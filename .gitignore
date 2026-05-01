@@ -1,0 +1,13 @@
+.DS_Store
+# Xcode
+build/
+DerivedData/
+*.moved-aside
+*.xcuserstate
+
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+__pycache__/
+xdremux_py/
