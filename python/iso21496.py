@@ -56,7 +56,12 @@ def build_iso21496_metadata(edr_scale: float) -> dict[str, Any]:
 
 
 def format_hdrgm_xmp(meta: dict[str, Any]) -> str:
-    """Format ISO 21496 metadata as hdrgm XMP string."""
+    """Format ISO 21496 metadata as hdrgm XMP string.
+
+    Produces a full XMP document with <x:xmpmeta> wrapper and xmlns
+    declarations matching Apple CGImageDestination output, which is
+    required for CIImage expandToHDR Headroom detection.
+    """
     def fmt(v):
         if isinstance(v, list):
             return " ".join(str(x) for x in v)
@@ -65,15 +70,24 @@ def format_hdrgm_xmp(meta: dict[str, Any]) -> str:
         return str(v)
 
     return (
-        '<rdf:Description rdf:about="" xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/">\n'
-        f'  <hdrgm:Version>1.0</hdrgm:Version>\n'
-        f'  <hdrgm:GainMapMin>{fmt(meta["gainMapMin"])}</hdrgm:GainMapMin>\n'
-        f'  <hdrgm:GainMapMax>{fmt(meta["gainMapMax"])}</hdrgm:GainMapMax>\n'
-        f'  <hdrgm:Gamma>{fmt(meta["gamma"])}</hdrgm:Gamma>\n'
-        f'  <hdrgm:OffsetSDR>{fmt(meta["offsetSdr"])}</hdrgm:OffsetSDR>\n'
-        f'  <hdrgm:OffsetHDR>{fmt(meta["offsetHdr"])}</hdrgm:OffsetHDR>\n'
-        f'  <hdrgm:HDRCapacityMin>{fmt(meta["hdrCapacityMin"])}</hdrgm:HDRCapacityMin>\n'
-        f'  <hdrgm:HDRCapacityMax>{fmt(meta["hdrCapacityMax"])}</hdrgm:HDRCapacityMax>\n'
-        f'  <hdrgm:BaseRenditionIsHDR>{fmt(meta["baseRenditionIsHDR"])}</hdrgm:BaseRenditionIsHDR>\n'
-        f'</rdf:Description>'
+        '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">\n'
+        '   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        '      <rdf:Description rdf:about=""\n'
+        '            xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"\n'
+        '            xmlns:xmp="http://ns.adobe.com/xap/1.0/"\n'
+        '            xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">\n'
+        f'         <hdrgm:Version>1.0</hdrgm:Version>\n'
+        f'         <hdrgm:GainMapMin>{fmt(meta["gainMapMin"])}</hdrgm:GainMapMin>\n'
+        f'         <hdrgm:GainMapMax>{fmt(meta["gainMapMax"])}</hdrgm:GainMapMax>\n'
+        f'         <hdrgm:Gamma>{fmt(meta["gamma"])}</hdrgm:Gamma>\n'
+        f'         <hdrgm:OffsetSDR>{fmt(meta["offsetSdr"])}</hdrgm:OffsetSDR>\n'
+        f'         <hdrgm:OffsetHDR>{fmt(meta["offsetHdr"])}</hdrgm:OffsetHDR>\n'
+        f'         <hdrgm:HDRCapacityMin>{fmt(meta["hdrCapacityMin"])}</hdrgm:HDRCapacityMin>\n'
+        f'         <hdrgm:HDRCapacityMax>{fmt(meta["hdrCapacityMax"])}</hdrgm:HDRCapacityMax>\n'
+        f'         <hdrgm:BaseRenditionIsHDR>{fmt(meta["baseRenditionIsHDR"])}</hdrgm:BaseRenditionIsHDR>\n'
+        '      </rdf:Description>\n'
+        '   </rdf:RDF>\n'
+        '</x:xmpmeta>\n'
+        '<?xpacket end="w"?>'
     )

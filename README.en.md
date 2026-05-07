@@ -15,7 +15,7 @@ Extracts proprietary HDR Gain Map and metadata from ProXDR HEIC files and repack
 
 ## 🚀 Quick Start
 
-### Swift (macOS only)
+### Swift (requires macOS 26 or later)
 
 ```bash
 # Single file
@@ -30,8 +30,8 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python (cross-platform)
 
-> [!WARNING]
-> Python version is still in development. Metadata extraction and gain map reconstruction work, but HEIC output lacks ISO auxC box marking (pillow-heif API limitation). macOS may not detect it as HDR. Use the Swift version for full conversion.
+> [!NOTE]
+> Python version requires dependencies: `pip install pillow-heif Pillow numpy`
 
 ```bash
 python3 python/XDRemux.py convert --input IMG_001.heic
@@ -66,9 +66,19 @@ python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 
 Off by default. Without this flag, the output is a pure ISO 21496-1 standard HDR HEIC.
 
-## 🗺 Roadmap
+### `--passthrough` — Lossless Base Image Passthrough (Experimental)
 
-- Polish Python cross-platform HEIC encode/decode support.
+> [!CAUTION]
+> **Experimental option** — behavior may change between versions.
+
+Copies the base image HEVC compressed data directly from the source file without decode/re-encode round-trip. Only the gain map is encoded fresh. Benefits: zero quality loss, smaller file size (~60% reduction).
+
+```bash
+python3 python/XDRemux.py convert --input IMG_001.heic --output out.heic --passthrough
+python3 python/XDRemux.py batch --input-dir photo_dump/ --passthrough
+```
+
+Python only for now. See [`docs/passthrough_plan.md`](docs/passthrough_plan.md) for details.
 
 ---
 

@@ -15,7 +15,7 @@
 
 ## 🚀 快速上手
 
-### Swift（仅 macOS）
+### Swift（需要 macOS 26 及更新系统）
 
 ```bash
 # 单张转换
@@ -30,8 +30,8 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python（跨平台）
 
-> [!WARNING]
-> Python 版仍在开发中。元数据提取与 gain map 重建已可用，但 HEIC 编码输出的增益图缺少 ISO auxC 标记（受限于 pillow-heif API），macOS 可能无法识别为 HDR。完整转换请使用 Swift 版。
+> [!NOTE]
+> Python 版需要安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
 python3 python/XDRemux.py convert --input IMG_001.heic
@@ -66,9 +66,19 @@ python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 
 默认关闭。不加此选项时，输出为纯 ISO 21496-1 标准 HDR HEIC。
 
-## 🗺 未来目标
+### `--passthrough` — 无损基图透传模式（实验性）
 
-- Python 跨平台版完善 HEIC 编解码支持。
+> [!CAUTION]
+> **实验性选项**，行为可能会随版本更新而改变。
+
+直接拷贝源文件中 base image 的 HEVC 压缩数据，不做解码-重编码 round-trip。仅重新编码 gain map。优点：零画质损失、文件体积更小（约减少 60%）。
+
+```bash
+python3 python/XDRemux.py convert --input IMG_001.heic --output out.heic --passthrough
+python3 python/XDRemux.py batch --input-dir photo_dump/ --passthrough
+```
+
+当前仅支持 Python 版。详见 [`docs/passthrough_plan.md`](docs/passthrough_plan.md)。
 
 ---
 
