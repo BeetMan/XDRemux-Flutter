@@ -51,16 +51,21 @@ def read_heic(path: str) -> dict:
 
 def write_heic(output_path: str, base_image: Image.Image,
                gainmap, iso_meta: dict,
-               oppo_compat: bool = False, lhdr=None) -> None:
+               oppo_compat: bool = False, lhdr=None,
+               replace_primary_colr: bool = False,
+               exif_data: bytes | None = None) -> None:
     """Write HEIC with gain map as secondary image + ISO 21496-1 patch."""
     if base_image is None:
         raise ValueError("base_image is None")
 
     from pillow_heif import from_pillow
-    from .iso21496 import format_hdrgm_xmp
 
+    # Keep ICC profile if we need to convert modes.
+    icc_profile = base_image.info.get("icc_profile")
     if base_image.mode != "RGB":
         base_image = base_image.convert("RGB")
+        if icc_profile and not base_image.info.get("icc_profile"):
+            base_image.info["icc_profile"] = icc_profile
 
     # Accept both numpy arrays and PIL Images
     if isinstance(gainmap, Image.Image):
@@ -73,22 +78,31 @@ def write_heic(output_path: str, base_image: Image.Image,
     heif = from_pillow(base_image)
     heif.add_from_pillow(gm_img)
 
-    # Embed hdrgm XMP
-    xmp = format_hdrgm_xmp(iso_meta).encode("utf-8")
-    heif.info["xmp"] = xmp
+    # Build save kwargs — passthrough source EXIF (shooting params, GPS, orientation)
+    save_kwargs = {"quality": 90}
+    if exif_data is not None:
+        save_kwargs["exif"] = exif_data
 
-    # Inject patched OPPO UserComment EXIF before saving (avoids re-save corruption)
+    # OPPO compat: merge patched UserComment into EXIF before save.
+    # If exif_data is provided, merge into it; otherwise inject into heif object.
     if oppo_compat and lhdr is not None:
         patched_comment = _get_patched_oppo_user_comment(lhdr)
         if patched_comment:
-            _inject_exif_user_comment(heif, patched_comment)
+            if exif_data is not None:
+                save_kwargs["exif"] = _merge_exif_user_comment(exif_data, patched_comment)
+            else:
+                _inject_exif_user_comment(heif, patched_comment)
 
-    heif.save(output_path, quality=90)
+    heif.save(output_path, **save_kwargs)
 
     # Binary-patch for ISO 21496-1 compliance
     try:
         from .isobmff_patch import patch_heic_for_iso21496
-        patched = patch_heic_for_iso21496(output_path)
+        patched = patch_heic_for_iso21496(
+            output_path,
+            iso_meta=iso_meta,
+            replace_primary_colr=replace_primary_colr,
+        )
         if not patched:
             print("note: auxC already present or patching skipped", file=sys.stderr)
     except Exception as e:
@@ -109,6 +123,17 @@ def _get_patched_oppo_user_comment(lhdr) -> str | None:
     original_flags = int(m.group(1))
     patched_flags = original_flags | 0x20000000
     return f"oplus_{patched_flags}"
+
+
+def _merge_exif_user_comment(exif_bytes: bytes, comment: str) -> bytes:
+    """Merge a UserComment string into existing EXIF bytes."""
+    try:
+        import piexif
+        exif_dict = piexif.load(exif_bytes)
+        exif_dict["Exif"][piexif.ExifIFD.UserComment] = comment.encode("utf-8")
+        return piexif.dump(exif_dict)
+    except Exception:
+        return exif_bytes
 
 
 def _inject_exif_user_comment(heif, comment: str) -> None:
