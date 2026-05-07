@@ -72,6 +72,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
             print("error: HEIC decode failed — install pillow-heif for full conversion", file=sys.stderr)
             return 1
 
+        # Resolve gain map
         if lhdr.mode == "uhdr":
             gm_data = lhdr.gainmap_data
             gm_img = None
@@ -80,28 +81,29 @@ def cmd_convert(args: argparse.Namespace) -> int:
                     gm_img = Image.open(io.BytesIO(gm_data))
                 except Exception:
                     pass
-            heif_io.write_heic(
-                str(output_path),
-                base_image,
-                gm_img,
-                iso_meta,
-                oppo_compat=args.oppo_compat,
-                lhdr=lhdr,
-                replace_primary_colr=args.replace_colr,
-                exif_data=exif_data,
-            )
         else:
             mask_data = lhdr.mask_data
             if mask_data is None:
                 print("error: no mask data found", file=sys.stderr)
                 return 1
-
             mask_np = np.array(Image.open(io.BytesIO(mask_data)))
-            gm = gainmap.reconstruct(mask_np, edr_scale, lhdr.meta_floats[0])
+            gm_img = gainmap.reconstruct(mask_np, edr_scale, lhdr.meta_floats[0])
+
+        if getattr(args, 'passthrough', False):
+            heif_io.write_heic_passthrough(
+                str(input_path),
+                str(output_path),
+                gm_img,
+                iso_meta,
+                lhdr=lhdr,
+                replace_primary_colr=args.replace_colr,
+                exif_data=exif_data,
+            )
+        else:
             heif_io.write_heic(
                 str(output_path),
                 base_image,
-                gm,
+                gm_img,
                 iso_meta,
                 oppo_compat=args.oppo_compat,
                 lhdr=lhdr,
@@ -154,7 +156,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
         args2 = argparse.Namespace(input=str(f), output=str(out),
                                     debug_dir=args.debug_dir,
                                     oppo_compat=args.oppo_compat,
-                                    replace_colr=args.replace_colr)
+                                    replace_colr=args.replace_colr,
+                                    passthrough=args.passthrough)
         ret = cmd_convert(args2)
         if ret == 0:
             converted += 1
@@ -178,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--oppo-compat", action="store_true", default=False)
     c.add_argument("--replace-colr", action="store_true", default=False,
                    help="Replace primary colr with Apple PQ ICC (default: preserve original)")
+    c.add_argument("--passthrough", action="store_true", default=False,
+                   help="[experimental] Passthrough base image HEVC data without re-encoding")
 
     b = sub.add_parser("batch")
     b.add_argument("--input-dir", required=True)
@@ -187,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--oppo-compat", action="store_true", default=False)
     b.add_argument("--replace-colr", action="store_true", default=False,
                    help="Replace primary colr with Apple PQ ICC (default: preserve original)")
+    b.add_argument("--passthrough", action="store_true", default=False,
+                   help="[experimental] Passthrough base image HEVC data without re-encoding")
 
     args = parser.parse_args(argv)
     if args.command == "convert":
