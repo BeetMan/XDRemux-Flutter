@@ -30,8 +30,11 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python (cross-platform)
 
+> [!WARNING]
+> Python version is still in development. The current Python XDRemux (`write_heic()`) fully decodes the source HEIC's base image into PIL pixels, then re-encodes via pillow-heif at quality=90. This is a lossy round-trip (decode → re-encode) that degrades image quality and increases file size. RGB Gain Maps are also re-encoded as Grayscale Gain Maps.
+
 > [!NOTE]
-> Python version requires dependencies: `pip install pillow-heif Pillow numpy`
+> Requires dependencies: `pip install pillow-heif Pillow numpy`
 
 ```bash
 python3 python/XDRemux.py convert --input IMG_001.heic
@@ -65,20 +68,6 @@ python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 ```
 
 Off by default. Without this flag, the output is a pure ISO 21496-1 standard HDR HEIC.
-
-### `--passthrough` — Lossless Base Image Passthrough (Experimental)
-
-> [!CAUTION]
-> **Experimental option** — behavior may change between versions.
-
-Copies the base image HEVC compressed data directly from the source file without decode/re-encode round-trip. Only the gain map is encoded fresh. Benefits: zero quality loss, smaller file size (~60% reduction).
-
-```bash
-python3 python/XDRemux.py convert --input IMG_001.heic --output out.heic --passthrough
-python3 python/XDRemux.py batch --input-dir photo_dump/ --passthrough
-```
-
-Python only for now. See [`docs/passthrough_plan.md`](docs/passthrough_plan.md) for details.
 
 ---
 

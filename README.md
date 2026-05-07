@@ -30,8 +30,11 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python（跨平台）
 
+> [!WARNING]
+> Python 版仍在开发中。当前的 Python XDRemux（`write_heic()`）会将源 HEIC 的 base image 完全解码为 PIL 像素，然后通过 pillow-heif 以 quality=90 重新编码。这是一个有损的往返过程（解码 → 重新编码），会降低图像质量并增加文件大小。RGB Gain Map 也会被重新编码为 Grayscale Gain Map。
+
 > [!NOTE]
-> Python 版需要安装依赖：`pip install pillow-heif Pillow numpy`
+> 需要安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
 python3 python/XDRemux.py convert --input IMG_001.heic
@@ -43,9 +46,9 @@ python3 python/XDRemux.py batch --input-dir photo_dump/
 
 ## ⚠️ 已知局限
 
-- **色度下采样**: UHDR 设备的 8bit YCbCr 4:4:4 Gain Map 会被降采样为 4:2:0（Apple ImageIO / libheif 限制）。
-- **LHDR 相册识别**: LHDR 分支设备拍摄的 ProXDR HEIC 经转换后，在 OPPO 相册中查看时无法被识别到 Gain Map，导致无法触发HDR提亮。
-- **相册编辑丢失 HDR**: 转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
+- **色度下采样**：UHDR 设备的 8-bit YCbCr 4:4:4 Gain Map 会被降采样为 4:2:0（Apple ImageIO / libheif 限制）。
+- **LHDR 相册识别**：LHDR 分支设备拍摄的 ProXDR HEIC 经转换后，在 OPPO 相册中查看时无法被识别到 Gain Map，导致无法触发 HDR 提亮。
+- **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
 ## 🧪 实验性功能
 
@@ -65,20 +68,6 @@ python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 ```
 
 默认关闭。不加此选项时，输出为纯 ISO 21496-1 标准 HDR HEIC。
-
-### `--passthrough` — 无损基图透传模式（实验性）
-
-> [!CAUTION]
-> **实验性选项**，行为可能会随版本更新而改变。
-
-直接拷贝源文件中 base image 的 HEVC 压缩数据，不做解码-重编码 round-trip。仅重新编码 gain map。优点：零画质损失、文件体积更小（约减少 60%）。
-
-```bash
-python3 python/XDRemux.py convert --input IMG_001.heic --output out.heic --passthrough
-python3 python/XDRemux.py batch --input-dir photo_dump/ --passthrough
-```
-
-当前仅支持 Python 版。详见 [`docs/passthrough_plan.md`](docs/passthrough_plan.md)。
 
 ---
 
