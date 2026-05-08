@@ -54,23 +54,28 @@ def cmd_convert(args: argparse.Namespace) -> int:
         import numpy as np
         import io
         from PIL import Image
-        from pillow_heif import open_heif
 
-        data = heif_io.read_heic(str(input_path))
-        base_image = data["base_image"]
-
-        # Extract source EXIF for passthrough (shooting params, GPS, orientation)
-        # Aligns with Swift: CGImageSourceCopyPropertiesAtIndex → originalProperties
+        base_image = None
         exif_data = None
-        try:
-            src_heif = open_heif(str(input_path))
-            exif_data = src_heif[0].info.get("exif") if hasattr(src_heif, '__getitem__') else src_heif.info.get("exif")
-        except Exception:
-            pass
+        passthrough = getattr(args, 'passthrough', False)
 
-        if base_image is None:
-            print("error: HEIC decode failed — install pillow-heif for full conversion", file=sys.stderr)
-            return 1
+        if not passthrough:
+            from pillow_heif import open_heif
+
+            data = heif_io.read_heic(str(input_path))
+            base_image = data["base_image"]
+
+            # Extract source EXIF for normal-mode re-encode.
+            # Passthrough copies the original EXIF item at the ISOBMFF layer.
+            try:
+                src_heif = open_heif(str(input_path))
+                exif_data = src_heif[0].info.get("exif") if hasattr(src_heif, '__getitem__') else src_heif.info.get("exif")
+            except Exception:
+                pass
+
+            if base_image is None:
+                print("error: HEIC decode failed — install pillow-heif for full conversion", file=sys.stderr)
+                return 1
 
         # Resolve gain map
         if lhdr.mode == "uhdr":
@@ -89,15 +94,14 @@ def cmd_convert(args: argparse.Namespace) -> int:
             mask_np = np.array(Image.open(io.BytesIO(mask_data)))
             gm_img = gainmap.reconstruct(mask_np, edr_scale, lhdr.meta_floats[0])
 
-        if getattr(args, 'passthrough', False):
+        if passthrough:
             heif_io.write_heic_passthrough(
                 str(input_path),
                 str(output_path),
                 gm_img,
                 iso_meta,
                 lhdr=lhdr,
-                replace_primary_colr=args.replace_colr,
-                exif_data=exif_data,
+                oppo_compat=args.oppo_compat,
             )
         else:
             heif_io.write_heic(
@@ -107,7 +111,6 @@ def cmd_convert(args: argparse.Namespace) -> int:
                 iso_meta,
                 oppo_compat=args.oppo_compat,
                 lhdr=lhdr,
-                replace_primary_colr=args.replace_colr,
                 exif_data=exif_data,
             )
 
@@ -156,7 +159,6 @@ def cmd_batch(args: argparse.Namespace) -> int:
         args2 = argparse.Namespace(input=str(f), output=str(out),
                                     debug_dir=args.debug_dir,
                                     oppo_compat=args.oppo_compat,
-                                    replace_colr=args.replace_colr,
                                     passthrough=args.passthrough)
         ret = cmd_convert(args2)
         if ret == 0:
@@ -179,8 +181,6 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--output")
     c.add_argument("--debug-dir")
     c.add_argument("--oppo-compat", action="store_true", default=False)
-    c.add_argument("--replace-colr", action="store_true", default=False,
-                   help="Replace primary colr with Apple PQ ICC (default: preserve original)")
     c.add_argument("--passthrough", action="store_true", default=False,
                    help="[experimental] Passthrough base image HEVC data without re-encoding")
 
@@ -190,8 +190,6 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--glob")
     b.add_argument("--debug-dir")
     b.add_argument("--oppo-compat", action="store_true", default=False)
-    b.add_argument("--replace-colr", action="store_true", default=False,
-                   help="Replace primary colr with Apple PQ ICC (default: preserve original)")
     b.add_argument("--passthrough", action="store_true", default=False,
                    help="[experimental] Passthrough base image HEVC data without re-encoding")
 

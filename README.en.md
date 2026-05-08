@@ -30,14 +30,17 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python (cross-platform)
 
-> [!WARNING]
-> Python version is still in development. The current Python XDRemux (`write_heic()`) fully decodes the source HEIC's base image into PIL pixels, then re-encodes via pillow-heif at quality=90. This is a lossy round-trip (decode → re-encode) that degrades image quality and increases file size. RGB Gain Maps are also re-encoded as Grayscale Gain Maps.
-
 > [!NOTE]
 > Requires dependencies: `pip install pillow-heif Pillow numpy`
 
 ```bash
+# Standard mode (re-encodes base image at quality=90)
 python3 python/XDRemux.py convert --input IMG_001.heic
+
+# Passthrough mode (preserves original HEVC data, lossless)
+python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+
+# Batch conversion
 python3 python/XDRemux.py batch --input-dir photo_dump/
 ```
 
@@ -52,22 +55,17 @@ python3 python/XDRemux.py batch --input-dir photo_dump/
 
 ## 🧪 Experimental Features
 
-### `--oppo-compat` — OPPO Gallery Compatibility Mode
+### `--passthrough` — Lossless Passthrough Mode
 
 > [!CAUTION]
 > **Experimental option** — behavior may change between versions.
 
-Pass `--oppo-compat` during conversion to additionally write OPPO-proprietary UHDR extension blocks (`local.uhdr.gainmap.info` / `local.uhdr.gainmap.data`) and patch the EXIF UserComment `oplus_` tag flags, so the converted HDR photo can still activate HDR highlight rendering in OPPO Gallery.
+Skips base image decode→re-encode; copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. The base image in the output will be identical to the source — zero quality loss. Known issue: images produced by this option currently do not display correctly in OPPO Gallery. Investigation is ongoing.
 
 ```bash
-# Swift
-swift swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
-
 # Python
-python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
 ```
-
-Off by default. Without this flag, the output is a pure ISO 21496-1 standard HDR HEIC.
 
 ---
 

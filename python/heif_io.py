@@ -10,15 +10,200 @@ and insert iref/auxl reference — enabling HDR detection by macOS/iOS.
 
 import json
 import io
+import os
 import re
 import struct
 import sys
+import tempfile
 
 from PIL import Image
 import numpy as np
 
 from . import container
 from . import iso21496
+
+
+def _read_be(data: bytes | bytearray, offset: int, size: int) -> tuple[int, int]:
+    if size == 0:
+        return 0, offset
+    return int.from_bytes(data[offset:offset + size], "big"), offset + size
+
+
+def _parse_iloc_entries(data: bytes | bytearray, iloc_ds: int) -> list[dict]:
+    """Parse iloc and normalize base_offset + extent_offset into one offset."""
+    from .isobmff_patch import _fullbox
+
+    iloc_v, _, iloc_body = _fullbox(data, iloc_ds)
+    b0 = data[iloc_body]
+    osz = (b0 >> 4) & 0xF
+    lsz = b0 & 0xF
+    b1 = data[iloc_body + 1]
+    bosz = (b1 >> 4) & 0xF
+    isz = (b1 & 0xF) if iloc_v in (1, 2) else 0
+    pos = iloc_body + 2
+    cnt_size = 4 if iloc_v >= 2 else 2
+    item_id_size = 4 if iloc_v >= 2 else 2
+    count, pos = _read_be(data, pos, cnt_size)
+
+    entries = []
+    for _ in range(count):
+        item_id, pos = _read_be(data, pos, item_id_size)
+        construction_method = 0
+        if iloc_v in (1, 2):
+            construction_method, pos = _read_be(data, pos, 2)
+            construction_method &= 0xF
+        data_ref_index, pos = _read_be(data, pos, 2)
+        base_offset, pos = _read_be(data, pos, bosz)
+        extent_count, pos = _read_be(data, pos, 2)
+        extents = []
+        for _ in range(extent_count):
+            if iloc_v in (1, 2) and isz:
+                _, pos = _read_be(data, pos, isz)
+            extent_offset, pos = _read_be(data, pos, osz)
+            extent_length, pos = _read_be(data, pos, lsz)
+            extents.append((base_offset + extent_offset, extent_length))
+        entries.append({
+            "iid": item_id,
+            "cm": construction_method,
+            "dri": data_ref_index,
+            "extents": extents,
+        })
+    return entries
+
+
+def _parse_ipma_entries(data: bytes | bytearray, ipma_ds: int) -> tuple[int, int, list[dict]]:
+    from .isobmff_patch import _fullbox
+
+    ipma_v, ipma_f, ipma_body = _fullbox(data, ipma_ds)
+    count = struct.unpack_from(">I", data, ipma_body)[0]
+    pos = ipma_body + 4
+    entries = []
+    item_id_size = 4 if (ipma_f & 1) else 2
+    assoc_size = 2 if (ipma_f & 1) else 1
+    for _ in range(count):
+        item_id, pos = _read_be(data, pos, item_id_size)
+        assoc_count = data[pos]
+        pos += 1
+        assocs = []
+        for _ in range(assoc_count):
+            value, pos = _read_be(data, pos, assoc_size)
+            assocs.append(value)
+        entries.append({"iid": item_id, "assocs": assocs})
+    return ipma_v, ipma_f, entries
+
+
+def _extract_heif_hvc_payload_and_config(data: bytes) -> tuple[bytes, bytes]:
+    """Return the first hvc1 item's payload bytes and its associated hvcC box."""
+    from .isobmff_patch import _boxes, _fullbox, _parse_all_items
+
+    top = {}
+    for tp, ds, de, bs, bsz in _boxes(data, 0, len(data)):
+        top[tp] = {"ds": ds, "de": de, "bs": bs, "sz": bsz}
+    if "meta" not in top:
+        raise ValueError("temporary gain map HEIF missing meta")
+
+    _, _, meta_body = _fullbox(data, top["meta"]["ds"])
+    child = {}
+    for tp, ds, de, bs, bsz in _boxes(data, meta_body, top["meta"]["de"]):
+        child[tp] = {"ds": ds, "de": de, "bs": bs, "sz": bsz}
+
+    for name in ("iinf", "iloc", "iprp"):
+        if name not in child:
+            raise ValueError(f"temporary gain map HEIF missing {name}")
+
+    item_types, _ = _parse_all_items(data, child["iinf"]["ds"], child["iinf"]["de"])
+    hvc_item_id = next((iid for iid, item_type in item_types.items() if item_type == "hvc1"), None)
+    if hvc_item_id is None:
+        raise ValueError("temporary gain map HEIF has no hvc1 item")
+
+    ipco = ipma = None
+    for tp, ds, de, bs, bsz in _boxes(data, child["iprp"]["ds"], child["iprp"]["de"]):
+        if tp == "ipco":
+            ipco = {"ds": ds, "de": de}
+        elif tp == "ipma":
+            ipma = {"ds": ds, "de": de}
+    if ipco is None or ipma is None:
+        raise ValueError("temporary gain map HEIF missing ipco/ipma")
+
+    props = []
+    for tp, ds, de, bs, bsz in _boxes(data, ipco["ds"], ipco["de"]):
+        props.append({"type": tp, "raw": data[bs:de]})
+
+    _, ipma_f, ipma_entries = _parse_ipma_entries(data, ipma["ds"])
+    prop_mask = 0x7FFF if (ipma_f & 1) else 0x7F
+    hvcc_prop_idx = None
+    for entry in ipma_entries:
+        if entry["iid"] != hvc_item_id:
+            continue
+        for value in entry["assocs"]:
+            prop_idx = value & prop_mask
+            if 1 <= prop_idx <= len(props) and props[prop_idx - 1]["type"] == "hvcC":
+                hvcc_prop_idx = prop_idx
+                break
+        if hvcc_prop_idx is not None:
+            break
+    if hvcc_prop_idx is None:
+        hvcc_prop_idx = next(
+            (idx for idx, prop in enumerate(props, start=1) if prop["type"] == "hvcC"),
+            None,
+        )
+    if hvcc_prop_idx is None:
+        raise ValueError("temporary gain map HEIF has no hvcC property")
+    hvcc_box = props[hvcc_prop_idx - 1]["raw"]
+
+    iloc_entries = _parse_iloc_entries(data, child["iloc"]["ds"])
+    hvc_loc = next((entry for entry in iloc_entries if entry["iid"] == hvc_item_id), None)
+    if hvc_loc is None:
+        raise ValueError("temporary gain map HEIF has no iloc entry for hvc1")
+
+    chunks = []
+    for offset, length in hvc_loc["extents"]:
+        if hvc_loc["cm"] == 0:
+            start = offset
+        elif hvc_loc["cm"] == 1 and "idat" in child:
+            start = child["idat"]["ds"] + offset
+        else:
+            raise ValueError(f"unsupported temporary gain map construction_method={hvc_loc['cm']}")
+        end = start + length
+        if start < 0 or end > len(data):
+            raise ValueError("temporary gain map iloc extent is out of bounds")
+        chunks.append(data[start:end])
+
+    payload = b"".join(chunks)
+    if not payload:
+        raise ValueError("temporary gain map hvc1 payload is empty")
+    return payload, hvcc_box
+
+
+def _infe_box(item_id: int, item_type: str, *, flags: int = 0) -> bytes:
+    if item_id > 0xFFFF:
+        return (
+            struct.pack(">I", 23) + b"infe"
+            + bytes([2, (flags >> 16) & 0xFF, (flags >> 8) & 0xFF, flags & 0xFF])
+            + struct.pack(">I", item_id)
+            + struct.pack(">H", 0)
+            + item_type.encode("ascii")
+            + b"\x00"
+        )
+    return (
+        struct.pack(">I", 21) + b"infe"
+        + bytes([2, (flags >> 16) & 0xFF, (flags >> 8) & 0xFF, flags & 0xFF])
+        + struct.pack(">H", item_id)
+        + struct.pack(">H", 0)
+        + item_type.encode("ascii")
+        + b"\x00"
+    )
+
+
+def _iref_box(ref_type: bytes, from_id: int, to_ids: list[int], *, version: int) -> bytes:
+    id_size = 4 if version >= 1 else 2
+    payload = from_id.to_bytes(id_size, "big") + struct.pack(">H", len(to_ids))
+    payload += b"".join(to_id.to_bytes(id_size, "big") for to_id in to_ids)
+    return struct.pack(">I", 8 + len(payload)) + ref_type + payload
+
+
+def _colr_icc_box(icc_profile: bytes) -> bytes:
+    return struct.pack(">I", 8 + len(icc_profile)) + b"colr" + icc_profile
 
 
 def read_heic(path: str) -> dict:
@@ -49,6 +234,36 @@ def read_heic(path: str) -> dict:
     }
 
 
+def _as_uint8_array(array: np.ndarray) -> np.ndarray:
+    """Return an array Pillow can encode predictably as 8-bit image data."""
+    if array.dtype == np.uint8:
+        return array
+    return np.clip(np.round(array), 0, 255).astype(np.uint8)
+
+
+def _normalize_gainmap_image(gainmap) -> Image.Image:
+    """Convert gain map input to a JPEG/HEIF-ready image without dropping RGB channels."""
+    if isinstance(gainmap, Image.Image):
+        if gainmap.mode in ("L", "RGB"):
+            return gainmap.copy()
+        if gainmap.mode in ("P", "PA", "YCbCr") or len(gainmap.getbands()) >= 3:
+            return gainmap.convert("RGB")
+        return gainmap.convert("L")
+
+    if isinstance(gainmap, np.ndarray):
+        array = _as_uint8_array(np.asarray(gainmap))
+        if array.ndim == 2:
+            return Image.fromarray(array).convert("L")
+        if array.ndim == 3:
+            channels = array.shape[2]
+            if channels == 1:
+                return Image.fromarray(array[:, :, 0]).convert("L")
+            if channels >= 3:
+                return Image.fromarray(array[:, :, :3]).convert("RGB")
+
+    raise ValueError(f"Unsupported gainmap type or shape: {type(gainmap)}")
+
+
 def write_heic(output_path: str, base_image: Image.Image,
                gainmap, iso_meta: dict,
                oppo_compat: bool = False, lhdr=None,
@@ -67,13 +282,7 @@ def write_heic(output_path: str, base_image: Image.Image,
         if icc_profile and not base_image.info.get("icc_profile"):
             base_image.info["icc_profile"] = icc_profile
 
-    # Accept both numpy arrays and PIL Images
-    if isinstance(gainmap, Image.Image):
-        gm_img = gainmap.convert("L")
-    elif isinstance(gainmap, np.ndarray):
-        gm_img = Image.fromarray(gainmap, mode="L")
-    else:
-        raise ValueError(f"Unsupported gainmap type: {type(gainmap)}")
+    gm_img = _normalize_gainmap_image(gainmap)
 
     heif = from_pillow(base_image)
     heif.add_from_pillow(gm_img)
@@ -110,12 +319,13 @@ def write_heic(output_path: str, base_image: Image.Image,
 
     # OPPO Gallery compatibility: append UHDR extension blocks
     if oppo_compat and lhdr is not None:
-        _append_oppo_trailing_payload(output_path, iso_meta, gainmap, lhdr)
+        _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
 
 
 def write_heic_passthrough(source_path: str, output_path: str,
                             gainmap, iso_meta: dict,
-                            lhdr=None, replace_primary_colr: bool = False,
+                            lhdr=None, oppo_compat: bool = False,
+                            replace_primary_colr: bool = False,
                             exif_data: bytes | None = None) -> None:
     """Passthrough mode: copy source base image HEVC data without re-encoding.
 
@@ -125,7 +335,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     from .isobmff_patch import (
         _boxes, _build_tmap_config, _fullbox, _parse_all_items,
         AUXC_BOX, DINF_BOX, COLR_NCLX_PQ_BOX, COLR_NCLX_SRGB_BOX,
-        IROT_BOX, PIXI_RGB10_BOX,
+        IROT_BOX, PIXI_RGB10_BOX, SWIFT_PQ_ICC_PROFILE,
     )
 
     # ── 1. Read source file and parse top-level boxes ──────────────
@@ -164,6 +374,10 @@ def write_heic_passthrough(source_path: str, output_path: str,
         meta_children.append((tp, bs, ds, de, bsz))
         child[tp] = {'off': bs, 'ds': ds, 'de': de, 'sz': bsz}
 
+    for name in ("iinf", "iloc", "iprp", "pitm"):
+        if name not in child:
+            raise ValueError(f"Source meta missing {name}")
+
     # Parse iprp children (ipco and ipma are inside iprp)
     ipco = ipma = None
     for tp, ds, de, bs, bsz in _boxes(src, child['iprp']['ds'], child['iprp']['de']):
@@ -171,50 +385,11 @@ def write_heic_passthrough(source_path: str, output_path: str,
             ipco = {'off': bs, 'ds': ds, 'de': de, 'sz': bsz}
         elif tp == 'ipma':
             ipma = {'off': bs, 'ds': ds, 'de': de, 'sz': bsz}
+    if ipco is None or ipma is None:
+        raise ValueError("Source iprp missing ipco or ipma")
 
-    # Parse iloc
-    iloc_v, iloc_f, iloc_body = _fullbox(src, child['iloc']['ds'])
-    b0 = src[iloc_body]; osz = (b0 >> 4) & 0xF; lsz = b0 & 0xF
-    b1 = src[iloc_body+1]; bosz = (b1 >> 4) & 0xF
-    isz = (b1 & 0xF) if iloc_v in (1, 2) else 0
-    cnt_size = 2 if iloc_v < 2 else 4
-    item_id_size = 2 if iloc_v < 2 else 4
-    iloc_cnt_pos = iloc_body + 2
-    old_iloc_cnt = struct.unpack_from('>H' if cnt_size == 2 else '>I',
-                                       src, iloc_cnt_pos)[0]
-
-    # Parse all iloc entries
-    parsed_iloc = []
-    pos = iloc_cnt_pos + cnt_size
-    for _ in range(old_iloc_cnt):
-        if item_id_size == 4:
-            iid = struct.unpack_from('>I', src, pos)[0]; pos += 4
-        else:
-            iid = struct.unpack_from('>H', src, pos)[0]; pos += 2
-        cm = 0
-        if iloc_v in (1, 2):
-            cm = struct.unpack_from('>H', src, pos)[0] & 0xF; pos += 2
-        dri = struct.unpack_from('>H', src, pos)[0]; pos += 2
-        bo = 0
-        if bosz:
-            bo = struct.unpack_from('>I' if bosz == 4 else '>H', src, pos)[0]
-            pos += bosz
-        ec = struct.unpack_from('>H', src, pos)[0]; pos += 2
-        extents = []
-        for _ in range(ec):
-            if iloc_v in (1, 2) and isz:
-                pos += isz
-            eo = 0
-            if osz:
-                eo = struct.unpack_from('>I' if osz == 4 else '>H', src, pos)[0]
-                pos += osz
-            el = 0
-            if lsz:
-                el = struct.unpack_from('>I' if lsz == 4 else '>H', src, pos)[0]
-                pos += lsz
-            extents.append((eo, el))
-        parsed_iloc.append({'iid': iid, 'cm': cm, 'dri': dri, 'bo': bo,
-                            'extents': extents})
+    parsed_iloc = _parse_iloc_entries(src, child['iloc']['ds'])
+    old_iloc_cnt = len(parsed_iloc)
 
     # Parse iinf for item types
     item_types, iinf_v = _parse_all_items(src, child['iinf']['ds'], child['iinf']['de'])
@@ -233,33 +408,14 @@ def write_heic_passthrough(source_path: str, output_path: str,
         ipco_idx += 1
     prop_count = len(ipco_prop_types)
 
-    # Parse ipma
-    ipma_v, ipma_f, ipma_body = _fullbox(src, ipma['ds'])
-    ipma_cnt = struct.unpack_from('>I', src, ipma_body)[0]
-    ipma_pos = ipma_body + 4
-
-    # Find primary's ispe and colr indices
+    # Parse ipma and find primary's ispe/colr/pixi indices.
+    ipma_v, ipma_f, ipma_entries = _parse_ipma_entries(src, ipma['ds'])
     primary_ispe_idx = primary_colr_idx = primary_pixi_idx = None
 
-    ipma_entries = []
     pidx_mask = 0x7FFF if (ipma_f & 1) else 0x7F
-    for _ in range(ipma_cnt):
-        if ipma_f & 1:
-            iid = struct.unpack_from('>I', src, ipma_pos)[0]; ipma_pos += 4
-        else:
-            iid = struct.unpack_from('>H', src, ipma_pos)[0]; ipma_pos += 2
-        ac = src[ipma_pos]; ipma_pos += 1
-        assocs = []
-        for _ in range(ac):
-            if ipma_f & 1:
-                val = struct.unpack_from('>H', src, ipma_pos)[0]; ipma_pos += 2
-            else:
-                val = src[ipma_pos]; ipma_pos += 1
-            assocs.append(val)
-        ipma_entries.append({'iid': iid, 'assocs': assocs})
-
-        if iid == pitm_id:
-            for v in assocs:
+    for entry in ipma_entries:
+        if entry['iid'] == pitm_id:
+            for v in entry['assocs']:
                 pidx = v & pidx_mask
                 pt = ipco_prop_types.get(pidx)
                 if pt == 'ispe' and primary_ispe_idx is None:
@@ -271,39 +427,34 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # ── 3. Encode gain map ─────────────────────────────────────────
     from pillow_heif import from_pillow
-    if isinstance(gainmap, Image.Image):
-        gm_img = gainmap.convert("L")
-    elif isinstance(gainmap, np.ndarray):
-        gm_img = Image.fromarray(gainmap, mode="L")
-    else:
-        raise ValueError(f"Unsupported gainmap type: {type(gainmap)}")
+    gm_img = _normalize_gainmap_image(gainmap)
 
-    gm_heif = from_pillow(gm_img)
-    gm_heif.save(output_path + ".gm.heic", quality=90)
-
-    with open(output_path + ".gm.heic", 'rb') as f:
-        gm_data = f.read()
-
-    gm_mdat_data = None
     gm_width, gm_height = gm_img.size
-    for tp, ds, de, bs, bsz in _boxes(gm_data, 0, len(gm_data)):
-        if tp == 'mdat':
-            gm_mdat_data = gm_data[ds:de]
-
-    if gm_mdat_data is None:
-        raise ValueError("Gain map encoding failed — no mdat in temp file")
-
-    import os
+    gm_tmp_path = None
     try:
-        os.remove(output_path + ".gm.heic")
-    except OSError:
-        pass
+        fd, gm_tmp_path = tempfile.mkstemp(
+            prefix="proxdr_gainmap_", suffix=".heic",
+            dir=os.path.dirname(os.path.abspath(output_path)) or None,
+        )
+        os.close(fd)
+        from_pillow(gm_img).save(gm_tmp_path, quality=90)
+        with open(gm_tmp_path, 'rb') as f:
+            gm_data = f.read()
+        gm_mdat_data, gm_hvcC = _extract_heif_hvc_payload_and_config(gm_data)
+    finally:
+        if gm_tmp_path:
+            try:
+                os.remove(gm_tmp_path)
+            except OSError:
+                pass
 
     # ── 4. Prepare building blocks ─────────────────────────────────
     next_id = max(item_types.keys()) + 1
     gm_item_id = next_id
     gm_grid_id = next_id + 1
     tmap_item_id = next_id + 2
+    if tmap_item_id > 0xFFFF:
+        raise ValueError("Passthrough mode currently requires 16-bit HEIF item IDs")
 
     auxc_prop_idx = prop_count + 1
     irot_prop_idx = prop_count + 2
@@ -312,38 +463,15 @@ def write_heic_passthrough(source_path: str, output_path: str,
     hdr_pixi_prop_idx = prop_count + 5
     gm_hvcC_prop_idx = prop_count + 6
     gm_ispe_prop_idx = prop_count + 7
+    if not (ipma_f & 1) and gm_ispe_prop_idx > 0x7F:
+        raise ValueError("Passthrough mode cannot encode more than 127 properties in ipma flags=0")
+    if primary_ispe_idx is None:
+        raise ValueError(f"Primary item {pitm_id} has no ispe property association")
 
     tmap_config = _build_tmap_config(iso_meta)
 
-    # Read primary ispe dimensions
-    pidx = 1
-    for tp, ds, de, bs, bsz in _boxes(src, ipco['ds'], ipco['de']):
-        if pidx == primary_ispe_idx and tp == 'ispe':
-            primary_w = struct.unpack_from('>I', src, ds + 4)[0]
-            primary_h = struct.unpack_from('>I', src, ds + 8)[0]
-            break
-        pidx += 1
-
     gm_grid_config = b'\x00\x00\x00\x00' + struct.pack('>HH', gm_width, gm_height)
     idat_payload = gm_grid_config + tmap_config
-
-    # Source hvcC (reuse for gain map)
-    src_hvcC = None
-    for tp, ds, de, bs, bsz in _boxes(src, ipco['ds'], ipco['de']):
-        if tp == 'hvcC':
-            src_hvcC = src[bs:de]
-            break
-
-    # New infe entries
-    def _infe_box(item_id, item_type, flags=0):
-        return (
-            struct.pack('>I', 21) + b'infe'
-            + bytes([2, (flags >> 16) & 0xFF, (flags >> 8) & 0xFF, flags & 0xFF])
-            + struct.pack('>H', item_id)
-            + struct.pack('>H', 0)
-            + item_type.encode('ascii')
-            + b'\x00'
-        )
 
     new_infe = (
         _infe_box(gm_item_id, 'hvc1', flags=0)
@@ -353,21 +481,29 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # Find EXIF item ID from source iref (cdsc reference)
     exif_item_id = None
+    iref_v = 0
     if 'iref' in child:
         iref_ds = child['iref']['ds']
-        iref_v, iref_f, iref_body = _fullbox(src, iref_ds)
+        iref_v, _, iref_body = _fullbox(src, iref_ds)
         iref_end = child['iref']['de']
         ref_pos = iref_body
         while ref_pos + 8 <= iref_end:
             ref_sz = struct.unpack_from('>I', src, ref_pos)[0]
             ref_type = src[ref_pos+4:ref_pos+8]
-            if ref_type == b'cdsc':
-                from_cnt = struct.unpack_from('>H', src, ref_pos + 10)[0]
-                if from_cnt >= 1:
-                    if iref_f & 1:
-                        exif_item_id = struct.unpack_from('>I', src, ref_pos + 8)[0]
-                    else:
-                        exif_item_id = struct.unpack_from('>H', src, ref_pos + 8)[0]
+            id_size = 4 if iref_v >= 1 else 2
+            if ref_sz < 8 + id_size + 2 or ref_pos + ref_sz > iref_end:
+                break
+            from_id = int.from_bytes(src[ref_pos + 8:ref_pos + 8 + id_size], "big")
+            count_pos = ref_pos + 8 + id_size
+            ref_count = struct.unpack_from('>H', src, count_pos)[0]
+            targets_pos = count_pos + 2
+            targets = [
+                int.from_bytes(src[targets_pos + i * id_size:targets_pos + (i + 1) * id_size], "big")
+                for i in range(ref_count)
+                if targets_pos + (i + 1) * id_size <= ref_pos + ref_sz
+            ]
+            if ref_type == b'cdsc' and (pitm_id in targets or exif_item_id is None):
+                exif_item_id = from_id
             ref_pos += ref_sz
 
     # Find first colr property index (ICC profile) for primary grid
@@ -380,10 +516,16 @@ def write_heic_passthrough(source_path: str, output_path: str,
     # New ipma entries
     def _encode_ipma_entry(iid, assocs):
         entry = bytearray()
-        entry += struct.pack('>H', iid)
+        if ipma_f & 1:
+            entry += struct.pack('>I', iid)
+        else:
+            entry += struct.pack('>H', iid)
         entry += bytes([len(assocs)])
         for pidx_val, essential in assocs:
-            entry += bytes([(0x80 if essential else 0) | pidx_val])
+            if ipma_f & 1:
+                entry += struct.pack('>H', (0x8000 if essential else 0) | pidx_val)
+            else:
+                entry += bytes([(0x80 if essential else 0) | pidx_val])
         return bytes(entry)
 
     # Primary grid: colr + ispe + pixi + irot (matching normal mode)
@@ -413,24 +555,14 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # New iref references
     iref_new_content = (
-        struct.pack('>I', 14) + b'dimg'
-        + struct.pack('>H', gm_grid_id) + struct.pack('>H', 1)
-        + struct.pack('>H', gm_item_id)
-        + struct.pack('>I', 16) + b'dimg'
-        + struct.pack('>H', tmap_item_id) + struct.pack('>H', 2)
-        + struct.pack('>H', pitm_id) + struct.pack('>H', gm_grid_id)
-        + struct.pack('>I', 14) + b'auxl'
-        + struct.pack('>H', gm_item_id) + struct.pack('>H', 1)
-        + struct.pack('>H', pitm_id)
+        _iref_box(b'dimg', gm_grid_id, [gm_item_id], version=iref_v)
+        + _iref_box(b'dimg', tmap_item_id, [pitm_id, gm_grid_id], version=iref_v)
+        + _iref_box(b'auxl', gm_item_id, [pitm_id], version=iref_v)
     )
 
     # cdsc: EXIF references both primary grid and tmap (matches normal mode)
     if exif_item_id is not None:
-        iref_new_content += (
-            struct.pack('>I', 16) + b'cdsc'
-            + struct.pack('>H', exif_item_id) + struct.pack('>H', 2)
-            + struct.pack('>H', pitm_id) + struct.pack('>H', tmap_item_id)
-        )
+        iref_new_content += _iref_box(b'cdsc', exif_item_id, [pitm_id, tmap_item_id], version=iref_v)
 
     # ── 5. Build meta children as bytearrays ───────────────────────
     # Build each child, then compute actual sizes for the meta box.
@@ -502,11 +634,16 @@ def write_heic_passthrough(source_path: str, output_path: str,
             # Build ipco
             ipco_part = bytearray()
             ipco_part += b'\x00\x00\x00\x00' + b'ipco'
+            replace_colr_idx = primary_colr_idx or first_colr_idx
+            prop_idx = 1
             for tp2, ds2, de2, bs2, bsz2 in _boxes(src, ipco['ds'], ipco['de']):
-                ipco_part += src[bs2:de2]
+                if replace_primary_colr and tp2 == 'colr' and prop_idx == replace_colr_idx:
+                    ipco_part += _colr_icc_box(SWIFT_PQ_ICC_PROFILE)
+                else:
+                    ipco_part += src[bs2:de2]
+                prop_idx += 1
             ipco_part += AUXC_BOX + IROT_BOX + COLR_NCLX_PQ_BOX + COLR_NCLX_SRGB_BOX + PIXI_RGB10_BOX
-            if src_hvcC:
-                ipco_part += src_hvcC
+            ipco_part += gm_hvcC
             ipco_part += struct.pack('>I', 20) + b'ispe' + struct.pack('>I', 0)
             ipco_part += struct.pack('>II', gm_width, gm_height)
             struct.pack_into('>I', ipco_part, 0, len(ipco_part))
@@ -522,7 +659,10 @@ def write_heic_passthrough(source_path: str, output_path: str,
             for entry in ipma_entries:
                 if entry['iid'] == pitm_id:
                     continue
-                ipma_part += struct.pack('>H', entry['iid'])
+                if ipma_f & 1:
+                    ipma_part += struct.pack('>I', entry['iid'])
+                else:
+                    ipma_part += struct.pack('>H', entry['iid'])
                 ipma_part += bytes([len(entry['assocs'])])
                 for val in entry['assocs']:
                     if ipma_f & 1:
@@ -561,8 +701,31 @@ def write_heic_passthrough(source_path: str, output_path: str,
         else:
             meta_parts.append(bytearray(src[bs:de]))
 
+    if 'iref' not in child:
+        part = bytearray()
+        part += b'\x00\x00\x00\x00' + b'iref'
+        part += bytes([iref_v, 0, 0, 0])
+        part += iref_new_content
+        struct.pack_into('>I', part, 0, len(part))
+        meta_parts.append(part)
+
+    if 'idat' not in child:
+        part = bytearray()
+        part += b'\x00\x00\x00\x00' + b'idat'
+        part += idat_payload
+        struct.pack_into('>I', part, 0, len(part))
+        meta_parts.append(part)
+
     # grpl/altr (appended as a meta child)
-    new_altr_group_id = tmap_item_id + 1
+    existing_group_ids = []
+    if 'grpl' in child:
+        for tp, ds, de, bs, bsz in _boxes(src, child['grpl']['ds'], child['grpl']['de']):
+            if tp == 'altr' and de - ds >= 12:
+                existing_group_ids.append(struct.unpack_from('>I', src, ds + 4)[0])
+    new_altr_group_id = max(
+        [*item_types.keys(), gm_item_id, gm_grid_id, tmap_item_id, *existing_group_ids],
+        default=tmap_item_id,
+    ) + 1
     meta_parts.append(bytearray(
         struct.pack('>I', 36) + b'grpl'
         + struct.pack('>I', 28) + b'altr'
@@ -575,11 +738,10 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # ── 6. Compute sizes from actual parts ─────────────────────────
     meta_content_sz = sum(len(p) for p in meta_parts)
-    src_meta_content_sz = src_meta_sz - 12  # subtract meta header (8) + fullbox (4)
-    meta_content_delta = meta_content_sz - src_meta_content_sz
-
-    new_meta_sz = src_meta_sz + meta_content_delta
-    new_ftyp_sz = src_ftyp_sz + 12
+    new_meta_sz = 12 + meta_content_sz
+    ftyp_brands = {src[i:i + 4] for i in range(8, src_ftyp_sz, 4) if i + 4 <= src_ftyp_sz}
+    missing_brands = b''.join(brand for brand in (b'tmap', b'MiHE', b'MiHB') if brand not in ftyp_brands)
+    new_ftyp_sz = src_ftyp_sz + len(missing_brands)
     # iloc delta: difference in file position of mdat content
     # Source: mdat content at src_mdat_ds
     # Output: mdat content at new_ftyp_sz + new_meta_sz + len(intermediate) + 8
@@ -628,7 +790,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     out = bytearray()
 
     # ftyp
-    out += struct.pack('>I', new_ftyp_sz) + src[4:src_ftyp_sz] + b'tmapMiHEMiHB'
+    out += struct.pack('>I', new_ftyp_sz) + src[4:src_ftyp_sz] + missing_brands
 
     # meta header
     out += struct.pack('>I', new_meta_sz) + b'meta'
@@ -650,6 +812,9 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     with open(output_path, 'wb') as f:
         f.write(out)
+
+    if oppo_compat and lhdr is not None:
+        _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
 
 
 def _get_patched_oppo_user_comment(lhdr) -> str | None:
@@ -765,28 +930,16 @@ def _append_oppo_trailing_payload(output_path: str, iso_meta: dict,
 
     # local.uhdr.gainmap.data: JPEG of gain map
     if gainmap is not None:
-        if isinstance(gainmap, np.ndarray):
-            if gainmap.ndim == 2:
-                gm_img = Image.fromarray(gainmap, mode="L")
-            elif gainmap.ndim == 3 and gainmap.shape[2] == 3:
-                gm_img = Image.fromarray(gainmap, mode="RGB")
-            else:
-                gm_img = Image.fromarray(gainmap, mode="L")
-        elif isinstance(gainmap, Image.Image):
-            gm_img = gainmap
-        else:
-            gm_img = None
-
-        if gm_img is not None:
-            buf = io.BytesIO()
-            gm_img.save(buf, format="JPEG", quality=90)
-            gm_jpeg = buf.getvalue()
-            repacked.extend(gm_jpeg)
-            current_offset += len(gm_jpeg)
-            new_entries.append({
-                "name": "local.uhdr.gainmap.data", "length": len(gm_jpeg),
-                "offset": current_offset, "version": 1,
-            })
+        gm_img = _normalize_gainmap_image(gainmap)
+        buf = io.BytesIO()
+        gm_img.save(buf, format="JPEG", quality=90)
+        gm_jpeg = buf.getvalue()
+        repacked.extend(gm_jpeg)
+        current_offset += len(gm_jpeg)
+        new_entries.append({
+            "name": "local.uhdr.gainmap.data", "length": len(gm_jpeg),
+            "offset": current_offset, "version": 1,
+        })
 
     if not new_entries:
         return

@@ -30,14 +30,17 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 ### Python（跨平台）
 
-> [!WARNING]
-> Python 版仍在开发中。当前的 Python XDRemux（`write_heic()`）会将源 HEIC 的 base image 完全解码为 PIL 像素，然后通过 pillow-heif 以 quality=90 重新编码。这是一个有损的往返过程（解码 → 重新编码），会降低图像质量并增加文件大小。RGB Gain Map 也会被重新编码为 Grayscale Gain Map。
-
 > [!NOTE]
 > 需要安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
+# 标准模式（重新编码 base image，quality=90）
 python3 python/XDRemux.py convert --input IMG_001.heic
+
+# Passthrough 模式（保留原始 HEVC 数据，无损）
+python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+
+# 批量转换
 python3 python/XDRemux.py batch --input-dir photo_dump/
 ```
 
@@ -52,22 +55,17 @@ python3 python/XDRemux.py batch --input-dir photo_dump/
 
 ## 🧪 实验性功能
 
-### `--oppo-compat` — OPPO 相册兼容模式
+### `--passthrough` — 无损直通模式
 
 > [!CAUTION]
-> **实验性选项**，行为可能会随版本更新而改变。
+> **实验性选项** — 行为可能会随版本更新而改变。
 
-在转换时附加 `--oppo-compat`，输出文件会额外写入 OPPO 私有的 UHDR 扩展数据块（`local.uhdr.gainmap.info` / `local.uhdr.gainmap.data`）并修补 EXIF UserComment 中的 `oplus_` 标志位，使转换后的 HDR 照片在 OPPO 设备相册中仍能激活 HDR 提亮效果。
+跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失。目前已知问题：该选项输出的图像目前还无法在 OPPO 相册中正常显示，正在排查。
 
 ```bash
-# Swift
-swift swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
-
 # Python
-python3 python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
 ```
-
-默认关闭。不加此选项时，输出为纯 ISO 21496-1 标准 HDR HEIC。
 
 ---
 
