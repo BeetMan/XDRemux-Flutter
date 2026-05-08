@@ -55,12 +55,13 @@ python3 python/XDRemux.py batch --input-dir photo_dump/
 
 ## 🧪 Experimental Features
 
-### `--passthrough` — Lossless Passthrough Mode
+### `--passthrough`
 
 > [!CAUTION]
 > **Experimental option** — behavior may change between versions.
 
-Skips base image decode→re-encode; copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. The base image in the output will be identical to the source — zero quality loss. Known issue: images produced by this option currently do not display correctly in OPPO Gallery. Investigation is ongoing.
+Skips base image decode→re-encode; copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. The base image in the output will be identical to the source — zero quality loss. 
+Known issue: images produced by this option currently do not display correctly in OPPO Gallery. Investigation is ongoing.
 
 ```bash
 # Python
