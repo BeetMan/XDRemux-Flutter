@@ -55,12 +55,13 @@ python3 python/XDRemux.py batch --input-dir photo_dump/
 
 ## 🧪 实验性功能
 
-### `--passthrough` — 无损直通模式
+### `--passthrough`
 
 > [!CAUTION]
 > **实验性选项** — 行为可能会随版本更新而改变。
 
-跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失。目前已知问题：该选项输出的图像目前还无法在 OPPO 相册中正常显示，正在排查。
+跳过对 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失。
+目前已知问题：该选项输出的图像目前还无法在 OPPO 相册中正常显示，正在排查。
 
 ```bash
 # Python
