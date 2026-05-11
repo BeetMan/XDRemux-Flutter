@@ -128,6 +128,58 @@ PIXI_RGB10_BOX = (
     b'\x03\x0a\x0a\x0a'
 )
 
+PIXI_RGB8_BOX = (
+    b'\x00\x00\x00\x10'
+    b'\x70\x69\x78\x69'
+    b'\x00\x00\x00\x00'
+    b'\x03\x08\x08\x08'
+)
+
+
+def build_grid_payload(width: int, height: int, *, rows: int = 1, columns: int = 1) -> bytes:
+    """Build the 8-byte HEIF grid item payload used in meta/idat."""
+    if not (1 <= rows <= 0x100 and 1 <= columns <= 0x100):
+        raise ValueError(f"Unsupported grid shape: {rows}x{columns}")
+    if 1 <= width <= 0xFFFF and 1 <= height <= 0xFFFF:
+        return struct.pack('>BBBBHH', 0, 0, rows - 1, columns - 1, width, height)
+    if 1 <= width <= 0xFFFFFFFF and 1 <= height <= 0xFFFFFFFF:
+        return struct.pack('>BBBBII', 0, 1, rows - 1, columns - 1, width, height)
+    raise ValueError(f"Unsupported grid output size: {width}x{height}")
+
+
+def parse_iref_dimg(data: bytes | bytearray, iref_ds: int, iref_de: int) -> dict[int, list[int]]:
+    """Parse all dimg references from an iref box data range."""
+    version, _, pos = _fullbox(data, iref_ds)
+    id_size = 4 if version >= 1 else 2
+    refs = {}
+    while pos + 8 <= iref_de:
+        ref_size = struct.unpack_from('>I', data, pos)[0]
+        ref_type = bytes(data[pos + 4:pos + 8])
+        header_size = 8
+        if ref_size == 1:
+            if pos + 16 > iref_de:
+                break
+            ref_size = struct.unpack_from('>Q', data, pos + 8)[0]
+            header_size = 16
+        ref_end = pos + ref_size
+        if ref_size < header_size + id_size + 2 or ref_end > iref_de:
+            break
+        cursor = pos + header_size
+        from_id = int.from_bytes(data[cursor:cursor + id_size], 'big')
+        cursor += id_size
+        ref_count = struct.unpack_from('>H', data, cursor)[0]
+        cursor += 2
+        targets = []
+        for _ in range(ref_count):
+            if cursor + id_size > ref_end:
+                break
+            targets.append(int.from_bytes(data[cursor:cursor + id_size], 'big'))
+            cursor += id_size
+        if ref_type == b'dimg':
+            refs[from_id] = targets
+        pos = ref_end
+    return refs
+
 def _first_number(value, default=0.0):
     if isinstance(value, (list, tuple)):
         return _first_number(value[0], default) if value else default
@@ -687,11 +739,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
 
     def _grid_payload_for_ispe(prop_idx):
         width, height = ispe_sizes.get(prop_idx, (0, 0))
-        if not (0 < width <= 0xFFFF and 0 < height <= 0xFFFF):
-            raise ValueError(f"Unsupported grid size for ispe property {prop_idx}: {width}x{height}")
-        # version=0, flags=0, rows_minus_one=0, columns_minus_one=0,
-        # output_width/output_height as u16.
-        return b'\x00\x00\x00\x00' + struct.pack('>HH', width, height)
+        return build_grid_payload(width, height)
 
     primary_grid_config = _grid_payload_for_ispe(primary_ispe_idx)
     gainmap_grid_config = _grid_payload_for_ispe(gainmap_ispe_idx)

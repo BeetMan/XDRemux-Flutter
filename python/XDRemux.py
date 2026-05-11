@@ -11,7 +11,6 @@ Usage:
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -38,8 +37,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
         return 1
 
     if lhdr.mode == "uhdr":
-        edr_scale = 1.0  # not used for UHDR
         iso_meta = iso21496.build_iso21496_metadata_from_uhdr(lhdr.meta_floats)
+        edr_scale = iso_meta.get("scale", 1.0)
     else:
         edr_scale = edr.edr_scale_calculator(list(lhdr.meta_floats))
         iso_meta = iso21496.build_iso21496_metadata(edr_scale)
@@ -180,7 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--input", required=True)
     c.add_argument("--output")
     c.add_argument("--debug-dir")
-    c.add_argument("--oppo-compat", action="store_true", default=False)
+    c.set_defaults(oppo_compat=True)
+    c.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
+                   help="Enable OPPO Gallery compatibility metadata (default)")
+    c.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
+                   help="Disable OPPO Gallery compatibility metadata")
     c.add_argument("--passthrough", action="store_true", default=False,
                    help="[experimental] Passthrough base image HEVC data without re-encoding")
 
@@ -189,7 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--output-dir")
     b.add_argument("--glob")
     b.add_argument("--debug-dir")
-    b.add_argument("--oppo-compat", action="store_true", default=False)
+    b.set_defaults(oppo_compat=True)
+    b.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
+                   help="Enable OPPO Gallery compatibility metadata (default)")
+    b.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
+                   help="Disable OPPO Gallery compatibility metadata")
     b.add_argument("--passthrough", action="store_true", default=False,
                    help="[experimental] Passthrough base image HEVC data without re-encoding")
 
