@@ -57,7 +57,6 @@ python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
 
 - **色度下采样**：UHDR 设备的 8-bit YCbCr 4:4:4 Gain Map 会被降采样为 4:2:0（Apple ImageIO / libheif 限制）。
 - **OPPO 相册兼容**：默认会写入 OPPO 相册兼容元数据。LHDR 源文件保留原始 `local.hdr.*` 私有尾部，UHDR 源文件写入 `local.uhdr.*` 尾部；可用 `--no-oppo-compat` 关闭。
-- **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
 ## 🧪 实验性功能
 
@@ -66,7 +65,7 @@ python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
 > [!CAUTION]
 > **实验性选项** — 行为可能会随版本更新而改变。
 
-跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失。该模式已按 OPPO 相册 Path B 拓扑输出 `tmap -> [primary_grid, gainmap_grid]`，但仍作为实验性选项保留。
+跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失，作为实验性选项保留。
 
 ```bash
 # Python
@@ -75,4 +74,4 @@ python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
 
 ---
 
-本工具仅供技术研究使用，使用前请备份原始文件。作者不承担任何法律责任。
+本工具仅供技术研究使用，使用前请备份原始文件。作者不承担任何关于数据丢失的法律责任。
