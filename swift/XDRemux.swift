@@ -466,7 +466,7 @@ private enum LHDRExtractor {
         if let infoEntry = manifestInfo.entries.first(where: { $0.name == "local.uhdr.gainmap.info" }),
            let dataEntry = manifestInfo.entries.first(where: { $0.name == "local.uhdr.gainmap.data" }) {
             
-            let infoStart = dataBase + infoEntry.start
+            let infoStart = blockStart(for: infoEntry, in: data, manifestInfo: manifestInfo, dataBase: dataBase)
             let infoEnd = infoStart + infoEntry.length
             
             var metaBytes: Data
@@ -482,6 +482,7 @@ private enum LHDRExtractor {
             if metaFloats.allSatisfy({ $0 == 0.0 }) || abs(metaFloats[0] - 1.0) > 0.1 {
                 metaFloats = [
                     1.0, 1.0, 1.0,             // ratioMin
+                    1.0,                       // padding
                     4.926, 4.926, 4.926,       // ratioMax
                     1.0, 1.0, 1.0,             // gamma
                     0.0, 0.0, 0.0,             // epsilonSdr
@@ -500,7 +501,7 @@ private enum LHDRExtractor {
                 metaBytes = repacked
             }
             
-            let dataStart = dataBase + dataEntry.start
+            let dataStart = blockStart(for: dataEntry, in: data, manifestInfo: manifestInfo, dataBase: dataBase)
             let dataEnd = dataStart + dataEntry.length
             guard dataStart >= 0, dataEnd <= data.count else { throw CLIError.invalidLHDR("Out of bounds UHDR data block") }
             let maskJPEGData = data.subdata(in: dataStart..<dataEnd)
@@ -530,6 +531,20 @@ private enum LHDRExtractor {
             manifestInfo: manifestInfo,
             dataBase: dataBase
         )
+    }
+
+    private static func blockStart(
+        for entry: ManifestEntry,
+        in data: Data,
+        manifestInfo: ManifestInfo,
+        dataBase: Int
+    ) -> Int {
+        let manifestRelativeStart = manifestInfo.jsonStart - entry.offset
+        if manifestRelativeStart >= 0,
+           manifestRelativeStart + entry.length <= data.count {
+            return manifestRelativeStart
+        }
+        return dataBase + entry.start
     }
 
     private static func locateManifest(in data: Data) throws -> ManifestInfo {
@@ -930,17 +945,17 @@ private enum MaskDecoder {
 private enum EDRScaleResolver {
     static func resolve(metaFloats: [Double], mode: ExtractionMode) throws -> ResolvedScale {
         if mode == .uhdr {
-            guard metaFloats.count >= 18 else {
+            guard metaFloats.count >= 20 else {
                 throw CLIError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
             }
             let ratioMin = metaFloats[0]
-            let ratioMax = metaFloats[3]
-            let gamma = metaFloats[6]
-            let epsilonSdr = metaFloats[9]
-            let epsilonHdr = metaFloats[12]
-            let displayRatioSdr = metaFloats[15]
-            let displayRatioHdr = metaFloats[16]
-            let scaleVal = metaFloats[17]
+            let ratioMax = metaFloats[4]
+            let gamma = metaFloats[7]
+            let epsilonSdr = metaFloats[10]
+            let epsilonHdr = metaFloats[13]
+            let displayRatioSdr = metaFloats[16]
+            let displayRatioHdr = metaFloats[17]
+            let scaleVal = metaFloats[18]
             
             return ResolvedScale(
                 edrScale: scaleVal,
@@ -959,10 +974,10 @@ private enum EDRScaleResolver {
                 source: "local.uhdr.gainmap.info",
                 channelCount: 3,
                 perChannelGainMapMin: [safeLog2(metaFloats[0]), safeLog2(metaFloats[1]), safeLog2(metaFloats[2])],
-                perChannelGainMapMax: [safeLog2(metaFloats[3]), safeLog2(metaFloats[4]), safeLog2(metaFloats[5])],
-                perChannelGamma: [metaFloats[6], metaFloats[7], metaFloats[8]],
-                perChannelBaseOffset: [metaFloats[9], metaFloats[10], metaFloats[11]],
-                perChannelAlternateOffset: [metaFloats[12], metaFloats[13], metaFloats[14]]
+                perChannelGainMapMax: [safeLog2(metaFloats[4]), safeLog2(metaFloats[5]), safeLog2(metaFloats[6])],
+                perChannelGamma: [metaFloats[7], metaFloats[8], metaFloats[9]],
+                perChannelBaseOffset: [metaFloats[10], metaFloats[11], metaFloats[12]],
+                perChannelAlternateOffset: [metaFloats[13], metaFloats[14], metaFloats[15]]
             )
         }
 
@@ -1278,7 +1293,7 @@ private enum ISOHDRWriter {
         gainMap: GainMapRaster,
         style: HDRToneMapStyle,
         outputURL: URL,
-        oppoCompat: Bool = false
+        oppoCompat: Bool = true
     ) throws {
         let source = try makeImageSource(url: baseImageURL)
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
@@ -1287,14 +1302,7 @@ private enum ISOHDRWriter {
         var patchedUserComment: String?
         if oppoCompat {
             let sourceData = try Data(contentsOf: baseImageURL)
-            if let range = sourceData.range(of: Data("oplus_".utf8)) {
-                var digitEnd = range.upperBound
-                while digitEnd < sourceData.count, (48...57).contains(sourceData[digitEnd]) { digitEnd += 1 }
-                if let flagStr = String(data: sourceData.subdata(in: range.upperBound..<digitEnd), encoding: .utf8),
-                   let flags = Int(flagStr) {
-                    patchedUserComment = "oplus_\(flags | 0x20000000)"
-                }
-            }
+            patchedUserComment = patchedOppoUserComment(in: sourceData)
         }
 
         let metadata = try makeHDRToneMapMetadata(style: style)
@@ -1438,9 +1446,16 @@ private enum ISOHDRWriter {
         }
 
         if let patchedUserComment {
-            imageOptions[kCGImagePropertyExifDictionary as CFString] = [
-                kCGImagePropertyExifUserComment: patchedUserComment
-            ] as CFDictionary
+            var exifDictionary: [CFString: Any] = [:]
+            if let existing = imageOptions[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                exifDictionary = existing
+            } else if let existing = imageOptions[kCGImagePropertyExifDictionary] as? [String: Any] {
+                for (key, value) in existing {
+                    exifDictionary[key as CFString] = value
+                }
+            }
+            exifDictionary[kCGImagePropertyExifUserComment] = patchedUserComment
+            imageOptions[kCGImagePropertyExifDictionary] = exifDictionary as CFDictionary
         }
 
         CGImageDestinationAddImageFromSource(destination, source, 0, imageOptions as CFDictionary)
@@ -1603,8 +1618,8 @@ struct LHDRToISOHDRCLI {
     private static let fileManager = FileManager.default
     private static let usage = """
     Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--family auto|x6|x7] [--debug-dir <dir>] [--oppo-compat]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--family auto|x6|x7] [--glob *.heic] [--debug-dir <dir>] [--oppo-compat]
+            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--family auto|x6|x7] [--debug-dir <dir>] [--no-oppo-compat]
+            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--family auto|x6|x7] [--glob *.heic] [--debug-dir <dir>] [--no-oppo-compat]
 
     Notes:
       - The converter reconstructs a runtime-aligned gain map from LHDR mask + 144B metadata.
@@ -1612,6 +1627,7 @@ struct LHDRToISOHDRCLI {
             - EDR is resolved with built-in heuristics.
       - If --output is omitted, the input file is overwritten in place.
       - If --output-dir is omitted, files are written to the input directory.
+      - OPPO Gallery compatibility metadata is written by default; pass --no-oppo-compat to disable it.
     """
 
     static func main() {
@@ -1686,7 +1702,7 @@ struct LHDRToISOHDRCLI {
         outputURL: URL,
         familyPreference: Family,
         debugRootURL: URL?,
-        oppoCompat: Bool = false
+        oppoCompat: Bool = true
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
             throw CLIError.inputNotFound(inputURL)
@@ -1764,64 +1780,14 @@ struct LHDRToISOHDRCLI {
         }
 
         try ISOHDRWriter.write(baseImageURL: inputURL, gainMap: gainMapRaster, style: style, outputURL: outputURL, oppoCompat: oppoCompat)
-
-        // Append OPPO trailing payload with UHDR-format extension blocks.
-        // Replaces LHDR blocks (local.hdr.meta.data, local.hdr.linear.mask)
-        // with UHDR blocks (local.uhdr.gainmap.info, local.uhdr.gainmap.data)
-        // so OPPO Gallery can read the gain map via OPLUS_ULTRA_HDR decoder path.
-        if oppoCompat && extracted.dataBase >= 0 && extracted.dataBase < data.count {
-            let namesToSkip: Set<String> = ["local.hdr.meta.data", "local.hdr.linear.mask"]
-            var repackedData = Data()
-            var newEntries: [[String: Any]] = []
-            var currentOffset = 0
-
-            for entry in extracted.manifestInfo.entries {
-                if namesToSkip.contains(entry.name) { continue }
-                let startPos = extracted.dataBase + entry.start
-                let endPos = extracted.dataBase + entry.end
-                if startPos >= 0 && endPos <= data.count {
-                    let chunk = data.subdata(in: startPos..<endPos)
-                    repackedData.append(chunk)
-                    currentOffset += entry.length
-                    newEntries.append([
-                        "name": entry.name, "length": entry.length,
-                        "offset": currentOffset, "version": entry.version ?? 1
-                    ])
-                }
-            }
-
-            // local.uhdr.gainmap.info: 80 bytes = 20 float32 LE
-            let rm = Float(scale.ratioMax)
-            let drh = Float(scale.displayRatioHdr)
-            let sc = Float(scale.scale)
-            let infoFloats: [Float] = [
-                0, 0, 1, 1, 1, rm, rm, rm, 1, 1, 1,
-                0, 0, 0, 0, 0, 0, Float(scale.displayRatioSdr), drh, sc
-            ]
-            var info = Data()
-            for f in infoFloats { var bits = f.bitPattern.littleEndian; info.append(Data(bytes: &bits, count: 4)) }
-            repackedData.append(info)
-            currentOffset += info.count
-            newEntries.append(["name": "local.uhdr.gainmap.info", "length": info.count, "offset": currentOffset, "version": 1])
-
-            // local.uhdr.gainmap.data: JPEG of gain map
-            if let gmJpeg = gainMapRasterToJPEG(gainMapRaster) {
-                repackedData.append(gmJpeg)
-                currentOffset += gmJpeg.count
-                newEntries.append(["name": "local.uhdr.gainmap.data", "length": gmJpeg.count, "offset": currentOffset, "version": 1])
-            }
-
-            if !newEntries.isEmpty {
-                var finalPayload = Data()
-                finalPayload.append(repackedData)
-                if let jsonData = try? JSONSerialization.data(withJSONObject: newEntries, options: []) {
-                    finalPayload.append(jsonData)
-                }
-                let fileHandle = try FileHandle(forWritingTo: outputURL)
-                try fileHandle.seekToEnd()
-                try fileHandle.write(contentsOf: finalPayload)
-                try fileHandle.close()
-            }
+        if oppoCompat {
+            try appendOppoCompatibilityPayload(
+                outputURL: outputURL,
+                sourceData: data,
+                extracted: extracted,
+                scale: scale,
+                gainMapRaster: gainMapRaster
+            )
         }
 
         return SampleReport(
@@ -1839,7 +1805,7 @@ struct LHDRToISOHDRCLI {
         var outputPath: String?
         var family = Family.auto
         var debugDirPath: String?
-        var oppoCompat = false
+        var oppoCompat = true
 
         var index = 0
         while index < rawArgs.count {
@@ -1869,6 +1835,8 @@ struct LHDRToISOHDRCLI {
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
                 oppoCompat = true
+            case "--no-oppo-compat":
+                oppoCompat = false
             default:
                 throw CLIError.unknownOption(option)
             }
@@ -1891,7 +1859,7 @@ struct LHDRToISOHDRCLI {
         var family = Family.auto
         var glob = "*.heic"
         var debugDirPath: String?
-        var oppoCompat = false
+        var oppoCompat = true
 
         var index = 0
         while index < rawArgs.count {
@@ -1923,6 +1891,8 @@ struct LHDRToISOHDRCLI {
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
                 oppoCompat = true
+            case "--no-oppo-compat":
+                oppoCompat = false
             default:
                 throw CLIError.unknownOption(option)
             }
@@ -1988,30 +1958,186 @@ struct LHDRToISOHDRCLI {
     }
 }
 
-/// Patch `oplus_<digits>` in a String to include OPLUS_ULTRA_HDR (0x20000000).
-private func patchOplusTagFlags(in s: String) -> String {
-    let prefix = "oplus_"
-    guard let start = s.range(of: prefix)?.upperBound else { return s }
-    let suffix = s[start...]
-    guard let digitEnd = suffix.firstIndex(where: { !$0.isNumber }),
-          let flags = Int(s[start..<digitEnd]) else { return s }
-    var patched = s
-    patched.replaceSubrange(start..<digitEnd, with: String(flags | 0x20000000))
-    return patched
+private let oppoUltraHDRFlag = 0x20000000
+private let oppoTagFlagPrefixes = [
+    "ASCIIOplus_",
+    "ASCIIoppo_",
+    "Oplus_",
+    "oplus_",
+    "oppo_"
+]
+
+/// Extract and patch OPPO tagflags to include OPLUS_ULTRA_HDR.
+private func patchedOppoUserComment(in data: Data) -> String? {
+    for prefix in oppoTagFlagPrefixes {
+        let prefixData = Data(prefix.utf8)
+        var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
+        while let range = data.range(of: prefixData, options: [], in: searchRange) {
+            var digitEnd = range.upperBound
+            while digitEnd < data.count, (48...57).contains(data[digitEnd]) {
+                digitEnd += 1
+            }
+            if digitEnd > range.upperBound,
+               let flagStr = String(data: data.subdata(in: range.upperBound..<digitEnd), encoding: .utf8),
+               let flags = Int(flagStr) {
+                return "\(prefix)\(flags | oppoUltraHDRFlag)"
+            }
+            searchRange = range.upperBound..<data.endIndex
+        }
+    }
+    return nil
 }
 
-/// Patch `oplus_<digits>` in binary Data (EXIF UNDEFINED type).
-private func patchOplusTagFlags(in data: Data) -> Data {
-    let prefix = Data("oplus_".utf8)
-    guard let range = data.range(of: prefix) else { return data }
-    var digitEnd = range.upperBound
-    while digitEnd < data.count, (48...57).contains(data[digitEnd]) { digitEnd += 1 }
-    guard digitEnd > range.upperBound,
-          let flagStr = String(data: data.subdata(in: range.upperBound..<digitEnd), encoding: .utf8),
-          let flags = Int(flagStr) else { return data }
-    var patched = data
-    patched.replaceSubrange(range.upperBound..<digitEnd, with: Data(String(flags | 0x20000000).utf8))
-    return patched
+private func valueOrRepeated(_ values: [Double], index: Int, fallback: Double) -> Double {
+    guard !values.isEmpty else { return fallback }
+    return index < values.count ? values[index] : values[0]
+}
+
+private func positiveValueOrFallback(_ values: [Double], index: Int, fallback: Double) -> Double {
+    let value = valueOrRepeated(values, index: index, fallback: fallback)
+    guard value.isFinite, value > 0 else { return fallback }
+    return value
+}
+
+private func makeOppoUhdrInfoData(scale: ResolvedScale) -> Data {
+    var floats: [Float] = []
+    for channel in 0..<3 {
+        let gainMapMin = valueOrRepeated(scale.perChannelGainMapMin, index: channel, fallback: scale.gainMapMin)
+        floats.append(Float(pow(2.0, gainMapMin)))
+    }
+    floats.append(1.0)
+    for channel in 0..<3 {
+        let gainMapMax = positiveValueOrFallback(scale.perChannelGainMapMax, index: channel, fallback: scale.gainMapMax)
+        floats.append(Float(pow(2.0, gainMapMax)))
+    }
+    for channel in 0..<3 {
+        floats.append(Float(valueOrRepeated(scale.perChannelGamma, index: channel, fallback: scale.gamma)))
+    }
+    for channel in 0..<3 {
+        floats.append(Float(valueOrRepeated(scale.perChannelBaseOffset, index: channel, fallback: scale.epsilonSdr)))
+    }
+    for channel in 0..<3 {
+        floats.append(Float(valueOrRepeated(scale.perChannelAlternateOffset, index: channel, fallback: scale.epsilonHdr)))
+    }
+    floats.append(Float(scale.displayRatioSdr))
+    floats.append(Float(scale.displayRatioHdr))
+    floats.append(Float(scale.scale))
+    floats.append(0.0)
+
+    var data = Data()
+    for value in floats {
+        var bits = value.bitPattern.littleEndian
+        data.append(Data(bytes: &bits, count: 4))
+    }
+    return data
+}
+
+private func appendOppoCompatibilityPayload(
+    outputURL: URL,
+    sourceData: Data,
+    extracted: ExtractedLHDR,
+    scale: ResolvedScale,
+    gainMapRaster: GainMapRaster
+) throws {
+    guard extracted.dataBase >= 0, extracted.dataBase < sourceData.count else { return }
+
+    if extracted.mode == .lhdr {
+        guard extracted.manifestInfo.extensionStart >= 0,
+              extracted.manifestInfo.extensionStart < sourceData.count else { return }
+        let tail = sourceData.subdata(in: extracted.manifestInfo.extensionStart..<sourceData.count)
+        let fileHandle = try FileHandle(forWritingTo: outputURL)
+        try fileHandle.seekToEnd()
+        try fileHandle.write(contentsOf: tail)
+        try fileHandle.close()
+        return
+    }
+
+    let namesToSkip: Set<String> = [
+        "local.hdr.meta.data",
+        "local.hdr.linear.mask",
+        "local.uhdr.gainmap.info",
+        "local.uhdr.gainmap.data"
+    ]
+    var repackedData = Data()
+    var pendingEntries: [[String: Any]] = []
+
+    func appendManifestEntry(name: String, payload: Data, version: Any) {
+        let start = repackedData.count
+        repackedData.append(payload)
+        pendingEntries.append([
+            "name": name,
+            "length": payload.count,
+            "start": start,
+            "version": version
+        ])
+    }
+
+    for entry in extracted.manifestInfo.entries {
+        if namesToSkip.contains(entry.name) { continue }
+
+        let startPos = extracted.manifestInfo.jsonStart - entry.offset
+        let endPos = startPos + entry.length
+        if startPos >= 0 && endPos <= sourceData.count {
+            appendManifestEntry(
+                name: entry.name,
+                payload: sourceData.subdata(in: startPos..<endPos),
+                version: entry.version ?? 1
+            )
+            continue
+        }
+
+        let calibratedStart = extracted.dataBase + entry.start
+        let calibratedEnd = calibratedStart + entry.length
+        if calibratedStart >= 0 && calibratedEnd <= sourceData.count {
+            appendManifestEntry(
+                name: entry.name,
+                payload: sourceData.subdata(in: calibratedStart..<calibratedEnd),
+                version: entry.version ?? 1
+            )
+        }
+    }
+
+    appendManifestEntry(name: "local.uhdr.gainmap.info", payload: makeOppoUhdrInfoData(scale: scale), version: 1)
+    if let gmJpeg = gainMapRasterToJPEG(gainMapRaster) {
+        appendManifestEntry(name: "local.uhdr.gainmap.data", payload: gmJpeg, version: 1)
+    }
+    guard !pendingEntries.isEmpty else { return }
+
+    let payloadLength = repackedData.count
+    let newEntries: [[String: Any]] = pendingEntries.map { entry in
+        var manifestEntry = entry
+        let start = manifestEntry.removeValue(forKey: "start") as? Int ?? 0
+        manifestEntry["offset"] = payloadLength - start
+        return manifestEntry
+    }
+    let manifestJSON = try JSONSerialization.data(withJSONObject: newEntries, options: [])
+    let footerLength = manifestJSON.count + 1 + 8
+    let headerSize = 2168
+    let totalRegionSize = headerSize + payloadLength + footerLength
+
+    var header = Data(count: headerSize)
+    header.withUnsafeMutableBytes { rawBuffer in
+        guard let base = rawBuffer.baseAddress else { return }
+        base.storeBytes(of: UInt32(totalRegionSize).bigEndian, as: UInt32.self)
+        base.advanced(by: 4).storeBytes(of: Float(1.2).bitPattern.littleEndian, as: UInt32.self)
+    }
+    header[8] = 0xFF
+    let deviceName = Data("XDRemux\0".utf8)
+    header.replaceSubrange(9..<(9 + deviceName.count), with: deviceName)
+
+    var finalPayload = Data()
+    finalPayload.append(header)
+    finalPayload.append(repackedData)
+    finalPayload.append(manifestJSON)
+    finalPayload.append(0)
+    finalPayload.append(Data("jxrs".utf8))
+    var footerLengthLE = UInt32(footerLength).littleEndian
+    finalPayload.append(Data(bytes: &footerLengthLE, count: 4))
+
+    let fileHandle = try FileHandle(forWritingTo: outputURL)
+    try fileHandle.seekToEnd()
+    try fileHandle.write(contentsOf: finalPayload)
+    try fileHandle.close()
 }
 
 /// Encode gain map raster as JPEG for OPPO UHDR extension.

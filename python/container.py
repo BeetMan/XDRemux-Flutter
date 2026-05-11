@@ -140,9 +140,33 @@ def extract_lhdr(path: str) -> ExtractedLHDR:
         ext_start = find_extension_start(data)
         ext = data[ext_start:]
     except ValueError:
-        # No QTI marker — scan entire file
-        ext_start = 0
-        ext = data
+        # No QTI marker — locate Container Header by scanning backward
+        footer_pos = data.rfind(b"\x00jxrsq")
+        if footer_pos != -1:
+            json_end = data.rfind(b"]", max(0, footer_pos - 8192))
+            json_start = data.rfind(b"[{", max(0, json_end - 8192)) if json_end != -1 else -1
+            if json_start != -1:
+                # Data blocks start at extension region start + 84-byte header
+                # Scan ISOBMFF boxes to find extension region
+                pos = 0
+                known_types = {b"ftyp", b"meta", b"free", b"mdat", b"QTI "}
+                ext_start = 0
+                while pos < len(data) - 8:
+                    box_size = struct.unpack(">I", data[pos:pos + 4])[0]
+                    box_type = data[pos + 4:pos + 8]
+                    if box_size < 8 or pos + box_size > len(data):
+                        break
+                    if box_type not in known_types:
+                        ext_start = pos
+                        break
+                    pos += box_size
+                ext = data[ext_start + 2168:] if ext_start else data
+            else:
+                ext_start = 0
+                ext = data
+        else:
+            ext_start = 0
+            ext = data
 
     manifest = parse_manifest(ext)
 
