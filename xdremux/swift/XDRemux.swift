@@ -2,6 +2,8 @@
 
 import Foundation
 import CoreGraphics
+import CoreVideo
+import Darwin
 import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
@@ -27,6 +29,9 @@ private enum CLIError: Error, CustomStringConvertible {
     case unableToCreateMetadata
     case unableToWriteDebugAsset(URL)
     case outputVerificationFailed(URL)
+    case gainMapEncodeModeUnsupported(String)
+    case gainMapPixelFormatMismatch(URL, expected: UInt32, actual: UInt32?)
+    case invalidContainer(String)
 
     var description: String {
         switch self {
@@ -70,6 +75,12 @@ private enum CLIError: Error, CustomStringConvertible {
             return "unable to write debug artifact: \(url.path)"
         case .outputVerificationFailed(let url):
             return "written HEIC does not expose ISO HDR auxiliary data: \(url.path)"
+        case .gainMapEncodeModeUnsupported(let message):
+            return "gain map encode mode unsupported: \(message)"
+        case .gainMapPixelFormatMismatch(let url, let expected, let actual):
+            return "gain map pixel format mismatch in \(url.path): expected \(fourCCString(expected)), got \(fourCCString(actual))"
+        case .invalidContainer(let message):
+            return "invalid HEIC container: \(message)"
         }
     }
 }
@@ -80,12 +91,35 @@ private enum Family: String {
     case x7
 }
 
+private enum GainMapEncodeMode: String {
+    case auto
+    case defaultMode = "default"
+    case force444 = "force-444"
+    case private444 = "private-444"
+    case preserveReencode = "preserve-reencode"
+}
+
+private let gainMap444PixelFormat = kCVPixelFormatType_444YpCbCr8BiPlanarFullRange
+
+private func fourCCString(_ value: UInt32?) -> String {
+    guard let value else { return "missing" }
+    var bigEndian = value.bigEndian
+    let label = withUnsafeBytes(of: &bigEndian) { buffer -> String in
+        let bytes = buffer.map { byte -> UInt8 in
+            (32...126).contains(byte) ? byte : UInt8(ascii: ".")
+        }
+        return String(bytes: bytes, encoding: .ascii) ?? "????"
+    }
+    return "\(value) ('\(label)')"
+}
+
 private struct ConvertCommand {
     let inputURL: URL
     let outputURL: URL
     let family: Family
     let debugRootURL: URL?
     let oppoCompat: Bool
+    let gainMapEncodeMode: GainMapEncodeMode
 }
 
 private struct BatchCommand {
@@ -95,6 +129,7 @@ private struct BatchCommand {
     let glob: String
     let debugRootURL: URL?
     let oppoCompat: Bool
+    let gainMapEncodeMode: GainMapEncodeMode
 }
 
 private struct ManifestEntry {
@@ -141,6 +176,32 @@ private struct GainMapRaster {
     let bytesPerRow: Int
     let channelCount: Int
     let data: Data
+}
+
+private struct AuxiliaryGainMapPayload {
+    let data: Data
+    let bytesPerRow: Int
+    let pixelFormat: UInt32
+}
+
+private struct ISOBMFFBox {
+    let type: String
+    let dataStart: Int
+    let dataEnd: Int
+    let boxStart: Int
+    let size: Int
+}
+
+private struct ISOBMFFILocEntry {
+    let itemID: Int
+    let constructionMethod: Int
+    let dataReferenceIndex: Int
+    let extents: [(offset: Int, length: Int)]
+}
+
+private struct ISOBMFFIPMAEntry {
+    let itemID: Int
+    let associations: [Int]
 }
 
 private struct ResolvedScale {
@@ -1293,23 +1354,66 @@ private enum ISOHDRWriter {
         gainMap: GainMapRaster,
         style: HDRToneMapStyle,
         outputURL: URL,
-        oppoCompat: Bool = true
+        oppoCompat: Bool = false,
+        gainMapEncodeMode: GainMapEncodeMode = .auto
     ) throws {
-        let source = try makeImageSource(url: baseImageURL)
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        if gainMapEncodeMode == .preserveReencode {
+            // Phase 1: write intermediate using existing aux-data path
+            let intermediateURL = outputURL.appendingPathExtension("intermediate")
+            let source = try makeImageSource(url: baseImageURL)
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            var patchedUserComment: String?
+            if oppoCompat {
+                let sourceData = try Data(contentsOf: baseImageURL)
+                patchedUserComment = patchedOppoUserComment(in: sourceData)
+            }
+            let metadata = try makeHDRToneMapMetadata(style: style)
+            let auxInfo = try makeAuxiliaryDataInfo(gainMap: gainMap, metadata: metadata, gainMapEncodeMode: .defaultMode)
+            let primaryMetadata = try makeUltraHDRXMPMetadata(style: style)
+            try writeHEIC(
+                source: source,
+                originalProperties: properties,
+                auxiliaryDataInfo: auxInfo,
+                primaryMetadata: primaryMetadata,
+                patchedUserComment: patchedUserComment,
+                outputURL: intermediateURL,
+                gainMapChannelCount: gainMap.channelCount,
+                gainMapEncodeMode: .defaultMode
+            )
 
-        // Extract patched UserComment from source file bytes (bypasses ImageIO typing issues).
-        var patchedUserComment: String?
-        if oppoCompat {
-            let sourceData = try Data(contentsOf: baseImageURL)
-            patchedUserComment = patchedOppoUserComment(in: sourceData)
+            // Phase 2: re-read intermediate and write with preserve
+            try writeWithPreserveReencode(
+                intermediateURL: intermediateURL,
+                outputURL: outputURL,
+                patchedUserComment: patchedUserComment
+            )
+            try? FileManager.default.removeItem(at: intermediateURL)
+        } else {
+            let source = try makeImageSource(url: baseImageURL)
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+
+            // Extract patched UserComment from source file bytes (bypasses ImageIO typing issues).
+            var patchedUserComment: String?
+            if oppoCompat {
+                let sourceData = try Data(contentsOf: baseImageURL)
+                patchedUserComment = patchedOppoUserComment(in: sourceData)
+            }
+
+            let metadata = try makeHDRToneMapMetadata(style: style)
+            let auxInfo = try makeAuxiliaryDataInfo(gainMap: gainMap, metadata: metadata, gainMapEncodeMode: gainMapEncodeMode)
+            let primaryMetadata = try makeUltraHDRXMPMetadata(style: style)
+            try writeHEIC(
+                source: source,
+                originalProperties: properties,
+                auxiliaryDataInfo: auxInfo,
+                primaryMetadata: primaryMetadata,
+                patchedUserComment: patchedUserComment,
+                outputURL: outputURL,
+                gainMapChannelCount: gainMap.channelCount,
+                gainMapEncodeMode: gainMapEncodeMode
+            )
+            try verifyOutput(outputURL, requiredGainMapPixelFormat: requiredPixelFormat(for: gainMapEncodeMode, channelCount: gainMap.channelCount))
         }
-
-        let metadata = try makeHDRToneMapMetadata(style: style)
-        let auxInfo = try makeAuxiliaryDataInfo(gainMap: gainMap, metadata: metadata)
-        let primaryMetadata = try makeUltraHDRXMPMetadata(style: style)
-        try writeHEIC(source: source, originalProperties: properties, auxiliaryDataInfo: auxInfo, primaryMetadata: primaryMetadata, patchedUserComment: patchedUserComment, outputURL: outputURL)
-        try verifyOutput(outputURL)
     }
 
     private static func makeImageSource(url: URL) throws -> CGImageSource {
@@ -1390,32 +1494,61 @@ private enum ISOHDRWriter {
         try set("hdrgm:Gamma", formatFloat(style.gamma, digits: 6) as CFString)
         try set("hdrgm:OffsetSDR", formatFloat(style.baseOffset, digits: 6) as CFString)
         try set("hdrgm:OffsetHDR", formatFloat(style.alternateOffset, digits: 6) as CFString)
-        try set("hdrgm:HDRCapacityMin", formatFloat(style.gainMapMin, digits: 6) as CFString)
-        try set("hdrgm:HDRCapacityMax", formatFloat(style.gainMapMax, digits: 6) as CFString)
+        try set("hdrgm:HDRCapacityMin", formatFloat(style.baseHeadroom, digits: 6) as CFString)
+        try set("hdrgm:HDRCapacityMax", formatFloat(style.alternateHeadroom, digits: 6) as CFString)
         try set("hdrgm:BaseRenditionIsHDR", "False" as CFString)
 
         return metadata
     }
 
-    private static func makeAuxiliaryDataInfo(gainMap: GainMapRaster, metadata: CGImageMetadata) throws -> CFDictionary {
-        let pixelFormat: UInt32 = gainMap.channelCount == 3 ? fourCC("BGRA") : fourCC("L008")
+    private static func makeAuxiliaryDataInfo(
+        gainMap: GainMapRaster,
+        metadata: CGImageMetadata,
+        gainMapEncodeMode: GainMapEncodeMode
+    ) throws -> CFDictionary {
+        let payload = try makeAuxiliaryGainMapPayload(gainMap: gainMap, mode: gainMapEncodeMode)
 
         let description: [CFString: Any] = [
             kCGImagePropertyWidth: NSNumber(value: gainMap.width),
             kCGImagePropertyHeight: NSNumber(value: gainMap.height),
-            kCGImagePropertyBytesPerRow: NSNumber(value: gainMap.bytesPerRow),
-            kCGImagePropertyPixelFormat: NSNumber(value: pixelFormat)
+            kCGImagePropertyBytesPerRow: NSNumber(value: payload.bytesPerRow),
+            kCGImagePropertyPixelFormat: NSNumber(value: payload.pixelFormat)
         ]
 
         let info: [CFString: Any] = [
-            kCGImageAuxiliaryDataInfoData: gainMap.data,
+            kCGImageAuxiliaryDataInfoData: payload.data,
             kCGImageAuxiliaryDataInfoDataDescription: description,
             kCGImageAuxiliaryDataInfoMetadata: metadata
         ]
         return info as CFDictionary
     }
 
-    private static func writeHEIC(source: CGImageSource, originalProperties: [CFString: Any]?, auxiliaryDataInfo: CFDictionary, primaryMetadata: CGImageMetadata, patchedUserComment: String?, outputURL: URL) throws {
+    private static func makeAuxiliaryGainMapPayload(gainMap: GainMapRaster, mode: GainMapEncodeMode) throws -> AuxiliaryGainMapPayload {
+        guard gainMap.channelCount == 3 else {
+            return AuxiliaryGainMapPayload(
+                data: gainMap.data,
+                bytesPerRow: gainMap.bytesPerRow,
+                pixelFormat: fourCC("L008")
+            )
+        }
+
+        return AuxiliaryGainMapPayload(
+            data: gainMap.data,
+            bytesPerRow: gainMap.bytesPerRow,
+            pixelFormat: fourCC("BGRA")
+        )
+    }
+
+    private static func writeHEIC(
+        source: CGImageSource,
+        originalProperties: [CFString: Any]?,
+        auxiliaryDataInfo: CFDictionary,
+        primaryMetadata: CGImageMetadata,
+        patchedUserComment: String?,
+        outputURL: URL,
+        gainMapChannelCount: Int,
+        gainMapEncodeMode: GainMapEncodeMode
+    ) throws {
         guard let destination = CGImageDestinationCreateWithURL(
             outputURL as CFURL,
             UTType.heic.identifier as CFString,
@@ -1429,9 +1562,7 @@ private enum ISOHDRWriter {
             kCGImageDestinationEncodeBaseIsSDR: true,
             kCGImageDestinationLossyCompressionQuality: 1.0
         ]
-        if #available(macOS 26.0, *) {
-            requestOptions[kCGImageDestinationEncodeGainMapSubsampleFactor] = 1
-        }
+        try configureGainMapEncodingOptions(&requestOptions, channelCount: gainMapChannelCount, mode: gainMapEncodeMode)
 
         var imageOptions: [CFString: Any] = [
             kCGImageDestinationEncodeRequest: kCGImageDestinationEncodeToISOGainmap,
@@ -1466,11 +1597,188 @@ private enum ISOHDRWriter {
         }
     }
 
-    private static func verifyOutput(_ outputURL: URL) throws {
+    private static func verifyOutput(_ outputURL: URL, requiredGainMapPixelFormat: UInt32?) throws {
         guard let source = CGImageSourceCreateWithURL(outputURL as CFURL, nil),
-              CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil else {
+              let auxInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) as? [CFString: Any] else {
             throw CLIError.outputVerificationFailed(outputURL)
         }
+
+        guard let requiredGainMapPixelFormat else { return }
+        let description = auxInfo[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any]
+        let actualPixelFormat = pixelFormatValue(description?[kCGImagePropertyPixelFormat])
+        guard actualPixelFormat == requiredGainMapPixelFormat else {
+            throw CLIError.gainMapPixelFormatMismatch(
+                outputURL,
+                expected: requiredGainMapPixelFormat,
+                actual: actualPixelFormat
+            )
+        }
+    }
+
+    static func writeWithPreserveReencode(
+        intermediateURL: URL,
+        outputURL: URL,
+        patchedUserComment: String? = nil
+    ) throws {
+        guard let intermediateSource = CGImageSourceCreateWithURL(intermediateURL as CFURL, nil) else {
+            throw CLIError.unableToLoadBaseImage(intermediateURL)
+        }
+
+        // Verify intermediate has ISO gain map
+        guard let auxInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(intermediateSource, 0, kCGImageAuxiliaryDataTypeISOGainMap) else {
+            throw CLIError.outputVerificationFailed(intermediateURL)
+        }
+        let desc = (auxInfo as? [CFString: Any])?[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any]
+        let pfRaw = pixelFormatValue(desc?[kCGImagePropertyPixelFormat])
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            outputURL as CFURL,
+            UTType.heic.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw CLIError.unableToCreateDestination(outputURL)
+        }
+
+        // Build preserve options
+        var imageOptions: [CFString: Any] = [
+            kCGImageDestinationPreserveGainMap: true
+        ]
+
+        // Pass through original properties from intermediate
+        let originalProperties = CGImageSourceCopyPropertiesAtIndex(intermediateSource, 0, nil) as? [CFString: Any]
+        if let originalProperties {
+            for (key, value) in originalProperties {
+                imageOptions[key] = value
+            }
+        }
+        if let patchedUserComment {
+            var exifDictionary: [CFString: Any] = [:]
+            if let existing = imageOptions[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                exifDictionary = existing
+            } else if let existing = imageOptions[kCGImagePropertyExifDictionary] as? [String: Any] {
+                for (key, value) in existing {
+                    exifDictionary[key as CFString] = value
+                }
+            }
+            exifDictionary[kCGImagePropertyExifUserComment] = patchedUserComment
+            imageOptions[kCGImagePropertyExifDictionary] = exifDictionary as CFDictionary
+        }
+
+        // Write: CGImageDestinationAddImageFromSource ONLY — no AddAuxiliaryDataInfo
+        CGImageDestinationAddImageFromSource(destination, intermediateSource, 0, imageOptions as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            throw CLIError.unableToFinalizeDestination(outputURL)
+        }
+
+        // Verify: just check gain map is present (no pixel format enforcement initially)
+        let verifySource = CGImageSourceCreateWithURL(outputURL as CFURL, nil)
+        let verifyAux = verifySource.flatMap { CGImageSourceCopyAuxiliaryDataInfoAtIndex($0, 0, kCGImageAuxiliaryDataTypeISOGainMap) }
+        guard verifyAux != nil else {
+            throw CLIError.outputVerificationFailed(outputURL)
+        }
+
+        // Log pixel format for observation
+        if let verifyDesc = (verifyAux as? [CFString: Any])?[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any] {
+            let outputPF = pixelFormatValue(verifyDesc[kCGImagePropertyPixelFormat])
+            let intermediatePFStr = fourCCString(pfRaw)
+            let outputPFStr = fourCCString(outputPF)
+            if outputPF != pfRaw {
+                fputs("[preserve-reencode] gain map pixel format changed: \(intermediatePFStr) -> \(outputPFStr)\n", stderr)
+            } else {
+                fputs("[preserve-reencode] gain map pixel format preserved: \(outputPFStr)\n", stderr)
+            }
+        }
+    }
+
+    private static func requiredPixelFormat(for mode: GainMapEncodeMode, channelCount: Int) throws -> UInt32? {
+        guard channelCount == 3 else {
+            if mode == .force444 || mode == .private444 {
+                throw CLIError.gainMapEncodeModeUnsupported("\(mode.rawValue) requires a 3-channel gain map")
+            }
+            return nil
+        }
+
+        switch mode {
+        case .force444, .private444:
+            return gainMap444PixelFormat
+        case .auto, .defaultMode, .preserveReencode:
+            return nil
+        }
+    }
+
+    private static func configureGainMapEncodingOptions(
+        _ requestOptions: inout [CFString: Any],
+        channelCount: Int,
+        mode: GainMapEncodeMode
+    ) throws {
+        guard channelCount == 3 else {
+            if mode == .force444 || mode == .private444 {
+                throw CLIError.gainMapEncodeModeUnsupported("\(mode.rawValue) requires a 3-channel gain map")
+            }
+            return
+        }
+
+        switch mode {
+        case .defaultMode:
+            return
+        case .auto:
+            if #available(macOS 16.0, *) {
+                requestOptions[kCGImageDestinationEncodeGenerateGainMapWithBaseImage] = kCFBooleanTrue
+                requestPublicGainMap444(&requestOptions)
+            }
+        case .force444:
+            guard #available(macOS 16.0, *) else {
+                throw CLIError.gainMapEncodeModeUnsupported("force-444 requires public ImageIO gain map pixel-format requests (macOS 16/iOS 19 or newer)")
+            }
+            requestOptions[kCGImageDestinationEncodeGenerateGainMapWithBaseImage] = kCFBooleanTrue
+            requestPublicGainMap444(&requestOptions)
+        case .private444:
+            if #available(macOS 16.0, *) {
+                requestOptions[kCGImageDestinationEncodeGenerateGainMapWithBaseImage] = kCFBooleanTrue
+                requestPublicGainMap444(&requestOptions)
+            }
+            requestPrivateGainMap444(&requestOptions)
+        case .preserveReencode:
+            return // preserve step handles its own options in writeWithPreserveReencode
+        }
+    }
+
+    @available(macOS 16.0, *)
+    private static func requestPublicGainMap444(_ requestOptions: inout [CFString: Any]) {
+        requestOptions[kCGImageDestinationEncodeGainMapPixelFormatRequest] = NSNumber(value: gainMap444PixelFormat)
+        requestOptions[kCGImageDestinationEncodeGainMapSubsampleFactor] = NSNumber(value: 1)
+    }
+
+    private static func requestPrivateGainMap444(_ requestOptions: inout [CFString: Any]) {
+        for keyName in ["kCGTargetGainMapSubsampleFactor", "kCGImageDestinationEncodeGainMapSubsampleFactor"] {
+            requestOptions[imageIOCFStringSymbol(keyName) ?? keyName as CFString] = NSNumber(value: 1)
+        }
+        for keyName in ["kCGTargetPixelFormat", "kCGImageDestinationEncodeGainMapPixelFormatRequest"] {
+            requestOptions[imageIOCFStringSymbol(keyName) ?? keyName as CFString] = NSNumber(value: gainMap444PixelFormat)
+        }
+    }
+
+    private static func imageIOCFStringSymbol(_ name: String) -> CFString? {
+        guard let handle = dlopen("/System/Library/Frameworks/ImageIO.framework/ImageIO", RTLD_LAZY),
+              let symbol = dlsym(handle, name) else {
+            return nil
+        }
+        return symbol.assumingMemoryBound(to: CFString.self).pointee
+    }
+
+    private static func pixelFormatValue(_ value: Any?) -> UInt32? {
+        if let number = value as? NSNumber {
+            return number.uint32Value
+        }
+        if let value = value as? UInt32 {
+            return value
+        }
+        if let value = value as? Int {
+            return UInt32(value)
+        }
+        return nil
     }
 
     private static func fourCC(_ value: String) -> UInt32 {
@@ -1614,20 +1922,300 @@ private enum DebugWriter {
     }
 }
 
+private enum XDRemuxProductCore {
+    private static let fileManager = FileManager.default
+
+    static func convert(
+        inputURL: URL,
+        outputURL: URL,
+        familyPreference: Family,
+        debugRootURL: URL?,
+        oppoCompat: Bool = false,
+        gainMapEncodeMode: GainMapEncodeMode = .auto
+    ) throws -> SampleReport {
+        guard fileManager.fileExists(atPath: inputURL.path) else {
+            throw CLIError.inputNotFound(inputURL)
+        }
+
+        let parentURL = outputURL.deletingLastPathComponent()
+        try ensureDirectory(parentURL, fileManager: fileManager)
+
+        let sourceData: Data
+        do {
+            sourceData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
+        } catch {
+            throw CLIError.unableToRead(inputURL)
+        }
+
+        let productInput = try prepareProductInput(
+            inputURL: inputURL,
+            sourceData: sourceData,
+            familyPreference: familyPreference
+        )
+        let debugDirURL = try writeDiagnosticsIfRequested(
+            debugRootURL: debugRootURL,
+            inputURL: inputURL,
+            productInput: productInput
+        )
+        let actualOutputURL = temporaryOutputURLIfNeeded(inputURL: inputURL, outputURL: outputURL)
+        let writesInPlace = actualOutputURL != outputURL
+        defer {
+            if writesInPlace {
+                try? fileManager.removeItem(at: actualOutputURL)
+            }
+        }
+
+        try ProductGainMapWriter.write(
+            inputURL: inputURL,
+            outputURL: actualOutputURL,
+            sourceData: sourceData,
+            productInput: productInput,
+            oppoCompat: oppoCompat,
+            gainMapEncodeMode: gainMapEncodeMode
+        )
+
+        if oppoCompat {
+            try appendOppoCompatibilityPayload(
+                outputURL: actualOutputURL,
+                sourceData: sourceData,
+                extracted: productInput.extracted,
+                scale: productInput.scale,
+                gainMapRaster: productInput.gainMapRaster
+            )
+        }
+        if writesInPlace {
+            _ = try fileManager.replaceItemAt(outputURL, withItemAt: actualOutputURL)
+        }
+
+        return SampleReport(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            family: productInput.effectiveFamily,
+            scale: productInput.scale,
+            gainMapParams: productInput.params,
+            debugDirURL: debugDirURL
+        )
+    }
+
+    struct ProductInput {
+        let extracted: ExtractedLHDR
+        let detectedFamily: Family
+        let effectiveFamily: Family
+        let scale: ResolvedScale
+        let maskRaster: GainMapRaster
+        let gainMapRaster: GainMapRaster
+        let params: GainMapParams
+        let style: HDRToneMapStyle
+    }
+
+    private static func prepareProductInput(
+        inputURL: URL,
+        sourceData: Data,
+        familyPreference: Family
+    ) throws -> ProductInput {
+        let extracted = try LHDRExtractor.extract(from: sourceData)
+        let detectedFamily = detectFamily(from: extracted)
+        let effectiveFamily = familyPreference == .auto ? detectedFamily : familyPreference
+        let scale = try EDRScaleResolver.resolve(metaFloats: extracted.metaFloats, mode: extracted.mode)
+        let decoderChannels = extracted.mode == .uhdr ? 3 : 1
+        let maskRaster = try MaskDecoder.decodeMaskJPEG(
+            extracted.maskJPEGData,
+            sourceURL: inputURL,
+            channelCount: decoderChannels
+        )
+        let gainMap = try buildProductGainMap(
+            extracted: extracted,
+            maskRaster: maskRaster,
+            family: effectiveFamily,
+            scale: scale
+        )
+
+        return ProductInput(
+            extracted: extracted,
+            detectedFamily: detectedFamily,
+            effectiveFamily: effectiveFamily,
+            scale: scale,
+            maskRaster: maskRaster,
+            gainMapRaster: gainMap.raster,
+            params: gainMap.params,
+            style: makeHDRToneMapStyle(from: scale)
+        )
+    }
+
+    private static func detectFamily(from extracted: ExtractedLHDR) -> Family {
+        if extracted.mode == .uhdr {
+            return .x7
+        }
+        return extracted.metaFloats[0] >= 3.0 ? .x7 : .x6
+    }
+
+    private static func buildProductGainMap(
+        extracted: ExtractedLHDR,
+        maskRaster: GainMapRaster,
+        family: Family,
+        scale: ResolvedScale
+    ) throws -> (raster: GainMapRaster, params: GainMapParams) {
+        if extracted.mode == .uhdr {
+            return (
+                maskRaster,
+                GainMapParams(
+                    family: family,
+                    knee: 0,
+                    kneeRange: 1,
+                    headroomScale: 0,
+                    maxBoost: 0,
+                    log2Scale: 0,
+                    kneeSource: "uhdr_precomputed_skip_reconstruction"
+                )
+            )
+        }
+        return try GainMapReconstructor.reconstruct(
+            mask: maskRaster,
+            family: family,
+            scale: scale,
+            metaFloats: extracted.metaFloats
+        )
+    }
+
+    private static func makeHDRToneMapStyle(from scale: ResolvedScale) -> HDRToneMapStyle {
+        HDRToneMapStyle(
+            version: 1,
+            baseHeadroom: scale.baseHeadroom,
+            alternateHeadroom: scale.alternateHeadroom,
+            baseColorIsWorkingColor: false,
+            gainMapMin: scale.gainMapMin,
+            gainMapMax: scale.gainMapMax,
+            gamma: scale.gamma,
+            baseOffset: scale.epsilonSdr,
+            alternateOffset: scale.epsilonHdr,
+            channelCount: scale.channelCount,
+            perChannelGainMapMin: scale.perChannelGainMapMin,
+            perChannelGainMapMax: scale.perChannelGainMapMax,
+            perChannelGamma: scale.perChannelGamma,
+            perChannelBaseOffset: scale.perChannelBaseOffset,
+            perChannelAlternateOffset: scale.perChannelAlternateOffset
+        )
+    }
+
+    private static func writeDiagnosticsIfRequested(
+        debugRootURL: URL?,
+        inputURL: URL,
+        productInput: ProductInput
+    ) throws -> URL? {
+        guard let debugRootURL else { return nil }
+        let dir = debugRootURL.appendingPathComponent(inputURL.deletingPathExtension().lastPathComponent, isDirectory: true)
+        try DebugWriter.writeArtifacts(
+            extracted: productInput.extracted,
+            inputURL: inputURL,
+            debugDirURL: dir,
+            familyDetected: productInput.detectedFamily,
+            familyUsed: productInput.effectiveFamily,
+            maskRaster: productInput.maskRaster,
+            gainMapRaster: productInput.gainMapRaster,
+            scale: productInput.scale,
+            params: productInput.params,
+            style: productInput.style
+        )
+        return dir
+    }
+
+    private static func temporaryOutputURLIfNeeded(inputURL: URL, outputURL: URL) -> URL {
+        guard inputURL.standardizedFileURL.path == outputURL.standardizedFileURL.path else {
+            return outputURL
+        }
+        return outputURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".\(outputURL.lastPathComponent).xdremux-\(UUID().uuidString)")
+    }
+}
+
+private enum ProductGainMapWriter {
+    static func write(
+        inputURL: URL,
+        outputURL: URL,
+        sourceData: Data,
+        productInput: XDRemuxProductCore.ProductInput,
+        oppoCompat: Bool,
+        gainMapEncodeMode: GainMapEncodeMode
+    ) throws {
+        if productInput.extracted.mode == .uhdr, gainMapEncodeMode == .auto {
+            let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
+            try writeUHDRPrivatePassThroughDefault(
+                inputURL: inputURL,
+                outputURL: outputURL,
+                infoFloats: productInput.extracted.metaFloats,
+                gainMapJPEG: productInput.extracted.maskJPEGData,
+                patchedUserComment: patchedUserComment
+            )
+            return
+        }
+
+        if ResearchGainMapWriter.handles(gainMapEncodeMode) {
+            try ResearchGainMapWriter.write(
+                baseImageURL: inputURL,
+                gainMap: productInput.gainMapRaster,
+                style: productInput.style,
+                outputURL: outputURL,
+                oppoCompat: oppoCompat,
+                gainMapEncodeMode: gainMapEncodeMode
+            )
+            return
+        }
+
+        try ISOHDRWriter.write(
+            baseImageURL: inputURL,
+            gainMap: productInput.gainMapRaster,
+            style: productInput.style,
+            outputURL: outputURL,
+            oppoCompat: oppoCompat,
+            gainMapEncodeMode: gainMapEncodeMode
+        )
+    }
+}
+
+private enum ResearchGainMapWriter {
+    static func handles(_ mode: GainMapEncodeMode) -> Bool {
+        switch mode {
+        case .force444, .private444, .preserveReencode:
+            return true
+        case .auto, .defaultMode:
+            return false
+        }
+    }
+
+    static func write(
+        baseImageURL: URL,
+        gainMap: GainMapRaster,
+        style: HDRToneMapStyle,
+        outputURL: URL,
+        oppoCompat: Bool,
+        gainMapEncodeMode: GainMapEncodeMode
+    ) throws {
+        try ISOHDRWriter.write(
+            baseImageURL: baseImageURL,
+            gainMap: gainMap,
+            style: style,
+            outputURL: outputURL,
+            oppoCompat: oppoCompat,
+            gainMapEncodeMode: gainMapEncodeMode
+        )
+    }
+}
+
 struct LHDRToISOHDRCLI {
     private static let fileManager = FileManager.default
     private static let usage = """
     Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--family auto|x6|x7] [--debug-dir <dir>] [--no-oppo-compat]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--family auto|x6|x7] [--glob *.heic] [--debug-dir <dir>] [--no-oppo-compat]
+            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat]
+            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--debug-dir <dir>] [--oppo-compat]
 
     Notes:
-      - The converter reconstructs a runtime-aligned gain map from LHDR mask + 144B metadata.
-      - `local.hdr.linear.mask` is treated as source input, not as the final ISO gain map payload.
-            - EDR is resolved with built-in heuristics.
+      - Device family and gain-map encoding are selected automatically.
+      - UHDR uses strict private JPEG gain-map pass-through + Apple preserve when available.
+      - LHDR reconstructs a runtime-aligned gain map from mask + 144B metadata.
       - If --output is omitted, the input file is overwritten in place.
       - If --output-dir is omitted, files are written to the input directory.
-      - OPPO Gallery compatibility metadata is written by default; pass --no-oppo-compat to disable it.
+      - OPPO Gallery compatibility metadata is off by default; pass --oppo-compat only when targeting OPPO Gallery.
     """
 
     static func main() {
@@ -1656,12 +2244,13 @@ struct LHDRToISOHDRCLI {
     }
 
     private static func runConvert(_ cmd: ConvertCommand) throws {
-        let report = try convertOne(
+        let report = try XDRemuxProductCore.convert(
             inputURL: cmd.inputURL,
             outputURL: cmd.outputURL,
             familyPreference: cmd.family,
             debugRootURL: cmd.debugRootURL,
-            oppoCompat: cmd.oppoCompat
+            oppoCompat: cmd.oppoCompat,
+            gainMapEncodeMode: cmd.gainMapEncodeMode
         )
         print("converted \(report.inputURL.lastPathComponent) -> \(report.outputURL.path)")
     }
@@ -1679,12 +2268,13 @@ struct LHDRToISOHDRCLI {
             do {
                 let stem = inputURL.deletingPathExtension().lastPathComponent
                 let outputURL = cmd.outputDirURL.appendingPathComponent("\(stem).heic")
-                let report = try convertOne(
+                let report = try XDRemuxProductCore.convert(
                     inputURL: inputURL,
                     outputURL: outputURL,
                     familyPreference: cmd.family,
                     debugRootURL: cmd.debugRootURL,
-                    oppoCompat: cmd.oppoCompat
+                    oppoCompat: cmd.oppoCompat,
+                    gainMapEncodeMode: cmd.gainMapEncodeMode
                 )
                 reports.append(report)
                 print("converted \(inputURL.lastPathComponent)")
@@ -1697,115 +2287,13 @@ struct LHDRToISOHDRCLI {
         print("batch complete: converted \(reports.count) files, skipped \(failures) files into \(cmd.outputDirURL.path)")
     }
 
-    private static func convertOne(
-        inputURL: URL,
-        outputURL: URL,
-        familyPreference: Family,
-        debugRootURL: URL?,
-        oppoCompat: Bool = true
-    ) throws -> SampleReport {
-        guard fileManager.fileExists(atPath: inputURL.path) else {
-            throw CLIError.inputNotFound(inputURL)
-        }
-
-        let parentURL = outputURL.deletingLastPathComponent()
-        try ensureDirectory(parentURL, fileManager: fileManager)
-
-        let data: Data
-        do {
-            data = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
-        } catch {
-            throw CLIError.unableToRead(inputURL)
-        }
-
-        let extracted = try LHDRExtractor.extract(from: data)
-        let detectedFamily: Family
-        if extracted.mode == .uhdr {
-            detectedFamily = .x7 // Force X7/newer branch conceptually
-        } else {
-            detectedFamily = extracted.metaFloats[0] >= 3.0 ? .x7 : .x6
-        }
-        let effectiveFamily = familyPreference == .auto ? detectedFamily : familyPreference
-
-        let scale = try EDRScaleResolver.resolve(metaFloats: extracted.metaFloats, mode: extracted.mode)
-        let decoderChannels = extracted.mode == .uhdr ? 3 : 1
-        let maskRaster = try MaskDecoder.decodeMaskJPEG(extracted.maskJPEGData, sourceURL: inputURL, channelCount: decoderChannels)
-        
-        let gainMapRaster: GainMapRaster
-        let params: GainMapParams
-        if extracted.mode == .uhdr {
-            gainMapRaster = maskRaster
-            params = GainMapParams(family: effectiveFamily, knee: 0, kneeRange: 1, headroomScale: 0, maxBoost: 0, log2Scale: 0, kneeSource: "uhdr_precomputed_skip_reconstruction")
-        } else {
-            let reconstructed = try GainMapReconstructor.reconstruct(mask: maskRaster, family: effectiveFamily, scale: scale, metaFloats: extracted.metaFloats)
-            gainMapRaster = reconstructed.raster
-            params = reconstructed.params
-        }
-        let style = HDRToneMapStyle(
-            version: 1,
-            baseHeadroom: scale.baseHeadroom,
-            alternateHeadroom: scale.alternateHeadroom,
-            baseColorIsWorkingColor: false,
-            gainMapMin: scale.gainMapMin,
-            gainMapMax: scale.gainMapMax,
-            gamma: scale.gamma,
-            baseOffset: scale.epsilonSdr,
-            alternateOffset: scale.epsilonHdr,
-            channelCount: scale.channelCount,
-            perChannelGainMapMin: scale.perChannelGainMapMin,
-            perChannelGainMapMax: scale.perChannelGainMapMax,
-            perChannelGamma: scale.perChannelGamma,
-            perChannelBaseOffset: scale.perChannelBaseOffset,
-            perChannelAlternateOffset: scale.perChannelAlternateOffset
-        )
-
-        let debugDirURL: URL?
-        if let debugRootURL {
-            let dir = debugRootURL.appendingPathComponent(inputURL.deletingPathExtension().lastPathComponent, isDirectory: true)
-            try DebugWriter.writeArtifacts(
-                extracted: extracted,
-                inputURL: inputURL,
-                debugDirURL: dir,
-                familyDetected: detectedFamily,
-                familyUsed: effectiveFamily,
-                maskRaster: maskRaster,
-                gainMapRaster: gainMapRaster,
-                scale: scale,
-                params: params,
-                style: style
-            )
-            debugDirURL = dir
-        } else {
-            debugDirURL = nil
-        }
-
-        try ISOHDRWriter.write(baseImageURL: inputURL, gainMap: gainMapRaster, style: style, outputURL: outputURL, oppoCompat: oppoCompat)
-        if oppoCompat {
-            try appendOppoCompatibilityPayload(
-                outputURL: outputURL,
-                sourceData: data,
-                extracted: extracted,
-                scale: scale,
-                gainMapRaster: gainMapRaster
-            )
-        }
-
-        return SampleReport(
-            inputURL: inputURL,
-            outputURL: outputURL,
-            family: effectiveFamily,
-            scale: scale,
-            gainMapParams: params,
-            debugDirURL: debugDirURL
-        )
-    }
-
     private static func parseConvert(_ rawArgs: [String]) throws -> ConvertCommand {
         var inputPath: String?
         var outputPath: String?
         var family = Family.auto
         var debugDirPath: String?
-        var oppoCompat = true
+        var oppoCompat = false
+        var gainMapEncodeMode = GainMapEncodeMode.auto
 
         var index = 0
         while index < rawArgs.count {
@@ -1831,6 +2319,12 @@ struct LHDRToISOHDRCLI {
                     throw CLIError.invalidValue(option: option, value: value)
                 }
                 family = parsed
+            case "--gainmap-encode":
+                let value = try nextValue(for: option)
+                guard let parsed = GainMapEncodeMode(rawValue: value) else {
+                    throw CLIError.invalidValue(option: option, value: value)
+                }
+                gainMapEncodeMode = parsed
             case "--debug-dir":
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
@@ -1849,7 +2343,8 @@ struct LHDRToISOHDRCLI {
             outputURL: URL(fileURLWithPath: outputPath ?? inputPath),
             family: family,
             debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat
+            oppoCompat: oppoCompat,
+            gainMapEncodeMode: gainMapEncodeMode
         )
     }
 
@@ -1859,7 +2354,8 @@ struct LHDRToISOHDRCLI {
         var family = Family.auto
         var glob = "*.heic"
         var debugDirPath: String?
-        var oppoCompat = true
+        var oppoCompat = false
+        var gainMapEncodeMode = GainMapEncodeMode.auto
 
         var index = 0
         while index < rawArgs.count {
@@ -1885,6 +2381,12 @@ struct LHDRToISOHDRCLI {
                     throw CLIError.invalidValue(option: option, value: value)
                 }
                 family = parsed
+            case "--gainmap-encode":
+                let value = try nextValue(for: option)
+                guard let parsed = GainMapEncodeMode(rawValue: value) else {
+                    throw CLIError.invalidValue(option: option, value: value)
+                }
+                gainMapEncodeMode = parsed
             case "--glob":
                 glob = try nextValue(for: option)
             case "--debug-dir":
@@ -1906,7 +2408,8 @@ struct LHDRToISOHDRCLI {
             family: family,
             glob: glob,
             debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat
+            oppoCompat: oppoCompat,
+            gainMapEncodeMode: gainMapEncodeMode
         )
     }
 
@@ -1997,6 +2500,616 @@ private func positiveValueOrFallback(_ values: [Double], index: Int, fallback: D
     let value = valueOrRepeated(values, index: index, fallback: fallback)
     guard value.isFinite, value > 0 else { return fallback }
     return value
+}
+
+private let isoAuxCBox = Data([
+    0x00, 0x00, 0x00, 0x28, 0x61, 0x75, 0x78, 0x43,
+    0x00, 0x00, 0x00, 0x00, 0x75, 0x72, 0x6e, 0x3a,
+    0x69, 0x73, 0x6f, 0x3a, 0x73, 0x74, 0x64, 0x3a,
+    0x69, 0x73, 0x6f, 0x3a, 0x74, 0x73, 0x3a, 0x32,
+    0x31, 0x34, 0x39, 0x36, 0x3a, 0x2d, 0x31, 0x00,
+])
+private let isoDinfBox = Data([
+    0x00, 0x00, 0x00, 0x24, 0x64, 0x69, 0x6e, 0x66,
+    0x00, 0x00, 0x00, 0x1c, 0x64, 0x72, 0x65, 0x66,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x0c, 0x75, 0x72, 0x6c, 0x20,
+    0x00, 0x00, 0x00, 0x01,
+])
+private let isoIrotBox = Data([0x00, 0x00, 0x00, 0x09, 0x69, 0x72, 0x6f, 0x74, 0x00])
+private let isoColrPQBox = Data([
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
+    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x09, 0x00, 0x10,
+    0x00, 0x09, 0x80,
+])
+private let isoColrSRGBBox = Data([
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
+    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
+    0x00, 0x02, 0x80,
+])
+private let isoPixiRGB8Box = Data([
+    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0x08, 0x08, 0x08,
+])
+private let isoPixiRGB10Box = Data([
+    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0x0a, 0x0a, 0x0a,
+])
+
+private func readUInt16BEUnchecked(_ data: Data, at offset: Int) -> Int {
+    (Int(data[offset]) << 8) | Int(data[offset + 1])
+}
+
+private func readUInt32BEUnchecked(_ data: Data, at offset: Int) -> Int {
+    (Int(data[offset]) << 24)
+        | (Int(data[offset + 1]) << 16)
+        | (Int(data[offset + 2]) << 8)
+        | Int(data[offset + 3])
+}
+
+private func appendUInt16BE(_ value: Int, to data: inout Data) {
+    data.append(UInt8((value >> 8) & 0xff))
+    data.append(UInt8(value & 0xff))
+}
+
+private func appendUInt32BE(_ value: Int, to data: inout Data) {
+    data.append(UInt8((value >> 24) & 0xff))
+    data.append(UInt8((value >> 16) & 0xff))
+    data.append(UInt8((value >> 8) & 0xff))
+    data.append(UInt8(value & 0xff))
+}
+
+private func appendInt32BE(_ value: Int32, to data: inout Data) {
+    appendUInt32BE(Int(UInt32(bitPattern: value)), to: &data)
+}
+
+private func makeBox(_ type: String, payload: Data) -> Data {
+    var out = Data()
+    appendUInt32BE(payload.count + 8, to: &out)
+    out.append(type.data(using: .ascii)!)
+    out.append(payload)
+    return out
+}
+
+private func isobmffBoxes(in data: Data, start: Int, end: Int) -> [ISOBMFFBox] {
+    var result: [ISOBMFFBox] = []
+    var pos = start
+    while pos + 8 <= end {
+        var size = readUInt32BEUnchecked(data, at: pos)
+        let typeData = data.subdata(in: pos + 4..<pos + 8)
+        let type = String(data: typeData, encoding: .isoLatin1) ?? "????"
+        var header = 8
+        if size == 1 {
+            if pos + 16 > end { break }
+            size = Int(UInt64(readUInt32BEUnchecked(data, at: pos + 8)) << 32 | UInt64(readUInt32BEUnchecked(data, at: pos + 12)))
+            header = 16
+        } else if size == 0 {
+            size = end - pos
+        }
+        if size < header || pos + size > end { break }
+        result.append(ISOBMFFBox(type: type, dataStart: pos + header, dataEnd: pos + size, boxStart: pos, size: size))
+        pos += size
+    }
+    return result
+}
+
+private func parseISOBMFFILoc(_ data: Data, _ box: ISOBMFFBox) throws -> [ISOBMFFILocEntry] {
+    let version = data[box.dataStart]
+    var pos = box.dataStart + 4
+    let sizes0 = data[pos]; pos += 1
+    let sizes1 = data[pos]; pos += 1
+    let offsetSize = Int((sizes0 >> 4) & 0x0f)
+    let lengthSize = Int(sizes0 & 0x0f)
+    let baseOffsetSize = Int((sizes1 >> 4) & 0x0f)
+    let indexSize = version == 1 || version == 2 ? Int(sizes1 & 0x0f) : 0
+    let count: Int
+    if version >= 2 {
+        count = readUInt32BEUnchecked(data, at: pos); pos += 4
+    } else {
+        count = readUInt16BEUnchecked(data, at: pos); pos += 2
+    }
+
+    func read(_ size: Int, _ pos: inout Int) -> Int {
+        var value = 0
+        for _ in 0..<size {
+            value = (value << 8) | Int(data[pos])
+            pos += 1
+        }
+        return value
+    }
+
+    var entries: [ISOBMFFILocEntry] = []
+    for _ in 0..<count {
+        let itemID: Int
+        if version >= 2 {
+            itemID = readUInt32BEUnchecked(data, at: pos); pos += 4
+        } else {
+            itemID = readUInt16BEUnchecked(data, at: pos); pos += 2
+        }
+        var constructionMethod = 0
+        if version == 1 || version == 2 {
+            constructionMethod = readUInt16BEUnchecked(data, at: pos) & 0x0f
+            pos += 2
+        }
+        let dataReferenceIndex = readUInt16BEUnchecked(data, at: pos); pos += 2
+        let baseOffset = read(baseOffsetSize, &pos)
+        let extentCount = readUInt16BEUnchecked(data, at: pos); pos += 2
+        var extents: [(offset: Int, length: Int)] = []
+        for _ in 0..<extentCount {
+            if indexSize > 0 { _ = read(indexSize, &pos) }
+            let offset = read(offsetSize, &pos)
+            let length = read(lengthSize, &pos)
+            extents.append((baseOffset + offset, length))
+        }
+        entries.append(ISOBMFFILocEntry(itemID: itemID, constructionMethod: constructionMethod, dataReferenceIndex: dataReferenceIndex, extents: extents))
+    }
+    return entries
+}
+
+private func parseISOBMFFIInf(_ data: Data, _ box: ISOBMFFBox) -> (version: UInt8, entries: [Int: String], rawInfe: [Int: Data]) {
+    let version = data[box.dataStart]
+    var pos = box.dataStart + 4
+    if version >= 1 {
+        pos += 4
+    } else {
+        pos += 2
+    }
+    var entries: [Int: String] = [:]
+    var raw: [Int: Data] = [:]
+    for child in isobmffBoxes(in: data, start: pos, end: box.dataEnd) where child.type == "infe" {
+        let v = data[child.dataStart]
+        var p = child.dataStart + 4
+        if v >= 2 {
+            let typeAtU16 = String(data: data.subdata(in: p + 4..<p + 8), encoding: .ascii) ?? ""
+            let itemID: Int
+            if ["hvc1", "grid", "Exif", "mime", "tmap", "jpeg"].contains(typeAtU16) {
+                itemID = readUInt16BEUnchecked(data, at: p); p += 2
+            } else {
+                itemID = readUInt32BEUnchecked(data, at: p); p += 4
+            }
+            p += 2
+            let type = String(data: data.subdata(in: p..<p + 4), encoding: .isoLatin1) ?? "????"
+            entries[itemID] = type
+            raw[itemID] = data.subdata(in: child.boxStart..<child.boxStart + child.size)
+        }
+    }
+    return (version, entries, raw)
+}
+
+private func parseISOBMFFPITM(_ data: Data, _ box: ISOBMFFBox) -> Int {
+    let version = data[box.dataStart]
+    let pos = box.dataStart + 4
+    return version == 0 ? readUInt16BEUnchecked(data, at: pos) : readUInt32BEUnchecked(data, at: pos)
+}
+
+private func parseISOBMFFIPMA(_ data: Data, _ box: ISOBMFFBox) -> (flags: Int, entries: [ISOBMFFIPMAEntry]) {
+    let flags = (Int(data[box.dataStart + 1]) << 16) | (Int(data[box.dataStart + 2]) << 8) | Int(data[box.dataStart + 3])
+    var pos = box.dataStart + 4
+    let count = readUInt32BEUnchecked(data, at: pos); pos += 4
+    var entries: [ISOBMFFIPMAEntry] = []
+    for _ in 0..<count {
+        let itemID: Int
+        if flags & 1 != 0 {
+            itemID = readUInt32BEUnchecked(data, at: pos); pos += 4
+        } else {
+            itemID = readUInt16BEUnchecked(data, at: pos); pos += 2
+        }
+        let associationCount = Int(data[pos]); pos += 1
+        var associations: [Int] = []
+        for _ in 0..<associationCount {
+            if flags & 1 != 0 {
+                associations.append(readUInt16BEUnchecked(data, at: pos)); pos += 2
+            } else {
+                associations.append(Int(data[pos])); pos += 1
+            }
+        }
+        entries.append(ISOBMFFIPMAEntry(itemID: itemID, associations: associations))
+    }
+    return (flags, entries)
+}
+
+private func parseISOBMFFIRefVersion(_ data: Data, _ box: ISOBMFFBox?) -> UInt8 {
+    guard let box else { return 0 }
+    return data[box.dataStart]
+}
+
+private func parseISOBMFFIPCOProps(_ data: Data, _ iprp: ISOBMFFBox) throws -> (box: ISOBMFFBox, types: [Int: String], sizes: [Int: (Int, Int)]) {
+    guard let ipco = isobmffBoxes(in: data, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipco" }) else {
+        throw CLIError.invalidContainer("ipco missing")
+    }
+    var types: [Int: String] = [:]
+    var sizes: [Int: (Int, Int)] = [:]
+    var index = 1
+    for prop in isobmffBoxes(in: data, start: ipco.dataStart, end: ipco.dataEnd) {
+        types[index] = prop.type
+        if prop.type == "ispe", prop.dataEnd - prop.dataStart >= 12 {
+            sizes[index] = (readUInt32BEUnchecked(data, at: prop.dataStart + 4), readUInt32BEUnchecked(data, at: prop.dataStart + 8))
+        }
+        index += 1
+    }
+    return (ipco, types, sizes)
+}
+
+private func jpegImageSize(_ jpeg: Data) throws -> (Int, Int) {
+    guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = props[kCGImagePropertyPixelWidth] as? Int,
+          let height = props[kCGImagePropertyPixelHeight] as? Int else {
+        throw CLIError.invalidContainer("cannot read private gain map JPEG dimensions")
+    }
+    return (width, height)
+}
+
+private func makeInfeBox(itemID: Int, type: String, flags: Int = 0) -> Data {
+    var payload = Data([2, UInt8((flags >> 16) & 0xff), UInt8((flags >> 8) & 0xff), UInt8(flags & 0xff)])
+    appendUInt16BE(itemID, to: &payload)
+    appendUInt16BE(0, to: &payload)
+    payload.append(type.data(using: .ascii)!)
+    payload.append(0)
+    return makeBox("infe", payload: payload)
+}
+
+private func makeMimeInfeBox(itemID: Int) -> Data {
+    var payload = Data([2, 0, 0, 0])
+    appendUInt16BE(itemID, to: &payload)
+    appendUInt16BE(0, to: &payload)
+    payload.append(Data("mime".utf8))
+    payload.append(Data("hdrgm-xmp".utf8)); payload.append(0)
+    payload.append(Data("application/rdf+xml".utf8)); payload.append(0)
+    payload.append(0)
+    return makeBox("infe", payload: payload)
+}
+
+private func makeIspeBox(width: Int, height: Int) -> Data {
+    var payload = Data([0, 0, 0, 0])
+    appendUInt32BE(width, to: &payload)
+    appendUInt32BE(height, to: &payload)
+    return makeBox("ispe", payload: payload)
+}
+
+private func makeIrefBox(type: String, from: Int, to: [Int], version: UInt8) -> Data {
+    let idSize = version >= 1 ? 4 : 2
+    var payload = Data()
+    if idSize == 4 { appendUInt32BE(from, to: &payload) } else { appendUInt16BE(from, to: &payload) }
+    appendUInt16BE(to.count, to: &payload)
+    for item in to {
+        if idSize == 4 { appendUInt32BE(item, to: &payload) } else { appendUInt16BE(item, to: &payload) }
+    }
+    return makeBox(type, payload: payload)
+}
+
+private func makeIPMAEntry(_ itemID: Int, _ assocs: [(Int, Bool)], flags: Int) throws -> Data {
+    if flags & 1 == 0, assocs.contains(where: { $0.0 > 0x7f }) {
+        throw CLIError.invalidContainer("ipma property index exceeds 7-bit association limit")
+    }
+    var out = Data()
+    if flags & 1 != 0 { appendUInt32BE(itemID, to: &out) } else { appendUInt16BE(itemID, to: &out) }
+    out.append(UInt8(assocs.count))
+    for (index, essential) in assocs {
+        if flags & 1 != 0 {
+            appendUInt16BE((essential ? 0x8000 : 0) | index, to: &out)
+        } else {
+            out.append(UInt8((essential ? 0x80 : 0) | index))
+        }
+    }
+    return out
+}
+
+private func makeAppleTmapPayload(infoFloats f: [Double]) -> Data {
+    func fixed(_ value: Double) -> Int32 {
+        Int32((value * 100_000.0).rounded())
+    }
+    let values: [Double] = [
+        max(log2(max(f[16], 1.0)), 0.0), 1.0,
+        log2(max(f[17], 1.0)), 1.0,
+        max(log2(max(f[0], 1.0)), 0.0), 1.0,
+        log2(max(f[4], 1.0)), 1.0,
+        f[7], 1.0,
+        f[10], 1.0,
+        f[13], 1.0,
+    ]
+    var out = Data([0, 0, 0, 0, 0, 0x40])
+    for value in values {
+        appendInt32BE(fixed(value), to: &out)
+    }
+    return out
+}
+
+private func makeHdrgmXMP(infoFloats f: [Double]) -> Data {
+    func safeLog2(_ value: Double) -> Double { value > 0 ? log2(value) : 0.0 }
+    func fmt(_ values: [Double]) -> String { values.map { String(format: "%.6f", $0) }.joined(separator: " ") }
+    let gainMin = [safeLog2(f[0]), safeLog2(f[1]), safeLog2(f[2])]
+    let gainMax = [safeLog2(f[4]), safeLog2(f[5]), safeLog2(f[6])]
+    let gamma = [f[7], f[8], f[9]]
+    let offsetSdr = [f[10], f[11], f[12]]
+    let offsetHdr = [f[13], f[14], f[15]]
+    let capMin = max(safeLog2(f[16]), 0.0)
+    let capMax = safeLog2(f[17])
+    let xml = """
+    <?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+    <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">
+       <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about=""
+                xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/"
+                xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+                xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/">
+             <hdrgm:Version>1.0</hdrgm:Version>
+             <hdrgm:GainMapMin>\(fmt(gainMin))</hdrgm:GainMapMin>
+             <hdrgm:GainMapMax>\(fmt(gainMax))</hdrgm:GainMapMax>
+             <hdrgm:Gamma>\(fmt(gamma))</hdrgm:Gamma>
+             <hdrgm:OffsetSDR>\(fmt(offsetSdr))</hdrgm:OffsetSDR>
+             <hdrgm:OffsetHDR>\(fmt(offsetHdr))</hdrgm:OffsetHDR>
+             <hdrgm:HDRCapacityMin>\(String(format: "%.6f", capMin))</hdrgm:HDRCapacityMin>
+             <hdrgm:HDRCapacityMax>\(String(format: "%.6f", capMax))</hdrgm:HDRCapacityMax>
+             <hdrgm:BaseRenditionIsHDR>False</hdrgm:BaseRenditionIsHDR>
+          </rdf:Description>
+       </rdf:RDF>
+    </x:xmpmeta>
+    <?xpacket end="w"?>
+    """
+    return Data(xml.utf8)
+}
+
+private func buildUHDRPrivateGainMapIntermediate(
+    inputURL: URL,
+    outputURL: URL,
+    infoFloats: [Double],
+    gainMapJPEG: Data
+) throws -> (primaryID: Int, gainMapID: Int) {
+    guard infoFloats.count >= 20 else {
+        throw CLIError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
+    }
+    guard gainMapJPEG.starts(with: Data([0xff, 0xd8])) else {
+        throw CLIError.invalidContainer("local.uhdr.gainmap.data is not a JPEG payload")
+    }
+
+    let src = try Data(contentsOf: inputURL)
+    let top = isobmffBoxes(in: src, start: 0, end: src.count)
+    guard let ftyp = top.first(where: { $0.type == "ftyp" }),
+          let meta = top.first(where: { $0.type == "meta" }),
+          let mdat = top.first(where: { $0.type == "mdat" }) else {
+        throw CLIError.invalidContainer("missing ftyp/meta/mdat")
+    }
+    let metaChildren = isobmffBoxes(in: src, start: meta.dataStart + 4, end: meta.dataEnd)
+    func child(_ type: String) throws -> ISOBMFFBox {
+        guard let box = metaChildren.first(where: { $0.type == type }) else {
+            throw CLIError.invalidContainer("meta/\(type) missing")
+        }
+        return box
+    }
+
+    let iinf = try child("iinf")
+    let iloc = try child("iloc")
+    let pitm = try child("pitm")
+    let iprp = try child("iprp")
+    let idat = try child("idat")
+    let iref = metaChildren.first(where: { $0.type == "iref" })
+    let primaryID = parseISOBMFFPITM(src, pitm)
+    let iinfData = parseISOBMFFIInf(src, iinf)
+    let ilocEntries = try parseISOBMFFILoc(src, iloc)
+    let ipco = try parseISOBMFFIPCOProps(src, iprp)
+    guard let ipmaBox = isobmffBoxes(in: src, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipma" }) else {
+        throw CLIError.invalidContainer("ipma missing")
+    }
+    let ipma = parseISOBMFFIPMA(src, ipmaBox)
+    let propMask = ipma.flags & 1 != 0 ? 0x7fff : 0x7f
+    let primaryAssocs = ipma.entries.first(where: { $0.itemID == primaryID })?.associations ?? []
+    let primaryPropIndices = primaryAssocs.map { $0 & propMask }
+    guard let primaryIspeIndex = primaryPropIndices.first(where: { ipco.types[$0] == "ispe" }),
+          ipco.sizes[primaryIspeIndex] != nil else {
+        throw CLIError.invalidContainer("primary item has no ispe")
+    }
+
+    let gainMapSize = try jpegImageSize(gainMapJPEG)
+    let maxItemID = iinfData.entries.keys.max() ?? primaryID
+    let gainMapID = maxItemID + 1
+    let tmapID = gainMapID + 1
+    let xmpID = gainMapID + 2
+
+    let oldPropCount = ipco.types.count
+    let auxCIndex = oldPropCount + 1
+    let irotIndex = oldPropCount + 2
+    let srgbIndex = oldPropCount + 3
+    let pqIndex = oldPropCount + 4
+    let gmPixiIndex = oldPropCount + 5
+    let tmapPixiIndex = oldPropCount + 6
+    let gmIspeIndex = oldPropCount + 7
+    let oldIDATSize = idat.size - 8
+    let tmapPayload = makeAppleTmapPayload(infoFloats: infoFloats)
+    let xmpPayload = makeHdrgmXMP(infoFloats: infoFloats)
+
+    var metaParts: [Data] = []
+    for part in metaChildren {
+        switch part.type {
+        case "hdlr":
+            metaParts.append(src.subdata(in: part.boxStart..<part.boxStart + part.size))
+            if !metaChildren.contains(where: { $0.type == "dinf" }) {
+                metaParts.append(isoDinfBox)
+            }
+        case "pitm":
+            var payload = Data([0, 0, 0, 0])
+            appendUInt16BE(primaryID, to: &payload)
+            metaParts.append(makeBox("pitm", payload: payload))
+        case "iinf":
+            var payload = Data([iinfData.version, 0, 0, 0])
+            if iinfData.version >= 1 {
+                appendUInt32BE(iinfData.rawInfe.count + 3, to: &payload)
+            } else {
+                appendUInt16BE(iinfData.rawInfe.count + 3, to: &payload)
+            }
+            for raw in iinfData.rawInfe.sorted(by: { $0.key < $1.key }).map(\.value) {
+                payload.append(raw)
+            }
+            payload.append(makeInfeBox(itemID: gainMapID, type: "jpeg", flags: 1))
+            payload.append(makeInfeBox(itemID: tmapID, type: "tmap"))
+            payload.append(makeMimeInfeBox(itemID: xmpID))
+            metaParts.append(makeBox("iinf", payload: payload))
+        case "iloc":
+            var payload = Data([1, 0, 0, 0, 0x44, 0x00])
+            appendUInt16BE(ilocEntries.count + 3, to: &payload)
+            for entry in ilocEntries {
+                appendUInt16BE(entry.itemID, to: &payload)
+                appendUInt16BE(entry.constructionMethod, to: &payload)
+                appendUInt16BE(entry.dataReferenceIndex, to: &payload)
+                appendUInt16BE(entry.extents.count, to: &payload)
+                for extent in entry.extents {
+                    appendUInt32BE(extent.offset, to: &payload)
+                    appendUInt32BE(extent.length, to: &payload)
+                }
+            }
+            appendUInt16BE(gainMapID, to: &payload); appendUInt16BE(0, to: &payload); appendUInt16BE(0, to: &payload); appendUInt16BE(1, to: &payload)
+            appendUInt32BE(0, to: &payload); appendUInt32BE(gainMapJPEG.count, to: &payload)
+            appendUInt16BE(tmapID, to: &payload); appendUInt16BE(1, to: &payload); appendUInt16BE(0, to: &payload); appendUInt16BE(1, to: &payload)
+            appendUInt32BE(oldIDATSize, to: &payload); appendUInt32BE(tmapPayload.count, to: &payload)
+            appendUInt16BE(xmpID, to: &payload); appendUInt16BE(1, to: &payload); appendUInt16BE(0, to: &payload); appendUInt16BE(1, to: &payload)
+            appendUInt32BE(oldIDATSize + tmapPayload.count, to: &payload); appendUInt32BE(xmpPayload.count, to: &payload)
+            metaParts.append(makeBox("iloc", payload: payload))
+        case "iprp":
+            var ipcoPayload = src.subdata(in: ipco.box.dataStart..<ipco.box.dataEnd)
+            ipcoPayload.append(isoAuxCBox)
+            ipcoPayload.append(isoIrotBox)
+            ipcoPayload.append(isoColrSRGBBox)
+            ipcoPayload.append(isoColrPQBox)
+            ipcoPayload.append(isoPixiRGB8Box)
+            ipcoPayload.append(isoPixiRGB10Box)
+            ipcoPayload.append(makeIspeBox(width: gainMapSize.0, height: gainMapSize.1))
+            let ipcoPart = makeBox("ipco", payload: ipcoPayload)
+
+            var ipmaPayload = src.subdata(in: ipmaBox.dataStart..<ipmaBox.dataStart + 4)
+            appendUInt32BE(ipma.entries.count + 2, to: &ipmaPayload)
+            for entry in ipma.entries {
+                if ipma.flags & 1 != 0 { appendUInt32BE(entry.itemID, to: &ipmaPayload) } else { appendUInt16BE(entry.itemID, to: &ipmaPayload) }
+                var associations = entry.associations
+                if entry.itemID == primaryID {
+                    let rawIrot = (ipma.flags & 1 != 0 ? 0x8000 : 0x80) | irotIndex
+                    if !associations.contains(where: { ($0 & propMask) == irotIndex }) {
+                        associations.append(rawIrot)
+                    }
+                }
+                ipmaPayload.append(UInt8(associations.count))
+                for assoc in associations {
+                    if ipma.flags & 1 != 0 { appendUInt16BE(assoc, to: &ipmaPayload) } else { ipmaPayload.append(UInt8(assoc)) }
+                }
+            }
+            ipmaPayload.append(try makeIPMAEntry(gainMapID, [(gmIspeIndex, true), (gmPixiIndex, true), (srgbIndex, true), (irotIndex, true), (auxCIndex, true)], flags: ipma.flags))
+            ipmaPayload.append(try makeIPMAEntry(tmapID, [(primaryIspeIndex, true), (tmapPixiIndex, true), (pqIndex, true)], flags: ipma.flags))
+            let ipmaPart = makeBox("ipma", payload: ipmaPayload)
+            var iprpPayload = Data()
+            iprpPayload.append(ipcoPart)
+            iprpPayload.append(ipmaPart)
+            metaParts.append(makeBox("iprp", payload: iprpPayload))
+        case "iref":
+            var payload = src.subdata(in: part.dataStart..<part.dataEnd)
+            let version = parseISOBMFFIRefVersion(src, iref)
+            payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: version))
+            payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: version))
+            metaParts.append(makeBox("iref", payload: payload))
+        case "idat":
+            var payload = src.subdata(in: part.dataStart..<part.dataEnd)
+            payload.append(tmapPayload)
+            payload.append(xmpPayload)
+            metaParts.append(makeBox("idat", payload: payload))
+        default:
+            metaParts.append(src.subdata(in: part.boxStart..<part.boxStart + part.size))
+        }
+    }
+
+    if iref == nil {
+        var payload = Data([0, 0, 0, 0])
+        payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: 0))
+        payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: 0))
+        metaParts.append(makeBox("iref", payload: payload))
+    }
+
+    var grplPayload = Data()
+    var altrPayload = Data([0, 0, 0, 0])
+    appendUInt32BE(max(tmapID, xmpID) + 1, to: &altrPayload)
+    appendUInt32BE(2, to: &altrPayload)
+    appendUInt32BE(tmapID, to: &altrPayload)
+    appendUInt32BE(primaryID, to: &altrPayload)
+    grplPayload.append(makeBox("altr", payload: altrPayload))
+    metaParts.append(makeBox("grpl", payload: grplPayload))
+
+    var ftypPayload = src.subdata(in: ftyp.dataStart..<ftyp.dataEnd)
+    let existingBrands = Set(stride(from: ftyp.dataStart + 8, to: ftyp.dataEnd, by: 4).compactMap { pos -> String? in
+        guard pos + 4 <= ftyp.dataEnd else { return nil }
+        return String(data: src.subdata(in: pos..<pos + 4), encoding: .ascii)
+    })
+    for brand in ["tmap", "MiHE", "MiHB"] where !existingBrands.contains(brand) {
+        ftypPayload.append(Data(brand.utf8))
+    }
+    let ftypPart = makeBox("ftyp", payload: ftypPayload)
+    var metaPayload = src.subdata(in: meta.dataStart..<meta.dataStart + 4)
+    for part in metaParts { metaPayload.append(part) }
+    let metaPart = makeBox("meta", payload: metaPayload)
+    let betweenMetaAndMdat = src.subdata(in: meta.boxStart + meta.size..<mdat.boxStart)
+    let newMdatDataStart = ftypPart.count + metaPart.count + betweenMetaAndMdat.count + 8
+    let fileDelta = newMdatDataStart - mdat.dataStart
+    let gainMapOffset = newMdatDataStart + (mdat.dataEnd - mdat.dataStart)
+
+    var ilocPayload = Data([1, 0, 0, 0, 0x44, 0x00])
+    appendUInt16BE(ilocEntries.count + 3, to: &ilocPayload)
+    for entry in ilocEntries {
+        appendUInt16BE(entry.itemID, to: &ilocPayload)
+        appendUInt16BE(entry.constructionMethod, to: &ilocPayload)
+        appendUInt16BE(entry.dataReferenceIndex, to: &ilocPayload)
+        appendUInt16BE(entry.extents.count, to: &ilocPayload)
+        for extent in entry.extents {
+            appendUInt32BE(entry.constructionMethod == 0 ? extent.offset + fileDelta : extent.offset, to: &ilocPayload)
+            appendUInt32BE(extent.length, to: &ilocPayload)
+        }
+    }
+    appendUInt16BE(gainMapID, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload)
+    appendUInt32BE(gainMapOffset, to: &ilocPayload); appendUInt32BE(gainMapJPEG.count, to: &ilocPayload)
+    appendUInt16BE(tmapID, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload)
+    appendUInt32BE(oldIDATSize, to: &ilocPayload); appendUInt32BE(tmapPayload.count, to: &ilocPayload)
+    appendUInt16BE(xmpID, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload)
+    appendUInt32BE(oldIDATSize + tmapPayload.count, to: &ilocPayload); appendUInt32BE(xmpPayload.count, to: &ilocPayload)
+    let finalILoc = makeBox("iloc", payload: ilocPayload)
+    let finalMetaParts = metaParts.map { part -> Data in
+        if part.count >= 8, String(data: part.subdata(in: 4..<8), encoding: .ascii) == "iloc" {
+            return finalILoc
+        }
+        return part
+    }
+    var finalMetaPayload = src.subdata(in: meta.dataStart..<meta.dataStart + 4)
+    for part in finalMetaParts { finalMetaPayload.append(part) }
+    let finalMetaPart = makeBox("meta", payload: finalMetaPayload)
+
+    var mdatPayload = src.subdata(in: mdat.dataStart..<mdat.dataEnd)
+    mdatPayload.append(gainMapJPEG)
+    let mdatPart = makeBox("mdat", payload: mdatPayload)
+    var out = Data()
+    out.append(ftypPart)
+    out.append(finalMetaPart)
+    out.append(betweenMetaAndMdat)
+    out.append(mdatPart)
+    try out.write(to: outputURL)
+    return (primaryID, gainMapID)
+}
+
+private func writeUHDRPrivatePassThroughDefault(
+    inputURL: URL,
+    outputURL: URL,
+    infoFloats: [Double],
+    gainMapJPEG: Data,
+    patchedUserComment: String?
+) throws {
+    let parent = outputURL.deletingLastPathComponent()
+    let intermediateURL = parent.appendingPathComponent(".\(outputURL.deletingPathExtension().lastPathComponent).uhdr-passthrough-\(UUID().uuidString).heic")
+    defer { try? FileManager.default.removeItem(at: intermediateURL) }
+
+    _ = try buildUHDRPrivateGainMapIntermediate(
+        inputURL: inputURL,
+        outputURL: intermediateURL,
+        infoFloats: infoFloats,
+        gainMapJPEG: gainMapJPEG
+    )
+    try ISOHDRWriter.writeWithPreserveReencode(
+        intermediateURL: intermediateURL,
+        outputURL: outputURL,
+        patchedUserComment: patchedUserComment
+    )
 }
 
 private func makeOppoUhdrInfoData(scale: ResolvedScale) -> Data {
@@ -2097,9 +3210,14 @@ private func appendOppoCompatibilityPayload(
         }
     }
 
-    appendManifestEntry(name: "local.uhdr.gainmap.info", payload: makeOppoUhdrInfoData(scale: scale), version: 1)
-    if let gmJpeg = gainMapRasterToJPEG(gainMapRaster) {
-        appendManifestEntry(name: "local.uhdr.gainmap.data", payload: gmJpeg, version: 1)
+    if extracted.mode == .uhdr {
+        appendManifestEntry(name: "local.uhdr.gainmap.info", payload: extracted.metaBytes, version: 1)
+        appendManifestEntry(name: "local.uhdr.gainmap.data", payload: extracted.maskJPEGData, version: 1)
+    } else {
+        appendManifestEntry(name: "local.uhdr.gainmap.info", payload: makeOppoUhdrInfoData(scale: scale), version: 1)
+        if let gmJpeg = gainMapRasterToJPEG(gainMapRaster) {
+            appendManifestEntry(name: "local.uhdr.gainmap.data", payload: gmJpeg, version: 1)
+        }
     }
     guard !pendingEntries.isEmpty else { return }
 

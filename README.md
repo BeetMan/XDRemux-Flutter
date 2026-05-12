@@ -19,16 +19,16 @@
 
 ```bash
 # 单张转换
-swift swift/XDRemux.swift convert --input IMG_001.heic
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic
 
 # 批量转换
-swift swift/XDRemux.swift batch --input-dir photo_dump/
+swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
 
 # 指定输出路径
-swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
-# 禁用 OPPO 相册兼容尾部
-swift swift/XDRemux.swift convert --input IMG_001.heic --no-oppo-compat
+# 需要在 OPPO 相册中优先识别时，额外写入 OPPO 兼容尾部
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
 ### Python（跨平台）
@@ -37,17 +37,17 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --no-oppo-compat
 > 需要安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
-# 标准模式（重新编码 base image，quality=90）
-python3 python/XDRemux.py convert --input IMG_001.heic
-
-# Passthrough 模式（保留原始 HEVC 数据，无损）
-python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+# 标准模式（保留原始 base HEVC，仅重写 HDR gain map）
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # 批量转换
-python3 python/XDRemux.py batch --input-dir photo_dump/
+python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
 
-# 禁用 OPPO 相册兼容尾部
-python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
+# 需要在 OPPO 相册中优先识别时，额外写入 OPPO 兼容尾部
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+
+# 排障模式：解码并重新编码 base image
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
 > [!IMPORTANT]
@@ -55,21 +55,22 @@ python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
 
 ## ⚠️ 已知局限
 
-- **色度下采样**：UHDR 设备的 8-bit YCbCr 4:4:4 Gain Map 会被降采样为 4:2:0（Apple ImageIO / libheif 限制）。
-- **OPPO 相册兼容**：默认会写入 OPPO 相册兼容元数据。LHDR 源文件保留原始 `local.hdr.*` 私有尾部，UHDR 源文件写入 `local.uhdr.*` 尾部；可用 `--no-oppo-compat` 关闭。
+- **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族，并选择当前已验证的最高质量/最小额外处理路径；普通用户不需要指定 family 或 gain map 编码方式。Python 默认保留原始 base HEVC 数据，避免二次压缩。
+- **OPPO 相册兼容**：标准输出默认不写 OPPO 私有兼容尾部；需要面向 OPPO 相册优先识别时，使用 `--oppo-compat`。LHDR 源文件会保留原始 `local.hdr.*` 私有尾部，UHDR 源文件会写入 `local.uhdr.*` 尾部。
+- **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
 ## 🧪 实验性功能
 
-### `--passthrough`
+### `--reencode`
 
 > [!CAUTION]
 > **实验性选项** — 行为可能会随版本更新而改变。
 
-跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据。仅重新编码 Gain Map。输出文件的 base image 将与源文件完全一致，无质量损失，作为实验性选项保留。
+默认路径会跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据，仅重新编码 Gain Map。`--reencode` 保留为排障模式，会重新编码 base image，通常文件更大且可能带来二次压缩损耗。
 
 ```bash
 # Python
-python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
 ---
