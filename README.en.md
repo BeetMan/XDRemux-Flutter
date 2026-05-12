@@ -19,16 +19,16 @@ Extracts proprietary HDR Gain Map and metadata from ProXDR HEIC files and repack
 
 ```bash
 # Single file
-swift swift/XDRemux.swift convert --input IMG_001.heic
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic
 
 # Batch
-swift swift/XDRemux.swift batch --input-dir photo_dump/
+swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
 
 # Specify output
-swift swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
-# Disable OPPO Gallery compatibility tail
-swift swift/XDRemux.swift convert --input IMG_001.heic --no-oppo-compat
+# Add OPPO Gallery compatibility metadata when OPPO Gallery is the target viewer
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
 ### Python (cross-platform)
@@ -37,17 +37,17 @@ swift swift/XDRemux.swift convert --input IMG_001.heic --no-oppo-compat
 > Requires dependencies: `pip install pillow-heif Pillow numpy`
 
 ```bash
-# Standard mode (re-encodes base image at quality=90)
-python3 python/XDRemux.py convert --input IMG_001.heic
-
-# Passthrough mode (preserves original HEVC data, lossless)
-python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+# Standard mode (preserves original base HEVC and rewrites only the HDR gain map)
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # Batch conversion
-python3 python/XDRemux.py batch --input-dir photo_dump/
+python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
 
-# Disable OPPO Gallery compatibility tail
-python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
+# Add OPPO Gallery compatibility metadata when OPPO Gallery is the target viewer
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+
+# Troubleshooting mode: decode and re-encode the base image
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
 > [!IMPORTANT]
@@ -55,21 +55,22 @@ python3 python/XDRemux.py convert --input IMG_001.heic --no-oppo-compat
 
 ## ⚠️ Known Limitations
 
-- **Chroma subsampling**: UHDR device 8-bit YCbCr 4:4:4 Gain Maps are downsampled to 4:2:0 (Apple ImageIO / libheif limitation).
-- **OPPO Gallery compatibility**: OPPO Gallery compatibility metadata is written by default. LHDR sources preserve their original `local.hdr.*` private tail, while UHDR sources write a `local.uhdr.*` tail. Pass `--no-oppo-compat` to disable this.
+- **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family, then choose the currently verified high-quality path with the least extra processing. Users do not need to choose family or gain-map encoding. Python preserves the original base HEVC data by default to avoid recompression.
+- **OPPO Gallery compatibility**: Standard Swift output does not write the OPPO private compatibility tail by default. Use `--oppo-compat` when OPPO Gallery is the target viewer. LHDR sources preserve their original `local.hdr.*` private tail, while UHDR sources write a `local.uhdr.*` tail.
+- **Gallery editing strips HDR**: Editing and saving a converted photo in OPPO Gallery strips the HDR Gain Map and its metadata.
 
 ## 🧪 Experimental Features
 
-### `--passthrough`
+### `--reencode`
 
 > [!CAUTION]
 > **Experimental option** — behavior may change between versions.
 
-Skips base image decode→re-encode; copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. The base image in the output will be identical to the source — zero quality loss, remains experimental.
+The default path skips base image decode→re-encode and copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. `--reencode` remains as a troubleshooting mode; it re-encodes the base image and can produce larger files with recompression loss.
 
 ```bash
 # Python
-python3 python/XDRemux.py convert --input IMG_001.heic --passthrough
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
 ---

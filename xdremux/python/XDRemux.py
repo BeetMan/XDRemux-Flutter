@@ -5,14 +5,18 @@ Cross-platform Python implementation. Replaces Apple ImageIO / CoreGraphics
 with pillow-heif + Pillow + numpy.
 
 Usage:
-    xdremux.py convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>]
-    xdremux.py batch --input-dir <dir> [--output-dir <dir>] [--glob <pattern>]
+    xdremux.py convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat]
+    xdremux.py batch --input-dir <dir> [--output-dir <dir>] [--glob <pattern>] [--oppo-compat]
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "xdremux.python"
 
 from . import container, edr, iso21496
 
@@ -56,7 +60,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
         base_image = None
         exif_data = None
-        passthrough = getattr(args, 'passthrough', False)
+        reencode = getattr(args, "reencode", False)
+        passthrough = False if reencode else getattr(args, "passthrough", True)
 
         if not passthrough:
             from pillow_heif import open_heif
@@ -158,7 +163,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
         args2 = argparse.Namespace(input=str(f), output=str(out),
                                     debug_dir=args.debug_dir,
                                     oppo_compat=args.oppo_compat,
-                                    passthrough=args.passthrough)
+                                    passthrough=args.passthrough,
+                                    reencode=args.reencode)
         ret = cmd_convert(args2)
         if ret == 0:
             converted += 1
@@ -169,7 +175,7 @@ def cmd_batch(args: argparse.Namespace) -> int:
     return 0 if failed == 0 else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Convert OPPO ProXDR HEIC to ISO 21496-1 HDR HEIC",
     )
@@ -179,27 +185,35 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--input", required=True)
     c.add_argument("--output")
     c.add_argument("--debug-dir")
-    c.set_defaults(oppo_compat=True)
+    c.set_defaults(oppo_compat=False, passthrough=True, reencode=False)
     c.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
-                   help="Enable OPPO Gallery compatibility metadata (default)")
+                   help="Add OPPO Gallery compatibility metadata")
     c.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
-                   help="Disable OPPO Gallery compatibility metadata")
-    c.add_argument("--passthrough", action="store_true", default=False,
-                   help="[experimental] Passthrough base image HEVC data without re-encoding")
+                   help=argparse.SUPPRESS)
+    c.add_argument("--passthrough", action="store_true", dest="passthrough",
+                   help=argparse.SUPPRESS)
+    c.add_argument("--reencode", action="store_true", dest="reencode",
+                   help="Decode and re-encode the base image instead of preserving source HEVC")
 
     b = sub.add_parser("batch")
     b.add_argument("--input-dir", required=True)
     b.add_argument("--output-dir")
     b.add_argument("--glob")
     b.add_argument("--debug-dir")
-    b.set_defaults(oppo_compat=True)
+    b.set_defaults(oppo_compat=False, passthrough=True, reencode=False)
     b.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
-                   help="Enable OPPO Gallery compatibility metadata (default)")
+                   help="Add OPPO Gallery compatibility metadata")
     b.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
-                   help="Disable OPPO Gallery compatibility metadata")
-    b.add_argument("--passthrough", action="store_true", default=False,
-                   help="[experimental] Passthrough base image HEVC data without re-encoding")
+                   help=argparse.SUPPRESS)
+    b.add_argument("--passthrough", action="store_true", dest="passthrough",
+                   help=argparse.SUPPRESS)
+    b.add_argument("--reencode", action="store_true", dest="reencode",
+                   help="Decode and re-encode the base image instead of preserving source HEVC")
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "convert":
         return cmd_convert(args)

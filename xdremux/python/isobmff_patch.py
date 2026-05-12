@@ -3,7 +3,7 @@
 After pillow-heif writes a HEIC file with a secondary gain map image,
 this module patches the binary to:
   1. Add auxC property box in ipco with urn:iso:std:iso:ts:21496:-1 URI
-    2. Create a new tmap item with 62-byte tone map config (stored in mdat)
+    2. Create a new Apple-compatible tmap item (stored in idat)
   3. Link tmap to auxC via ipma
   4. Add iref/dimg from tmap to [primary, gain_map]
   5. Add iref/auxl from gain_map to primary (ISO 21496-1)
@@ -195,13 +195,102 @@ def _fixed_100k(value, *, zero_as_one=False):
     return encoded
 
 
+def _as_channel_values(value, default=0.0):
+    if isinstance(value, (list, tuple)):
+        values = [float(v) for v in value]
+    elif value is None:
+        values = []
+    else:
+        values = [float(value)]
+    if not values:
+        values = [float(default)]
+    return values
+
+
+def _channels_differ(values, tolerance=1e-9):
+    if len(values) < 3:
+        return False
+    first = float(values[0])
+    return any(abs(float(v) - first) > tolerance for v in values[1:3])
+
+
+def _iso_channel_count(iso_meta):
+    channel_fields = (
+        "gainMapMin",
+        "gainMapMax",
+        "gamma",
+        "offsetSdr",
+        "offsetHdr",
+    )
+    for field in channel_fields:
+        if _channels_differ(_as_channel_values(iso_meta.get(field), 0.0)):
+            return 3
+    return 1
+
+
+def _channel_value(iso_meta, field, index, default):
+    values = _as_channel_values(iso_meta.get(field), default)
+    if index < len(values):
+        return values[index]
+    return values[0]
+
+
+def _signed_rational(value, denominator=100000):
+    return struct.pack('>iI', _fixed_100k(value), denominator)
+
+
+def _unsigned_rational(value, denominator=100000):
+    encoded = _fixed_100k(value)
+    if encoded < 0:
+        raise ValueError(f"unsigned ISO 21496 rational cannot encode negative value {value}")
+    return struct.pack('>II', encoded, denominator)
+
+
+def _build_iso_gainmap_metadata_payload(iso_meta=None):
+    """Build strict ISO 21496-1 C.2.2 GainMapMetadata bytes.
+
+    This is kept as a reference helper for conformance tests and a possible
+    future strict-ISO mode. The default HEIF writer uses Apple-compatible tmap
+    payloads so CoreImage continues to recognize the output as HDR.
+    """
+    iso_meta = iso_meta or {}
+    base_headroom = _first_number(iso_meta.get("hdrCapacityMin"), 0.0)
+    alternate_headroom = _first_number(
+        iso_meta.get("hdrCapacityMax"),
+        _first_number(iso_meta.get("gainMapMax"), 1.0),
+    )
+    channel_count = _iso_channel_count(iso_meta)
+    is_multichannel = channel_count == 3
+    use_base_colour_space = bool(iso_meta.get("useBaseColorSpace", True))
+    flags = (0x80 if is_multichannel else 0) | (0x40 if use_base_colour_space else 0)
+
+    gain_map_metadata = bytearray()
+    gain_map_metadata += struct.pack('>HH', 0, 0)  # minimum_version, writer_version
+    gain_map_metadata += bytes([flags, 0, 0, 0])
+    gain_map_metadata += _unsigned_rational(base_headroom)
+    gain_map_metadata += _unsigned_rational(alternate_headroom)
+    for channel in range(channel_count):
+        gain_map_metadata += _signed_rational(_channel_value(iso_meta, "gainMapMin", channel, 0.0))
+        gain_map_metadata += _signed_rational(
+            _channel_value(iso_meta, "gainMapMax", channel, alternate_headroom)
+        )
+        gain_map_metadata += _unsigned_rational(_channel_value(iso_meta, "gamma", channel, 1.0))
+        gain_map_metadata += _signed_rational(_channel_value(iso_meta, "offsetSdr", channel, 0.0))
+        gain_map_metadata += _signed_rational(_channel_value(iso_meta, "offsetHdr", channel, 0.0))
+
+    payload = bytes(gain_map_metadata)
+    expected_len = 144 if is_multichannel else 64
+    if len(payload) != expected_len:
+        raise ValueError(f"ISO gain map metadata is {len(payload)} bytes, expected {expected_len}")
+    return payload
+
+
 def _build_tmap_config(iso_meta=None):
     """Build Apple ImageIO-compatible 62-byte tmap item payload.
 
-    The payload mirrors the structure emitted by CGImageDestination for ISO
-    gain maps: a six-byte header followed by seven signed fixed-point
-    numerator/denominator pairs at scale 100000.  CoreImage derives the
-    reported content headroom from the alternate headroom pair.
+    This preserves Apple CoreImage Headroom detection while the surrounding
+    HEIF structure and XMP metadata stay aligned with ISO 21496/23008-12 where
+    Apple compatibility permits.
     """
     iso_meta = iso_meta or {}
     base_headroom = _first_number(iso_meta.get("hdrCapacityMin"), 0.0)
@@ -230,6 +319,30 @@ def _build_tmap_config(iso_meta=None):
     if len(payload) != 62:
         raise ValueError(f"tmap config is {len(payload)} bytes, expected 62")
     return payload
+
+
+def _build_hdrgm_xmp_payload(iso_meta=None):
+    """Return the ISO/HEIF XMP metadata item payload for hdrgm metadata."""
+    from . import iso21496
+
+    return iso21496.format_hdrgm_xmp(iso_meta or {}).encode("utf-8")
+
+
+def _mime_infe_box(item_id: int, content_type: str, *, flags: int = 0,
+                   item_name: str = "hdrgm-xmp") -> bytes:
+    """Build an ItemInfoEntry v2 for an ISO/IEC 23008-12 XMP mime item."""
+    if item_id > 0xFFFF:
+        raise ValueError("mime ItemInfoEntry helper currently requires 16-bit item IDs")
+    payload = (
+        bytes([2, (flags >> 16) & 0xFF, (flags >> 8) & 0xFF, flags & 0xFF])
+        + struct.pack(">H", item_id)
+        + struct.pack(">H", 0)
+        + b"mime"
+        + item_name.encode("utf-8") + b"\x00"
+        + content_type.encode("ascii") + b"\x00"
+        + b"\x00"  # empty content_encoding
+    )
+    return struct.pack(">I", 8 + len(payload)) + b"infe" + payload
 
 # Primary image colr payload extracted from an Apple ImageIO ISO-gain-map HEIC.
 # It is a Display P3 Linear ICC profile with a cicp tag, which CoreImage reports
@@ -273,6 +386,8 @@ def _parse_all_items(data, iinf_ds, iinf_de):
     infe_start = ec_pos + ec_size
     item_types = {}
 
+    known_u16_item_types = {"hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "avc1"}
+
     def _is_valid_fourcc(b):
         """Check if 4 bytes look like a valid item type FourCC."""
         try:
@@ -289,7 +404,12 @@ def _parse_all_items(data, iinf_ds, iinf_de):
                 # Detect u16 vs u32 by checking which offset has valid FourCC
                 type_at_u16 = data[o+4:o+8]   # item_type if iid is u16
                 type_at_u32 = data[o+6:o+10]  # item_type if iid is u32
-                if _is_valid_fourcc(type_at_u16) and not _is_valid_fourcc(type_at_u32):
+                try:
+                    u16_type_text = type_at_u16.decode('ascii')
+                except UnicodeDecodeError:
+                    u16_type_text = ""
+                if (u16_type_text in known_u16_item_types
+                        or (_is_valid_fourcc(type_at_u16) and not _is_valid_fourcc(type_at_u32))):
                     iid = struct.unpack_from('>H', data, o)[0]; o += 2
                 else:
                     iid = struct.unpack_from('>I', data, o)[0]; o += 4
@@ -317,7 +437,12 @@ def _parse_infe_item_id(raw_box):
     o = 12
     type_at_u16 = raw_box[o+4:o+8]
     type_at_u32 = raw_box[o+6:o+10]
-    if _is_valid_fourcc(type_at_u16) and not _is_valid_fourcc(type_at_u32):
+    try:
+        u16_type_text = type_at_u16.decode('ascii')
+    except UnicodeDecodeError:
+        u16_type_text = ""
+    if (u16_type_text in {"hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "avc1"}
+            or (_is_valid_fourcc(type_at_u16) and not _is_valid_fourcc(type_at_u32))):
         return struct.unpack_from('>H', raw_box, o)[0]
     return struct.unpack_from('>I', raw_box, o)[0]
 
@@ -435,6 +560,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     new_primary_grid_item_id = next_item_id
     new_gainmap_grid_item_id = next_item_id + 1
     new_tmap_item_id = next_item_id + 2
+    new_xmp_item_id = next_item_id + 3
 
     # iloc geometry — upgrade v0 to v1 for Apple ImageIO compatibility.
     # Pillow-heif writes iloc v=0 with bosz=4. Apple ImageIO requires v=1
@@ -736,6 +862,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # ════════════════════════════════════════════════════════════════
 
     tmap_config = _build_tmap_config(iso_meta)
+    xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
 
     def _grid_payload_for_ispe(prop_idx):
         width, height = ispe_sizes.get(prop_idx, (0, 0))
@@ -743,7 +870,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
 
     primary_grid_config = _grid_payload_for_ispe(primary_ispe_idx)
     gainmap_grid_config = _grid_payload_for_ispe(gainmap_ispe_idx)
-    idat_payload = primary_grid_config + gainmap_grid_config + tmap_config
+    idat_payload = primary_grid_config + gainmap_grid_config + tmap_config + xmp_payload
 
     def _infe_box(item_id, item_type, flags=0):
         # infe v=2 with u16 item_ID + empty item_name.
@@ -767,6 +894,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         _infe_box(new_primary_grid_item_id, 'grid', flags=0)
         + _infe_box(new_gainmap_grid_item_id, 'grid', flags=1)
         + _infe_box(new_tmap_item_id, 'tmap', flags=0)
+        + _mime_infe_box(new_xmp_item_id, 'application/rdf+xml', flags=1)
     )
 
     def _single_dimg(from_id, to_id):
@@ -788,6 +916,13 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         _single_dimg(new_primary_grid_item_id, primary_item_id)
         + _single_dimg(new_gainmap_grid_item_id, gainmap_item_id)
         + dimg_tmap_sub
+    )
+    xmp_cdsc_sub = (
+        struct.pack('>I', 16) + b'cdsc'
+        + struct.pack('>H', new_xmp_item_id)
+        + struct.pack('>H', 2)
+        + struct.pack('>H', new_primary_grid_item_id)
+        + struct.pack('>H', new_tmap_item_id)
     )
 
     # Build replacement cdsc sub-boxes that point to primary grid + tmap.
@@ -811,6 +946,8 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
             new_tids.append(new_primary_grid_item_id)
         if new_tmap_item_id not in new_tids:
             new_tids.append(new_tmap_item_id)
+        if new_xmp_item_id not in new_tids:
+            new_tids.append(new_xmp_item_id)
         new_sz = 4 + 4 + 2 + 2 + len(new_tids) * 2
         cdsc_new_size += new_sz
         cdsc_replacements[fid] = (
@@ -824,7 +961,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # Build grpl/altr box — Apple ImageIO requires this to find the tmap
     # as an "alternate representation" of the primary image.
     # grpl(36) = header(8) + altr(28) = header(8) + altr_header(8) + v(4) + gid(4) + n(4) + ids(8)
-    new_altr_group_id = new_tmap_item_id + 1
+    new_altr_group_id = new_xmp_item_id + 1
     GRPL_BOX = (
         struct.pack('>I', 36) + b'grpl'
         + struct.pack('>I', 28) + b'altr'
@@ -843,7 +980,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # Update iinf entry_count BEFORE snapshot (Phase C reads from orig_data)
     old_iinf_cnt = struct.unpack_from('>H' if iinf_ec_size == 2 else '>I',
                                       data, iinf_ec_pos)[0]
-    _wn(iinf_ec_size, old_iinf_cnt + 3, data, iinf_ec_pos)  # primary grid + gainmap grid + tmap
+    _wn(iinf_ec_size, old_iinf_cnt + 4, data, iinf_ec_pos)
 
     # Snapshot original data AFTER count update but BEFORE size field modifications
     orig_data = bytearray(data)
@@ -866,12 +1003,12 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # iloc delta: v0->v1 conversion changes entry size, plus three derived entries
     old_entry_size_v0 = item_id_size_orig + 2 + bosz_orig + 2 + osz + lsz
     new_entry_size_v1 = 2 + 2 + 2 + 2 + 4 + 4  # id, cm, dri, ec, offset, length
-    iloc_entry_delta = (new_entry_size_v1 - old_entry_size_v0) * old_iloc_cnt + (new_entry_size_v1 * 3)
+    iloc_entry_delta = (new_entry_size_v1 - old_entry_size_v0) * old_iloc_cnt + (new_entry_size_v1 * 4)
     ipma_entry_delta = len(ipma_entries_raw) - (old_ipma_content_end - ipma_body)
     # Existing pillow-heif output only has cdsc references. The new tmap dimg
     # sub-box is additional content and must be included in the enclosing sizes
     # and iloc mdat offset shift.
-    iref_delta = cdsc_delta + len(dimg_subs)
+    iref_delta = cdsc_delta + len(dimg_subs) + len(xmp_cdsc_sub)
 
     total_delta = (iinf_delta + iloc_entry_delta +
                    ipma_entry_delta + iref_delta + grpl_delta + len(DINF_BOX) + colr_pq_delta + idat_delta + icc_colr_delta)
@@ -1036,7 +1173,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
             # v1 format: version=1, flags=0, b0=osz|lsz, b1=0 (bosz=0, isz=0)
             out += bytes([1, 0, 0, 0])  # version=1, flags=0
             out += bytes([0x44, 0x00])  # b0=0x44 (osz=4, lsz=4), b1=0x00 (bosz=0, isz=0)
-            out += struct.pack('>H', old_iloc_cnt + 3)
+            out += struct.pack('>H', old_iloc_cnt + 4)
 
             # Convert existing entries from v0 to v1 format
             pos = iloc_body + 2 + iloc_cnt_size_orig
@@ -1088,6 +1225,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                 (new_primary_grid_item_id, existing_idat_data_size, len(primary_grid_config)),
                 (new_gainmap_grid_item_id, existing_idat_data_size + len(primary_grid_config), len(gainmap_grid_config)),
                 (new_tmap_item_id, existing_idat_data_size + len(primary_grid_config) + len(gainmap_grid_config), len(tmap_config)),
+                (new_xmp_item_id, existing_idat_data_size + len(primary_grid_config) + len(gainmap_grid_config) + len(tmap_config), len(xmp_payload)),
             ):
                 out += struct.pack('>H', iid)
                 out += struct.pack('>H', 1)  # construction_method=1 (idat)
@@ -1125,6 +1263,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                     out += orig_data[rpos:re]
                 rpos = re
             out += dimg_subs
+            out += xmp_cdsc_sub
             # Fix iref size
             iref_new_sz = len(out) - iref_out_start
             struct.pack_into('>I', out, iref_out_start, iref_new_sz)

@@ -333,7 +333,7 @@ def _encode_gainmap_tiles(gm_img: Image.Image, output_dir: str,
                     prefix="proxdr_gainmap_tile_", suffix=".heic", dir=output_dir or None,
                 )
                 os.close(fd)
-                from_pillow(tile).save(gm_tmp_path, quality=90)
+                from_pillow(tile).save(gm_tmp_path, quality=90, chroma="444")
                 with open(gm_tmp_path, "rb") as f:
                     gm_data = f.read()
                 payload, hvcc = _extract_heif_hvc_payload_and_config(gm_data)
@@ -377,7 +377,7 @@ def write_heic(output_path: str, base_image: Image.Image,
     heif.add_from_pillow(gm_img)
 
     # Build save kwargs — passthrough source EXIF (shooting params, GPS, orientation)
-    save_kwargs = {"quality": 90}
+    save_kwargs = {"quality": 90, "chroma": "444"}
     if exif_data is not None:
         save_kwargs["exif"] = exif_data
 
@@ -422,7 +422,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
     byte-for-byte from the source mdat, preserving original quality.
     """
     from .isobmff_patch import (
-        _boxes, _build_tmap_config, _fullbox, _parse_all_items, _parse_infe_item_id,
+        _boxes, _build_hdrgm_xmp_payload, _build_tmap_config, _fullbox,
+        _mime_infe_box, _parse_all_items, _parse_infe_item_id,
         build_grid_payload,
         AUXC_BOX, DINF_BOX, COLR_NCLX_PQ_BOX, COLR_NCLX_SRGB_BOX,
         IROT_BOX, PIXI_RGB10_BOX, PIXI_RGB8_BOX, SWIFT_PQ_ICC_PROFILE,
@@ -483,6 +484,16 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # Parse iinf for item types
     item_types, iinf_v = _parse_all_items(src, child['iinf']['ds'], child['iinf']['de'])
+    source_tmap_item_ids = {iid for iid, item_type in item_types.items() if item_type == "tmap"}
+    if source_tmap_item_ids:
+        with open(output_path, 'wb') as f:
+            f.write(src)
+        if oppo_compat and lhdr is not None:
+            gm_img = _normalize_gainmap_image(gainmap)
+            _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
+        return
+
+    original_max_item_id = max(item_types.keys())
 
     if oppo_compat and lhdr is not None and lhdr.mode == "uhdr":
         patched_comment = _get_patched_oppo_user_comment(lhdr)
@@ -542,14 +553,18 @@ def write_heic_passthrough(source_path: str, output_path: str,
     )
 
     # ── 4. Prepare building blocks ─────────────────────────────────
-    next_id = max(item_types.keys()) + 1
+    next_id = original_max_item_id + 1
     add_primary_grid = item_types.get(pitm_id) != "grid"
     primary_grid_id = next_id if add_primary_grid else pitm_id
     gm_tile_start_id = next_id + (1 if add_primary_grid else 0)
     gm_tile_ids = list(range(gm_tile_start_id, gm_tile_start_id + len(gm_tile_payloads)))
     gm_grid_id = gm_tile_start_id + len(gm_tile_payloads)
     tmap_item_id = gm_grid_id + 1
-    if tmap_item_id > 0xFFFF:
+    xmp_item_id = tmap_item_id + 1
+    used_item_ids = set(item_types) | set(gm_tile_ids) | {primary_grid_id, gm_grid_id, tmap_item_id}
+    while xmp_item_id in used_item_ids:
+        xmp_item_id += 1
+    if xmp_item_id > 0xFFFF:
         raise ValueError("Passthrough mode currently requires 16-bit HEIF item IDs")
 
     auxc_prop_idx = prop_count + 1
@@ -567,17 +582,19 @@ def write_heic_passthrough(source_path: str, output_path: str,
         raise ValueError(f"Primary item {pitm_id} has no ispe property association")
 
     tmap_config = _build_tmap_config(iso_meta)
+    xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
 
     primary_width, primary_height = ispe_sizes.get(primary_ispe_idx, (0, 0))
     primary_grid_config = build_grid_payload(primary_width, primary_height) if add_primary_grid else b""
     gm_grid_config = build_grid_payload(gm_width, gm_height, rows=gm_rows, columns=gm_columns)
-    idat_payload = primary_grid_config + gm_grid_config + tmap_config
+    idat_payload = primary_grid_config + gm_grid_config + tmap_config + xmp_payload
 
     new_infe = (
         (_infe_box(primary_grid_id, 'grid', flags=0) if add_primary_grid else b"")
         + b"".join(_infe_box(gm_item_id, 'hvc1', flags=1) for gm_item_id in gm_tile_ids)
         + _infe_box(gm_grid_id, 'grid', flags=1)
         + _infe_box(tmap_item_id, 'tmap', flags=0)
+        + _mime_infe_box(xmp_item_id, 'application/rdf+xml', flags=1)
     )
 
     # Find EXIF item ID from source iref (cdsc reference)
@@ -660,6 +677,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
         (gm_grid_ispe_prop_idx, True),
         (srgb_nclx_prop_idx, True),
         (gm_pixi_prop_idx, True),
+        (irot_prop_idx, True),
     ]
     new_ipma_entries.append(_encode_ipma_entry(gm_grid_id, gm_grid_assocs))
 
@@ -679,6 +697,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     # cdsc: EXIF references both primary grid and tmap (matches normal mode)
     if exif_item_id is not None:
         iref_new_content += _iref_box(b'cdsc', exif_item_id, [primary_grid_id, tmap_item_id], version=iref_v)
+    iref_new_content += _iref_box(b'cdsc', xmp_item_id, [primary_grid_id, tmap_item_id], version=iref_v)
 
     # ── 5. Build meta children as bytearrays ───────────────────────
     # Build each child, then compute actual sizes for the meta box.
@@ -705,11 +724,14 @@ def write_heic_passthrough(source_path: str, output_path: str,
             for tp2, ds2, de2, bs2, bsz2 in _boxes(src, ec_pos + ec_size, child['iinf']['de']):
                 if tp2 == 'infe':
                     raw_infe = bytes(src[bs2:de2])
-                    if add_primary_grid and _parse_infe_item_id(raw_infe) == pitm_id:
+                    infe_item_id = _parse_infe_item_id(raw_infe)
+                    if infe_item_id in source_tmap_item_ids:
+                        continue
+                    if add_primary_grid and infe_item_id == pitm_id:
                         raw_infe = _infe_with_flags(raw_infe, 1)
                     part += raw_infe
             old_cnt = struct.unpack_from('>H' if ec_size == 2 else '>I', src, ec_pos)[0]
-            new_cnt = old_cnt + len(gm_tile_ids) + 2 + (1 if add_primary_grid else 0)
+            new_cnt = old_cnt - len(source_tmap_item_ids) + len(gm_tile_ids) + 3 + (1 if add_primary_grid else 0)
             if ec_size == 2:
                 struct.pack_into('>H', part, 8 + 4, new_cnt)
             else:
@@ -723,8 +745,9 @@ def write_heic_passthrough(source_path: str, output_path: str,
             part += b'\x00\x00\x00\x00' + b'iloc'
             part += bytes([1, 0, 0, 0])  # version=1, flags=0
             part += bytes([0x44, 0x00])  # osz=4, lsz=4, bosz=0, isz=0
-            part += struct.pack('>H', old_iloc_cnt + len(gm_tile_ids) + 2 + (1 if add_primary_grid else 0))
-            for entry in parsed_iloc:
+            kept_iloc_entries = [entry for entry in parsed_iloc if entry['iid'] not in source_tmap_item_ids]
+            part += struct.pack('>H', len(kept_iloc_entries) + len(gm_tile_ids) + 3 + (1 if add_primary_grid else 0))
+            for entry in kept_iloc_entries:
                 part += struct.pack('>H', entry['iid'])
                 part += struct.pack('>H', entry['cm'])
                 part += struct.pack('>H', entry['dri'])
@@ -754,6 +777,11 @@ def write_heic_passthrough(source_path: str, output_path: str,
             part += struct.pack('>H', 0) + struct.pack('>H', 1)
             part += struct.pack('>I', old_idat_data_sz + len(primary_grid_config) + len(gm_grid_config))
             part += struct.pack('>I', len(tmap_config))
+            # hdrgm XMP item (cm=1, in idat)
+            part += struct.pack('>H', xmp_item_id) + struct.pack('>H', 1)
+            part += struct.pack('>H', 0) + struct.pack('>H', 1)
+            part += struct.pack('>I', old_idat_data_sz + len(primary_grid_config) + len(gm_grid_config) + len(tmap_config))
+            part += struct.pack('>I', len(xmp_payload))
             struct.pack_into('>I', part, 0, len(part))
             meta_parts.append(part)
 
@@ -785,9 +813,10 @@ def write_heic_passthrough(source_path: str, output_path: str,
             ipma_part += src[ipma['ds']:ipma['ds'] + 4]  # fullbox header
             # Count: keep existing source associations, then append only new
             # Path-B items. Existing primary grids must remain untouched.
-            existing_count = len(ipma_entries)
+            kept_ipma_entries = [entry for entry in ipma_entries if entry['iid'] not in source_tmap_item_ids]
+            existing_count = len(kept_ipma_entries)
             ipma_part += struct.pack('>I', existing_count + len(new_ipma_entries))
-            for entry in ipma_entries:
+            for entry in kept_ipma_entries:
                 if ipma_f & 1:
                     ipma_part += struct.pack('>I', entry['iid'])
                 else:
@@ -814,7 +843,28 @@ def write_heic_passthrough(source_path: str, output_path: str,
             part = bytearray()
             part += b'\x00\x00\x00\x00' + b'iref'
             part += src[ds:ds + 4]  # fullbox header
-            part += src[ds + 4:de]  # existing refs
+            ref_pos = ds + 4
+            id_size = 4 if iref_v >= 1 else 2
+            while ref_pos + 8 <= de:
+                ref_sz = struct.unpack_from('>I', src, ref_pos)[0]
+                ref_end = ref_pos + ref_sz
+                if ref_sz < 8 + id_size + 2 or ref_end > de:
+                    break
+                ref_type = src[ref_pos + 4:ref_pos + 8]
+                from_id = int.from_bytes(src[ref_pos + 8:ref_pos + 8 + id_size], "big")
+                ref_count_pos = ref_pos + 8 + id_size
+                ref_count = struct.unpack_from('>H', src, ref_count_pos)[0]
+                targets_pos = ref_count_pos + 2
+                targets = [
+                    int.from_bytes(src[targets_pos + i * id_size:targets_pos + (i + 1) * id_size], "big")
+                    for i in range(ref_count)
+                    if targets_pos + (i + 1) * id_size <= ref_end
+                ]
+                if from_id in source_tmap_item_ids or any(target in source_tmap_item_ids for target in targets):
+                    ref_pos = ref_end
+                    continue
+                part += src[ref_pos:ref_end]
+                ref_pos = ref_end
             part += iref_new_content
             struct.pack_into('>I', part, 0, len(part))
             meta_parts.append(part)
@@ -852,7 +902,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
             if tp == 'altr' and de - ds >= 12:
                 existing_group_ids.append(struct.unpack_from('>I', src, ds + 4)[0])
     new_altr_group_id = max(
-        [*item_types.keys(), primary_grid_id, *gm_tile_ids, gm_grid_id, tmap_item_id, *existing_group_ids],
+        [*item_types.keys(), primary_grid_id, *gm_tile_ids, gm_grid_id, tmap_item_id, xmp_item_id, *existing_group_ids],
         default=tmap_item_id,
     ) + 1
     meta_parts.append(bytearray(
@@ -899,7 +949,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
     # Patch: walk iloc entries and adjust cm=0 offsets
     # Header: size(4) + type(4) + version/flags(4) + fields(2) + count(2) = 16
     iloc_off = 16
-    total_new_items = old_iloc_cnt + len(gm_tile_ids) + 2 + (1 if add_primary_grid else 0)
+    kept_iloc_for_patch = [entry for entry in parsed_iloc if entry['iid'] not in source_tmap_item_ids]
+    total_new_items = len(kept_iloc_for_patch) + len(gm_tile_ids) + 3 + (1 if add_primary_grid else 0)
     for i in range(total_new_items):
         current_iid = struct.unpack_from('>H', iloc_part, iloc_off)[0]
         iloc_off += 2  # item_id
@@ -912,8 +963,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
             iloc_off += 4  # extent_offset (osz=4)
             el_off = iloc_off
             iloc_off += 4  # extent_length (lsz=4)
-            if i < old_iloc_cnt:
-                entry = parsed_iloc[i]
+            if i < len(kept_iloc_for_patch):
+                entry = kept_iloc_for_patch[i]
                 if entry['cm'] == 0 and j < len(entry['extents']):
                     old_eo = entry['extents'][j][0]
                     struct.pack_into('>I', iloc_part, el_off - 4, old_eo + file_delta)
