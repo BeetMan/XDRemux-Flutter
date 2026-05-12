@@ -6,6 +6,8 @@
 
 提取 ProXDR HEIC 中的专有 HDR Gain Map 及元数据，重新封装为符合业界标准的 ISO 21496-1 HDR HEIC，确保在 macOS、iOS、Android 上呈现准确的色调映射。
 
+当前推荐使用 Swift CLI 作为 macOS 上的主转换入口。
+
 ## 📱 支持设备
 
 | Format | Devices |
