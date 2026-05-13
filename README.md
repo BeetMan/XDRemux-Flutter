@@ -12,8 +12,8 @@
 
 | Format | Devices |
 |--------|---------|
-| UHDR | OPPO Find X8 Ultra, Find X9, Find X9 Ultra |
-| LHDR | OPPO Find X6 Pro, Find X7 Ultra, Find X8 |
+| UHDR | OPPO Find X8 Ultra, OPPO Find X9 系列 |
+| LHDR | OPPO Find X6 Pro 发布后，OPPO Find X8 Ultra 发布前所有支持 ProXDR 照片拍摄的设备 |
 
 ## 🚀 快速上手
 
