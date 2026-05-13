@@ -135,6 +135,34 @@ PIXI_RGB8_BOX = (
     b'\x03\x08\x08\x08'
 )
 
+CLLI_REFERENCE_MAX_CLL = 203
+CLLI_REFERENCE_MAX_FALL = 64
+
+
+def _build_clli_box(iso_meta=None, *, alternate: bool = False) -> bytes:
+    """Build a HEIF Content Light Level item property.
+
+    ISO 21496-1 stores HDR headroom in stops over HDR reference white. Apple
+    ImageIO uses 203/64 nits for the SDR representation, so scale those values
+    by the relevant baseline/alternate headroom when signalling CLLI.
+    """
+    iso_meta = iso_meta or {}
+    if alternate:
+        headroom = _first_number(
+            iso_meta.get("hdrCapacityMax"),
+            _first_number(iso_meta.get("gainMapMax"), 0.0),
+        )
+    else:
+        headroom = _first_number(iso_meta.get("hdrCapacityMin"), 0.0)
+    scale = 2 ** max(float(headroom), 0.0)
+
+    def _u16_nits(value):
+        return max(1, min(0xFFFF, int(round(float(value)))))
+
+    max_cll = _u16_nits(CLLI_REFERENCE_MAX_CLL * scale)
+    max_fall = _u16_nits(CLLI_REFERENCE_MAX_FALL * scale)
+    return struct.pack('>I4sHH', 12, b'clli', max_cll, max_fall)
+
 
 def build_grid_payload(width: int, height: int, *, rows: int = 1, columns: int = 1) -> bytes:
     """Build the 8-byte HEIF grid item payload used in meta/idat."""
@@ -617,6 +645,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
 
     # ipma geometry
     ipma_v, ipma_f, ipma_body = _fullbox(data, ipma['ds'])
+    pidx_mask = 0x7FFF if (ipma_f & 1) else 0x7F
     ipma_entry_cnt = struct.unpack_from('>I', data, ipma_body)[0]
     ipma_pos = ipma_body + 4
     for _ in range(ipma_entry_cnt):
@@ -661,7 +690,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                     scan_val = struct.unpack_from('>H', data, scan_pos)[0]; scan_pos += 2
                 else:
                     scan_val = data[scan_pos]; scan_pos += 1
-                scan_pidx = scan_val & 0x7FFF
+                scan_pidx = scan_val & pidx_mask
                 if ipco_prop_types.get(scan_pidx) == 'colr':
                     primary_colr_idx_pre = scan_pidx
                     break
@@ -669,11 +698,13 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         for _ in range(scan_ac):
             scan_pos += 2 if (ipma_f & 1) else 1
 
-    # New properties appended to ipco: irot, PQ nclx, sRGB nclx, HDR pixi
+    # New properties appended to ipco: irot, PQ nclx, sRGB nclx, HDR pixi, CLLI.
     irot_prop_idx = prop_count + 1
-    pq_nclx_prop_idx_early = prop_count + 2  # PQ nclx for tmap AND primary
+    pq_nclx_prop_idx_early = prop_count + 2  # PQ nclx for tmap.
     srgb_nclx_prop_idx = prop_count + 3  # after irot + PQ nclx
     hdr_pixi_prop_idx = prop_count + 4
+    base_clli_prop_idx = prop_count + 5
+    tmap_clli_prop_idx = prop_count + 6
 
     # Parse all ipma entries to modify gain map entry (add auxC)
     gainmap_ispe_idx = None
@@ -700,14 +731,14 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         # Track gainmap's ispe index for tmap ipma entry
         if iid == gainmap_item_id and gainmap_ispe_idx is None:
             for v in assocs:
-                pidx = v & 0x7FFF
+                pidx = v & pidx_mask
                 if pidx in ispe_indices:
                     gainmap_ispe_idx = pidx
                     break
         # Track primary's ispe index for grid ipma entries
         if iid == primary_item_id and primary_ispe_idx is None:
             for v in assocs:
-                pidx = v & 0x7FFF
+                pidx = v & pidx_mask
                 if pidx in ispe_indices:
                     primary_ispe_idx = pidx
                     break
@@ -724,7 +755,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         entry_ac = ac + extra_assocs
         entry += bytes([entry_ac])
         for val in assocs:
-            pidx = val & 0x7FFF
+            pidx = val & pidx_mask
             # Make colr essential on primary (Apple ImageIO needs this for PQ detection)
             if iid == primary_item_id and pidx == primary_colr_idx_pre:
                 if ipma_f & 1:
@@ -764,7 +795,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     for e in ipma_entries_list:
         if e['item_id'] == primary_item_id:
             for v in e['assocs']:
-                pidx = v & 0x7FFF
+                pidx = v & pidx_mask
                 prop_type = ipco_prop_types.get(pidx)
                 if prop_type == 'colr' and primary_colr_idx is None:
                     primary_colr_idx = pidx
@@ -772,7 +803,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                     primary_pixi_idx = pidx
         elif e['item_id'] == gainmap_item_id:
             for v in e['assocs']:
-                pidx = v & 0x7FFF
+                pidx = v & pidx_mask
                 if ipco_prop_types.get(pidx) == 'pixi' and gainmap_pixi_idx is None:
                     gainmap_pixi_idx = pidx
 
@@ -793,12 +824,15 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # gain-map writer exposes tmap over two grid-derived items, even when the
     # source is conceptually a single image.
     primary_grid_assocs = []
-    if primary_colr_idx is not None:
-        primary_grid_assocs.append((primary_colr_idx, True))
+    primary_grid_assocs.append((
+        primary_colr_idx if primary_colr_idx is not None else srgb_nclx_prop_idx,
+        True,
+    ))
     if primary_ispe_idx is not None:
         primary_grid_assocs.append((primary_ispe_idx, False))
     if primary_pixi_idx is not None:
         primary_grid_assocs.append((primary_pixi_idx, False))
+    primary_grid_assocs.append((base_clli_prop_idx, False))
     primary_grid_assocs.append((irot_prop_idx, True))
     ipma_entry_bytes.append(_encode_ipma_entry(new_primary_grid_item_id, primary_grid_assocs))
 
@@ -815,6 +849,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     if primary_ispe_idx is not None:
         tmap_assocs.append((primary_ispe_idx, False))
     tmap_assocs.append((hdr_pixi_prop_idx, False))
+    tmap_assocs.append((tmap_clli_prop_idx, False))
     tmap_assocs.append((irot_prop_idx, True))
     ipma_entry_bytes.append(_encode_ipma_entry(new_tmap_item_id, tmap_assocs))
 
@@ -863,6 +898,8 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
 
     tmap_config = _build_tmap_config(iso_meta)
     xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
+    base_clli_box = _build_clli_box(iso_meta, alternate=False)
+    tmap_clli_box = _build_clli_box(iso_meta, alternate=True)
 
     def _grid_payload_for_ispe(prop_idx):
         width, height = ispe_sizes.get(prop_idx, (0, 0))
@@ -992,6 +1029,8 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
         + len(COLR_NCLX_SRGB_BOX)
         + len(IROT_BOX)
         + len(PIXI_RGB10_BOX)
+        + len(base_clli_box)
+        + len(tmap_clli_box)
     )
     # Grid configs and tmap config are stored in idat (cm=1), matching Apple output.
     if has_idat:
@@ -1123,6 +1162,9 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                     # Append RGB10 pixi for the alternate HDR representation.
                     hdr_pixi_prop_idx_local = prop_idx + 3
                     out += PIXI_RGB10_BOX
+                    # Append CLLI for base and alternate tmap representations.
+                    out += base_clli_box
+                    out += tmap_clli_box
                     # Fix ipco size
                     ipco_new_sz = len(out) - ipco_out_start
                     struct.pack_into('>I', out, ipco_out_start, ipco_new_sz)

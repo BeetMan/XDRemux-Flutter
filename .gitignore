@@ -11,3 +11,31 @@ DerivedData/
 Package.resolved
 __pycache__/
 xdremux_py/
+
+# Large binaries
+*.apk
+*.heic
+*.tar.gz
+*.zip
+
+# Local agent / project scaffolding (not for tracking)
+.claude/
+.github/
+.sisyphus/
+.flake8
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+Makefile
+apk_analysis_results/
+docs/
+evals/
+handoff_package/
+harness/
+oracle-dump/
+proxdr-probe-app/
+scripts/
+test-samples/
+tmp-samples/
+tmp/
+tools/

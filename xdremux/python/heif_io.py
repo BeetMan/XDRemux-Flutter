@@ -422,7 +422,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     byte-for-byte from the source mdat, preserving original quality.
     """
     from .isobmff_patch import (
-        _boxes, _build_hdrgm_xmp_payload, _build_tmap_config, _fullbox,
+        _boxes, _build_clli_box, _build_hdrgm_xmp_payload, _build_tmap_config, _fullbox,
         _mime_infe_box, _parse_all_items, _parse_infe_item_id,
         build_grid_payload,
         AUXC_BOX, DINF_BOX, COLR_NCLX_PQ_BOX, COLR_NCLX_SRGB_BOX,
@@ -572,10 +572,12 @@ def write_heic_passthrough(source_path: str, output_path: str,
     pq_nclx_prop_idx = prop_count + 3
     srgb_nclx_prop_idx = prop_count + 4
     hdr_pixi_prop_idx = prop_count + 5
-    gm_pixi_prop_idx = prop_count + 6
-    gm_hvcC_prop_idx = prop_count + 7
-    gm_grid_ispe_prop_idx = prop_count + 8
-    gm_tile_ispe_prop_idx = prop_count + 9
+    base_clli_prop_idx = prop_count + 6
+    tmap_clli_prop_idx = prop_count + 7
+    gm_pixi_prop_idx = prop_count + 8
+    gm_hvcC_prop_idx = prop_count + 9
+    gm_grid_ispe_prop_idx = prop_count + 10
+    gm_tile_ispe_prop_idx = prop_count + 11
     if not (ipma_f & 1) and gm_tile_ispe_prop_idx > 0x7F:
         raise ValueError("Passthrough mode cannot encode more than 127 properties in ipma flags=0")
     if primary_ispe_idx is None:
@@ -583,6 +585,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     tmap_config = _build_tmap_config(iso_meta)
     xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
+    base_clli_box = _build_clli_box(iso_meta, alternate=False)
+    tmap_clli_box = _build_clli_box(iso_meta, alternate=True)
 
     primary_width, primary_height = ispe_sizes.get(primary_ispe_idx, (0, 0))
     primary_grid_config = build_grid_payload(primary_width, primary_height) if add_primary_grid else b""
@@ -599,6 +603,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # Find EXIF item ID from source iref (cdsc reference)
     exif_item_id = None
+    source_dimg_refs = {}
     iref_v = 0
     if 'iref' in child:
         iref_ds = child['iref']['ds']
@@ -620,6 +625,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
                 for i in range(ref_count)
                 if targets_pos + (i + 1) * id_size <= ref_pos + ref_sz
             ]
+            if ref_type == b'dimg':
+                source_dimg_refs[from_id] = targets
             if ref_type == b'cdsc' and (pitm_id in targets or exif_item_id is None):
                 exif_item_id = from_id
             ref_pos += ref_sz
@@ -646,16 +653,47 @@ def write_heic_passthrough(source_path: str, output_path: str,
                 entry += bytes([(0x80 if essential else 0) | pidx_val])
         return bytes(entry)
 
-    # Keep an existing primary grid's property associations byte-for-byte. OPPO
-    # Gallery is picky here: adding otherwise-valid properties can make the
-    # original image path fall back to thumbnail-only decode.
-    primary_assocs = []
-    pitm_ipma_entry = next((entry for entry in ipma_entries if entry['iid'] == pitm_id), None)
-    if pitm_ipma_entry is not None:
-        primary_assocs = [
+    def _entry_for_item(item_id):
+        return next((entry for entry in ipma_entries if entry['iid'] == item_id), None)
+
+    def _decode_assocs(entry):
+        if entry is None:
+            return []
+        return [
             (value & pidx_mask, bool(value & (0x8000 if (ipma_f & 1) else 0x80)))
-            for value in pitm_ipma_entry['assocs']
+            for value in entry['assocs']
         ]
+
+    def _has_assoc_type(assocs, prop_type):
+        return any(ipco_prop_types.get(pidx_value) == prop_type for pidx_value, _ in assocs)
+
+    def _first_assoc_from_items(item_ids, prop_type):
+        for item_id in item_ids:
+            for pidx_value, essential in _decode_assocs(_entry_for_item(item_id)):
+                if ipco_prop_types.get(pidx_value) == prop_type:
+                    return pidx_value, essential
+        return None
+
+    def _uniform_assoc_from_items(item_ids, prop_type):
+        found = []
+        for item_id in item_ids:
+            match = _first_assoc_from_items([item_id], prop_type)
+            if match is not None:
+                found.append(match)
+        if not found or len(found) != len(item_ids):
+            return None
+        first = found[0][0]
+        if any(pidx_value != first for pidx_value, _ in found):
+            return None
+        return first, any(essential for _, essential in found)
+
+    # Existing primary grids are usually safe to keep, but ISO tmap requires
+    # the base input itself to carry colr/orientation. Augment only the missing
+    # associations so the source HEVC payload and unrelated metadata remain stable.
+    primary_assocs = []
+    pitm_ipma_entry = _entry_for_item(pitm_id)
+    if pitm_ipma_entry is not None:
+        primary_assocs = _decode_assocs(pitm_ipma_entry)
     else:
         if first_colr_idx is not None:
             primary_assocs.append((first_colr_idx, True))
@@ -663,9 +701,30 @@ def write_heic_passthrough(source_path: str, output_path: str,
             primary_assocs.append((primary_ispe_idx, True))
         if primary_pixi_idx is not None:
             primary_assocs.append((primary_pixi_idx, True))
+
+    primary_tile_ids = source_dimg_refs.get(pitm_id, [])
+    if not _has_assoc_type(primary_assocs, 'colr'):
+        tile_colr = _first_assoc_from_items(primary_tile_ids, 'colr')
+        if tile_colr is not None:
+            primary_assocs.append(tile_colr)
+        elif first_colr_idx is not None:
+            primary_assocs.append((first_colr_idx, True))
+        else:
+            primary_assocs.append((srgb_nclx_prop_idx, True))
+
+    if not _has_assoc_type(primary_assocs, 'clli'):
+        primary_assocs.append((base_clli_prop_idx, False))
+
+    primary_irot = _first_assoc_from_items([pitm_id], 'irot')
+    if primary_irot is None:
+        primary_irot = _uniform_assoc_from_items(primary_tile_ids, 'irot')
+    if primary_irot is None:
+        primary_irot = (irot_prop_idx, True)
+    if not _has_assoc_type(primary_assocs, 'irot'):
+        primary_assocs.append(primary_irot)
+
     new_ipma_entries = []
-    if add_primary_grid:
-        new_ipma_entries.append(_encode_ipma_entry(primary_grid_id, primary_assocs))
+    new_ipma_entries.append(_encode_ipma_entry(primary_grid_id, primary_assocs))
 
     gm_assocs = [(gm_hvcC_prop_idx, True), (gm_tile_ispe_prop_idx, True)]
     if first_colr_idx is not None:
@@ -677,12 +736,13 @@ def write_heic_passthrough(source_path: str, output_path: str,
         (gm_grid_ispe_prop_idx, True),
         (srgb_nclx_prop_idx, True),
         (gm_pixi_prop_idx, True),
-        (irot_prop_idx, True),
+        primary_irot,
     ]
     new_ipma_entries.append(_encode_ipma_entry(gm_grid_id, gm_grid_assocs))
 
     tmap_assocs = [(pq_nclx_prop_idx, True), (hdr_pixi_prop_idx, True),
-                   (primary_ispe_idx, True)]
+                   (primary_ispe_idx, True), (tmap_clli_prop_idx, False),
+                   primary_irot]
     new_ipma_entries.append(_encode_ipma_entry(tmap_item_id, tmap_assocs))
 
     # New iref references
@@ -798,6 +858,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
                     ipco_part += src[bs2:de2]
                 prop_idx += 1
             ipco_part += AUXC_BOX + IROT_BOX + COLR_NCLX_PQ_BOX + COLR_NCLX_SRGB_BOX + PIXI_RGB10_BOX
+            ipco_part += base_clli_box + tmap_clli_box
             ipco_part += PIXI_RGB8_BOX
             ipco_part += gm_hvcC
             ipco_part += struct.pack('>I', 20) + b'ispe' + struct.pack('>I', 0)
@@ -811,9 +872,14 @@ def write_heic_passthrough(source_path: str, output_path: str,
             ipma_part = bytearray()
             ipma_part += b'\x00\x00\x00\x00' + b'ipma'
             ipma_part += src[ipma['ds']:ipma['ds'] + 4]  # fullbox header
-            # Count: keep existing source associations, then append only new
-            # Path-B items. Existing primary grids must remain untouched.
-            kept_ipma_entries = [entry for entry in ipma_entries if entry['iid'] not in source_tmap_item_ids]
+            # Count: keep existing source associations, then append/replace the
+            # derived-path entries. The primary grid is replaced only when it
+            # needs the ISO tmap-facing property augmentations above.
+            kept_ipma_entries = [
+                entry for entry in ipma_entries
+                if entry['iid'] not in source_tmap_item_ids
+                and (add_primary_grid or entry['iid'] != pitm_id)
+            ]
             existing_count = len(kept_ipma_entries)
             ipma_part += struct.pack('>I', existing_count + len(new_ipma_entries))
             for entry in kept_ipma_entries:
