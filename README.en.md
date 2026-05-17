@@ -27,9 +27,20 @@ swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
 # Specify output
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
+# Select the input processing branch; the default is hybrid
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+
 # Add OPPO Gallery compatibility metadata when OPPO Gallery is the target viewer
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
+
+The Swift CLI accepts exactly three `--input-processing` branches:
+
+| Branch | Description |
+|--------|-------------|
+| `hybrid` | Default production path. It takes the original HEIC and the parsed gain map, lets ImageIO/Preserve produce the HEVC gain map first, then rewrites ISOBMFF and grafts the original primary subtree. The target is primary passthrough, HEVC gain map, and an ImageIO-readable ISO gain map. |
+| `system` | System-output path. ImageIO writes the final HEIC directly; use it as a reference for system behavior. ImageIO decides how both the base image and gain map are encoded. |
+| `passthrough` | Experimental path. Rewrites ISOBMFF boxes directly so the output is recognized by ImageIO as an HDR photo; this branch is for validating direct box-rewrite behavior. |
 
 ### Python (cross-platform)
 
@@ -55,7 +66,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 ## ⚠️ Known Limitations
 
-- **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family, then choose the currently verified high-quality path with the least extra processing. Users do not need to choose family or gain-map encoding. Python preserves the original base HEVC data by default to avoid recompression.
+- **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family. Swift uses the `hybrid` input processing branch by default; users do not need to choose family or an input processing branch. Python preserves the original base HEVC data by default to avoid recompression.
 - **OPPO Gallery compatibility**: Standard Swift output does not write the OPPO private compatibility tail by default. Use `--oppo-compat` when OPPO Gallery is the target viewer. LHDR sources preserve their original `local.hdr.*` private tail, while UHDR sources write a `local.uhdr.*` tail.
 - **Gallery editing strips HDR**: Editing and saving a converted photo in OPPO Gallery strips the HDR Gain Map and its metadata.
 
