@@ -29,9 +29,20 @@ swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
 # 指定输出路径
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
+# 选择输入处理分支；默认是 hybrid
+swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+
 # 需要在 OPPO 相册中优先识别时，额外写入 OPPO 兼容尾部
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
+
+Swift CLI 的 `--input-processing` 只接受三个分支：
+
+| 分支 | 说明 |
+|------|------|
+| `hybrid` | 默认生产路径。输入原始 HEIC 和解析出的 gain map，先让 ImageIO/Preserve 产出 HEVC gain map，再重写 ISOBMFF 并 graft 原始 primary subtree。目标是 primary passthrough、HEVC gain map、ImageIO 可读 ISO gain map。 |
+| `system` | 系统直出路径。直接让 ImageIO 写最终 HEIC，用作系统行为对照；base image 和 gain map 均由 ImageIO 决定编码方式。 |
+| `passthrough` | 实验性路径。直接重写 ISOBMFF box，使输出能被 ImageIO 识别为 HDR 照片；用于验证直接 box rewrite 的可行性。 |
 
 ### Python（跨平台）
 
@@ -57,7 +68,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 ## ⚠️ 已知局限
 
-- **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族，并选择当前已验证的最高质量/最小额外处理路径；普通用户不需要指定 family 或 gain map 编码方式。Python 默认保留原始 base HEVC 数据，避免二次压缩。
+- **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族。Swift 默认使用 `hybrid` 输入处理分支；普通用户不需要指定 family 或输入处理分支。Python 默认保留原始 base HEVC 数据，避免二次压缩。
 - **OPPO 相册兼容**：标准输出默认不写 OPPO 私有兼容尾部；需要面向 OPPO 相册优先识别时，使用 `--oppo-compat`。LHDR 源文件会保留原始 `local.hdr.*` 私有尾部，UHDR 源文件会写入 `local.uhdr.*` 尾部。
 - **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
