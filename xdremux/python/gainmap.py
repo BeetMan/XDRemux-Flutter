@@ -5,6 +5,7 @@ and EDR scale using an empirical LUT chain model.
 """
 
 import math
+import struct
 import numpy as np
 
 
@@ -13,26 +14,35 @@ def _make_lut(count: int, fn) -> np.ndarray:
     return np.array([fn(i / 1000.0) for i in range(count)], dtype=np.float32)
 
 
+def _f32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", float(value)))[0]
+
+
 def _get_knee_point(edr: float) -> float:
-    """Reinhard tone-mapping knee point from empirical EDR curve analysis."""
-    inv_gamma = 1.0 / 2.2
-    edr_scaled = edr * 100.0
-    t = 1.0 / edr_scaled
-    k = 1.0 - t
+    """Reinhard tone-mapping knee point for early LHDR."""
+    scale = _f32(edr)
+    inv_gamma = _f32(0.45454543828964233)
+    t = _f32(1.0 / _f32(scale * _f32(100.0)))
+    k = _f32(1.0 - t)
 
-    p1 = edr ** inv_gamma
-    div1 = 1.0 / p1
-    x_norm = (0.98 - t) / k
-    p2 = x_norm ** inv_gamma
-    y = (div1 - p2 * 1.00394) / (1.0 - div1)
-    p3 = y ** inv_gamma
+    p1 = _f32(math.pow(scale, inv_gamma))
+    div1 = _f32(1.0 / p1)
+    x_norm = _f32(_f32(_f32(0.9800000190734863) - t) / k)
+    p2 = _f32(math.pow(x_norm, inv_gamma))
+    y = _f32(_f32(_f32(p2 * _f32(1.003937005996704)) - div1) / _f32(1.0 - div1))
+    if not math.isfinite(y) or y <= 0.0:
+        return float("nan")
 
-    knee_raw = p3 * 255.0 - 254.0
-    knee_adj = knee_raw / (p3 - 1.0)
+    p3 = _f32(math.pow(y, inv_gamma))
+    if not math.isfinite(p3) or p3 == 1.0:
+        return float("nan")
+
+    knee_raw = _f32(_f32(p3 * _f32(255.0)) + _f32(-254.0))
+    knee_adj = _f32(knee_raw / _f32(p3 - _f32(1.0)))
     result = round(knee_adj)
     if result <= 0.0:
         result = knee_raw
-    return result / 255.0
+    return float(_f32(result / _f32(255.0)))
 
 
 def reconstruct(mask: np.ndarray, edr_scale: float,

@@ -469,7 +469,7 @@ private func buildLHDRSemanticFields(floats: [Double]) -> [String: LHDRSemanticF
             index: 33,
             meaning: "Pre-computed EDR scale bypass",
             confidence: "direct_from_code",
-            note: "If >= 1.0, native code uses this directly instead of computing EDR."
+            note: "If >= 1.0, use this directly instead of computing EDR."
         ),
         "f34ConfigFlag": field(
             index: 34,
@@ -1048,7 +1048,7 @@ private enum EDRScaleResolver {
 
         return resolvedScale(
             edrScale: edrScaleCalculator(metaFloats),
-            source: "empirical_edrScaleCalculator"
+            source: metaFloats[0] < 3.0 ? "float32_early_lhdr_edr_scale" : "empirical_edrScaleCalculator"
         )
     }
 
@@ -1090,29 +1090,37 @@ private enum EDRScaleResolver {
         )
     }
 
-    /// Compute Reinhard tone-mapping knee point from EDR scale factor
-    /// Calculation based on empirical EDR curve analysis and tone-mapping models.
-    /// Constants derived from HDR standard gamma (1/2.2) and SDR scaling factors.
+    /// Compute the early-LHDR Reinhard knee point from EDR scale factor.
     static func getKneePoint(_ edr: Double) -> Double {
-        let invGamma = 1.0 / 2.2  // 0x3EE8BA2E = 0.454545
-        let edrScaled = edr * 100.0  // 0x42C80000
-        let t = 1.0 / edrScaled
+        getKneePointResult(edr).value
+    }
+
+    static func getKneePointResult(_ edr: Double) -> (value: Double, source: String) {
+        let scale = Float(edr)
+        let invGamma = Float(0.45454543828964233)
+        let t = 1.0 / (scale * Float(100.0))
         let k = 1.0 - t
 
         // Three-stage power chain for curve fitting
-        let p1 = pow(edr, invGamma)
+        let p1 = powf(scale, invGamma)
         let div1 = 1.0 / p1
-        let xNorm = (0.98 - t) / k        // 0x3F7AE148
-        let p2 = pow(xNorm, invGamma)
-        let y = (div1 - p2 * 1.00394) / (1.0 - div1)
-        let p3 = pow(y, invGamma)
+        let xNorm = (Float(0.9800000190734863) - t) / k
+        let p2 = powf(xNorm, invGamma)
+        let y = (p2 * Float(1.003937005996704) - div1) / (1.0 - div1)
+        return (Double(quantizedKnee(fromPoweredBase: y, invGamma: invGamma)), "float32_early_lhdr_knee")
+    }
+
+    private static func quantizedKnee(fromPoweredBase base: Float, invGamma: Float) -> Float {
+        guard base.isFinite, base > 0.0 else { return .nan }
+        let p3 = powf(base, invGamma)
+        guard p3.isFinite, p3 != 1.0 else { return .nan }
 
         // Reinhard knee point discretization and rounding
-        let kneeRaw = p3 * 255.0 - 254.0
+        let kneeRaw = p3 * Float(255.0) + Float(-254.0)
         let kneeAdj = kneeRaw / (p3 - 1.0)
         var result = kneeAdj.rounded(.toNearestOrAwayFromZero)
         if result <= 0.0 { result = kneeRaw }
-        return result / 255.0
+        return result / Float(255.0)
     }
 
     /// Complete EDR scale calculation — verified against device probe data.
@@ -1127,6 +1135,11 @@ private enum EDRScaleResolver {
     ///
     /// Note: Adjustments include linear interpolations and threshold cutoffs observed in raw sample EXIF data.
     private static func edrScaleCalculator(_ f: [Double]) -> Double {
+        // Keep the established f0 >= 3.0 LHDR path below unchanged.
+        if f[0] < 3.0 {
+            return Double(float32EarlyLHDRScaleCalculator(f))
+        }
+
         // Path A: EDR version < 2.0 → return 1.0
         if f[0] < 2.0 { return 1.0 }
 
@@ -1198,6 +1211,59 @@ private enum EDRScaleResolver {
         return clamp(edr, min: 1.0, max: 7.9)
     }
 
+    private static func float32EarlyLHDRScaleCalculator(_ f: [Double]) -> Float {
+        let version = Float(f[0])
+        if version < 2.0 { return 1.0 }
+
+        let precomputed = Float(f[33])
+        if precomputed >= 1.0 { return precomputed }
+
+        let rawGain = Float(f[32])
+        if rawGain <= 0.0 { return 1.0 }
+
+        let faceStrength = Float(f[24])
+        let highlight = Float(f[29])
+
+        var edr = exp2f(fmaf(rawGain, Float(-0.11749999970197678), Float(-6.828999996185303)))
+        edr = Float(780.2999877929688) / (edr + 1.0) + Float(-772.2999877929688)
+
+        var faceAdjusted = edr
+        if faceStrength > 0.0 {
+            let factor = faceStrength < 1.0 ? faceStrength : 1.0 / faceStrength
+            faceAdjusted = fmaf(edr - 1.0, factor, 1.0)
+        }
+
+        let sqrtTerm = abs(sqrtf(faceAdjusted)) - 1.0
+        let highlightAdjusted: Float
+        if highlight >= Float(200.0) {
+            let highHighlight = fmaf(sqrtTerm, Float(1.340000033378601), 1.0)
+            let midFactor = fmaf(highlight, Float(-0.020500000566244125), Float(7.900000095367432))
+            let midHighlight = fmaf(sqrtTerm, midFactor, 1.0)
+            highlightAdjusted = highlight >= Float(320.0) ? highHighlight : midHighlight
+        } else {
+            highlightAdjusted = fmaf(sqrtTerm, Float(3.799999952316284), 1.0)
+        }
+
+        if Float(f[34]).bitPattern == 1 {
+            let cfgTerm = abs(sqrtf(highlightAdjusted)) - 1.0
+            return fmaf(cfgTerm, Float(1.2999999523162842), 1.0)
+        }
+
+        if faceStrength > 0.0 {
+            let faceTerm = abs(sqrtf(highlightAdjusted)) - 1.0
+            let adjusted = fmaf(faceTerm, Float(1.850000023841858), 1.0)
+            if highlight <= Float(320.0) {
+                return adjusted
+            }
+            return fmaf(adjusted - 1.0, Float(0.800000011920929), 1.0)
+        }
+
+        if highlight <= Float(320.0) {
+            return highlightAdjusted
+        }
+        return fmaf(highlightAdjusted - 1.0, Float(0.800000011920929), 1.0)
+    }
+
     static func makeTrace(
         metaFloats: [Double],
         scale: ResolvedScale,
@@ -1209,7 +1275,10 @@ private enum EDRScaleResolver {
         let log2f32 = f.count > 32 ? optionalLog2(f[32]) : nil
         let highlightRef = f.count > 29 ? max(f[29], 1.0) : 1.0
 
-        // Simplified trace using current empirical model
+        let branch = f.count > 0 && f[0] < 3.0
+            ? "float32_early_lhdr_edr_scale"
+            : "empirical_edrScaleCalculator"
+
         let preCorrectionEDR = scale.edrScale
         let finalEDR = scale.edrScale
         let faceCorrectionApplied = f.count > 24 ? f[24] > 0.0 : false
@@ -1220,7 +1289,7 @@ private enum EDRScaleResolver {
             familyUsed: familyUsed.rawValue,
             floatAudits: floatAudits,
             basePath: CalibrationTrace.BasePath(
-                branch: "empirical_edrScaleCalculator",
+                branch: branch,
                 log2f32: log2f32.map { round($0, digits: 7) },
                 highlightRef: round(highlightRef, digits: 7),
                 log2rm: nil,
@@ -1323,8 +1392,9 @@ private enum GainMapReconstructor {
             kneeSource = "edr_ge3_log2_path"
         } else {
             // EDR < 3.0: Reinhard knee path
-            knee = EDRScaleResolver.getKneePoint(scale.edrScale)
-            kneeSource = "edr_lt3_reinhard_knee"
+            let result = EDRScaleResolver.getKneePointResult(scale.edrScale)
+            knee = result.value
+            kneeSource = result.source
         }
 
         let kneeRange = 1.0 - knee
