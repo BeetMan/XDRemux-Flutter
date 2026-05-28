@@ -31,6 +31,7 @@ apk_analysis_results/
 docs/
 evals/
 handoff_package/
+archive/
 harness/
 oracle-dump/
 proxdr-probe-app/
@@ -39,3 +40,11 @@ test-samples/
 tmp-samples/
 tmp/
 tools/
+
+# Recreatable
+final-output/
+.venv/
+
+# Canonical conclusions (extracted from tarball)
+organized/
+organized_cold_data.tar.gz

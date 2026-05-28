@@ -32,7 +32,7 @@ swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 # 选择输入处理分支；默认是 hybrid
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
-# 需要在 OPPO 相册中优先识别时，额外写入 OPPO 兼容尾部
+# 需要在 OPPO 相册中优先识别时，启用 OPPO 兼容输出
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
@@ -69,7 +69,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ## ⚠️ 已知局限
 
 - **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族。Swift 默认使用 `hybrid` 输入处理分支；普通用户不需要指定 family 或输入处理分支。Python 默认保留原始 base HEVC 数据，避免二次压缩。
-- **OPPO 相册兼容**：标准输出默认不写 OPPO 私有兼容尾部；需要面向 OPPO 相册优先识别时，使用 `--oppo-compat`。LHDR 源文件会保留原始 `local.hdr.*` 私有尾部，UHDR 源文件会写入 `local.uhdr.*` 尾部。
+- **OPPO 相册兼容**：标准 Swift 输出默认不写 OPPO 私有兼容尾部。需要面向 OPPO 相册优先识别时，使用 `--oppo-compat`。LHDR 源文件会保留原始 `local.hdr.*` 私有尾部；UHDR 源文件会写入 `local.uhdr.*` 尾部，并使用 ImageIO-native 142B/PQ `tmap` 图，同时保留源文件 primary HEVC。严格 ISO 检查仍会把 142B `tmap` 作为非严格兼容形态处理。
 - **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
 ## 🧪 实验性功能
