@@ -1,0 +1,19 @@
+name: XDRemuxApp
+options:
+  bundleIdPrefix: com.proxdr
+targets:
+  XDRemuxApp:
+    type: application
+    platform: macOS
+    deploymentTarget: 15.0
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+    settings:
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "-"
+      ENABLE_APP_SANDBOX: NO
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+      INFOPLIST_KEY_NSPrincipalClass: NSApplication
+      GENERATE_INFOPLIST_FILE: YES

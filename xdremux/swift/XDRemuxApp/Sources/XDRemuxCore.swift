@@ -1,4 +1,3 @@
-#!/usr/bin/env swift
 
 import Foundation
 import CoreGraphics
@@ -8,7 +7,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
 
-private enum CLIError: Error, CustomStringConvertible {
+enum XDRemuxError: Error, CustomStringConvertible {
     case usage(String)
     case invalidCommand(String)
     case missingArgument(String)
@@ -97,16 +96,31 @@ private enum CLIError: Error, CustomStringConvertible {
     }
 }
 
-private enum Family: String {
+enum Family: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
     case auto
     case x6
     case x7
+
+    var id: String { rawValue }
 }
 
-private enum InputProcessingBranch: String {
+enum InputProcessingBranch: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
     case system
     case hybrid
     case passthrough
+
+    var id: String { rawValue }
+}
+
+struct ConversionConfig: Sendable {
+    var family: Family = .auto
+    var outputDirectory: URL?
+    var oppoCompat: Bool = false
+    var inputProcessingBranch: InputProcessingBranch = .hybrid
+    var debugDirectory: URL?
+    var fileNameSuffix: String = "_iso"
+    var skipExisting: Bool = true
+    var maxConcurrentJobs: Int = min(ProcessInfo.processInfo.activeProcessorCount, 4)
 }
 
 private func fourCCString(_ value: UInt32?) -> String {
@@ -119,32 +133,6 @@ private func fourCCString(_ value: UInt32?) -> String {
         return String(bytes: bytes, encoding: .ascii) ?? "????"
     }
     return "\(value) ('\(label)')"
-}
-
-private struct ConvertCommand {
-    let inputURL: URL
-    let outputURL: URL
-    let family: Family
-    let debugRootURL: URL?
-    let oppoCompat: Bool
-    let inputProcessingBranch: InputProcessingBranch
-}
-
-private struct BatchCommand {
-    let inputDirURL: URL
-    let outputDirURL: URL
-    let family: Family
-    let glob: String
-    let debugRootURL: URL?
-    let oppoCompat: Bool
-    let inputProcessingBranch: InputProcessingBranch
-    let jobs: Int
-    /// Nil means auto checkpoint path under output-dir.
-    let checkpointURL: URL?
-    /// If false, ignore any existing checkpoint and start a fresh run.
-    let resume: Bool
-    /// Skip valid existing outputs (default on).
-    let skipExisting: Bool
 }
 
 private struct ManifestEntry {
@@ -598,7 +586,7 @@ private enum LHDRExtractor {
             
             let dataStart = blockStart(for: dataEntry, in: data, manifestInfo: manifestInfo, dataBase: dataBase)
             let dataEnd = dataStart + dataEntry.length
-            guard dataStart >= 0, dataEnd <= data.count else { throw CLIError.invalidLHDR("Out of bounds UHDR data block") }
+            guard dataStart >= 0, dataEnd <= data.count else { throw XDRemuxError.invalidLHDR("Out of bounds UHDR data block") }
             let maskJPEGData = data.subdata(in: dataStart..<dataEnd)
             
             return ExtractedLHDR(
@@ -645,12 +633,12 @@ private enum LHDRExtractor {
     private static func locateManifest(in data: Data) throws -> ManifestInfo {
         let extensionStart = try findExtensionStart(in: data)
         guard let manifestArray = parseManifest(in: data) else {
-            throw CLIError.manifestNotFound
+            throw XDRemuxError.manifestNotFound
         }
 
         guard let jsonStart = lastIndex(of: Data("[{".utf8), in: data),
               let jsonEndBase = firstIndex(of: UInt8(ascii: "]"), in: data, startingAt: jsonStart) else {
-            throw CLIError.manifestNotFound
+            throw XDRemuxError.manifestNotFound
         }
         let jsonEnd = jsonEndBase + 1
 
@@ -694,7 +682,7 @@ private enum LHDRExtractor {
                 return boxStart + Int(boxSize)
             }
         }
-        throw CLIError.qtiMarkerNotFound
+        throw XDRemuxError.qtiMarkerNotFound
     }
 
     private static func parseManifest(in data: Data) -> [Any]? {
@@ -851,7 +839,7 @@ private enum LHDRExtractor {
         }
 
         guard let best, best.score >= 8 else {
-            throw CLIError.invalidLHDR("failed to locate plausible 144-byte local.hdr.meta.data block")
+            throw XDRemuxError.invalidLHDR("failed to locate plausible 144-byte local.hdr.meta.data block")
         }
         return best.chunk
     }
@@ -899,7 +887,7 @@ private enum LHDRExtractor {
             }
         }
         guard !blobs.isEmpty else {
-            throw CLIError.invalidLHDR("failed to locate local.hdr.linear.mask JPEG")
+            throw XDRemuxError.invalidLHDR("failed to locate local.hdr.linear.mask JPEG")
         }
 
         if let maskEntry = manifestInfo.entries.first(where: { $0.name == "local.hdr.linear.mask" }) {
@@ -964,13 +952,13 @@ private enum MaskDecoder {
     static func decodeMaskJPEG(_ data: Data, sourceURL: URL, channelCount: Int = 1) throws -> GainMapRaster {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            throw CLIError.unableToDecodeMask(sourceURL)
+            throw XDRemuxError.unableToDecodeMask(sourceURL)
         }
 
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else {
-            throw CLIError.unableToDecodeMask(sourceURL)
+            throw XDRemuxError.unableToDecodeMask(sourceURL)
         }
 
         if channelCount == 3 {
@@ -999,7 +987,7 @@ private enum MaskDecoder {
             }
 
             guard ok else {
-                throw CLIError.unableToDecodeMask(sourceURL)
+                throw XDRemuxError.unableToDecodeMask(sourceURL)
             }
 
             return GainMapRaster(width: width, height: height, bytesPerRow: bytesPerRow, channelCount: 3, data: bgraData)
@@ -1029,7 +1017,7 @@ private enum MaskDecoder {
             }
 
             guard ok else {
-                throw CLIError.unableToDecodeMask(sourceURL)
+                throw XDRemuxError.unableToDecodeMask(sourceURL)
             }
 
             return GainMapRaster(width: width, height: height, bytesPerRow: bytesPerRow, channelCount: 1, data: raster)
@@ -1041,7 +1029,7 @@ private enum EDRScaleResolver {
     static func resolve(metaFloats: [Double], mode: ExtractionMode) throws -> ResolvedScale {
         if mode == .uhdr {
             guard metaFloats.count >= 20 else {
-                throw CLIError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
+                throw XDRemuxError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
             }
             let ratioMin = metaFloats[0]
             let ratioMax = metaFloats[4]
@@ -1077,7 +1065,7 @@ private enum EDRScaleResolver {
         }
 
         guard metaFloats.count == 36 else {
-            throw CLIError.invalidLHDR("local.hdr.meta.data must contain exactly 36 float32 values")
+            throw XDRemuxError.invalidLHDR("local.hdr.meta.data must contain exactly 36 float32 values")
         }
 
         return resolvedScale(
@@ -1433,7 +1421,7 @@ private enum GainMapReconstructor {
 
         let kneeRange = 1.0 - knee
         guard knee.isFinite, kneeRange.isFinite, kneeRange > 0 else {
-            throw CLIError.invalidLHDR("non-finite gain map params: knee=\(knee), kneeRange=\(kneeRange)")
+            throw XDRemuxError.invalidLHDR("non-finite gain map params: knee=\(knee), kneeRange=\(kneeRange)")
         }
 
         return GainMapParams(
@@ -1522,7 +1510,7 @@ private enum ISOHDRWriter {
 
     private static func makeImageSource(url: URL) throws -> CGImageSource {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            throw CLIError.unableToLoadBaseImage(url)
+            throw XDRemuxError.unableToLoadBaseImage(url)
         }
         return source
     }
@@ -1534,7 +1522,7 @@ private enum ISOHDRWriter {
         ]
         let imageIndex = CGImageSourceGetPrimaryImageIndex(source)
         guard let image = CGImageSourceCreateImageAtIndex(source, imageIndex, options as CFDictionary) else {
-            throw CLIError.unableToLoadBaseImage(url)
+            throw XDRemuxError.unableToLoadBaseImage(url)
         }
         return image
     }
@@ -1547,12 +1535,12 @@ private enum ISOHDRWriter {
         var error: Unmanaged<CFError>?
         guard CGImageMetadataRegisterNamespaceForPrefix(metadata, namespace, prefix, &error) else {
             if let error { throw error.takeRetainedValue() as Error }
-            throw CLIError.unableToCreateMetadata
+            throw XDRemuxError.unableToCreateMetadata
         }
 
         func set(_ path: String, _ value: CFTypeRef) throws {
             guard CGImageMetadataSetValueWithPath(metadata, nil, path as CFString, value) else {
-                throw CLIError.unableToCreateMetadata
+                throw XDRemuxError.unableToCreateMetadata
             }
         }
 
@@ -1583,12 +1571,12 @@ private enum ISOHDRWriter {
         var error: Unmanaged<CFError>?
         guard CGImageMetadataRegisterNamespaceForPrefix(metadata, namespace, prefix, &error) else {
             if let error { throw error.takeRetainedValue() as Error }
-            throw CLIError.unableToCreateMetadata
+            throw XDRemuxError.unableToCreateMetadata
         }
 
         func set(_ path: String, _ value: CFTypeRef) throws {
             guard CGImageMetadataSetValueWithPath(metadata, nil, path as CFString, value) else {
-                throw CLIError.unableToCreateMetadata
+                throw XDRemuxError.unableToCreateMetadata
             }
         }
 
@@ -1659,7 +1647,7 @@ private enum ISOHDRWriter {
             1,
             nil
         ) else {
-            throw CLIError.unableToCreateDestination(outputURL)
+            throw XDRemuxError.unableToCreateDestination(outputURL)
         }
 
         var requestOptions: [CFString: Any] = [
@@ -1697,21 +1685,21 @@ private enum ISOHDRWriter {
         CGImageDestinationAddAuxiliaryDataInfo(destination, kCGImageAuxiliaryDataTypeISOGainMap, auxiliaryDataInfo)
 
         guard CGImageDestinationFinalize(destination) else {
-            throw CLIError.unableToFinalizeDestination(outputURL)
+            throw XDRemuxError.unableToFinalizeDestination(outputURL)
         }
     }
 
     private static func verifyOutput(_ outputURL: URL, requiredGainMapPixelFormat: UInt32?) throws {
         guard let source = CGImageSourceCreateWithURL(outputURL as CFURL, nil),
               let auxInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) as? [CFString: Any] else {
-            throw CLIError.outputVerificationFailed(outputURL)
+            throw XDRemuxError.outputVerificationFailed(outputURL)
         }
 
         guard let requiredGainMapPixelFormat else { return }
         let description = auxInfo[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any]
         let actualPixelFormat = pixelFormatValue(description?[kCGImagePropertyPixelFormat])
         guard actualPixelFormat == requiredGainMapPixelFormat else {
-            throw CLIError.gainMapPixelFormatMismatch(
+            throw XDRemuxError.gainMapPixelFormatMismatch(
                 outputURL,
                 expected: requiredGainMapPixelFormat,
                 actual: actualPixelFormat
@@ -1725,12 +1713,12 @@ private enum ISOHDRWriter {
         patchedUserComment: String? = nil
     ) throws {
         guard let intermediateSource = CGImageSourceCreateWithURL(intermediateURL as CFURL, nil) else {
-            throw CLIError.unableToLoadBaseImage(intermediateURL)
+            throw XDRemuxError.unableToLoadBaseImage(intermediateURL)
         }
 
         // Verify intermediate has ISO gain map
         guard let auxInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(intermediateSource, 0, kCGImageAuxiliaryDataTypeISOGainMap) else {
-            throw CLIError.outputVerificationFailed(intermediateURL)
+            throw XDRemuxError.outputVerificationFailed(intermediateURL)
         }
         let desc = (auxInfo as? [CFString: Any])?[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any]
         let pfRaw = pixelFormatValue(desc?[kCGImagePropertyPixelFormat])
@@ -1741,7 +1729,7 @@ private enum ISOHDRWriter {
             1,
             nil
         ) else {
-            throw CLIError.unableToCreateDestination(outputURL)
+            throw XDRemuxError.unableToCreateDestination(outputURL)
         }
 
         // Build preserve options
@@ -1773,14 +1761,14 @@ private enum ISOHDRWriter {
         CGImageDestinationAddImageFromSource(destination, intermediateSource, 0, imageOptions as CFDictionary)
 
         guard CGImageDestinationFinalize(destination) else {
-            throw CLIError.unableToFinalizeDestination(outputURL)
+            throw XDRemuxError.unableToFinalizeDestination(outputURL)
         }
 
         // Verify: just check gain map is present (no pixel format enforcement initially)
         let verifySource = CGImageSourceCreateWithURL(outputURL as CFURL, nil)
         let verifyAux = verifySource.flatMap { CGImageSourceCopyAuxiliaryDataInfoAtIndex($0, 0, kCGImageAuxiliaryDataTypeISOGainMap) }
         guard verifyAux != nil else {
-            throw CLIError.outputVerificationFailed(outputURL)
+            throw XDRemuxError.outputVerificationFailed(outputURL)
         }
 
         // Log pixel format for observation
@@ -1938,7 +1926,7 @@ private enum DebugWriter {
             let data = try encoder.encode(value)
             try data.write(to: url)
         } catch {
-            throw CLIError.unableToWriteDebugAsset(url)
+            throw XDRemuxError.unableToWriteDebugAsset(url)
         }
     }
 
@@ -1959,11 +1947,11 @@ private enum DebugWriter {
                 intent: .defaultIntent
               ),
               let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-            throw CLIError.unableToWriteDebugAsset(url)
+            throw XDRemuxError.unableToWriteDebugAsset(url)
         }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else {
-            throw CLIError.unableToWriteDebugAsset(url)
+            throw XDRemuxError.unableToWriteDebugAsset(url)
         }
     }
 }
@@ -1971,7 +1959,7 @@ private enum DebugWriter {
 private func verifyImageIOISOGainMap(_ outputURL: URL) throws {
     guard let source = CGImageSourceCreateWithURL(outputURL as CFURL, nil),
           CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil else {
-        throw CLIError.outputVerificationFailed(outputURL)
+        throw XDRemuxError.outputVerificationFailed(outputURL)
     }
 }
 
@@ -1987,7 +1975,7 @@ private enum XDRemuxProductCore {
         inputProcessingBranch: InputProcessingBranch = .hybrid
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
-            throw CLIError.inputNotFound(inputURL)
+            throw XDRemuxError.inputNotFound(inputURL)
         }
 
         let parentURL = outputURL.deletingLastPathComponent()
@@ -1997,7 +1985,7 @@ private enum XDRemuxProductCore {
         do {
             sourceData = try Data(contentsOf: inputURL, options: [.mappedIfSafe])
         } catch {
-            throw CLIError.unableToRead(inputURL)
+            throw XDRemuxError.unableToRead(inputURL)
         }
 
         let productInput = try prepareProductInput(
@@ -2241,29 +2229,18 @@ private enum HybridGainMapWriter {
         let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
         switch productInput.extracted.mode {
         case .uhdr:
-            if oppoCompat {
-                try ISOHDRWriter.write(
-                    baseImageURL: inputURL,
-                    gainMap: productInput.gainMapRaster,
-                    style: productInput.style,
-                    outputURL: preservedURL,
-                    oppoCompat: false,
-                    inputProcessingBranch: .system
-                )
-            } else {
-                _ = try writePrivateJPEGPassthroughOutput(
-                    inputURL: inputURL,
-                    outputURL: privateIntermediateURL,
-                    infoFloats: productInput.extracted.metaFloats,
-                    gainMapJPEG: productInput.extracted.maskJPEGData,
-                    patchedUserComment: patchedUserComment
-                )
-                try ISOHDRWriter.writeWithPreserveReencode(
-                    intermediateURL: privateIntermediateURL,
-                    outputURL: preservedURL,
-                    patchedUserComment: patchedUserComment
-                )
-            }
+            _ = try writePrivateJPEGPassthroughOutput(
+                inputURL: inputURL,
+                outputURL: privateIntermediateURL,
+                infoFloats: productInput.extracted.metaFloats,
+                gainMapJPEG: productInput.extracted.maskJPEGData,
+                patchedUserComment: patchedUserComment
+            )
+            try ISOHDRWriter.writeWithPreserveReencode(
+                intermediateURL: privateIntermediateURL,
+                outputURL: preservedURL,
+                patchedUserComment: patchedUserComment
+            )
         case .lhdr:
             try ISOHDRWriter.write(
                 baseImageURL: inputURL,
@@ -2279,8 +2256,7 @@ private enum HybridGainMapWriter {
             sourceURL: inputURL,
             preservedURL: preservedURL,
             outputURL: outputURL,
-            patchedUserComment: patchedUserComment,
-            preserveTmapColor: oppoCompat && productInput.extracted.mode == .uhdr
+            patchedUserComment: patchedUserComment
         )
     }
 }
@@ -2312,672 +2288,20 @@ private enum DirectPassthroughGainMapWriter {
     }
 }
 
-struct LHDRToISOHDRCLI {
-    private static let fileManager = FileManager.default
-    private static let usage = """
-    Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat] [--input-processing system|hybrid|passthrough]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>] [--oppo-compat] [--input-processing system|hybrid|passthrough]
-
-    Notes:
-      - Input processing defaults to hybrid.
-      - Batch defaults: --jobs min(cpu,4), --resume, --skip-existing.
-      - A JSONL checkpoint is written under output-dir by default; it is deleted only when the batch finishes with zero failures.
-      - system: ImageIO writes the final HEIC directly.
-      - hybrid: ImageIO/Preserve produces HEVC gain map, then XDRemux grafts the original primary subtree.
-      - passthrough: experimental direct ISOBMFF rewrite that keeps ImageIO ISO gain-map readability.
-      - If --output is omitted, the input file is overwritten in place.
-      - If --output-dir is omitted, files are written to the input directory.
-      - OPPO Gallery compatibility metadata is off by default; pass --oppo-compat only when targeting OPPO Gallery.
-    """
-
-    static func main() {
-        do {
-            let args = Array(CommandLine.arguments.dropFirst())
-            guard let command = args.first else {
-                throw CLIError.usage(usage)
-            }
-
-            switch command {
-            case "convert":
-                let cmd = try parseConvert(Array(args.dropFirst()))
-                try runConvert(cmd)
-            case "batch":
-                let cmd = try parseBatch(Array(args.dropFirst()))
-                try runBatch(cmd)
-            case "-h", "--help", "help":
-                print(usage)
-            default:
-                throw CLIError.invalidCommand(command)
-            }
-        } catch {
-            if let cli = error as? CLIError {
-                switch cli {
-                case .usage(let message):
-                    FileHandle.standardError.write(Data("\(message)\n".utf8))
-                case .invalidCommand, .missingArgument, .unknownOption, .invalidValue:
-                    FileHandle.standardError.write(Data("error: \(cli)\n\n\(usage)\n".utf8))
-                default:
-                    FileHandle.standardError.write(Data("error: \(cli)\n".utf8))
-                }
-            } else {
-                FileHandle.standardError.write(Data("error: \(error)\n".utf8))
-            }
-            exit(1)
-        }
-    }
-
-    private static func runConvert(_ cmd: ConvertCommand) throws {
-        let report = try XDRemuxProductCore.convert(
-            inputURL: cmd.inputURL,
-            outputURL: cmd.outputURL,
-            familyPreference: cmd.family,
-            debugRootURL: cmd.debugRootURL,
-            oppoCompat: cmd.oppoCompat,
-            inputProcessingBranch: cmd.inputProcessingBranch
-        )
-        print("converted \(report.inputURL.lastPathComponent) -> \(report.outputURL.path)")
-    }
-
-    private static func runBatch(_ cmd: BatchCommand) throws {
-        try ensureDirectory(cmd.outputDirURL, fileManager: fileManager)
-        let matched = try enumerateInputs(root: cmd.inputDirURL, glob: cmd.glob)
-        guard !matched.isEmpty else {
-            throw CLIError.noFilesMatched(cmd.inputDirURL, cmd.glob)
-        }
-
-        let jobs = max(1, cmd.jobs)
-        let configHash = batchConfigHash(cmd)
-        let checkpointURL = resolvedCheckpointURL(cmd: cmd, configHash: configHash)
-
-        // Precompute outputs and fail fast on collisions.
-        let workItems = matched.map { inputURL -> BatchWorkItem in
-            let stem = inputURL.deletingPathExtension().lastPathComponent
-            let outputURL = cmd.outputDirURL.appendingPathComponent("\(stem).heic")
-            return BatchWorkItem(inputURL: inputURL, outputURL: outputURL)
-        }
-        try assertNoOutputCollisions(workItems)
-
-        var checkpointState: [String: BatchCheckpointItem] = [:]
-        if cmd.resume {
-            checkpointState = try loadCheckpointStateIfPresent(url: checkpointURL, expectedConfigHash: configHash)
-        } else {
-            // Fresh run: truncate any existing checkpoint so future resumes are consistent.
-            if fileManager.fileExists(atPath: checkpointURL.path) {
-                do {
-                    try fileManager.removeItem(at: checkpointURL)
-                } catch {
-                    // If removal fails, best-effort truncate.
-                    if let handle = try? FileHandle(forWritingTo: checkpointURL) {
-                        try? handle.truncate(atOffset: 0)
-                        try? handle.close()
-                    }
-                }
-            }
-        }
-
-        let checkpointWriter = try BatchCheckpointWriter(url: checkpointURL, fileManager: fileManager)
-        defer {
-            try? checkpointWriter.close()
-        }
-        try checkpointWriter.appendHeader(configHash: configHash, jobs: jobs)
-
-        let logLock = NSLock()
-        func log(_ message: String) {
-            logLock.lock()
-            defer { logLock.unlock() }
-            print(message)
-        }
-
-        let statsLock = NSLock()
-        var convertedCount = 0
-        var skippedExistingCount = 0
-        var failureCount = 0
-
-        let queue = OperationQueue()
-        queue.maxConcurrentOperationCount = jobs
-        queue.qualityOfService = .userInitiated
-
-        for item in workItems {
-            queue.addOperation {
-                autoreleasepool {
-                    let inputKey = item.inputURL.standardizedFileURL.path
-                    let outputKey = item.outputURL.standardizedFileURL.path
-                    let signature = (try? fileSignature(for: item.inputURL, fileManager: fileManager))
-
-                    func record(status: BatchCheckpointStatus, error: String? = nil) {
-                        do {
-                            try checkpointWriter.appendItem(
-                                inputPath: inputKey,
-                                outputPath: outputKey,
-                                status: status,
-                                inputSize: signature?.size,
-                                inputMtimeNs: signature?.mtimeNs,
-                                error: error
-                            )
-                        } catch {
-                            // Checkpoint failure should be visible, but do not abort in-flight conversions.
-                            log("checkpoint write failed: \(error)")
-                        }
-                    }
-
-                    func isOutputValid() -> Bool {
-                        guard fileManager.fileExists(atPath: item.outputURL.path) else { return false }
-                        do {
-                            try verifyImageIOISOGainMap(item.outputURL)
-                            return true
-                        } catch {
-                            return false
-                        }
-                    }
-
-                    // Resume: only treat checkpoint success/skipped as done. Failures always retry.
-                    if cmd.resume, let prior = checkpointState[inputKey], prior.matchesSignature(signature) {
-                        if (prior.status == .success || prior.status == .skippedExisting), prior.outputPath == outputKey {
-                            if isOutputValid() {
-                                statsLock.lock(); skippedExistingCount += 1; statsLock.unlock()
-                                record(status: .skippedExisting)
-                                log("skipped-existing \(item.inputURL.lastPathComponent)")
-                                return
-                            }
-                        }
-
-                        if prior.status == .failure {
-                            // fallthrough: retry conversion even if an output exists.
-                        }
-                    }
-
-                    // Skip-existing: filesystem-based fast path, unless resume explicitly says we must retry.
-                    if cmd.skipExisting {
-                        let prior = cmd.resume ? checkpointState[inputKey] : nil
-                        let signatureMatchesCheckpoint = prior?.matchesSignature(signature) == true
-                        let mustRetryFromCheckpoint = signatureMatchesCheckpoint && (prior?.status == .failure)
-                        let inputChangedSinceCheckpoint = (prior != nil) && !signatureMatchesCheckpoint
-                        if !mustRetryFromCheckpoint && !inputChangedSinceCheckpoint {
-                            if isOutputValid() {
-                                statsLock.lock(); skippedExistingCount += 1; statsLock.unlock()
-                                record(status: .skippedExisting)
-                                log("skipped-existing \(item.inputURL.lastPathComponent)")
-                                return
-                            }
-                        }
-                    }
-
-                    // If we are going to write to a different output path and it exists, remove it to avoid ImageIO failures.
-                    if item.outputURL.standardizedFileURL.path != item.inputURL.standardizedFileURL.path,
-                       fileManager.fileExists(atPath: item.outputURL.path) {
-                        try? fileManager.removeItem(at: item.outputURL)
-                    }
-
-                    do {
-                        _ = try XDRemuxProductCore.convert(
-                            inputURL: item.inputURL,
-                            outputURL: item.outputURL,
-                            familyPreference: cmd.family,
-                            debugRootURL: cmd.debugRootURL,
-                            oppoCompat: cmd.oppoCompat,
-                            inputProcessingBranch: cmd.inputProcessingBranch
-                        )
-                        statsLock.lock(); convertedCount += 1; statsLock.unlock()
-                        record(status: .success)
-                        log("converted \(item.inputURL.lastPathComponent)")
-                    } catch {
-                        statsLock.lock(); failureCount += 1; statsLock.unlock()
-                        record(status: .failure, error: String(describing: error))
-                        log("failed \(item.inputURL.lastPathComponent): \(error)")
-                    }
-                }
-            }
-        }
-
-        queue.waitUntilAllOperationsAreFinished()
-        try checkpointWriter.close()
-
-        log("batch complete: converted \(convertedCount) files, skipped-existing \(skippedExistingCount) files, failed \(failureCount) files into \(cmd.outputDirURL.path)")
-        if failureCount == 0 {
-            try? fileManager.removeItem(at: checkpointURL)
-        } else {
-            log("checkpoint kept (failures present): \(checkpointURL.path)")
-        }
-    }
-
-    private struct BatchWorkItem {
-        let inputURL: URL
-        let outputURL: URL
-    }
-
-    private enum BatchCheckpointStatus: String {
-        case success = "success"
-        case failure = "failure"
-        case skippedExisting = "skipped_existing"
-    }
-
-    private struct BatchCheckpointItem {
-        let inputPath: String
-        let outputPath: String
-        let status: BatchCheckpointStatus
-        let inputSize: Int64?
-        let inputMtimeNs: Int64?
-
-        func matchesSignature(_ signature: FileSignature?) -> Bool {
-            guard let signature else { return true }
-            if let inputSize, inputSize != signature.size { return false }
-            if let inputMtimeNs, inputMtimeNs != signature.mtimeNs { return false }
-            return true
-        }
-
-        func isDone(for expectedOutputPath: String, signature: FileSignature?) -> Bool {
-            guard status == .success || status == .skippedExisting else { return false }
-            guard outputPath == expectedOutputPath else { return false }
-            return matchesSignature(signature)
-        }
-    }
-
-    private struct FileSignature {
-        let size: Int64
-        let mtimeNs: Int64
-    }
-
-    private static func fileSignature(for url: URL, fileManager: FileManager) throws -> FileSignature {
-        let attrs = try fileManager.attributesOfItem(atPath: url.path)
-        let sizeValue = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-        let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let mtimeNs = Int64(mtime * 1_000_000_000)
-        return FileSignature(size: sizeValue, mtimeNs: mtimeNs)
-    }
-
-    private final class BatchCheckpointWriter {
-        private let url: URL
-        private let queue = DispatchQueue(label: "xdremux.checkpoint")
-        private var fileHandle: FileHandle?
-        private var isClosed = false
-
-        init(url: URL, fileManager: FileManager) throws {
-            self.url = url
-            let parent = url.deletingLastPathComponent()
-            try ensureDirectory(parent, fileManager: fileManager)
-            if !fileManager.fileExists(atPath: url.path) {
-                let ok = fileManager.createFile(atPath: url.path, contents: nil)
-                guard ok else { throw CLIError.unableToWriteCheckpoint(url) }
-            }
-            do {
-                let handle = try FileHandle(forWritingTo: url)
-                try handle.seekToEnd()
-                self.fileHandle = handle
-            } catch {
-                throw CLIError.unableToWriteCheckpoint(url)
-            }
-        }
-
-        func appendHeader(configHash: String, jobs: Int) throws {
-            let record: [String: Any] = [
-                "kind": "header",
-                "schema": 1,
-                "configHash": configHash,
-                "jobs": jobs,
-                "startedAtMs": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            try appendJSONLine(record)
-        }
-
-        func appendItem(
-            inputPath: String,
-            outputPath: String,
-            status: BatchCheckpointStatus,
-            inputSize: Int64?,
-            inputMtimeNs: Int64?,
-            error: String?
-        ) throws {
-            var record: [String: Any] = [
-                "kind": "item",
-                "schema": 1,
-                "inputPath": inputPath,
-                "outputPath": outputPath,
-                "status": status.rawValue,
-                "finishedAtMs": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            if let inputSize { record["inputSize"] = inputSize }
-            if let inputMtimeNs { record["inputMtimeNs"] = inputMtimeNs }
-            if let error { record["error"] = error }
-            try appendJSONLine(record)
-        }
-
-        func close() throws {
-            var thrown: Error?
-            queue.sync {
-                if isClosed { return }
-                isClosed = true
-                do {
-                    try fileHandle?.close()
-                } catch {
-                    thrown = error
-                }
-                fileHandle = nil
-            }
-            if let thrown {
-                throw thrown
-            }
-        }
-
-        private func appendJSONLine(_ record: [String: Any]) throws {
-            let data: Data
-            do {
-                data = try JSONSerialization.data(withJSONObject: record, options: [])
-            } catch {
-                throw CLIError.unableToWriteCheckpoint(url)
-            }
-            var line = data
-            line.append(UInt8(ascii: "\n"))
-
-            var thrown: Error?
-            queue.sync {
-                guard !isClosed, let fileHandle else {
-                    thrown = CLIError.unableToWriteCheckpoint(url)
-                    return
-                }
-                do {
-                    try fileHandle.write(contentsOf: line)
-                    try? fileHandle.synchronize()
-                } catch {
-                    thrown = CLIError.unableToWriteCheckpoint(url)
-                }
-            }
-            if let thrown {
-                throw thrown
-            }
-        }
-    }
-
-    private static func loadCheckpointStateIfPresent(url: URL, expectedConfigHash: String) throws -> [String: BatchCheckpointItem] {
-        guard fileManager.fileExists(atPath: url.path) else { return [:] }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url, options: [.mappedIfSafe])
-        } catch {
-            throw CLIError.unableToReadCheckpoint(url)
-        }
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw CLIError.unableToReadCheckpoint(url)
-        }
-
-        var items: [String: BatchCheckpointItem] = [:]
-        var sawHeader = false
-
-        for rawLine in text.split(whereSeparator: { $0.isNewline }) {
-            let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.isEmpty { continue }
-            guard let lineData = line.data(using: .utf8) else { continue }
-
-            let obj: Any
-            do {
-                obj = try JSONSerialization.jsonObject(with: lineData, options: [])
-            } catch {
-                // Tolerate a partially-written trailing line after interruption.
-                continue
-            }
-            guard let dict = obj as? [String: Any] else {
-                continue
-            }
-            let kind = dict["kind"] as? String
-            if kind == "header" {
-                sawHeader = true
-                let actual = dict["configHash"] as? String ?? "missing"
-                if actual != expectedConfigHash {
-                    throw CLIError.checkpointConfigMismatch(url, expected: expectedConfigHash, actual: actual)
-                }
-                continue
-            }
-            guard kind == "item" else { continue }
-
-            let inputPath = dict["inputPath"] as? String ?? ""
-            if inputPath.isEmpty { continue }
-            let outputPath = dict["outputPath"] as? String ?? ""
-            let statusRaw = dict["status"] as? String ?? ""
-            let status = BatchCheckpointStatus(rawValue: statusRaw) ?? .failure
-
-            let inputSize = (dict["inputSize"] as? NSNumber)?.int64Value
-            let inputMtimeNs = (dict["inputMtimeNs"] as? NSNumber)?.int64Value
-            items[inputPath] = BatchCheckpointItem(
-                inputPath: inputPath,
-                outputPath: outputPath,
-                status: status,
-                inputSize: inputSize,
-                inputMtimeNs: inputMtimeNs
-            )
-        }
-
-        guard sawHeader else {
-            throw CLIError.invalidCheckpoint(url, "missing header")
-        }
-        return items
-    }
-
-    private static func batchConfigHash(_ cmd: BatchCommand) -> String {
-        let entries: [(String, String)] = [
-            ("family", cmd.family.rawValue),
-            ("inputDir", cmd.inputDirURL.standardizedFileURL.path),
-            ("inputProcessing", cmd.inputProcessingBranch.rawValue),
-            ("oppoCompat", cmd.oppoCompat ? "1" : "0"),
-            ("outputDir", cmd.outputDirURL.standardizedFileURL.path)
-        ]
-        let stable = entries.sorted(by: { $0.0 < $1.0 }).map { "\($0.0)=\($0.1)" }.joined(separator: "\n")
-        return sha256Hex(Data(stable.utf8))
-    }
-
-    private static func resolvedCheckpointURL(cmd: BatchCommand, configHash: String) -> URL {
-        if let checkpointURL = cmd.checkpointURL {
-            return checkpointURL
-        }
-        let short = String(configHash.prefix(16))
-        return cmd.outputDirURL.appendingPathComponent(".xdremux-batch.\(short).jsonl")
-    }
-
-    private static func assertNoOutputCollisions(_ items: [BatchWorkItem]) throws {
-        var seen: [String: URL] = [:]
-        for item in items {
-            let key = item.outputURL.standardizedFileURL.path
-            if let prior = seen[key] {
-                throw CLIError.outputPathCollision(output: item.outputURL, firstInput: prior, secondInput: item.inputURL)
-            }
-            seen[key] = item.inputURL
-        }
-    }
-
-    private static func parseConvert(_ rawArgs: [String]) throws -> ConvertCommand {
-        var inputPath: String?
-        var outputPath: String?
-        var family = Family.auto
-        var debugDirPath: String?
-        var oppoCompat = false
-        var inputProcessingBranch = InputProcessingBranch.hybrid
-
-        var index = 0
-        while index < rawArgs.count {
-            let option = rawArgs[index]
-            index += 1
-
-            func nextValue(for option: String) throws -> String {
-                guard index < rawArgs.count else {
-                    throw CLIError.missingArgument(option)
-                }
-                defer { index += 1 }
-                return rawArgs[index]
-            }
-
-            switch option {
-            case "--input":
-                inputPath = try nextValue(for: option)
-            case "--output":
-                outputPath = try nextValue(for: option)
-            case "--family":
-                let value = try nextValue(for: option)
-                guard let parsed = Family(rawValue: value) else {
-                    throw CLIError.invalidValue(option: option, value: value)
-                }
-                family = parsed
-            case "--input-processing":
-                let value = try nextValue(for: option)
-                guard let parsed = InputProcessingBranch(rawValue: value) else {
-                    throw CLIError.invalidValue(option: option, value: value)
-                }
-                inputProcessingBranch = parsed
-            case "--debug-dir":
-                debugDirPath = try nextValue(for: option)
-            case "--oppo-compat":
-                oppoCompat = true
-            case "--no-oppo-compat":
-                oppoCompat = false
-            default:
-                throw CLIError.unknownOption(option)
-            }
-        }
-
-        guard let inputPath else { throw CLIError.missingArgument("--input") }
-
-        return ConvertCommand(
-            inputURL: URL(fileURLWithPath: inputPath),
-            outputURL: URL(fileURLWithPath: outputPath ?? inputPath),
-            family: family,
-            debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat,
-            inputProcessingBranch: inputProcessingBranch
+enum XDRemuxCore {
+    static func convert(inputURL: URL, outputURL: URL, config: ConversionConfig) throws {
+        _ = try XDRemuxProductCore.convert(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            familyPreference: config.family,
+            debugRootURL: config.debugDirectory,
+            oppoCompat: config.oppoCompat,
+            inputProcessingBranch: config.inputProcessingBranch
         )
     }
 
-    private static func parseBatch(_ rawArgs: [String]) throws -> BatchCommand {
-        var inputDirPath: String?
-        var outputDirPath: String?
-        var family = Family.auto
-        var glob = "*.heic"
-        var debugDirPath: String?
-        var oppoCompat = false
-        var inputProcessingBranch = InputProcessingBranch.hybrid
-        var jobs = min(ProcessInfo.processInfo.activeProcessorCount, 4)
-        var checkpointPath: String?
-        var resume = true
-        var skipExisting = true
-
-        var index = 0
-        while index < rawArgs.count {
-            let option = rawArgs[index]
-            index += 1
-
-            func nextValue(for option: String) throws -> String {
-                guard index < rawArgs.count else {
-                    throw CLIError.missingArgument(option)
-                }
-                defer { index += 1 }
-                return rawArgs[index]
-            }
-
-            switch option {
-            case "--input-dir":
-                inputDirPath = try nextValue(for: option)
-            case "--output-dir":
-                outputDirPath = try nextValue(for: option)
-            case "--family":
-                let value = try nextValue(for: option)
-                guard let parsed = Family(rawValue: value) else {
-                    throw CLIError.invalidValue(option: option, value: value)
-                }
-                family = parsed
-            case "--input-processing":
-                let value = try nextValue(for: option)
-                guard let parsed = InputProcessingBranch(rawValue: value) else {
-                    throw CLIError.invalidValue(option: option, value: value)
-                }
-                inputProcessingBranch = parsed
-            case "--glob":
-                glob = try nextValue(for: option)
-            case "--jobs":
-                let value = try nextValue(for: option)
-                guard let parsed = Int(value), parsed > 0 else {
-                    throw CLIError.invalidValue(option: option, value: value)
-                }
-                jobs = parsed
-            case "--checkpoint":
-                checkpointPath = try nextValue(for: option)
-            case "--resume":
-                resume = true
-            case "--no-resume":
-                resume = false
-            case "--skip-existing":
-                skipExisting = true
-            case "--no-skip-existing":
-                skipExisting = false
-            case "--debug-dir":
-                debugDirPath = try nextValue(for: option)
-            case "--oppo-compat":
-                oppoCompat = true
-            case "--no-oppo-compat":
-                oppoCompat = false
-            default:
-                throw CLIError.unknownOption(option)
-            }
-        }
-
-        guard let inputDirPath else { throw CLIError.missingArgument("--input-dir") }
-
-        return BatchCommand(
-            inputDirURL: URL(fileURLWithPath: inputDirPath),
-            outputDirURL: URL(fileURLWithPath: outputDirPath ?? inputDirPath),
-            family: family,
-            glob: glob,
-            debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat,
-            inputProcessingBranch: inputProcessingBranch,
-            jobs: jobs,
-            checkpointURL: checkpointPath.map { URL(fileURLWithPath: $0) },
-            resume: resume,
-            skipExisting: skipExisting
-        )
-    }
-
-    private static func enumerateInputs(root: URL, glob: String) throws -> [URL] {
-        guard fileManager.fileExists(atPath: root.path) else {
-            throw CLIError.inputNotFound(root)
-        }
-
-        let regex = try globToRegex(glob)
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            throw CLIError.inputNotFound(root)
-        }
-
-        var matched: [URL] = []
-        for case let fileURL as URL in enumerator {
-            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
-            guard values.isRegularFile == true else { continue }
-
-            let relative = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            let filename = fileURL.lastPathComponent
-            if regex.firstMatch(in: relative, options: [], range: NSRange(relative.startIndex..., in: relative)) != nil ||
-                regex.firstMatch(in: filename, options: [], range: NSRange(filename.startIndex..., in: filename)) != nil {
-                matched.append(fileURL)
-            }
-        }
-        return matched.sorted { $0.path < $1.path }
-    }
-
-    private static func globToRegex(_ glob: String) throws -> NSRegularExpression {
-        var pattern = "^"
-        for scalar in glob.unicodeScalars {
-            switch scalar {
-            case "*":
-                pattern += ".*"
-            case "?":
-                pattern += "."
-            case ".", "(", ")", "[", "]", "{", "}", "+", "^", "$", "|", "\\":
-                pattern += "\\\(scalar)"
-            default:
-                pattern.append(Character(scalar))
-            }
-        }
-        pattern += "$"
-        return try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    static func isValidISOGainMapOutput(_ outputURL: URL) -> Bool {
+        (try? verifyImageIOISOGainMap(outputURL)) != nil
     }
 }
 
@@ -3257,7 +2581,7 @@ private func parseISOBMFFIRefVersion(_ data: Data, _ box: ISOBMFFBox?) -> UInt8 
 
 private func parseISOBMFFIPCOProps(_ data: Data, _ iprp: ISOBMFFBox) throws -> (box: ISOBMFFBox, types: [Int: String], sizes: [Int: (Int, Int)]) {
     guard let ipco = isobmffBoxes(in: data, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipco" }) else {
-        throw CLIError.invalidContainer("ipco missing")
+        throw XDRemuxError.invalidContainer("ipco missing")
     }
     var types: [Int: String] = [:]
     var sizes: [Int: (Int, Int)] = [:]
@@ -3341,7 +2665,7 @@ private func parseISOBMFFIRefs(_ data: Data, _ box: ISOBMFFBox?) -> (version: UI
 
 private func parseISOBMFFIPCOPropertyInfos(_ data: Data, _ iprp: ISOBMFFBox) throws -> [ISOBMFFPropertyInfo] {
     guard let ipco = isobmffBoxes(in: data, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipco" }) else {
-        throw CLIError.invalidContainer("ipco missing")
+        throw XDRemuxError.invalidContainer("ipco missing")
     }
     return isobmffBoxes(in: data, start: ipco.dataStart, end: ipco.dataEnd).enumerated().map { offset, prop in
         ISOBMFFPropertyInfo(
@@ -3431,15 +2755,15 @@ private func itemPayload(in data: Data, entry: ISOBMFFILocEntry, idat: ISOBMFFBo
             start = extent.offset
         case 1:
             guard let idat else {
-                throw CLIError.invalidContainer("item \(entry.itemID) uses idat construction but idat is missing")
+                throw XDRemuxError.invalidContainer("item \(entry.itemID) uses idat construction but idat is missing")
             }
             start = idat.dataStart + extent.offset
         default:
-            throw CLIError.invalidContainer("unsupported construction_method \(entry.constructionMethod) for item \(entry.itemID)")
+            throw XDRemuxError.invalidContainer("unsupported construction_method \(entry.constructionMethod) for item \(entry.itemID)")
         }
         let end = start + extent.length
         guard start >= 0, end <= data.count else {
-            throw CLIError.invalidContainer("item \(entry.itemID) extent is out of bounds")
+            throw XDRemuxError.invalidContainer("item \(entry.itemID) extent is out of bounds")
         }
         out.append(data.subdata(in: start..<end))
     }
@@ -3451,7 +2775,7 @@ private func jpegImageSize(_ jpeg: Data) throws -> (Int, Int) {
           let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
           let width = props[kCGImagePropertyPixelWidth] as? Int,
           let height = props[kCGImagePropertyPixelHeight] as? Int else {
-        throw CLIError.invalidContainer("cannot read private gain map JPEG dimensions")
+        throw XDRemuxError.invalidContainer("cannot read private gain map JPEG dimensions")
     }
     return (width, height)
 }
@@ -3496,7 +2820,7 @@ private func makeIrefBox(type: String, from: Int, to: [Int], version: UInt8) -> 
 
 private func makeIPMAEntry(_ itemID: Int, _ assocs: [(Int, Bool)], flags: Int) throws -> Data {
     if flags & 1 == 0, assocs.contains(where: { $0.0 > 0x7f }) {
-        throw CLIError.invalidContainer("ipma property index exceeds 7-bit association limit")
+        throw XDRemuxError.invalidContainer("ipma property index exceeds 7-bit association limit")
     }
     var out = Data()
     if flags & 1 != 0 { appendUInt32BE(itemID, to: &out) } else { appendUInt16BE(itemID, to: &out) }
@@ -3570,8 +2894,7 @@ private func writeHybridPrimaryPassthrough(
     sourceURL: URL,
     preservedURL: URL,
     outputURL: URL,
-    patchedUserComment: String?,
-    preserveTmapColor: Bool = false
+    patchedUserComment: String?
 ) throws {
     let source = try Data(contentsOf: sourceURL)
     let preserved = try Data(contentsOf: preservedURL)
@@ -3582,20 +2905,20 @@ private func writeHybridPrimaryPassthrough(
           let sourceMeta = sourceTop.first(where: { $0.type == "meta" }),
           let sourceMdat = sourceTop.first(where: { $0.type == "mdat" }),
           let preservedMeta = preservedTop.first(where: { $0.type == "meta" }) else {
-        throw CLIError.invalidContainer("hybrid graft requires ftyp/meta/mdat in source and meta in preserve output")
+        throw XDRemuxError.invalidContainer("hybrid graft requires ftyp/meta/mdat in source and meta in preserve output")
     }
 
     let sourceMetaChildren = isobmffBoxes(in: source, start: sourceMeta.dataStart + 4, end: sourceMeta.dataEnd)
     let preservedMetaChildren = isobmffBoxes(in: preserved, start: preservedMeta.dataStart + 4, end: preservedMeta.dataEnd)
     func sourceChild(_ type: String) throws -> ISOBMFFBox {
         guard let box = sourceMetaChildren.first(where: { $0.type == type }) else {
-            throw CLIError.invalidContainer("source meta/\(type) missing")
+            throw XDRemuxError.invalidContainer("source meta/\(type) missing")
         }
         return box
     }
     func preservedChild(_ type: String) throws -> ISOBMFFBox {
         guard let box = preservedMetaChildren.first(where: { $0.type == type }) else {
-            throw CLIError.invalidContainer("preserve meta/\(type) missing")
+            throw XDRemuxError.invalidContainer("preserve meta/\(type) missing")
         }
         return box
     }
@@ -3613,7 +2936,7 @@ private func writeHybridPrimaryPassthrough(
     let sourceProps = try parseISOBMFFIPCOPropertyInfos(source, sourceIprp)
     let sourcePropsByIndex = Dictionary(uniqueKeysWithValues: sourceProps.map { ($0.index, $0) })
     guard let sourceIPMABox = isobmffBoxes(in: source, start: sourceIprp.dataStart, end: sourceIprp.dataEnd).first(where: { $0.type == "ipma" }) else {
-        throw CLIError.invalidContainer("source ipma missing")
+        throw XDRemuxError.invalidContainer("source ipma missing")
     }
     let sourceIPMA = parseISOBMFFIPMA(source, sourceIPMABox)
 
@@ -3632,7 +2955,7 @@ private func writeHybridPrimaryPassthrough(
     let preservedProps = try parseISOBMFFIPCOPropertyInfos(preserved, preservedIprp)
     let preservedPropsByIndex = Dictionary(uniqueKeysWithValues: preservedProps.map { ($0.index, $0) })
     guard let preservedIPMABox = isobmffBoxes(in: preserved, start: preservedIprp.dataStart, end: preservedIprp.dataEnd).first(where: { $0.type == "ipma" }) else {
-        throw CLIError.invalidContainer("preserve ipma missing")
+        throw XDRemuxError.invalidContainer("preserve ipma missing")
     }
     let preservedIPMA = parseISOBMFFIPMA(preserved, preservedIPMABox)
 
@@ -3643,7 +2966,7 @@ private func writeHybridPrimaryPassthrough(
     )
     guard let preservedTmapID = preservedItemInfo.items.first(where: { $0.type == "tmap" })?.itemID,
           let tmapTargets = preservedDimgRefs[preservedTmapID] else {
-        throw CLIError.invalidContainer("preserve output has no tmap dimg reference")
+        throw XDRemuxError.invalidContainer("preserve output has no tmap dimg reference")
     }
     let preservedGainGridID = tmapTargets.first {
         $0 != preservedPrimaryID && preservedItemsByID[$0]?.type == "grid"
@@ -3652,7 +2975,7 @@ private func writeHybridPrimaryPassthrough(
           preservedItemsByID[preservedGainGridID]?.type == "grid",
           let preservedGainTileIDs = preservedDimgRefs[preservedGainGridID],
           !preservedGainTileIDs.isEmpty else {
-        throw CLIError.invalidContainer("preserve output has no HEVC gain-map grid")
+        throw XDRemuxError.invalidContainer("preserve output has no HEVC gain-map grid")
     }
     let preservedXMPID = preservedRefsInfo.refs.first {
         $0.type == "cdsc" && $0.to.contains(preservedTmapID) && preservedItemsByID[$0.from]?.type == "mime"
@@ -3682,13 +3005,13 @@ private func writeHybridPrimaryPassthrough(
     let keptSourceIDs = Set(keptSourceItems.map(\.itemID))
     let keptSourceIlocEntries = sourceIlocEntries.filter { keptSourceIDs.contains($0.itemID) }
     guard keptSourceIDs.contains(sourcePrimaryID) else {
-        throw CLIError.invalidContainer("hybrid graft would drop primary item")
+        throw XDRemuxError.invalidContainer("hybrid graft would drop primary item")
     }
 
     let maxSourceID = keptSourceItems.map(\.itemID).max() ?? sourcePrimaryID
     let copiedItemCount = preservedGainTileIDs.count + 2 + (preservedXMPID == nil ? 0 : 1)
     guard maxSourceID + copiedItemCount < 0xffff else {
-        throw CLIError.invalidContainer("hybrid graft currently requires 16-bit item IDs")
+        throw XDRemuxError.invalidContainer("hybrid graft currently requires 16-bit item IDs")
     }
     var nextItemID = maxSourceID + 1
     var gainTileIDMap: [Int: Int] = [:]
@@ -3710,20 +3033,20 @@ private func writeHybridPrimaryPassthrough(
 
     let gainTilePayloads: [(oldID: Int, newID: Int, payload: Data)] = try preservedGainTileIDs.map { oldID in
         guard let entry = preservedIlocByID[oldID], let newID = gainTileIDMap[oldID] else {
-            throw CLIError.invalidContainer("preserve gain tile \(oldID) has no iloc entry")
+            throw XDRemuxError.invalidContainer("preserve gain tile \(oldID) has no iloc entry")
         }
         return (oldID, newID, try itemPayload(in: preserved, entry: entry, idat: preservedIDAT))
     }
     guard let gainGridEntry = preservedIlocByID[preservedGainGridID],
           let tmapEntry = preservedIlocByID[preservedTmapID] else {
-        throw CLIError.invalidContainer("preserve gain grid/tmap has no iloc entry")
+        throw XDRemuxError.invalidContainer("preserve gain grid/tmap has no iloc entry")
     }
     let gainGridPayload = try itemPayload(in: preserved, entry: gainGridEntry, idat: preservedIDAT)
     let tmapPayload = try itemPayload(in: preserved, entry: tmapEntry, idat: preservedIDAT)
     let xmpPayload: Data?
     if let preservedXMPID {
         guard let xmpEntry = preservedIlocByID[preservedXMPID] else {
-            throw CLIError.invalidContainer("preserve XMP item has no iloc entry")
+            throw XDRemuxError.invalidContainer("preserve XMP item has no iloc entry")
         }
         xmpPayload = try itemPayload(in: preserved, entry: xmpEntry, idat: preservedIDAT)
     } else {
@@ -3738,7 +3061,7 @@ private func writeHybridPrimaryPassthrough(
     func mapPreservedProperty(_ index: Int) throws -> Int {
         if let mapped = propertyIndexMap[index] { return mapped }
         guard let prop = preservedPropsByIndex[index] else {
-            throw CLIError.invalidContainer("preserve property \(index) missing")
+            throw XDRemuxError.invalidContainer("preserve property \(index) missing")
         }
         let mapped = sourceProps.count + propertyIndexMap.count + 1
         propertyIndexMap[index] = mapped
@@ -3804,14 +3127,14 @@ private func writeHybridPrimaryPassthrough(
     }
     for tile in gainTilePayloads {
         guard let preservedEntry = preservedIPMAByID[tile.oldID] else {
-            throw CLIError.invalidContainer("preserve gain tile \(tile.oldID) has no ipma entry")
+            throw XDRemuxError.invalidContainer("preserve gain tile \(tile.oldID) has no ipma entry")
         }
         ipmaEntries.append(try makeIPMAEntry(tile.newID, try remapPreservedAssocs(preservedEntry.associations), flags: sourceIPMA.flags))
         ipmaEntryCount += 1
     }
     guard let preservedGainGridIPMA = preservedIPMAByID[preservedGainGridID],
           let preservedTmapIPMA = preservedIPMAByID[preservedTmapID] else {
-        throw CLIError.invalidContainer("preserve gain grid/tmap has no ipma entry")
+        throw XDRemuxError.invalidContainer("preserve gain grid/tmap has no ipma entry")
     }
     ipmaEntries.append(try makeIPMAEntry(outputGainGridID, try remapPreservedAssocs(preservedGainGridIPMA.associations), flags: sourceIPMA.flags))
     ipmaEntryCount += 1
@@ -3820,9 +3143,7 @@ private func writeHybridPrimaryPassthrough(
     var tmapAssocs = try preservedTmapAssocPairs
         .filter { propertyType($0, in: preservedPropsByIndex) != "colr" }
         .map { (try mapPreservedProperty($0.0), $0.1) }
-    if preserveTmapColor, let preservedTmapColorAssoc {
-        tmapAssocs.insert((try mapPreservedProperty(preservedTmapColorAssoc.0), preservedTmapColorAssoc.1), at: 0)
-    } else if let sourceBaselineColorAssoc {
+    if let sourceBaselineColorAssoc {
         tmapAssocs.insert(sourceBaselineColorAssoc, at: 0)
     } else if let firstSourceColor = sourceProps.first(where: { $0.type == "colr" })?.index {
         tmapAssocs.insert((firstSourceColor, true), at: 0)
@@ -4001,7 +3322,7 @@ private func writeHybridPrimaryPassthrough(
     out.append(mdatPart)
     if let patchedUserComment {
         guard patchOppoUserComment(&out, patchedUserComment: patchedUserComment) else {
-            throw CLIError.invalidContainer("unable to patch OPPO UserComment in hybrid output")
+            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in hybrid output")
         }
     }
     try out.write(to: outputURL)
@@ -4015,10 +3336,10 @@ private func writePrivateJPEGPassthroughOutput(
     patchedUserComment: String? = nil
 ) throws -> (primaryID: Int, gainMapID: Int) {
     guard infoFloats.count >= 20 else {
-        throw CLIError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
+        throw XDRemuxError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
     }
     guard gainMapJPEG.starts(with: Data([0xff, 0xd8])) else {
-        throw CLIError.invalidContainer("local.uhdr.gainmap.data is not a JPEG payload")
+        throw XDRemuxError.invalidContainer("local.uhdr.gainmap.data is not a JPEG payload")
     }
 
     let src = try Data(contentsOf: inputURL)
@@ -4026,12 +3347,12 @@ private func writePrivateJPEGPassthroughOutput(
     guard let ftyp = top.first(where: { $0.type == "ftyp" }),
           let meta = top.first(where: { $0.type == "meta" }),
           let mdat = top.first(where: { $0.type == "mdat" }) else {
-        throw CLIError.invalidContainer("missing ftyp/meta/mdat")
+        throw XDRemuxError.invalidContainer("missing ftyp/meta/mdat")
     }
     let metaChildren = isobmffBoxes(in: src, start: meta.dataStart + 4, end: meta.dataEnd)
     func child(_ type: String) throws -> ISOBMFFBox {
         guard let box = metaChildren.first(where: { $0.type == type }) else {
-            throw CLIError.invalidContainer("meta/\(type) missing")
+            throw XDRemuxError.invalidContainer("meta/\(type) missing")
         }
         return box
     }
@@ -4047,7 +3368,7 @@ private func writePrivateJPEGPassthroughOutput(
     let ilocEntries = try parseISOBMFFILoc(src, iloc)
     let ipco = try parseISOBMFFIPCOProps(src, iprp)
     guard let ipmaBox = isobmffBoxes(in: src, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipma" }) else {
-        throw CLIError.invalidContainer("ipma missing")
+        throw XDRemuxError.invalidContainer("ipma missing")
     }
     let ipma = parseISOBMFFIPMA(src, ipmaBox)
     let propMask = ipma.flags & 1 != 0 ? 0x7fff : 0x7f
@@ -4055,7 +3376,7 @@ private func writePrivateJPEGPassthroughOutput(
     let primaryPropIndices = primaryAssocs.map { $0 & propMask }
     guard let primaryIspeIndex = primaryPropIndices.first(where: { ipco.types[$0] == "ispe" }),
           ipco.sizes[primaryIspeIndex] != nil else {
-        throw CLIError.invalidContainer("primary item has no ispe")
+        throw XDRemuxError.invalidContainer("primary item has no ispe")
     }
     let primaryColrIndex = primaryPropIndices.first(where: { ipco.types[$0] == "colr" })
         ?? ipco.types.first(where: { $0.value == "colr" })?.key
@@ -4250,7 +3571,7 @@ private func writePrivateJPEGPassthroughOutput(
     out.append(mdatPart)
     if let patchedUserComment {
         guard patchOppoUserComment(&out, patchedUserComment: patchedUserComment) else {
-            throw CLIError.invalidContainer("unable to patch OPPO UserComment in UHDR pass-through output")
+            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in UHDR pass-through output")
         }
     }
     try out.write(to: outputURL)
@@ -4434,14 +3755,14 @@ private func ensureDirectory(_ url: URL, fileManager: FileManager) throws {
     var isDirectory: ObjCBool = false
     if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) {
         guard isDirectory.boolValue else {
-            throw CLIError.outputParentIsNotDirectory(url)
+            throw XDRemuxError.outputParentIsNotDirectory(url)
         }
         return
     }
     do {
         try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
     } catch {
-        throw CLIError.unableToCreateDirectory(url)
+        throw XDRemuxError.unableToCreateDirectory(url)
     }
 }
 
@@ -4535,7 +3856,7 @@ private func formatFloat(_ value: Double, digits: Int) -> String {
 
 private func readUInt32BE(from data: Data, at offset: Int) throws -> UInt32 {
     guard offset >= 0, offset + 4 <= data.count else {
-        throw CLIError.invalidLHDR("out-of-range uint32 read at \(offset)")
+        throw XDRemuxError.invalidLHDR("out-of-range uint32 read at \(offset)")
     }
     var value: UInt32 = 0
     _ = withUnsafeMutableBytes(of: &value) { buffer in
@@ -4550,7 +3871,7 @@ private func unpack36FloatLE(_ data: Data) throws -> [Double] {
 
 private func unpackFloatArrayLE(_ data: Data, count: Int) throws -> [Double] {
     guard data.count >= count * 4 else {
-        throw CLIError.invalidLHDR("float payload shorter than expected \(count * 4) bytes")
+        throw XDRemuxError.invalidLHDR("float payload shorter than expected \(count * 4) bytes")
     }
 
     var values: [Double] = []
@@ -4581,5 +3902,3 @@ private func lastIndex(of needle: Data, in haystack: Data) -> Int? {
     guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
     return haystack.range(of: needle, options: [.backwards], in: 0..<haystack.count)?.lowerBound
 }
-
-LHDRToISOHDRCLI.main()
