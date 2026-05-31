@@ -109,6 +109,22 @@ private enum InputProcessingBranch: String {
     case passthrough
 }
 
+/// Controls OPPO Gallery compatibility behavior.
+/// - `auto`: explicit metadata-only OPPO mode without the private compatibility tail.
+/// - `on`: full OPPO compatibility including private tail (previous `--oppo-compat` behavior).
+/// - `off`: no OPPO-specific behavior; clean Apple/ImageIO-only output.
+private enum OppoCompatibility: String {
+    case auto
+    case on
+    case off
+
+    /// Whether to apply OPPO UserComment tagflag patching and tmap color preservation.
+    var wantsOppoCompat: Bool { self != .off }
+
+    /// Whether to append the OPPO private compatibility tail (manifest + gainmap entries).
+    var wantsOppoTail: Bool { self == .on }
+}
+
 private func fourCCString(_ value: UInt32?) -> String {
     guard let value else { return "missing" }
     var bigEndian = value.bigEndian
@@ -126,7 +142,7 @@ private struct ConvertCommand {
     let outputURL: URL
     let family: Family
     let debugRootURL: URL?
-    let oppoCompat: Bool
+    let oppoCompatibility: OppoCompatibility
     let inputProcessingBranch: InputProcessingBranch
 }
 
@@ -136,7 +152,7 @@ private struct BatchCommand {
     let family: Family
     let glob: String
     let debugRootURL: URL?
-    let oppoCompat: Bool
+    let oppoCompatibility: OppoCompatibility
     let inputProcessingBranch: InputProcessingBranch
     let jobs: Int
     /// Nil means auto checkpoint path under output-dir.
@@ -1983,7 +1999,7 @@ private enum XDRemuxProductCore {
         outputURL: URL,
         familyPreference: Family,
         debugRootURL: URL?,
-        oppoCompat: Bool = false,
+        oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .hybrid
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
@@ -2023,11 +2039,11 @@ private enum XDRemuxProductCore {
             outputURL: actualOutputURL,
             sourceData: sourceData,
             productInput: productInput,
-            oppoCompat: oppoCompat,
+            oppoCompat: oppoCompatibility.wantsOppoCompat,
             inputProcessingBranch: inputProcessingBranch
         )
 
-        if oppoCompat {
+        if oppoCompatibility.wantsOppoTail {
             try appendOppoCompatibilityPayload(
                 outputURL: actualOutputURL,
                 sourceData: sourceData,
@@ -2241,29 +2257,26 @@ private enum HybridGainMapWriter {
         let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
         switch productInput.extracted.mode {
         case .uhdr:
-            if oppoCompat {
-                try ISOHDRWriter.write(
-                    baseImageURL: inputURL,
-                    gainMap: productInput.gainMapRaster,
-                    style: productInput.style,
-                    outputURL: preservedURL,
-                    oppoCompat: false,
-                    inputProcessingBranch: .system
-                )
-            } else {
-                _ = try writePrivateJPEGPassthroughOutput(
-                    inputURL: inputURL,
-                    outputURL: privateIntermediateURL,
-                    infoFloats: productInput.extracted.metaFloats,
-                    gainMapJPEG: productInput.extracted.maskJPEGData,
-                    patchedUserComment: patchedUserComment
-                )
-                try ISOHDRWriter.writeWithPreserveReencode(
-                    intermediateURL: privateIntermediateURL,
-                    outputURL: preservedURL,
-                    patchedUserComment: patchedUserComment
-                )
-            }
+            // JPEG passthrough plus preserve keeps the final HEVC gain map on the 4:4:4 path.
+            // OPPO compat uses 142B 3-channel tmap (PQ transfer); otherwise 62B Apple tmap.
+            let uhdrTmapPayload: Data? = oppoCompat
+                ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
+                : nil
+            let uhdrTmapColorBox: Data? = oppoCompat ? isoColrBT2020PQBox : nil
+            _ = try writePrivateJPEGPassthroughOutput(
+                inputURL: inputURL,
+                outputURL: privateIntermediateURL,
+                infoFloats: productInput.extracted.metaFloats,
+                gainMapJPEG: productInput.extracted.maskJPEGData,
+                patchedUserComment: patchedUserComment,
+                tmapPayload: uhdrTmapPayload,
+                tmapColorBox: uhdrTmapColorBox
+            )
+            try ISOHDRWriter.writeWithPreserveReencode(
+                intermediateURL: privateIntermediateURL,
+                outputURL: preservedURL,
+                patchedUserComment: patchedUserComment
+            )
         case .lhdr:
             try ISOHDRWriter.write(
                 baseImageURL: inputURL,
@@ -2294,12 +2307,18 @@ private enum DirectPassthroughGainMapWriter {
         oppoCompat: Bool
     ) throws {
         let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
+        let tmapPayload: Data? = oppoCompat && productInput.extracted.mode == .uhdr
+            ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
+            : nil
+        let tmapColorBox: Data? = tmapPayload == nil ? nil : isoColrBT2020PQBox
         _ = try writePrivateJPEGPassthroughOutput(
             inputURL: inputURL,
             outputURL: outputURL,
             infoFloats: privateGainMapInfoFloats(for: productInput),
             gainMapJPEG: productInput.extracted.maskJPEGData,
-            patchedUserComment: patchedUserComment
+            patchedUserComment: patchedUserComment,
+            tmapPayload: tmapPayload,
+            tmapColorBox: tmapColorBox
         )
         try verifyImageIOISOGainMap(outputURL)
     }
@@ -2316,19 +2335,25 @@ struct LHDRToISOHDRCLI {
     private static let fileManager = FileManager.default
     private static let usage = """
     Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat] [--input-processing system|hybrid|passthrough]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>] [--oppo-compat] [--input-processing system|hybrid|passthrough]
+            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat [auto|on|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
+            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>] [--oppo-compat [auto|on|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
 
     Notes:
       - Input processing defaults to hybrid.
+      - OPPO Gallery compatibility is opt-in. Bare --oppo-compat and --oppo-compat on apply
+        UserComment tagflag patching, 142B ImageIO-native tmap metadata, PQ tmap color, and the
+        OPPO private compatibility tail. --oppo-compat auto applies only the metadata/tagflag part.
+        The default is clean Apple/ImageIO output with no OPPO-specific behavior.
       - Batch defaults: --jobs min(cpu,4), --resume, --skip-existing.
       - A JSONL checkpoint is written under output-dir by default; it is deleted only when the batch finishes with zero failures.
-      - system: ImageIO writes the final HEIC directly.
-      - hybrid: ImageIO/Preserve produces HEVC gain map, then XDRemux grafts the original primary subtree.
+      - system: ImageIO writes the final HEIC directly (HEVC gain map, compact file size).
+      - hybrid: XDRemux preserves the original 4:4:4 gain map and grafts the source primary subtree.
       - passthrough: experimental direct ISOBMFF rewrite that keeps ImageIO ISO gain-map readability.
       - If --output is omitted, the input file is overwritten in place.
       - If --output-dir is omitted, files are written to the input directory.
-      - OPPO Gallery compatibility metadata is off by default; pass --oppo-compat only when targeting OPPO Gallery.
+      - Strict ISO validation and ImageIO-native compatibility are separate concerns. ImageIO may produce
+        a 142-byte tmap payload instead of the strict ISO 145-byte three-channel metadata; strict mode
+        will flag this as expected.
     """
 
     static func main() {
@@ -2373,7 +2398,7 @@ struct LHDRToISOHDRCLI {
             outputURL: cmd.outputURL,
             familyPreference: cmd.family,
             debugRootURL: cmd.debugRootURL,
-            oppoCompat: cmd.oppoCompat,
+            oppoCompatibility: cmd.oppoCompatibility,
             inputProcessingBranch: cmd.inputProcessingBranch
         )
         print("converted \(report.inputURL.lastPathComponent) -> \(report.outputURL.path)")
@@ -2515,7 +2540,7 @@ struct LHDRToISOHDRCLI {
                             outputURL: item.outputURL,
                             familyPreference: cmd.family,
                             debugRootURL: cmd.debugRootURL,
-                            oppoCompat: cmd.oppoCompat,
+                            oppoCompatibility: cmd.oppoCompatibility,
                             inputProcessingBranch: cmd.inputProcessingBranch
                         )
                         statsLock.lock(); convertedCount += 1; statsLock.unlock()
@@ -2757,7 +2782,7 @@ struct LHDRToISOHDRCLI {
             ("family", cmd.family.rawValue),
             ("inputDir", cmd.inputDirURL.standardizedFileURL.path),
             ("inputProcessing", cmd.inputProcessingBranch.rawValue),
-            ("oppoCompat", cmd.oppoCompat ? "1" : "0"),
+            ("oppoCompat", cmd.oppoCompatibility.rawValue),
             ("outputDir", cmd.outputDirURL.standardizedFileURL.path)
         ]
         let stable = entries.sorted(by: { $0.0 < $1.0 }).map { "\($0.0)=\($0.1)" }.joined(separator: "\n")
@@ -2788,7 +2813,7 @@ struct LHDRToISOHDRCLI {
         var outputPath: String?
         var family = Family.auto
         var debugDirPath: String?
-        var oppoCompat = false
+        var oppoCompatibility: OppoCompatibility = .off
         var inputProcessingBranch = InputProcessingBranch.hybrid
 
         var index = 0
@@ -2824,9 +2849,15 @@ struct LHDRToISOHDRCLI {
             case "--debug-dir":
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
-                oppoCompat = true
+                // Bare --oppo-compat means "on"; --oppo-compat auto|on|off for explicit mode.
+                if index < rawArgs.count, let parsed = OppoCompatibility(rawValue: rawArgs[index]) {
+                    oppoCompatibility = parsed
+                    index += 1
+                } else {
+                    oppoCompatibility = .on
+                }
             case "--no-oppo-compat":
-                oppoCompat = false
+                oppoCompatibility = .off
             default:
                 throw CLIError.unknownOption(option)
             }
@@ -2839,7 +2870,7 @@ struct LHDRToISOHDRCLI {
             outputURL: URL(fileURLWithPath: outputPath ?? inputPath),
             family: family,
             debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat,
+            oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: inputProcessingBranch
         )
     }
@@ -2850,7 +2881,7 @@ struct LHDRToISOHDRCLI {
         var family = Family.auto
         var glob = "*.heic"
         var debugDirPath: String?
-        var oppoCompat = false
+        var oppoCompatibility: OppoCompatibility = .off
         var inputProcessingBranch = InputProcessingBranch.hybrid
         var jobs = min(ProcessInfo.processInfo.activeProcessorCount, 4)
         var checkpointPath: String?
@@ -2908,9 +2939,14 @@ struct LHDRToISOHDRCLI {
             case "--debug-dir":
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
-                oppoCompat = true
+                if index < rawArgs.count, let parsed = OppoCompatibility(rawValue: rawArgs[index]) {
+                    oppoCompatibility = parsed
+                    index += 1
+                } else {
+                    oppoCompatibility = .on
+                }
             case "--no-oppo-compat":
-                oppoCompat = false
+                oppoCompatibility = .off
             default:
                 throw CLIError.unknownOption(option)
             }
@@ -2924,7 +2960,7 @@ struct LHDRToISOHDRCLI {
             family: family,
             glob: glob,
             debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
-            oppoCompat: oppoCompat,
+            oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: inputProcessingBranch,
             jobs: jobs,
             checkpointURL: checkpointPath.map { URL(fileURLWithPath: $0) },
@@ -3068,6 +3104,11 @@ private let isoColrSRGBBox = Data([
     0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
     0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
     0x00, 0x02, 0x80,
+])
+private let isoColrBT2020PQBox = Data([
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
+    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x09, 0x00, 0x10,
+    0x00, 0x09, 0x80,
 ])
 private let isoPixiRGB8Box = Data([
     0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
@@ -3511,6 +3552,55 @@ private func makeIPMAEntry(_ itemID: Int, _ assocs: [(Int, Bool)], flags: Int) t
     return out
 }
 
+/// Generate the 142-byte ImageIO-native tmap payload observed in OPPO-recognized CoreImage output.
+/// This compatibility form is intentionally distinct from strict ISO 21496-1's padded 145-byte check.
+private func makeImageIONativeTmapPayload(infoFloats f: [Double]) -> Data {
+    let rationalDen = 100_000
+    func appendRational(_ value: Double, to data: inout Data) {
+        appendUInt32BE(Int(max(0, (value * Double(rationalDen)).rounded())), to: &data)
+        appendUInt32BE(rationalDen, to: &data)
+    }
+    func appendSignedRational(_ value: Double, to data: inout Data) {
+        appendInt32BE(Int32((value * Double(rationalDen)).rounded()), to: &data)
+        appendUInt32BE(rationalDen, to: &data)
+    }
+
+    // Use the same values as makeAppleTmapPayload for all 3 channels.
+    // f[0]=gain_min, f[4]=gain_max, f[7]=gamma, f[10]=base_offset, f[13]=alt_offset,
+    // f[16]=cap_min, f[17]=cap_max.  Per-channel variants at f[1-2],f[5-6],f[8-9],
+    // f[11-12],f[14-15] are unused here to match the proven 62B payload behavior.
+    let gainMin = max(log2(max(f[0], 1.0)), 0.0)
+    let gainMax = log2(max(f[4], 1.0))
+    let gamma = f[7]
+    let baseOffset = f[10]
+    let altOffset = f[13]
+    let capMin = max(log2(max(f[16], 1.0)), 0.0)
+    let capMax = log2(max(f[17], 1.0))
+
+    var out = Data()
+
+    // Version byte
+    out.append(0x00)
+
+    // Common header (21 bytes)
+    appendUInt16BE(0, to: &out)  // minimum_version
+    appendUInt16BE(0, to: &out)  // writer_version
+    out.append(0xC0)             // flags: multichannel=1, use_base_colour_space=1
+    appendRational(capMin, to: &out)   // base_hdr_headroom
+    appendRational(capMax, to: &out)   // alternate_hdr_headroom
+
+    // 3 channels × 40 bytes (same values for all channels, matching 62B payload)
+    for _ in 0..<3 {
+        appendSignedRational(gainMin, to: &out)      // gain_map_min
+        appendSignedRational(gainMax, to: &out)      // gain_map_max
+        appendRational(gamma, to: &out)              // gamma
+        appendSignedRational(baseOffset, to: &out)   // base_offset (single rational)
+        appendSignedRational(altOffset, to: &out)    // alternate_offset (single rational)
+    }
+
+    return out  // 1 + 21 + 120 = 142 bytes
+}
+
 private func makeAppleTmapPayload(infoFloats f: [Double]) -> Data {
     func fixed(_ value: Double) -> Int32 {
         Int32((value * 100_000.0).rounded())
@@ -3813,7 +3903,21 @@ private func writeHybridPrimaryPassthrough(
           let preservedTmapIPMA = preservedIPMAByID[preservedTmapID] else {
         throw CLIError.invalidContainer("preserve gain grid/tmap has no ipma entry")
     }
-    ipmaEntries.append(try makeIPMAEntry(outputGainGridID, try remapPreservedAssocs(preservedGainGridIPMA.associations), flags: sourceIPMA.flags))
+    var gainGridAssocs = try remapPreservedAssocs(preservedGainGridIPMA.associations)
+    let gainGridHasAuxC = gainGridAssocs.contains { assoc in
+        if let mapped = propertyIndexMap.first(where: { $1 == assoc.0 })?.key {
+            return preservedPropsByIndex[mapped]?.type == "auxC"
+        }
+        return sourcePropsByIndex[assoc.0]?.type == "auxC"
+    }
+    if !gainGridHasAuxC {
+        // ImageIO re-encode drops auxC; add it explicitly for ISO gain map recognition
+        let auxCOutputIndex = sourceProps.count + propertyIndexMap.count + 1
+        propertyIndexMap[-1] = auxCOutputIndex  // reserve slot so subsequent mapPreservedProperty uses correct index
+        ipcoPayload.append(isoAuxCBox)
+        gainGridAssocs.append((auxCOutputIndex, true))
+    }
+    ipmaEntries.append(try makeIPMAEntry(outputGainGridID, gainGridAssocs, flags: sourceIPMA.flags))
     ipmaEntryCount += 1
     let preservedTmapAssocPairs = assocPairs(preservedTmapIPMA.associations, flags: preservedIPMA.flags)
     let preservedTmapColorAssoc = preservedTmapAssocPairs.first { propertyType($0, in: preservedPropsByIndex) == "colr" }
@@ -3880,6 +3984,7 @@ private func writeHybridPrimaryPassthrough(
     }
     outputRefs.append(ISOBMFFIRefEntry(type: "dimg", from: outputGainGridID, to: gainTilePayloads.map(\.newID)))
     outputRefs.append(ISOBMFFIRefEntry(type: "dimg", from: outputTmapID, to: [sourcePrimaryID, outputGainGridID]))
+    outputRefs.append(ISOBMFFIRefEntry(type: "auxl", from: outputGainGridID, to: [sourcePrimaryID, outputTmapID]))
     if let outputXMPID {
         outputRefs.append(ISOBMFFIRefEntry(type: "cdsc", from: outputXMPID, to: [sourcePrimaryID, outputTmapID]))
     }
@@ -4012,7 +4117,9 @@ private func writePrivateJPEGPassthroughOutput(
     outputURL: URL,
     infoFloats: [Double],
     gainMapJPEG: Data,
-    patchedUserComment: String? = nil
+    patchedUserComment: String? = nil,
+    tmapPayload: Data? = nil,
+    tmapColorBox: Data? = nil
 ) throws -> (primaryID: Int, gainMapID: Int) {
     guard infoFloats.count >= 20 else {
         throw CLIError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
@@ -4073,9 +4180,10 @@ private func writePrivateJPEGPassthroughOutput(
     let gmPixiIndex = oldPropCount + 4
     let tmapPixiIndex = oldPropCount + 5
     let gmIspeIndex = oldPropCount + 6
-    let tmapColrIndex = primaryColrIndex ?? srgbIndex
+    let tmapOverrideColrIndex = tmapColorBox == nil ? nil : oldPropCount + 7
+    let tmapColrIndex = tmapOverrideColrIndex ?? primaryColrIndex ?? srgbIndex
     let oldIDATSize = idat.size - 8
-    let tmapPayload = makeAppleTmapPayload(infoFloats: infoFloats)
+    let tmapPayload = tmapPayload ?? makeAppleTmapPayload(infoFloats: infoFloats)
     let xmpPayload = makeHdrgmXMP(infoFloats: infoFloats)
 
     var metaParts: [Data] = []
@@ -4132,6 +4240,9 @@ private func writePrivateJPEGPassthroughOutput(
             ipcoPayload.append(isoPixiRGB8Box)
             ipcoPayload.append(isoPixiRGB10Box)
             ipcoPayload.append(makeIspeBox(width: gainMapSize.0, height: gainMapSize.1))
+            if let tmapColorBox {
+                ipcoPayload.append(tmapColorBox)
+            }
             let ipcoPart = makeBox("ipco", payload: ipcoPayload)
 
             var ipmaPayload = src.subdata(in: ipmaBox.dataStart..<ipmaBox.dataStart + 4)
@@ -4166,6 +4277,7 @@ private func writePrivateJPEGPassthroughOutput(
             var payload = src.subdata(in: part.dataStart..<part.dataEnd)
             let version = parseISOBMFFIRefVersion(src, iref)
             payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: version))
+            payload.append(makeIrefBox(type: "auxl", from: gainMapID, to: [primaryID, tmapID], version: version))
             payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: version))
             metaParts.append(makeBox("iref", payload: payload))
         case "idat":
@@ -4181,6 +4293,7 @@ private func writePrivateJPEGPassthroughOutput(
     if iref == nil {
         var payload = Data([0, 0, 0, 0])
         payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: 0))
+        payload.append(makeIrefBox(type: "auxl", from: gainMapID, to: [primaryID, tmapID], version: 0))
         payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: 0))
         metaParts.append(makeBox("iref", payload: payload))
     }

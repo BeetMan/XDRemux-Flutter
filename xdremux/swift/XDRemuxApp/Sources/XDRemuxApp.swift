@@ -6,7 +6,6 @@ struct XDRemuxApp: App {
         WindowGroup {
             ContentView()
         }
-        .windowResizability(.contentSize)
-        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.automatic)
     }
 }

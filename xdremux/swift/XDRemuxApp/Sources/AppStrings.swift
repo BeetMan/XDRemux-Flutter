@@ -73,9 +73,13 @@ enum AppStrings {
     static let inputProcessingPassthroughHelp = "不让系统重编码 gain map；直接重建符合 ISO 标准的 ISOBMFF box 来保留原始增益图数据。"
 
     static let oppoCompatLabel = "[实验性] OPPO 相册 HDR 兼容层"
-    static let oppoCompatHelp = "转换时保留 OPPO 相册识别 HDR 所需的私有标记和兼容元数据，包括可识别的 UserComment HDR 标记以及源文件中可安全迁移的 OPPO HDR 兼容信息。"
-    static let oppoCompatOn = "开"
-    static let oppoCompatOff = "关"
+    static let oppoCompatHelp = "控制 OPPO 相册识别信号。关闭时输出纯净 Apple/ImageIO 结构；自动只写元数据和 tagflags；开启会额外写入 OPPO 私有尾部。"
+    static let oppoCompatAuto = "自动"
+    static let oppoCompatOn = "开启"
+    static let oppoCompatOff = "关闭"
+    static let oppoCompatAutoHelp = "只写 OPPO 可识别的元数据和 tagflags，不追加私有兼容尾部。"
+    static let oppoCompatOnHelp = "写入 OPPO tagflags、142B ImageIO-native tmap、PQ tmap 颜色和 OPPO 私有兼容尾部。"
+    static let oppoCompatOffHelp = "不写 OPPO 私有信号，保持 Apple/ImageIO 优先的干净输出。"
     static let skipExisting = "跳过已有有效输出"
     static let skipExistingHelp = "目标文件已经包含可识别的 ISO gain map 时不重复转换。"
     static let concurrentJobs = "并发任务"
@@ -88,6 +92,24 @@ enum AppStrings {
     static let doNotWriteDebugFiles = "不写调试文件"
     static let chooseDirectory = "选择目录"
     static let clear = "清除"
+}
+
+extension OppoCompatibility {
+    var appTitle: String {
+        switch self {
+        case .auto: return AppStrings.oppoCompatAuto
+        case .on: return AppStrings.oppoCompatOn
+        case .off: return AppStrings.oppoCompatOff
+        }
+    }
+
+    var appHelp: String {
+        switch self {
+        case .auto: return AppStrings.oppoCompatAutoHelp
+        case .on: return AppStrings.oppoCompatOnHelp
+        case .off: return AppStrings.oppoCompatOffHelp
+        }
+    }
 }
 
 extension Family {
