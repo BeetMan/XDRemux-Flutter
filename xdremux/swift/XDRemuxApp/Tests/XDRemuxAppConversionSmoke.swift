@@ -40,7 +40,7 @@ struct XDRemuxAppConversionSmoke {
                 }
                 config.inputProcessingBranch = branch
             case "--oppo-compat":
-                config.oppoCompat = true
+                config.oppoCompatibility = .on
             default:
                 throw ConversionSmokeError.usage
             }

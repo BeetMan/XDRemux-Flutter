@@ -30,15 +30,15 @@ swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 # Select the input processing branch; the default is hybrid
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
-# Enable OPPO Gallery-targeted compatibility output
+# Prefer OPPO Gallery recognition while preserving the 4:4:4 gain map:
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
-The Swift CLI accepts exactly three `--input-processing` branches:
+The Swift CLI accepts three `--input-processing` branches:
 
 | Branch | Description |
 |--------|-------------|
-| `hybrid` | Default production path. It takes the original HEIC and the parsed gain map, lets ImageIO/Preserve produce the HEVC gain map first, then rewrites ISOBMFF and grafts the original primary subtree. The target is primary passthrough, HEVC gain map, and an ImageIO-readable ISO gain map. |
+| `hybrid` | Default production path. Preserves the source primary HEVC and keeps the final HEVC gain map at 4:4:4. The default output is clean Apple/ImageIO-compatible structure; `--oppo-compat` adds OPPO recognition signals, a 142B ImageIO-native `tmap`, and PQ `tmap` color while still keeping the final gain map 4:4:4. |
 | `system` | System-output path. ImageIO writes the final HEIC directly; use it as a reference for system behavior. ImageIO decides how both the base image and gain map are encoded. |
 | `passthrough` | Experimental path. Rewrites ISOBMFF boxes directly so the output is recognized by ImageIO as an HDR photo; this branch is for validating direct box-rewrite behavior. |
 
@@ -67,7 +67,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ## ⚠️ Known Limitations
 
 - **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family. Swift uses the `hybrid` input processing branch by default; users do not need to choose family or an input processing branch. Python preserves the original base HEVC data by default to avoid recompression.
-- **OPPO Gallery compatibility**: Standard Swift output does not write the OPPO private compatibility tail by default. Use `--oppo-compat` when OPPO Gallery is the target viewer. LHDR sources preserve their original `local.hdr.*` private tail. UHDR sources write a `local.uhdr.*` tail and use an ImageIO-native 142B/PQ `tmap` graph while preserving the source primary HEVC. Strict ISO validation still treats the 142B `tmap` payload as a compatibility form, not strict ISO metadata.
+- **OPPO Gallery compatibility**: Swift `hybrid` defaults to clean Apple/ImageIO-compatible output and does not automatically write OPPO private signals. With `--oppo-compat`, XDRemux uses the preserve path: it keeps the source primary HEVC and final HEVC gain map at 4:4:4, then writes OPPO tagflags, the OPPO private tail, a 142B ImageIO-native `tmap`, and PQ `tmap` color association. Strict ISO validation and ImageIO-native/OPPO compatibility are separate concerns; the 142B `tmap` is the verified ImageIO-native compatibility form, not the strict-mode 145B padded structure.
 - **Gallery editing strips HDR**: Editing and saving a converted photo in OPPO Gallery strips the HDR Gain Map and its metadata.
 
 ## 🧪 Experimental Features

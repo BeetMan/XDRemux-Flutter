@@ -112,10 +112,20 @@ enum InputProcessingBranch: String, CaseIterable, Codable, Sendable, Identifiabl
     var id: String { rawValue }
 }
 
+enum OppoCompatibility: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
+    case auto
+    case on
+    case off
+
+    var id: String { rawValue }
+    var wantsOppoCompat: Bool { self != .off }
+    var wantsOppoTail: Bool { self == .on }
+}
+
 struct ConversionConfig: Sendable {
     var family: Family = .auto
     var outputDirectory: URL?
-    var oppoCompat: Bool = false
+    var oppoCompatibility: OppoCompatibility = .off
     var inputProcessingBranch: InputProcessingBranch = .hybrid
     var debugDirectory: URL?
     var fileNameSuffix: String = "_iso"
@@ -1971,7 +1981,7 @@ private enum XDRemuxProductCore {
         outputURL: URL,
         familyPreference: Family,
         debugRootURL: URL?,
-        oppoCompat: Bool = false,
+        oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .hybrid
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
@@ -2011,11 +2021,11 @@ private enum XDRemuxProductCore {
             outputURL: actualOutputURL,
             sourceData: sourceData,
             productInput: productInput,
-            oppoCompat: oppoCompat,
+            oppoCompat: oppoCompatibility.wantsOppoCompat,
             inputProcessingBranch: inputProcessingBranch
         )
 
-        if oppoCompat {
+        if oppoCompatibility.wantsOppoTail {
             try appendOppoCompatibilityPayload(
                 outputURL: actualOutputURL,
                 sourceData: sourceData,
@@ -2229,12 +2239,18 @@ private enum HybridGainMapWriter {
         let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
         switch productInput.extracted.mode {
         case .uhdr:
+            let uhdrTmapPayload: Data? = oppoCompat
+                ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
+                : nil
+            let uhdrTmapColorBox: Data? = oppoCompat ? isoColrBT2020PQBox : nil
             _ = try writePrivateJPEGPassthroughOutput(
                 inputURL: inputURL,
                 outputURL: privateIntermediateURL,
                 infoFloats: productInput.extracted.metaFloats,
                 gainMapJPEG: productInput.extracted.maskJPEGData,
-                patchedUserComment: patchedUserComment
+                patchedUserComment: patchedUserComment,
+                tmapPayload: uhdrTmapPayload,
+                tmapColorBox: uhdrTmapColorBox
             )
             try ISOHDRWriter.writeWithPreserveReencode(
                 intermediateURL: privateIntermediateURL,
@@ -2270,12 +2286,18 @@ private enum DirectPassthroughGainMapWriter {
         oppoCompat: Bool
     ) throws {
         let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
+        let tmapPayload: Data? = oppoCompat && productInput.extracted.mode == .uhdr
+            ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
+            : nil
+        let tmapColorBox: Data? = tmapPayload == nil ? nil : isoColrBT2020PQBox
         _ = try writePrivateJPEGPassthroughOutput(
             inputURL: inputURL,
             outputURL: outputURL,
             infoFloats: privateGainMapInfoFloats(for: productInput),
             gainMapJPEG: productInput.extracted.maskJPEGData,
-            patchedUserComment: patchedUserComment
+            patchedUserComment: patchedUserComment,
+            tmapPayload: tmapPayload,
+            tmapColorBox: tmapColorBox
         )
         try verifyImageIOISOGainMap(outputURL)
     }
@@ -2295,7 +2317,7 @@ enum XDRemuxCore {
             outputURL: outputURL,
             familyPreference: config.family,
             debugRootURL: config.debugDirectory,
-            oppoCompat: config.oppoCompat,
+            oppoCompatibility: config.oppoCompatibility,
             inputProcessingBranch: config.inputProcessingBranch
         )
     }
@@ -2392,6 +2414,11 @@ private let isoColrSRGBBox = Data([
     0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
     0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
     0x00, 0x02, 0x80,
+])
+private let isoColrBT2020PQBox = Data([
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
+    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x09, 0x00, 0x10,
+    0x00, 0x09, 0x80,
 ])
 private let isoPixiRGB8Box = Data([
     0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
@@ -2835,6 +2862,46 @@ private func makeIPMAEntry(_ itemID: Int, _ assocs: [(Int, Bool)], flags: Int) t
     return out
 }
 
+private func makeImageIONativeTmapPayload(infoFloats f: [Double]) -> Data {
+    let rationalDen = 100_000
+
+    func appendRational(_ value: Double, to data: inout Data) {
+        appendUInt32BE(Int(max(0, (value * Double(rationalDen)).rounded())), to: &data)
+        appendUInt32BE(rationalDen, to: &data)
+    }
+
+    func appendSignedRational(_ value: Double, to data: inout Data) {
+        appendInt32BE(Int32((value * Double(rationalDen)).rounded()), to: &data)
+        appendUInt32BE(rationalDen, to: &data)
+    }
+
+    let gainMin = max(log2(max(f[0], 1.0)), 0.0)
+    let gainMax = log2(max(f[4], 1.0))
+    let gamma = f[7]
+    let baseOffset = f[10]
+    let altOffset = f[13]
+    let capMin = max(log2(max(f[16], 1.0)), 0.0)
+    let capMax = log2(max(f[17], 1.0))
+
+    var out = Data()
+    out.append(0x00)
+    appendUInt16BE(0, to: &out)
+    appendUInt16BE(0, to: &out)
+    out.append(0xC0)
+    appendRational(capMin, to: &out)
+    appendRational(capMax, to: &out)
+
+    for _ in 0..<3 {
+        appendSignedRational(gainMin, to: &out)
+        appendSignedRational(gainMax, to: &out)
+        appendRational(gamma, to: &out)
+        appendSignedRational(baseOffset, to: &out)
+        appendSignedRational(altOffset, to: &out)
+    }
+
+    return out
+}
+
 private func makeAppleTmapPayload(infoFloats f: [Double]) -> Data {
     func fixed(_ value: Double) -> Int32 {
         Int32((value * 100_000.0).rounded())
@@ -3136,7 +3203,20 @@ private func writeHybridPrimaryPassthrough(
           let preservedTmapIPMA = preservedIPMAByID[preservedTmapID] else {
         throw XDRemuxError.invalidContainer("preserve gain grid/tmap has no ipma entry")
     }
-    ipmaEntries.append(try makeIPMAEntry(outputGainGridID, try remapPreservedAssocs(preservedGainGridIPMA.associations), flags: sourceIPMA.flags))
+    var gainGridAssocs = try remapPreservedAssocs(preservedGainGridIPMA.associations)
+    let gainGridHasAuxC = gainGridAssocs.contains { assoc in
+        if let mapped = propertyIndexMap.first(where: { $1 == assoc.0 })?.key {
+            return preservedPropsByIndex[mapped]?.type == "auxC"
+        }
+        return sourcePropsByIndex[assoc.0]?.type == "auxC"
+    }
+    if !gainGridHasAuxC {
+        let auxCOutputIndex = sourceProps.count + propertyIndexMap.count + 1
+        propertyIndexMap[-1] = auxCOutputIndex
+        ipcoPayload.append(isoAuxCBox)
+        gainGridAssocs.append((auxCOutputIndex, true))
+    }
+    ipmaEntries.append(try makeIPMAEntry(outputGainGridID, gainGridAssocs, flags: sourceIPMA.flags))
     ipmaEntryCount += 1
     let preservedTmapAssocPairs = assocPairs(preservedTmapIPMA.associations, flags: preservedIPMA.flags)
     let preservedTmapColorAssoc = preservedTmapAssocPairs.first { propertyType($0, in: preservedPropsByIndex) == "colr" }
@@ -3201,6 +3281,7 @@ private func writeHybridPrimaryPassthrough(
     }
     outputRefs.append(ISOBMFFIRefEntry(type: "dimg", from: outputGainGridID, to: gainTilePayloads.map(\.newID)))
     outputRefs.append(ISOBMFFIRefEntry(type: "dimg", from: outputTmapID, to: [sourcePrimaryID, outputGainGridID]))
+    outputRefs.append(ISOBMFFIRefEntry(type: "auxl", from: outputGainGridID, to: [sourcePrimaryID, outputTmapID]))
     if let outputXMPID {
         outputRefs.append(ISOBMFFIRefEntry(type: "cdsc", from: outputXMPID, to: [sourcePrimaryID, outputTmapID]))
     }
@@ -3333,7 +3414,9 @@ private func writePrivateJPEGPassthroughOutput(
     outputURL: URL,
     infoFloats: [Double],
     gainMapJPEG: Data,
-    patchedUserComment: String? = nil
+    patchedUserComment: String? = nil,
+    tmapPayload: Data? = nil,
+    tmapColorBox: Data? = nil
 ) throws -> (primaryID: Int, gainMapID: Int) {
     guard infoFloats.count >= 20 else {
         throw XDRemuxError.invalidLHDR("local.uhdr.gainmap.info must contain at least 20 float32 values")
@@ -3394,9 +3477,10 @@ private func writePrivateJPEGPassthroughOutput(
     let gmPixiIndex = oldPropCount + 4
     let tmapPixiIndex = oldPropCount + 5
     let gmIspeIndex = oldPropCount + 6
-    let tmapColrIndex = primaryColrIndex ?? srgbIndex
+    let tmapOverrideColrIndex = tmapColorBox == nil ? nil : oldPropCount + 7
+    let tmapColrIndex = tmapOverrideColrIndex ?? primaryColrIndex ?? srgbIndex
     let oldIDATSize = idat.size - 8
-    let tmapPayload = makeAppleTmapPayload(infoFloats: infoFloats)
+    let tmapPayload = tmapPayload ?? makeAppleTmapPayload(infoFloats: infoFloats)
     let xmpPayload = makeHdrgmXMP(infoFloats: infoFloats)
 
     var metaParts: [Data] = []
@@ -3453,6 +3537,9 @@ private func writePrivateJPEGPassthroughOutput(
             ipcoPayload.append(isoPixiRGB8Box)
             ipcoPayload.append(isoPixiRGB10Box)
             ipcoPayload.append(makeIspeBox(width: gainMapSize.0, height: gainMapSize.1))
+            if let tmapColorBox {
+                ipcoPayload.append(tmapColorBox)
+            }
             let ipcoPart = makeBox("ipco", payload: ipcoPayload)
 
             var ipmaPayload = src.subdata(in: ipmaBox.dataStart..<ipmaBox.dataStart + 4)
@@ -3487,6 +3574,7 @@ private func writePrivateJPEGPassthroughOutput(
             var payload = src.subdata(in: part.dataStart..<part.dataEnd)
             let version = parseISOBMFFIRefVersion(src, iref)
             payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: version))
+            payload.append(makeIrefBox(type: "auxl", from: gainMapID, to: [primaryID, tmapID], version: version))
             payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: version))
             metaParts.append(makeBox("iref", payload: payload))
         case "idat":
@@ -3502,6 +3590,7 @@ private func writePrivateJPEGPassthroughOutput(
     if iref == nil {
         var payload = Data([0, 0, 0, 0])
         payload.append(makeIrefBox(type: "dimg", from: tmapID, to: [primaryID, gainMapID], version: 0))
+        payload.append(makeIrefBox(type: "auxl", from: gainMapID, to: [primaryID, tmapID], version: 0))
         payload.append(makeIrefBox(type: "cdsc", from: xmpID, to: [primaryID, tmapID], version: 0))
         metaParts.append(makeBox("iref", payload: payload))
     }
