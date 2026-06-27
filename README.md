@@ -73,12 +73,14 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 | `xdremux/swift-cli/` | 当前推荐的 Swift CLI 主入口。只放命令行转换器。 |
 | `xdremux/python/` | 跨平台 Python CLI 与 HEIF I/O 辅助实现。 |
 | `apps/macos/XDRemuxApp/` | macOS SwiftUI App 外壳、Xcode 工程、资源与 App 测试。 |
+| `tests/` | 仓库级转换器验证，不绑定具体 App 工程。 |
+| `fixtures/` | 小型合成 fixture、外部样本 manifest 与样本政策；不直接存放大体积真实照片。 |
 | `scripts/` | 可运行的本地开发、构建与验证脚本。 |
-| `docs/` | 面向维护者的说明、发布记录和后续设计文档。 |
+| `docs/` | 面向维护者的说明、发布记录、设计、研究和验证文档。 |
 | `experiments/` | 可审计但非产品主线的实验分支。 |
 | `skills/` | 与 ISO HDR 合规审计相关的 agent skill 与参考规则。 |
 
-目录约定：转换器入口放在 `xdremux/`，图形界面应用放在 `apps/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`。Swift CLI 与 macOS App 不共用同一个源码目录，以免把命令行产品路径和图形界面外壳混在一起。
+目录约定：转换器入口放在 `xdremux/`，图形界面应用放在 `apps/`，仓库级验证放在 `tests/`，样本政策和小型 fixture 放在 `fixtures/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`。Swift CLI 与 macOS App 不共用同一个源码目录，以免把命令行产品路径和图形界面外壳混在一起。
 
 ### macOS App 本地辅助脚本
 
