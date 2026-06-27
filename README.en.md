@@ -6,7 +6,7 @@ Convert OPPO/OnePlus/realme ProXDR HEIC to ISO 21496-1 HDR HEIC.
 
 Extracts proprietary HDR Gain Map and metadata from ProXDR HEIC files and repackages them into industry-standard ISO 21496-1 HDR HEIC files, ensuring accurate tone mapping on macOS, iOS, and Android.
 
-The Swift CLI is currently the recommended conversion entry point on macOS.
+The Swift CLI is currently the recommended conversion entry point on macOS. The macOS app is a separate graphical shell and does not live in the same source directory as the CLI.
 
 ## 📱 Supported Devices
 
@@ -17,23 +17,23 @@ The Swift CLI is currently the recommended conversion entry point on macOS.
 
 ## 🚀 Quick Start
 
-### Swift (requires macOS 26 or later)
+### Swift CLI (requires macOS 26 or later)
 
 ```bash
 # Single file
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic
 
 # Batch
-swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
+swift xdremux/swift-cli/XDRemux.swift batch --input-dir photo_dump/
 
 # Specify output
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 # Select the input processing branch; the default is hybrid
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
 # Prefer OPPO Gallery recognition while preserving the 4:4:4 gain map
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
 The Swift CLI accepts three `--input-processing` branches:
@@ -70,14 +70,15 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 | Path | Purpose |
 | --- | --- |
-| `xdremux/swift/` | Recommended Swift CLI and macOS app prototype. |
+| `xdremux/swift-cli/` | Recommended Swift CLI entry point. Contains only the command-line converter. |
 | `xdremux/python/` | Cross-platform Python CLI and HEIF I/O support code. |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI app shell, Xcode project, resources, and app tests. |
 | `scripts/` | Local development, build, and verification scripts. |
 | `docs/` | Maintainer-facing notes, release records, and future design documents. |
 | `experiments/` | Auditable experimental branches that are not the production path. |
 | `skills/` | Agent skill and reference rules for ISO HDR compliance review. |
 
-Repository convention: production entry points live under `xdremux/`, automation scripts live under `scripts/`, durable documentation lives under `docs/`, and trackable documentation/script directories are not ignored by `.gitignore`.
+Repository convention: converter entry points live under `xdremux/`, graphical apps live under `apps/`, automation scripts live under `scripts/`, and durable documentation lives under `docs/`. The Swift CLI and macOS app do not share a source directory, so the command-line production path stays separate from the graphical app shell.
 
 ### macOS App helper script
 

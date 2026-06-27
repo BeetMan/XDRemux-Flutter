@@ -6,7 +6,7 @@
 
 提取 ProXDR HEIC 中的专有 HDR Gain Map 及元数据，重新封装为符合业界标准的 ISO 21496-1 HDR HEIC，确保在 macOS、iOS、Android 上呈现准确的色调映射。
 
-当前推荐使用 Swift CLI 作为 macOS 上的主转换入口。
+当前推荐使用 Swift CLI 作为 macOS 上的主转换入口。macOS App 是独立的图形界面外壳，不与 CLI 放在同一源码目录。
 
 ## 📱 支持设备
 
@@ -17,23 +17,23 @@
 
 ## 🚀 快速上手
 
-### Swift（需要 macOS 26 及更新系统）
+### Swift CLI（需要 macOS 26 及更新系统）
 
 ```bash
 # 单张转换
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic
 
 # 批量转换
-swift xdremux/swift/XDRemux.swift batch --input-dir photo_dump/
+swift xdremux/swift-cli/XDRemux.swift batch --input-dir photo_dump/
 
 # 指定输出路径
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.heic
 
 # 选择输入处理分支；默认是 hybrid
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
 # 需要 OPPO 相册优先识别时，启用 OPPO 兼容信号并保留 4:4:4 gain map
-swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
 Swift CLI 的 `--input-processing` 接受三个分支：
@@ -70,14 +70,15 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 | 路径 | 用途 |
 | --- | --- |
-| `xdremux/swift/` | 当前推荐的 Swift CLI 与 macOS App 原型。 |
+| `xdremux/swift-cli/` | 当前推荐的 Swift CLI 主入口。只放命令行转换器。 |
 | `xdremux/python/` | 跨平台 Python CLI 与 HEIF I/O 辅助实现。 |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI App 外壳、Xcode 工程、资源与 App 测试。 |
 | `scripts/` | 可运行的本地开发、构建与验证脚本。 |
 | `docs/` | 面向维护者的说明、发布记录和后续设计文档。 |
 | `experiments/` | 可审计但非产品主线的实验分支。 |
 | `skills/` | 与 ISO HDR 合规审计相关的 agent skill 与参考规则。 |
 
-目录约定：产品入口放在 `xdremux/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`，不再把可追踪的文档和脚本目录列入 `.gitignore`。
+目录约定：转换器入口放在 `xdremux/`，图形界面应用放在 `apps/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`。Swift CLI 与 macOS App 不共用同一个源码目录，以免把命令行产品路径和图形界面外壳混在一起。
 
 ### macOS App 本地辅助脚本
 
