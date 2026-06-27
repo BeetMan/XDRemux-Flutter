@@ -4,7 +4,7 @@ set -euo pipefail
 MODE="${1:-run}"
 APP_NAME="XDRemuxApp"
 BUNDLE_ID="com.proxdr.XDRemuxApp"
-PROJECT_PATH="xdremux/swift/XDRemuxApp/XDRemuxApp.xcodeproj"
+PROJECT_PATH="apps/macos/XDRemuxApp/XDRemuxApp.xcodeproj"
 SCHEME="XDRemuxApp"
 CONFIGURATION="Debug"
 DERIVED_DATA="/tmp/xdremuxapp-derived"
