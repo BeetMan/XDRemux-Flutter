@@ -20,7 +20,6 @@ xdremux_py/
 
 # Local agent / project scaffolding (not for tracking)
 .claude/
-.github/
 .sisyphus/
 .flake8
 AGENTS.md
@@ -28,14 +27,12 @@ CLAUDE.md
 HANDOFF.md
 Makefile
 apk_analysis_results/
-docs/
 evals/
 handoff_package/
 archive/
 harness/
 oracle-dump/
 proxdr-probe-app/
-scripts/
 test-samples/
 tmp-samples/
 tmp/
