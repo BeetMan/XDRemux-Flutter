@@ -6,10 +6,12 @@ Convert OPPO/OnePlus/realme ProXDR HEIC to ISO 21496-1 HDR HEIC.
 
 Extracts proprietary HDR Gain Map and metadata from ProXDR HEIC files and repackages them into industry-standard ISO 21496-1 HDR HEIC files, ensuring accurate tone mapping on macOS, iOS, and Android.
 
+The Swift CLI is currently the recommended conversion entry point on macOS.
+
 ## 📱 Supported Devices
 
 | Format | Devices |
-|--------|---------|
+| --- | --- |
 | UHDR | OPPO Find X8 Ultra, Find X9, Find X9 Ultra |
 | LHDR | OPPO Find X6 Pro, Find X7 Ultra, Find X8 |
 
@@ -30,14 +32,14 @@ swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --output out.heic
 # Select the input processing branch; the default is hybrid
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
-# Prefer OPPO Gallery recognition while preserving the 4:4:4 gain map:
+# Prefer OPPO Gallery recognition while preserving the 4:4:4 gain map
 swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
 The Swift CLI accepts three `--input-processing` branches:
 
 | Branch | Description |
-|--------|-------------|
+| --- | --- |
 | `hybrid` | Default production path. Preserves the source primary HEVC and keeps the final HEVC gain map at 4:4:4. The default output is clean Apple/ImageIO-compatible structure; `--oppo-compat` adds OPPO recognition signals, a 142B ImageIO-native `tmap`, and PQ `tmap` color while still keeping the final gain map 4:4:4. |
 | `system` | System-output path. ImageIO writes the final HEIC directly; use it as a reference for system behavior. ImageIO decides how both the base image and gain map are encoded. |
 | `passthrough` | Experimental path. Rewrites ISOBMFF boxes directly so the output is recognized by ImageIO as an HDR photo; this branch is for validating direct box-rewrite behavior. |
@@ -63,6 +65,27 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 > [!IMPORTANT]
 > Omitting `--output` or `--output-dir` overwrites the original files in place. Back up before use.
+
+## 🗂️ Repository Layout
+
+| Path | Purpose |
+| --- | --- |
+| `xdremux/swift/` | Recommended Swift CLI and macOS app prototype. |
+| `xdremux/python/` | Cross-platform Python CLI and HEIF I/O support code. |
+| `scripts/` | Local development, build, and verification scripts. |
+| `docs/` | Maintainer-facing notes, release records, and future design documents. |
+| `experiments/` | Auditable experimental branches that are not the production path. |
+| `skills/` | Agent skill and reference rules for ISO HDR compliance review. |
+
+Repository convention: production entry points live under `xdremux/`, automation scripts live under `scripts/`, durable documentation lives under `docs/`, and trackable documentation/script directories are not ignored by `.gitignore`.
+
+### macOS App helper script
+
+```bash
+scripts/build_and_run.sh run
+scripts/build_and_run.sh --verify
+scripts/build_and_run.sh --logs
+```
 
 ## ⚠️ Known Limitations
 

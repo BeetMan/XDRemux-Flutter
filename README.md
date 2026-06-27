@@ -11,7 +11,7 @@
 ## 📱 支持设备
 
 | Format | Devices |
-|--------|---------|
+| --- | --- |
 | UHDR | OPPO Find X8 Ultra, OPPO Find X9 系列 |
 | LHDR | OPPO Find X6 Pro 发布后，OPPO Find X8 Ultra 发布前所有支持 ProXDR 照片拍摄的设备 |
 
@@ -39,7 +39,7 @@ swift xdremux/swift/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 Swift CLI 的 `--input-processing` 接受三个分支：
 
 | 分支 | 说明 |
-|------|------|
+| --- | --- |
 | `hybrid` | 默认生产路径。保留源文件 primary HEVC，并让最终 HEVC gain map 保持 4:4:4。默认输出为纯净 Apple/ImageIO 兼容结构；使用 `--oppo-compat` 时，增加 OPPO 识别信号、142B ImageIO-native `tmap` 与 PQ `tmap` 颜色关联，同时继续保持最终 gain map 为 4:4:4。 |
 | `system` | 系统直出路径。直接让 ImageIO 写最终 HEIC，用作系统行为对照；base image 和 gain map 均由 ImageIO 决定编码方式。 |
 | `passthrough` | 实验性路径。直接重写 ISOBMFF box，使输出能被 ImageIO 识别为 HDR 照片；用于验证直接 box rewrite 的可行性。 |
@@ -65,6 +65,27 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 
 > [!IMPORTANT]
 > 省略 `--output` 或 `--output-dir` 时将在原路径覆写原始文件，请提前备份。
+
+## 🗂️ 仓库层级
+
+| 路径 | 用途 |
+| --- | --- |
+| `xdremux/swift/` | 当前推荐的 Swift CLI 与 macOS App 原型。 |
+| `xdremux/python/` | 跨平台 Python CLI 与 HEIF I/O 辅助实现。 |
+| `scripts/` | 可运行的本地开发、构建与验证脚本。 |
+| `docs/` | 面向维护者的说明、发布记录和后续设计文档。 |
+| `experiments/` | 可审计但非产品主线的实验分支。 |
+| `skills/` | 与 ISO HDR 合规审计相关的 agent skill 与参考规则。 |
+
+目录约定：产品入口放在 `xdremux/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`，不再把可追踪的文档和脚本目录列入 `.gitignore`。
+
+### macOS App 本地辅助脚本
+
+```bash
+scripts/build_and_run.sh run
+scripts/build_and_run.sh --verify
+scripts/build_and_run.sh --logs
+```
 
 ## ⚠️ 已知局限
 
