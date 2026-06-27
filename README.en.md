@@ -73,12 +73,14 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 | `xdremux/swift-cli/` | Recommended Swift CLI entry point. Contains only the command-line converter. |
 | `xdremux/python/` | Cross-platform Python CLI and HEIF I/O support code. |
 | `apps/macos/XDRemuxApp/` | macOS SwiftUI app shell, Xcode project, resources, and app tests. |
+| `tests/` | Repository-level converter validation that is not coupled to a specific app project. |
+| `fixtures/` | Small synthetic fixtures, external sample manifests, and sample policy; large real photos should not be committed here. |
 | `scripts/` | Local development, build, and verification scripts. |
-| `docs/` | Maintainer-facing notes, release records, and future design documents. |
+| `docs/` | Maintainer-facing notes, release records, design, research, and validation documents. |
 | `experiments/` | Auditable experimental branches that are not the production path. |
 | `skills/` | Agent skill and reference rules for ISO HDR compliance review. |
 
-Repository convention: converter entry points live under `xdremux/`, graphical apps live under `apps/`, automation scripts live under `scripts/`, and durable documentation lives under `docs/`. The Swift CLI and macOS app do not share a source directory, so the command-line production path stays separate from the graphical app shell.
+Repository convention: converter entry points live under `xdremux/`, graphical apps live under `apps/`, repository-level validation lives under `tests/`, fixture policy and small fixtures live under `fixtures/`, automation scripts live under `scripts/`, and durable documentation lives under `docs/`. The Swift CLI and macOS app do not share a source directory, so the command-line production path stays separate from the graphical app shell.
 
 ### macOS App helper script
 
