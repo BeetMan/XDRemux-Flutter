@@ -2,114 +2,129 @@
 
 English Version | [中文版](README.md)
 
-Convert OPPO/OnePlus/realme ProXDR HEIC to ISO 21496-1 HDR HEIC.
+XDRemux converts ProXDR HEIC photos captured on OPPO, OnePlus, and realme devices into standard HDR HEIC files.
 
-Extracts proprietary HDR Gain Map and metadata from ProXDR HEIC files and repackages them into industry-standard ISO 21496-1 HDR HEIC files, ensuring accurate tone mapping on macOS, iOS, and Android.
+It reads the private HDR Gain Map and metadata from the original photo, then repackages them into an HDR HEIC file compliant with ISO 21496-1. The converted photo can be viewed on macOS, iOS, Android, and other systems that support HDR photo display.
 
-The Swift CLI is currently the recommended conversion entry point on macOS. The macOS app is a separate graphical shell and does not live in the same source directory as the CLI.
+## When do I need this tool?
 
-## 📱 Supported Devices
+Use XDRemux if you captured ProXDR HEIC photos on an OPPO, OnePlus, or realme phone and want them to keep displaying as HDR photos in other systems or software.
 
-| Format | Devices |
-| --- | --- |
-| UHDR | OPPO Find X8 Ultra, Find X9, Find X9 Ultra |
-| LHDR | OPPO Find X6 Pro, Find X7 Ultra, Find X8 |
+## Quick Start
 
-## 🚀 Quick Start
+> [!IMPORTANT]
+> Omitting `--output` or `--output-dir` makes the tool overwrite files in place. Back up your original photos before conversion.
 
-### Swift CLI (requires macOS 26 or later)
+### Swift CLI
 
 ```bash
 # Single file
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic
 
-# Batch
+# Batch conversion
 swift xdremux/swift-cli/XDRemux.swift batch --input-dir photo_dump/
 
-# Specify output
+# Specify output path
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.heic
-
-# Select the input processing branch; the default is hybrid
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
-
-# Enable the OPPO no-tail compatibility path
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
-The Swift CLI accepts three `--input-processing` branches:
+The default mode is suitable for most cases. It tries to preserve the original Base Image and only reprocesses the HDR Gain Map and its metadata.
 
-| Branch | Description |
-| --- | --- |
-| `hybrid` | Default production path. Preserves the source primary HEVC and keeps the final HEVC gain map at 4:4:4. The default output preserves the GitHub v1.2 baseline Apple/ImageIO-compatible behavior; `--oppo-compat auto` uses the no-`local.uhdr.*` ISO diagnostic path; bare `--oppo-compat` / `--oppo-compat on` also append no OPPO private tail, while writing the standard HEIC `tmap`/gain-map structure and preserving/setting OPPO UHDR tagflags. |
-| `system` | System-output path. ImageIO writes the final HEIC directly; use it as a reference for system behavior. ImageIO decides how both the base image and gain map are encoded. |
-| `passthrough` | Experimental path. Rewrites ISOBMFF boxes directly so the output is recognized by ImageIO as an HDR photo; this branch is for validating direct box-rewrite behavior. |
-
-### Python (cross-platform)
+### Python CLI
 
 > [!NOTE]
-> Requires dependencies: `pip install pillow-heif Pillow numpy`
+> Install dependencies first: `pip install pillow-heif Pillow numpy`
 
 ```bash
-# Standard mode (preserves original base HEVC and rewrites only the HDR gain map)
+# Single file
 python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # Batch conversion
 python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
-
-# Enable the OPPO no-tail compatibility path when OPPO Gallery is the target viewer
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
-
-# Troubleshooting mode: decode and re-encode the base image
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
-> [!IMPORTANT]
-> Omitting `--output` or `--output-dir` overwrites the original files in place. Back up before use.
+### macOS App
 
-## 🗂️ Repository Layout
+Source path:
 
-| Path | Purpose |
-| --- | --- |
-| `xdremux/swift-cli/` | Recommended Swift CLI entry point. Contains only the command-line converter. |
-| `xdremux/python/` | Cross-platform Python CLI and HEIF I/O support code. |
-| `apps/macos/XDRemuxApp/` | macOS SwiftUI app shell, Xcode project, resources, and app tests. |
-| `tests/` | Repository-level converter validation that is not coupled to a specific app project. |
-| `fixtures/` | Small synthetic fixtures, external sample manifests, and sample policy; large real photos should not be committed here. |
-| `scripts/` | Local development, build, and verification scripts. |
-| `docs/` | Maintainer-facing notes, release records, design, research, and validation documents. |
-| `experiments/` | Auditable experimental branches that are not the production path. |
-| `skills/` | Agent skill and reference rules for ISO HDR compliance review. |
+```text
+apps/macos/XDRemuxApp/
+```
 
-Repository convention: converter entry points live under `xdremux/`, graphical apps live under `apps/`, repository-level validation lives under `tests/`, fixture policy and small fixtures live under `fixtures/`, automation scripts live under `scripts/`, and durable documentation lives under `docs/`. The Swift CLI and macOS app do not share a source directory, so the command-line production path stays separate from the graphical app shell.
-
-### macOS App helper script
+Build and run locally:
 
 ```bash
 scripts/build_and_run.sh run
-scripts/build_and_run.sh --verify
-scripts/build_and_run.sh --logs
 ```
 
-## ⚠️ Known Limitations
+## OPPO Gallery compatibility mode
 
-- **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family. Swift uses the `hybrid` input processing branch by default; users do not need to choose family or an input processing branch. Python preserves the original base HEVC data by default to avoid recompression.
-- **OPPO Gallery compatibility**: Swift `hybrid` defaults to the GitHub v1.2 baseline Apple/ImageIO-compatible output: it appends no OPPO private tail and does not additionally rewrite OPPO tagflags. `--oppo-compat auto` keeps the no-private-tail ISO-only diagnostic path for testing whether standard HEIC `tmap` / HEVC gain maps can trigger the OPPO framework/EDR route. Bare `--oppo-compat`, `--oppo-compat on`, and `--oppo-compat tail` no longer append any OPPO private tail; they preserve the source primary HEVC, write the ImageIO-native `tmap` / PQ `tmap` color association, and preserve/set OPPO UHDR tagflags. Strict ISO validation and ImageIO-native/OPPO compatibility are separate concerns; the 142B `tmap` is the verified ImageIO-native compatibility form, not the strict-mode 145B padded structure.
-- **Gallery editing strips HDR**: Editing and saving a converted photo in OPPO Gallery strips the HDR Gain Map and its metadata.
+OPPO Gallery has limited compatibility with HEVC RExt 4:4:4 Gain Maps. When OPPO Gallery compatibility mode is enabled, XDRemux encodes the Gain Map with HEVC Main Still Picture Profile (4:2:0), allowing OPPO Gallery to trigger HDR display.
 
-## 🧪 Experimental Features
-
-### `--reencode`
-
-> [!CAUTION]
-> **Experimental option** — behavior may change between versions.
-
-The default path skips base image decode→re-encode and copies HEVC compressed data directly from the source file. Only the Gain Map is re-encoded. `--reencode` remains as a troubleshooting mode; it re-encodes the base image and can produce larger files with recompression loss.
+Swift CLI:
 
 ```bash
-# Python
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
----
+Python CLI:
 
-This tool is for technical research only. Back up your files before use. The author bears no legal responsibility.
+```bash
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+```
+
+macOS App:
+
+Enable **OPPO Gallery compatibility mode** before export.
+
+## Swift CLI input processing modes
+
+The Swift CLI supports the `--input-processing` option. Most users do not need to set it manually.
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+```
+
+| Mode | Description |
+| --- | --- |
+| `hybrid` | Default mode. Preserves the original Base Image and only reprocesses the HDR Gain Map. It can encode the Gain Map as HEVC RExt 4:4:4, preserving Gain Map sampling precision while also reducing file size for some photos. |
+| `system` | Lets the system ImageIO writer produce the final HEIC. This mode re-encodes both the Base Image and the Gain Map, and is useful as a reference for system behavior. |
+| `passthrough` | Experimental mode. Rewrites the internal HEIC structure directly for validation and development. Not recommended for normal use. |
+
+## Supported devices
+
+XDRemux is intended for OPPO, OnePlus, and realme devices that can capture ProXDR photos.
+
+The following mainland China models are known to support ProXDR photo capture:
+
+| Brand/series | Models |
+| --- | --- |
+| OnePlus | OnePlus Ace2 Pro, OnePlus 12, OnePlus Ace3, OnePlus Ace 3V, OnePlus Ace 3 Pro, OnePlus 13, OnePlus Ace 5 series, OnePlus 13T, OnePlus Ace 6, OnePlus Ace 6T, OnePlus Turbo 6, OnePlus 15, OnePlus 15T, OnePlus Ace 5 Supreme Edition |
+| OPPO K series | K12, K12x, K13 Turbo series, K15 Pro series |
+| OPPO Find series | Find X6, Find X6 Pro, Find N3, Find N3 Flip, Find X7, Find X7 Ultra, Find X8 series, Find N5, Find X8s, Find X9 series, Find N6 |
+| OPPO Reno series | Reno10 Pro, Reno10 Pro+, Reno11 Pro, Reno12 series, Reno13 series, Reno14 series, Reno15 series, Reno 16 series |
+| realme GT series | realme GT5 series, realme GT5 Pro, realme GT6, realme GT7 Pro, realme GT7 Pro Racing Edition, realme GT7, realme Neo7 Turbo, realme GT8, realme GT8 Pro |
+| realme Neo series | realme GT Neo6 SE, realme GT Neo6, realme Neo7, realme Neo7 SE, realme Neo7x, realme Neo8 |
+| realme number series | realme 12 Pro, realme 12 Pro+, realme 13 Pro+, realme 13 Pro Supreme Edition, realme 13 Pro, realme 14 Pro+, realme 14 Pro, realme 14, realme 15, realme 15 Pro |
+
+Among them, OPPO Find X8 Ultra, the Find X9 series, and realme GT8 Pro in Ricoh mode support **YCbCr 4:4:4 HDR Gain Map sampling** in their Gain Map implementation.
+
+## Repository structure
+
+| Path | Purpose |
+| --- | --- |
+| `xdremux/swift-cli/` | Swift CLI entry point. |
+| `xdremux/python/` | Python CLI and HEIF I/O helper implementation. |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI app. |
+| `tests/` | Converter tests. |
+| `fixtures/` | Small test samples and sample notes. |
+| `scripts/` | Local build, run, and validation scripts. |
+| `docs/` | Design notes, research records, and maintainer documentation. |
+| `experiments/` | Experimental code. |
+| `skills/` | Agent skill for ISO HDR compliance review. |
+
+## Known limitations
+
+- HDR Gain Map and HDR metadata may be lost after editing and saving a converted photo again in OPPO Gallery.
+
+This tool is for technical research only. Back up your original files before conversion. The author assumes no legal responsibility for data loss.
