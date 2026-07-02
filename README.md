@@ -2,22 +2,20 @@
 
 [English Version](README.en.md) | 中文版
 
-将 OPPO/OnePlus/realme 设备拍摄的 ProXDR HEIC 转换为 ISO 21496-1 HDR HEIC。
+XDRemux 可以将 OPPO、OnePlus、realme 设备拍摄的 ProXDR HEIC 照片转换为标准 HDR HEIC。
 
-提取 ProXDR HEIC 中的专有 HDR Gain Map 及元数据，重新封装为符合业界标准的 ISO 21496-1 HDR HEIC，确保在 macOS、iOS、Android 上呈现准确的色调映射。
+它会读取原始照片中的私有 HDR Gain Map 及元数据，并重新封装为符合 ISO 21496-1 标准的 HDR HEIC 文件。转换后的照片可以在 macOS、iOS、Android 等支持 HDR 照片显示的系统中查看。
 
-当前推荐使用 Swift CLI 作为 macOS 上的主转换入口。macOS App 是独立的图形界面外壳，不与 CLI 放在同一源码目录。
+## 什么时候需要这个工具？
 
-## 📱 支持设备
+如果你从 OPPO、OnePlus 或 realme 手机上拍摄了 ProXDR HEIC 照片，并希望它们在其他系统或软件里仍然以 HDR 方式显示，可以使用 XDRemux 转换。
 
-| Format | Devices |
-| --- | --- |
-| UHDR | OPPO Find X8 Ultra, OPPO Find X9 系列 |
-| LHDR | OPPO Find X6 Pro 发布后，OPPO Find X8 Ultra 发布前所有支持 ProXDR 照片拍摄的设备 |
+## 快速上手
 
-## 🚀 快速上手
+> [!IMPORTANT]
+> 省略 `--output` 或 `--output-dir` 时，工具会在原路径覆写文件。转换前请备份原始照片。
 
-### Swift CLI（需要 macOS 26 及更新系统）
+### Swift CLI
 
 ```bash
 # 单张转换
@@ -28,88 +26,105 @@ swift xdremux/swift-cli/XDRemux.swift batch --input-dir photo_dump/
 
 # 指定输出路径
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.heic
-
-# 选择输入处理分支；默认是 hybrid
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
-
-# 需要 OPPO 相册 no-tail 兼容路径时
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
-Swift CLI 的 `--input-processing` 接受三个分支：
+默认模式适合大多数情况。它会尽量保留原始 Base Image，只重新处理 HDR Gain Map 及其元数据。
 
-| 分支 | 说明 |
-| --- | --- |
-| `hybrid` | 默认生产路径。保留源文件 primary HEVC，并让最终 HEVC gain map 保持 4:4:4。默认输出保持 GitHub v1.2 基线的 Apple/ImageIO 兼容行为；`--oppo-compat auto` 使用无 `local.uhdr.*` 私有尾部的 ISO 诊断路径；裸 `--oppo-compat` / `--oppo-compat on` 也不再追加 OPPO 私有尾部，只写标准 HEIC `tmap`/gain-map 结构并保留/设置 OPPO UHDR tagflags。 |
-| `system` | 系统直出路径。直接让 ImageIO 写最终 HEIC，用作系统行为对照；base image 和 gain map 均由 ImageIO 决定编码方式。 |
-| `passthrough` | 实验性路径。直接重写 ISOBMFF box，使输出能被 ImageIO 识别为 HDR 照片；用于验证直接 box rewrite 的可行性。 |
-
-### Python（跨平台）
+### Python CLI
 
 > [!NOTE]
-> 需要安装依赖：`pip install pillow-heif Pillow numpy`
+> 需要先安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
-# 标准模式（保留原始 base HEVC，仅重写 HDR gain map）
+# 单张转换
 python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # 批量转换
 python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
-
-# 需要在 OPPO 相册中优先识别时，启用 no-tail 兼容路径
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
-
-# 排障模式：解码并重新编码 base image
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
 ```
 
-> [!IMPORTANT]
-> 省略 `--output` 或 `--output-dir` 时将在原路径覆写原始文件，请提前备份。
+### macOS App
 
-## 🗂️ 仓库层级
+源码位于：
 
-| 路径 | 用途 |
-| --- | --- |
-| `xdremux/swift-cli/` | 当前推荐的 Swift CLI 主入口。只放命令行转换器。 |
-| `xdremux/python/` | 跨平台 Python CLI 与 HEIF I/O 辅助实现。 |
-| `apps/macos/XDRemuxApp/` | macOS SwiftUI App 外壳、Xcode 工程、资源与 App 测试。 |
-| `tests/` | 仓库级转换器验证，不绑定具体 App 工程。 |
-| `fixtures/` | 小型合成 fixture、外部样本 manifest 与样本政策；不直接存放大体积真实照片。 |
-| `scripts/` | 可运行的本地开发、构建与验证脚本。 |
-| `docs/` | 面向维护者的说明、发布记录、设计、研究和验证文档。 |
-| `experiments/` | 可审计但非产品主线的实验分支。 |
-| `skills/` | 与 ISO HDR 合规审计相关的 agent skill 与参考规则。 |
+```text
+apps/macos/XDRemuxApp/
+```
 
-目录约定：转换器入口放在 `xdremux/`，图形界面应用放在 `apps/`，仓库级验证放在 `tests/`，样本政策和小型 fixture 放在 `fixtures/`，自动化脚本放在 `scripts/`，长期文档放在 `docs/`。Swift CLI 与 macOS App 不共用同一个源码目录，以免把命令行产品路径和图形界面外壳混在一起。
-
-### macOS App 本地辅助脚本
+本地构建和运行：
 
 ```bash
 scripts/build_and_run.sh run
-scripts/build_and_run.sh --verify
-scripts/build_and_run.sh --logs
 ```
 
-## ⚠️ 已知局限
+## OPPO 相册兼容模式
 
-- **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族。Swift 默认使用 `hybrid` 输入处理分支；普通用户不需要指定 family 或输入处理分支。Python 默认保留原始 base HEVC 数据，避免二次压缩。
-- **OPPO 相册兼容**：Swift `hybrid` 默认保持 GitHub v1.2 基线的 Apple/ImageIO 兼容输出，不追加 OPPO 私有 tail，也不额外改写 OPPO tagflags。`--oppo-compat auto` 保留无私有尾部的 ISO-only 诊断路径，用于继续验证标准 HEIC `tmap`/HEVC gain map 能否触发 OPPO framework/EDR 路径。裸 `--oppo-compat`、`--oppo-compat on` 与 `--oppo-compat tail` 不再追加任何 OPPO 私有尾部；它们保留 source primary HEVC，写入 ImageIO-native `tmap` / PQ `tmap` 颜色关联，并保留/设置 OPPO UHDR tagflags。严格 ISO 检查与 ImageIO-native/OPPO 兼容性是两个独立关注点；142B `tmap` 是已验证的 ImageIO-native 兼容形式，不等同于严格模式检查的 145B padded 结构。
-- **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
+OPPO 系统相册对 HEVC RExt 4:4:4 Gain Map 的兼容性有限。启用 OPPO 相册兼容模式后，XDRemux 会将 Gain Map 改用 HEVC Main Still Picture Profile（4:2:0）编码，从而触发 OPPO 系统相册中的 HDR 显示。
 
-## 🧪 实验性功能
-
-### `--reencode`
-
-> [!CAUTION]
-> **实验性选项** — 行为可能会随版本更新而改变。
-
-默认路径会跳过 base image 的解码→重新编码，直接从源文件复制 HEVC 压缩数据，仅重新编码 Gain Map。`--reencode` 保留为排障模式，会重新编码 base image，通常文件更大且可能带来二次压缩损耗。
+Swift CLI：
 
 ```bash
-# Python
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --reencode
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
----
+Python CLI：
 
-本工具仅供技术研究使用，使用前请备份原始文件。作者不承担任何关于数据丢失的法律责任。
+```bash
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
+```
+
+macOS App：
+
+在导出前打开 **OPPO 相册兼容模式**。
+
+## Swift CLI 输入处理模式
+
+Swift CLI 支持 `--input-processing` 参数。普通用户通常不需要手动设置。
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
+```
+
+| 模式            | 说明                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `hybrid`      | 默认模式。保留原始 Base Image，只重新处理 HDR Gain Map。最高可将 Gain Map 编码为 HEVC RExt 4:4:4，在保持 Gain Map 采样精度的同时，部分照片的体积也可能更小。 |
+| `system`      | 让系统 ImageIO 负责写出最终 HEIC。这个模式会重新编码 Base Image 和 Gain Map，适合用于对照系统行为。                                          |
+| `passthrough` | 实验性模式。直接改写 HEIC 内部结构，用于验证和开发。普通用户不建议使用。                                                                      |
+
+## 支持设备
+
+XDRemux 适用于可以拍摄 ProXDR 照片的 OPPO、OnePlus、realme 设备。
+
+在中国大陆销售且支持拍摄 ProXDR 照片的设备如下：
+
+| 品牌/系列         | 机型名称                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 一加            | 一加 Ace2 Pro、一加 12、一加 Ace3、一加 Ace 3V、一加 Ace 3 Pro、一加 13、一加 Ace 5 系列、一加 13T、一加 Ace 6、一加 Ace 6T、一加 Turbo 6、一加 15、一加 15T、一加 Ace 5 至尊版 |
+| OPPO K 系列     | K12、K12x、K13 Turbo 系列、K15 Pro 系列                                                                                                  |
+| OPPO Find 系列  | Find X6、Find X6 Pro、Find N3、Find N3 Flip、Find X7、Find X7 Ultra、Find X8 系列、Find N5、Find X8s、Find X9 系列、Find N6                     |
+| OPPO Reno 系列  | Reno10 Pro、Reno10 Pro+、Reno11 Pro、Reno12 系列、Reno13 系列、Reno14 系列、Reno15 系列、Reno 16 系列                                              |
+| realme GT 系列  | 真我 GT5 系列、真我 GT5 Pro、真我 GT6、真我 GT7 Pro、真我 GT7 Pro 竞速版、真我 GT7、真我 Neo7 Turbo、真我 GT8、真我 GT8 Pro                                      |
+| realme Neo 系列 | 真我 GT Neo6 SE、真我 GT Neo6、真我 Neo7、真我 Neo7 SE、真我 Neo7x、真我 Neo8                                                                      |
+| realme 数字系列   | 真我 12 Pro、真我 12 Pro+、真我 13 Pro+、真我 13 Pro 至尊版、真我 13 Pro、真我 14 Pro+、真我 14 Pro、真我 14、真我 15、真我 15 Pro                                |
+
+其中，OPPO Find X8 Ultra、Find X9 系列及真我 GT8 Pro（理光模式）在 Gain Map 实现中支持 **YCbCr 4:4:4 采样的 HDR Gain Map**。
+
+## 仓库结构
+
+| 路径                       | 用途                             |
+| ------------------------ | ------------------------------ |
+| `xdremux/swift-cli/`     | Swift CLI 主入口。                 |
+| `xdremux/python/`        | Python CLI 与 HEIF I/O 辅助实现。    |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI App。             |
+| `tests/`                 | 转换器测试。                         |
+| `fixtures/`              | 小型测试样本与样本说明。                   |
+| `scripts/`               | 本地构建、运行和验证脚本。                  |
+| `docs/`                  | 设计说明、研究记录和维护文档。                |
+| `experiments/`           | 实验性代码。                         |
+| `skills/`                | 与 ISO HDR 合规审计相关的 agent skill。 |
+
+## 已知限制
+
+- 转换后的照片在 OPPO 相册中再次编辑并保存后，HDR Gain Map 及其 HDR 元数据可能会丢失。
+
+本工具仅供技术研究使用。转换前请备份原始文件。作者不承担任何关于数据丢失的法律责任。
