@@ -8,6 +8,9 @@ import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
 
+private let cgImageDestinationEncodeGainMapSubsampleFactorCompat =
+    "kCGImageDestinationEncodeGainMapSubsampleFactor" as CFString
+
 private enum CLIError: Error, CustomStringConvertible {
     case usage(String)
     case invalidCommand(String)
@@ -21,6 +24,7 @@ private enum CLIError: Error, CustomStringConvertible {
     case unableToWriteCheckpoint(URL)
     case invalidCheckpoint(URL, String)
     case checkpointConfigMismatch(URL, expected: String, actual: String)
+    case batchFailed(failures: Int, checkpoint: URL)
     case unableToCreateDirectory(URL)
     case outputParentIsNotDirectory(URL)
     case outputPathCollision(output: URL, firstInput: URL, secondInput: URL)
@@ -63,6 +67,8 @@ private enum CLIError: Error, CustomStringConvertible {
             return "invalid checkpoint \(url.path): \(message)"
         case .checkpointConfigMismatch(let url, let expected, let actual):
             return "checkpoint config mismatch in \(url.path): expected \(expected), got \(actual) (use --no-resume or a different --checkpoint)"
+        case .batchFailed(let failures, let checkpoint):
+            return "batch failed for \(failures) file(s); checkpoint kept at \(checkpoint.path)"
         case .unableToCreateDirectory(let url):
             return "unable to create directory: \(url.path)"
         case .outputParentIsNotDirectory(let url):
@@ -110,19 +116,20 @@ private enum InputProcessingBranch: String {
 }
 
 /// Controls OPPO Gallery compatibility behavior.
-/// - `auto`: explicit metadata-only OPPO mode without the private compatibility tail.
-/// - `on`: full OPPO compatibility including private tail (previous `--oppo-compat` behavior).
-/// - `off`: no OPPO-specific behavior; clean Apple/ImageIO-only output.
+/// - `auto`: ISO-only diagnostic path which avoids private OPPO HDR tagflags.
+/// - `on`/`tail`: OPPO activation path with private UHDR tagflags, but no compatibility tail.
+/// - `off`: clean Apple/ImageIO output with GitHub baseline metadata behavior.
 private enum OppoCompatibility: String {
     case auto
     case on
+    case tail
     case off
 
-    /// Whether to apply OPPO UserComment tagflag patching and tmap color preservation.
+    /// Whether to apply OPPO-oriented tmap metadata preservation.
     var wantsOppoCompat: Bool { self != .off }
 
-    /// Whether to append the OPPO private compatibility tail (manifest + gainmap entries).
-    var wantsOppoTail: Bool { self == .on }
+    /// Whether to preserve/set OPPO private UHDR routing tagflags.
+    var wantsOppoActivationTagflags: Bool { self == .on || self == .tail }
 }
 
 private func fourCCString(_ value: UInt32?) -> String {
@@ -1474,7 +1481,7 @@ private enum ISOHDRWriter {
         gainMap: GainMapRaster,
         style: HDRToneMapStyle,
         outputURL: URL,
-        oppoCompat: Bool = false,
+        oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .system
     ) throws {
         if inputProcessingBranch == .hybrid {
@@ -1482,11 +1489,8 @@ private enum ISOHDRWriter {
             let intermediateURL = outputURL.appendingPathExtension("intermediate")
             let source = try makeImageSource(url: baseImageURL)
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-            var patchedUserComment: String?
-            if oppoCompat {
-                let sourceData = try Data(contentsOf: baseImageURL)
-                patchedUserComment = patchedOppoUserComment(in: sourceData)
-            }
+            let sourceData = try Data(contentsOf: baseImageURL)
+            let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
             let metadata = try makeHDRToneMapMetadata(style: style)
             let auxInfo = try makeAuxiliaryDataInfo(gainMap: gainMap, metadata: metadata, inputProcessingBranch: .system)
             let primaryMetadata = try makeUltraHDRXMPMetadata(style: style)
@@ -1498,26 +1502,25 @@ private enum ISOHDRWriter {
                 patchedUserComment: patchedUserComment,
                 outputURL: intermediateURL,
                 gainMapChannelCount: gainMap.channelCount,
-                inputProcessingBranch: .system
+                inputProcessingBranch: .system,
+                oppoCompatibility: oppoCompatibility
             )
 
             // Phase 2: re-read intermediate and write with preserve
             try writeWithPreserveReencode(
                 intermediateURL: intermediateURL,
                 outputURL: outputURL,
-                patchedUserComment: patchedUserComment
+                patchedUserComment: patchedUserComment,
+                oppoCompatibility: oppoCompatibility
             )
             try? FileManager.default.removeItem(at: intermediateURL)
         } else {
             let source = try makeImageSource(url: baseImageURL)
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
 
-            // Extract patched UserComment from source file bytes (bypasses ImageIO typing issues).
-            var patchedUserComment: String?
-            if oppoCompat {
-                let sourceData = try Data(contentsOf: baseImageURL)
-                patchedUserComment = patchedOppoUserComment(in: sourceData)
-            }
+            // Extract adjusted UserComment from source file bytes (bypasses ImageIO typing issues).
+            let sourceData = try Data(contentsOf: baseImageURL)
+            let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
 
             let metadata = try makeHDRToneMapMetadata(style: style)
             let auxInfo = try makeAuxiliaryDataInfo(gainMap: gainMap, metadata: metadata, inputProcessingBranch: inputProcessingBranch)
@@ -1530,7 +1533,8 @@ private enum ISOHDRWriter {
                 patchedUserComment: patchedUserComment,
                 outputURL: outputURL,
                 gainMapChannelCount: gainMap.channelCount,
-                inputProcessingBranch: inputProcessingBranch
+                inputProcessingBranch: inputProcessingBranch,
+                oppoCompatibility: oppoCompatibility
             )
             try verifyOutput(outputURL, requiredGainMapPixelFormat: requiredPixelFormat(for: inputProcessingBranch, channelCount: gainMap.channelCount))
         }
@@ -1667,7 +1671,8 @@ private enum ISOHDRWriter {
         patchedUserComment: String?,
         outputURL: URL,
         gainMapChannelCount: Int,
-        inputProcessingBranch: InputProcessingBranch
+        inputProcessingBranch: InputProcessingBranch,
+        oppoCompatibility: OppoCompatibility
     ) throws {
         guard let destination = CGImageDestinationCreateWithURL(
             outputURL as CFURL,
@@ -1682,6 +1687,9 @@ private enum ISOHDRWriter {
             kCGImageDestinationEncodeBaseIsSDR: true,
             kCGImageDestinationLossyCompressionQuality: 1.0
         ]
+        if oppoCompatibility.wantsOppoCompat {
+            requestOptions[cgImageDestinationEncodeGainMapSubsampleFactorCompat] = NSNumber(value: 2)
+        }
         try configureGainMapEncodingOptions(&requestOptions, channelCount: gainMapChannelCount, branch: inputProcessingBranch)
 
         var imageOptions: [CFString: Any] = [
@@ -1738,7 +1746,8 @@ private enum ISOHDRWriter {
     static func writeWithPreserveReencode(
         intermediateURL: URL,
         outputURL: URL,
-        patchedUserComment: String? = nil
+        patchedUserComment: String? = nil,
+        oppoCompatibility: OppoCompatibility = .off
     ) throws {
         guard let intermediateSource = CGImageSourceCreateWithURL(intermediateURL as CFURL, nil) else {
             throw CLIError.unableToLoadBaseImage(intermediateURL)
@@ -1764,6 +1773,12 @@ private enum ISOHDRWriter {
         var imageOptions: [CFString: Any] = [
             kCGImageDestinationPreserveGainMap: true
         ]
+        if oppoCompatibility.wantsOppoCompat {
+            let requestOptions: [CFString: Any] = [
+                cgImageDestinationEncodeGainMapSubsampleFactorCompat: NSNumber(value: 2)
+            ]
+            imageOptions[kCGImageDestinationEncodeRequestOptions] = requestOptions as CFDictionary
+        }
 
         // Pass through original properties from intermediate
         let originalProperties = CGImageSourceCopyPropertiesAtIndex(intermediateSource, 0, nil) as? [CFString: Any]
@@ -2039,19 +2054,10 @@ private enum XDRemuxProductCore {
             outputURL: actualOutputURL,
             sourceData: sourceData,
             productInput: productInput,
-            oppoCompat: oppoCompatibility.wantsOppoCompat,
+            oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: inputProcessingBranch
         )
 
-        if oppoCompatibility.wantsOppoTail {
-            try appendOppoCompatibilityPayload(
-                outputURL: actualOutputURL,
-                sourceData: sourceData,
-                extracted: productInput.extracted,
-                scale: productInput.scale,
-                gainMapRaster: productInput.gainMapRaster
-            )
-        }
         if writesInPlace {
             _ = try fileManager.replaceItemAt(outputURL, withItemAt: actualOutputURL)
         }
@@ -2204,7 +2210,7 @@ private enum ProductGainMapWriter {
         outputURL: URL,
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
-        oppoCompat: Bool,
+        oppoCompatibility: OppoCompatibility,
         inputProcessingBranch: InputProcessingBranch
     ) throws {
         switch inputProcessingBranch {
@@ -2214,7 +2220,7 @@ private enum ProductGainMapWriter {
                 gainMap: productInput.gainMapRaster,
                 style: productInput.style,
                 outputURL: outputURL,
-                oppoCompat: oppoCompat,
+                oppoCompatibility: oppoCompatibility,
                 inputProcessingBranch: .system
             )
         case .hybrid:
@@ -2223,7 +2229,7 @@ private enum ProductGainMapWriter {
                 outputURL: outputURL,
                 sourceData: sourceData,
                 productInput: productInput,
-                oppoCompat: oppoCompat
+                oppoCompatibility: oppoCompatibility
             )
         case .passthrough:
             try DirectPassthroughGainMapWriter.write(
@@ -2231,7 +2237,7 @@ private enum ProductGainMapWriter {
                 outputURL: outputURL,
                 sourceData: sourceData,
                 productInput: productInput,
-                oppoCompat: oppoCompat
+                oppoCompatibility: oppoCompatibility
             )
         }
     }
@@ -2243,57 +2249,15 @@ private enum HybridGainMapWriter {
         outputURL: URL,
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
-        oppoCompat: Bool
+        oppoCompatibility: OppoCompatibility
     ) throws {
-        let parent = outputURL.deletingLastPathComponent()
-        let stem = outputURL.deletingPathExtension().lastPathComponent
-        let privateIntermediateURL = parent.appendingPathComponent(".\(stem).hybrid-private-\(UUID().uuidString).heic")
-        let preservedURL = parent.appendingPathComponent(".\(stem).hybrid-preserve-\(UUID().uuidString).heic")
-        defer {
-            try? FileManager.default.removeItem(at: privateIntermediateURL)
-            try? FileManager.default.removeItem(at: preservedURL)
-        }
-
-        let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
-        switch productInput.extracted.mode {
-        case .uhdr:
-            // JPEG passthrough plus preserve keeps the final HEVC gain map on the 4:4:4 path.
-            // OPPO compat uses 142B 3-channel tmap (PQ transfer); otherwise 62B Apple tmap.
-            let uhdrTmapPayload: Data? = oppoCompat
-                ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
-                : nil
-            let uhdrTmapColorBox: Data? = oppoCompat ? isoColrBT2020PQBox : nil
-            _ = try writePrivateJPEGPassthroughOutput(
-                inputURL: inputURL,
-                outputURL: privateIntermediateURL,
-                infoFloats: productInput.extracted.metaFloats,
-                gainMapJPEG: productInput.extracted.maskJPEGData,
-                patchedUserComment: patchedUserComment,
-                tmapPayload: uhdrTmapPayload,
-                tmapColorBox: uhdrTmapColorBox
-            )
-            try ISOHDRWriter.writeWithPreserveReencode(
-                intermediateURL: privateIntermediateURL,
-                outputURL: preservedURL,
-                patchedUserComment: patchedUserComment
-            )
-        case .lhdr:
-            try ISOHDRWriter.write(
-                baseImageURL: inputURL,
-                gainMap: productInput.gainMapRaster,
-                style: productInput.style,
-                outputURL: preservedURL,
-                oppoCompat: false,
-                inputProcessingBranch: .hybrid
-            )
-        }
-
-        try writeHybridPrimaryPassthrough(
-            sourceURL: inputURL,
-            preservedURL: preservedURL,
+        try writeImageIOPreservedGainMapPassthrough(
+            inputURL: inputURL,
             outputURL: outputURL,
-            patchedUserComment: patchedUserComment,
-            preserveTmapColor: oppoCompat && productInput.extracted.mode == .uhdr
+            sourceData: sourceData,
+            productInput: productInput,
+            oppoCompatibility: oppoCompatibility,
+            temporaryLabel: "hybrid"
         )
     }
 }
@@ -2304,10 +2268,22 @@ private enum DirectPassthroughGainMapWriter {
         outputURL: URL,
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
-        oppoCompat: Bool
+        oppoCompatibility: OppoCompatibility
     ) throws {
-        let patchedUserComment = oppoCompat ? patchedOppoUserComment(in: sourceData) : nil
-        let tmapPayload: Data? = oppoCompat && productInput.extracted.mode == .uhdr
+        if oppoCompatibility.wantsOppoCompat {
+            try writeImageIOPreservedGainMapPassthrough(
+                inputURL: inputURL,
+                outputURL: outputURL,
+                sourceData: sourceData,
+                productInput: productInput,
+                oppoCompatibility: oppoCompatibility,
+                temporaryLabel: "passthrough-oppo"
+            )
+            return
+        }
+
+        let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
+        let tmapPayload: Data? = oppoCompatibility.wantsOppoCompat && productInput.extracted.mode == .uhdr
             ? makeImageIONativeTmapPayload(infoFloats: productInput.extracted.metaFloats)
             : nil
         let tmapColorBox: Data? = tmapPayload == nil ? nil : isoColrBT2020PQBox
@@ -2331,23 +2307,89 @@ private enum DirectPassthroughGainMapWriter {
     }
 }
 
+private func writeImageIOPreservedGainMapPassthrough(
+    inputURL: URL,
+    outputURL: URL,
+    sourceData: Data,
+    productInput: XDRemuxProductCore.ProductInput,
+    oppoCompatibility: OppoCompatibility,
+    temporaryLabel: String
+) throws {
+    let parent = outputURL.deletingLastPathComponent()
+    let stem = outputURL.deletingPathExtension().lastPathComponent
+    let privateIntermediateURL = parent.appendingPathComponent(".\(stem).\(temporaryLabel)-private-\(UUID().uuidString).heic")
+    let preservedURL = parent.appendingPathComponent(".\(stem).\(temporaryLabel)-preserve-\(UUID().uuidString).heic")
+    defer {
+        try? FileManager.default.removeItem(at: privateIntermediateURL)
+        try? FileManager.default.removeItem(at: preservedURL)
+    }
+
+    let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
+    switch productInput.extracted.mode {
+    case .uhdr:
+        if oppoCompatibility.wantsOppoCompat {
+            try ISOHDRWriter.write(
+                baseImageURL: inputURL,
+                gainMap: productInput.gainMapRaster,
+                style: productInput.style,
+                outputURL: preservedURL,
+                oppoCompatibility: oppoCompatibility,
+                inputProcessingBranch: .system
+            )
+        } else {
+            _ = try writePrivateJPEGPassthroughOutput(
+                inputURL: inputURL,
+                outputURL: privateIntermediateURL,
+                infoFloats: productInput.extracted.metaFloats,
+                gainMapJPEG: productInput.extracted.maskJPEGData,
+                patchedUserComment: patchedUserComment,
+                tmapPayload: nil,
+                tmapColorBox: nil
+            )
+            try ISOHDRWriter.writeWithPreserveReencode(
+                intermediateURL: privateIntermediateURL,
+                outputURL: preservedURL,
+                patchedUserComment: patchedUserComment
+            )
+        }
+    case .lhdr:
+        try ISOHDRWriter.write(
+            baseImageURL: inputURL,
+            gainMap: productInput.gainMapRaster,
+            style: productInput.style,
+            outputURL: preservedURL,
+            oppoCompatibility: .off,
+            inputProcessingBranch: .hybrid
+        )
+    }
+
+    try writeHybridPrimaryPassthrough(
+        sourceURL: inputURL,
+        preservedURL: preservedURL,
+        outputURL: outputURL,
+        patchedUserComment: patchedUserComment,
+        preserveTmapColor: oppoCompatibility.wantsOppoCompat && productInput.extracted.mode == .uhdr
+    )
+}
+
 struct LHDRToISOHDRCLI {
     private static let fileManager = FileManager.default
     private static let usage = """
     Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat [auto|on|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>] [--oppo-compat [auto|on|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
+            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat [auto|on|tail|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
+            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>] [--oppo-compat [auto|on|tail|off]] [--no-oppo-compat] [--input-processing system|hybrid|passthrough]
 
     Notes:
       - Input processing defaults to hybrid.
-      - OPPO Gallery compatibility is opt-in. Bare --oppo-compat and --oppo-compat on apply
-        UserComment tagflag patching, 142B ImageIO-native tmap metadata, PQ tmap color, and the
-        OPPO private compatibility tail. --oppo-compat auto applies only the metadata/tagflag part.
-        The default is clean Apple/ImageIO output with no OPPO-specific behavior.
+      - XDRemux neutralizes stale OPPO private HDR UserComment tagflags in converted ISO outputs.
+      - OPPO Gallery compatibility is opt-in for the ImageIO-native 142B tmap + PQ tmap color path.
+        Bare --oppo-compat and --oppo-compat on use the OPPO activation path without appending any private tail.
+        --oppo-compat auto keeps the ISO-only diagnostic path without appending a private tail.
+        --oppo-compat tail is a backwards-compatible alias for the activation path.
       - Batch defaults: --jobs min(cpu,4), --resume, --skip-existing.
       - A JSONL checkpoint is written under output-dir by default; it is deleted only when the batch finishes with zero failures.
       - system: ImageIO writes the final HEIC directly (HEVC gain map, compact file size).
-      - hybrid: XDRemux preserves the original 4:4:4 gain map and grafts the source primary subtree.
+      - hybrid: XDRemux preserves the source primary subtree and grafts the ImageIO-preserved ISO gain map.
       - passthrough: experimental direct ISOBMFF rewrite that keeps ImageIO ISO gain-map readability.
       - If --output is omitted, the input file is overwritten in place.
       - If --output-dir is omitted, files are written to the input directory.
@@ -2563,6 +2605,7 @@ struct LHDRToISOHDRCLI {
             try? fileManager.removeItem(at: checkpointURL)
         } else {
             log("checkpoint kept (failures present): \(checkpointURL.path)")
+            throw CLIError.batchFailed(failures: failureCount, checkpoint: checkpointURL)
         }
     }
 
@@ -2849,7 +2892,7 @@ struct LHDRToISOHDRCLI {
             case "--debug-dir":
                 debugDirPath = try nextValue(for: option)
             case "--oppo-compat":
-                // Bare --oppo-compat means "on"; --oppo-compat auto|on|off for explicit mode.
+                // Bare --oppo-compat means "on"; --oppo-compat auto|on|tail|off for explicit mode.
                 if index < rawArgs.count, let parsed = OppoCompatibility(rawValue: rawArgs[index]) {
                     oppoCompatibility = parsed
                     index += 1
@@ -3018,6 +3061,7 @@ struct LHDRToISOHDRCLI {
 }
 
 private let oppoUltraHDRFlag = 0x20000000
+private let oppoPrivateHDRBranchFlags = 0x40000 | 0x200000 | oppoUltraHDRFlag
 private let oppoTagFlagPrefixes = [
     "ASCIIOplus_",
     "ASCIIoppo_",
@@ -3026,8 +3070,15 @@ private let oppoTagFlagPrefixes = [
     "oppo_"
 ]
 
-/// Extract and patch OPPO tagflags to include OPLUS_ULTRA_HDR.
-private func patchedOppoUserComment(in data: Data) -> String? {
+/// Extract OPPO tagflags and adjust only the private HDR branch bits.
+///
+/// Converted ISO gain-map HEICs keep OPPO's private UHDR routing flags only on
+/// the explicit OPPO activation path. The activation path no longer appends any
+/// private OPPO tail; the standard ISO gain-map/tmap structure remains the gain
+/// map payload source.
+private func adjustedOppoUserComment(in data: Data, compatibility: OppoCompatibility) -> String? {
+    guard compatibility != .off else { return nil }
+
     for prefix in oppoTagFlagPrefixes {
         let prefixData = Data(prefix.utf8)
         var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
@@ -3039,7 +3090,14 @@ private func patchedOppoUserComment(in data: Data) -> String? {
             if digitEnd > range.upperBound,
                let flagStr = String(data: data.subdata(in: range.upperBound..<digitEnd), encoding: .utf8),
                let flags = Int(flagStr) {
-                return "\(prefix)\(flags | oppoUltraHDRFlag)"
+                let adjustedFlags: Int
+                if compatibility.wantsOppoActivationTagflags {
+                    adjustedFlags = flags | oppoUltraHDRFlag
+                } else {
+                    adjustedFlags = flags & ~oppoPrivateHDRBranchFlags
+                }
+                guard adjustedFlags != flags else { return nil }
+                return "\(prefix)\(adjustedFlags)"
             }
             searchRange = range.upperBound..<data.endIndex
         }
@@ -4396,151 +4454,6 @@ private func makePrivateGainMapInfoFloats(scale: ResolvedScale) -> [Double] {
     floats.append(0.0)
 
     return floats.map(Double.init)
-}
-
-private func makeOppoUhdrInfoData(scale: ResolvedScale) -> Data {
-    let floats = makePrivateGainMapInfoFloats(scale: scale).map(Float.init)
-    var data = Data()
-    for value in floats {
-        var bits = value.bitPattern.littleEndian
-        data.append(Data(bytes: &bits, count: 4))
-    }
-    return data
-}
-
-private func appendOppoCompatibilityPayload(
-    outputURL: URL,
-    sourceData: Data,
-    extracted: ExtractedLHDR,
-    scale: ResolvedScale,
-    gainMapRaster: GainMapRaster
-) throws {
-    guard extracted.dataBase >= 0, extracted.dataBase < sourceData.count else { return }
-
-    if extracted.mode == .lhdr {
-        guard extracted.manifestInfo.extensionStart >= 0,
-              extracted.manifestInfo.extensionStart < sourceData.count else { return }
-        let tail = sourceData.subdata(in: extracted.manifestInfo.extensionStart..<sourceData.count)
-        let fileHandle = try FileHandle(forWritingTo: outputURL)
-        try fileHandle.seekToEnd()
-        try fileHandle.write(contentsOf: tail)
-        try fileHandle.close()
-        return
-    }
-
-    let namesToSkip: Set<String> = [
-        "local.hdr.meta.data",
-        "local.hdr.linear.mask",
-        "local.uhdr.gainmap.info",
-        "local.uhdr.gainmap.data"
-    ]
-    var repackedData = Data()
-    var pendingEntries: [[String: Any]] = []
-
-    func appendManifestEntry(name: String, payload: Data, version: Any) {
-        let start = repackedData.count
-        repackedData.append(payload)
-        pendingEntries.append([
-            "name": name,
-            "length": payload.count,
-            "start": start,
-            "version": version
-        ])
-    }
-
-    for entry in extracted.manifestInfo.entries {
-        if namesToSkip.contains(entry.name) { continue }
-
-        let startPos = extracted.manifestInfo.jsonStart - entry.offset
-        let endPos = startPos + entry.length
-        if startPos >= 0 && endPos <= sourceData.count {
-            appendManifestEntry(
-                name: entry.name,
-                payload: sourceData.subdata(in: startPos..<endPos),
-                version: entry.version ?? 1
-            )
-            continue
-        }
-
-        let calibratedStart = extracted.dataBase + entry.start
-        let calibratedEnd = calibratedStart + entry.length
-        if calibratedStart >= 0 && calibratedEnd <= sourceData.count {
-            appendManifestEntry(
-                name: entry.name,
-                payload: sourceData.subdata(in: calibratedStart..<calibratedEnd),
-                version: entry.version ?? 1
-            )
-        }
-    }
-
-    if extracted.mode == .uhdr {
-        appendManifestEntry(name: "local.uhdr.gainmap.info", payload: extracted.metaBytes, version: 1)
-        appendManifestEntry(name: "local.uhdr.gainmap.data", payload: extracted.maskJPEGData, version: 1)
-    } else {
-        appendManifestEntry(name: "local.uhdr.gainmap.info", payload: makeOppoUhdrInfoData(scale: scale), version: 1)
-        if let gmJpeg = gainMapRasterToJPEG(gainMapRaster) {
-            appendManifestEntry(name: "local.uhdr.gainmap.data", payload: gmJpeg, version: 1)
-        }
-    }
-    guard !pendingEntries.isEmpty else { return }
-
-    let payloadLength = repackedData.count
-    let newEntries: [[String: Any]] = pendingEntries.map { entry in
-        var manifestEntry = entry
-        let start = manifestEntry.removeValue(forKey: "start") as? Int ?? 0
-        manifestEntry["offset"] = payloadLength - start
-        return manifestEntry
-    }
-    let manifestJSON = try JSONSerialization.data(withJSONObject: newEntries, options: [])
-    let footerLength = manifestJSON.count + 1 + 8
-    let headerSize = 2168
-    let totalRegionSize = headerSize + payloadLength + footerLength
-
-    var header = Data(count: headerSize)
-    header.withUnsafeMutableBytes { rawBuffer in
-        guard let base = rawBuffer.baseAddress else { return }
-        base.storeBytes(of: UInt32(totalRegionSize).bigEndian, as: UInt32.self)
-        base.advanced(by: 4).storeBytes(of: Float(1.2).bitPattern.littleEndian, as: UInt32.self)
-    }
-    header[8] = 0xFF
-    let deviceName = Data("XDRemux\0".utf8)
-    header.replaceSubrange(9..<(9 + deviceName.count), with: deviceName)
-
-    var finalPayload = Data()
-    finalPayload.append(header)
-    finalPayload.append(repackedData)
-    finalPayload.append(manifestJSON)
-    finalPayload.append(0)
-    finalPayload.append(Data("jxrs".utf8))
-    var footerLengthLE = UInt32(footerLength).littleEndian
-    finalPayload.append(Data(bytes: &footerLengthLE, count: 4))
-
-    let fileHandle = try FileHandle(forWritingTo: outputURL)
-    try fileHandle.seekToEnd()
-    try fileHandle.write(contentsOf: finalPayload)
-    try fileHandle.close()
-}
-
-/// Encode gain map raster as JPEG for OPPO UHDR extension.
-private func gainMapRasterToJPEG(_ raster: GainMapRaster) -> Data? {
-    let isColor = raster.channelCount == 3
-    let bpp = isColor ? 32 : 8
-    guard let provider = CGDataProvider(data: raster.data as CFData),
-          let image = CGImage(
-            width: raster.width, height: raster.height,
-            bitsPerComponent: 8, bitsPerPixel: bpp,
-            bytesPerRow: raster.bytesPerRow,
-            space: isColor ? CGColorSpaceCreateDeviceRGB() : CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGBitmapInfo(rawValue: isColor
-                ? (CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue)
-                : CGImageAlphaInfo.none.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
-          ) else { return nil }
-    let jpegData = NSMutableData()
-    guard let dest = CGImageDestinationCreateWithData(jpegData as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-    CGImageDestinationAddImage(dest, image, nil)
-    guard CGImageDestinationFinalize(dest) else { return nil }
-    return jpegData as Data
 }
 
 private func ensureDirectory(_ url: URL, fileManager: FileManager) throws {
