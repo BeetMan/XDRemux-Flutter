@@ -73,13 +73,15 @@ enum AppStrings {
     static let inputProcessingPassthroughHelp = "不让系统重编码 gain map；直接重建符合 ISO 标准的 ISOBMFF box 来保留原始增益图数据。"
 
     static let oppoCompatLabel = "[实验性] OPPO 相册 HDR 兼容层"
-    static let oppoCompatHelp = "控制 OPPO 相册识别信号。关闭时输出纯净 Apple/ImageIO 结构；自动只写元数据和 tagflags；开启会额外写入 OPPO 私有尾部。"
+    static let oppoCompatHelp = "控制 OPPO 相册识别信号。关闭时保持默认 Apple/ImageIO 输出；自动使用无私有尾部的 ISO 诊断路径；开启也不追加任何私有 tail。"
     static let oppoCompatAuto = "自动"
     static let oppoCompatOn = "开启"
+    static let oppoCompatTail = "兼容开启"
     static let oppoCompatOff = "关闭"
-    static let oppoCompatAutoHelp = "只写 OPPO 可识别的元数据和 tagflags，不追加私有兼容尾部。"
-    static let oppoCompatOnHelp = "写入 OPPO tagflags、142B ImageIO-native tmap、PQ tmap 颜色和 OPPO 私有兼容尾部。"
-    static let oppoCompatOffHelp = "不写 OPPO 私有信号，保持 Apple/ImageIO 优先的干净输出。"
+    static let oppoCompatAutoHelp = "写入 142B ImageIO-native tmap 和 PQ tmap 颜色，并清理会触发私有 OUHDR 路径的 tagflags；不追加任何私有 tail。"
+    static let oppoCompatOnHelp = "保留 source primary，写入标准 HEIC tmap/gain map 结构并设置 OPPO UHDR tagflags；不追加任何私有 tail。"
+    static let oppoCompatTailHelp = "兼容旧命令名；行为等同于开启，不追加任何私有 tail。"
+    static let oppoCompatOffHelp = "不写 OPPO 兼容 tmap 扩展，保持默认元数据行为。"
     static let skipExisting = "跳过已有有效输出"
     static let skipExistingHelp = "目标文件已经包含可识别的 ISO gain map 时不重复转换。"
     static let concurrentJobs = "并发任务"
@@ -99,6 +101,7 @@ extension OppoCompatibility {
         switch self {
         case .auto: return AppStrings.oppoCompatAuto
         case .on: return AppStrings.oppoCompatOn
+        case .tail: return AppStrings.oppoCompatTail
         case .off: return AppStrings.oppoCompatOff
         }
     }
@@ -107,6 +110,7 @@ extension OppoCompatibility {
         switch self {
         case .auto: return AppStrings.oppoCompatAutoHelp
         case .on: return AppStrings.oppoCompatOnHelp
+        case .tail: return AppStrings.oppoCompatTailHelp
         case .off: return AppStrings.oppoCompatOffHelp
         }
     }

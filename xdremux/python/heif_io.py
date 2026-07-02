@@ -8,8 +8,6 @@ to add auxC box (urn:iso:std:iso:ts:21496:-1), convert gain map to tmap type,
 and insert iref/auxl reference — enabling HDR detection by macOS/iOS.
 """
 
-import json
-import io
 import os
 import struct
 import sys
@@ -31,7 +29,6 @@ OPPO_TAGFLAG_PREFIXES = (
     b"oppo_",
 )
 EXIF_USER_COMMENT_ASCII_PREFIX = b"ASCII\x00\x00\x00"
-OPPO_EXTENSION_TAG = b"jxrs"
 
 
 def _read_be(data: bytes | bytearray, offset: int, size: int) -> tuple[int, int]:
@@ -308,7 +305,8 @@ def _pad_tile_to_size(tile: Image.Image, tile_size: int) -> Image.Image:
 
 
 def _encode_gainmap_tiles(gm_img: Image.Image, output_dir: str,
-                          tile_size: int = 512) -> tuple[list[bytes], bytes, int, int]:
+                          tile_size: int = 512,
+                          oppo_compat: bool = False) -> tuple[list[bytes], bytes, int, int]:
     """Encode a gain map as HEVC tiles and return tile payloads plus hvcC."""
     from pillow_heif import from_pillow
 
@@ -317,6 +315,7 @@ def _encode_gainmap_tiles(gm_img: Image.Image, output_dir: str,
     rows = (gm_height + tile_size - 1) // tile_size
     tile_payloads: list[bytes] = []
     tile_hvcc: bytes | None = None
+    chroma = "420" if oppo_compat else "444"
 
     for row in range(rows):
         for column in range(columns):
@@ -333,7 +332,7 @@ def _encode_gainmap_tiles(gm_img: Image.Image, output_dir: str,
                     prefix="proxdr_gainmap_tile_", suffix=".heic", dir=output_dir or None,
                 )
                 os.close(fd)
-                from_pillow(tile).save(gm_tmp_path, quality=90, chroma="444")
+                from_pillow(tile).save(gm_tmp_path, quality=90, chroma=chroma)
                 with open(gm_tmp_path, "rb") as f:
                     gm_data = f.read()
                 payload, hvcc = _extract_heif_hvc_payload_and_config(gm_data)
@@ -377,7 +376,7 @@ def write_heic(output_path: str, base_image: Image.Image,
     heif.add_from_pillow(gm_img)
 
     # Build save kwargs — passthrough source EXIF (shooting params, GPS, orientation)
-    save_kwargs = {"quality": 90, "chroma": "444"}
+    save_kwargs = {"quality": 90, "chroma": "420" if oppo_compat else "444"}
     if exif_data is not None:
         save_kwargs["exif"] = exif_data
 
@@ -405,10 +404,6 @@ def write_heic(output_path: str, base_image: Image.Image,
             print("note: auxC already present or patching skipped", file=sys.stderr)
     except Exception as e:
         print(f"warning: auxC patching failed: {e}", file=sys.stderr)
-
-    # OPPO Gallery compatibility: append UHDR extension blocks
-    if oppo_compat and lhdr is not None:
-        _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
 
 
 def write_heic_passthrough(source_path: str, output_path: str,
@@ -488,9 +483,6 @@ def write_heic_passthrough(source_path: str, output_path: str,
     if source_tmap_item_ids:
         with open(output_path, 'wb') as f:
             f.write(src)
-        if oppo_compat and lhdr is not None:
-            gm_img = _normalize_gainmap_image(gainmap)
-            _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
         return
 
     original_max_item_id = max(item_types.keys())
@@ -550,6 +542,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     gm_tile_payloads, gm_hvcC, gm_rows, gm_columns = _encode_gainmap_tiles(
         gm_img,
         os.path.dirname(os.path.abspath(output_path)),
+        oppo_compat=oppo_compat,
     )
 
     # ── 4. Prepare building blocks ─────────────────────────────────
@@ -1066,9 +1059,6 @@ def write_heic_passthrough(source_path: str, output_path: str,
     with open(output_path, 'wb') as f:
         f.write(out)
 
-    if oppo_compat and lhdr is not None:
-        _append_oppo_trailing_payload(output_path, iso_meta, gm_img, lhdr)
-
 
 def _patch_oppo_tagflags_bytes(data: bytes) -> tuple[bytes, str | None]:
     """Patch the first OPPO tagflags prefix in raw bytes."""
@@ -1316,104 +1306,3 @@ def _patch_passthrough_exif_user_comment(src_mdat_content: bytes,
 
     print("warning: unable to patch passthrough EXIF UserComment; preserving source EXIF", file=sys.stderr)
     return src_mdat_content
-
-
-def _append_oppo_trailing_payload(output_path: str, iso_meta: dict,
-                                   gainmap, lhdr) -> None:
-    """Append OPPO private extension blocks to the HEIC tail.
-
-    LHDR sources are kept byte-for-byte so Gallery can stay on the proven
-    local.hdr.* decoder branch. UHDR sources are repacked into the OPPO UHDR
-    extension shape.
-    """
-    if lhdr.file_data is None or lhdr.manifest_entries is None:
-        return
-
-    if lhdr.mode == "lhdr":
-        with open(output_path, "ab") as f:
-            f.write(lhdr.file_data[lhdr.ext_start:])
-        return
-
-    names_to_skip = {
-        "local.hdr.meta.data",
-        "local.hdr.linear.mask",
-        "local.uhdr.gainmap.info",
-        "local.uhdr.gainmap.data",
-    }
-    json_start_in_ext = None
-    # Locate the JSON manifest in the extension region to compute physical offsets
-    ext = lhdr.file_data[lhdr.ext_start:]
-    manifest_result = container.parse_manifest(ext)
-    if manifest_result is None:
-        return
-    _, json_start_in_ext, _ = manifest_result
-
-    repacked = bytearray()
-    new_entries = []
-
-    def append_manifest_entry(name: str, payload: bytes, version: int = 1) -> None:
-        start = len(repacked)
-        repacked.extend(payload)
-        new_entries.append({
-            "name": name,
-            "length": len(payload),
-            "start": start,
-            "version": version,
-        })
-
-    for entry in lhdr.manifest_entries:
-        if entry["name"] in names_to_skip:
-            continue
-        # Physical offset = ext_start + (json_start_in_ext - entry.offset)
-        phys = lhdr.ext_start + (json_start_in_ext - entry["offset"])
-        length = entry["length"]
-        if 0 <= phys and phys + length <= len(lhdr.file_data):
-            chunk = lhdr.file_data[phys:phys + length]
-            append_manifest_entry(entry["name"], chunk, entry.get("version", 1))
-
-    info_bytes = iso21496.build_oppo_uhdr_info_bytes(iso_meta)
-    append_manifest_entry("local.uhdr.gainmap.info", info_bytes, 1)
-
-    # local.uhdr.gainmap.data: JPEG of gain map
-    if gainmap is not None:
-        gm_img = _normalize_gainmap_image(gainmap)
-        buf = io.BytesIO()
-        gm_img.save(buf, format="JPEG", quality=90)
-        gm_jpeg = buf.getvalue()
-        append_manifest_entry("local.uhdr.gainmap.data", gm_jpeg, 1)
-
-    if not new_entries:
-        return
-
-    # Build final payload: 2168-byte container header + data + JSON manifest + footer
-    # Header: 84-byte standard header + 2164-byte hdr.transform.data (zeroed)
-    HEADER_SIZE = 2168
-    payload_length = len(repacked)
-    manifest_entries = [
-        {
-            "name": entry["name"],
-            "length": entry["length"],
-            "offset": payload_length - entry["start"],
-            "version": entry["version"],
-        }
-        for entry in new_entries
-    ]
-    manifest_json = json.dumps(manifest_entries, separators=(",", ":")).encode("utf-8")
-
-    footer_length = len(manifest_json) + 1 + 8
-    total_region_size = HEADER_SIZE + payload_length + footer_length
-    header = bytearray(HEADER_SIZE)
-    struct.pack_into(">I", header, 0, total_region_size)
-    struct.pack_into("<f", header, 4, 1.2)
-    header[8] = 0xFF
-    device_name = b"XDRemux\x00"
-    header[9:9 + len(device_name)] = device_name
-    # bytes 84-2168: hdr.transform.data (zeroed — no tone curve LUT available)
-
-    with open(output_path, "ab") as f:
-        f.write(bytes(header))
-        f.write(bytes(repacked))
-        f.write(manifest_json)
-        f.write(b"\x00")
-        f.write(OPPO_EXTENSION_TAG)
-        f.write(struct.pack("<I", footer_length))

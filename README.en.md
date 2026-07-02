@@ -32,7 +32,7 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.
 # Select the input processing branch; the default is hybrid
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
-# Prefer OPPO Gallery recognition while preserving the 4:4:4 gain map
+# Enable the OPPO no-tail compatibility path
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
@@ -40,7 +40,7 @@ The Swift CLI accepts three `--input-processing` branches:
 
 | Branch | Description |
 | --- | --- |
-| `hybrid` | Default production path. Preserves the source primary HEVC and keeps the final HEVC gain map at 4:4:4. The default output is clean Apple/ImageIO-compatible structure; `--oppo-compat` adds OPPO recognition signals, a 142B ImageIO-native `tmap`, and PQ `tmap` color while still keeping the final gain map 4:4:4. |
+| `hybrid` | Default production path. Preserves the source primary HEVC and keeps the final HEVC gain map at 4:4:4. The default output preserves the GitHub v1.2 baseline Apple/ImageIO-compatible behavior; `--oppo-compat auto` uses the no-`local.uhdr.*` ISO diagnostic path; bare `--oppo-compat` / `--oppo-compat on` also append no OPPO private tail, while writing the standard HEIC `tmap`/gain-map structure and preserving/setting OPPO UHDR tagflags. |
 | `system` | System-output path. ImageIO writes the final HEIC directly; use it as a reference for system behavior. ImageIO decides how both the base image and gain map are encoded. |
 | `passthrough` | Experimental path. Rewrites ISOBMFF boxes directly so the output is recognized by ImageIO as an HDR photo; this branch is for validating direct box-rewrite behavior. |
 
@@ -56,7 +56,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 # Batch conversion
 python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
 
-# Add OPPO Gallery compatibility metadata when OPPO Gallery is the target viewer
+# Enable the OPPO no-tail compatibility path when OPPO Gallery is the target viewer
 python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 
 # Troubleshooting mode: decode and re-encode the base image
@@ -93,7 +93,7 @@ scripts/build_and_run.sh --logs
 ## ⚠️ Known Limitations
 
 - **Smart defaults**: The Swift and Python CLIs automatically detect LHDR/UHDR and device family. Swift uses the `hybrid` input processing branch by default; users do not need to choose family or an input processing branch. Python preserves the original base HEVC data by default to avoid recompression.
-- **OPPO Gallery compatibility**: Swift `hybrid` defaults to clean Apple/ImageIO-compatible output and does not automatically write OPPO private signals. With `--oppo-compat`, XDRemux uses the preserve path: it keeps the source primary HEVC and final HEVC gain map at 4:4:4, then writes OPPO tagflags, the OPPO private tail, a 142B ImageIO-native `tmap`, and PQ `tmap` color association. Strict ISO validation and ImageIO-native/OPPO compatibility are separate concerns; the 142B `tmap` is the verified ImageIO-native compatibility form, not the strict-mode 145B padded structure.
+- **OPPO Gallery compatibility**: Swift `hybrid` defaults to the GitHub v1.2 baseline Apple/ImageIO-compatible output: it appends no OPPO private tail and does not additionally rewrite OPPO tagflags. `--oppo-compat auto` keeps the no-private-tail ISO-only diagnostic path for testing whether standard HEIC `tmap` / HEVC gain maps can trigger the OPPO framework/EDR route. Bare `--oppo-compat`, `--oppo-compat on`, and `--oppo-compat tail` no longer append any OPPO private tail; they preserve the source primary HEVC, write the ImageIO-native `tmap` / PQ `tmap` color association, and preserve/set OPPO UHDR tagflags. Strict ISO validation and ImageIO-native/OPPO compatibility are separate concerns; the 142B `tmap` is the verified ImageIO-native compatibility form, not the strict-mode 145B padded structure.
 - **Gallery editing strips HDR**: Editing and saving a converted photo in OPPO Gallery strips the HDR Gain Map and its metadata.
 
 ## 🧪 Experimental Features

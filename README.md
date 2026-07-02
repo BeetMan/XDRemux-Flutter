@@ -32,7 +32,7 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.
 # 选择输入处理分支；默认是 hybrid
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 
-# 需要 OPPO 相册优先识别时，启用 OPPO 兼容信号并保留 4:4:4 gain map
+# 需要 OPPO 相册 no-tail 兼容路径时
 swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
 ```
 
@@ -40,7 +40,7 @@ Swift CLI 的 `--input-processing` 接受三个分支：
 
 | 分支 | 说明 |
 | --- | --- |
-| `hybrid` | 默认生产路径。保留源文件 primary HEVC，并让最终 HEVC gain map 保持 4:4:4。默认输出为纯净 Apple/ImageIO 兼容结构；使用 `--oppo-compat` 时，增加 OPPO 识别信号、142B ImageIO-native `tmap` 与 PQ `tmap` 颜色关联，同时继续保持最终 gain map 为 4:4:4。 |
+| `hybrid` | 默认生产路径。保留源文件 primary HEVC，并让最终 HEVC gain map 保持 4:4:4。默认输出保持 GitHub v1.2 基线的 Apple/ImageIO 兼容行为；`--oppo-compat auto` 使用无 `local.uhdr.*` 私有尾部的 ISO 诊断路径；裸 `--oppo-compat` / `--oppo-compat on` 也不再追加 OPPO 私有尾部，只写标准 HEIC `tmap`/gain-map 结构并保留/设置 OPPO UHDR tagflags。 |
 | `system` | 系统直出路径。直接让 ImageIO 写最终 HEIC，用作系统行为对照；base image 和 gain map 均由 ImageIO 决定编码方式。 |
 | `passthrough` | 实验性路径。直接重写 ISOBMFF box，使输出能被 ImageIO 识别为 HDR 照片；用于验证直接 box rewrite 的可行性。 |
 
@@ -56,7 +56,7 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 # 批量转换
 python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
 
-# 需要在 OPPO 相册中优先识别时，额外写入 OPPO 兼容尾部
+# 需要在 OPPO 相册中优先识别时，启用 no-tail 兼容路径
 python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
 
 # 排障模式：解码并重新编码 base image
@@ -93,7 +93,7 @@ scripts/build_and_run.sh --logs
 ## ⚠️ 已知局限
 
 - **智能默认路径**：Swift / Python CLI 会自动识别 LHDR/UHDR 与设备家族。Swift 默认使用 `hybrid` 输入处理分支；普通用户不需要指定 family 或输入处理分支。Python 默认保留原始 base HEVC 数据，避免二次压缩。
-- **OPPO 相册兼容**：Swift `hybrid` 默认保持 Apple/ImageIO 兼容输出，不自动写入 OPPO 私有信号。使用 `--oppo-compat` 时，XDRemux 走保留路径：保留源文件 primary HEVC，并让最终 HEVC gain map 保持 4:4:4，同时写入 OPPO tagflags、OPPO 私有尾部、142B ImageIO-native `tmap` 载荷和 PQ `tmap` 颜色关联。严格 ISO 检查与 ImageIO-native/OPPO 兼容性是两个独立关注点；142B `tmap` 是已验证的 ImageIO-native 兼容形式，不等同于严格模式检查的 145B padded 结构。
+- **OPPO 相册兼容**：Swift `hybrid` 默认保持 GitHub v1.2 基线的 Apple/ImageIO 兼容输出，不追加 OPPO 私有 tail，也不额外改写 OPPO tagflags。`--oppo-compat auto` 保留无私有尾部的 ISO-only 诊断路径，用于继续验证标准 HEIC `tmap`/HEVC gain map 能否触发 OPPO framework/EDR 路径。裸 `--oppo-compat`、`--oppo-compat on` 与 `--oppo-compat tail` 不再追加任何 OPPO 私有尾部；它们保留 source primary HEVC，写入 ImageIO-native `tmap` / PQ `tmap` 颜色关联，并保留/设置 OPPO UHDR tagflags。严格 ISO 检查与 ImageIO-native/OPPO 兼容性是两个独立关注点；142B `tmap` 是已验证的 ImageIO-native 兼容形式，不等同于严格模式检查的 145B padded 结构。
 - **相册编辑丢失 HDR**：转换后的照片在 OPPO 相册中编辑并保存后，HDR Gain Map 及其元数据会丢失。
 
 ## 🧪 实验性功能
