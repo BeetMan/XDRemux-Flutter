@@ -195,6 +195,44 @@ private struct GainMapRaster {
     let data: Data
 }
 
+private extension GainMapRaster {
+    func replicatingLumaToRGB() -> GainMapRaster {
+        guard channelCount == 1 else { return self }
+
+        let outputBytesPerRow = alignUp(width * 4, toMultipleOf: 64)
+        var output = Data(count: outputBytesPerRow * height)
+        data.withUnsafeBytes { sourceRawBuffer in
+            output.withUnsafeMutableBytes { outputRawBuffer in
+                guard let source = sourceRawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                      let destination = outputRawBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                    return
+                }
+
+                for y in 0..<height {
+                    let sourceRow = y * bytesPerRow
+                    let destinationRow = y * outputBytesPerRow
+                    for x in 0..<width {
+                        let value = source[sourceRow + x]
+                        let offset = destinationRow + x * 4
+                        destination[offset] = value
+                        destination[offset + 1] = value
+                        destination[offset + 2] = value
+                        destination[offset + 3] = 255
+                    }
+                }
+            }
+        }
+
+        return GainMapRaster(
+            width: width,
+            height: height,
+            bytesPerRow: outputBytesPerRow,
+            channelCount: 3,
+            data: output
+        )
+    }
+}
+
 private struct AuxiliaryGainMapPayload {
     let data: Data
     let bytesPerRow: Int
@@ -289,6 +327,34 @@ private struct HDRToneMapStyle: Encodable {
     let perChannelGamma: [Double]
     let perChannelBaseOffset: [Double]
     let perChannelAlternateOffset: [Double]
+}
+
+private extension HDRToneMapStyle {
+    func replicatingMonochromeToRGB() -> HDRToneMapStyle {
+        guard channelCount == 1 else { return self }
+
+        func triplet(_ values: [Double], fallback: Double) -> [Double] {
+            Array(repeating: values.first ?? fallback, count: 3)
+        }
+
+        return HDRToneMapStyle(
+            version: version,
+            baseHeadroom: baseHeadroom,
+            alternateHeadroom: alternateHeadroom,
+            baseColorIsWorkingColor: baseColorIsWorkingColor,
+            gainMapMin: gainMapMin,
+            gainMapMax: gainMapMax,
+            gamma: gamma,
+            baseOffset: baseOffset,
+            alternateOffset: alternateOffset,
+            channelCount: 3,
+            perChannelGainMapMin: triplet(perChannelGainMapMin, fallback: gainMapMin),
+            perChannelGainMapMax: triplet(perChannelGainMapMax, fallback: gainMapMax),
+            perChannelGamma: triplet(perChannelGamma, fallback: gamma),
+            perChannelBaseOffset: triplet(perChannelBaseOffset, fallback: baseOffset),
+            perChannelAlternateOffset: triplet(perChannelAlternateOffset, fallback: alternateOffset)
+        )
+    }
 }
 
 private struct DebugMeta: Encodable {
@@ -2194,10 +2260,14 @@ private enum ProductGainMapWriter {
     ) throws {
         switch inputProcessingBranch {
         case .system:
+            let writerInput = gainMapWriterInput(
+                productInput: productInput,
+                oppoCompatibility: oppoCompatibility
+            )
             try ISOHDRWriter.write(
                 baseImageURL: inputURL,
-                gainMap: productInput.gainMapRaster,
-                style: productInput.style,
+                gainMap: writerInput.gainMap,
+                style: writerInput.style,
                 outputURL: outputURL,
                 oppoCompatibility: oppoCompatibility,
                 inputProcessingBranch: .system
@@ -2220,6 +2290,19 @@ private enum ProductGainMapWriter {
             )
         }
     }
+}
+
+private func gainMapWriterInput(
+    productInput: XDRemuxProductCore.ProductInput,
+    oppoCompatibility: OppoCompatibility
+) -> (gainMap: GainMapRaster, style: HDRToneMapStyle) {
+    guard productInput.extracted.mode == .lhdr, oppoCompatibility.wantsOppoCompat else {
+        return (productInput.gainMapRaster, productInput.style)
+    }
+    return (
+        productInput.gainMapRaster.replicatingLumaToRGB(),
+        productInput.style.replicatingMonochromeToRGB()
+    )
 }
 
 private enum HybridGainMapWriter {
@@ -2332,13 +2415,18 @@ private func writeImageIOPreservedGainMapPassthrough(
             )
         }
     case .lhdr:
+        let writerInput = gainMapWriterInput(
+            productInput: productInput,
+            oppoCompatibility: oppoCompatibility
+        )
+        let branch: InputProcessingBranch = oppoCompatibility.wantsOppoCompat ? .system : .hybrid
         try ISOHDRWriter.write(
             baseImageURL: inputURL,
-            gainMap: productInput.gainMapRaster,
-            style: productInput.style,
+            gainMap: writerInput.gainMap,
+            style: writerInput.style,
             outputURL: preservedURL,
-            oppoCompatibility: .off,
-            inputProcessingBranch: .hybrid
+            oppoCompatibility: oppoCompatibility,
+            inputProcessingBranch: branch
         )
     }
 
@@ -2347,7 +2435,7 @@ private func writeImageIOPreservedGainMapPassthrough(
         preservedURL: preservedURL,
         outputURL: outputURL,
         patchedUserComment: patchedUserComment,
-        preserveTmapColor: oppoCompatibility.wantsOppoCompat && productInput.extracted.mode == .uhdr
+        preserveTmapColor: oppoCompatibility.wantsOppoCompat
     )
 }
 
@@ -2433,6 +2521,65 @@ private func patchOppoUserComment(_ data: inout Data, patchedUserComment: String
         }
     }
     return false
+}
+
+private struct OppoUserCommentPatch {
+    let sourceRange: Range<Int>
+    let delta: Int
+}
+
+private func applyOppoUserCommentPatch(
+    _ data: inout Data,
+    sourceOffset: Int,
+    patchedUserComment: String
+) -> OppoUserCommentPatch? {
+    for prefix in oppoTagFlagPrefixes {
+        guard patchedUserComment.hasPrefix(prefix) else { continue }
+        let patchedDigits = String(patchedUserComment.dropFirst(prefix.count))
+        let prefixData = Data(prefix.utf8)
+        var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
+        while let range = data.range(of: prefixData, options: [], in: searchRange) {
+            var digitEnd = range.upperBound
+            while digitEnd < data.count, (48...57).contains(data[digitEnd]) {
+                digitEnd += 1
+            }
+            let digitCount = digitEnd - range.upperBound
+            guard digitCount > 0 else {
+                searchRange = range.upperBound..<data.endIndex
+                continue
+            }
+
+            var replacement = prefixData
+            replacement.append(Data(repeating: UInt8(ascii: "0"), count: max(0, digitCount - patchedDigits.count)))
+            replacement.append(Data(patchedDigits.utf8))
+            let replacedRange = range.lowerBound..<digitEnd
+            data.replaceSubrange(replacedRange, with: replacement)
+            return OppoUserCommentPatch(
+                sourceRange: (sourceOffset + range.lowerBound)..<(sourceOffset + digitEnd),
+                delta: replacement.count - (digitEnd - range.lowerBound)
+            )
+        }
+    }
+    return nil
+}
+
+private func adjustedExtentForOppoUserCommentPatch(
+    _ extent: (offset: Int, length: Int),
+    patch: OppoUserCommentPatch?
+) -> (offset: Int, length: Int)? {
+    guard let patch, patch.delta != 0 else { return extent }
+    let extentRange = extent.offset..<extent.offset + extent.length
+    if extentRange.upperBound <= patch.sourceRange.lowerBound {
+        return extent
+    }
+    if extentRange.lowerBound >= patch.sourceRange.upperBound {
+        return (extent.offset + patch.delta, extent.length)
+    }
+    guard extentRange.lowerBound <= patch.sourceRange.lowerBound,
+          extentRange.upperBound >= patch.sourceRange.upperBound else {
+        return nil
+    }
+    return (extent.offset, extent.length + patch.delta)
 }
 
 private func valueOrRepeated(_ values: [Double], index: Int, fallback: Double) -> Double {
@@ -3126,6 +3273,20 @@ private func writeHybridPrimaryPassthrough(
     guard keptSourceIDs.contains(sourcePrimaryID) else {
         throw XDRemuxError.invalidContainer("hybrid graft would drop primary item")
     }
+    var sourceMdatPayload = source.subdata(in: sourceMdat.dataStart..<sourceMdat.dataEnd)
+    let userCommentPatch: OppoUserCommentPatch?
+    if let patchedUserComment {
+        guard let patch = applyOppoUserCommentPatch(
+            &sourceMdatPayload,
+            sourceOffset: sourceMdat.dataStart,
+            patchedUserComment: patchedUserComment
+        ) else {
+            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in hybrid output")
+        }
+        userCommentPatch = patch
+    } else {
+        userCommentPatch = nil
+    }
 
     let maxSourceID = keptSourceItems.map(\.itemID).max() ?? sourcePrimaryID
     let copiedItemCount = preservedGainTileIDs.count + 2 + (preservedXMPID == nil ? 0 : 1)
@@ -3414,9 +3575,12 @@ private func writeHybridPrimaryPassthrough(
 
     var finalIlocEntries: [ISOBMFFILocEntry] = []
     for entry in keptSourceIlocEntries {
-        let extents = entry.extents.map { extent -> (offset: Int, length: Int) in
+        let extents = try entry.extents.map { extent -> (offset: Int, length: Int) in
             if entry.constructionMethod == 0 {
-                return (extent.offset + fileDelta, extent.length)
+                guard let adjusted = adjustedExtentForOppoUserCommentPatch(extent, patch: userCommentPatch) else {
+                    throw XDRemuxError.invalidContainer("OPPO UserComment patch crosses item extent boundary")
+                }
+                return (adjusted.offset + fileDelta, adjusted.length)
             }
             return extent
         }
@@ -3424,7 +3588,7 @@ private func writeHybridPrimaryPassthrough(
     }
     var appendedMdatPayload = Data()
     for tile in gainTilePayloads {
-        let offset = newMdatDataStart + (sourceMdat.dataEnd - sourceMdat.dataStart) + appendedMdatPayload.count
+        let offset = newMdatDataStart + sourceMdatPayload.count + appendedMdatPayload.count
         appendedMdatPayload.append(tile.payload)
         finalIlocEntries.append(ISOBMFFILocEntry(itemID: tile.newID, constructionMethod: 0, dataReferenceIndex: 0, extents: [(offset, tile.payload.count)]))
     }
@@ -3446,7 +3610,7 @@ private func writeHybridPrimaryPassthrough(
     }
     let finalMetaPart = makeBox("meta", payload: finalMetaPayload)
 
-    var mdatPayload = source.subdata(in: sourceMdat.dataStart..<sourceMdat.dataEnd)
+    var mdatPayload = sourceMdatPayload
     mdatPayload.append(appendedMdatPayload)
     let mdatPart = makeBox("mdat", payload: mdatPayload)
 
@@ -3455,11 +3619,6 @@ private func writeHybridPrimaryPassthrough(
     out.append(finalMetaPart)
     out.append(betweenMetaAndMdat)
     out.append(mdatPart)
-    if let patchedUserComment {
-        guard patchOppoUserComment(&out, patchedUserComment: patchedUserComment) else {
-            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in hybrid output")
-        }
-    }
     try out.write(to: outputURL)
 }
 

@@ -59,7 +59,7 @@ scripts/build_and_run.sh run
 
 ## OPPO 相册兼容模式
 
-OPPO 系统相册对 HEVC RExt 4:4:4 Gain Map 的兼容性有限。启用 OPPO 相册兼容模式后，XDRemux 会将 Gain Map 改用 HEVC Main Still Picture Profile（4:2:0）编码，从而触发 OPPO 系统相册中的 HDR 显示。
+OPPO 系统相册对 HEVC RExt 4:4:4 Gain Map 的兼容性有限。启用 OPPO 相册兼容模式后，XDRemux 会将 Gain Map 改用 HEVC Main Still Picture Profile（4:2:0）编码，从而触发 OPPO 系统相册中的 HDR 显示。LHDR 在 OPPO 兼容模式下固定写出已验证的 RGB-copy 8-bit Gain Map；非 OPPO LHDR 输出仍保留原始灰度 Gain Map。
 
 Swift CLI：
 
@@ -87,7 +87,7 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-proce
 
 | 模式            | 说明                                                                                                           |
 | ------------- | ------------------------------------------------------------------------------------------------------------ |
-| `hybrid`      | 默认模式。保留原始 Base Image，只重新处理 HDR Gain Map。最高可将 Gain Map 编码为 HEVC RExt 4:4:4，在保持 Gain Map 采样精度的同时，部分照片的体积也可能更小。 |
+| `hybrid`      | 默认模式。保留原始 Base Image，只重新处理 HDR Gain Map。非 OPPO 输出保留原通道结构；开启 OPPO 兼容时，LHDR 使用已验证的 RGB-copy Gain Map。 |
 | `system`      | 让系统 ImageIO 负责写出最终 HEIC。这个模式会重新编码 Base Image 和 Gain Map，适合用于对照系统行为。                                          |
 | `passthrough` | 实验性模式。直接改写 HEIC 内部结构，用于验证和开发。普通用户不建议使用。                                                                      |
 
