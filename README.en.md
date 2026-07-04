@@ -59,7 +59,7 @@ scripts/build_and_run.sh run
 
 ## OPPO Gallery compatibility mode
 
-OPPO Gallery has limited compatibility with HEVC RExt 4:4:4 Gain Maps. When OPPO Gallery compatibility mode is enabled, XDRemux encodes the Gain Map with HEVC Main Still Picture Profile (4:2:0), allowing OPPO Gallery to trigger HDR display.
+OPPO Gallery has limited compatibility with HEVC RExt 4:4:4 Gain Maps. When OPPO Gallery compatibility mode is enabled, XDRemux encodes the Gain Map with HEVC Main Still Picture Profile (4:2:0), allowing OPPO Gallery to trigger HDR display. LHDR is fixed to the verified RGB-copy 8-bit Gain Map in OPPO compatibility mode; non-OPPO LHDR outputs keep the original grayscale Gain Map.
 
 Swift CLI:
 
@@ -87,7 +87,7 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-proce
 
 | Mode | Description |
 | --- | --- |
-| `hybrid` | Default mode. Preserves the original Base Image and only reprocesses the HDR Gain Map. It can encode the Gain Map as HEVC RExt 4:4:4, preserving Gain Map sampling precision while also reducing file size for some photos. |
+| `hybrid` | Default mode. Preserves the original Base Image and only reprocesses the HDR Gain Map. Non-OPPO outputs keep the original channel layout; OPPO-compatible LHDR uses the verified RGB-copy Gain Map. |
 | `system` | Lets the system ImageIO writer produce the final HEIC. This mode re-encodes both the Base Image and the Gain Map, and is useful as a reference for system behavior. |
 | `passthrough` | Experimental mode. Rewrites the internal HEIC structure directly for validation and development. Not recommended for normal use. |
 

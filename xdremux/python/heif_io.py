@@ -284,6 +284,14 @@ def _normalize_gainmap_image(gainmap) -> Image.Image:
     raise ValueError(f"Unsupported gainmap type or shape: {type(gainmap)}")
 
 
+def _oppo_compatible_gainmap_image(gm_img: Image.Image, lhdr) -> Image.Image:
+    """Return the device-validated LHDR OPPO gain-map shape."""
+    if lhdr is not None and getattr(lhdr, "mode", None) == "lhdr":
+        luma = gm_img.convert("L")
+        return Image.merge("RGB", (luma, luma, luma))
+    return gm_img
+
+
 def _pad_tile_to_size(tile: Image.Image, tile_size: int) -> Image.Image:
     """Pad edge tiles by extending their last row/column to a fixed canvas."""
     if tile.size == (tile_size, tile_size):
@@ -371,6 +379,8 @@ def write_heic(output_path: str, base_image: Image.Image,
             base_image.info["icc_profile"] = icc_profile
 
     gm_img = _normalize_gainmap_image(gainmap)
+    if oppo_compat:
+        gm_img = _oppo_compatible_gainmap_image(gm_img, lhdr)
 
     heif = from_pillow(base_image)
     heif.add_from_pillow(gm_img)
@@ -399,6 +409,7 @@ def write_heic(output_path: str, base_image: Image.Image,
             output_path,
             iso_meta=iso_meta,
             replace_primary_colr=replace_primary_colr,
+            oppo_compat=oppo_compat,
         )
         if not patched:
             print("note: auxC already present or patching skipped", file=sys.stderr)
@@ -537,6 +548,8 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # ── 3. Encode gain map ─────────────────────────────────────────
     gm_img = _normalize_gainmap_image(gainmap)
+    if oppo_compat:
+        gm_img = _oppo_compatible_gainmap_image(gm_img, lhdr)
 
     gm_width, gm_height = gm_img.size
     gm_tile_payloads, gm_hvcC, gm_rows, gm_columns = _encode_gainmap_tiles(
@@ -576,7 +589,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     if primary_ispe_idx is None:
         raise ValueError(f"Primary item {pitm_id} has no ispe property association")
 
-    tmap_config = _build_tmap_config(iso_meta)
+    tmap_config = _build_tmap_config(iso_meta, oppo_compat=oppo_compat)
     xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
     base_clli_box = _build_clli_box(iso_meta, alternate=False)
     tmap_clli_box = _build_clli_box(iso_meta, alternate=True)

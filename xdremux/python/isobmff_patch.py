@@ -313,13 +313,48 @@ def _build_iso_gainmap_metadata_payload(iso_meta=None):
     return payload
 
 
-def _build_tmap_config(iso_meta=None):
-    """Build Apple ImageIO-compatible 62-byte tmap item payload.
+def _build_imageio_native_tmap_config(iso_meta=None):
+    """Build the 142-byte ImageIO-native RGB tmap payload used by OPPO compat."""
+    iso_meta = iso_meta or {}
+    base_headroom = _first_number(iso_meta.get("hdrCapacityMin"), 0.0)
+    alternate_headroom = _first_number(
+        iso_meta.get("hdrCapacityMax"),
+        _first_number(iso_meta.get("gainMapMax"), 1.0),
+    )
+    gain_min = _first_number(iso_meta.get("gainMapMin"), 0.0)
+    gain_max = _first_number(iso_meta.get("gainMapMax"), alternate_headroom)
+    gamma = _first_number(iso_meta.get("gamma"), 1.0)
+    base_offset = _first_number(iso_meta.get("offsetSdr"), 0.0)
+    alternate_offset = _first_number(iso_meta.get("offsetHdr"), 0.0)
+
+    payload = bytearray()
+    payload += b"\x00"
+    payload += struct.pack(">HHB", 0, 0, 0xC0)
+    payload += _unsigned_rational(base_headroom)
+    payload += _unsigned_rational(alternate_headroom)
+    for _ in range(3):
+        payload += _signed_rational(gain_min)
+        payload += _signed_rational(gain_max)
+        payload += _unsigned_rational(gamma)
+        payload += _signed_rational(base_offset)
+        payload += _signed_rational(alternate_offset)
+
+    out = bytes(payload)
+    if len(out) != 142:
+        raise ValueError(f"tmap config is {len(out)} bytes, expected 142")
+    return out
+
+
+def _build_tmap_config(iso_meta=None, *, oppo_compat: bool = False):
+    """Build Apple/ImageIO-compatible tmap item payload.
 
     This preserves Apple CoreImage Headroom detection while the surrounding
     HEIF structure and XMP metadata stay aligned with ISO 21496/23008-12 where
     Apple compatibility permits.
     """
+    if oppo_compat:
+        return _build_imageio_native_tmap_config(iso_meta)
+
     iso_meta = iso_meta or {}
     base_headroom = _first_number(iso_meta.get("hdrCapacityMin"), 0.0)
     alternate_headroom = _first_number(
@@ -498,7 +533,8 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
                              primary_item_id: int = None,
                              iso_meta: dict = None,
                              *,
-                             replace_primary_colr: bool = False) -> bool:
+                             replace_primary_colr: bool = False,
+                             oppo_compat: bool = False) -> bool:
     """Patch a HEIC file for ISO 21496-1 compliance.
 
     Three-phase approach:
@@ -896,7 +932,7 @@ def patch_heic_for_iso21496(path: str, gainmap_item_id: int = None,
     # Build new content pieces
     # ════════════════════════════════════════════════════════════════
 
-    tmap_config = _build_tmap_config(iso_meta)
+    tmap_config = _build_tmap_config(iso_meta, oppo_compat=oppo_compat)
     xmp_payload = _build_hdrgm_xmp_payload(iso_meta)
     base_clli_box = _build_clli_box(iso_meta, alternate=False)
     tmap_clli_box = _build_clli_box(iso_meta, alternate=True)
