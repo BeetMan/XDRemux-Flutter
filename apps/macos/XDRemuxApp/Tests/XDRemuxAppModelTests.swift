@@ -47,6 +47,8 @@ struct XDRemuxAppModelTests {
         try testClearCompletedAndRetryFailedKeepQueuePredictable()
         try testThumbnailResultOnlyAppliesToExistingMatchingQueueItem()
         try testUserFacingCopyUsesClearConversionTerms()
+        try testProductPolicyDefaults()
+        try testSimplifiedProductSwitches()
         print("XDRemuxAppModelTests passed")
     }
 
@@ -183,7 +185,7 @@ struct XDRemuxAppModelTests {
 
     @MainActor
     private static func testThumbnailRendererProducesBoundedPNGData() throws {
-        let icon = URL(fileURLWithPath: "xdremux/swift/XDRemuxApp/Assets.xcassets/AppIcon.appiconset/icon_32x32.png")
+        let icon = URL(fileURLWithPath: "apps/macos/XDRemuxApp/Assets.xcassets/AppIcon.appiconset/icon_32x32.png")
         let data = try XDRemuxViewModel.makeThumbnailPNGDataForTesting(for: icon, maxPixelSize: 24)
 
         try expect(data.count > 8, "thumbnail renderer should produce image data")
@@ -277,5 +279,36 @@ struct XDRemuxAppModelTests {
         try expect(AppStrings.inputProcessingPassthroughHelp.contains("ISOBMFF box"), "passthrough mode help should explain container rebuilding")
         try expect(AppStrings.outputPlanOverwriteExisting.contains("覆盖"), "overwrite plan copy should make replacement explicit")
         try expect(AppStrings.previewUnavailable.contains("预览"), "thumbnail failure copy should name preview behavior")
+    }
+
+    @MainActor
+    private static func testProductPolicyDefaults() throws {
+        let config = ConversionConfig()
+
+        try expect(config.family == .auto, "product input family should be detected automatically")
+        try expect(config.inputProcessingBranch == .hybrid, "product output should use metadata-preserving remux")
+        try expect(config.tmapFormat == .imageIO, "product output should use the device-validated 142-byte tmap")
+        try expect(config.oppoCompatibility == .auto, "product output should preserve source HDR routing flags")
+        try expect(config.oppoCameraTail == .preserve, "product output should preserve the complete source tail")
+        try expect(config.oppoGalleryCompatibilityEnabled, "OPPO Gallery compatibility should default on")
+        try expect(config.preservesPortraitEditingData, "portrait editing data should default to preserved")
+    }
+
+    @MainActor
+    private static func testSimplifiedProductSwitches() throws {
+        var config = ConversionConfig()
+
+        config.oppoGalleryCompatibilityEnabled = false
+        try expect(config.oppoCompatibility == .off, "disabling compatibility should select Hybrid high-spec encoding")
+        try expect(config.oppoCameraTail == .preserve, "encoding mode must not change metadata preservation")
+
+        config.preservesPortraitEditingData = false
+        try expect(config.oppoCameraTail == .preserveWithoutPortrait, "portrait switch should select the filtered tail")
+        try expect(config.oppoCompatibility == .off, "portrait switch must not change Gain Map encoding")
+
+        config.oppoGalleryCompatibilityEnabled = true
+        config.preservesPortraitEditingData = true
+        try expect(config.oppoCompatibility == .auto, "enabling compatibility should restore automatic OPPO routing")
+        try expect(config.oppoCameraTail == .preserve, "enabling portrait preservation should restore the byte-preserving tail")
     }
 }
