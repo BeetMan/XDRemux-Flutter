@@ -30,6 +30,30 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.
 
 默认模式适合大多数情况。它会尽量保留原始 Base Image，只重新处理 HDR Gain Map 及其元数据。
 
+### 转换为 Apple 人像照片
+
+对于包含 OPPO 私有人像数据的照片，可以显式启用 Apple 人像转换：
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --apple-portrait \
+  --input IMG_001.heic \
+  --output IMG_001_apple_portrait.heic
+```
+
+XDRemux 会通过 `UserComment` 中的人像标志和私有尾部中的 `rear.depth`
+自动确认输入是人像照片，然后读取 `src.image` 中的 Base Image 与 Gain
+Map、转换 OPPO Depth Map，并使用 Vision 生成人像效果蒙版（Portrait Effects
+Matte）和人脸兴趣点 Focus。用户无需手动提供这些私有字段。
+
+`src.image` 的 Base Image 与 Gain Map 只进行第一次 HEIC 编码；写入 Depth、
+Portrait Effects Matte 和人像元数据时不会再次编码最终 Base Image/Gain Map
+载荷。图像横竖方向根据外层主图和 `src.image` 的尺寸及 EXIF 方向自动确定。
+
+不指定 `--apple-portrait` 时，不会生成 Apple 人像数据，原始 OPPO/QTI
+人像尾部默认保留。私有 `rear.depth` 使用 zstd 压缩，因此 Apple 人像转换要求
+系统的 `PATH` 中存在 `zstd` 命令。
+
 ### Python CLI
 
 > [!NOTE]

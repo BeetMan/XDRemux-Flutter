@@ -30,6 +30,34 @@ swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.
 
 The default mode is suitable for most cases. It tries to preserve the original Base Image and only reprocesses the HDR Gain Map and its metadata.
 
+### Convert to an Apple portrait photo
+
+Apple portrait conversion is explicitly opt-in for photos containing OPPO
+private portrait resources:
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --apple-portrait \
+  --input IMG_001.heic \
+  --output IMG_001_apple_portrait.heic
+```
+
+XDRemux confirms a portrait input from the portrait flag in `UserComment` and
+the `rear.depth` private-tail resource. It then reads the Base Image and Gain
+Map from `src.image`, converts the OPPO Depth Map, and uses Vision to generate
+a Portrait Effects Matte and face-attention Focus region. No private-field
+arguments are required.
+
+The `src.image` Base Image and Gain Map are encoded into HEIC only once. Their
+final HEVC payloads are not re-encoded while depth, matte, and portrait metadata
+are authored. Orientation is derived automatically from the outer primary and
+the `src.image` dimensions and EXIF orientation.
+
+Without `--apple-portrait`, no Apple portrait resources are generated and the
+original OPPO/QTI portrait tail is preserved by default. Because `rear.depth`
+uses zstd compression, Apple portrait conversion requires the `zstd` command
+to be available on `PATH`.
+
 ### Python CLI
 
 > [!NOTE]

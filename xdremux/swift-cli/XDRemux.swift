@@ -1,12 +1,15 @@
 #!/usr/bin/env swift
 
 import Foundation
+import AVFoundation
 import CoreGraphics
+import CoreImage
 import CoreVideo
 import Darwin
 import ImageIO
 import UniformTypeIdentifiers
 import CryptoKit
+import Vision
 
 private let cgImageDestinationEncodeGainMapSubsampleFactorCompat =
     "kCGImageDestinationEncodeGainMapSubsampleFactor" as CFString
@@ -175,8 +178,14 @@ private struct ConvertCommand {
     let debugRootURL: URL?
     let oppoCompatibility: OppoCompatibility
     let inputProcessingBranch: InputProcessingBranch
+    let portraitMode: PortraitMode
     let oppoCameraTail: OppoCameraTail
     let tmapFormat: TmapFormat
+}
+
+private enum PortraitMode {
+    case on
+    case off
 }
 
 private struct BatchCommand {
@@ -744,6 +753,26 @@ private enum LHDRExtractor {
             manifestInfo: manifestInfo,
             dataBase: dataBase
         )
+    }
+
+    static func portraitBlocks(from data: Data) throws -> [String: Data] {
+        let manifestInfo = try locateManifest(in: data)
+        let dataBase = calibrateDataBase(in: data, manifestInfo: manifestInfo)
+            ?? manifestInfo.extensionStart
+        var blocks: [String: Data] = [:]
+        for entry in manifestInfo.entries {
+            let start = blockStart(
+                for: entry,
+                in: data,
+                manifestInfo: manifestInfo,
+                dataBase: dataBase
+            )
+            let end = start + entry.length
+            if start >= 0, end <= data.count {
+                blocks[entry.name] = data.subdata(in: start..<end)
+            }
+        }
+        return blocks
     }
 
     private static func blockStart(
@@ -2911,8 +2940,8 @@ struct LHDRToISOHDRCLI {
     private static let fileManager = FileManager.default
     private static let usage = """
     Usage:
-            XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--oppo-compatible|--no-oppo-compat] [--discard-portrait-data] [--debug-dir <dir>]
-            XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--oppo-compatible|--no-oppo-compat] [--discard-portrait-data] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>]
+             XDRemux.swift convert --input <file.heic> [--output <out.heic>] [--apple-portrait] [--oppo-compatible|--no-oppo-compat] [--discard-portrait-data] [--debug-dir <dir>]
+             XDRemux.swift batch --input-dir <dir> [--output-dir <dir>] [--glob *.heic] [--jobs <n>] [--oppo-compatible|--no-oppo-compat] [--discard-portrait-data] [--checkpoint <file>] [--resume|--no-resume] [--skip-existing|--no-skip-existing] [--debug-dir <dir>]
 
     Notes:
       - Product output always uses the metadata-preserving source-primary remux path.
@@ -2925,6 +2954,9 @@ struct LHDRToISOHDRCLI {
       - Only the active Gain Map graph and its required container descriptions may change.
       - Batch defaults: --jobs min(cpu,4), --resume, --skip-existing.
       - A JSONL checkpoint is written under output-dir by default; it is deleted only when the batch finishes with zero failures.
+      - --apple-portrait requires UserComment portrait flags plus rear.depth, then extracts
+        src.image/gain-info/depth, generates Vision PEM and Focus, and restores the first-assembly
+        base/gain HEVC payloads without re-encoding them. Without the switch, OPPO portrait tail stays intact.
       - If --output is omitted, the input file is overwritten in place.
       - If --output-dir is omitted, files are written to the input directory.
     """
@@ -2966,6 +2998,14 @@ struct LHDRToISOHDRCLI {
     }
 
     private static func runConvert(_ cmd: ConvertCommand) throws {
+        if try PortraitConversionPipeline.convertIfNeeded(
+            inputURL: cmd.inputURL,
+            outputURL: cmd.outputURL,
+            mode: cmd.portraitMode
+        ) {
+            print("converted OPPO portrait \(cmd.inputURL.lastPathComponent) -> \(cmd.outputURL.path)")
+            return
+        }
         let report = try XDRemuxProductCore.convert(
             inputURL: cmd.inputURL,
             outputURL: cmd.outputURL,
@@ -3394,6 +3434,7 @@ struct LHDRToISOHDRCLI {
         var debugDirPath: String?
         var oppoCompatibility: OppoCompatibility = .auto
         var inputProcessingBranch = InputProcessingBranch.hybrid
+        var applePortraitEnabled = false
         var oppoCameraTail = OppoCameraTail.preserve
         var tmapFormat = TmapFormat.imageIO
 
@@ -3411,6 +3452,8 @@ struct LHDRToISOHDRCLI {
             }
 
             switch option {
+            case "--apple-portrait":
+                applePortraitEnabled = true
             case "--input":
                 inputPath = try nextValue(for: option)
             case "--output":
@@ -3469,6 +3512,7 @@ struct LHDRToISOHDRCLI {
             debugRootURL: debugDirPath.map { URL(fileURLWithPath: $0) },
             oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: inputProcessingBranch,
+            portraitMode: applePortraitEnabled ? .on : .off,
             oppoCameraTail: oppoCameraTail,
             tmapFormat: tmapFormat
         )
@@ -5511,6 +5555,910 @@ private func firstIndex(of byte: UInt8, in haystack: Data, startingAt start: Int
 private func lastIndex(of needle: Data, in haystack: Data) -> Int? {
     guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
     return haystack.range(of: needle, options: [.backwards], in: 0..<haystack.count)?.lowerBound
+}
+
+private struct PortraitFocusRegion {
+    let rawX: Double
+    let rawY: Double
+    let rawWidth: Double
+    let rawHeight: Double
+}
+
+private enum PortraitConversionPipeline {
+    static func convertIfNeeded(
+        inputURL: URL,
+        outputURL: URL,
+        mode: PortraitMode
+    ) throws -> Bool {
+        guard mode != .off else { return false }
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw CLIError.inputNotFound(inputURL)
+        }
+        let inputData = try Data(contentsOf: inputURL)
+        let hasPortraitUserComment = portraitUserCommentFlag(in: inputURL)
+        guard hasPortraitUserComment else {
+            throw CLIError.invalidContainer(
+                "--apple-portrait requires the OPPO portrait UserComment flag"
+            )
+        }
+        let blocks: [String: Data]
+        do {
+            blocks = try LHDRExtractor.portraitBlocks(from: inputData)
+        } catch {
+            throw CLIError.invalidContainer(
+                "--apple-portrait requires an OPPO private tail containing rear.depth"
+            )
+        }
+        guard
+              let srcImage = blocks["src.image"],
+              let info = blocks["local.uhdr.gainmap.info"],
+              let compressedDepth = blocks["rear.depth"] else {
+            throw CLIError.invalidContainer(
+                "--apple-portrait requires OPPO portrait UserComment, src.image, "
+                    + "local.uhdr.gainmap.info, and rear.depth"
+            )
+        }
+        guard info.count == 80 else {
+            throw CLIError.invalidLHDR("portrait gain info must be exactly 80 bytes")
+        }
+        guard let firstEOI = srcImage.range(of: Data([0xff, 0xd9])),
+              firstEOI.upperBound + 3 <= srcImage.count,
+              srcImage[firstEOI.upperBound..<(firstEOI.upperBound + 3)] == Data([0xff, 0xd8, 0xff]) else {
+            throw CLIError.invalidContainer("portrait src.image does not contain adjacent base/gain JPEGs")
+        }
+        let baseJPEG = srcImage.subdata(in: 0..<firstEOI.upperBound)
+        let gainJPEG = srcImage.subdata(in: firstEOI.upperBound..<srcImage.count)
+        guard let baseSource = CGImageSourceCreateWithData(baseJPEG as CFData, nil),
+              let baseImage = CGImageSourceCreateImageAtIndex(
+                  baseSource,
+                  0,
+                  [kCGImageSourceShouldCache: true] as CFDictionary
+              ) else {
+            throw CLIError.invalidContainer("unable to decode portrait src.image base JPEG")
+        }
+        let baseProperties = CGImageSourceCopyPropertiesAtIndex(baseSource, 0, nil) as? [CFString: Any]
+        let inputSource = CGImageSourceCreateWithURL(inputURL as CFURL, nil)
+        let inputProperties = inputSource.flatMap {
+            CGImageSourceCopyPropertiesAtIndex($0, 0, nil) as? [CFString: Any]
+        }
+        let inputOrientation = (inputProperties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value
+        let baseOrientation = (baseProperties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value
+        let inputWidth = (inputProperties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue
+        let inputHeight = (inputProperties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+        let dimensionsAreSwapped = inputWidth == baseImage.height && inputHeight == baseImage.width
+        let orientationRaw: UInt32
+        if dimensionsAreSwapped {
+            // OPPO stores some portrait src.image JPEGs in landscape pixel order while
+            // the outer HEIC is physically rotated. Prefer the JPEG's rotation instead
+            // of inheriting the outer item's misleading orientation=1.
+            orientationRaw = baseOrientation.map { (5...8).contains($0) ? $0 : 6 } ?? 6
+        } else {
+            orientationRaw = inputOrientation ?? baseOrientation ?? 1
+        }
+        let orientation = CGImagePropertyOrientation(rawValue: orientationRaw) ?? .up
+        let depthWidth = baseImage.width / 4
+        let depthHeight = baseImage.height / 4
+        let decodedDepth = try decompressZstd(compressedDepth)
+        let depthHeaderSize = 768
+        guard decodedDepth.count >= depthHeaderSize + depthWidth * depthHeight else {
+            throw CLIError.invalidContainer(
+                "decoded rear.depth is too short for \(depthWidth)x\(depthHeight) ranks"
+            )
+        }
+        let depthRanks = decodedDepth.subdata(
+            in: depthHeaderSize..<(depthHeaderSize + depthWidth * depthHeight)
+        )
+        let focus = try makeFocusRegion(
+            image: baseImage,
+            orientation: orientation,
+            orientationRaw: orientationRaw
+        )
+
+        let parent = outputURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let stem = outputURL.deletingPathExtension().lastPathComponent
+        let carrier = parent.appendingPathComponent(".\(stem).portrait-carrier-\(UUID().uuidString).heic")
+        let privateIntermediate = parent.appendingPathComponent(".\(stem).portrait-private-\(UUID().uuidString).heic")
+        let firstAssembly = parent.appendingPathComponent(".\(stem).portrait-first-\(UUID().uuidString).heic")
+        let scaffold = parent.appendingPathComponent(".\(stem).portrait-scaffold-\(UUID().uuidString).heic")
+        defer {
+            for url in [carrier, privateIntermediate, firstAssembly, scaffold] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        guard let carrierDestination = CGImageDestinationCreateWithURL(
+            carrier as CFURL,
+            UTType.heic.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw CLIError.unableToCreateDestination(carrier)
+        }
+        CGImageDestinationAddImageFromSource(
+            carrierDestination,
+            baseSource,
+            0,
+            [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary
+        )
+        guard CGImageDestinationFinalize(carrierDestination) else {
+            throw CLIError.unableToFinalizeDestination(carrier)
+        }
+        let infoFloats = try unpackFloatArrayLE(info, count: 20)
+        _ = try writePrivateJPEGPassthroughOutput(
+            inputURL: carrier,
+            outputURL: privateIntermediate,
+            infoFloats: infoFloats,
+            gainMapJPEG: gainJPEG,
+            patchedUserComment: nil
+        )
+        try ISOHDRWriter.writeWithPreserveReencode(
+            intermediateURL: privateIntermediate,
+            outputURL: firstAssembly
+        )
+
+        guard let firstSource = CGImageSourceCreateWithURL(firstAssembly as CFURL, nil),
+              CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+                  firstSource,
+                  0,
+                  kCGImageAuxiliaryDataTypeISOGainMap
+              ) != nil else {
+            throw CLIError.outputVerificationFailed(firstAssembly)
+        }
+        let depthDictionary = try makeDepthDictionary(
+            ranks: depthRanks,
+            width: depthWidth,
+            height: depthHeight,
+            orientation: orientationRaw,
+            far: 1.4,
+            near: 4.3
+        )
+        let matteDictionary = try makePortraitEffectsMatteDictionary(
+            image: baseImage,
+            orientation: orientation,
+            orientationRaw: orientationRaw
+        )
+        try writeBlankPortraitScaffold(
+            sourceMetadataURL: inputURL,
+            baseWidth: baseImage.width,
+            baseHeight: baseImage.height,
+            baseColorSpace: baseImage.colorSpace,
+            orientation: orientationRaw,
+            focus: focus,
+            captureDate: captureDateString(sourceURL: inputURL),
+            gainJPEG: gainJPEG,
+            infoFloats: infoFloats,
+            depthDictionary: depthDictionary,
+            matteDictionary: matteDictionary,
+            outputURL: scaffold
+        )
+        try transplantPortraitBaseAndGainPayloads(
+            payloadSourceURL: firstAssembly,
+            scaffoldURL: scaffold,
+            outputURL: outputURL
+        )
+        return true
+    }
+
+    private static let portraitRenderingParametersBase64 = """
+    UkVORAcAAABIBQAAAQAAAGQAAgAAAAAAZQACAAIAAABmAAEAj8L1PGcAAQDNzMw9aAABAArXIz1pAAEAMzOzP2oAAQDNzEw9awABAJqZmT5sAAEAzczMP20AAQAAAABAbgACABQAAABvAAEAzcxMPXAAAQBYOTQ8cQABAArXIzxyAAEAzczMPXMAAQAK1yM9dAABAAAAgD91AAEAAABAP3YAAQBmZmY/dwABAJqZmT94AAEAAAAAQHkAAQDNzMw+egABAM3MzD17AAEAAACAP3wAAQAAAABAfQABAAAAAEF+AAEAF7fROH8AAgAyAAAAgAABAAAAgD/IAAEAPQoXP8kAAQAAAEA/ygABAPfMEjksAQEACtcjPC0BAQAXSJI5LgEBADVeuj0vAQEAMzOzPzABAQDgLRA7MQEBAFoMQzoyAQEAAACAPzMBAQAAAIA/kAECABkAAACRAQEAz3P8PZIBAQDbVr1AkwEBAM9z/D2UAQEAQmBlO5UBAQCZuxY8lgEBAGZmZj+XAQEAAACAP5gBAQAAAAAAmQEBAM3MTD7CAQEAz3N8QMMBAQBhyB1BxAEBALB4lz7FAQEADM6PQMYBAQAzM5tA8gECAAkAAADzAQIADAAAAPQBAgAJAAAA9QEBAAAAekT2AQEAmpkZPvcBAQBSuJ4++AEBAAAAAED5AQEAAMAPRfoBAQDNzEw9+wEBADMzsz78AQIAAgAAAP0BAQCamZk+/gEBAAAAoD//AQEAZmZmPwACAgAGAAAAAQIBAAAAgD8CAgEAAAAAAFgCAQAzMzNAWQIBADMzsz9aAgEAAACAQVsCAQB02qA/vAIBAAAAAAC9AgEAAAAAACADAgADAAAAIQMBAM3MTL0iAwEACtejPCMDAQDNzEy9JAMBAI/C9T2EAwEAzcxMP4UDAQAAAIA/hgMBAAAAAACHAwEAAAAAAIgDAQDNzMw+iQMBAOAtkDroAwEAmpmZPukDAQAAAKBA6gMBAJqZmT7rAwEAzcxMP+wDAQAAAAAA7QMBAAAAgD/uAwEAMzMzv+8DAQBmZmY/8AMBAI/C9TzxAwEAbxKDOvIDAQAAAAAA8wMCAIcAAAD0AwEAzczMPvUDAQAAAIA/9gMCABQAAAD3AwEAzczMPvgDAQAAAAAA+QMBAM3MTD/6AwEAAACAP/sDAQAAAAAA/AMBAM3MTD79AwEAAAAAAP4DAQAAAAAA/wMBAM3MzD8ABAIAAgAAAAEEAQAAAAAAAgQBAG8SAzoDBAEAmplZPwQEAQAAAAAABQQBAAAAgD8GBAEAzcxMPwcEAQCamZk+CAQBAAAAAEAJBAEAexQuPgoEAQAzM7M+CwQBAAAAgD8MBAEAAAAAAA0EAQCamZk+DgQBAM3MzD0PBAEAzcxMPkwEAQBmZuY+TQQBAAAAAABOBAEAAAAAAE8EAQDNzMw9UAQBAGZmZj+wBAIACQAAALEEAgAEAAAAsgQCAAwAAACzBAEAAACAP7QEAQAAAIA/tQQBANej8D62BAEAFK5HP7cEAQAAAADAuAQBAAAAAAC5BAEAAACAv7oEAQCamRk+uwQBAM3MzD28BAEAmpmZP70EAQBcj8I+vgQCAAQAAAAUBQEAAACAPhUFAQC/fV0+FgUBAArXIzwXBQEAj8L1PBgFAQAzM3M/GQUBAKabRD0aBQEAF7fRORsFAQBfKUs7HAUBAPYoHD8dBQEACtejPB4FAQAK1yM8HwUBAGZmJkAgBQEAAABAPyEFAQBsCfk6IgUBAI/C9TwjBQEAZmZmPyQFAQCamZk+JQUBAAAAwD8=
+    """.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    private static func portraitUserCommentFlag(in url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any],
+              let comment = exif[kCGImagePropertyExifUserComment] as? String,
+              let underscore = comment.lastIndex(of: "_"),
+              let value = UInt64(comment[comment.index(after: underscore)...]) else {
+            return false
+        }
+        return value & 65_536 != 0
+    }
+
+    private static func decompressZstd(_ data: Data) throws -> Data {
+        let directory = FileManager.default.temporaryDirectory
+        let input = directory.appendingPathComponent("xdremux-depth-\(UUID().uuidString).zst")
+        defer { try? FileManager.default.removeItem(at: input) }
+        try data.write(to: input, options: .atomic)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["zstd", "-d", "-q", "-c", input.path]
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        do { try process.run() } catch {
+            throw CLIError.invalidContainer("--apple-portrait requires the zstd command-line tool")
+        }
+        let decoded = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(data: errorData, encoding: .utf8) ?? "zstd failed"
+            throw CLIError.invalidContainer(message.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return decoded
+    }
+
+    private static func registerMetadataNamespace(
+        _ metadata: CGMutableImageMetadata,
+        namespace: String,
+        prefix: String
+    ) throws {
+        var error: Unmanaged<CFError>?
+        guard CGImageMetadataRegisterNamespaceForPrefix(
+            metadata,
+            namespace as CFString,
+            prefix as CFString,
+            &error
+        ) else {
+            if let error { throw error.takeRetainedValue() as Error }
+            throw CLIError.invalidContainer("unable to register metadata namespace \(prefix)")
+        }
+    }
+
+    private static func setMetadata(
+        _ metadata: CGMutableImageMetadata,
+        path: String,
+        value: String
+    ) throws {
+        try setMetadataValue(metadata, path: path, value: value as CFString)
+    }
+
+    private static func setMetadataValue(
+        _ metadata: CGMutableImageMetadata,
+        path: String,
+        value: CFTypeRef
+    ) throws {
+        guard CGImageMetadataSetValueWithPath(metadata, nil, path as CFString, value) else {
+            throw CLIError.invalidContainer("unable to set metadata \(path)")
+        }
+    }
+
+    private static func makeFocusMetadata(
+        width: Int,
+        height: Int,
+        focus: PortraitFocusRegion,
+        captureDate: String?
+    ) throws -> CGImageMetadata {
+        let date = captureDate ?? "1970-01-01T00:00:00"
+        let xmp = """
+        <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XDRemux">
+          <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about="" xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/" xmlns:stArea="http://ns.adobe.com/xmp/sType/Area#" xmlns:stDim="http://ns.adobe.com/xap/1.0/sType/Dimensions#">
+              <mwg-rs:Regions rdf:parseType="Resource"><mwg-rs:AppliedToDimensions rdf:parseType="Resource"><stDim:h>\(height)</stDim:h><stDim:unit>pixel</stDim:unit><stDim:w>\(width)</stDim:w></mwg-rs:AppliedToDimensions><mwg-rs:RegionList><rdf:Bag><rdf:li rdf:parseType="Resource"><mwg-rs:Area rdf:parseType="Resource"><stArea:h>\(focus.rawHeight)</stArea:h><stArea:unit>normalized</stArea:unit><stArea:w>\(focus.rawWidth)</stArea:w><stArea:x>\(focus.rawX)</stArea:x><stArea:y>\(focus.rawY)</stArea:y></mwg-rs:Area><mwg-rs:Type>Focus</mwg-rs:Type></rdf:li></rdf:Bag></mwg-rs:RegionList></mwg-rs:Regions>
+            </rdf:Description>
+            <rdf:Description rdf:about="" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"><photoshop:DateCreated>\(date)</photoshop:DateCreated></rdf:Description>
+            <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/"><xmp:CreateDate>\(date)</xmp:CreateDate><xmp:CreatorTool>XDRemux</xmp:CreatorTool><xmp:ModifyDate>\(date)</xmp:ModifyDate></rdf:Description>
+          </rdf:RDF>
+        </x:xmpmeta>
+        """
+        guard let metadata = CGImageMetadataCreateFromXMPData(Data(xmp.utf8) as CFData) else {
+            throw CLIError.invalidContainer("unable to create Focus XMP metadata")
+        }
+        return metadata
+    }
+
+    private static func portraitMakerAppleDictionary() -> [String: Any] {
+        let makerData = Data(base64Encoded: "ywG5Ap4DpQAaADIALQA1AHEAmgDXAA4ACQAJAA4AOwDMABgBkQFqAEMANQApAB4AEgCJAHIACwAJAAkAHQBBAGoByAEfAnYASQBZAJUAnwBcAJMAFgAJAAkADAAzAEUAUAGbAdIBngCgAKMAnADKAFcAsAARAAoACQAQAE8AVwCnAdgBGQIuAuQBRAHYANMAZgB0ABwACwALACUAcABvACwCKwJuAoMCjQJZAdAAKQIIApYB7wBEABcAVQCYAJEAgwKAAskC0QLBAnwCwAEdAZQABQKCAawAjgC4ANIAvwB6AskCHAMLA90CGQKaAuIBiwAWAQ4B7AAJATMBIQH6AFkCyAI6A+sC9AH4APMBzQFfAa8AbAGeAEwBmwFyATsBDwI9AXcCHQELAQ8BiQFcAnoB+ADTAVMBgwEdAswBbQFPATwB5gEPAQoBJwFCAc0CTAG7AO0BKgHtAOsCTQJ3AegBvwE7AyQC3ABEAQ8BiQJ5AccAlQH5AJoA2wH2AGQADQILA0MDHQNlAWMBHgEHAXwBSAGsAQ0BPgHrACEACwDTAf0CSgMBA9ACYAHGAFwArABjAbQBAgE9AggBFAALAGwCMQNiA9MCugI7AZsAbADqADkByAGPAbwBfQL/Ad4AMwOaA8QDzALhAgUBmgDEAJ8A7QA7Ai8CfQEuAvMBEQE=") ?? Data()
+        let captureTime = CMTime(
+            value: 411_546_020_942_750,
+            timescale: 1_000_000_000,
+            flags: .valid,
+            epoch: 0
+        )
+        return [
+            "1": 17, "2": makerData, "3": NSValue(time: captureTime), "4": 0,
+            "5": 184, "6": 174, "7": 1,
+            "8": [-0.0013844214845448732, -0.8983764052391052, -0.45038747787475586],
+            "12": [1.91015625, 0.4296875], "13": 1, "14": 0, "16": 1,
+            "20": 12, "23": 8_595_224_612, "25": 139_298, "26": "q750n",
+            "29": 0.012993750162422657, "31": 1,
+            "32": "6197861E-6AE0-4B35-93B3-DA292CE0554D", "33": 1.0099999904632568,
+            "35": [44, 268_435_504], "37": 11_538_574, "38": 3,
+            "39": 41.253238677978516, "43": "C227536D-2A43-4CA3-97CC-083900DFCD56",
+            "45": 3800, "46": 1, "47": 111, "48": 0.4457031190395355,
+            "54": 784, "55": 8, "56": 38, "57": 2, "58": 128, "59": 0,
+            "60": 4, "61": 66, "63": 0,
+            "64": ["0": 1, "1": 0, "2": 0, "3": 0],
+            "65": 0, "66": 0, "67": 0, "68": 0, "69": 0, "70": 0,
+            "72": 0, "73": 0, "74": 2, "77": 32.507781982421875,
+            "78": ["1": 3, "2": [["2.1": 2001.9581298828125, "2.2": 309], ["2.1": 0, "2.2": 70]]],
+            "79": 0, "82": 0, "83": 2, "85": 0, "88": 2051,
+            "96": 4037, "97": 24,
+        ]
+    }
+
+    private static func makeDepthDictionary(
+        ranks: Data,
+        width: Int,
+        height: Int,
+        orientation: UInt32,
+        far: Float,
+        near: Float
+    ) throws -> CFDictionary {
+        let output = NSMutableDictionary()
+        let description = NSMutableDictionary()
+        var disparity = Data(capacity: width * height * 2)
+        let span = near - far
+        for rank in ranks {
+            let value = near - Float(rank) / 255.0 * span
+            var bits = Float16(value).bitPattern.littleEndian
+            withUnsafeBytes(of: &bits) { disparity.append(contentsOf: $0) }
+        }
+        description[kCGImagePropertyWidth as String] = width
+        description[kCGImagePropertyHeight as String] = height
+        description[kCGImagePropertyBytesPerRow as String] = width * 2
+        description[kCGImagePropertyPixelFormat as String] = NSNumber(value: kCVPixelFormatType_DisparityFloat16)
+        description[kCGImagePropertyOrientation as String] = NSNumber(value: orientation)
+        output[kCGImageAuxiliaryDataInfoData as String] = disparity
+        output[kCGImageAuxiliaryDataInfoDataDescription as String] = description
+        let metadata = CGImageMetadataCreateMutable()
+        try registerMetadataNamespace(
+            metadata,
+            namespace: "http://ns.apple.com/depthData/1.0/",
+            prefix: "depthData"
+        )
+        try registerMetadataNamespace(
+            metadata,
+            namespace: "http://ns.apple.com/depthBlurEffect/1.0/",
+            prefix: "depthBlurEffect"
+        )
+        try registerMetadataNamespace(
+            metadata,
+            namespace: "http://ns.apple.com/portraitLightingEffect/1.0/",
+            prefix: "portraitLightingEffect"
+        )
+        try setMetadata(metadata, path: "depthData:Quality", value: "high")
+        try setMetadata(metadata, path: "depthData:Accuracy", value: "relative")
+        try setMetadata(metadata, path: "depthData:Filtered", value: "True")
+        try setMetadata(metadata, path: "depthData:DepthDataVersion", value: "65541")
+        try setMetadata(metadata, path: "depthData:IntrinsicMatrixReferenceWidth", value: "4032")
+        try setMetadata(metadata, path: "depthData:IntrinsicMatrixReferenceHeight", value: "3024")
+        try setMetadata(metadata, path: "depthData:LensDistortionCenterOffsetX", value: "2017.552734375")
+        try setMetadata(metadata, path: "depthData:LensDistortionCenterOffsetY", value: "1523.492919921875")
+        try setMetadata(metadata, path: "depthData:PixelSize", value: "0.002440")
+        try setMetadataValue(
+            metadata,
+            path: "depthData:IntrinsicMatrix",
+            value: [2860.37890625, 0, 0, 0, 2860.37890625, 0, 2010.31103515625, 1525.0140380859375, 1] as CFArray
+        )
+        try setMetadataValue(
+            metadata,
+            path: "depthData:ExtrinsicMatrix",
+            value: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] as CFArray
+        )
+        try setMetadataValue(
+            metadata,
+            path: "depthData:LensDistortionCoefficients",
+            value: [0, -0.5552194714546204, 0.053949449211359024, -0.0018901334842666984, -0.000004621016614692053, 0.0000019594019704527454, -0.0000000451839099468998, 0.00000000031430857916348032] as CFArray
+        )
+        try setMetadataValue(
+            metadata,
+            path: "depthData:InverseLensDistortionCoefficients",
+            value: [0, 0.5448748469352722, -0.05080728605389595, 0.0016805990599095821, 0.000007370583261945285, -0.0000017933325580088422, 0.00000003959269534448139, -0.0000000002689144740219973] as CFArray
+        )
+        try setMetadata(metadata, path: "depthBlurEffect:RenderingParameters", value: portraitRenderingParametersBase64)
+        try setMetadata(metadata, path: "depthBlurEffect:SimulatedAperture", value: "1.400000")
+        try setMetadata(metadata, path: "portraitLightingEffect:EffectStrength", value: "0.500000")
+        output[kCGImageAuxiliaryDataInfoMetadata as String] = metadata
+        return output as CFDictionary
+    }
+
+    private static func makePortraitEffectsMatteDictionary(
+        image: CGImage,
+        orientation: CGImagePropertyOrientation,
+        orientationRaw: UInt32
+    ) throws -> CFDictionary {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([request])
+        guard let observation = request.results?.first else {
+            throw CLIError.invalidContainer("Vision returned no person segmentation mask")
+        }
+        let targetWidth = image.width / 2
+        let targetHeight = image.height / 2
+        var outputBuffer: CVPixelBuffer?
+        let attributes: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:]]
+        guard CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            targetWidth,
+            targetHeight,
+            kCVPixelFormatType_OneComponent8,
+            attributes as CFDictionary,
+            &outputBuffer
+        ) == kCVReturnSuccess, let outputBuffer else {
+            throw CLIError.invalidContainer("unable to allocate Portrait Effects Matte buffer")
+        }
+        let displayMask = CIImage(cvPixelBuffer: observation.pixelBuffer)
+        let storedMask: CIImage
+        switch orientationRaw {
+        case 3: storedMask = displayMask.oriented(.down)
+        case 6: storedMask = displayMask.oriented(.left)
+        case 8: storedMask = displayMask.oriented(.right)
+        default: storedMask = displayMask
+        }
+        let scaled = storedMask.transformed(by: CGAffineTransform(
+            scaleX: CGFloat(targetWidth) / storedMask.extent.width,
+            y: CGFloat(targetHeight) / storedMask.extent.height
+        ))
+        CIContext().render(
+            scaled,
+            to: outputBuffer,
+            bounds: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight),
+            colorSpace: CGColorSpaceCreateDeviceGray()
+        )
+        CVPixelBufferLockBaseAddress(outputBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(outputBuffer, .readOnly) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(outputBuffer) else {
+            throw CLIError.invalidContainer("Portrait Effects Matte has no base address")
+        }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(outputBuffer)
+        var pixels = Data(count: targetWidth * targetHeight)
+        pixels.withUnsafeMutableBytes { destination in
+            for row in 0..<targetHeight {
+                memcpy(
+                    destination.baseAddress!.advanced(by: row * targetWidth),
+                    baseAddress.advanced(by: row * bytesPerRow),
+                    targetWidth
+                )
+            }
+        }
+        let description: [CFString: Any] = [
+            kCGImagePropertyWidth: targetWidth,
+            kCGImagePropertyHeight: targetHeight,
+            kCGImagePropertyBytesPerRow: targetWidth,
+            kCGImagePropertyPixelFormat: NSNumber(value: kCVPixelFormatType_OneComponent8),
+            kCGImagePropertyOrientation: NSNumber(value: orientationRaw),
+        ]
+        return [
+            kCGImageAuxiliaryDataInfoData: pixels,
+            kCGImageAuxiliaryDataInfoDataDescription: description,
+            kCGImageAuxiliaryDataInfoMetadata: CGImageMetadataCreateMutable(),
+        ] as CFDictionary
+    }
+
+    private static func makeFocusRegion(
+        image: CGImage,
+        orientation: CGImagePropertyOrientation,
+        orientationRaw: UInt32
+    ) throws -> PortraitFocusRegion {
+        let attention = VNGenerateAttentionBasedSaliencyImageRequest()
+        let faces = VNDetectFaceLandmarksRequest()
+        try VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]).perform([attention, faces])
+        let faceResults = faces.results ?? []
+        let saliencyBuffer = attention.results?.first?.pixelBuffer
+        let selectedFace = faceResults.max {
+            faceAttentionScore($0, saliency: saliencyBuffer)
+                < faceAttentionScore($1, saliency: saliencyBuffer)
+        }
+        let displayX: Double
+        let displayY: Double
+        let displayWidth: Double
+        let displayHeight: Double
+        if let face = selectedFace {
+            let box = face.boundingBox
+            let leftEye = face.landmarks?.leftEye.flatMap { landmarkCenter($0, face: face) }
+            let rightEye = face.landmarks?.rightEye.flatMap { landmarkCenter($0, face: face) }
+            if let leftEye, let rightEye {
+                displayX = (leftEye.x + rightEye.x) / 2
+                displayY = (leftEye.y + rightEye.y) / 2
+            } else {
+                displayX = box.midX
+                displayY = 1 - box.midY
+            }
+            displayWidth = box.width
+            displayHeight = box.height
+        } else if let observation = attention.results?.first {
+            let point = try attentionCentroid(observation.pixelBuffer)
+            displayX = point.x
+            displayY = point.y
+            displayWidth = 0.12
+            displayHeight = 0.12
+        } else {
+            throw CLIError.invalidContainer("Vision returned no Focus candidate")
+        }
+        let raw = rawFocusRect(
+            x: displayX,
+            y: displayY,
+            width: displayWidth,
+            height: displayHeight,
+            orientation: orientationRaw
+        )
+        return PortraitFocusRegion(
+            rawX: raw.x,
+            rawY: raw.y,
+            rawWidth: raw.width,
+            rawHeight: raw.height
+        )
+    }
+
+    private static func landmarkCenter(
+        _ region: VNFaceLandmarkRegion2D,
+        face: VNFaceObservation
+    ) -> (x: Double, y: Double)? {
+        guard region.pointCount > 0 else { return nil }
+        var x = 0.0
+        var y = 0.0
+        for point in region.normalizedPoints {
+            x += face.boundingBox.minX + CGFloat(point.x) * face.boundingBox.width
+            y += face.boundingBox.minY + CGFloat(point.y) * face.boundingBox.height
+        }
+        return (x / Double(region.pointCount), 1 - y / Double(region.pointCount))
+    }
+
+    private static func faceAttentionScore(
+        _ face: VNFaceObservation,
+        saliency: CVPixelBuffer?
+    ) -> Double {
+        guard let saliency,
+              CVPixelBufferGetPixelFormatType(saliency) == kCVPixelFormatType_OneComponent32Float else {
+            return Double(face.boundingBox.width * face.boundingBox.height) * Double(face.confidence)
+        }
+        CVPixelBufferLockBaseAddress(saliency, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(saliency, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(saliency) else { return 0 }
+        let width = CVPixelBufferGetWidth(saliency)
+        let height = CVPixelBufferGetHeight(saliency)
+        let stride = CVPixelBufferGetBytesPerRow(saliency) / MemoryLayout<Float>.stride
+        let values = base.assumingMemoryBound(to: Float.self)
+        let box = face.boundingBox
+        let minX = max(0, min(width - 1, Int(box.minX * CGFloat(width))))
+        let maxX = max(minX, min(width - 1, Int(box.maxX * CGFloat(width))))
+        let top = 1 - box.maxY
+        let bottom = 1 - box.minY
+        let minY = max(0, min(height - 1, Int(top * CGFloat(height))))
+        let maxY = max(minY, min(height - 1, Int(bottom * CGFloat(height))))
+        var sum = 0.0
+        var count = 0
+        for y in minY...maxY { for x in minX...maxX {
+            let value = values[y * stride + x]
+            if value.isFinite {
+                sum += Double(value)
+                count += 1
+            }
+        }}
+        let mean = count > 0 ? sum / Double(count) : 0
+        return mean * Double(face.confidence)
+    }
+
+    private static func attentionCentroid(_ buffer: CVPixelBuffer) throws -> (x: Double, y: Double) {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_OneComponent32Float,
+              let base = CVPixelBufferGetBaseAddress(buffer) else {
+            throw CLIError.invalidContainer("unexpected Vision saliency buffer")
+        }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let stride = CVPixelBufferGetBytesPerRow(buffer) / MemoryLayout<Float>.stride
+        let values = base.assumingMemoryBound(to: Float.self)
+        var finite: [Float] = []
+        finite.reserveCapacity(width * height)
+        for y in 0..<height { for x in 0..<width where values[y * stride + x].isFinite {
+            finite.append(values[y * stride + x])
+        }}
+        guard !finite.isEmpty else { throw CLIError.invalidContainer("empty Vision saliency map") }
+        finite.sort()
+        let threshold = finite[Int(Double(finite.count - 1) * 0.9)]
+        var sum = 0.0
+        var weightedX = 0.0
+        var weightedY = 0.0
+        for y in 0..<height { for x in 0..<width {
+            let value = values[y * stride + x]
+            guard value.isFinite, value >= threshold, value > 0 else { continue }
+            let weight = Double(value)
+            sum += weight
+            weightedX += (Double(x) + 0.5) / Double(width) * weight
+            weightedY += (Double(y) + 0.5) / Double(height) * weight
+        }}
+        guard sum > 0 else { throw CLIError.invalidContainer("Vision saliency has no positive response") }
+        return (weightedX / sum, weightedY / sum)
+    }
+
+    private static func rawFocusRect(
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+        orientation: UInt32
+    ) -> (x: Double, y: Double, width: Double, height: Double) {
+        switch orientation {
+        case 2: return (1 - x, y, width, height)
+        case 3: return (1 - x, 1 - y, width, height)
+        case 4: return (x, 1 - y, width, height)
+        case 5: return (y, x, height, width)
+        case 6: return (y, 1 - x, height, width)
+        case 7: return (1 - y, 1 - x, height, width)
+        case 8: return (1 - y, x, height, width)
+        default: return (x, y, width, height)
+        }
+    }
+
+    private static func writeBlankPortraitScaffold(
+        sourceMetadataURL: URL,
+        baseWidth: Int,
+        baseHeight: Int,
+        baseColorSpace: CGColorSpace?,
+        orientation: UInt32,
+        focus: PortraitFocusRegion,
+        captureDate: String?,
+        gainJPEG: Data,
+        infoFloats: [Double],
+        depthDictionary: CFDictionary,
+        matteDictionary: CFDictionary,
+        outputURL: URL
+    ) throws {
+        let parent = outputURL.deletingLastPathComponent()
+        let token = UUID().uuidString
+        let gainCarrierURL = parent.appendingPathComponent(".\(outputURL.lastPathComponent).blank-\(token).heic")
+        let gainPrivateURL = parent.appendingPathComponent(".\(outputURL.lastPathComponent).blank-private-\(token).heic")
+        let gainISOURL = parent.appendingPathComponent(".\(outputURL.lastPathComponent).blank-iso-\(token).heic")
+        defer {
+            for url in [gainCarrierURL, gainPrivateURL, gainISOURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        guard let colorSpace = baseColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: baseWidth,
+                  height: baseHeight,
+                  bitsPerComponent: 8,
+                  bytesPerRow: baseWidth * 4,
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              ),
+              let blank = context.makeImage(),
+              let destination = CGImageDestinationCreateWithURL(
+                  gainCarrierURL as CFURL,
+                  UTType.heic.identifier as CFString,
+                  1,
+                  nil
+              ) else {
+            throw CLIError.unableToCreateDestination(outputURL)
+        }
+        guard let source = CGImageSourceCreateWithURL(sourceMetadataURL as CFURL, nil) else {
+            throw CLIError.unableToLoadBaseImage(sourceMetadataURL)
+        }
+        var properties = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]) ?? [:]
+        properties[kCGImagePropertyMakerAppleDictionary] = portraitMakerAppleDictionary()
+        var exif = (properties[kCGImagePropertyExifDictionary] as? [CFString: Any]) ?? [:]
+        exif[kCGImagePropertyExifCustomRendered] = 9
+        exif[kCGImagePropertyExifPixelXDimension] = baseWidth
+        exif[kCGImagePropertyExifPixelYDimension] = baseHeight
+        properties[kCGImagePropertyExifDictionary] = exif
+        properties[kCGImagePropertyOrientation] = orientation
+        let metadata = try makeFocusMetadata(
+            width: baseWidth,
+            height: baseHeight,
+            focus: focus,
+            captureDate: captureDate
+        )
+        CGImageDestinationAddImageAndMetadata(destination, blank, metadata, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw CLIError.unableToFinalizeDestination(gainCarrierURL)
+        }
+        _ = try writePrivateJPEGPassthroughOutput(
+            inputURL: gainCarrierURL,
+            outputURL: gainPrivateURL,
+            infoFloats: infoFloats,
+            gainMapJPEG: gainJPEG
+        )
+        try ISOHDRWriter.writeWithPreserveReencode(
+            intermediateURL: gainPrivateURL,
+            outputURL: gainISOURL
+        )
+        guard let gainCarrier = CGImageSourceCreateWithURL(gainISOURL as CFURL, nil),
+              let scaffoldDestination = CGImageDestinationCreateWithURL(
+                  outputURL as CFURL,
+                  UTType.heic.identifier as CFString,
+                  1,
+                  nil
+              ) else {
+            throw CLIError.unableToFinalizeDestination(gainCarrierURL)
+        }
+        CGImageDestinationAddImageFromSource(
+            scaffoldDestination,
+            gainCarrier,
+            0,
+            [
+                kCGImageDestinationPreserveGainMap: true,
+                kCGImagePropertyOrientation: NSNumber(value: orientation),
+            ] as CFDictionary
+        )
+        CGImageDestinationAddAuxiliaryDataInfo(
+            scaffoldDestination,
+            kCGImageAuxiliaryDataTypeDisparity,
+            depthDictionary
+        )
+        CGImageDestinationAddAuxiliaryDataInfo(
+            scaffoldDestination,
+            kCGImageAuxiliaryDataTypePortraitEffectsMatte,
+            matteDictionary
+        )
+        guard CGImageDestinationFinalize(scaffoldDestination) else {
+            throw CLIError.unableToFinalizeDestination(outputURL)
+        }
+    }
+
+    private static func captureDateString(sourceURL: URL) -> String? {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any],
+              let raw = exif[kCGImagePropertyExifDateTimeOriginal] as? String else {
+            return nil
+        }
+        return raw.replacingOccurrences(of: ":", with: "-", options: [], range: raw.startIndex..<raw.index(raw.startIndex, offsetBy: min(10, raw.count)))
+            .replacingOccurrences(of: " ", with: "T")
+    }
+}
+
+private func transplantPortraitBaseAndGainPayloads(
+    payloadSourceURL: URL,
+    scaffoldURL: URL,
+    outputURL: URL
+) throws {
+    struct Graph {
+        let mdat: ISOBMFFBox
+        let iloc: ISOBMFFBox
+        let idat: ISOBMFFBox?
+        let locations: [Int: ISOBMFFILocEntry]
+        let baseTiles: [Int]
+        let gainTiles: [Int]
+        let hvcCByItem: [Int: Data]
+    }
+    func graph(_ data: Data, owner: String) throws -> Graph {
+        let top = isobmffBoxes(in: data, start: 0, end: data.count)
+        guard let meta = top.first(where: { $0.type == "meta" }),
+              let mdat = top.first(where: { $0.type == "mdat" }) else {
+            throw CLIError.invalidContainer("\(owner) has no meta/mdat")
+        }
+        let children = isobmffBoxes(in: data, start: meta.dataStart + 4, end: meta.dataEnd)
+        guard let pitm = children.first(where: { $0.type == "pitm" }),
+              let iinf = children.first(where: { $0.type == "iinf" }),
+              let iloc = children.first(where: { $0.type == "iloc" }),
+              let iref = children.first(where: { $0.type == "iref" }),
+              let iprp = children.first(where: { $0.type == "iprp" }) else {
+            throw CLIError.invalidContainer("\(owner) item graph is incomplete")
+        }
+        let primary = parseISOBMFFPITM(data, pitm)
+        let infos = parseISOBMFFItemInfos(data, iinf).items
+        guard let tmap = infos.first(where: { $0.type == "tmap" })?.itemID else {
+            throw CLIError.invalidContainer("\(owner) has no tmap")
+        }
+        let refs = parseISOBMFFIRefs(data, iref).refs
+        guard let baseTiles = refs.first(where: { $0.type == "dimg" && $0.from == primary })?.to,
+              let gainGrid = refs.first(where: { $0.type == "dimg" && $0.from == tmap })?.to.first(where: { $0 != primary }),
+              let gainTiles = refs.first(where: { $0.type == "dimg" && $0.from == gainGrid })?.to else {
+            throw CLIError.invalidContainer("\(owner) base/gain grid graph is incomplete")
+        }
+        let locations = Dictionary(uniqueKeysWithValues: try parseISOBMFFILoc(data, iloc).map { ($0.itemID, $0) })
+        let properties = try parseISOBMFFIPCOPropertyInfos(data, iprp)
+        let propertyByIndex = Dictionary(uniqueKeysWithValues: properties.map { ($0.index, $0) })
+        guard let ipmaBox = isobmffBoxes(in: data, start: iprp.dataStart, end: iprp.dataEnd).first(where: { $0.type == "ipma" }) else {
+            throw CLIError.invalidContainer("\(owner) has no ipma")
+        }
+        let ipma = parseISOBMFFIPMA(data, ipmaBox)
+        var hvcCByItem: [Int: Data] = [:]
+        for entry in ipma.entries {
+            for association in entry.associations {
+                let index = assocPropertyIndex(association, flags: ipma.flags)
+                if let property = propertyByIndex[index], property.type == "hvcC" {
+                    hvcCByItem[entry.itemID] = property.rawBox
+                }
+            }
+        }
+        return Graph(
+            mdat: mdat,
+            iloc: iloc,
+            idat: children.first(where: { $0.type == "idat" }),
+            locations: locations,
+            baseTiles: baseTiles,
+            gainTiles: gainTiles,
+            hvcCByItem: hvcCByItem
+        )
+    }
+
+    let sourceData = try Data(contentsOf: payloadSourceURL)
+    var scaffoldData = try Data(contentsOf: scaffoldURL)
+    let source = try graph(sourceData, owner: "first assembly")
+    let scaffold = try graph(scaffoldData, owner: "portrait scaffold")
+    guard source.baseTiles.count == scaffold.baseTiles.count,
+          source.gainTiles.count == scaffold.gainTiles.count,
+          let sourceBaseFirst = source.baseTiles.first,
+          let scaffoldBaseFirst = scaffold.baseTiles.first,
+          let sourceGainFirst = source.gainTiles.first,
+          let scaffoldGainFirst = scaffold.gainTiles.first,
+          source.hvcCByItem[sourceBaseFirst] == scaffold.hvcCByItem[scaffoldBaseFirst],
+          source.hvcCByItem[sourceGainFirst] == scaffold.hvcCByItem[scaffoldGainFirst] else {
+        throw CLIError.invalidContainer("first assembly/scaffold tile codec graph differs")
+    }
+    struct Replacement {
+        let itemID: Int
+        let offset: Int
+        let length: Int
+        let payload: Data
+        var delta: Int { payload.count - length }
+    }
+    let pairs = Array(zip(source.baseTiles, scaffold.baseTiles))
+        + Array(zip(source.gainTiles, scaffold.gainTiles))
+    var replacements: [Replacement] = []
+    for (sourceID, scaffoldID) in pairs {
+        guard let sourceLocation = source.locations[sourceID],
+              let scaffoldLocation = scaffold.locations[scaffoldID],
+              scaffoldLocation.constructionMethod == 0,
+              scaffoldLocation.extents.count == 1 else {
+            throw CLIError.invalidContainer("portrait tile does not have one file extent")
+        }
+        replacements.append(Replacement(
+            itemID: scaffoldID,
+            offset: scaffoldLocation.extents[0].offset,
+            length: scaffoldLocation.extents[0].length,
+            payload: try itemPayload(in: sourceData, entry: sourceLocation, idat: source.idat)
+        ))
+    }
+    let replacementByID = Dictionary(uniqueKeysWithValues: replacements.map { ($0.itemID, $0) })
+    let iloc = scaffold.iloc
+    let version = scaffoldData[iloc.dataStart]
+    let sizeField = scaffoldData[iloc.dataStart + 4]
+    let sizeField2 = scaffoldData[iloc.dataStart + 5]
+    let offsetSize = Int(sizeField >> 4)
+    let lengthSize = Int(sizeField & 0x0f)
+    let baseOffsetSize = Int(sizeField2 >> 4)
+    let indexSize = (version == 1 || version == 2) ? Int(sizeField2 & 0x0f) : 0
+    guard offsetSize == 4, lengthSize == 4, baseOffsetSize == 0 else {
+        throw CLIError.invalidContainer("unsupported portrait scaffold iloc")
+    }
+    var position = iloc.dataStart + 6
+    let itemCount: Int
+    if version < 2 { itemCount = readUInt16BEUnchecked(scaffoldData, at: position); position += 2 }
+    else { itemCount = readUInt32BEUnchecked(scaffoldData, at: position); position += 4 }
+    var fields: [(itemID: Int, offsetPosition: Int, lengthPosition: Int)] = []
+    for _ in 0..<itemCount {
+        let itemID: Int
+        if version < 2 { itemID = readUInt16BEUnchecked(scaffoldData, at: position); position += 2 }
+        else { itemID = readUInt32BEUnchecked(scaffoldData, at: position); position += 4 }
+        var constructionMethod = 0
+        if version == 1 || version == 2 {
+            constructionMethod = readUInt16BEUnchecked(scaffoldData, at: position) & 0x0f
+            position += 2
+        }
+        position += 2 + baseOffsetSize
+        let extentCount = readUInt16BEUnchecked(scaffoldData, at: position); position += 2
+        for _ in 0..<extentCount {
+            position += indexSize
+            let offsetPosition = position; position += offsetSize
+            let lengthPosition = position; position += lengthSize
+            if constructionMethod == 0 { fields.append((itemID, offsetPosition, lengthPosition)) }
+        }
+    }
+    func patchUInt32(_ value: Int, at position: Int) {
+        var replacement = Data()
+        appendUInt32BE(value, to: &replacement)
+        scaffoldData.replaceSubrange(position..<(position + 4), with: replacement)
+    }
+    for field in fields {
+        let oldOffset = readUInt32BEUnchecked(scaffoldData, at: field.offsetPosition)
+        let shift = replacements.filter { $0.offset < oldOffset }.reduce(0) { $0 + $1.delta }
+        patchUInt32(oldOffset + shift, at: field.offsetPosition)
+        if let replacement = replacementByID[field.itemID] {
+            patchUInt32(replacement.payload.count, at: field.lengthPosition)
+        }
+    }
+    patchUInt32(
+        scaffold.mdat.size + replacements.reduce(0) { $0 + $1.delta },
+        at: scaffold.mdat.boxStart
+    )
+    for replacement in replacements.sorted(by: { $0.offset > $1.offset }) {
+        scaffoldData.replaceSubrange(
+            replacement.offset..<(replacement.offset + replacement.length),
+            with: replacement.payload
+        )
+    }
+    try scaffoldData.write(to: outputURL, options: .atomic)
 }
 
 LHDRToISOHDRCLI.main()
