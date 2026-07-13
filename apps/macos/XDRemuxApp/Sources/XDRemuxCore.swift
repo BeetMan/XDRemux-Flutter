@@ -153,7 +153,7 @@ enum OppoCameraTail: String, CaseIterable, Codable, Sendable, Identifiable, Hash
 struct ConversionConfig: Sendable {
     var family: Family = .auto
     var outputDirectory: URL?
-    var oppoCompatibility: OppoCompatibility = .auto
+    var oppoCompatibility: OppoCompatibility = .off
     var inputProcessingBranch: InputProcessingBranch = .hybrid
     var oppoCameraTail: OppoCameraTail = .preserve
     var tmapFormat: TmapFormat = .imageIO
@@ -2479,7 +2479,7 @@ private enum XDRemuxProductCore {
         outputURL: URL,
         familyPreference: Family,
         debugRootURL: URL?,
-        oppoCompatibility: OppoCompatibility = .auto,
+        oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .hybrid,
         oppoCameraTail: OppoCameraTail = .preserve,
         tmapFormat: TmapFormat = .imageIO

@@ -10,53 +10,83 @@ It reads the private HDR Gain Map and metadata from the original photo, then rep
 
 Use XDRemux if you captured ProXDR HEIC photos on an OPPO, OnePlus, or realme phone and want them to keep displaying as HDR photos in other systems or software.
 
-## Quick Start
+## Three output modes
+
+The current Swift CLI has two opt-in product switches. With neither switch, it
+uses the standard ISO default.
+
+| Mode | Switch | Result |
+|---|---|---|
+| Standard ISO (default) | none | ISO 21496-1 HDR with the source Base Image, channel structure, and complete OPPO/QTI metadata tail; Gain Maps may retain HEVC RExt 4:4:4 when the source supports it |
+| OPPO Gallery compatible | `--oppo-compatible` | Main Still Picture 4:2:0 Gain Map for OPPO Gallery, with the OPPO private metadata tail preserved |
+| Apple portrait | `--apple-portrait` | Converts OPPO depth, subject, pet, hair, and aperture information into Apple disparity, Portrait Effects Matte, semantic hair, Focus, and portrait metadata |
 
 > [!IMPORTANT]
-> Omitting `--output` or `--output-dir` makes the tool overwrite files in place. Back up your original photos before conversion.
+> Omitting `--output` or `--output-dir` overwrites inputs. Back up originals
+> before conversion.
 
-### Swift CLI
+### Default: standard ISO HDR
 
 ```bash
-# Single file
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --input IMG_001.heic \
+  --output IMG_001_iso.heic
 
-# Batch conversion
-swift xdremux/swift-cli/XDRemux.swift batch --input-dir photo_dump/
-
-# Specify output path
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --output out.heic
+swift xdremux/swift-cli/XDRemux.swift batch \
+  --input-dir photo_dump/ \
+  --output-dir iso_output/
 ```
 
-The default mode is suitable for most cases. It tries to preserve the original Base Image and only reprocesses the HDR Gain Map and its metadata.
+The default does not enable the OPPO-specific compatibility layer. XDRemux
+preserves the original Base Image where possible and rebuilds a standard ISO
+Gain Map graph. Monochrome sources remain monochrome, while un-downsampled
+three-channel sources can retain HEVC Range Extensions 4:4:4. An existing
+4:2:0 Gain Map is never advertised as 4:4:4 because discarded chroma cannot be
+recovered.
 
-### Convert to an Apple portrait photo
+The complete OPPO/QTI/FileExtendedContainer tail is preserved by default,
+including watermark, master-mode, capture, portrait-editing, and unknown
+vendor metadata.
 
-Apple portrait conversion is explicitly opt-in for photos containing OPPO
-private portrait resources:
+### `--oppo-compatible`: OPPO Gallery compatibility
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --oppo-compatible \
+  --input IMG_001.heic \
+  --output IMG_001_oppo.heic
+```
+
+This mode converts a high-spec Gain Map to Main Still Picture 4:2:0 so OPPO
+Gallery can trigger HDR display. It retains the OPPO private metadata tail for
+photos intended to return to the OPPO ecosystem.
+
+### `--apple-portrait`: convert OPPO portrait depth
 
 ```bash
 swift xdremux/swift-cli/XDRemux.swift convert \
   --apple-portrait \
   --input IMG_001.heic \
   --output IMG_001_apple_portrait.heic
+
+swift xdremux/swift-cli/XDRemux.swift batch \
+  --apple-portrait \
+  --input-dir photo_dump/ \
+  --output-dir apple_portraits/
 ```
 
-XDRemux confirms a portrait input from the portrait flag in `UserComment` and
-the `rear.depth` private-tail resource. It then reads the Base Image and Gain
-Map from `src.image`, converts the OPPO Depth Map, and uses Vision to generate
-a Portrait Effects Matte and face-attention Focus region. No private-field
-arguments are required.
+XDRemux automatically reads `src.image`, `rear.depth`, `rear.depth.config`,
+and Gain Map parameters. Base and gain payloads are encoded once; rank becomes
+Apple Float16 disparity; OPPO portrait/pet/hair planes become PEM and semantic
+hair; Vision is used only as the empty-subject fallback and for face-attention
+Focus. The OPPO simulated aperture and original orientation are preserved in
+the Apple portrait graph.
 
-The `src.image` Base Image and Gain Map are encoded into HEIC only once. Their
-final HEVC payloads are not re-encoded while depth, matte, and portrait metadata
-are authored. Orientation is derived automatically from the outer primary and
-the `src.image` dimensions and EXIF orientation.
-
-Without `--apple-portrait`, no Apple portrait resources are generated and the
-original OPPO/QTI portrait tail is preserved by default. Because `rear.depth`
-uses zstd compression, Apple portrait conversion requires the `zstd` command
-to be available on `PATH`.
+Apple portrait mode omits the large OPPO portrait tail after semantic
+migration, avoiding two complete depth-resource sets. It is mutually exclusive
+with `--oppo-compatible`; enabling both fails before writing. Blur-strength
+mapping is still under device validation; see
+`docs/research/oppo-apple-portrait-information-coverage-20260713.md`.
 
 ### Python CLI
 
@@ -69,7 +99,12 @@ python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # Batch conversion
 python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
+
+# OPPO Gallery-compatible output (--oppo-compat remains as a legacy alias)
+python3 xdremux/python/XDRemux.py convert --oppo-compatible --input IMG_001.heic
 ```
+
+Apple portrait conversion is currently provided by the Swift CLI.
 
 ### macOS App
 
@@ -84,26 +119,6 @@ Build and run locally:
 ```bash
 scripts/build_and_run.sh run
 ```
-
-## OPPO Gallery compatibility mode
-
-OPPO Gallery has limited compatibility with HEVC RExt 4:4:4 Gain Maps. When OPPO Gallery compatibility mode is enabled, XDRemux encodes the Gain Map with HEVC Main Still Picture Profile (4:2:0), allowing OPPO Gallery to trigger HDR display. LHDR is fixed to the verified RGB-copy 8-bit Gain Map in OPPO compatibility mode; non-OPPO LHDR outputs keep the original grayscale Gain Map.
-
-Swift CLI:
-
-```bash
-swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --oppo-compat
-```
-
-Python CLI:
-
-```bash
-python3 xdremux/python/XDRemux.py convert --input IMG_001.heic --oppo-compat
-```
-
-macOS App:
-
-Enable **OPPO Gallery compatibility mode** before export.
 
 ## Swift CLI input processing modes
 

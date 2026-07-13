@@ -81,7 +81,7 @@ enum AppStrings {
     static let tmapFormatImageIOHelp = "默认保留 Apple ImageIO 生成的 142-byte 兼容形式；Find X9 Ultra 相册 Exif、编辑和 HDR 兼容性更好。"
 
     static let oppoCompatLabel = "[实验性] OPPO 相册 HDR 兼容层"
-    static let oppoCompatHelp = "控制 Gain Map 的 OPPO 编码兼容性和可选私有激活位；相机私有尾由下方选项独立控制。默认自动输出 Main Still 4:2:0，并保持源 UserComment 不变。"
+    static let oppoCompatHelp = "默认输出标准 ISO HDR，并在源数据允许时保留最高 4:4:4/HEVC RExt Gain Map；开启后改为 OPPO 相册可消费的 Main Still 4:2:0。相机私有尾由下方选项独立控制。"
     static let oppoCompatAuto = "自动"
     static let oppoCompatISO = "标准 HDR 位"
     static let oppoCompatISONoLocal = "标准 HDR（清除 LHDR）"
@@ -97,7 +97,7 @@ enum AppStrings {
     static let oppoCompatTailHelp = "兼容旧命令名；行为等同于开启。相机尾部仍由下方选项控制。"
     static let oppoCompatOffHelp = "从原始高规格源生成 profile 4/4:4:4 Gain Map；已经降采样为 4:2:0 的输入不能反向升级。"
     static let oppoGalleryCompatibility = "输出 OPPO 相册兼容格式"
-    static let oppoGalleryCompatibilityHelp = "开启时输出 Main Still Picture 4:2:0 Gain Map；关闭时保留原始单通道，或从未降采样的三通道源输出 4:4:4/RExt。元数据保留策略不受影响。"
+    static let oppoGalleryCompatibilityHelp = "默认关闭：输出标准 ISO HDR，保留原始单通道或未降采样三通道的 4:4:4/RExt。开启时输出 Main Still Picture 4:2:0 Gain Map。元数据尾部保留策略不受影响。"
     static let preservePortraitEditingData = "保留人像后期数据"
     static let preservePortraitEditingDataHelp = "关闭时删除 depth、src.image、mask、mesh 和 crop 等大体积后期资源；水印、大师模式、HDR 数据和其他厂商元数据继续保留。"
     static let oppoCameraTailLabel = "[实验性] OPPO 相机尾部"

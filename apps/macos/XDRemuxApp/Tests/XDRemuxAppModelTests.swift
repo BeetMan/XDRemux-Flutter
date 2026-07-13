@@ -288,9 +288,9 @@ struct XDRemuxAppModelTests {
         try expect(config.family == .auto, "product input family should be detected automatically")
         try expect(config.inputProcessingBranch == .hybrid, "product output should use metadata-preserving remux")
         try expect(config.tmapFormat == .imageIO, "product output should use the device-validated 142-byte tmap")
-        try expect(config.oppoCompatibility == .auto, "product output should preserve source HDR routing flags")
+        try expect(config.oppoCompatibility == .off, "default product output should select standard high-spec ISO encoding")
         try expect(config.oppoCameraTail == .preserve, "product output should preserve the complete source tail")
-        try expect(config.oppoGalleryCompatibilityEnabled, "OPPO Gallery compatibility should default on")
+        try expect(!config.oppoGalleryCompatibilityEnabled, "OPPO Gallery compatibility should be opt-in")
         try expect(config.preservesPortraitEditingData, "portrait editing data should default to preserved")
     }
 
