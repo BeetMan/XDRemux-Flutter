@@ -54,8 +54,9 @@ class XdRemuxFFI {
   /// then fall back to the working directory (for flutter run standalone).
   static ffi.DynamicLibrary _openMacOS() {
     const name = 'libxdremux_core.dylib';
-    // App bundle Frameworks path (production)
-    final frameworksPath = '${Platform.resolvedExecutable}/../Frameworks/$name';
+    // ResolvedExecutable = Contents/MacOS/xdremux
+    // Frameworks are at Contents/Frameworks/ (two levels up)
+    final frameworksPath = '${Platform.resolvedExecutable}/../../Frameworks/$name';
     if (File(frameworksPath).existsSync()) {
       return ffi.DynamicLibrary.open(frameworksPath);
     }
