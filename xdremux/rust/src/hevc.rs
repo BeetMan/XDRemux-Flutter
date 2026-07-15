@@ -151,7 +151,7 @@ pub fn hevc_byte_stream_to_length_prefixed(data: &[u8]) -> Vec<u8> {
     let mut pos = 0;
 
     while pos < data.len() {
-        let (sc_len, nal_start) = if data[pos..].starts_with(nal_4b) {
+        let (_sc_len, nal_start) = if data[pos..].starts_with(nal_4b) {
             (4, pos + 4)
         } else if pos + 3 <= data.len() && data[pos..].starts_with(nal_3b) {
             (3, pos + 3)
@@ -220,12 +220,9 @@ pub fn extract_hvcc_config(hevc_data: &[u8]) -> Option<Vec<u8>> {
     let mut vps_nal: Option<&[u8]> = None;
     let mut sps_nal: Option<&[u8]> = None;
     let mut pps_nal: Option<&[u8]> = None;
-    let mut _general_profile_idc: u8 = 0;
-    let mut general_level_idc: u8 = 0;
-    let mut general_profile_compat: u32 = 0;
-    let mut chroma_format_idc: u8 = 0;
-    let mut bit_depth_luma: u8 = 8;
-    let mut bit_depth_chroma: u8 = 8;
+    let chroma_format_idc: u8 = 0;
+    let bit_depth_luma: u8 = 8;
+    let bit_depth_chroma: u8 = 8;
 
     for i in 0..nal_positions.len() {
         // Determine start code length at this position
@@ -256,20 +253,7 @@ pub fn extract_hvcc_config(hevc_data: &[u8]) -> Option<Vec<u8>> {
                     //  vps_max_layers_minus1(6) + vps_max_sub_layers_minus1(3) +
                     //  vps_temporal_id_nesting_flag(1) + reserved_ffff(16))
                     // PTL starts at byte 6 of the NAL payload.
-                    let ptl = &payload[6..];
-                    _general_profile_idc = ptl[0] & 0x1f;
-                    if ptl.len() >= 5 {
-                        general_profile_compat =
-                            ((ptl[1] as u32) << 24) | ((ptl[2] as u32) << 16)
-                            | ((ptl[3] as u32) << 8) | (ptl[4] as u32);
-                    }
-                    if ptl.len() >= 12 {
-                        // level_idc is the 6th byte of PTL, but may be preceded
-                        // by sublayers data. For single-layer, it's at ptl[11].
-                        general_level_idc = ptl[11];
-                    } else if ptl.len() >= 6 {
-                        general_level_idc = ptl[5];
-                    }
+                    // Profile/compat/level are parsed below from the VPS directly.
                 }
             }
             33 => {

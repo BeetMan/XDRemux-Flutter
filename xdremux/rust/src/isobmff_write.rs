@@ -504,10 +504,12 @@ fn assemble_and_write(
             *tid, &[(gm_hvcc_i, true), (gm_tile_ispe_i, true), (colr_prof, true)], parsed.ipma_flags,
         ));
     }
-    // Gain grid: ispe(grid)(e) + colr(sRGB)(e) + pixi8(e) + irot(e)
+    // Gain grid: ispe(grid)(e) + colr(sRGB)(e) + pixi8(e) + irot(e) + auxC(e)
+    let auxc_i = old_n + 1;
     let irot_pick = source_irot_idx.unwrap_or(irot_i);
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(cfg.gain_grid_id, &[
         (gm_grid_ispe_i, true), (srgb_colr_i, true), (pixi8_i, true), (irot_pick, true),
+        (auxc_i, true),
     ], parsed.ipma_flags));
     // tmap: colr(PQ)(e) + pixi10(e) + ispe(primary_grid)(e) + clli(tmap) + irot(e)
     // Find primary grid ispe index from source
@@ -585,6 +587,10 @@ fn assemble_and_write(
     output_refs.push(IrefEntry {
         rtype: "dimg".into(), from: cfg.tmap_id,
         to: vec![parsed.primary_id, cfg.gain_grid_id],
+    });
+    output_refs.push(IrefEntry {
+        rtype: "auxl".into(), from: cfg.gain_grid_id,
+        to: vec![parsed.primary_id, cfg.tmap_id],
     });
     output_refs.push(IrefEntry {
         rtype: "cdsc".into(), from: cfg.xmp_id,

@@ -1,0 +1,12 @@
+[package]
+name = "xdremux-conformance"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xdremux-core = { path = "../../xdremux/rust" }
+serde_json = "1.0"
+
+[[bin]]
+name = "xdremux-conformance"
+path = "src/main.rs"

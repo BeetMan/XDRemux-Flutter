@@ -12,6 +12,10 @@ Package.resolved
 __pycache__/
 xdremux_py/
 
+# Rust / Cargo
+target/
+**/target/
+
 # Large binaries
 *.apk
 *.heic

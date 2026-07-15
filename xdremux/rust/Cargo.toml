@@ -7,11 +7,6 @@ license = "MIT"
 description = "XDRemux cross-platform HEIC conversion core (Rust)"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-
-[profile.release]
-opt-level = "s"
-lto = true
-panic = "abort"

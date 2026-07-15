@@ -406,9 +406,11 @@ pub fn make_imageio_native_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
     let cap_min = safe_log2(info_floats.get(16).copied().unwrap_or(1.0).max(1.0)).max(0.0);
     let cap_max = safe_log2(info_floats.get(17).copied().unwrap_or(1.0).max(1.0));
 
-    // Python zero_as_one logic for offsets
-    let base_num = if base_offset == 0.0 { 1.0 } else { base_offset };
-    let alt_num = if alt_offset == 0.0 { 1.0 } else { alt_offset };
+    // Python's `_build_imageio_native_tmap_config` does NOT apply
+    // `zero_as_one` to base/alt offset here (it does in the 62B Apple
+    // payload). Mirroring Python's behavior for byte-equivalence.
+    let base_num = base_offset;
+    let alt_num = alt_offset;
 
     let mut out = Vec::with_capacity(142);
 
@@ -439,6 +441,114 @@ pub fn make_imageio_native_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
     }
 
     debug_assert_eq!(out.len(), 142, "ImageIO-native tmap payload must be exactly 142 bytes");
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Strict ISO 21496-1 GainMapMetadata (C.2.2)
+// ---------------------------------------------------------------------------
+
+/// Detect the channel count from a per-channel metadata block, mirroring
+/// Python's `_iso_channel_count` helper in `isobmff_patch.py`.
+///
+/// Returns 3 if any of the channel-valued fields has at least 3 values that
+/// differ by more than a small tolerance. Returns 1 otherwise. The two values
+/// in a 2-element list never trigger multichannel — only 3 differing values do.
+fn channel_count_for_iso_meta(meta: &IsoMeta) -> usize {
+    let check = |v: &[f32]| {
+        v.len() >= 3
+            && (v[0] - v[1]).abs() > 1e-6
+            && (v[0] - v[2]).abs() > 1e-6
+            && (v[1] - v[2]).abs() > 1e-6
+    };
+    if check(&meta.gain_map_min)
+        || check(&meta.gain_map_max)
+        || check(&meta.gamma)
+        || check(&meta.offset_sdr)
+        || check(&meta.offset_hdr)
+    {
+        3
+    } else {
+        1
+    }
+}
+
+/// Build a strict ISO 21496-1 GainMapMetadata (Appendix C.2.2) binary payload.
+///
+/// Layout (matches the Python reference implementation):
+/// ```text
+/// [u16be minimum_version=0][u16be writer_version=0]   // 4 bytes
+/// [u8 flags][u8 0][u8 0][u8 0]                        // 4 bytes
+/// [u32be base_hdr_headroom_num][u32be 100000]         // 8 bytes
+/// [u32be alt_hdr_headroom_num][u32be 100000]          // 8 bytes
+/// per channel:
+///     i32be gain_min *100k      u32be 100000          // 8 bytes
+///     i32be gain_max *100k      u32be 100000          // 8 bytes
+///     u32be gamma *100k         u32be 100000          // 8 bytes
+///     i32be base_offset *100k   u32be 100000          // 8 bytes
+///     i32be alt_offset *100k    u32be 100000          // 8 bytes
+/// = 64 bytes (1 channel) or 144 bytes (3 channels)
+/// ```
+///
+/// Mirrors the Python `_build_iso_gainmap_metadata_payload` helper so
+/// conformance Tier 2 byte-compares cleanly across implementations.
+pub fn make_iso21496_metadata_payload(meta: &IsoMeta) -> Vec<u8> {
+    let base_headroom = meta.hdr_capacity_min;
+    let alternate_headroom = meta.hdr_capacity_max;
+
+    let channel_count = channel_count_for_iso_meta(meta);
+    let is_multichannel = channel_count == 3;
+    let use_base_color_space = true; // matches Python default
+    let flags: u8 = (if is_multichannel { 0x80 } else { 0 })
+        | (if use_base_color_space { 0x40 } else { 0 });
+
+    let mut out = Vec::with_capacity(if is_multichannel { 144 } else { 64 });
+
+    // GainMapVersion
+    append_u16be(0, &mut out); // minimum_version
+    append_u16be(0, &mut out); // writer_version
+    // flags byte + 3 padding bytes
+    out.push(flags);
+    out.push(0);
+    out.push(0);
+    out.push(0);
+
+    // Headroom rationals
+    append_u32be(fixed_u32(base_headroom), &mut out);
+    append_u32be(RATIONAL_DEN as u32, &mut out);
+    append_u32be(fixed_u32(alternate_headroom), &mut out);
+    append_u32be(RATIONAL_DEN as u32, &mut out);
+
+    for channel in 0..channel_count {
+        let gain_min = meta.gain_map_min.get(channel).copied().unwrap_or(0.0);
+        let gain_max = meta
+            .gain_map_max
+            .get(channel)
+            .copied()
+            .unwrap_or(alternate_headroom);
+        let gamma = meta.gamma.get(channel).copied().unwrap_or(1.0);
+        let base_offset = meta.offset_sdr.get(channel).copied().unwrap_or(0.0);
+        let alt_offset = meta.offset_hdr.get(channel).copied().unwrap_or(0.0);
+
+        // gain_min / gain_max / base_offset / alt_offset are signed rationals
+        append_i32be(fixed_i32(gain_min), &mut out);
+        append_u32be(RATIONAL_DEN as u32, &mut out);
+        append_i32be(fixed_i32(gain_max), &mut out);
+        append_u32be(RATIONAL_DEN as u32, &mut out);
+        // gamma is unsigned rational
+        append_u32be(fixed_u32(gamma), &mut out);
+        append_u32be(RATIONAL_DEN as u32, &mut out);
+        append_i32be(fixed_i32(base_offset), &mut out);
+        append_u32be(RATIONAL_DEN as u32, &mut out);
+        append_i32be(fixed_i32(alt_offset), &mut out);
+        append_u32be(RATIONAL_DEN as u32, &mut out);
+    }
+
+    debug_assert_eq!(
+        out.len(),
+        if is_multichannel { 144 } else { 64 },
+        "ISO 21496-1 GainMapMetadata must be 64 or 144 bytes"
+    );
     out
 }
 
@@ -643,5 +753,55 @@ mod tests {
         assert!((parsed[3] - 1.0).abs() < 0.001);
         // gamma should be 1.0
         assert!((parsed[7] - 1.0).abs() < 0.1);
+    }
+
+    // ---------- strict ISO 21496-1 GainMapMetadata ----------
+
+    #[test]
+    fn iso21496_payload_multichannel_is_144_bytes() {
+        // The sample UHDR floats produce *identical* per-channel values for
+        // gain/gamma/offset. Python's _iso_channel_count returns 1 in that
+        // case (it only escalates to 3 when channels actually differ), so
+        // the strict-ISO payload is 64 bytes here. Use a meta with three
+        // distinct per-channel gainMapMax values to exercise the 144-byte
+        // path.
+        let mut meta = build_iso_metadata(4.0);
+        // Three distinct channels force channel_count=3 in the helper.
+        meta.gain_map_max = vec![1.0, 2.0, 3.0];
+        meta.gain_map_min = vec![0.0, 0.0, 0.0];
+        meta.gamma = vec![1.0, 1.0, 1.0];
+        meta.offset_sdr = vec![0.0, 0.0, 0.0];
+        meta.offset_hdr = vec![0.0, 0.0, 0.0];
+        meta.channel_count = 3;
+        let payload = make_iso21496_metadata_payload(&meta);
+        assert_eq!(payload.len(), 144, "multichannel ISO 21496-1 must be 144 bytes");
+    }
+
+    #[test]
+    fn iso21496_payload_monochannel_is_64_bytes() {
+        let meta = build_iso_metadata(4.0);
+        let payload = make_iso21496_metadata_payload(&meta);
+        assert_eq!(payload.len(), 64, "monochannel ISO 21496-1 must be 64 bytes");
+    }
+
+    #[test]
+    fn iso21496_payload_header_layout() {
+        let meta = build_iso_metadata(4.0);
+        let payload = make_iso21496_metadata_payload(&meta);
+        // version
+        assert_eq!(&payload[0..2], &[0, 0]); // min_version
+        assert_eq!(&payload[2..4], &[0, 0]); // writer_version
+                                             // monochannel: flags = 0x40 (use_base_colour_space only)
+        assert_eq!(payload[4], 0x40);
+        // 3 padding bytes
+        assert_eq!(&payload[5..8], &[0, 0, 0]);
+        // base headroom num (hdr_capacity_min=0.0) → 0
+        assert_eq!(&payload[8..12], &[0, 0, 0, 0]);
+        // base headroom den (100000 = 0x000186A0)
+        assert_eq!(&payload[12..16], &[0x00, 0x01, 0x86, 0xA0]);
+        // alt headroom num (hdr_capacity_max = log2(4) = 2.0) → 200000 = 0x00030D40
+        assert_eq!(&payload[16..20], &[0x00, 0x03, 0x0D, 0x40]);
+        // alt headroom den (100000)
+        assert_eq!(&payload[20..24], &[0x00, 0x01, 0x86, 0xA0]);
     }
 }

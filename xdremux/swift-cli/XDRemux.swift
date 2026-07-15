@@ -1832,6 +1832,8 @@ private enum ISOHDRWriter {
         ]
         if oppoCompatibility.wantsOppoCompat {
             requestOptions[cgImageDestinationEncodeGainMapSubsampleFactorCompat] = NSNumber(value: 2)
+        } else {
+            requestOptions[cgImageDestinationEncodeGainMapSubsampleFactorCompat] = NSNumber(value: 1)
         }
         try configureGainMapEncodingOptions(&requestOptions, channelCount: gainMapChannelCount, branch: inputProcessingBranch)
 
@@ -2205,6 +2207,7 @@ private func gainMapEncodingMatchesTarget(at url: URL, compatibility: OppoCompat
     }
     return pixelFormat == pixelFormatFourCC("444f")
         || pixelFormat == pixelFormatFourCC("L008")
+        || isSubsampledGainMapPixelFormat(pixelFormat)
 }
 
 private func pixelFormatFourCC(_ value: String) -> UInt32 {
@@ -2885,36 +2888,14 @@ private func writeImageIOPreservedGainMapPassthrough(
     let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
     switch productInput.extracted.mode {
     case .uhdr:
-        if oppoCompatibility.wantsOppoCompat {
-            try ISOHDRWriter.write(
-                baseImageURL: inputURL,
-                gainMap: productInput.gainMapRaster,
-                style: productInput.style,
-                outputURL: preservedURL,
-                oppoCompatibility: oppoCompatibility,
-                inputProcessingBranch: .system
-            )
-        } else if gainMapEncodingMatchesTarget(at: inputURL, compatibility: oppoCompatibility) {
-            // The input already has the requested high-spec ISO Gain Map. Reusing
-            // that graph avoids appending a second temporary JPEG/tmap graph,
-            // which ImageIO rejects as ambiguous during preserve re-encoding.
-            try FileManager.default.copyItem(at: inputURL, to: preservedURL)
-        } else {
-            _ = try writePrivateJPEGPassthroughOutput(
-                inputURL: inputURL,
-                outputURL: privateIntermediateURL,
-                infoFloats: productInput.extracted.metaFloats,
-                gainMapJPEG: productInput.extracted.maskJPEGData,
-                patchedUserComment: patchedUserComment,
-                tmapPayload: nil,
-                tmapColorBox: nil
-            )
-            try ISOHDRWriter.writeWithPreserveReencode(
-                intermediateURL: privateIntermediateURL,
-                outputURL: preservedURL,
-                patchedUserComment: patchedUserComment
-            )
-        }
+        try ISOHDRWriter.write(
+            baseImageURL: inputURL,
+            gainMap: productInput.gainMapRaster,
+            style: productInput.style,
+            outputURL: preservedURL,
+            oppoCompatibility: oppoCompatibility,
+            inputProcessingBranch: .system
+        )
     case .lhdr:
         let writerInput = gainMapWriterInput(
             productInput: productInput,

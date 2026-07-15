@@ -192,7 +192,7 @@ pub fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
 
 /// Build the ftyp box with required brands appended.
 pub fn make_ftyp_box(original_ftyp_payload: &[u8]) -> Vec<u8> {
-    let required_brands: &[&[u8]] = &[b"tmap", b"MiHE", b"miaf", b"MiHB"];
+    let required_brands: &[&[u8]] = &[b"tmap", b"MiHE", b"MiHB"];
 
     // Collect existing brands from the original payload
     let existing_bytes: Vec<Vec<u8>> = original_ftyp_payload[8..]
