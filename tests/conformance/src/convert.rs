@@ -4,30 +4,18 @@
 
 use std::path::Path;
 
-use xdremux_core::ConvertConfig;
-
 /// Run the conversion and write output to `output_path`.
 /// Mirrors the `xdremux_convert` FFI call in lib.rs.
 pub fn run(input: &Path, output: &Path, oppo_compat: u8) -> Result<(), String> {
     let input_str = input.to_str().ok_or("input path is not valid UTF-8")?;
     let output_str = output.to_str().ok_or("output path is not valid UTF-8")?;
 
-    let config = ConvertConfig { oppo_compat };
-
-    // Use the same FFI binding that Flutter would use.
-    // The xdremux_convert function is a public extern "C" with #[no_mangle],
-    // but since we link directly we can call the internal path.
+    // Run the conversion via the core library's internal functions.
     let result = xdremux_core::container::extract_lhdr(input_str)
         .map_err(|e| format!("extract failed: {e}"))?;
 
     let source = std::fs::read(input_str)
         .map_err(|e| format!("cannot read input: {e}"))?;
-
-    let family = if result.meta_floats.first().copied().unwrap_or(0.0) >= 3.0 || result.mode == "uhdr" {
-        "x7"
-    } else {
-        "x6"
-    };
 
     let oppo_compat_enum = xdremux_core::exif::OppoCompat::from_u8(oppo_compat);
 

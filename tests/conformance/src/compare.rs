@@ -265,36 +265,8 @@ fn find_in_object<'a>(obj: &'a str, key: &str) -> Option<(&'a str, usize)> {
     None
 }
 
-/// Return the offset just past the next comma or closing brace at the same depth
-/// as the start position. Used to skip over values when scanning for a key.
-fn skip_value(bytes: &[u8], start: usize) -> usize {
-    let len = bytes.len();
-    match bytes[start] {
-        b'{' | b'[' => {
-            let end = find_matching(bytes, start);
-            end + 1
-        }
-        b'"' => {
-            let mut m = start + 1;
-            while m < len && bytes[m] != b'"' {
-                if bytes[m] == b'\\' {
-                    m += 2;
-                } else {
-                    m += 1;
-                }
-            }
-            m + 1
-        }
-        _ => {
-            let mut m = start;
-            while m < len && bytes[m] != b',' && bytes[m] != b'}' {
-                m += 1;
-            }
-            m
-        }
-    }
-}
-
+/// Return the character index of the matching close bracket for the bracket at
+/// `start`.
 fn find_matching(bytes: &[u8], start: usize) -> usize {
     let open = bytes[start];
     let close = if open == b'{' { b'}' } else { b']' };
@@ -504,6 +476,7 @@ fn parse_xmp_num_vec<'a>(e: Option<&'a Extracted<'a>>) -> Option<Extracted<'a>> 
 /// Walk a dotted path by re-parsing keys from the root each time, since the
 /// caller wants a typed value. (Simpler than threading state through the
 /// per-segment search above.)
+#[allow(dead_code)]
 pub(crate) fn extract<'a>(json: &'a str, path: &str) -> Option<Extracted<'a>> {
     extract_path(json, path)
 }

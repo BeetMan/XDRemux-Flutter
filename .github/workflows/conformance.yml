@@ -14,7 +14,7 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          rust-version: stable
+          toolchain: stable
 
       - name: Build workspace
         run: cargo build --workspace
@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          rust-version: stable
+          toolchain: stable
 
       - name: Build workspace
         run: cargo build --workspace

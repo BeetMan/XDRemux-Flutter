@@ -6,10 +6,6 @@
 use std::fs;
 use std::path::Path;
 
-use crate::json;
-
-const SCHEMA_VERSION: &str = "xdremux-conformance-dump/1";
-
 /// Run the compare-dump subcommand and return a Markdown report.
 pub fn run<P1: AsRef<Path>, P2: AsRef<Path>>(a: P1, b: P2) -> Result<String, String> {
     let a_json = fs::read_to_string(a.as_ref())
