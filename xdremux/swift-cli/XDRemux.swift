@@ -2894,6 +2894,11 @@ private func writeImageIOPreservedGainMapPassthrough(
                 oppoCompatibility: oppoCompatibility,
                 inputProcessingBranch: .system
             )
+        } else if gainMapEncodingMatchesTarget(at: inputURL, compatibility: oppoCompatibility) {
+            // The input already has the requested high-spec ISO Gain Map. Reusing
+            // that graph avoids appending a second temporary JPEG/tmap graph,
+            // which ImageIO rejects as ambiguous during preserve re-encoding.
+            try FileManager.default.copyItem(at: inputURL, to: preservedURL)
         } else {
             _ = try writePrivateJPEGPassthroughOutput(
                 inputURL: inputURL,
