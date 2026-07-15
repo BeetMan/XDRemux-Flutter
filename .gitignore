@@ -20,6 +20,9 @@ target/
 example/rust_output/
 example/swift_output/
 
+# Built app
+xdremux.app
+
 # Large binaries
 *.apk
 *.heic
