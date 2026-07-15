@@ -146,17 +146,55 @@ XDRemux 适用于可以拍摄 ProXDR 照片的 OPPO、OnePlus、realme 设备。
 
 其中，OPPO Find X8 Ultra、Find X9 系列及真我 GT8 Pro（理光模式）在 Gain Map 实现中支持 **YCbCr 4:4:4 采样的 HDR Gain Map**。
 
+## Rust 核心库
+
+`xdremux/rust/` 是 XDRemux 的 Rust 重写版本，通过 C FFI 暴露 `xdremux_inspect` / `xdremux_convert` / `xdremux_verify_output` 供 Flutter 的 `dart:ffi` 调用。
+
+### 构建
+
+```bash
+cargo build --workspace --release
+# 产出: xdremux/rust/target/release/libxdremux_core.dylib (macOS)
+```
+
+### 一致性验证
+
+Rust 版本与原版 Swift / Python 实现了四层自动化一致性验证：
+
+| 层级 | 比对内容 | 样本 | 结果 |
+|------|---------|------|------|
+| Tier 1 | LHDR/UHDR 数值（mode, meta_floats, edr_scale, family） | 2 | ✅ 14/14 pass，误差 ≤ 5.5e-8 |
+| Tier 2 | GainMapMetadata 二进制（62B/142B/144B MD5） | 2 | ✅ 全部 MD5 一致 |
+| Tier 3 | ISOBMFF 结构（ftyp, pitm, iinf, iref, ipco, ipma, iloc） | 2 | ✅ 65/245 items, 63/243 associations |
+| Tier 4 | 像素解码验证 + SDR base | 2 | ✅ SDR bit-exact，增益图瓦片可解码 |
+| Apple ImageIO | `CGImageSourceCopyAuxiliaryDataInfoAtIndex` | 2 | ✅ normal + oppo-compat 均通过 |
+
+运行验证：
+
+```bash
+# 生成报告
+python3 tests/conformance/driver.py \
+  --sample-dir ../example \
+  --out-report conformance_report.md
+
+# 单文件检查
+./target/debug/xdremux-conformance dump output.heic dump.json
+./target/debug/xdremux-conformance compare-dump dump_a.json dump_b.json
+```
+
 ## 仓库结构
 
-| 路径                       | 用途                             |
-| ------------------------ | ------------------------------ |
-| `xdremux/swift-cli/`     | Swift CLI 主入口。                 |
-| `xdremux/python/`        | Python CLI 与 HEIF I/O 辅助实现。    |
-| `apps/macos/XDRemuxApp/` | macOS SwiftUI App。             |
-| `tests/`                 | 转换器测试。                         |
-| `fixtures/`              | 小型测试样本与样本说明。                   |
-| `scripts/`               | 本地构建、运行和验证脚本。                  |
-| `experiments/`           | 实验性代码。                         |
+| 路径 | 用途 |
+|------|------|
+| `xdremux/swift-cli/` | Swift CLI 主入口 |
+| `xdremux/python/` | Python CLI 与 HEIF I/O 辅助实现 |
+| `xdremux/rust/` | Rust 核心库（跨平台动态库，供 Flutter 调用） |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI App |
+| `apps/flutter/` | Flutter 跨平台 App 骨架 |
+| `tests/conformance/` | 跨实现一致性验证 harness（Rust CLI + Python driver） |
+| `fixtures/` | 小型测试样本与样本说明 |
+| `scripts/` | 本地构建、运行和验证脚本 |
+| `experiments/` | 实验性代码 |
 
 ## 已知限制
 

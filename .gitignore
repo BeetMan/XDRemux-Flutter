@@ -16,6 +16,10 @@ xdremux_py/
 target/
 **/target/
 
+# Conformance outputs
+example/rust_output/
+example/swift_output/
+
 # Large binaries
 *.apk
 *.heic
