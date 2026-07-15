@@ -80,8 +80,7 @@ Vision 只在主体 plane 为空时兜底，并用于选择人脸兴趣 Focus。
 
 Apple 人像模式会省略已经完成语义迁移的大型 OPPO 人像私有尾，避免同时保存
 两套景深资源。它与 `--oppo-compatible` 互斥；同时指定会在写文件前报错。
-Apple 虚化强度映射仍在设备验证阶段，研究边界见
-`docs/research/oppo-apple-portrait-information-coverage-20260713.md`。
+Apple 虚化强度映射仍在设备验证阶段。
 
 ### Python CLI
 
@@ -157,9 +156,7 @@ XDRemux 适用于可以拍摄 ProXDR 照片的 OPPO、OnePlus、realme 设备。
 | `tests/`                 | 转换器测试。                         |
 | `fixtures/`              | 小型测试样本与样本说明。                   |
 | `scripts/`               | 本地构建、运行和验证脚本。                  |
-| `docs/`                  | 设计说明、研究记录和维护文档。                |
 | `experiments/`           | 实验性代码。                         |
-| `skills/`                | 与 ISO HDR 合规审计相关的 agent skill。 |
 
 ## 已知限制
 

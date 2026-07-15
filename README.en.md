@@ -85,8 +85,7 @@ the Apple portrait graph.
 Apple portrait mode omits the large OPPO portrait tail after semantic
 migration, avoiding two complete depth-resource sets. It is mutually exclusive
 with `--oppo-compatible`; enabling both fails before writing. Blur-strength
-mapping is still under device validation; see
-`docs/research/oppo-apple-portrait-information-coverage-20260713.md`.
+mapping is still under device validation.
 
 ### Python CLI
 
@@ -162,9 +161,7 @@ Among them, OPPO Find X8 Ultra, the Find X9 series, and realme GT8 Pro in Ricoh 
 | `tests/` | Converter tests. |
 | `fixtures/` | Small test samples and sample notes. |
 | `scripts/` | Local build, run, and validation scripts. |
-| `docs/` | Design notes, research records, and maintainer documentation. |
 | `experiments/` | Experimental code. |
-| `skills/` | Agent skill for ISO HDR compliance review. |
 
 ## Known limitations
 
