@@ -445,12 +445,10 @@ fn assemble_and_write(
     let pq_colr_i   = old_n + 3;  // colr nclx BT.2020 PQ (for tmap)
     let srgb_colr_i = old_n + 4;  // colr nclx sRGB (for gain grid)
     let pixi10_i    = old_n + 5;  // pixi 3ch 10bpp
-    let base_clli_i = old_n + 6;  // clli base
-    let tmap_clli_i = old_n + 7;  // clli tmap
-    let pixi8_i     = old_n + 8;  // pixi 3ch 8bpp
-    let gm_hvcc_i   = old_n + 9;  // hvcC for gain tiles
-    let gm_grid_ispe_i = old_n + 10; // ispe for gain grid
-    let gm_tile_ispe_i = old_n + 11; // ispe for gain tiles (512x512)
+    let pixi8_i     = old_n + 6;  // pixi 3ch 8bpp
+    let gm_hvcc_i   = old_n + 7;  // hvcC for gain tiles
+    let gm_grid_ispe_i = old_n + 8;  // ispe for gain grid
+    let gm_tile_ispe_i = old_n + 9;  // ispe for gain tiles (512x512)
 
     // Build ipco (source + new properties, matching Python reference order)
     let (ipco_start, ipco_end) = parsed.ipco_box_raw.as_ref()
@@ -462,8 +460,6 @@ fn assemble_and_write(
     ipco.extend_from_slice(COLR_BT2020_PQ_BOX);          // for tmap
     ipco.extend_from_slice(COLR_SRGB_BOX);                // for gain grid
     ipco.extend_from_slice(PIXI_RGB10_BOX);               // for tmap/primary
-    ipco.extend_from_slice(&isobmff::make_clli_box(203, 64));   // base clli
-    ipco.extend_from_slice(&isobmff::make_clli_box(1000, 315)); // tmap clli
     ipco.extend_from_slice(PIXI_RGB8_BOX);                // for gain grid
     ipco.extend_from_slice(&gain_hvcc_box);               // gain tile HEVC config
     ipco.extend_from_slice(&isobmff::make_ispe_box(mask_width.max(1), mask_height.max(1))); // gain grid
@@ -481,13 +477,9 @@ fn assemble_and_write(
         let mut assocs = entry.associations.clone();
         if entry.item_id == parsed.primary_id {
             // Python reference augments the primary grid item with colr(e),
-            // clli, and irot(e) — Apple ImageIO requires these for HDR
-            // detection.
+            // irot(e) — Apple ImageIO requires these for HDR detection.
             if !assocs.iter().any(|(idx, _)| *idx == colr_prof) {
                 assocs.push((colr_prof, true));
-            }
-            if !assocs.iter().any(|(idx, _)| *idx == base_clli_i) {
-                assocs.push((base_clli_i, false));
             }
             if !assocs.iter().any(|(idx, _)| *idx == irot_pick) {
                 assocs.push((irot_pick, true));
@@ -511,7 +503,7 @@ fn assemble_and_write(
         (gm_grid_ispe_i, true), (srgb_colr_i, true), (pixi8_i, true), (irot_pick, true),
         (auxc_i, true),
     ], parsed.ipma_flags));
-    // tmap: colr(PQ)(e) + pixi10(e) + ispe(primary_grid)(e) + clli(tmap) + irot(e)
+    // tmap: colr(PQ)(e) + pixi10(e) + ispe(primary_grid)(e) + irot(e)
     // Find primary grid ispe index from source
     let _primary_ispe_idx = parsed.props.iter()
         .position(|p| p.ptype == "ispe")
@@ -535,7 +527,7 @@ fn assemble_and_write(
         .unwrap_or(4);
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(cfg.tmap_id, &[
         (pq_colr_i, true), (pixi10_i, true), (primary_ispe_idx, true),
-        (tmap_clli_i, false), (irot_pick, true),
+        (irot_pick, true),
     ], parsed.ipma_flags));
 
     let ipma_header = &source_data[parsed.ipma_box.data_start..parsed.ipma_box.data_start + 4]; // version+flags only
@@ -560,24 +552,16 @@ fn assemble_and_write(
         .cloned()
         .collect();
 
-    // Python: keep all original cdsc as-is, and ADD new cdsc entries for EXIF items
-    // that also point to tmap_id (don't modify originals — iOS needs the standalone refs)
-    let mut extra_cdsc: Vec<IrefEntry> = Vec::new();
-    for r in &output_refs {
+    // Swift behaviour: augment Exif cdsc refs to also point to tmap_id
+    // in-place, rather than creating duplicate standalone entries.
+    for r in &mut output_refs {
         if r.rtype == "cdsc" {
             let is_exif = parsed.items.iter().any(|it| it.item_id == r.from && it.itype == "Exif");
             if is_exif && !r.to.contains(&cfg.tmap_id) {
-                let mut augmented = r.to.clone();
-                augmented.push(cfg.tmap_id);
-                extra_cdsc.push(IrefEntry {
-                    rtype: "cdsc".into(),
-                    from: r.from,
-                    to: augmented,
-                });
+                r.to.push(cfg.tmap_id);
             }
         }
     }
-    output_refs.extend(extra_cdsc);
 
     if !cfg.tile_ids.is_empty() {
         output_refs.push(IrefEntry {
