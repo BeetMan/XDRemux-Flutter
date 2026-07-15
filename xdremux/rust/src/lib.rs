@@ -628,9 +628,9 @@ mod tests {
 
         eprintln!("\n===== IDAT COMPARISON =====");
         eprintln!("PY:");
-        let (py_idat, py_tmap, py_xmp) = find_payloads(&py_data);
+        let (_py_idat, py_tmap, py_xmp) = find_payloads(&py_data);
         eprintln!("RUST:");
-        let (rust_idat, rust_tmap, rust_xmp) = find_payloads(&rust_data);
+        let (_rust_idat, rust_tmap, rust_xmp) = find_payloads(&rust_data);
 
         eprintln!("\n--- tmap ---");
         eprintln!("PY  : {}B {}", py_tmap.len(), hex(&py_tmap));
