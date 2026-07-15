@@ -460,6 +460,11 @@ def write_heic_passthrough(source_path: str, output_path: str,
 
     # mdat content: use ds (data start) to handle extended-size boxes
     src_mdat_content = src[src_mdat_ds:src_mdat_off + src_mdat_sz]
+    # Preserve every byte after mdat as an opaque OPPO metadata envelope.  This
+    # includes QTI/FileExtendedContainer depth, watermark, edit, live-photo,
+    # private HDR fallback, and unknown vendor data.  The ISO graph rewrite must
+    # not infer that unparsed tail bytes are disposable.
+    src_post_mdat = src[src_mdat_off + src_mdat_sz:]
 
     # ── 2. Parse source meta structure ─────────────────────────────
     _, _, meta_body = _fullbox(src, src_meta_ds)
@@ -1068,6 +1073,7 @@ def write_heic_passthrough(source_path: str, output_path: str,
     out += b'mdat'
     out += src_mdat_content
     out += gm_mdat_data
+    out += src_post_mdat
 
     with open(output_path, 'wb') as f:
         f.write(out)

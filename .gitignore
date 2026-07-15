@@ -19,6 +19,7 @@ xdremux_py/
 *.zip
 
 # Local agent / project scaffolding (not for tracking)
+.codex/
 .claude/
 .sisyphus/
 .flake8
@@ -26,6 +27,12 @@ AGENTS.md
 CLAUDE.md
 HANDOFF.md
 Makefile
+docs/
+skills/
+**/MIGRATION_PLAN.md
+scripts/agent_completion_gate.py
+tests/validation/test_agent_completion_gate.py
+tests/validation/verify_swift_cli_sample.py
 apk_analysis_results/
 evals/
 handoff_package/
@@ -44,4 +51,4 @@ final-output/
 
 # Canonical conclusions (extracted from tarball)
 organized/
-organized_cold_data.tar.gz
+organized_customers.tar.gz

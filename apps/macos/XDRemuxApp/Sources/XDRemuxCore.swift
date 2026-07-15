@@ -109,21 +109,45 @@ enum Family: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
 
 enum InputProcessingBranch: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
     case system
+    case systemDecoded = "system-decoded"
     case hybrid
     case passthrough
 
     var id: String { rawValue }
 }
 
+enum TmapFormat: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
+    case strict = "strict"
+    case imageIO = "imageio"
+
+    var id: String { rawValue }
+}
+
 enum OppoCompatibility: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
     case auto
+    case iso
+    case isoNoLocal = "iso-no-local"
+    case isoGraph = "iso-graph"
     case on
     case tail
     case off
 
     var id: String { rawValue }
     var wantsOppoCompat: Bool { self != .off }
-    var wantsOppoActivationTagflags: Bool { self == .on || self == .tail }
+}
+
+enum OppoCameraTail: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
+    case off
+    case watermark
+    case compact
+    case preserve
+    case preserveWithoutPortrait = "preserve-without-portrait"
+    case preserveWithoutPrivateUHDR = "preserve-without-private-uhdr"
+    case preserveWithoutPrivateHDR = "preserve-without-private-hdr"
+    case preserveNoUHDR = "preserve-no-uhdr"
+    case preserveNoHDR = "preserve-no-hdr"
+
+    var id: String { rawValue }
 }
 
 struct ConversionConfig: Sendable {
@@ -131,10 +155,22 @@ struct ConversionConfig: Sendable {
     var outputDirectory: URL?
     var oppoCompatibility: OppoCompatibility = .off
     var inputProcessingBranch: InputProcessingBranch = .hybrid
+    var oppoCameraTail: OppoCameraTail = .preserve
+    var tmapFormat: TmapFormat = .imageIO
     var debugDirectory: URL?
     var fileNameSuffix: String = "_iso"
     var skipExisting: Bool = true
     var maxConcurrentJobs: Int = min(ProcessInfo.processInfo.activeProcessorCount, 4)
+
+    var oppoGalleryCompatibilityEnabled: Bool {
+        get { oppoCompatibility.wantsOppoCompat }
+        set { oppoCompatibility = newValue ? .auto : .off }
+    }
+
+    var preservesPortraitEditingData: Bool {
+        get { oppoCameraTail != .preserveWithoutPortrait }
+        set { oppoCameraTail = newValue ? .preserve : .preserveWithoutPortrait }
+    }
 }
 
 private func fourCCString(_ value: UInt32?) -> String {
@@ -154,6 +190,7 @@ private struct ManifestEntry {
     let offset: Int
     let length: Int
     let version: Any?
+    let jsonOrder: Int
     let start: Int
     let end: Int
 }
@@ -711,7 +748,7 @@ private enum LHDRExtractor {
     }
 
     private static func locateManifest(in data: Data) throws -> ManifestInfo {
-        let extensionStart = try findExtensionStart(in: data)
+        let detectedExtensionStart = try? findExtensionStart(in: data)
         guard let manifestArray = parseManifest(in: data) else {
             throw XDRemuxError.manifestNotFound
         }
@@ -721,9 +758,21 @@ private enum LHDRExtractor {
             throw XDRemuxError.manifestNotFound
         }
         let jsonEnd = jsonEndBase + 1
+        let markerStart = lastIndex(of: Data([0] + "jxrs".utf8), in: data)
+        let hasValidJXRSFooter: Bool = markerStart.map { marker in
+            guard marker + 9 == data.count else { return false }
+            let footerLength = Int(data[marker + 5])
+                | (Int(data[marker + 6]) << 8)
+                | (Int(data[marker + 7]) << 16)
+                | (Int(data[marker + 8]) << 24)
+            return footerLength == data.count - jsonStart
+        } ?? false
+        guard detectedExtensionStart != nil || hasValidJXRSFooter else {
+            throw XDRemuxError.qtiMarkerNotFound
+        }
 
         var entries: [ManifestEntry] = []
-        for raw in manifestArray {
+        for (jsonOrder, raw) in manifestArray.enumerated() {
             guard let dict = raw as? [String: Any],
                   let offset = dict["offset"] as? NSNumber,
                   let length = dict["length"] as? NSNumber else {
@@ -738,12 +787,16 @@ private enum LHDRExtractor {
                     offset: offsetValue,
                     length: lengthValue,
                     version: dict["version"],
+                    jsonOrder: jsonOrder,
                     start: offsetValue - lengthValue,
                     end: offsetValue
                 )
             )
         }
         entries.sort { $0.start < $1.start }
+        let extensionStart = detectedExtensionStart
+            ?? entries.map { jsonStart - $0.offset }.filter { $0 >= 0 }.min()
+            ?? jsonStart
 
         return ManifestInfo(
             extensionStart: extensionStart,
@@ -1579,7 +1632,8 @@ private enum ISOHDRWriter {
                 outputURL: outputURL,
                 gainMapChannelCount: gainMap.channelCount,
                 inputProcessingBranch: inputProcessingBranch,
-                oppoCompatibility: oppoCompatibility
+                oppoCompatibility: oppoCompatibility,
+                decodePrimaryImage: inputProcessingBranch == .systemDecoded
             )
             try verifyOutput(outputURL, requiredGainMapPixelFormat: requiredPixelFormat(for: inputProcessingBranch, channelCount: gainMap.channelCount))
         }
@@ -1717,7 +1771,8 @@ private enum ISOHDRWriter {
         outputURL: URL,
         gainMapChannelCount: Int,
         inputProcessingBranch: InputProcessingBranch,
-        oppoCompatibility: OppoCompatibility
+        oppoCompatibility: OppoCompatibility,
+        decodePrimaryImage: Bool = false
     ) throws {
         guard let destination = CGImageDestinationCreateWithURL(
             outputURL as CFURL,
@@ -1743,7 +1798,7 @@ private enum ISOHDRWriter {
             kCGImageDestinationMergeMetadata: primaryMetadata
         ]
         
-        if let originalProperties {
+        if let originalProperties, !decodePrimaryImage {
             for (key, value) in originalProperties {
                 imageOptions[key] = value
             }
@@ -1762,7 +1817,31 @@ private enum ISOHDRWriter {
             imageOptions[kCGImagePropertyExifDictionary] = exifDictionary as CFDictionary
         }
 
-        CGImageDestinationAddImageFromSource(destination, source, 0, imageOptions as CFDictionary)
+        if decodePrimaryImage {
+            guard let decodedImage = CGImageSourceCreateImageAtIndex(
+                source,
+                0,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+            ),
+            let context = CGContext(
+                data: nil,
+                width: decodedImage.width,
+                height: decodedImage.height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                throw XDRemuxError.unableToLoadBaseImage(outputURL)
+            }
+            context.draw(decodedImage, in: CGRect(x: 0, y: 0, width: decodedImage.width, height: decodedImage.height))
+            guard let image8Bit = context.makeImage() else {
+                throw XDRemuxError.unableToLoadBaseImage(outputURL)
+            }
+            CGImageDestinationAddImage(destination, image8Bit, imageOptions as CFDictionary)
+        } else {
+            CGImageDestinationAddImageFromSource(destination, source, 0, imageOptions as CFDictionary)
+        }
         CGImageDestinationAddAuxiliaryDataInfo(destination, kCGImageAuxiliaryDataTypeISOGainMap, auxiliaryDataInfo)
 
         guard CGImageDestinationFinalize(destination) else {
@@ -1874,7 +1953,7 @@ private enum ISOHDRWriter {
 
     private static func requiredPixelFormat(for branch: InputProcessingBranch, channelCount: Int) throws -> UInt32? {
         switch branch {
-        case .system, .hybrid, .passthrough:
+        case .system, .systemDecoded, .hybrid, .passthrough:
             return nil
         }
     }
@@ -1885,7 +1964,7 @@ private enum ISOHDRWriter {
         branch: InputProcessingBranch
     ) throws {
         switch branch {
-        case .system, .hybrid, .passthrough:
+        case .system, .systemDecoded, .hybrid, .passthrough:
             return
         }
     }
@@ -2051,6 +2130,347 @@ private func verifyImageIOISOGainMap(_ outputURL: URL) throws {
     }
 }
 
+private func isoGainMapPixelFormat(at url: URL) -> UInt32? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let info = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+              source,
+              0,
+              kCGImageAuxiliaryDataTypeISOGainMap
+          ) as? [CFString: Any],
+          let description = info[kCGImageAuxiliaryDataInfoDataDescription] as? [CFString: Any] else {
+        return nil
+    }
+    if let number = description[kCGImagePropertyPixelFormat] as? NSNumber {
+        return number.uint32Value
+    }
+    if let string = description[kCGImagePropertyPixelFormat] as? String, string.utf8.count == 4 {
+        return pixelFormatFourCC(string)
+    }
+    return nil
+}
+
+private func isSubsampledGainMapPixelFormat(_ pixelFormat: UInt32) -> Bool {
+    pixelFormat == pixelFormatFourCC("420f")
+        || pixelFormat == pixelFormatFourCC("420v")
+        || pixelFormat == pixelFormatFourCC("x420")
+}
+
+private func gainMapEncodingMatchesTarget(at url: URL, compatibility: OppoCompatibility) -> Bool {
+    guard let pixelFormat = isoGainMapPixelFormat(at: url) else { return false }
+    if compatibility.wantsOppoCompat {
+        return isSubsampledGainMapPixelFormat(pixelFormat)
+    }
+    return pixelFormat == pixelFormatFourCC("444f")
+        || pixelFormat == pixelFormatFourCC("L008")
+}
+
+private func pixelFormatFourCC(_ value: String) -> UInt32 {
+    value.utf8.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+}
+
+private func rejectLossyGainMapPromotion(inputURL: URL, compatibility: OppoCompatibility) throws {
+    guard !compatibility.wantsOppoCompat,
+          let pixelFormat = isoGainMapPixelFormat(at: inputURL),
+          isSubsampledGainMapPixelFormat(pixelFormat) else { return }
+    throw XDRemuxError.invalidContainer(
+        "cannot promote an existing 4:2:0 Gain Map to high-spec 4:4:4 because chroma information has already been discarded"
+    )
+}
+
+private let oppoCameraWatermarkAuxiliaryEntryNames: Set<String> = [
+    "color.space",
+    "gr.effect.info",
+    "master.mode.preset.info",
+    "private.emptyspace"
+]
+
+private let oppoCameraPortraitEditingEntryNames: Set<String> = [
+    "crop.region",
+    "front.depth",
+    "front.depth.config",
+    "front.hair.mask",
+    "front.matter.info",
+    "front.negevimg",
+    "front.segment",
+    "mesh.coord",
+    "mesh.coord.config",
+    "rear.depth",
+    "rear.depth.config",
+    "rear.spotlight",
+    "src.image",
+    "src.image.block"
+]
+
+private let oppoCameraCompactPortraitTailEntryNames: Set<String> =
+    oppoCameraPortraitEditingEntryNames.union(["hdr.transform.data", "src.local.hdr.linear.mask"])
+
+private func shouldPreserveOppoCameraTailEntry(_ name: String, mode: OppoCameraTail) -> Bool {
+    switch mode {
+    case .off:
+        return false
+    case .watermark:
+        return name.hasPrefix("watermark.") || oppoCameraWatermarkAuxiliaryEntryNames.contains(name)
+    case .compact:
+        return shouldPreserveOppoCameraTailEntry(name, mode: .watermark)
+            || oppoCameraCompactPortraitTailEntryNames.contains(name)
+    case .preserveWithoutPortrait:
+        return !oppoCameraPortraitEditingEntryNames.contains(name)
+    case .preserveWithoutPrivateUHDR:
+        return !oppoPrivateUHDRTailEntryNames.contains(name)
+    case .preserveWithoutPrivateHDR:
+        return !isOppoPrivateHDRTailEntry(name)
+    case .preserve, .preserveNoUHDR, .preserveNoHDR:
+        return true
+    }
+}
+
+private let oppoPrivateUHDRTailEntryNames: Set<String> = [
+    "local.uhdr.gainmap.data",
+    "local.uhdr.gainmap.info"
+]
+
+private func isOppoPrivateHDRTailEntry(_ name: String) -> Bool {
+    oppoPrivateUHDRTailEntryNames.contains(name)
+        || name.hasPrefix("hdr.")
+        || name.hasPrefix("local.hdr.")
+        || name.hasPrefix("src.local.hdr.")
+}
+
+private func shouldNeutralizeOppoCameraTailEntry(_ name: String, mode: OppoCameraTail) -> Bool {
+    switch mode {
+    case .preserveNoUHDR:
+        return oppoPrivateUHDRTailEntryNames.contains(name)
+    case .preserveNoHDR:
+        return isOppoPrivateHDRTailEntry(name)
+    case .off, .watermark, .compact, .preserve, .preserveWithoutPortrait, .preserveWithoutPrivateUHDR, .preserveWithoutPrivateHDR:
+        return false
+    }
+}
+
+private func appendCompleteSourceTail(
+    outputURL: URL,
+    sourceData: Data,
+    manifestInfo: ManifestInfo,
+    mode: OppoCameraTail
+) throws {
+    guard let sourceMdat = isobmffBoxes(in: sourceData, start: 0, end: sourceData.count)
+        .first(where: { $0.type == "mdat" }) else {
+        throw XDRemuxError.invalidContainer("source mdat missing while preserving OPPO metadata tail")
+    }
+    let tailStart = sourceMdat.boxStart + sourceMdat.size
+    guard tailStart < sourceData.count else { return }
+    var tail = sourceData.subdata(in: tailStart..<sourceData.count)
+
+    if mode == .preserveNoUHDR || mode == .preserveNoHDR {
+        let jsonStart = manifestInfo.jsonStart - tailStart
+        let jsonEnd = manifestInfo.jsonEnd - tailStart
+        guard jsonStart >= 0, jsonEnd <= tail.count, jsonStart < jsonEnd else {
+            throw XDRemuxError.invalidContainer("OPPO manifest is outside preserved tail")
+        }
+        for entry in manifestInfo.entries where shouldNeutralizeOppoCameraTailEntry(entry.name, mode: mode) {
+            let nameBytes = Data(entry.name.utf8)
+            guard let range = tail.range(of: nameBytes, options: [], in: jsonStart..<jsonEnd),
+                  !range.isEmpty else {
+                throw XDRemuxError.invalidContainer("unable to neutralize OPPO tail entry \(entry.name)")
+            }
+            // Keep the JSON and tail byte lengths stable. Exact vendor lookups
+            // no longer match, while payload bytes and every offset stay intact.
+            tail[range.lowerBound] = UInt8(ascii: "x")
+        }
+    }
+
+    if let outputData = try? Data(contentsOf: outputURL, options: [.mappedIfSafe]),
+       outputData.count >= tail.count,
+       outputData.suffix(tail.count) == tail {
+        return
+    }
+
+    let handle = try FileHandle(forWritingTo: outputURL)
+    defer { try? handle.close() }
+    try handle.seekToEnd()
+    try handle.write(contentsOf: tail)
+}
+
+private struct PackedOppoCameraTailEntry {
+    let entry: ManifestEntry
+    let payloadStart: Int
+}
+
+private struct OppoCameraTailManifestRecord: Encodable {
+    let length: Int
+    let name: String
+    let offset: Int
+    let version: Int
+}
+
+private func oppoCameraTailTag(in sourceData: Data) -> Data {
+    guard sourceData.count >= 9,
+          sourceData[sourceData.count - 9] == 0 else {
+        return Data("jxrs".utf8)
+    }
+    let tag = sourceData.subdata(in: sourceData.count - 8..<sourceData.count - 4)
+    guard tag.allSatisfy({ (32...126).contains($0) }) else {
+        return Data("jxrs".utf8)
+    }
+    return tag
+}
+
+private func appendOppoCameraTailIfNeeded(
+    outputURL: URL,
+    sourceData: Data,
+    extracted: ExtractedLHDR,
+    mode: OppoCameraTail
+) throws {
+    guard mode != .off else { return }
+
+    if mode == .preserve || mode == .preserveNoUHDR || mode == .preserveNoHDR {
+        try appendCompleteSourceTail(
+            outputURL: outputURL,
+            sourceData: sourceData,
+            manifestInfo: extracted.manifestInfo,
+            mode: mode
+        )
+        return
+    }
+
+    let selected = extracted.manifestInfo.entries.filter {
+        shouldPreserveOppoCameraTailEntry($0.name, mode: mode)
+    }
+    guard !selected.isEmpty else { return }
+
+    var payload = Data()
+    var packedEntries: [PackedOppoCameraTailEntry] = []
+    let selectedWithSourceStart = selected.map { entry -> (entry: ManifestEntry, sourceStart: Int) in
+        let manifestRelativeStart = extracted.manifestInfo.jsonStart - entry.offset
+        if manifestRelativeStart >= 0,
+           manifestRelativeStart + entry.length <= sourceData.count {
+            return (entry, manifestRelativeStart)
+        }
+        return (entry, extracted.dataBase + entry.start)
+    }
+
+    for (entry, sourceStart) in selectedWithSourceStart.sorted(by: { $0.sourceStart < $1.sourceStart }) {
+        let sourceEnd = sourceStart + entry.length
+        guard sourceStart >= 0, sourceEnd <= sourceData.count else {
+            throw XDRemuxError.invalidContainer("OPPO camera tail entry \(entry.name) is out of bounds")
+        }
+        let payloadStart = payload.count
+        payload.append(sourceData.subdata(in: sourceStart..<sourceEnd))
+        packedEntries.append(PackedOppoCameraTailEntry(entry: entry, payloadStart: payloadStart))
+    }
+
+    let payloadLength = payload.count
+    var packedByName: [String: PackedOppoCameraTailEntry] = [:]
+    for packed in packedEntries {
+        packedByName[packed.entry.name] = packed
+    }
+    let manifestRecords: [OppoCameraTailManifestRecord] = selected
+        .sorted { $0.jsonOrder < $1.jsonOrder }
+        .compactMap { entry in
+            guard let packed = packedByName[entry.name] else { return nil }
+            return OppoCameraTailManifestRecord(
+                length: entry.length,
+                name: entry.name,
+                offset: payloadLength - packed.payloadStart,
+                version: manifestVersion(entry.version)
+            )
+        }
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let manifestJSON = try encoder.encode(manifestRecords)
+    var tail = Data()
+    tail.append(payload)
+    tail.append(manifestJSON)
+    tail.append(0)
+    tail.append(oppoCameraTailTag(in: sourceData))
+    appendUInt32LE(manifestJSON.count + 1 + 4 + 4, to: &tail)
+
+    let handle = try FileHandle(forWritingTo: outputURL)
+    defer { try? handle.close() }
+    try handle.seekToEnd()
+    try handle.write(contentsOf: tail)
+}
+
+private func hasValidOutput(
+    _ outputURL: URL,
+    oppoCameraTail: OppoCameraTail,
+    oppoCompatibility: OppoCompatibility
+) -> Bool {
+    guard gainMapEncodingMatchesTarget(at: outputURL, compatibility: oppoCompatibility) else { return false }
+    switch oppoCameraTail {
+    case .off:
+        return true
+    case .watermark, .compact, .preserve, .preserveWithoutPortrait, .preserveWithoutPrivateUHDR, .preserveWithoutPrivateHDR, .preserveNoUHDR, .preserveNoHDR:
+        return hasValidCompactOppoCameraTail(outputURL, mode: oppoCameraTail)
+    }
+}
+
+private func hasValidCompactOppoCameraTail(_ outputURL: URL, mode: OppoCameraTail) -> Bool {
+    guard let data = try? Data(contentsOf: outputURL, options: [.mappedIfSafe]),
+          data.count >= 9 else {
+        return false
+    }
+    let markerStart = data.count - 9
+    let tag = data.subdata(in: markerStart + 1..<markerStart + 5)
+    guard data[markerStart] == 0,
+          tag == Data("jxrs".utf8) || tag == Data("wtmk".utf8),
+          markerStart + 9 == data.count,
+          let jsonStart = lastIndex(of: Data("[{".utf8), in: data),
+          jsonStart < markerStart else {
+        return false
+    }
+
+    let footerOffset = markerStart + 5
+    let footerLength = Int(data[footerOffset])
+        | (Int(data[footerOffset + 1]) << 8)
+        | (Int(data[footerOffset + 2]) << 16)
+        | (Int(data[footerOffset + 3]) << 24)
+    guard footerLength == data.count - jsonStart,
+          let jsonEndBase = firstIndex(of: UInt8(ascii: "]"), in: data, startingAt: jsonStart),
+          jsonEndBase < markerStart else {
+        return false
+    }
+
+    let manifestData = data.subdata(in: jsonStart..<(jsonEndBase + 1))
+    guard let object = try? JSONSerialization.jsonObject(with: manifestData, options: []),
+          let manifest = object as? [[String: Any]] else {
+        return false
+    }
+    let names = manifest.compactMap { $0["name"] as? String }
+    if mode == .preserve {
+        return !names.isEmpty
+    }
+    if mode == .preserveWithoutPortrait {
+        return !names.isEmpty && names.allSatisfy { !oppoCameraPortraitEditingEntryNames.contains($0) }
+    }
+    if mode == .preserveWithoutPrivateUHDR {
+        return !names.isEmpty && names.allSatisfy { !oppoPrivateUHDRTailEntryNames.contains($0) }
+    }
+    if mode == .preserveWithoutPrivateHDR {
+        return !names.isEmpty && names.allSatisfy { !isOppoPrivateHDRTailEntry($0) }
+    }
+    if mode == .preserveNoUHDR {
+        return !names.isEmpty && names.allSatisfy { !oppoPrivateUHDRTailEntryNames.contains($0) }
+    }
+    if mode == .preserveNoHDR {
+        return !names.isEmpty && names.allSatisfy { !shouldNeutralizeOppoCameraTailEntry($0, mode: mode) }
+    }
+    return !names.isEmpty && names.allSatisfy {
+        shouldPreserveOppoCameraTailEntry($0, mode: mode) && !$0.hasPrefix("local.uhdr.")
+    }
+}
+
+private func manifestVersion(_ value: Any?) -> Int {
+    if let number = value as? NSNumber {
+        return number.intValue
+    }
+    if let string = value as? String, let parsed = Int(string) {
+        return parsed
+    }
+    return 1
+}
+
 private enum XDRemuxProductCore {
     private static let fileManager = FileManager.default
 
@@ -2060,7 +2480,9 @@ private enum XDRemuxProductCore {
         familyPreference: Family,
         debugRootURL: URL?,
         oppoCompatibility: OppoCompatibility = .off,
-        inputProcessingBranch: InputProcessingBranch = .hybrid
+        inputProcessingBranch: InputProcessingBranch = .hybrid,
+        oppoCameraTail: OppoCameraTail = .preserve,
+        tmapFormat: TmapFormat = .imageIO
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
             throw XDRemuxError.inputNotFound(inputURL)
@@ -2076,6 +2498,7 @@ private enum XDRemuxProductCore {
             throw XDRemuxError.unableToRead(inputURL)
         }
 
+        try rejectLossyGainMapPromotion(inputURL: inputURL, compatibility: oppoCompatibility)
         let productInput = try prepareProductInput(
             inputURL: inputURL,
             sourceData: sourceData,
@@ -2094,14 +2517,41 @@ private enum XDRemuxProductCore {
             }
         }
 
+        // Complete OPPO preservation requires the source-primary graft path. ImageIO's
+        // direct writer and the experimental passthrough writer may normalize or omit
+        // non-HDR HEIF items before the opaque camera tail is restored.
+        let effectiveInputProcessingBranch: InputProcessingBranch = (
+            oppoCameraTail == .preserve
+                || oppoCameraTail == .preserveWithoutPortrait
+                || oppoCameraTail == .preserveWithoutPrivateUHDR
+                || oppoCameraTail == .preserveWithoutPrivateHDR
+                || tmapFormat == .strict
+        )
+            ? .hybrid
+            : inputProcessingBranch
         try ProductGainMapWriter.write(
             inputURL: inputURL,
             outputURL: actualOutputURL,
             sourceData: sourceData,
             productInput: productInput,
             oppoCompatibility: oppoCompatibility,
-            inputProcessingBranch: inputProcessingBranch
+            inputProcessingBranch: effectiveInputProcessingBranch,
+            strictISO21496: tmapFormat == .strict
         )
+        try restoreOppoUserCommentFromSource(
+            outputURL: actualOutputURL,
+            sourceData: sourceData,
+            compatibility: oppoCompatibility
+        )
+        try appendOppoCameraTailIfNeeded(
+            outputURL: actualOutputURL,
+            sourceData: sourceData,
+            extracted: productInput.extracted,
+            mode: oppoCameraTail
+        )
+        guard gainMapEncodingMatchesTarget(at: actualOutputURL, compatibility: oppoCompatibility) else {
+            throw XDRemuxError.invalidContainer("output Gain Map encoding does not match the selected compatibility target")
+        }
 
         if writesInPlace {
             _ = try fileManager.replaceItemAt(outputURL, withItemAt: actualOutputURL)
@@ -2256,10 +2706,11 @@ private enum ProductGainMapWriter {
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
         oppoCompatibility: OppoCompatibility,
-        inputProcessingBranch: InputProcessingBranch
+        inputProcessingBranch: InputProcessingBranch,
+        strictISO21496: Bool
     ) throws {
         switch inputProcessingBranch {
-        case .system:
+        case .system, .systemDecoded:
             let writerInput = gainMapWriterInput(
                 productInput: productInput,
                 oppoCompatibility: oppoCompatibility
@@ -2270,7 +2721,7 @@ private enum ProductGainMapWriter {
                 style: writerInput.style,
                 outputURL: outputURL,
                 oppoCompatibility: oppoCompatibility,
-                inputProcessingBranch: .system
+                inputProcessingBranch: inputProcessingBranch
             )
         case .hybrid:
             try HybridGainMapWriter.write(
@@ -2278,7 +2729,8 @@ private enum ProductGainMapWriter {
                 outputURL: outputURL,
                 sourceData: sourceData,
                 productInput: productInput,
-                oppoCompatibility: oppoCompatibility
+                oppoCompatibility: oppoCompatibility,
+                strictISO21496: strictISO21496
             )
         case .passthrough:
             try DirectPassthroughGainMapWriter.write(
@@ -2311,7 +2763,8 @@ private enum HybridGainMapWriter {
         outputURL: URL,
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
-        oppoCompatibility: OppoCompatibility
+        oppoCompatibility: OppoCompatibility,
+        strictISO21496: Bool
     ) throws {
         try writeImageIOPreservedGainMapPassthrough(
             inputURL: inputURL,
@@ -2319,7 +2772,8 @@ private enum HybridGainMapWriter {
             sourceData: sourceData,
             productInput: productInput,
             oppoCompatibility: oppoCompatibility,
-            temporaryLabel: "hybrid"
+            temporaryLabel: "hybrid",
+            strictISO21496: strictISO21496
         )
     }
 }
@@ -2332,7 +2786,7 @@ private enum DirectPassthroughGainMapWriter {
         productInput: XDRemuxProductCore.ProductInput,
         oppoCompatibility: OppoCompatibility
     ) throws {
-        if oppoCompatibility.wantsOppoCompat {
+        if oppoCompatibility.wantsOppoCompat && productInput.extracted.mode != .uhdr {
             try writeImageIOPreservedGainMapPassthrough(
                 inputURL: inputURL,
                 outputURL: outputURL,
@@ -2375,7 +2829,8 @@ private func writeImageIOPreservedGainMapPassthrough(
     sourceData: Data,
     productInput: XDRemuxProductCore.ProductInput,
     oppoCompatibility: OppoCompatibility,
-    temporaryLabel: String
+    temporaryLabel: String,
+    strictISO21496: Bool = false
 ) throws {
     let parent = outputURL.deletingLastPathComponent()
     let stem = outputURL.deletingPathExtension().lastPathComponent
@@ -2435,7 +2890,9 @@ private func writeImageIOPreservedGainMapPassthrough(
         preservedURL: preservedURL,
         outputURL: outputURL,
         patchedUserComment: patchedUserComment,
-        preserveTmapColor: oppoCompatibility.wantsOppoCompat
+        preserveTmapColor: oppoCompatibility.wantsOppoCompat,
+        strictISO21496Tmap: strictISO21496,
+        fallbackXMPPayload: makeHdrgmXMP(infoFloats: productInput.extracted.metaFloats)
     )
 }
 
@@ -2447,17 +2904,28 @@ enum XDRemuxCore {
             familyPreference: config.family,
             debugRootURL: config.debugDirectory,
             oppoCompatibility: config.oppoCompatibility,
-            inputProcessingBranch: config.inputProcessingBranch
+            inputProcessingBranch: config.inputProcessingBranch,
+            oppoCameraTail: config.oppoCameraTail,
+            tmapFormat: config.tmapFormat
         )
     }
 
     static func isValidISOGainMapOutput(_ outputURL: URL) -> Bool {
         (try? verifyImageIOISOGainMap(outputURL)) != nil
     }
+
+    static func isValidOutput(_ outputURL: URL, config: ConversionConfig) -> Bool {
+        hasValidOutput(
+            outputURL,
+            oppoCameraTail: config.oppoCameraTail,
+            oppoCompatibility: config.oppoCompatibility
+        )
+    }
 }
 
 private let oppoUltraHDRFlag = 0x20000000
-private let oppoPrivateHDRBranchFlags = 0x40000 | 0x200000 | oppoUltraHDRFlag
+private let isoUltraHDRFlag = 0x00200000
+private let localHDRFlag = 0x00040000
 private let oppoTagFlagPrefixes = [
     "ASCIIOplus_",
     "ASCIIoppo_",
@@ -2466,10 +2934,34 @@ private let oppoTagFlagPrefixes = [
     "oppo_"
 ]
 
-/// Extract OPPO tagflags and adjust only the private HDR branch bits.
-private func adjustedOppoUserComment(in data: Data, compatibility: OppoCompatibility) -> String? {
-    guard compatibility != .off else { return nil }
+private func targetOppoTagFlags(_ sourceFlags: Int, compatibility: OppoCompatibility) -> Int {
+    switch compatibility {
+    case .auto, .off:
+        return sourceFlags
+    case .on, .tail:
+        return sourceFlags | oppoUltraHDRFlag
+    case .iso:
+        return (sourceFlags & ~oppoUltraHDRFlag) | isoUltraHDRFlag
+    case .isoNoLocal:
+        return (sourceFlags & ~oppoUltraHDRFlag & ~localHDRFlag) | isoUltraHDRFlag
+    case .isoGraph:
+        return sourceFlags & ~oppoUltraHDRFlag & ~isoUltraHDRFlag
+    }
+}
 
+/// Extract OPPO tagflags and adjust only explicit HDR routing bits.
+private func adjustedOppoUserComment(in data: Data, compatibility: OppoCompatibility) -> String? {
+    if let userComment = oppoUserComment(in: data),
+       let source = oppoTagFlags(from: userComment) {
+        let adjustedFlags = targetOppoTagFlags(source.flags, compatibility: compatibility)
+        guard adjustedFlags != source.flags else { return nil }
+        let digits = String(adjustedFlags)
+        return source.prefix
+            + String(repeating: "0", count: max(0, source.digitCount - digits.count))
+            + digits
+    }
+
+    // Fallback for malformed vendor Exif that ImageIO cannot type as a string.
     for prefix in oppoTagFlagPrefixes {
         let prefixData = Data(prefix.utf8)
         var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
@@ -2481,14 +2973,12 @@ private func adjustedOppoUserComment(in data: Data, compatibility: OppoCompatibi
             if digitEnd > range.upperBound,
                let flagStr = String(data: data.subdata(in: range.upperBound..<digitEnd), encoding: .utf8),
                let flags = Int(flagStr) {
-                let adjustedFlags: Int
-                if compatibility.wantsOppoActivationTagflags {
-                    adjustedFlags = flags | oppoUltraHDRFlag
-                } else {
-                    adjustedFlags = flags & ~oppoPrivateHDRBranchFlags
-                }
+                let adjustedFlags = targetOppoTagFlags(flags, compatibility: compatibility)
                 guard adjustedFlags != flags else { return nil }
-                return "\(prefix)\(adjustedFlags)"
+                let digits = String(adjustedFlags)
+                return prefix
+                    + String(repeating: "0", count: max(0, digitEnd - range.upperBound - digits.count))
+                    + digits
             }
             searchRange = range.upperBound..<data.endIndex
         }
@@ -2496,31 +2986,62 @@ private func adjustedOppoUserComment(in data: Data, compatibility: OppoCompatibi
     return nil
 }
 
-private func patchOppoUserComment(_ data: inout Data, patchedUserComment: String) -> Bool {
-    for prefix in oppoTagFlagPrefixes {
-        guard patchedUserComment.hasPrefix(prefix) else { continue }
-        let patchedDigits = String(patchedUserComment.dropFirst(prefix.count))
-        let prefixData = Data(prefix.utf8)
-        var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
-        while let range = data.range(of: prefixData, options: [], in: searchRange) {
-            var digitEnd = range.upperBound
-            while digitEnd < data.count, (48...57).contains(data[digitEnd]) {
-                digitEnd += 1
-            }
-            let digitCount = digitEnd - range.upperBound
-            guard digitCount > 0, patchedDigits.count <= digitCount else {
-                searchRange = range.upperBound..<data.endIndex
-                continue
-            }
-
-            var replacement = prefixData
-            replacement.append(Data(repeating: UInt8(ascii: "0"), count: digitCount - patchedDigits.count))
-            replacement.append(Data(patchedDigits.utf8))
-            data.replaceSubrange(range.lowerBound..<digitEnd, with: replacement)
-            return true
-        }
+private func restoreOppoUserCommentFromSource(
+    outputURL: URL,
+    sourceData: Data,
+    compatibility: OppoCompatibility
+) throws {
+    guard let sourceUserComment = oppoUserComment(in: sourceData),
+          let sourceTagFlags = oppoTagFlags(from: sourceUserComment) else {
+        return
     }
-    return false
+
+    let targetFlags = targetOppoTagFlags(sourceTagFlags.flags, compatibility: compatibility)
+
+    var data = try Data(contentsOf: outputURL)
+    guard let outputUserComment = oppoUserComment(in: data),
+          let outputTagFlags = oppoTagFlags(from: outputUserComment) else {
+        return
+    }
+
+    guard outputTagFlags.flags != targetFlags else { return }
+
+    let originalBytes = Data(outputUserComment.utf8)
+    let targetDigits = String(targetFlags)
+    guard targetDigits.count <= outputTagFlags.digitCount else {
+        throw XDRemuxError.invalidContainer("unable to preserve source OPPO UserComment without resizing")
+    }
+    let patchedUserComment = outputTagFlags.prefix
+        + String(repeating: "0", count: outputTagFlags.digitCount - targetDigits.count)
+        + targetDigits
+    let patchedBytes = Data(patchedUserComment.utf8)
+    guard originalBytes.count == patchedBytes.count,
+          let range = data.range(of: originalBytes) else {
+        throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment")
+    }
+
+    data.replaceSubrange(range, with: patchedBytes)
+    try data.write(to: outputURL, options: [.atomic])
+}
+
+private func oppoUserComment(in data: Data) -> String? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any],
+          let value = exif[kCGImagePropertyExifUserComment] else {
+        return nil
+    }
+    return value as? String
+}
+
+private func oppoTagFlags(from userComment: String) -> (prefix: String, digitCount: Int, flags: Int)? {
+    for prefix in oppoTagFlagPrefixes {
+        guard userComment.hasPrefix(prefix) else { continue }
+        let digits = String(userComment.dropFirst(prefix.count).prefix { $0.isNumber })
+        guard !digits.isEmpty, let flags = Int(digits) else { return nil }
+        return (prefix, digits.count, flags)
+    }
+    return nil
 }
 
 private struct OppoUserCommentPatch {
@@ -2529,38 +3050,125 @@ private struct OppoUserCommentPatch {
 }
 
 private func applyOppoUserCommentPatch(
-    _ data: inout Data,
-    sourceOffset: Int,
+    _ mdatPayload: inout Data,
+    mdatDataStart: Int,
+    exifEntry: ISOBMFFILocEntry,
     patchedUserComment: String
 ) -> OppoUserCommentPatch? {
-    for prefix in oppoTagFlagPrefixes {
-        guard patchedUserComment.hasPrefix(prefix) else { continue }
-        let patchedDigits = String(patchedUserComment.dropFirst(prefix.count))
-        let prefixData = Data(prefix.utf8)
-        var searchRange: Range<Data.Index>? = data.startIndex..<data.endIndex
-        while let range = data.range(of: prefixData, options: [], in: searchRange) {
-            var digitEnd = range.upperBound
-            while digitEnd < data.count, (48...57).contains(data[digitEnd]) {
-                digitEnd += 1
-            }
-            let digitCount = digitEnd - range.upperBound
-            guard digitCount > 0 else {
-                searchRange = range.upperBound..<data.endIndex
-                continue
-            }
+    guard exifEntry.constructionMethod == 0,
+          exifEntry.extents.count == 1,
+          let extent = exifEntry.extents.first else { return nil }
+    let localStart = extent.offset - mdatDataStart
+    let localEnd = localStart + extent.length
+    guard localStart >= 0, localEnd <= mdatPayload.count else { return nil }
+    var exifPayload = mdatPayload.subdata(in: localStart..<localEnd)
 
-            var replacement = prefixData
-            replacement.append(Data(repeating: UInt8(ascii: "0"), count: max(0, digitCount - patchedDigits.count)))
-            replacement.append(Data(patchedDigits.utf8))
-            let replacedRange = range.lowerBound..<digitEnd
-            data.replaceSubrange(replacedRange, with: replacement)
-            return OppoUserCommentPatch(
-                sourceRange: (sourceOffset + range.lowerBound)..<(sourceOffset + digitEnd),
-                delta: replacement.count - (digitEnd - range.lowerBound)
-            )
+    guard exifPayload.count >= 12 else { return nil }
+    let tiffStart = 4 + readUInt32BEUnchecked(exifPayload, at: 0)
+    guard tiffStart >= 4, tiffStart + 8 <= exifPayload.count else { return nil }
+    let isLittleEndian: Bool
+    if exifPayload[tiffStart] == UInt8(ascii: "I"), exifPayload[tiffStart + 1] == UInt8(ascii: "I") {
+        isLittleEndian = true
+    } else if exifPayload[tiffStart] == UInt8(ascii: "M"), exifPayload[tiffStart + 1] == UInt8(ascii: "M") {
+        isLittleEndian = false
+    } else {
+        return nil
+    }
+
+    func read16(_ offset: Int) -> Int? {
+        guard offset >= 0, offset + 2 <= exifPayload.count else { return nil }
+        if isLittleEndian {
+            return Int(exifPayload[offset]) | (Int(exifPayload[offset + 1]) << 8)
+        }
+        return (Int(exifPayload[offset]) << 8) | Int(exifPayload[offset + 1])
+    }
+    func read32(_ offset: Int) -> Int? {
+        guard offset >= 0, offset + 4 <= exifPayload.count else { return nil }
+        if isLittleEndian {
+            return Int(exifPayload[offset])
+                | (Int(exifPayload[offset + 1]) << 8)
+                | (Int(exifPayload[offset + 2]) << 16)
+                | (Int(exifPayload[offset + 3]) << 24)
+        }
+        return (Int(exifPayload[offset]) << 24)
+            | (Int(exifPayload[offset + 1]) << 16)
+            | (Int(exifPayload[offset + 2]) << 8)
+            | Int(exifPayload[offset + 3])
+    }
+    func write32(_ value: Int, at offset: Int) -> Bool {
+        guard value >= 0, value <= Int(UInt32.max), offset >= 0, offset + 4 <= exifPayload.count else { return false }
+        if isLittleEndian {
+            exifPayload[offset] = UInt8(value & 0xff)
+            exifPayload[offset + 1] = UInt8((value >> 8) & 0xff)
+            exifPayload[offset + 2] = UInt8((value >> 16) & 0xff)
+            exifPayload[offset + 3] = UInt8((value >> 24) & 0xff)
+        } else {
+            exifPayload[offset] = UInt8((value >> 24) & 0xff)
+            exifPayload[offset + 1] = UInt8((value >> 16) & 0xff)
+            exifPayload[offset + 2] = UInt8((value >> 8) & 0xff)
+            exifPayload[offset + 3] = UInt8(value & 0xff)
+        }
+        return true
+    }
+
+    guard read16(tiffStart + 2) == 42,
+          let firstIFDOffset = read32(tiffStart + 4) else { return nil }
+    var pendingIFDs = [firstIFDOffset]
+    var visitedIFDs = Set<Int>()
+    var userCommentEntryOffset: Int?
+    while let relativeIFD = pendingIFDs.popLast(), userCommentEntryOffset == nil {
+        guard visitedIFDs.insert(relativeIFD).inserted else { continue }
+        let ifd = tiffStart + relativeIFD
+        guard let count = read16(ifd), count <= 4096 else { return nil }
+        for index in 0..<count {
+            let entry = ifd + 2 + index * 12
+            guard let tag = read16(entry), entry + 12 <= exifPayload.count else { return nil }
+            if tag == 0x9286 {
+                userCommentEntryOffset = entry
+                break
+            }
+            if tag == 0x8769 || tag == 0x8825,
+               let childOffset = read32(entry + 8) {
+                pendingIFDs.append(childOffset)
+            }
         }
     }
-    return nil
+
+    guard let entry = userCommentEntryOffset,
+          let fieldType = read16(entry + 2), fieldType == 7,
+          let oldCount = read32(entry + 4), oldCount > 0,
+          let oldValueOffset = read32(entry + 8) else { return nil }
+    let oldValueStart = oldCount <= 4 ? entry + 8 : tiffStart + oldValueOffset
+    let oldValueEnd = oldValueStart + oldCount
+    guard oldValueStart >= 0, oldValueEnd <= exifPayload.count else { return nil }
+    var newValue = exifPayload.subdata(in: oldValueStart..<oldValueEnd)
+
+    var sourceCommentRange: Range<Int>?
+    for prefix in oppoTagFlagPrefixes {
+        let prefixData = Data(prefix.utf8)
+        guard let range = newValue.range(of: prefixData) else { continue }
+        var digitEnd = range.upperBound
+        while digitEnd < newValue.count, (48...57).contains(newValue[digitEnd]) {
+            digitEnd += 1
+        }
+        guard digitEnd > range.upperBound else { continue }
+        sourceCommentRange = range.lowerBound..<digitEnd
+        break
+    }
+    guard let sourceCommentRange else { return nil }
+    newValue.replaceSubrange(sourceCommentRange, with: Data(patchedUserComment.utf8))
+
+    while exifPayload.count % 4 != 0 { exifPayload.append(0) }
+    let newValueOffset = exifPayload.count - tiffStart
+    exifPayload.append(newValue)
+    guard write32(newValue.count, at: entry + 4),
+          write32(newValueOffset, at: entry + 8) else { return nil }
+
+    mdatPayload.replaceSubrange(localStart..<localEnd, with: exifPayload)
+    return OppoUserCommentPatch(
+        sourceRange: extent.offset..<(extent.offset + extent.length),
+        delta: exifPayload.count - extent.length
+    )
 }
 
 private func adjustedExtentForOppoUserCommentPatch(
@@ -2648,6 +3256,11 @@ private func appendUInt32BE(_ value: Int, to data: inout Data) {
     data.append(UInt8((value >> 16) & 0xff))
     data.append(UInt8((value >> 8) & 0xff))
     data.append(UInt8(value & 0xff))
+}
+
+private func appendUInt32LE(_ value: Int, to data: inout Data) {
+    var little = UInt32(value).littleEndian
+    withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
 }
 
 private func appendInt32BE(_ value: Int32, to data: inout Data) {
@@ -2961,14 +3574,45 @@ private func makeIrefFullBox(version: UInt8, refs: [ISOBMFFIRefEntry]) -> Data {
 }
 
 private func makeGrplAltrBox(groupID: Int, tmapID: Int, primaryID: Int) -> Data {
+    makeBox("grpl", payload: makeAltrEntityGroupBox(groupID: groupID, tmapID: tmapID, primaryID: primaryID))
+}
+
+private func makeAltrEntityGroupBox(groupID: Int, tmapID: Int, primaryID: Int) -> Data {
     var altrPayload = Data([0, 0, 0, 0])
     appendUInt32BE(groupID, to: &altrPayload)
     appendUInt32BE(2, to: &altrPayload)
     appendUInt32BE(tmapID, to: &altrPayload)
     appendUInt32BE(primaryID, to: &altrPayload)
-    var grplPayload = Data()
-    grplPayload.append(makeBox("altr", payload: altrPayload))
-    return makeBox("grpl", payload: grplPayload)
+    return makeBox("altr", payload: altrPayload)
+}
+
+private func preservedEntityGroupChildren(
+    in data: Data,
+    grpl: ISOBMFFBox,
+    dropping itemIDs: Set<Int>
+) -> (payload: Data, groupIDs: [Int]) {
+    var payload = Data()
+    var groupIDs: [Int] = []
+    for child in isobmffBoxes(in: data, start: grpl.dataStart, end: grpl.dataEnd) {
+        let raw = data.subdata(in: child.boxStart..<child.boxStart + child.size)
+        guard child.dataEnd - child.dataStart >= 12 else {
+            payload.append(raw)
+            continue
+        }
+        let groupID = readUInt32BEUnchecked(data, at: child.dataStart + 4)
+        let entityCount = readUInt32BEUnchecked(data, at: child.dataStart + 8)
+        groupIDs.append(groupID)
+        var pos = child.dataStart + 12
+        var entities: [Int] = []
+        for _ in 0..<entityCount where pos + 4 <= child.dataEnd {
+            entities.append(readUInt32BEUnchecked(data, at: pos))
+            pos += 4
+        }
+        if itemIDs.isDisjoint(with: entities) {
+            payload.append(raw)
+        }
+    }
+    return (payload, groupIDs)
 }
 
 private func itemPayload(in data: Data, entry: ISOBMFFILocEntry, idat: ISOBMFFBox?) throws -> Data {
@@ -3160,7 +3804,9 @@ private func writeHybridPrimaryPassthrough(
     preservedURL: URL,
     outputURL: URL,
     patchedUserComment: String?,
-    preserveTmapColor: Bool = false
+    preserveTmapColor: Bool = false,
+    strictISO21496Tmap: Bool = false,
+    fallbackXMPPayload: Data? = nil
 ) throws {
     let source = try Data(contentsOf: sourceURL)
     let preserved = try Data(contentsOf: preservedURL)
@@ -3247,23 +3893,34 @@ private func writeHybridPrimaryPassthrough(
         $0.type == "cdsc" && $0.to.contains(preservedTmapID) && preservedItemsByID[$0.from]?.type == "mime"
     }?.from
 
-    let sourceTmapIDs = Set(sourceItemInfo.items.filter { $0.type == "tmap" }.map(\.itemID))
-    var dropSourceIDs = Set(sourceItemInfo.items.filter { $0.type == "jpeg" }.map(\.itemID))
-    dropSourceIDs.formUnion(sourceTmapIDs)
-    var changed = true
-    while changed {
-        changed = false
-        for ref in sourceRefsInfo.refs where dropSourceIDs.contains(ref.from) {
-            for target in ref.to where target != sourcePrimaryID && !dropSourceIDs.contains(target) {
-                dropSourceIDs.insert(target)
-                changed = true
-            }
-        }
-        for ref in sourceRefsInfo.refs where ref.type == "cdsc" && !dropSourceIDs.isDisjoint(with: Set(ref.to)) {
-            if !dropSourceIDs.contains(ref.from) {
-                dropSourceIDs.insert(ref.from)
-                changed = true
-            }
+    let sourceTmapIDs = Set(sourceItemInfo.items.compactMap { item -> Int? in
+        guard item.type == "tmap",
+              sourceRefsInfo.refs.contains(where: {
+                  $0.type == "dimg" && $0.from == item.itemID && $0.to.contains(sourcePrimaryID)
+              }) else { return nil }
+        return item.itemID
+    })
+    let sourceGainRootIDs = Set(sourceRefsInfo.refs
+        .filter { $0.type == "dimg" && sourceTmapIDs.contains($0.from) }
+        .flatMap(\.to)
+        .filter { $0 != sourcePrimaryID })
+    var dropSourceIDs = sourceTmapIDs
+    let generatedHDRGMName = Data("hdrgm-xmp\u{0}".utf8)
+    let sourceGeneratedHDRGMXMPIDs = Set(sourceItemInfo.items.compactMap { item -> Int? in
+        guard item.type == "mime",
+              item.rawInfe.range(of: generatedHDRGMName) != nil,
+              sourceRefsInfo.refs.contains(where: {
+                  $0.type == "cdsc" && $0.from == item.itemID && !Set($0.to).isDisjoint(with: sourceTmapIDs)
+              }) else { return nil }
+        return item.itemID
+    })
+    dropSourceIDs.formUnion(sourceGeneratedHDRGMXMPIDs)
+    var pendingHDRInputs = Array(sourceGainRootIDs)
+    while let itemID = pendingHDRInputs.popLast() {
+        guard itemID != sourcePrimaryID, !dropSourceIDs.contains(itemID) else { continue }
+        dropSourceIDs.insert(itemID)
+        for ref in sourceRefsInfo.refs where ref.type == "dimg" && ref.from == itemID {
+            pendingHDRInputs.append(contentsOf: ref.to.filter { $0 != sourcePrimaryID })
         }
     }
 
@@ -3274,11 +3931,17 @@ private func writeHybridPrimaryPassthrough(
         throw XDRemuxError.invalidContainer("hybrid graft would drop primary item")
     }
     var sourceMdatPayload = source.subdata(in: sourceMdat.dataStart..<sourceMdat.dataEnd)
+    let sourceExifID = keptSourceItems.first(where: { $0.type == "Exif" })?.itemID
     let userCommentPatch: OppoUserCommentPatch?
     if let patchedUserComment {
+        guard let sourceExifID,
+              let sourceExifEntry = keptSourceIlocEntries.first(where: { $0.itemID == sourceExifID }) else {
+            throw XDRemuxError.invalidContainer("unable to locate source Exif item for OPPO UserComment patch")
+        }
         guard let patch = applyOppoUserCommentPatch(
             &sourceMdatPayload,
-            sourceOffset: sourceMdat.dataStart,
+            mdatDataStart: sourceMdat.dataStart,
+            exifEntry: sourceExifEntry,
             patchedUserComment: patchedUserComment
         ) else {
             throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in hybrid output")
@@ -3289,7 +3952,8 @@ private func writeHybridPrimaryPassthrough(
     }
 
     let maxSourceID = keptSourceItems.map(\.itemID).max() ?? sourcePrimaryID
-    let copiedItemCount = preservedGainTileIDs.count + 2 + (preservedXMPID == nil ? 0 : 1)
+    let hasOutputXMP = preservedXMPID != nil || fallbackXMPPayload != nil
+    let copiedItemCount = preservedGainTileIDs.count + 2 + (hasOutputXMP ? 1 : 0)
     guard maxSourceID + copiedItemCount < 0xffff else {
         throw XDRemuxError.invalidContainer("hybrid graft currently requires 16-bit item IDs")
     }
@@ -3304,7 +3968,7 @@ private func writeHybridPrimaryPassthrough(
     let outputTmapID = nextItemID
     nextItemID += 1
     let outputXMPID: Int?
-    if preservedXMPID != nil {
+    if hasOutputXMP {
         outputXMPID = nextItemID
         nextItemID += 1
     } else {
@@ -3322,7 +3986,17 @@ private func writeHybridPrimaryPassthrough(
         throw XDRemuxError.invalidContainer("preserve gain grid/tmap has no iloc entry")
     }
     let gainGridPayload = try itemPayload(in: preserved, entry: gainGridEntry, idat: preservedIDAT)
-    let tmapPayload = try itemPayload(in: preserved, entry: tmapEntry, idat: preservedIDAT)
+    let preservedTmapPayload = try itemPayload(in: preserved, entry: tmapEntry, idat: preservedIDAT)
+    let tmapPayload: Data
+    if strictISO21496Tmap, preservedTmapPayload.count == 62 || preservedTmapPayload.count == 142 {
+        // ImageIO omits the three reserved GainMapMetadata bytes. Restore them
+        // after the flags byte so one/three-channel ISO payloads are 65/145 B.
+        tmapPayload = preservedTmapPayload.prefix(6)
+            + Data([0x00, 0x00, 0x00])
+            + preservedTmapPayload.dropFirst(6)
+    } else {
+        tmapPayload = preservedTmapPayload
+    }
     let xmpPayload: Data?
     if let preservedXMPID {
         guard let xmpEntry = preservedIlocByID[preservedXMPID] else {
@@ -3330,7 +4004,7 @@ private func writeHybridPrimaryPassthrough(
         }
         xmpPayload = try itemPayload(in: preserved, entry: xmpEntry, idat: preservedIDAT)
     } else {
-        xmpPayload = nil
+        xmpPayload = fallbackXMPPayload
     }
 
     var ipcoPayload = Data()
@@ -3379,14 +4053,17 @@ private func writeHybridPrimaryPassthrough(
     }?.to.first
     let sourceBaselineColorAssoc = sourcePrimaryColorAssoc
         ?? sourceBaselineTileID.flatMap(sourceItemColorAssoc)
-    if let preservedPrimaryEntry = preservedIPMAByID[preservedPrimaryID] {
-        for value in preservedPrimaryEntry.associations {
-            let index = assocPropertyIndex(value, flags: preservedIPMA.flags)
-            guard let prop = preservedPropsByIndex[index],
-                  ["colr", "clli", "pixi", "irot"].contains(prop.type),
-                  !primaryHasPropertyType(prop.type) else { continue }
-            primaryAssocs.append((try mapPreservedProperty(index), assocIsEssential(value, flags: preservedIPMA.flags)))
-        }
+    if !primaryHasPropertyType("colr"), let sourceBaselineColorAssoc {
+        // Associate the source tile's existing color property with the source
+        // grid. This adds the ISO-required base color declaration without
+        // importing a newly normalized ImageIO profile.
+        primaryAssocs.append(sourceBaselineColorAssoc)
+    }
+    if !primaryHasPropertyType("irot") {
+        let irotOutputIndex = sourceProps.count + propertyIndexMap.count + 1
+        propertyIndexMap[-2] = irotOutputIndex
+        ipcoPayload.append(isoIrotBox)
+        primaryAssocs.append((irotOutputIndex, true))
     }
 
     var ipmaEntries = Data()
@@ -3462,8 +4139,9 @@ private func writeHybridPrimaryPassthrough(
     }
     rawInfes.append(makeInfeBox(itemID: outputGainGridID, type: "grid", flags: preservedItemsByID[preservedGainGridID]?.flags ?? 1))
     rawInfes.append(makeInfeBox(itemID: outputTmapID, type: "tmap", flags: preservedItemsByID[preservedTmapID]?.flags ?? 0))
-    if let outputXMPID, let preservedXMPID {
-        rawInfes.append(makeMimeInfeBox(itemID: outputXMPID, flags: preservedItemsByID[preservedXMPID]?.flags ?? 1))
+    if let outputXMPID {
+        let flags = preservedXMPID.flatMap { preservedItemsByID[$0]?.flags } ?? 1
+        rawInfes.append(makeMimeInfeBox(itemID: outputXMPID, flags: flags))
     }
 
     let sourceIDATPayload = sourceIDAT.map { source.subdata(in: $0.dataStart..<$0.dataEnd) } ?? Data()
@@ -3477,21 +4155,42 @@ private func writeHybridPrimaryPassthrough(
         appendedIDATPayload.append(xmpPayload)
     }
 
-    let sourceRefs = sourceRefsInfo.refs.filter { ref in
-        !dropSourceIDs.contains(ref.from) && dropSourceIDs.isDisjoint(with: Set(ref.to))
-    }
     var outputRefs: [ISOBMFFIRefEntry] = []
     var updatedSourceCdsc = false
-    for ref in sourceRefs {
-        if ref.type == "cdsc", ref.to.contains(sourcePrimaryID) {
-            outputRefs.append(ISOBMFFIRefEntry(type: ref.type, from: ref.from, to: [sourcePrimaryID, outputTmapID]))
+    for ref in sourceRefsInfo.refs where !dropSourceIDs.contains(ref.from) {
+        var replacedTmapTarget = false
+        var rewrittenTargets: [Int] = []
+        for target in ref.to {
+            let rewritten: Int?
+            if sourceTmapIDs.contains(target) {
+                rewritten = outputTmapID
+                replacedTmapTarget = true
+            } else if sourceGainRootIDs.contains(target) {
+                rewritten = outputGainGridID
+            } else if dropSourceIDs.contains(target) {
+                rewritten = nil
+            } else {
+                rewritten = target
+            }
+            if let rewritten, !rewrittenTargets.contains(rewritten) {
+                rewrittenTargets.append(rewritten)
+            }
+        }
+        guard !rewrittenTargets.isEmpty else { continue }
+        if ref.type == "cdsc",
+           ref.from == sourceExifID,
+           rewrittenTargets.contains(sourcePrimaryID),
+           !rewrittenTargets.contains(outputTmapID) {
+            rewrittenTargets.append(outputTmapID)
             updatedSourceCdsc = true
-        } else {
-            outputRefs.append(ref)
+        }
+        outputRefs.append(ISOBMFFIRefEntry(type: ref.type, from: ref.from, to: rewrittenTargets))
+        if ref.type == "cdsc", replacedTmapTarget {
+            updatedSourceCdsc = true
         }
     }
     if !updatedSourceCdsc,
-       let exifID = keptSourceItems.first(where: { $0.type == "Exif" })?.itemID {
+       let exifID = sourceExifID {
         outputRefs.append(ISOBMFFIRefEntry(type: "cdsc", from: exifID, to: [sourcePrimaryID, outputTmapID]))
     }
     outputRefs.append(ISOBMFFIRefEntry(type: "dimg", from: outputGainGridID, to: gainTilePayloads.map(\.newID)))
@@ -3517,6 +4216,14 @@ private func writeHybridPrimaryPassthrough(
     placeholderIlocEntries.append(ISOBMFFILocEntry(itemID: outputTmapID, constructionMethod: 1, dataReferenceIndex: 0, extents: [(tmapIDATOffset, tmapPayload.count)]))
     if let outputXMPID, let xmpPayload {
         placeholderIlocEntries.append(ISOBMFFILocEntry(itemID: outputXMPID, constructionMethod: 1, dataReferenceIndex: 0, extents: [(xmpIDATOffset, xmpPayload.count)]))
+    }
+
+    var preservedGroupPayload = Data()
+    var sourceGroupIDs: [Int] = []
+    for groupBox in sourceMetaChildren where groupBox.type == "grpl" {
+        let preserved = preservedEntityGroupChildren(in: source, grpl: groupBox, dropping: dropSourceIDs)
+        preservedGroupPayload.append(preserved.payload)
+        sourceGroupIDs.append(contentsOf: preserved.groupIDs)
     }
 
     var metaParts: [Data] = []
@@ -3551,8 +4258,9 @@ private func writeHybridPrimaryPassthrough(
     if sourceIDAT == nil {
         metaParts.append(makeBox("idat", payload: appendedIDATPayload))
     }
-    let groupID = max(nextItemID, outputTmapID) + 1
-    metaParts.append(makeGrplAltrBox(groupID: groupID, tmapID: outputTmapID, primaryID: sourcePrimaryID))
+    let groupID = max(max(nextItemID, outputTmapID), sourceGroupIDs.max() ?? 0) + 1
+    preservedGroupPayload.append(makeAltrEntityGroupBox(groupID: groupID, tmapID: outputTmapID, primaryID: sourcePrimaryID))
+    metaParts.append(makeBox("grpl", payload: preservedGroupPayload))
 
     var ftypPayload = source.subdata(in: sourceFtyp.dataStart..<sourceFtyp.dataEnd)
     var existingBrands = Set(stride(from: sourceFtyp.dataStart + 8, to: sourceFtyp.dataEnd, by: 4).compactMap { pos -> String? in
@@ -3695,6 +4403,25 @@ private func writePrivateJPEGPassthroughOutput(
     let oldIDATSize = idat.size - 8
     let tmapPayload = tmapPayload ?? makeAppleTmapPayload(infoFloats: infoFloats)
     let xmpPayload = makeHdrgmXMP(infoFloats: infoFloats)
+    var sourceMdatPayload = src.subdata(in: mdat.dataStart..<mdat.dataEnd)
+    let userCommentPatch: OppoUserCommentPatch?
+    if let patchedUserComment {
+        guard let exifID = iinfData.entries.first(where: { $0.value == "Exif" })?.key,
+              let exifEntry = ilocEntries.first(where: { $0.itemID == exifID }) else {
+            throw XDRemuxError.invalidContainer("unable to locate source Exif item for OPPO UserComment patch")
+        }
+        guard let patch = applyOppoUserCommentPatch(
+            &sourceMdatPayload,
+            mdatDataStart: mdat.dataStart,
+            exifEntry: exifEntry,
+            patchedUserComment: patchedUserComment
+        ) else {
+            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in UHDR pass-through output")
+        }
+        userCommentPatch = patch
+    } else {
+        userCommentPatch = nil
+    }
 
     var metaParts: [Data] = []
     for part in metaChildren {
@@ -3832,7 +4559,7 @@ private func writePrivateJPEGPassthroughOutput(
     let betweenMetaAndMdat = src.subdata(in: meta.boxStart + meta.size..<mdat.boxStart)
     let newMdatDataStart = ftypPart.count + metaPart.count + betweenMetaAndMdat.count + 8
     let fileDelta = newMdatDataStart - mdat.dataStart
-    let gainMapOffset = newMdatDataStart + (mdat.dataEnd - mdat.dataStart)
+    let gainMapOffset = newMdatDataStart + sourceMdatPayload.count
 
     var ilocPayload = Data([1, 0, 0, 0, 0x44, 0x00])
     appendUInt16BE(ilocEntries.count + 3, to: &ilocPayload)
@@ -3842,8 +4569,16 @@ private func writePrivateJPEGPassthroughOutput(
         appendUInt16BE(entry.dataReferenceIndex, to: &ilocPayload)
         appendUInt16BE(entry.extents.count, to: &ilocPayload)
         for extent in entry.extents {
-            appendUInt32BE(entry.constructionMethod == 0 ? extent.offset + fileDelta : extent.offset, to: &ilocPayload)
-            appendUInt32BE(extent.length, to: &ilocPayload)
+            if entry.constructionMethod == 0 {
+                guard let adjusted = adjustedExtentForOppoUserCommentPatch(extent, patch: userCommentPatch) else {
+                    throw XDRemuxError.invalidContainer("OPPO UserComment patch crosses item extent boundary")
+                }
+                appendUInt32BE(adjusted.offset + fileDelta, to: &ilocPayload)
+                appendUInt32BE(adjusted.length, to: &ilocPayload)
+            } else {
+                appendUInt32BE(extent.offset, to: &ilocPayload)
+                appendUInt32BE(extent.length, to: &ilocPayload)
+            }
         }
     }
     appendUInt16BE(gainMapID, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(0, to: &ilocPayload); appendUInt16BE(1, to: &ilocPayload)
@@ -3863,7 +4598,7 @@ private func writePrivateJPEGPassthroughOutput(
     for part in finalMetaParts { finalMetaPayload.append(part) }
     let finalMetaPart = makeBox("meta", payload: finalMetaPayload)
 
-    var mdatPayload = src.subdata(in: mdat.dataStart..<mdat.dataEnd)
+    var mdatPayload = sourceMdatPayload
     mdatPayload.append(gainMapJPEG)
     let mdatPart = makeBox("mdat", payload: mdatPayload)
     var out = Data()
@@ -3871,11 +4606,6 @@ private func writePrivateJPEGPassthroughOutput(
     out.append(finalMetaPart)
     out.append(betweenMetaAndMdat)
     out.append(mdatPart)
-    if let patchedUserComment {
-        guard patchOppoUserComment(&out, patchedUserComment: patchedUserComment) else {
-            throw XDRemuxError.invalidContainer("unable to patch OPPO UserComment in UHDR pass-through output")
-        }
-    }
     try out.write(to: outputURL)
     return (primaryID, gainMapID)
 }

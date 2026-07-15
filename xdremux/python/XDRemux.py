@@ -5,8 +5,8 @@ Cross-platform Python implementation. Replaces Apple ImageIO / CoreGraphics
 with pillow-heif + Pillow + numpy.
 
 Usage:
-    xdremux.py convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compat]
-    xdremux.py batch --input-dir <dir> [--output-dir <dir>] [--glob <pattern>] [--oppo-compat]
+    xdremux.py convert --input <file.heic> [--output <out.heic>] [--debug-dir <dir>] [--oppo-compatible]
+    xdremux.py batch --input-dir <dir> [--output-dir <dir>] [--glob <pattern>] [--oppo-compatible]
 """
 
 import argparse
@@ -186,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--output")
     c.add_argument("--debug-dir")
     c.set_defaults(oppo_compat=False, passthrough=True, reencode=False)
-    c.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
+    c.add_argument("--oppo-compatible", "--oppo-compat", action="store_true", dest="oppo_compat",
                    help="Add OPPO Gallery compatibility metadata")
     c.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
                    help=argparse.SUPPRESS)
@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--glob")
     b.add_argument("--debug-dir")
     b.set_defaults(oppo_compat=False, passthrough=True, reencode=False)
-    b.add_argument("--oppo-compat", action="store_true", dest="oppo_compat",
+    b.add_argument("--oppo-compatible", "--oppo-compat", action="store_true", dest="oppo_compat",
                    help="Add OPPO Gallery compatibility metadata")
     b.add_argument("--no-oppo-compat", action="store_false", dest="oppo_compat",
                    help=argparse.SUPPRESS)

@@ -348,7 +348,10 @@ final class XDRemuxViewModel {
         outputURL: URL,
         skipExisting: Bool
     ) throws -> OutputPreparationDisposition {
-        try prepareOutputForConversion(inputURL: inputURL, outputURL: outputURL, skipExisting: skipExisting)
+        var config = ConversionConfig()
+        config.skipExisting = skipExisting
+        config.oppoCameraTail = .off
+        return try prepareOutputForConversion(inputURL: inputURL, outputURL: outputURL, config: config)
     }
 
     nonisolated static func makeThumbnailPNGDataForTesting(for url: URL, maxPixelSize: Int) throws -> Data {
@@ -542,13 +545,13 @@ final class XDRemuxViewModel {
             }
 
             do {
-                if config.skipExisting, XDRemuxCore.isValidISOGainMapOutput(item.outputURL) {
+                if config.skipExisting, XDRemuxCore.isValidOutput(item.outputURL, config: config) {
                     return QueueWorkResult(id: item.id, status: .skippedExisting, errorMessage: nil, finishedAt: Date())
                 }
                 let disposition = try prepareOutputForConversion(
                     inputURL: item.inputURL,
                     outputURL: item.outputURL,
-                    skipExisting: config.skipExisting
+                    config: config
                 )
                 if disposition == .skippedExistingValidOutput {
                     return QueueWorkResult(id: item.id, status: .skippedExisting, errorMessage: nil, finishedAt: Date())
@@ -626,7 +629,7 @@ final class XDRemuxViewModel {
             return .ready
         }
 
-        if config.skipExisting, XDRemuxCore.isValidISOGainMapOutput(outputURL) {
+        if config.skipExisting, XDRemuxCore.isValidOutput(outputURL, config: config) {
             return .skipsExistingValidOutput
         }
         return .willOverwriteExisting
@@ -648,7 +651,7 @@ final class XDRemuxViewModel {
     nonisolated private static func prepareOutputForConversion(
         inputURL: URL,
         outputURL: URL,
-        skipExisting: Bool
+        config: ConversionConfig
     ) throws -> OutputPreparationDisposition {
         let fileManager = FileManager.default
         guard pathKey(inputURL) != pathKey(outputURL) else {
@@ -657,7 +660,7 @@ final class XDRemuxViewModel {
         guard fileManager.fileExists(atPath: outputURL.path) else {
             return .ready
         }
-        if skipExisting, XDRemuxCore.isValidISOGainMapOutput(outputURL) {
+        if config.skipExisting, XDRemuxCore.isValidOutput(outputURL, config: config) {
             return .skippedExistingValidOutput
         }
         try fileManager.removeItem(at: outputURL)

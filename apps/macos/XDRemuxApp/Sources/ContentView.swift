@@ -196,7 +196,8 @@ struct ContentView: View {
     private var configSummary: String {
         let output = viewModel.config.outputDirectory?.lastPathComponent ?? viewModel.config.fileNameSuffix
         let oppo = "\(AppStrings.oppoCompatLabel): \(viewModel.config.oppoCompatibility.appTitle)"
-        return "\(viewModel.config.family.appTitle) / \(viewModel.config.inputProcessingBranch.appTitle) / \(oppo) / \(output)"
+        let cameraTail = "\(AppStrings.oppoCameraTailLabel): \(viewModel.config.oppoCameraTail.appTitle)"
+        return "\(viewModel.config.family.appTitle) / \(viewModel.config.inputProcessingBranch.appTitle) / \(oppo) / \(cameraTail) / \(output)"
     }
 
     private var stateTitle: String {
@@ -801,29 +802,17 @@ private struct SettingsView: View {
             }
 
             Form {
-                Picker(AppStrings.inputHDRType, selection: $viewModel.config.family) {
-                    ForEach(Family.allCases) { family in
-                        Text(family.appTitle).tag(family)
-                    }
-                }
-                .pickerStyle(.segmented)
-                SettingExplanation(AppStrings.inputHDRTypeHelp)
+                Toggle(
+                    AppStrings.oppoGalleryCompatibility,
+                    isOn: $viewModel.config.oppoGalleryCompatibilityEnabled
+                )
+                SettingExplanation(AppStrings.oppoGalleryCompatibilityHelp)
 
-                Picker(AppStrings.inputProcessing, selection: $viewModel.config.inputProcessingBranch) {
-                    ForEach(InputProcessingBranch.allCases) { branch in
-                        Text(branch.appTitle).tag(branch)
-                    }
-                }
-                .pickerStyle(.segmented)
-                SettingExplanation(viewModel.config.inputProcessingBranch.appHelp)
-
-                Picker(AppStrings.oppoCompatLabel, selection: $viewModel.config.oppoCompatibility) {
-                    ForEach(OppoCompatibility.allCases) { mode in
-                        Text(mode.appTitle).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                SettingExplanation(viewModel.config.oppoCompatibility.appHelp)
+                Toggle(
+                    AppStrings.preservePortraitEditingData,
+                    isOn: $viewModel.config.preservesPortraitEditingData
+                )
+                SettingExplanation(AppStrings.preservePortraitEditingDataHelp)
 
                 Toggle(AppStrings.skipExisting, isOn: $viewModel.config.skipExisting)
                     .onChange(of: viewModel.config.skipExisting) {

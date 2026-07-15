@@ -1,455 +1,165 @@
-# XDRemux Flutter
+# XDRemux
 
-[English](#english) | [中文](#中文)
+[English Version](README.en.md) | 中文版
 
-A cross-platform ProXDR HEIC converter built with Flutter + Rust.
+XDRemux 可以将 OPPO、OnePlus、realme 设备拍摄的 ProXDR HEIC 照片转换为标准 HDR HEIC。
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.24-blue.svg)](https://flutter.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.80-orange.svg)](https://www.rust-lang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS-lightgrey.svg)]()
-[![Status](https://img.shields.io/badge/Status-Work%20in%20Progress-yellow.svg)]()
+它会读取原始照片中的私有 HDR Gain Map 及元数据，并重新封装为符合 ISO 21496-1 标准的 HDR HEIC 文件。转换后的照片可以在 macOS、iOS、Android 等支持 HDR 照片显示的系统中查看。
 
-> ⚠️ **Work in Progress**
->
-> This project is in early development stage. The repository has just been created and core functionality is still being implemented.
->
-> **Current status:**
-> - ✅ Project structure initialized
-> - ✅ Rust FFI interface designed
-> - ✅ Flutter UI skeleton created
-> - 🔨 Core Rust engine (porting from Python)
-> - 🔨 HEIC container parser
-> - 🔨 ISO 21496-1 metadata handler
-> - ❌ Not yet functional
->
-> Contributions and feedback are welcome!
+## 什么时候需要这个工具？
 
----
+如果你从 OPPO、OnePlus 或 realme 手机上拍摄了 ProXDR HEIC 照片，并希望它们在其他系统或软件里仍然以 HDR 方式显示，可以使用 XDRemux 转换。
 
-## English
+## 三种输出模式
 
-XDRemux Flutter is a cross-platform version of [XDRemux](https://github.com/21Z121Z1/XDRemux), supporting Android, iOS, Windows, and macOS.
+当前 Swift CLI 只有两个产品开关。两个都不指定时使用标准 ISO 默认模式。
 
-It converts ProXDR HEIC photos captured on OPPO, OnePlus, and realme devices into standard ISO 21496-1 HDR HEIC files.
+| 模式 | 开关 | 结果 |
+|---|---|---|
+| 标准 ISO（默认） | 无 | 输出 ISO 21496-1 HDR；保留源 Base Image、原始通道结构和完整 OPPO/QTI 元数据尾；源数据允许时 Gain Map 最高可达 HEVC RExt 4:4:4 |
+| OPPO 相册兼容 | `--oppo-compatible` | 将 Gain Map 写成 OPPO 相册可消费的 HEVC Main Still Picture 4:2:0，并保留 OPPO 私有元数据尾 |
+| Apple 人像 | `--apple-portrait` | 把 OPPO 人像景深、主体、宠物、头发和光圈信息转换成 Apple disparity、Portrait Effects Matte、Semantic Hair Matte、Focus 与人像元数据 |
 
-### Acknowledgments
+> [!IMPORTANT]
+> 省略 `--output` 或 `--output-dir` 时会覆写输入文件。转换前请备份原片。
 
-This project is based on the core algorithms and research from [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux). Special thanks to the original author for their contribution.
-
-The original project uses Swift + Python implementation. This project rewrites it using Flutter + Rust for true cross-platform support.
-
----
-
-## Features
-
-- 📱 **Cross-platform**: Android, iOS, Windows, macOS
-- ⚡ **High Performance**: Rust core engine
-- 🎨 **Modern UI**: Flutter Material Design 3
-- 🔄 **Batch Conversion**: Multiple file support
-- 📷 **OPPO Compatibility**: OPPO Gallery compatible mode
-
-## Quick Start
-
-### Prerequisites
-
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Flutter | 3.24+ | UI Framework |
-| Rust | 1.80+ | Core Engine |
-| Android Studio | Latest | Android Development |
-| Xcode | 15.0+ | iOS/macOS Development |
-| Visual Studio | 2022+ | Windows Development |
-
-### Install
+### 默认：标准 ISO HDR
 
 ```bash
-# Clone
-git clone https://github.com/BeetMan/XDRemux-Flutter.git
-cd XDRemux-Flutter
+# 单张
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --input IMG_001.heic \
+  --output IMG_001_iso.heic
 
-# Install dependencies
-flutter pub get
-
-# Build Rust core
-cd rust && cargo build --release && cd ..
+# 批量
+swift xdremux/swift-cli/XDRemux.swift batch \
+  --input-dir photo_dump/ \
+  --output-dir iso_output/
 ```
 
-### Build for Each Platform
+默认不启用 OPPO 专用兼容层。XDRemux 尽量保留原始 Base Image，只重建标准
+ISO Gain Map 图；单通道源保持单通道，未被降采样的三通道源可保留最高
+4:4:4/HEVC Range Extensions。已经是 4:2:0 的 Gain Map 不会被伪装成
+4:4:4，因为丢失的色度信息无法恢复。
+
+默认同时保留完整的 OPPO/QTI/FileExtendedContainer 元数据尾，包括水印、
+大师模式、拍摄参数、人像后期数据以及工具尚未识别的厂商字段。
+
+### `--oppo-compatible`：OPPO 相册兼容
 
 ```bash
-# Android
-flutter build apk --release
-
-# iOS
-flutter build ios --release
-
-# Windows
-flutter build windows --release
-
-# macOS
-flutter build macos --release
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --oppo-compatible \
+  --input IMG_001.heic \
+  --output IMG_001_oppo.heic
 ```
 
-## Usage
+此模式把高规格 Gain Map 转成 Main Still Picture 4:2:0，以触发 OPPO 相册的
+HDR 显示。它仍保留 OPPO 私有元数据尾，因此适合需要回到 OPPO 生态的照片。
 
-### Command Line
+### `--apple-portrait`：转换 OPPO 人像景深
 
 ```bash
-# Single file
-flutter run -- --input photo.heic
+swift xdremux/swift-cli/XDRemux.swift convert \
+  --apple-portrait \
+  --input IMG_001.heic \
+  --output IMG_001_apple_portrait.heic
 
-# Batch
-flutter run -- --input-dir photos/ --output-dir converted/
+# 批量时自动跳过没有完整人像资源的普通 HEIC
+swift xdremux/swift-cli/XDRemux.swift batch \
+  --apple-portrait \
+  --input-dir photo_dump/ \
+  --output-dir apple_portraits/
 ```
 
-### Dart API
+XDRemux 自动读取 `src.image`、`rear.depth`、`rear.depth.config` 和 Gain Map
+参数：Base Image/Gain Map 只编码一次；rank plane 转成 Apple Float16
+disparity；OPPO portrait/pet/hair plane 转成 PEM 与 Semantic Hair Matte；
+Vision 只在主体 plane 为空时兜底，并用于选择人脸兴趣 Focus。OPPO 模拟光圈
+会写入 Apple 人像编辑元数据，图像方向由原片自动确定。
 
-```dart
-import 'services/xdremux_service.dart';
+Apple 人像模式会省略已经完成语义迁移的大型 OPPO 人像私有尾，避免同时保存
+两套景深资源。它与 `--oppo-compatible` 互斥；同时指定会在写文件前报错。
+Apple 虚化强度映射仍在设备验证阶段。
 
-// Single file
-await XdRemuxService.convert(
-  'input.heic',
-  'output.heic',
-  oppoCompat: false,
-);
+### Python CLI
 
-// Batch
-await XdRemuxService.batchConvert(
-  'input/',
-  'output/',
-  oppoCompat: true,
-);
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│           Flutter UI Layer              │
-│    (Android / iOS / Windows / macOS)    │
-├─────────────────────────────────────────┤
-│            Dart FFI Bridge              │
-├─────────────────────────────────────────┤
-│            Rust Core Engine             │
-│  ┌─────────┬─────────┬─────────┬──────┐ │
-│  │Container│ISO 21496│Gain Map │ EDR  │ │
-│  │ Parser  │Metadata │Processor│Calc  │ │
-│  └─────────┴─────────┴─────────┴──────┘ │
-├─────────────────────────────────────────┤
-│        libheif / image-rs               │
-└─────────────────────────────────────────┘
-```
-
-## Supported Devices
-
-| Brand | Series | Models |
-|-------|--------|--------|
-| OnePlus | Flagship | 12, 13, 15, 15T |
-| OnePlus | Ace | Ace 3/5/6 series |
-| OPPO | Find | X6/X7/X8/X9, N3/N5/N6 |
-| OPPO | Reno | Reno10-16 series |
-| OPPO | K | K12/K13/K15 series |
-| realme | GT | GT5/GT6/GT7/GT8 series |
-| realme | Neo | Neo6/Neo7/Neo8 series |
-| realme | Number | 12/13/14/15 series |
-
-## Project Structure
-
-```
-XDRemux-Flutter/
-├── rust/                    # Rust core engine
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs           # FFI exports
-│       ├── container.rs     # HEIC container parser
-│       ├── iso21496.rs      # ISO 21496-1 metadata
-│       ├── gainmap.rs       # Gain Map processor
-│       ├── edr.rs           # EDR calculator
-│       └── heif_io.rs       # HEIF I/O
-├── lib/                     # Flutter application
-│   ├── main.dart
-│   ├── screens/             # UI screens
-│   ├── services/            # Business logic
-│   └── ffi/                 # FFI bindings
-├── android/                 # Android platform
-├── ios/                     # iOS platform
-├── windows/                 # Windows platform
-├── macos/                   # macOS platform
-└── pubspec.yaml             # Flutter dependencies
-```
-
-## Development
-
-### Run in Development
+> [!NOTE]
+> 需要先安装依赖：`pip install pillow-heif Pillow numpy`
 
 ```bash
-flutter run
-```
-
-### Run Tests
-
-```bash
-# Flutter tests
-flutter test
-
-# Rust tests
-cd rust && cargo test
-```
-
-### Build for Release
-
-```bash
-# Clean build
-flutter clean
-flutter pub get
-cd rust && cargo build --release && cd ..
-
-# Build all platforms
-flutter build apk --release
-flutter build ios --release
-flutter build windows --release
-flutter build macos --release
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) for details.
-
-## Credits
-
-- **Original Project**: [XDRemux](https://github.com/21Z121Z1/XDRemux) by [21Z121Z1](https://github.com/21Z121Z1)
-- **Flutter**: [flutter.dev](https://flutter.dev)
-- **Rust**: [rust-lang.org](https://www.rust-lang.org)
-- **libheif**: [github.com/novice-lab/libheif](https://github.com/novice-lab/libheif)
-
----
-
-## 中文
-
-XDRemux Flutter 是 [XDRemux](https://github.com/21Z121Z1/XDRemux) 的跨平台版本，支持 Android、iOS、Windows 和 macOS。
-
-它能将 OPPO、OnePlus、realme 设备拍摄的 ProXDR HEIC 照片转换为符合 ISO 21496-1 标准的 HDR HEIC 文件。
-
-> ⚠️ **开发中**
->
-> 本项目处于早期开发阶段，仓库刚刚创建，核心功能正在移植中。
->
-> **当前进度：**
-> - ✅ 项目结构初始化完成
-> - ✅ Rust FFI 接口设计完成
-> - ✅ Flutter UI 骨架创建完成
-> - 🔨 核心 Rust 引擎（从 Python 移植中）
-> - 🔨 HEIC 容器解析器
-> - 🔨 ISO 21496-1 元数据处理
-> - ❌ 尚未可用
->
-> 欢迎贡献代码和反馈！
-
-### 致谢
-
-本项目基于 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux) 的核心算法和研究成果，在此感谢原作者的贡献。
-
-原项目使用 Swift + Python 实现，本项目使用 Flutter + Rust 重写，实现了真正的跨平台支持。
-
----
-
-## 功能特性
-
-- 📱 **跨平台**: Android、iOS、Windows、macOS
-- ⚡ **高性能**: Rust 核心引擎
-- 🎨 **现代 UI**: Flutter Material Design 3
-- 🔄 **批量转换**: 支持多文件同时转换
-- 📷 **OPPO 兼容**: 支持 OPPO 相册兼容模式
-
-## 快速开始
-
-### 环境要求
-
-| 工具 | 版本 | 用途 |
-|------|------|------|
-| Flutter | 3.24+ | UI 框架 |
-| Rust | 1.80+ | 核心引擎 |
-| Android Studio | 最新版 | Android 开发 |
-| Xcode | 15.0+ | iOS/macOS 开发 |
-| Visual Studio | 2022+ | Windows 开发 |
-
-### 安装
-
-```bash
-# 克隆仓库
-git clone https://github.com/BeetMan/XDRemux-Flutter.git
-cd XDRemux-Flutter
-
-# 安装 Flutter 依赖
-flutter pub get
-
-# 构建 Rust 核心
-cd rust && cargo build --release && cd ..
-```
-
-### 构建
-
-```bash
-# Android
-flutter build apk --release
-
-# iOS
-flutter build ios --release
-
-# Windows
-flutter build windows --release
-
-# macOS
-flutter build macos --release
-```
-
-## 使用方法
-
-### 命令行
-
-```bash
-# 单文件转换
-flutter run -- --input photo.heic
+# 单张转换
+python3 xdremux/python/XDRemux.py convert --input IMG_001.heic
 
 # 批量转换
-flutter run -- --input-dir photos/ --output-dir converted/
+python3 xdremux/python/XDRemux.py batch --input-dir photo_dump/
+
+# OPPO 相册兼容输出（旧名 --oppo-compat 仍可用）
+python3 xdremux/python/XDRemux.py convert --oppo-compatible --input IMG_001.heic
 ```
 
-### Dart API
+Apple 人像转换目前由 Swift CLI 提供。
 
-```dart
-import 'services/xdremux_service.dart';
+### macOS App
 
-// 单文件转换
-await XdRemuxService.convert(
-  'input.heic',
-  'output.heic',
-  oppoCompat: false,
-);
+源码位于：
 
-// 批量转换
-await XdRemuxService.batchConvert(
-  'input/',
-  'output/',
-  oppoCompat: true,
-);
+```text
+apps/macos/XDRemuxApp/
 ```
 
-## 架构
+本地构建和运行：
 
+```bash
+scripts/build_and_run.sh run
 ```
-┌─────────────────────────────────────────┐
-│           Flutter UI 层                 │
-│    (Android / iOS / Windows / macOS)    │
-├─────────────────────────────────────────┤
-│            Dart FFI 桥接层              │
-├─────────────────────────────────────────┤
-│            Rust 核心引擎                │
-│  ┌─────────┬─────────┬─────────┬──────┐ │
-│  │容器解析 │ISO元数据 │Gain Map │ EDR  │ │
-│  │         │         │处理     │计算  │ │
-│  └─────────┴─────────┴─────────┴──────┘ │
-├─────────────────────────────────────────┤
-│        libheif / image-rs               │
-└─────────────────────────────────────────┘
+
+## Swift CLI 输入处理模式
+
+Swift CLI 支持 `--input-processing` 参数。普通用户通常不需要手动设置。
+
+```bash
+swift xdremux/swift-cli/XDRemux.swift convert --input IMG_001.heic --input-processing hybrid
 ```
+
+| 模式            | 说明                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `hybrid`      | 默认模式。保留原始 Base Image，只重新处理 HDR Gain Map。非 OPPO 输出保留原通道结构；开启 OPPO 兼容时，LHDR 使用已验证的 RGB-copy Gain Map。 |
+| `system`      | 让系统 ImageIO 负责写出最终 HEIC。这个模式会重新编码 Base Image 和 Gain Map，适合用于对照系统行为。                                          |
+| `passthrough` | 实验性模式。直接改写 HEIC 内部结构，用于验证和开发。普通用户不建议使用。                                                                      |
 
 ## 支持设备
 
-| 品牌 | 系列 | 机型 |
-|------|------|------|
-| 一加 | 旗舰 | 12、13、15、15T |
-| 一加 | Ace | Ace 3/5/6 系列 |
-| OPPO | Find | X6/X7/X8/X9、N3/N5/N6 |
-| OPPO | Reno | Reno10-16 系列 |
-| OPPO | K | K12/K13/K15 系列 |
-| realme | GT | GT5/GT6/GT7/GT8 系列 |
-| realme | Neo | Neo6/Neo7/Neo8 系列 |
-| realme | 数字 | 12/13/14/15 系列 |
+XDRemux 适用于可以拍摄 ProXDR 照片的 OPPO、OnePlus、realme 设备。
 
-## 项目结构
+在中国大陆销售且支持拍摄 ProXDR 照片的设备如下：
 
-```
-XDRemux-Flutter/
-├── rust/                    # Rust 核心引擎
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs           # FFI 导出接口
-│       ├── container.rs     # HEIC 容器解析
-│       ├── iso21496.rs      # ISO 21496-1 元数据
-│       ├── gainmap.rs       # Gain Map 处理
-│       ├── edr.rs           # EDR 计算器
-│       └── heif_io.rs       # HEIF I/O
-├── lib/                     # Flutter 应用
-│   ├── main.dart
-│   ├── screens/             # 界面
-│   ├── services/            # 业务逻辑
-│   └── ffi/                 # FFI 绑定
-├── android/                 # Android 平台
-├── ios/                     # iOS 平台
-├── windows/                 # Windows 平台
-├── macos/                   # macOS 平台
-└── pubspec.yaml             # Flutter 依赖
-```
+| 品牌/系列         | 机型名称                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 一加            | 一加 Ace2 Pro、一加 12、一加 Ace3、一加 Ace 3V、一加 Ace 3 Pro、一加 13、一加 Ace 5 系列、一加 13T、一加 Ace 6、一加 Ace 6T、一加 Turbo 6、一加 15、一加 15T、一加 Ace 5 至尊版 |
+| OPPO K 系列     | K12、K12x、K13 Turbo 系列、K15 Pro 系列                                                                                                  |
+| OPPO Find 系列  | Find X6、Find X6 Pro、Find N3、Find N3 Flip、Find X7、Find X7 Ultra、Find X8 系列、Find N5、Find X8s、Find X9 系列、Find N6                     |
+| OPPO Reno 系列  | Reno10 Pro、Reno10 Pro+、Reno11 Pro、Reno12 系列、Reno13 系列、Reno14 系列、Reno15 系列、Reno 16 系列                                              |
+| realme GT 系列  | 真我 GT5 系列、真我 GT5 Pro、真我 GT6、真我 GT7 Pro、真我 GT7 Pro 竞速版、真我 GT7、真我 Neo7 Turbo、真我 GT8、真我 GT8 Pro                                      |
+| realme Neo 系列 | 真我 GT Neo6 SE、真我 GT Neo6、真我 Neo7、真我 Neo7 SE、真我 Neo7x、真我 Neo8                                                                      |
+| realme 数字系列   | 真我 12 Pro、真我 12 Pro+、真我 13 Pro+、真我 13 Pro 至尊版、真我 13 Pro、真我 14 Pro+、真我 14 Pro、真我 14、真我 15、真我 15 Pro                                |
 
-## 开发
+其中，OPPO Find X8 Ultra、Find X9 系列及真我 GT8 Pro（理光模式）在 Gain Map 实现中支持 **YCbCr 4:4:4 采样的 HDR Gain Map**。
 
-### 开发模式运行
+## 仓库结构
 
-```bash
-flutter run
-```
+| 路径                       | 用途                             |
+| ------------------------ | ------------------------------ |
+| `xdremux/swift-cli/`     | Swift CLI 主入口。                 |
+| `xdremux/python/`        | Python CLI 与 HEIF I/O 辅助实现。    |
+| `apps/macos/XDRemuxApp/` | macOS SwiftUI App。             |
+| `tests/`                 | 转换器测试。                         |
+| `fixtures/`              | 小型测试样本与样本说明。                   |
+| `scripts/`               | 本地构建、运行和验证脚本。                  |
+| `experiments/`           | 实验性代码。                         |
 
-### 运行测试
+## 已知限制
 
-```bash
-# Flutter 测试
-flutter test
+- 转换后的照片在 OPPO 相册中再次编辑并保存后，HDR Gain Map 及其 HDR 元数据可能会丢失。
 
-# Rust 测试
-cd rust && cargo test
-```
-
-### 发布构建
-
-```bash
-# 清理构建
-flutter clean
-flutter pub get
-cd rust && cargo build --release && cd ..
-
-# 构建所有平台
-flutter build apk --release
-flutter build ios --release
-flutter build windows --release
-flutter build macos --release
-```
-
-## 贡献
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 许可证
-
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
-
-## 致谢
-
-- **原项目**: [XDRemux](https://github.com/21Z121Z1/XDRemux) by [21Z121Z1](https://github.com/21Z121Z1)
-- **Flutter**: [flutter.dev](https://flutter.dev)
-- **Rust**: [rust-lang.org](https://www.rust-lang.org)
-- **libheif**: [github.com/novice-lab/libheif](https://github.com/novice-lab/libheif)
+本工具仅供技术研究使用。转换前请备份原始文件。作者不承担任何关于数据丢失的法律责任。
