@@ -1,0 +1,42 @@
+name: xdremux
+description: XDRemux cross-platform ProXDR HEIC to ISO 21496-1 HDR converter
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # FFI bridge to Rust core
+  ffi: ^2.1.0
+
+  # File/folder picking across platforms
+  file_picker: ^8.0.0
+
+  # Standard paths (downloads, cache, etc.)
+  path_provider: ^2.1.0
+
+  # Permissions on Android/iOS
+  permission_handler: ^11.0.0
+
+  # Persistent user settings
+  shared_preferences: ^2.2.0
+
+  # Cupertino icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Rust core DLL is bundled at build time for Windows;
+  # Android copies the .so into jniLibs via Gradle hooks.
+  # No explicit asset entries needed for the dynamic library.

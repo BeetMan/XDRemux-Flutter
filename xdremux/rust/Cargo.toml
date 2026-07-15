@@ -1,0 +1,17 @@
+[package]
+name = "xdremux-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["BeetMan"]
+license = "MIT"
+description = "XDRemux cross-platform HEIC conversion core (Rust)"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
