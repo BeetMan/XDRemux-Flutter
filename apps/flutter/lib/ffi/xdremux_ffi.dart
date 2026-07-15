@@ -46,8 +46,36 @@ class XdRemuxFFI {
     } else if (Platform.isWindows) {
       return _openWindows();
     } else {
-      return ffi.DynamicLibrary.open('libxdremux_core.dylib');
+      return _openMacOS();
     }
+  }
+
+  /// On macOS, try the Frameworks directory inside the app bundle first,
+  /// then fall back to the working directory (for flutter run standalone).
+  static ffi.DynamicLibrary _openMacOS() {
+    const name = 'libxdremux_core.dylib';
+    // App bundle Frameworks path (production)
+    final frameworksPath = '${Platform.resolvedExecutable}/../Frameworks/$name';
+    if (File(frameworksPath).existsSync()) {
+      return ffi.DynamicLibrary.open(frameworksPath);
+    }
+    // Working directory (flutter run / development)
+    if (File(name).existsSync()) {
+      return ffi.DynamicLibrary.open(name);
+    }
+    // Fallback: cargo build output
+    final candidates = <String>[
+      '../../../xdremux/rust/target/debug/deps/$name',
+      '../../../xdremux/rust/target/release/$name',
+      '../../../target/release/$name',
+    ];
+    for (final c in candidates) {
+      if (File(c).existsSync()) {
+        return ffi.DynamicLibrary.open(c);
+      }
+    }
+    throw StateError('Could not locate $name. '
+        'Build with: cargo build -p xdremux-core --lib');
   }
 
   /// On Windows the DLL ships next to the executable (installed by CMake).
