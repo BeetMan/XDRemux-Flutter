@@ -104,6 +104,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
+    _captureFocusNode.dispose();
     super.dispose();
   }
 
@@ -592,15 +593,8 @@ class _HomePageState extends State<HomePage> {
         : (_queue.isNotEmpty ? _queue.first : null);
 
     return RawKeyboardListener(
-      focusNode: FocusNode()..requestFocus(),
-      onKey: (event) {
-        if (event is RawKeyDownEvent &&
-            event.isControlPressed &&
-            event.isShiftPressed &&
-            event.logicalKey == LogicalKeyboardKey.keyS) {
-          _captureScreenshot();
-        }
-      },
+      focusNode: _captureFocusNode,
+      onKey: _onKey,
       child: RepaintBoundary(
         key: _rootKey,
         child: Scaffold(
@@ -699,6 +693,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   String get _versionSuffix => _version.isNotEmpty ? '  $_version' : '';
+
+  // Keyboard handler for screenshot capture (Ctrl+Shift+S).
+  final FocusNode _captureFocusNode = FocusNode();
+  void _onKey(RawKeyEvent event) {
+    if (event is RawKeyDownEvent &&
+        event.isControlPressed &&
+        event.isShiftPressed &&
+        event.logicalKey == LogicalKeyboardKey.keyS) {
+      _captureScreenshot();
+    }
+  }
 
   Widget _buildProgressBar(ThemeData theme) {
     return Container(
