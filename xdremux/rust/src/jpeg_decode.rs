@@ -10,14 +10,37 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// `CREATE_NO_WINDOW` — suppresses the console window flash for every ffmpeg
+/// subprocess on Windows (const 0x08000000, from winbase.h).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn resolve_exe(name: &str) -> PathBuf {
+    // 1. Check next to our own executable (bundled distribution).
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bare = exe_dir.join(name);
+            if bare.exists() {
+                return bare;
+            }
+            if cfg!(windows) {
+                let with_ext = exe_dir.join(format!("{}.exe", name));
+                if with_ext.exists() {
+                    return with_ext;
+                }
+            }
+        }
+    }
+    // 2. Search PATH (wrap `where` / `which` in CREATE_NO_WINDOW on Windows).
     let which_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(output) = Command::new(which_cmd)
-        .arg(name)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    {
+    let mut cmd = Command::new(which_cmd);
+    cmd.arg(name).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    if let Ok(output) = cmd.output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(line) = stdout.lines().next() {
             let trimmed = line.trim();
@@ -26,15 +49,13 @@ fn resolve_exe(name: &str) -> PathBuf {
             }
         }
     }
-    let fallback_dirs: &[&str] = if cfg!(target_os = "macos") {
-        &["/opt/homebrew/bin", "/usr/local/bin"]
-    } else {
-        &["/usr/bin", "/usr/local/bin"]
-    };
-    for dir in fallback_dirs {
-        let candidate = PathBuf::from(dir).join(name);
-        if candidate.exists() {
-            return candidate;
+    // 3. macOS homebrew fallback.
+    if cfg!(target_os = "macos") {
+        for dir in &["/opt/homebrew/bin", "/usr/local/bin"] {
+            let candidate = PathBuf::from(dir).join(name);
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
     PathBuf::from(name)
@@ -51,19 +72,21 @@ pub fn decode_jpeg_to_rgb(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u3
     let (width, height) = probe_jpeg_dimensions(jpeg_data)?;
 
     let ffmpeg = resolve_exe("ffmpeg");
-    let mut child = Command::new(&ffmpeg)
-        .args([
-            "-v", "quiet",
-            "-f", "jpeg_pipe",
-            "-i", "pipe:0",
-            "-f", "rawvideo",
-            "-pix_fmt", "rgb24",
-            "pipe:1",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.args([
+        "-v", "quiet",
+        "-f", "jpeg_pipe",
+        "-i", "pipe:0",
+        "-f", "rawvideo",
+        "-pix_fmt", "rgb24",
+        "pipe:1",
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = cmd.spawn()?;
 
     let owned = jpeg_data.to_vec();
     let mut stdin = child.stdin.take().unwrap();
@@ -113,18 +136,20 @@ pub fn decode_jpeg_to_gray(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u
 
 fn probe_jpeg_dimensions(jpeg_data: &[u8]) -> std::io::Result<(u32, u32)> {
     let ffprobe = resolve_exe("ffprobe");
-    let mut child = Command::new(&ffprobe)
-        .args([
-            "-v", "quiet",
-            "-print_format", "csv=p=0",
-            "-show_entries", "stream=width,height",
-            "-f", "jpeg_pipe",
-            "-i", "pipe:0",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut cmd = Command::new(&ffprobe);
+    cmd.args([
+        "-v", "quiet",
+        "-print_format", "csv=p=0",
+        "-show_entries", "stream=width,height",
+        "-f", "jpeg_pipe",
+        "-i", "pipe:0",
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = cmd.spawn()?;
 
     let owned = jpeg_data.to_vec();
     let mut stdin = child.stdin.take().unwrap();
@@ -166,19 +191,21 @@ fn probe_jpeg_dimensions(jpeg_data: &[u8]) -> std::io::Result<(u32, u32)> {
 
 fn decode_jpeg_raw(jpeg_data: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     let ffmpeg = resolve_exe("ffmpeg");
-    let mut child = Command::new(&ffmpeg)
-        .args([
-            "-v", "quiet",
-            "-f", "jpeg_pipe",
-            "-i", "pipe:0",
-            "-f", "rawvideo",
-            "-pix_fmt", "gray",
-            "pipe:1",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut cmd = Command::new(&ffmpeg);
+    cmd.args([
+        "-v", "quiet",
+        "-f", "jpeg_pipe",
+        "-i", "pipe:0",
+        "-f", "rawvideo",
+        "-pix_fmt", "gray",
+        "pipe:1",
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = cmd.spawn()?;
 
     let owned = jpeg_data.to_vec();
     let mut stdin = child.stdin.take().unwrap();

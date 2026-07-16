@@ -94,8 +94,8 @@ class XdRemuxFFI {
       'build/windows/x64/runner/Debug/$name',
       'build/windows/x64/runner/Release/$name',
       // Rust cargo output, relative to apps/flutter
-      '../../../xdremux/rust/target/release/$name',
-      '../../../xdremux/rust/target/debug/$name',
+      '../../../target/release/$name',
+      '../../../target/debug/$name',
     ];
     for (final c in candidates) {
       try {

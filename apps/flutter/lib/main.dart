@@ -17,10 +17,14 @@ class XdRemuxApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Use Microsoft YaHei on Windows for proper CJK rendering; keep system
+    // default on other platforms.
+    final String? fontFamily = Platform.isWindows ? 'Microsoft YaHei' : null;
     return MaterialApp(
       title: 'XDRemux',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        fontFamily: fontFamily,
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.deepPurple,
           brightness: Brightness.light,
@@ -28,6 +32,7 @@ class XdRemuxApp extends StatelessWidget {
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
+        fontFamily: fontFamily,
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.deepPurple,
           brightness: Brightness.dark,

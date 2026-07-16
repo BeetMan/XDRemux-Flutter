@@ -9,18 +9,41 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// `CREATE_NO_WINDOW` — suppresses the console window flash for every ffmpeg
+/// subprocess on Windows (const 0x08000000, from winbase.h).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Resolve `name` (e.g. "ffmpeg") to an absolute path, falling back to the bare
 /// name if resolution fails.
 fn resolve_exe(name: &str) -> PathBuf {
-    // On Windows we need the absolute path so the DLL loader searches
-    // ffmpeg's own directory rather than our application directory
-    // (which contains Flutter DLLs that conflict).
+    // 1. Check next to our own executable (bundled distribution).
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bare = exe_dir.join(name);
+            if bare.exists() {
+                return bare;
+            }
+            if cfg!(windows) {
+                let with_ext = exe_dir.join(format!("{}.exe", name));
+                if with_ext.exists() {
+                    return with_ext;
+                }
+            }
+        }
+    }
+    // 2. Search PATH — on Windows we need the absolute path so the DLL
+    //    loader searches ffmpeg's own directory rather than our application
+    //    directory (which contains Flutter DLLs that conflict).
     let which_cmd = if cfg!(windows) { "where" } else { "which" };
-    if let Ok(output) = std::process::Command::new(which_cmd)
-        .arg(name)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
+    let mut cmd = std::process::Command::new(which_cmd);
+    cmd.arg(name).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    if let Ok(output) = cmd.output()
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(line) = stdout.lines().next() {
@@ -30,18 +53,14 @@ fn resolve_exe(name: &str) -> PathBuf {
             }
         }
     }
-    // App bundles launched from Finder/Dock have a minimal PATH that
-    // does not include /opt/homebrew/bin or /usr/local/bin. Probe
-    // common macOS Linux/Unix tool paths before giving up.
-    let fallback_dirs: &[&str] = if cfg!(target_os = "macos") {
-        &["/opt/homebrew/bin", "/usr/local/bin"]
-    } else {
-        &["/usr/bin", "/usr/local/bin"]
-    };
-    for dir in fallback_dirs {
-        let candidate = PathBuf::from(dir).join(name);
-        if candidate.exists() {
-            return candidate;
+    // 3. App bundles launched from Finder/Dock have a minimal PATH that
+    //    does not include /opt/homebrew/bin or /usr/local/bin.
+    if cfg!(target_os = "macos") {
+        for dir in &["/opt/homebrew/bin", "/usr/local/bin"] {
+            let candidate = PathBuf::from(dir).join(name);
+            if candidate.exists() {
+                return candidate;
+            }
         }
     }
     PathBuf::from(name)
@@ -124,11 +143,12 @@ fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> 
         "pipe:1",
     ]);
 
-    let mut child = cmd
-        .stdin(Stdio::piped())
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = cmd.spawn()?;
 
     // Pump stdin on a background thread while reading stdout on the main
     // thread, so neither pipe deadlocks on Windows' 64 KiB buffer.

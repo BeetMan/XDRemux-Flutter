@@ -7,6 +7,26 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
 
+/// Resolve the ffmpeg executable path, checking the app's own directory first
+/// (bundled distribution) before falling back to PATH.
+String _resolveFfmpeg() {
+  // On Windows, check next to our own executable first.
+  if (Platform.isWindows) {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final bundled = File('${exeDir.path}\\ffmpeg.exe');
+    if (bundled.existsSync()) return bundled.path;
+  } else if (Platform.isMacOS) {
+    // macOS app bundle: check Frameworks and executable directory.
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final bundled = File('${exeDir.path}/ffmpeg');
+    if (bundled.existsSync()) return bundled.path;
+    final frameworksDir = File('${exeDir.path}/../Frameworks/ffmpeg');
+    if (frameworksDir.existsSync()) return frameworksDir.path;
+  }
+  // Fall back to whatever is on PATH (or bare name on other platforms).
+  return 'ffmpeg';
+}
+
 /// Higher-level service that wraps raw FFI calls and manages settings.
 class XdRemuxService {
   XdRemuxService._();
@@ -82,7 +102,8 @@ class XdRemuxService {
     int maxPixelSize = 320,
   }) async {
     try {
-      final result = await Process.run('ffmpeg', [
+      final ffmpeg = _resolveFfmpeg();
+      final result = await Process.run(ffmpeg, [
         '-y',
         '-i',
         inputPath,
@@ -93,7 +114,7 @@ class XdRemuxService {
         '-c:v',
         'png',
         'pipe:1',
-      ]);
+      ], runInShell: false);
       if (result.exitCode == 0 && result.stdout is List<int>) {
         return Uint8List.fromList(result.stdout as List<int>);
       }

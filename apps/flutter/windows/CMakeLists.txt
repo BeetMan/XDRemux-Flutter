@@ -88,11 +88,22 @@ if(PLUGIN_BUNDLED_LIBRARIES)
 endif()
 
 # Copy the Rust core DLL next to the executable so dart:ffi can load it.
-set(XDREMUX_RUST_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../../../xdremux/rust/target/release/xdremux_core.dll")
+set(XDREMUX_RUST_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../../../target/release/xdremux_core.dll")
 if(EXISTS "${XDREMUX_RUST_DLL}")
   install(FILES "${XDREMUX_RUST_DLL}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 else()
   message(WARNING "Rust core DLL not found at ${XDREMUX_RUST_DLL}. Build it with: cargo build --release")
+endif()
+
+# Bundle ffmpeg executables for offline distribution.
+set(FFMPEG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/ffmpeg/windows")
+if(EXISTS "${FFMPEG_DIR}")
+  install(FILES
+    "${FFMPEG_DIR}/ffmpeg.exe"
+    "${FFMPEG_DIR}/ffprobe.exe"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+else()
+  message(WARNING "ffmpeg binaries not found at ${FFMPEG_DIR}. Download them from https://www.gyan.dev/ffmpeg/builds/")
 endif()
 
 # Copy the native assets provided by the build.dart from all packages.
