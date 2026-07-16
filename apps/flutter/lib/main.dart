@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'models/app_models.dart';
@@ -65,6 +68,7 @@ class _HomePageState extends State<HomePage> {
   bool _isProcessing = false;
   int? _selectedIndex;
   Timer? _progressTimer;
+  final GlobalKey _rootKey = GlobalKey();
 
   String _version = '';
   Timer? _configSaveTimer;
@@ -587,7 +591,19 @@ class _HomePageState extends State<HomePage> {
         ? _queue[_selectedIndex!]
         : (_queue.isNotEmpty ? _queue.first : null);
 
-    return Scaffold(
+    return RawKeyboardListener(
+      focusNode: FocusNode()..requestFocus(),
+      onKey: (event) {
+        if (event is RawKeyDownEvent &&
+            event.isControlPressed &&
+            event.isShiftPressed &&
+            event.logicalKey == LogicalKeyboardKey.keyS) {
+          _captureScreenshot();
+        }
+      },
+      child: RepaintBoundary(
+        key: _rootKey,
+        child: Scaffold(
       appBar: AppBar(
         title: Text('XDRemux$_versionSuffix'),
         backgroundColor: theme.colorScheme.inversePrimary,
@@ -655,7 +671,31 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+        ),
+      ),
     );
+  }
+
+  /// Save a PNG screenshot of the app window to the project screenshots dir.
+  Future<void> _captureScreenshot() async {
+    try {
+      final boundary = _rootKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
+      final image = await boundary.toImage(pixelRatio: 1.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+      final dir = Directory('screenshots');
+      if (!dir.existsSync()) dir.createSync();
+      final file = File('screenshots/windows_main.png');
+      await file.writeAsBytes(byteData.buffer.asUint8List());
+      if (mounted) {
+        setState(() => _currentFileName = '截图已保存: ${file.path}');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _currentFileName = '截图失败: $e');
+      }
+    }
   }
 
   String get _versionSuffix => _version.isNotEmpty ? '  $_version' : '';
