@@ -30,6 +30,20 @@ fn resolve_exe(name: &str) -> PathBuf {
             }
         }
     }
+    // App bundles launched from Finder/Dock have a minimal PATH that
+    // does not include /opt/homebrew/bin or /usr/local/bin. Probe
+    // common macOS Linux/Unix tool paths before giving up.
+    let fallback_dirs: &[&str] = if cfg!(target_os = "macos") {
+        &["/opt/homebrew/bin", "/usr/local/bin"]
+    } else {
+        &["/usr/bin", "/usr/local/bin"]
+    };
+    for dir in fallback_dirs {
+        let candidate = PathBuf::from(dir).join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
     PathBuf::from(name)
 }
 

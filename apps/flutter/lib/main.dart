@@ -71,8 +71,8 @@ class _HomePageState extends State<HomePage> {
     _config = await XdRemuxService.loadConfig();
     try {
       _version = await XdRemuxService.getVersion();
-    } catch (_) {
-      _version = 'core not loaded';
+    } catch (e) {
+      _version = 'core error: $e';
     }
     if (mounted) setState(() {});
   }

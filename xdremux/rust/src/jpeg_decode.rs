@@ -26,6 +26,17 @@ fn resolve_exe(name: &str) -> PathBuf {
             }
         }
     }
+    let fallback_dirs: &[&str] = if cfg!(target_os = "macos") {
+        &["/opt/homebrew/bin", "/usr/local/bin"]
+    } else {
+        &["/usr/bin", "/usr/local/bin"]
+    };
+    for dir in fallback_dirs {
+        let candidate = PathBuf::from(dir).join(name);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
     PathBuf::from(name)
 }
 

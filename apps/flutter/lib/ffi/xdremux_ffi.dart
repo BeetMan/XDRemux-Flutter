@@ -54,29 +54,29 @@ class XdRemuxFFI {
   /// then fall back to the working directory (for flutter run standalone).
   static ffi.DynamicLibrary _openMacOS() {
     const name = 'libxdremux_core.dylib';
-    // ResolvedExecutable = Contents/MacOS/xdremux
-    // Frameworks are at Contents/Frameworks/ (two levels up)
-    final frameworksPath = '${Platform.resolvedExecutable}/../../Frameworks/$name';
-    if (File(frameworksPath).existsSync()) {
-      return ffi.DynamicLibrary.open(frameworksPath);
-    }
-    // Working directory (flutter run / development)
-    if (File(name).existsSync()) {
-      return ffi.DynamicLibrary.open(name);
-    }
-    // Fallback: cargo build output
-    final candidates = <String>[
-      '../../../xdremux/rust/target/debug/deps/$name',
-      '../../../xdremux/rust/target/release/$name',
-      '../../../target/release/$name',
+    // macOS dyld searches @rpath and @executable_path automatically.
+    // The app has @executable_path/../Frameworks in LD_RUNPATH_SEARCH_PATHS,
+    // and we also place the dylib next to the main binary.
+    // Try each approach, catching and collecting errors for diagnostics.
+    final attempts = <(String, dynamic)>[
+      // 1. Just the bare name — let dyld search rpath + executable_path
+      (name, null),
+      // 2. Next to the executable
+      ('${Platform.resolvedExecutable}/../$name', null),
+      // 3. App bundle Frameworks
+      ('${Platform.resolvedExecutable}/../../Frameworks/$name', null),
+      // 4. Also try ../../../Frameworks (if resolvedExecutable is inside App.framework)
+      ('${Platform.resolvedExecutable}/../../../Frameworks/$name', null),
     ];
-    for (final c in candidates) {
-      if (File(c).existsSync()) {
-        return ffi.DynamicLibrary.open(c);
+    Object? lastError;
+    for (final (path, _) in attempts) {
+      try {
+        return ffi.DynamicLibrary.open(path);
+      } catch (e) {
+        lastError = e;
       }
     }
-    throw StateError('Could not locate $name. '
-        'Build with: cargo build -p xdremux-core --lib');
+    throw StateError('Could not load $name. Last error: $lastError');
   }
 
   /// On Windows the DLL ships next to the executable (installed by CMake).
