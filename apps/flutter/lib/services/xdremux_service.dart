@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,17 +38,17 @@ class XdRemuxService {
   }
 
   // -----------------------------------------------------------------------
-  // Convert
+  // Convert (runs in background isolate to keep UI responsive)
   // -----------------------------------------------------------------------
 
   static Future<Map<String, dynamic>> convert(
     String inputPath,
     String outputPath, {
     int oppoCompat = 0,
-  }) async {
-    final result = XdRemuxFFI.convert(inputPath, outputPath, oppoCompat: oppoCompat);
-    try {
-      return {
+  }) {
+    return Isolate.run(() {
+      final result = XdRemuxFFI.convert(inputPath, outputPath, oppoCompat: oppoCompat);
+      final map = {
         'success': result.success,
         'mode': result.mode.toDartStringOrNull(),
         'family': result.family.toDartStringOrNull(),
@@ -55,9 +56,9 @@ class XdRemuxService {
         'gainMapMax': result.gainMapMax,
         'errorMessage': result.errorMessage.toDartStringOrNull(),
       };
-    } finally {
       XdRemuxFFI.freeResult(result);
-    }
+      return map;
+    });
   }
 
   // -----------------------------------------------------------------------
