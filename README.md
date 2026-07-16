@@ -2,7 +2,7 @@
 
 将 OPPO / OnePlus / realme 设备拍摄的 ProXDR HEIC 照片转换为标准 ISO 21496-1 HDR HEIC。
 
-转换后的照片可在 macOS、iOS、Android 等支持 HDR 显示的系统中查看。
+基于原版 [XDRemux](https://github.com/BeetMan/XDRemux)（Swift + Python）用 Rust 重写核心转换逻辑，搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android 等支持 HDR 显示的系统中查看。
 
 ## 快速开始
 
