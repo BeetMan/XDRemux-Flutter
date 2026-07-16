@@ -1,4 +1,0 @@
-interface:
-  display_name: "ISO HDR Compliance Review"
-  short_description: "Review ISO 21496 and HEIF tmap compliance"
-  default_prompt: "Use $iso-hdr-compliance-review to audit an XDRemux HEIC output against ISO 21496-1 and ISO/IEC 23008-12 tmap rules."

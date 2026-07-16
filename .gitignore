@@ -23,6 +23,29 @@ example/swift_output/
 # Built app
 xdremux.app
 
+# Maintainer-only (keep out of public history)
+.codex/
+.claude/
+.sisyphus/
+.github/
+skills/
+docs/
+AGENTS.md
+CLAUDE.md
+HANDOFF.md
+Makefile
+PROJECT_SETUP.md
+QUICK_START.md
+README.en.md
+README_FLUTTER.md
+
+# Conformance golden snapshot (not a test fixture)
+tests/conformance/GOLDEN.md
+
+# Built dylib artifacts
+apps/flutter/macos/Frameworks/libxdremux_core.dylib
+apps/flutter/libxdremux_core.dylib
+
 # Large binaries
 *.apk
 *.heic
@@ -63,3 +86,4 @@ final-output/
 # Canonical conclusions (extracted from tarball)
 organized/
 organized_customers.tar.gz
+apps/flutter/README.md
