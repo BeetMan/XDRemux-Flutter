@@ -422,6 +422,61 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Drag & drop
+  // ---------------------------------------------------------------------------
+
+  Widget _buildDropTarget(BuildContext context, Widget child) {
+    return DragTarget<List<String>>(
+      onWillAcceptWithDetails: (_) => _canEditQueue,
+      onAcceptWithDetails: (details) => _handleDrop(details.data),
+      builder: (context, candidate, rejected) {
+        final isHovering = candidate.isNotEmpty && _canEditQueue;
+        return Stack(
+          children: [
+            child,
+            if (isHovering)
+              Positioned.fill(
+                child: Container(
+                  color: Theme.of(context).colorScheme.primary.withAlpha(30),
+                  child: Center(
+                    child: Icon(
+                      Icons.cloud_upload,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _handleDrop(List<String> paths) {
+    final existing = _queue.map((item) => item.inputPath).toSet();
+    int added = 0;
+    for (final path in paths) {
+      if (!path.toLowerCase().endsWith('.heic')) continue;
+      if (existing.contains(path)) continue;
+      final outputPath = _config.outputPathFor(path);
+      _queue.add(QueueItem(
+        id: _makeId(),
+        inputPath: path,
+        outputPath: outputPath,
+        outputPlanStatus: _computeOutputPlan(path, outputPath),
+      ));
+      existing.add(path);
+      added++;
+    }
+    if (added > 0) {
+      _validateOutputPlans();
+      _updateStatusText();
+      setState(() => _currentFileName = '已拖入 $added 个文件');
+    }
+  }
+
   void _revealInExplorer(String path) {
     if (Platform.isWindows) {
       Process.run('explorer', ['/select,', path]);
@@ -515,18 +570,21 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Column(
-        children: [
-          // Progress bar
-          _buildProgressBar(theme),
-          const Divider(height: 1),
-          // Main content
-          Expanded(
-            child: _queue.isEmpty ? _buildEmptyState(theme) : _buildQueueView(theme, selectedItem),
-          ),
-          // Footer
-          if (_queue.isNotEmpty) _buildFooter(theme),
-        ],
+      body: _buildDropTarget(
+        context,
+        Column(
+          children: [
+            // Progress bar
+            _buildProgressBar(theme),
+            const Divider(height: 1),
+            // Main content
+            Expanded(
+              child: _queue.isEmpty ? _buildEmptyState(theme) : _buildQueueView(theme, selectedItem),
+            ),
+            // Footer
+            if (_queue.isNotEmpty) _buildFooter(theme),
+          ],
+        ),
       ),
     );
   }
@@ -622,7 +680,7 @@ class _HomePageState extends State<HomePage> {
           Icon(Icons.photo_library_outlined,
               size: 64, color: theme.colorScheme.primary.withAlpha(100)),
           const SizedBox(height: 16),
-          Text('拖拽或选择 ProXDR HEIC 文件', style: theme.textTheme.titleMedium),
+          Text('拖拽 HEIC 文件到窗口，或点击下方按钮选择', style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           FilledButton.icon(
             icon: const Icon(Icons.add),
