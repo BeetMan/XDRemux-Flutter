@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'models/app_models.dart';
 import 'services/xdremux_service.dart';
@@ -60,11 +61,13 @@ class _HomePageState extends State<HomePage> {
 
   String _version = '';
   Timer? _configSaveTimer;
+  static const _dropChannel = MethodChannel('xdremux/drop');
 
   @override
   void initState() {
     super.initState();
     _initAsync();
+    _initDropChannel();
   }
 
   Future<void> _initAsync() async {
@@ -75,6 +78,15 @@ class _HomePageState extends State<HomePage> {
       _version = 'core error: $e';
     }
     if (mounted) setState(() {});
+  }
+
+  void _initDropChannel() {
+    _dropChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onFilesDropped') {
+        final paths = List<String>.from(call.arguments as List);
+        _handleDrop(paths);
+      }
+    });
   }
 
   @override
