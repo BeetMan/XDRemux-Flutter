@@ -2888,14 +2888,18 @@ private func writeImageIOPreservedGainMapPassthrough(
     let patchedUserComment = adjustedOppoUserComment(in: sourceData, compatibility: oppoCompatibility)
     switch productInput.extracted.mode {
     case .uhdr:
-        try ISOHDRWriter.write(
-            baseImageURL: inputURL,
-            gainMap: productInput.gainMapRaster,
-            style: productInput.style,
-            outputURL: preservedURL,
-            oppoCompatibility: oppoCompatibility,
-            inputProcessingBranch: .system
-        )
+        if gainMapEncodingMatchesTarget(at: inputURL, compatibility: oppoCompatibility) {
+            try FileManager.default.copyItem(at: inputURL, to: preservedURL)
+        } else {
+            try ISOHDRWriter.write(
+                baseImageURL: inputURL,
+                gainMap: productInput.gainMapRaster,
+                style: productInput.style,
+                outputURL: preservedURL,
+                oppoCompatibility: oppoCompatibility,
+                inputProcessingBranch: .system
+            )
+        }
     case .lhdr:
         let writerInput = gainMapWriterInput(
             productInput: productInput,

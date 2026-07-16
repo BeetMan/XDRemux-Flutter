@@ -19,6 +19,7 @@ use crate::isobmff::{
 struct OutputConfig {
     _oppo_compat: OppoCompat,
     oppo_rgb: bool,      // true for OPPO LHDR RGB-copy or UHDR 3ch
+    filter_hdr: bool,    // filter private HDR entries from the OPPO tail
     tile_payloads: Vec<Vec<u8>>,
     tile_ids: Vec<u32>,
     gain_grid_id: u32,
@@ -114,6 +115,7 @@ pub fn write_lhdr_iso_output(
     let cfg = OutputConfig {
         _oppo_compat: oppo_compat,
         oppo_rgb: oppo_compat.wants_oppo_rgb(),
+        filter_hdr: !oppo_compat.wants_patch(),
         tile_payloads: tile_payloads.clone(),
         tile_ids: tile_ids.clone(),
         gain_grid_id,
@@ -208,6 +210,7 @@ pub fn write_uhdr_iso_output(
     let cfg = OutputConfig {
         _oppo_compat: oppo_compat,
         oppo_rgb: true, // UHDR gain maps are always 3-channel
+        filter_hdr: !oppo_compat.wants_patch(),
         tile_payloads: tile_payloads.clone(),
         tile_ids: tile_ids.clone(),
         gain_grid_id,
@@ -690,11 +693,14 @@ fn assemble_and_write(
     out.extend_from_slice(between);
     out.extend_from_slice(&mdat_box);
 
-    // Preserve the complete OPPO/QTI/FileExtendedContainer tail from the
-    // source (watermarks, master mode presets, camera parameters, portrait
-    // editing data, and unrecognised vendor fields).
-    if let Some(tail) = crate::container::get_oppo_tail(source_data) {
-        out.extend_from_slice(tail);
+    // Preserve OPPO/QTI/FileExtendedContainer tail.  In standard ISO mode
+    // the private HDR entries (local.uhdr.*, local.hdr.*, src.local.hdr.*,
+    // hdr.*) are removed; the non-HDR metadata (watermark, camera params,
+    // portrait data) is kept.  In OPPO-compatible mode the entire tail is
+    // preserved.
+    let filter_hdr = cfg.filter_hdr;
+    if let Some(tail) = crate::container::get_oppo_tail(source_data, filter_hdr) {
+        out.extend_from_slice(&tail);
     }
 
     std::fs::write(output_path, &out).map_err(|e| format!("write error: {e}"))?;

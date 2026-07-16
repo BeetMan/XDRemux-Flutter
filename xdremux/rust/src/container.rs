@@ -1,3 +1,4 @@
+use std::fmt::Write;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -142,19 +143,106 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
 /// source HEIC file. Returns `None` if no extension region is found.
 ///
 /// Includes the ISOBMFF QTI box header (size + type) so the preserved tail
-/// remains a valid box structure identical to what Swift's
-/// `appendOppoCameraTailIfNeeded` preserves — watermarks, master mode presets,
-/// camera parameters, portrait editing data, and unrecognised vendor fields.
-pub fn get_oppo_tail(data: &[u8]) -> Option<&[u8]> {
+/// remains a valid box structure.
+///
+/// When `filter_hdr` is true (standard ISO mode), private HDR entries
+/// (local.uhdr.*, local.hdr.*, src.local.hdr.*, hdr.*) are removed,
+/// matching Python's `filter_private_hdr_tail` and Swift's
+/// `.preserveWithoutPrivateHDR` default mode.
+pub fn get_oppo_tail(data: &[u8], filter_hdr: bool) -> Option<Vec<u8>> {
+    let tail_start = find_qti_box_start(data)?;
+    let raw_tail = &data[tail_start..];
+    if filter_hdr {
+        filter_private_hdr_tail(raw_tail)
+    } else {
+        Some(raw_tail.to_vec())
+    }
+}
+
+/// Find the start of the QTI box in the data. Returns the absolute offset
+/// of the 4-byte size header preceding the QTI marker.
+fn find_qti_box_start(data: &[u8]) -> Option<usize> {
     for marker in QTI_MARKERS {
         if let Some(pos) = data.windows(marker.len()).position(|w| w == *marker) {
             if pos >= 4 {
-                let box_start = pos - 4;
-                return Some(&data[box_start..]);
+                return Some(pos - 4);
             }
         }
     }
     None
+}
+
+/// Remove private HDR entries from the OPPO tail while preserving all
+/// non-HDR manifested entries (watermark, depth, vendor data, etc.).
+///
+/// Ported from Python `container.filter_private_hdr_tail()`.
+fn filter_private_hdr_tail(tail: &[u8]) -> Option<Vec<u8>> {
+    let (entries, json_start, json_end) = parse_manifest(tail)?;
+    if entries.is_empty() || !has_private_hdr_entries(&entries) {
+        return Some(tail.to_vec());
+    }
+
+    // Collect kept entries with their source byte ranges.
+    let mut kept: Vec<(usize, &ManifestEntry)> = Vec::new();
+    for (_index, entry) in entries.iter().enumerate() {
+        if is_private_hdr_tail_entry(&entry.name) {
+            continue;
+        }
+        let source_start = (json_start as i64 - entry.offset as i64) as usize;
+        kept.push((source_start, entry));
+    }
+    if kept.is_empty() {
+        return Some(Vec::new());
+    }
+
+    /// Rebuild payload: kept entry bytes + new manifest + jxrs footer.
+    let mut payload = Vec::new();
+    let mut offsets_from_start: Vec<usize> = Vec::new(); // payload offset for each kept entry
+    for (source_start, entry) in &kept {
+        let start_in_payload = payload.len();
+        let end = source_start + entry.length as usize;
+        if end <= tail.len() {
+            payload.extend_from_slice(&tail[*source_start..end]);
+        }
+        offsets_from_start.push(start_in_payload);
+    }
+
+    // Build new manifest: JSON array of { "length":..., "name":..., "offset":..., "version":1 }
+    let mut manifest = String::from("[");
+    for (i, (start_in_payload, (_, entry))) in offsets_from_start.iter().zip(&kept).enumerate() {
+        if i > 0 {
+            manifest.push(',');
+        }
+        // offset = distance from start of payload to entry start
+        let offset = *start_in_payload;
+        write!(&mut manifest, r#"{{"length":{},"name":"{}","offset":{},"version":1}}"#,
+            entry.length, entry.name, offset).unwrap();
+    }
+    manifest.push(']');
+    let manifest_bytes = manifest.as_bytes();
+    payload.extend_from_slice(manifest_bytes);
+    payload.push(0); // null before footer
+
+    // jxrs footer (manifest_len + 9 as little-endian u32)
+    let footer_size = (manifest_bytes.len() + 9) as u32;
+    payload.extend_from_slice(b"jxrs");
+    payload.extend_from_slice(&footer_size.to_le_bytes());
+
+    Some(payload)
+}
+
+/// Check if any manifest entry is a private HDR entry.
+fn has_private_hdr_entries(entries: &[ManifestEntry]) -> bool {
+    entries.iter().any(|e| is_private_hdr_tail_entry(&e.name))
+}
+
+/// Mirror of Python's `is_private_hdr_tail_entry`.
+fn is_private_hdr_tail_entry(name: &str) -> bool {
+    name == "local.uhdr.gainmap.data"
+        || name == "local.uhdr.gainmap.info"
+        || name.starts_with("hdr.")
+        || name.starts_with("local.hdr.")
+        || name.starts_with("src.local.hdr.")
 }
 
 /// Locate the OPPO extension region in the HEIC file.
