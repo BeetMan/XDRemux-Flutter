@@ -1,4 +1,4 @@
-# XDRemux
+# XDRemux-Flutter
 
 将 OPPO / OnePlus / realme 设备拍摄的 ProXDR HEIC 照片转换为标准 ISO 21496-1 HDR HEIC。
 
