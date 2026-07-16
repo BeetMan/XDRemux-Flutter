@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'models/app_models.dart';
 import 'services/xdremux_service.dart';
+import 'ffi/xdremux_ffi.dart';
 
 void main() {
   runApp(const XdRemuxApp());
@@ -63,6 +64,7 @@ class _HomePageState extends State<HomePage> {
   int _currentConcurrency = 0;
   bool _isProcessing = false;
   int? _selectedIndex;
+  Timer? _progressTimer;
 
   String _version = '';
   Timer? _configSaveTimer;
@@ -97,6 +99,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _configSaveTimer?.cancel();
+    _progressTimer?.cancel();
     super.dispose();
   }
 
@@ -136,12 +139,45 @@ class _HomePageState extends State<HomePage> {
   int get _failedCount =>
       _queue.where((item) => item.status == QueueItemStatus.failed).length;
 
-  double get _progressFraction =>
-      _totalFiles > 0 ? _processedCount / _totalFiles : 0.0;
+  double get _progressFraction {
+    if (_totalFiles == 0) return 0.0;
+
+    // Count fully completed files.
+    final completed = _convertedCount + _skippedCount + _failedCount;
+
+    // Add partial progress from the currently-running items.
+    double partial = 0.0;
+    for (final item in _queue) {
+      final p = item.progress;
+      if (p != null && item.status == QueueItemStatus.running) {
+        // The HEVC tile encoding phase (~stage 3) dominates runtime.
+        // Other stages contribute a fixed small fraction each.
+        if (p.stage == 3 && p.total > 0) {
+          partial += p.current / p.total;
+        }
+        // Give each running job equal weight.
+        partial = partial.clamp(0.0, 1.0);
+        break; // only show the first running job's granular progress
+      }
+    }
+
+    return (completed + partial) / _totalFiles;
+  }
 
   void _updateStatusText() {
     if (_isProcessing) {
-      setState(() => _statusText = '转换中');
+      // Show progress of the currently-active file.
+      String label = '转换中';
+      for (final item in _queue) {
+        if (item.status == QueueItemStatus.running) {
+          final pl = item.progressLabel;
+          if (pl.isNotEmpty) {
+            label = pl;
+          }
+          break;
+        }
+      }
+      setState(() => _statusText = label);
     } else if (_queue.isEmpty) {
       setState(() => _statusText = '就绪');
     } else if (_failedCount > 0) {
@@ -329,6 +365,20 @@ class _HomePageState extends State<HomePage> {
     final item = _queue[index];
     final runConfig = _config.copy();
 
+    // Start polling progress from the Rust core.
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+      if (!mounted) return;
+      try {
+        final (stage, current, total) = XdRemuxFFI.readProgress();
+        if (_queue.length > index) {
+          _queue[index].progress = (stage: stage, current: current, total: total);
+          _updateStatusText();
+          setState(() {});
+        }
+      } catch (_) {}
+    });
+
     try {
       // Check skipExisting
       if (runConfig.skipExisting &&
@@ -336,6 +386,7 @@ class _HomePageState extends State<HomePage> {
           await XdRemuxService.verifyOutput(item.outputPath)) {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
+        item.progress = null;
         if (mounted) setState(() {});
         return;
       }
@@ -364,6 +415,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     item.finishedAt = DateTime.now();
+    item.progress = null;
     if (mounted) setState(() {});
   }
 
@@ -853,6 +905,11 @@ class _QueueListTile extends StatelessWidget {
         children: [
           Text(item.status.displayName,
               style: TextStyle(fontSize: 11, color: color)),
+          if (item.status == QueueItemStatus.running && item.progress != null) ...[
+            const SizedBox(width: 6),
+            Text(item.progressLabel,
+                style: TextStyle(fontSize: 10, color: Colors.blue.shade700)),
+          ],
           if (item.outputPlanStatus != OutputPlanStatus.ready) ...[
             const SizedBox(width: 4),
             Text(item.outputPlanStatus.displayName,

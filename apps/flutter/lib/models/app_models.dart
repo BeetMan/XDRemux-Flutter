@@ -220,6 +220,23 @@ class QueueItem {
   DateTime? startedAt;
   DateTime? finishedAt;
 
+  /// Per-file progress within conversion, e.g. (stage: 3, current: 12, total: 48)
+  /// meaning HEVC tile 12 / 48 is being encoded. Null when idle or done.
+  ({int stage, int current, int total})? progress;
+
+  /// Human-readable progress label derived from [progress].
+  String get progressLabel {
+    final p = progress;
+    if (p == null || p.stage == 0) return '';
+    return switch (p.stage) {
+      1 => '解析元数据…',
+      2 => '解码JPEG…',
+      3 => '编码 HEVC ${p.current}/${p.total}',
+      4 => '组装输出…',
+      _ => '',
+    };
+  }
+
   QueueItem({
     required this.id,
     required this.inputPath,
@@ -229,6 +246,7 @@ class QueueItem {
     this.errorMessage,
     this.startedAt,
     this.finishedAt,
+    this.progress,
   });
 
   String get fileName {

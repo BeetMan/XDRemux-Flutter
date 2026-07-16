@@ -330,6 +330,10 @@ fn tile_and_encode(
     let mut tile_payloads: Vec<Vec<u8>> = Vec::with_capacity((rows * cols) as usize);
     let mut gain_hvcc: Vec<u8> = Vec::new();
 
+    let total_tiles = rows * cols;
+    let mut tile_index: u32 = 0;
+    crate::progress::set_progress(3, 0, total_tiles);
+
     for row in 0..rows {
         for col in 0..cols {
             let x0 = col * tile_size;
@@ -381,6 +385,9 @@ fn tile_and_encode(
             // length-prefixed NAL units in mdat.
             let hevc_lp = crate::hevc::hevc_byte_stream_to_length_prefixed(&hevc_bs);
             tile_payloads.push(hevc_lp);
+
+            tile_index += 1;
+            crate::progress::set_progress(3, tile_index, total_tiles);
         }
     }
 

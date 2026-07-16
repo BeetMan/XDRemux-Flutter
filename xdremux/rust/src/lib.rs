@@ -11,6 +11,7 @@ pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
 pub mod hevc;
+pub mod progress;
 
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
@@ -57,6 +58,25 @@ pub extern "C" fn xdremux_free_string(s: *mut c_char) {
         unsafe {
             drop(CString::from_raw(s));
         }
+    }
+}
+
+/// Read the current conversion progress tuple.
+///
+/// `buf` must point to 3 × u32 (12 bytes).  Returns (stage, current, total).
+///
+/// Stage: 0=idle, 1=extract, 2=decode, 3=encode tiles, 4=assemble.
+/// Dart should poll this on a timer during conversion.
+#[no_mangle]
+pub extern "C" fn xdremux_read_progress(buf: *mut u32) {
+    if buf.is_null() {
+        return;
+    }
+    let (stage, current, total) = progress::read_progress();
+    unsafe {
+        *buf = stage;
+        *buf.add(1) = current;
+        *buf.add(2) = total;
     }
 }
 
@@ -263,19 +283,24 @@ fn convert_lhdr(
     output: &str,
     oppo_compat: OppoCompat,
 ) -> Result<(f32, f32), String> {
+    progress::set_progress(1, 0, 0); // extract
+
     let edr = edr::edr_scale_calculator(&extracted.meta_floats);
 
     let mask_data = extracted.mask_data.as_ref()
         .ok_or_else(|| "no mask JPEG in extracted LHDR data".to_string())?;
 
+    progress::set_progress(2, 0, 0); // decode JPEG
     let (mask_pixels, mask_w, mask_h) = jpeg_decode::decode_jpeg_to_gray(mask_data)
         .map_err(|e| format!("mask JPEG decode failed: {e}"))?;
 
+    progress::set_progress(4, 1, 1); // assemble
     isobmff_write::write_lhdr_iso_output(
         source, &mask_pixels, mask_w, mask_h,
         &extracted.meta_floats, edr, oppo_compat, output,
     )?;
 
+    progress::set_progress(0, 0, 0); // done
     let gm_max = if edr > 1.0 { edr.log2() } else { 0.0 };
     Ok((edr, gm_max))
 }
@@ -286,13 +311,19 @@ fn convert_uhdr(
     output: &str,
     oppo_compat: OppoCompat,
 ) -> Result<(f32, f32), String> {
+    progress::set_progress(1, 0, 0); // extract
+
     let gainmap_jpeg = extracted.gainmap_data.as_ref()
         .ok_or_else(|| "no gainmap JPEG in extracted UHDR data".to_string())?;
 
+    progress::set_progress(2, 0, 0); // decode JPEG
+
+    progress::set_progress(4, 1, 1); // assemble
     isobmff_write::write_uhdr_iso_output(
         source, gainmap_jpeg, &extracted.meta_floats, oppo_compat, output,
     )?;
 
+    progress::set_progress(0, 0, 0); // done
     let scale = if extracted.meta_floats.len() >= 19 {
         extracted.meta_floats[18]
     } else {

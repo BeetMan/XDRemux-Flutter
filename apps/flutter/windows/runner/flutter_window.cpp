@@ -1,5 +1,7 @@
 #include "flutter_window.h"
 
+#include <shellapi.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -36,6 +38,14 @@ bool FlutterWindow::OnCreate() {
   // window is shown. It is a no-op if the first frame hasn't completed yet.
   flutter_controller_->ForceRedraw();
 
+  // Set up the drop channel so we can forward WM_DROPFILES to Dart.
+  drop_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "xdremux/drop",
+      &flutter::StandardMethodCodec::GetInstance());
+
+  // Register the window for file-drop support (WM_DROPFILES).
+  DragAcceptFiles(GetHandle(), TRUE);
+
   return true;
 }
 
@@ -65,6 +75,37 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+
+    case WM_DROPFILES: {
+      HDROP hDrop = reinterpret_cast<HDROP>(wparam);
+      UINT fileCount = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+
+      flutter::EncodableList paths;
+      for (UINT i = 0; i < fileCount; ++i) {
+        UINT len = DragQueryFileW(hDrop, i, nullptr, 0);
+        if (len == 0) continue;
+        std::vector<wchar_t> wideBuf(len + 1);
+        DragQueryFileW(hDrop, i, wideBuf.data(),
+                       static_cast<UINT>(wideBuf.size()));
+        // Convert wide path to UTF-8 for Dart.
+        int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideBuf.data(), -1,
+                                          nullptr, 0, nullptr, nullptr);
+        if (utf8Len <= 0) continue;
+        std::string utf8Path(utf8Len - 1, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, wideBuf.data(), -1, &utf8Path[0],
+                            utf8Len, nullptr, nullptr);
+        paths.push_back(flutter::EncodableValue(utf8Path));
+      }
+
+      DragFinish(hDrop);
+
+      if (drop_channel_ && !paths.empty()) {
+        drop_channel_->InvokeMethod(
+            "onFilesDropped",
+            std::make_unique<flutter::EncodableValue>(paths));
+      }
+      return 0;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

@@ -131,6 +131,10 @@ class XdRemuxFFI {
       ffi.Void Function(ConversionResult),
       void Function(ConversionResult)>('xdremux_free_result');
 
+  static final _readProgress = _lib.lookupFunction<
+      ffi.Void Function(ffi.Pointer<ffi.Uint32>),
+      void Function(ffi.Pointer<ffi.Uint32>)>('xdremux_read_progress');
+
   /// Returns the Rust core version string (e.g. "0.1.0").
   static String version() {
     final ptr = _version();
@@ -179,5 +183,19 @@ class XdRemuxFFI {
 
   static void freeResult(ConversionResult result) {
     _freeResult(result);
+  }
+
+  /// Read the current conversion progress.
+  ///
+  /// Returns `(stage, current, total)`.
+  /// Stage: 0=idle, 1=extract, 2=decode, 3=encode tiles, 4=assemble.
+  static (int, int, int) readProgress() {
+    final buf = calloc<ffi.Uint32>(3);
+    try {
+      _readProgress(buf);
+      return (buf[0], buf[1], buf[2]);
+    } finally {
+      calloc.free(buf);
+    }
   }
 }
