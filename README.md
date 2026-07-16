@@ -43,8 +43,13 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 ### 多平台
 
-- ✅ Rust 核心（Windows、macOS、Linux）
-- ✅ Flutter App（Android、iOS、macOS）
+| 平台 | 状态 | 备注 |
+|------|------|------|
+| Windows | ✅ 可运行 | ffmpeg 捆绑、原生拖拽、DLL 完整工作 |
+| macOS | ✅ 可运行 | FFI dylib 加载 + macOS Runner 已验证 |
+| Linux | ❌ 未创建 | `flutter create` 待执行 |
+| iOS | ❌ 未创建 | `flutter create` 待执行 |
+| Android | ❌ 未适配 | Gradle 骨架存在，NDK + FFI + ffmpeg 集成待做 |
 
 ## 快速开始
 
@@ -123,7 +128,8 @@ cargo build --workspace --release
 
 - [ ] macOS App Store 签名与公证
 - [ ] Linux 测试与打包（AppImage / Flatpak）
-- [ ] iOS 端测试
+- [ ] iOS 适配（`flutter create` 待执行）
+- [ ] Android 适配（NDK + FFI + ffmpeg 跨编译集成）
 
 ### 工程
 
