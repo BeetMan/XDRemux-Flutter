@@ -690,6 +690,13 @@ fn assemble_and_write(
     out.extend_from_slice(between);
     out.extend_from_slice(&mdat_box);
 
+    // Preserve the complete OPPO/QTI/FileExtendedContainer tail from the
+    // source (watermarks, master mode presets, camera parameters, portrait
+    // editing data, and unrecognised vendor fields).
+    if let Some(tail) = crate::container::get_oppo_tail(source_data) {
+        out.extend_from_slice(tail);
+    }
+
     std::fs::write(output_path, &out).map_err(|e| format!("write error: {e}"))?;
     Ok(())
 }

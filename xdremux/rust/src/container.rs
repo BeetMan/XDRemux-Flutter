@@ -138,6 +138,25 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
 // Extension region discovery
 // ---------------------------------------------------------------------------
 
+/// Extract the complete OPPO/QTI/FileExtendedContainer tail bytes from a
+/// source HEIC file. Returns `None` if no extension region is found.
+///
+/// Includes the ISOBMFF QTI box header (size + type) so the preserved tail
+/// remains a valid box structure identical to what Swift's
+/// `appendOppoCameraTailIfNeeded` preserves — watermarks, master mode presets,
+/// camera parameters, portrait editing data, and unrecognised vendor fields.
+pub fn get_oppo_tail(data: &[u8]) -> Option<&[u8]> {
+    for marker in QTI_MARKERS {
+        if let Some(pos) = data.windows(marker.len()).position(|w| w == *marker) {
+            if pos >= 4 {
+                let box_start = pos - 4;
+                return Some(&data[box_start..]);
+            }
+        }
+    }
+    None
+}
+
 /// Locate the OPPO extension region in the HEIC file.
 ///
 /// Returns `(ext_start, extension_bytes)` where `ext_start` is the absolute
