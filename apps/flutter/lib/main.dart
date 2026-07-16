@@ -481,6 +481,16 @@ class _HomePageState extends State<HomePage> {
             label: const Text('开始'),
             onPressed: _canStart ? _startConversion : null,
           ),
+          const SizedBox(width: 8),
+          // OPPO compatibility toggle
+          if (_canEditQueue)
+            _OppoCompatToggle(
+              mode: _config.oppoCompatibility,
+              onChanged: (v) {
+                setState(() => _config.oppoCompatibility = v);
+                _scheduleConfigSave();
+              },
+            ),
           const SizedBox(width: 4),
           // Cancel
           IconButton(
@@ -1014,6 +1024,64 @@ class _DetailPathRow extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis),
         ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// OPPO Compat Toggle (app bar)
+// ============================================================================
+
+class _OppoCompatToggle extends StatelessWidget {
+  final OppoCompatMode mode;
+  final ValueChanged<OppoCompatMode> onChanged;
+
+  const _OppoCompatToggle({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isOn = mode != OppoCompatMode.off;
+
+    return Tooltip(
+      message: isOn ? 'OPPO 兼容：开启' : 'OPPO 兼容：关闭',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          onChanged(isOn ? OppoCompatMode.off : OppoCompatMode.on);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: isOn
+                ? theme.colorScheme.primaryContainer
+                : theme.colorScheme.surfaceContainerHighest,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isOn ? Icons.phone_android : Icons.phone_android,
+                size: 16,
+                color: isOn
+                    ? theme.colorScheme.onPrimaryContainer
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'OPPO',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: isOn
+                      ? theme.colorScheme.onPrimaryContainer
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
