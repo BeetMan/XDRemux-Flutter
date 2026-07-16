@@ -3454,7 +3454,7 @@ struct LHDRToISOHDRCLI {
         var inputProcessingBranch = InputProcessingBranch.hybrid
         var applePortraitEnabled = false
         var oppoCompatibilityWasExplicit = false
-        var oppoCameraTail = OppoCameraTail.preserve
+        var oppoCameraTail = OppoCameraTail.preserveWithoutPrivateHDR
         var tmapFormat = TmapFormat.imageIO
 
         var index = 0
@@ -3561,7 +3561,7 @@ struct LHDRToISOHDRCLI {
         var inputProcessingBranch = InputProcessingBranch.hybrid
         var applePortraitEnabled = false
         var oppoCompatibilityWasExplicit = false
-        var oppoCameraTail = OppoCameraTail.preserve
+        var oppoCameraTail = OppoCameraTail.preserveWithoutPrivateHDR
         var tmapFormat = TmapFormat.imageIO
         var jobs = min(ProcessInfo.processInfo.activeProcessorCount, 4)
         var checkpointPath: String?
