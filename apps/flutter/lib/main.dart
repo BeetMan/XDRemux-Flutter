@@ -840,45 +840,54 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildQueueView(ThemeData theme, QueueItem? selectedItem) {
-    return Row(
-      children: [
-        // Left sidebar — queue list
-        SizedBox(
-          width: 320,
-          child: ListView.builder(
-            itemCount: _queue.length,
-            itemBuilder: (context, index) {
-              final item = _queue[index];
-              final isSelected = index == _selectedIndex;
-              return _QueueListTile(
-                item: item,
-                isSelected: isSelected,
-                onTap: () => setState(() => _selectedIndex = index),
-                onRemove: () => _removeItem(index),
-                onRevealInput: () => _revealInExplorer(item.inputPath),
-                onRevealOutput: () => _revealInExplorer(item.outputPath),
-                onRetry: () => _retryFailed(),
-              );
-            },
-          ),
-        ),
-        const VerticalDivider(width: 1),
-        // Right panel — detail
-        Expanded(
-          child: selectedItem != null
-              ? _QueueDetailView(
-                  item: selectedItem,
-                  revealInput: () => _revealInExplorer(selectedItem.inputPath),
-                  revealOutput: () =>
-                      _revealInExplorer(selectedItem.outputPath),
-                )
-              : Center(
-                  child: Text('选择队列项目查看详情',
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                ),
-        ),
-      ],
+    return _buildPhotoGrid(theme);
+  }
+
+  Widget _buildPhotoGrid(ThemeData theme) {
+    if (_queue.isEmpty) {
+      return Center(
+        child: Text('选择队列项目查看详情',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      );
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.85,
+      ),
+      itemCount: _queue.length,
+      itemBuilder: (context, index) {
+        return _PhotoCard(
+          item: _queue[index],
+          isSelected: index == _selectedIndex,
+          onTap: () {
+            setState(() => _selectedIndex = index);
+            _showItemDetail(_queue[index]);
+          },
+          onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
+          onRevealOutput: () => _revealInExplorer(_queue[index].outputPath),
+          onRetry: () => _retryFailed(),
+          onRemove: () => _removeItem(index),
+        );
+      },
+    );
+  }
+
+  void _showItemDetail(QueueItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) => _ItemDetailSheet(
+        item: item,
+        revealInput: () => _revealInExplorer(item.inputPath),
+        revealOutput: () => _revealInExplorer(item.outputPath),
+      ),
     );
   }
 
@@ -930,10 +939,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // Settings sheet
-  // ---------------------------------------------------------------------------
 
   void _openSettings(BuildContext context) {
     showModalBottomSheet(
@@ -1690,6 +1695,368 @@ class _SettingsSheetState extends State<_SettingsSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ============================================================================
+// Photo card (grid cell)
+// ============================================================================
+
+class _PhotoCard extends StatelessWidget {
+  static final Map<String, Uint8List?> _thumbCache = {};
+
+  final QueueItem item;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onRevealInput;
+  final VoidCallback onRevealOutput;
+  final VoidCallback onRetry;
+  final VoidCallback onRemove;
+
+  const _PhotoCard({
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+    required this.onRevealInput,
+    required this.onRevealOutput,
+    required this.onRetry,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final status = item.status;
+    final isRunning = status == QueueItemStatus.running;
+    final isDone = status == QueueItemStatus.converted;
+    final isFailed = status == QueueItemStatus.failed;
+    final isSkipped = status == QueueItemStatus.skippedExisting;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        elevation: isSelected ? 4 : 1,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: isSelected
+              ? BorderSide(color: theme.colorScheme.primary, width: 2)
+              : BorderSide.none,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _ThumbnailWidget(inputPath: item.inputPath),
+                  if (isRunning)
+                    _OverlayBadge(
+                      icon: Icons.bolt,
+                      label: item.progressLabel.isNotEmpty
+                          ? item.progressLabel
+                          : '转换中',
+                      color: Colors.blue,
+                      bottom: 0,
+                    ),
+                  if (isDone)
+                    const _OverlayBadge(
+                      icon: Icons.check_circle,
+                      label: '完成',
+                      color: Colors.green,
+                      bottom: 0,
+                    ),
+                  if (isFailed)
+                    const _OverlayBadge(
+                      icon: Icons.cancel,
+                      label: '失败',
+                      color: Colors.red,
+                      bottom: 0,
+                    ),
+                  if (isSkipped)
+                    const _OverlayBadge(
+                      icon: Icons.skip_next,
+                      label: '已跳过',
+                      color: Colors.grey,
+                      bottom: 0,
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    item.fileName,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(fontWeight: FontWeight.w500),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      _statusChip(theme, item.status),
+                      if (item.status == QueueItemStatus.running &&
+                          item.progress != null) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          '${item.progress!.current}/${item.progress!.total}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      _cardAction(theme, Icons.file_open, onRevealInput),
+                      if (item.isSuccessful)
+                        _cardAction(theme, Icons.check_circle, onRevealOutput),
+                      if (isFailed || status == QueueItemStatus.cancelled)
+                        _cardAction(theme, Icons.refresh, onRetry),
+                      _cardAction(theme, Icons.close, onRemove),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statusChip(ThemeData theme, QueueItemStatus status) {
+    final color = switch (status) {
+      QueueItemStatus.pending => Colors.grey,
+      QueueItemStatus.running => Colors.blue,
+      QueueItemStatus.converted => Colors.green,
+      QueueItemStatus.skippedExisting => Colors.grey,
+      QueueItemStatus.failed => Colors.red,
+      QueueItemStatus.cancelled => Colors.orange,
+    };
+    final label = switch (status) {
+      QueueItemStatus.pending => '待处理',
+      QueueItemStatus.running => '转换中',
+      QueueItemStatus.converted => '已转换',
+      QueueItemStatus.skippedExisting => '已跳过',
+      QueueItemStatus.failed => '失败',
+      QueueItemStatus.cancelled => '已取消',
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  Widget _cardAction(ThemeData theme, IconData icon, VoidCallback onTap) {
+    return IconButton(
+      icon: Icon(icon, size: 14),
+      onPressed: onTap,
+      visualDensity: VisualDensity.compact,
+      tooltip: switch (icon) {
+        Icons.file_open => '源文件',
+        Icons.check_circle => '输出文件',
+        Icons.refresh => '重试',
+        Icons.close => '移除',
+        _ => '',
+      },
+    );
+  }
+}
+
+class _ThumbnailWidget extends StatelessWidget {
+  final String inputPath;
+
+  const _ThumbnailWidget({required this.inputPath});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: _PhotoCard._thumbCache.containsKey(inputPath)
+          ? Future.value(_PhotoCard._thumbCache[inputPath])
+          : XdRemuxService.getThumbnail(inputPath, maxPixelSize: 256)
+              .then((t) {
+              _PhotoCard._thumbCache[inputPath] = t;
+              return t;
+            }),
+      builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data != null) {
+          return Image.memory(
+            snapshot.data!,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          );
+        }
+        return Container(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: const Center(
+            child: Icon(Icons.photo, size: 32, color: Colors.grey),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _OverlayBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final double bottom;
+
+  const _OverlayBadge({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.bottom,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 6,
+      bottom: bottom + 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(160),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Item detail bottom sheet
+// ============================================================================
+
+class _ItemDetailSheet extends StatelessWidget {
+  final QueueItem item;
+  final VoidCallback revealInput;
+  final VoidCallback revealOutput;
+
+  const _ItemDetailSheet({
+    required this.item,
+    required this.revealInput,
+    required this.revealOutput,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      expand: false,
+      builder: (ctx, scrollController) {
+        return SingleChildScrollView(
+          controller: scrollController,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(item.fileName, style: theme.textTheme.titleLarge),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _StatusChip(
+                      label: item.status.displayName,
+                      color: item.status == QueueItemStatus.converted
+                          ? Colors.green
+                          : item.status == QueueItemStatus.failed
+                              ? Colors.red
+                              : Colors.grey),
+                  const SizedBox(width: 8),
+                  _StatusChip(
+                      label: item.outputPlanStatus.displayName,
+                      color: item.outputPlanStatus.blocksConversion
+                          ? Colors.red
+                          : Colors.orange.shade300),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (item.errorMessage != null) ...[
+                _ExpandableError(message: item.errorMessage!),
+                const SizedBox(height: 16),
+              ],
+              if (item.isSuccessful && item.status == QueueItemStatus.converted)
+                _OutputPreview(outputPath: item.outputPath),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.file_open, size: 16),
+                    label: const Text('源文件'),
+                    onPressed: revealInput,
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.folder_open, size: 16),
+                    label: const Text('输出文件'),
+                    onPressed: item.isSuccessful ? revealOutput : null,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              _DetailRow('状态', item.status.displayName),
+              _DetailRow('输出计划', item.outputPlanStatus.displayName),
+              if (item.startedAt != null)
+                _DetailRow(
+                    '开始', '${item.startedAt!.hour.toString().padLeft(2, '0')}:${item.startedAt!.minute.toString().padLeft(2, '0')}:${item.startedAt!.second.toString().padLeft(2, '0')}'),
+              if (item.finishedAt != null)
+                _DetailRow(
+                    '结束', '${item.finishedAt!.hour.toString().padLeft(2, '0')}:${item.finishedAt!.minute.toString().padLeft(2, '0')}:${item.finishedAt!.second.toString().padLeft(2, '0')}'),
+              if (item.duration != null)
+                _DetailRow('耗时', '${item.duration!.inMilliseconds / 1000} 秒'),
+              _DetailPathRow('输入路径', item.inputPath, revealInput),
+              _DetailPathRow('输出路径', item.outputPath, revealOutput),
+            ],
+          ),
+        );
+      },
     );
   }
 }

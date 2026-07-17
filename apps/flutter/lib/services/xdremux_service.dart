@@ -125,6 +125,29 @@ class XdRemuxService {
   }
 
   // -----------------------------------------------------------------------
+  // Thumbnail cache (in-memory, keyed by inputPath + maxPixelSize)
+  // -----------------------------------------------------------------------
+
+  static final Map<String, Uint8List?> _thumbnailCache = {};
+
+  /// Cached thumbnail for a file. Generates on first call and caches the result.
+  static Future<Uint8List?> getThumbnail(
+    String inputPath, {
+    int maxPixelSize = 320,
+  }) async {
+    final key = '$inputPath@$maxPixelSize';
+    if (_thumbnailCache.containsKey(key)) return _thumbnailCache[key];
+    final result = await generateThumbnail(inputPath, maxPixelSize: maxPixelSize);
+    _thumbnailCache[key] = result;
+    return result;
+  }
+
+  /// Invalidate all cached thumbnails (e.g. after clearing queue).
+  static void clearThumbnailCache() {
+    _thumbnailCache.clear();
+  }
+
+  // -----------------------------------------------------------------------
   // Settings persistence
   // -----------------------------------------------------------------------
 
