@@ -215,15 +215,21 @@ class _HomePageState extends State<HomePage> {
       final path = file.path!;
       if (existing.contains(path)) continue;
 
-      final outputPath = _config.outputPathFor(path);
-      _queue.add(QueueItem(
-        id: _makeId(),
-        inputPath: path,
-        outputPath: outputPath,
-        outputPlanStatus: _computeOutputPlan(path, outputPath),
-      ));
-      existing.add(path);
-      added++;
+      try {
+        final outputPath = _config.outputPathFor(path);
+        _queue.add(QueueItem(
+          id: _makeId(),
+          inputPath: path,
+          outputPath: outputPath,
+          outputPlanStatus: _computeOutputPlan(path, outputPath),
+        ));
+        existing.add(path);
+        added++;
+      } catch (e) {
+        if (mounted) {
+          setState(() => _currentFileName = '添加失败: $e');
+        }
+      }
     }
 
     _validateOutputPlans();
@@ -232,26 +238,30 @@ class _HomePageState extends State<HomePage> {
   }
 
   OutputPlanStatus _computeOutputPlan(String inputPath, String outputPath) {
-    final inputFile = File(inputPath);
-    if (!inputFile.existsSync()) return OutputPlanStatus.inputMissing;
+    try {
+      final inputFile = File(inputPath);
+      if (!inputFile.existsSync()) return OutputPlanStatus.inputMissing;
 
-    final outputFile = File(outputPath);
-    final parent = outputFile.parent;
-    if (parent.existsSync() && !parent.path.endsWith(Platform.pathSeparator)) {
-      try {
-        if (FileSystemEntity.typeSync(parent.path) !=
-            FileSystemEntityType.directory) {
-          return OutputPlanStatus.outputParentIsFile;
-        }
-      } catch (_) {}
+      final outputFile = File(outputPath);
+      final parent = outputFile.parent;
+      if (parent.existsSync() && !parent.path.endsWith(Platform.pathSeparator)) {
+        try {
+          if (FileSystemEntity.typeSync(parent.path) !=
+              FileSystemEntityType.directory) {
+            return OutputPlanStatus.outputParentIsFile;
+          }
+        } catch (_) {}
+      }
+
+      if (!outputFile.existsSync()) return OutputPlanStatus.ready;
+
+      if (_config.skipExisting) {
+        return OutputPlanStatus.skipsExistingValidOutput;
+      }
+      return OutputPlanStatus.willOverwriteExisting;
+    } catch (_) {
+      return OutputPlanStatus.ready;
     }
-
-    if (!outputFile.existsSync()) return OutputPlanStatus.ready;
-
-    if (_config.skipExisting) {
-      return OutputPlanStatus.skipsExistingValidOutput;
-    }
-    return OutputPlanStatus.willOverwriteExisting;
   }
 
   void _validateOutputPlans() {
