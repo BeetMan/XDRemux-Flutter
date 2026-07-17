@@ -706,12 +706,34 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildProgressBar(ThemeData theme) {
+    final currentItem = _queue.where((i) => i.status == QueueItemStatus.running).firstOrNull;
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Current conversion indicator
+          if (currentItem != null) ...[
+            Row(
+              children: [
+                Icon(Icons.bolt, size: 16, color: Colors.blue.shade700),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${currentItem.fileName}  ${currentItem.progressLabel}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.blue.shade700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+          ],
+          // Overall status
           Row(
             children: [
               Text(_statusText,
@@ -788,20 +810,31 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildEmptyState(ThemeData theme) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.photo_library_outlined,
-              size: 64, color: theme.colorScheme.primary.withAlpha(100)),
-          const SizedBox(height: 16),
-          Text('拖拽 HEIC 文件到窗口，或点击下方按钮选择', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            icon: const Icon(Icons.add),
-            label: const Text('添加文件'),
-            onPressed: _addFiles,
+      child: Card(
+        margin: const EdgeInsets.all(48),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_upload_outlined,
+                  size: 64, color: theme.colorScheme.primary.withAlpha(150)),
+              const SizedBox(height: 16),
+              Text('拖拽 HEIC 文件到窗口', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text('将 OPPO / OnePlus / realme 拍摄的 ProXDR HEIC\n转换为 ISO 21496-1 HDR HEIC',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text('添加文件'),
+                onPressed: _addFiles,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -822,6 +855,9 @@ class _HomePageState extends State<HomePage> {
                 isSelected: isSelected,
                 onTap: () => setState(() => _selectedIndex = index),
                 onRemove: () => _removeItem(index),
+                onRevealInput: () => _revealInExplorer(item.inputPath),
+                onRevealOutput: () => _revealInExplorer(item.outputPath),
+                onRetry: () => _retryFailed(),
               );
             },
           ),
@@ -924,18 +960,29 @@ class _QueueListTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
   final VoidCallback onRemove;
+  final VoidCallback? onRevealInput;
+  final VoidCallback? onRevealOutput;
+  final VoidCallback? onRetry;
 
   const _QueueListTile({
     required this.item,
     required this.isSelected,
     required this.onTap,
     required this.onRemove,
+    this.onRevealInput,
+    this.onRevealOutput,
+    this.onRetry,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final color = _statusColor();
+
+    final canRevealOutput = item.status == QueueItemStatus.converted ||
+        item.status == QueueItemStatus.skippedExisting;
+    final canRetry = item.status == QueueItemStatus.failed ||
+        item.status == QueueItemStatus.cancelled;
 
     return ListTile(
       selected: isSelected,
@@ -946,29 +993,47 @@ class _QueueListTile extends StatelessWidget {
             ?.copyWith(fontWeight: FontWeight.w500),
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Row(
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(item.status.displayName,
-              style: TextStyle(fontSize: 11, color: color)),
-          if (item.status == QueueItemStatus.running && item.progress != null) ...[
-            const SizedBox(width: 6),
-            Text(item.progressLabel,
-                style: TextStyle(fontSize: 10, color: Colors.blue.shade700)),
-          ],
-          if (item.outputPlanStatus != OutputPlanStatus.ready) ...[
-            const SizedBox(width: 4),
-            Text(item.outputPlanStatus.displayName,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: item.outputPlanStatus.blocksConversion
-                        ? Colors.red
-                        : Colors.orange)),
-          ],
-          if (item.duration != null) ...[
-            const SizedBox(width: 4),
-            Text(_formatDuration(item.duration!),
-                style: const TextStyle(fontSize: 10)),
-          ],
+          Row(
+            children: [
+              Text(item.status.displayName,
+                  style: TextStyle(fontSize: 11, color: color)),
+              if (item.status == QueueItemStatus.running && item.progress != null) ...[
+                const SizedBox(width: 6),
+                Text(item.progressLabel,
+                    style: TextStyle(fontSize: 10, color: Colors.blue.shade700)),
+              ],
+              if (item.duration != null) ...[
+                const SizedBox(width: 4),
+                Text(_formatDuration(item.duration!),
+                    style: const TextStyle(fontSize: 10)),
+              ],
+            ],
+          ),
+          if (canRevealOutput || canRetry || item.outputPlanStatus != OutputPlanStatus.ready)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                children: [
+                  if (canRevealOutput)
+                    _miniAction(context, Icons.check_circle_outline, '输出', onRevealOutput),
+                  _miniAction(context, Icons.file_open, '源', onRevealInput),
+                  if (canRetry)
+                    _miniAction(context, Icons.refresh, '重试', onRetry),
+                  if (item.outputPlanStatus != OutputPlanStatus.ready) ...[
+                    const SizedBox(width: 4),
+                    Text(item.outputPlanStatus.displayName,
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: item.outputPlanStatus.blocksConversion
+                                ? Colors.red
+                                : Colors.orange)),
+                  ],
+                ],
+              ),
+            ),
         ],
       ),
       dense: true,
@@ -977,6 +1042,28 @@ class _QueueListTile extends StatelessWidget {
         icon: const Icon(Icons.close, size: 16),
         onPressed: onRemove,
         tooltip: '移除',
+      ),
+    );
+  }
+
+  Widget _miniAction(BuildContext context, IconData icon, String label, VoidCallback? onTap) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 10, color: theme.colorScheme.primary),
+              Text(label,
+                  style: TextStyle(fontSize: 10, color: theme.colorScheme.primary)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1067,20 +1154,15 @@ class _QueueDetailView extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Error message
+          // Expandable error message
           if (item.errorMessage != null) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withAlpha(20),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.withAlpha(80)),
-              ),
-              child: Text(item.errorMessage!,
-                  style: const TextStyle(color: Colors.red)),
-            ),
+            _ExpandableError(message: item.errorMessage!),
             const SizedBox(height: 16),
           ],
+
+          // Output preview (only when converted)
+          if (item.isSuccessful && item.status == QueueItemStatus.converted)
+            _OutputPreview(outputPath: item.outputPath),
 
           // Buttons
           Row(
@@ -1118,6 +1200,147 @@ class _QueueDetailView extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ============================================================================
+// Expandable error message
+// ============================================================================
+
+class _ExpandableError extends StatefulWidget {
+  final String message;
+
+  const _ExpandableError({required this.message});
+
+  @override
+  State<_ExpandableError> createState() => _ExpandableErrorState();
+}
+
+class _ExpandableErrorState extends State<_ExpandableError> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.red.withAlpha(20),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.red.withAlpha(80)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.error_outline, size: 16, color: Colors.red),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    widget.message,
+                    style: const TextStyle(color: Colors.red, fontSize: 12),
+                    maxLines: _expanded ? null : 2,
+                    overflow: _expanded ? null : TextOverflow.ellipsis,
+                  ),
+                ),
+                Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16, color: Colors.red),
+              ],
+            ),
+            if (_expanded) ...[
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: widget.message));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('已复制错误信息'),
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.copy, size: 12, color: Colors.red.shade300),
+                    const SizedBox(width: 4),
+                    Text('复制错误信息',
+                        style: TextStyle(fontSize: 11, color: Colors.red.shade300)),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Output preview
+// ============================================================================
+
+class _OutputPreview extends StatelessWidget {
+  final String outputPath;
+
+  const _OutputPreview({required this.outputPath});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: FutureBuilder<Uint8List?>(
+        future: _generatePreview(),
+        builder: (context, snapshot) {
+          if (snapshot.hasData && snapshot.data != null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('输出预览', style: theme.textTheme.titleSmall),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    snapshot.data!,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    height: 240,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            );
+          }
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+  }
+
+  Future<Uint8List?> _generatePreview() async {
+    final ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+    for (final ffmpeg in ffmpegPaths) {
+      if (!File(ffmpeg).existsSync()) continue;
+      try {
+        final result = await Process.run(ffmpeg, [
+          '-y',
+          '-i', outputPath,
+          '-vf', 'scale=min(320,iw):min(320,ih):force_original_aspect_ratio=decrease',
+          '-f', 'image2pipe',
+          '-c:v', 'png',
+          'pipe:1',
+        ]);
+        if (result.exitCode == 0 && result.stdout is List<int>) {
+          return Uint8List.fromList(result.stdout as List<int>);
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 }
 
@@ -1354,91 +1577,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 20),
 
-                  // OPPO compat
-                  Text('OPPO 兼容模式', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  SegmentedButton<OppoCompatMode>(
-                    segments: OppoCompatMode.values
-                        .map((m) => ButtonSegment<OppoCompatMode>(
-                            value: m, label: Text(m.appTitle)))
-                        .toList(),
-                    selected: {_cfg.oppoCompatibility},
-                    onSelectionChanged: (v) {
-                      setState(() => _cfg.oppoCompatibility = v.first);
-                      _emit();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  Text(_cfg.oppoCompatibility.appHelp,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(height: 20),
-
-                  // Skip existing
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('跳过已有有效输出'),
-                    subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
-                    value: _cfg.skipExisting,
-                    dense: true,
-                    onChanged: (v) {
-                      setState(() => _cfg.skipExisting = v);
-                      _emit();
-                    },
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Concurrency
-                  Row(
-                    children: [
-                      Text('最大并行数', style: theme.textTheme.bodyLarge),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.remove),
-                        onPressed: _cfg.maxConcurrentJobs > 1
-                            ? () {
-                                setState(() => _cfg.maxConcurrentJobs--);
-                                _emit();
-                              }
-                            : null,
-                      ),
-                      Text('${_cfg.maxConcurrentJobs}',
-                          style: theme.textTheme.titleMedium
-                              ?.copyWith(fontFamily: 'monospace')),
-                      IconButton(
-                        icon: const Icon(Icons.add),
-                        onPressed: _cfg.maxConcurrentJobs < 4
-                            ? () {
-                                setState(() => _cfg.maxConcurrentJobs++);
-                                _emit();
-                              }
-                            : null,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // File name suffix
-                  TextField(
-                    decoration: const InputDecoration(
-                      labelText: '输出文件名后缀',
-                      hintText: '_iso',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    enabled: _cfg.outputDirectory == null,
-                    controller: TextEditingController(text: _cfg.fileNameSuffix),
-                    onChanged: (v) {
-                      _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
-                      _emit();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  Text('设置输出目录后，后缀将被忽略。',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(height: 16),
-
                   // Output directory
                   Row(
                     children: [
@@ -1468,6 +1606,82 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               }
                             : null,
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Advanced settings (collapsible)
+                  ExpansionTile(
+                    title: Text('高级',
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                    tilePadding: EdgeInsets.zero,
+                    initiallyExpanded: false,
+                    childrenPadding: const EdgeInsets.only(top: 8),
+                    children: [
+                      // Skip existing
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('跳过已有有效输出'),
+                        subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
+                        value: _cfg.skipExisting,
+                        dense: true,
+                        onChanged: (v) {
+                          setState(() => _cfg.skipExisting = v);
+                          _emit();
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Concurrency
+                      Row(
+                        children: [
+                          Text('最大并行数', style: theme.textTheme.bodyLarge),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.remove),
+                            onPressed: _cfg.maxConcurrentJobs > 1
+                                ? () {
+                                    setState(() => _cfg.maxConcurrentJobs--);
+                                    _emit();
+                                  }
+                                : null,
+                          ),
+                          Text('${_cfg.maxConcurrentJobs}',
+                              style: theme.textTheme.titleMedium
+                                  ?.copyWith(fontFamily: 'monospace')),
+                          IconButton(
+                            icon: const Icon(Icons.add),
+                            onPressed: _cfg.maxConcurrentJobs < 4
+                                ? () {
+                                    setState(() => _cfg.maxConcurrentJobs++);
+                                    _emit();
+                                  }
+                                : null,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // File name suffix
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: '输出文件名后缀',
+                          hintText: '_iso',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        enabled: _cfg.outputDirectory == null,
+                        controller: TextEditingController(text: _cfg.fileNameSuffix),
+                        onChanged: (v) {
+                          _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
+                          _emit();
+                        },
+                      ),
+                      const SizedBox(height: 4),
+                      Text('设置输出目录后，后缀将被忽略。',
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                     ],
                   ),
                 ],
