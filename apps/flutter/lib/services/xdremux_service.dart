@@ -10,18 +10,27 @@ import '../models/app_models.dart';
 /// Resolve the ffmpeg executable path, checking the app's own directory first
 /// (bundled distribution) before falling back to PATH.
 String _resolveFfmpeg() {
-  // On Windows, check next to our own executable first.
-  if (Platform.isWindows) {
-    final exeDir = File(Platform.resolvedExecutable).parent;
-    final bundled = File('${exeDir.path}\\ffmpeg.exe');
-    if (bundled.existsSync()) return bundled.path;
-  } else if (Platform.isMacOS) {
-    // macOS app bundle: check Frameworks and executable directory.
-    final exeDir = File(Platform.resolvedExecutable).parent;
-    final bundled = File('${exeDir.path}/ffmpeg');
-    if (bundled.existsSync()) return bundled.path;
-    final frameworksDir = File('${exeDir.path}/../Frameworks/ffmpeg');
-    if (frameworksDir.existsSync()) return frameworksDir.path;
+  try {
+    // On Windows, check next to our own executable first.
+    if (Platform.isWindows) {
+      final exeDir = File(Platform.resolvedExecutable).parent;
+      final bundled = File('${exeDir.path}\\ffmpeg.exe');
+      if (bundled.existsSync()) return bundled.path;
+    } else if (Platform.isMacOS) {
+      // macOS app bundle: check Frameworks and executable directory.
+      final exeDir = File(Platform.resolvedExecutable).parent;
+      final bundled = File('${exeDir.path}/ffmpeg');
+      if (bundled.existsSync()) return bundled.path;
+      final frameworksDir = File('${exeDir.path}/../Frameworks/ffmpeg');
+      if (frameworksDir.existsSync()) return frameworksDir.path;
+      // Homebrew paths (app launched from Finder has minimal PATH).
+      const homebrew = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+      for (final p in homebrew) {
+        if (File(p).existsSync()) return p;
+      }
+    }
+  } catch (e) {
+    print('_resolveFfmpeg error: $e');
   }
   // Fall back to whatever is on PATH (or bare name on other platforms).
   return 'ffmpeg';
@@ -103,23 +112,31 @@ class XdRemuxService {
   }) async {
     try {
       final ffmpeg = _resolveFfmpeg();
+      print('generateThumbnail: ffmpeg=$ffmpeg');
+      // Output PNG (not rawvideo) so Image.memory() can decode it.
+      // Use -s (simple scale) to avoid complex filtergraph errors on HEIC.
       final result = await Process.run(ffmpeg, [
         '-y',
-        '-i',
-        inputPath,
-        '-vf',
-        'scale=min($maxPixelSize\\,iw):min($maxPixelSize\\,ih):force_original_aspect_ratio=decrease',
-        '-f',
-        'image2pipe',
-        '-c:v',
-        'png',
+        '-ss', '0',
+        '-i', inputPath,
+        '-vframes', '1',
+        '-s', '${maxPixelSize}x${maxPixelSize}',
+        '-f', 'image2pipe',
+        '-c:v', 'png',
         'pipe:1',
-      ], runInShell: false);
-      if (result.exitCode == 0 && result.stdout is List<int>) {
+      ], runInShell: false, stdoutEncoding: null);
+      if (result.exitCode == 0 && result.stdout is List<int> && result.stdout.isNotEmpty) {
         return Uint8List.fromList(result.stdout as List<int>);
       }
-    } catch (_) {
-      // ffmpeg not available — return null (UI shows placeholder)
+      // ffmpeg binary output should be List<int>; if it's String (e.g. error
+      // message), print a snippet for debugging.
+      final stdoutSnippet = result.stdout is String
+          ? (result.stdout as String).substring(0, (result.stdout as String).length.clamp(0, 200))
+          : 'type=${result.stdout.runtimeType} len=${result.stdout.length}';
+      print('generateThumbnail: exit=${result.exitCode}, stdoutSnippet=$stdoutSnippet, stderr=${result.stderr.toString().substring(0, result.stderr.toString().length.clamp(0, 200))}');
+    } catch (e, st) {
+      print('generateThumbnail ERROR: $e');
+      print(st);
     }
     return null;
   }
