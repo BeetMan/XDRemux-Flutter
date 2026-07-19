@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -602,9 +601,9 @@ class _HomePageState extends State<HomePage> {
         ? _queue[_selectedIndex!]
         : (_queue.isNotEmpty ? _queue.first : null);
 
-    return RawKeyboardListener(
+    return KeyboardListener(
       focusNode: _captureFocusNode,
-      onKey: _onKey,
+      onKeyEvent: _onKey,
       child: RepaintBoundary(
         key: _rootKey,
         child: Scaffold(
@@ -706,10 +705,10 @@ class _HomePageState extends State<HomePage> {
 
   // Keyboard handler for screenshot capture (Ctrl+Shift+S).
   final FocusNode _captureFocusNode = FocusNode();
-  void _onKey(RawKeyEvent event) {
-    if (event is RawKeyDownEvent &&
-        event.isControlPressed &&
-        event.isShiftPressed &&
+  void _onKey(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        HardwareKeyboard.instance.isControlPressed &&
+        HardwareKeyboard.instance.isShiftPressed &&
         event.logicalKey == LogicalKeyboardKey.keyS) {
       _captureScreenshot();
     }
@@ -961,258 +960,6 @@ class _HomePageState extends State<HomePage> {
           _scheduleConfigSave();
           _refreshOutputPaths();
         },
-      ),
-    );
-  }
-}
-
-// ============================================================================
-// Queue List Tile
-// ============================================================================
-
-class _QueueListTile extends StatelessWidget {
-  final QueueItem item;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback onRemove;
-  final VoidCallback? onRevealInput;
-  final VoidCallback? onRevealOutput;
-  final VoidCallback? onRetry;
-
-  const _QueueListTile({
-    required this.item,
-    required this.isSelected,
-    required this.onTap,
-    required this.onRemove,
-    this.onRevealInput,
-    this.onRevealOutput,
-    this.onRetry,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = _statusColor();
-
-    final canRevealOutput = item.status == QueueItemStatus.converted ||
-        item.status == QueueItemStatus.skippedExisting;
-    final canRetry = item.status == QueueItemStatus.failed ||
-        item.status == QueueItemStatus.cancelled;
-
-    return ListTile(
-      selected: isSelected,
-      leading: Icon(_statusIcon(), color: color, size: 22),
-      title: Text(
-        item.fileName,
-        style: theme.textTheme.bodyMedium
-            ?.copyWith(fontWeight: FontWeight.w500),
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(item.status.displayName,
-                  style: TextStyle(fontSize: 11, color: color)),
-              if (item.status == QueueItemStatus.running && item.progress != null) ...[
-                const SizedBox(width: 6),
-                Text(item.progressLabel,
-                    style: TextStyle(fontSize: 10, color: Colors.blue.shade700)),
-              ],
-              if (item.duration != null) ...[
-                const SizedBox(width: 4),
-                Text(_formatDuration(item.duration!),
-                    style: const TextStyle(fontSize: 10)),
-              ],
-            ],
-          ),
-          if (canRevealOutput || canRetry || item.outputPlanStatus != OutputPlanStatus.ready)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Row(
-                children: [
-                  if (canRevealOutput)
-                    _miniAction(context, Icons.check_circle_outline, '输出', onRevealOutput),
-                  _miniAction(context, Icons.file_open, '源', onRevealInput),
-                  if (canRetry)
-                    _miniAction(context, Icons.refresh, '重试', onRetry),
-                  if (item.outputPlanStatus != OutputPlanStatus.ready) ...[
-                    const SizedBox(width: 4),
-                    Text(item.outputPlanStatus.displayName,
-                        style: TextStyle(
-                            fontSize: 10,
-                            color: item.outputPlanStatus.blocksConversion
-                                ? Colors.red
-                                : Colors.orange)),
-                  ],
-                ],
-              ),
-            ),
-        ],
-      ),
-      dense: true,
-      onTap: onTap,
-      trailing: IconButton(
-        icon: const Icon(Icons.close, size: 16),
-        onPressed: onRemove,
-        tooltip: '移除',
-      ),
-    );
-  }
-
-  Widget _miniAction(BuildContext context, IconData icon, String label, VoidCallback? onTap) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 10, color: theme.colorScheme.primary),
-              Text(label,
-                  style: TextStyle(fontSize: 10, color: theme.colorScheme.primary)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  IconData _statusIcon() {
-    switch (item.status) {
-      case QueueItemStatus.pending:
-        return Icons.hourglass_empty;
-      case QueueItemStatus.running:
-        return Icons.bolt;
-      case QueueItemStatus.converted:
-        return Icons.check_circle;
-      case QueueItemStatus.skippedExisting:
-        return Icons.skip_next;
-      case QueueItemStatus.failed:
-        return Icons.cancel;
-      case QueueItemStatus.cancelled:
-        return Icons.remove_circle;
-    }
-  }
-
-  Color _statusColor() {
-    switch (item.status) {
-      case QueueItemStatus.pending:
-        return Colors.grey;
-      case QueueItemStatus.running:
-        return Colors.blue;
-      case QueueItemStatus.converted:
-        return Colors.green;
-      case QueueItemStatus.skippedExisting:
-        return Colors.grey;
-      case QueueItemStatus.failed:
-        return Colors.red;
-      case QueueItemStatus.cancelled:
-        return Colors.orange;
-    }
-  }
-
-  String _formatDuration(Duration d) {
-    if (d.inSeconds < 10) return '${d.inMilliseconds / 1000}s';
-    return '${d.inSeconds}s';
-  }
-}
-
-// ============================================================================
-// Queue Detail View
-// ============================================================================
-
-class _QueueDetailView extends StatelessWidget {
-  final QueueItem item;
-  final VoidCallback revealInput;
-  final VoidCallback revealOutput;
-
-  const _QueueDetailView({
-    required this.item,
-    required this.revealInput,
-    required this.revealOutput,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Text(item.fileName, style: theme.textTheme.titleLarge),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _StatusChip(
-                  label: item.status.displayName,
-                  color: item.status == QueueItemStatus.converted
-                      ? Colors.green
-                      : item.status == QueueItemStatus.failed
-                          ? Colors.red
-                          : Colors.grey),
-              const SizedBox(width: 8),
-              _StatusChip(
-                  label: item.outputPlanStatus.displayName,
-                  color: item.outputPlanStatus.blocksConversion
-                      ? Colors.red
-                      : Colors.orange.shade300),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Expandable error message
-          if (item.errorMessage != null) ...[
-            _ExpandableError(message: item.errorMessage!),
-            const SizedBox(height: 16),
-          ],
-
-          // Output preview (only when converted)
-          if (item.isSuccessful && item.status == QueueItemStatus.converted)
-            _OutputPreview(outputPath: item.outputPath),
-
-          // Buttons
-          Row(
-            children: [
-              OutlinedButton.icon(
-                icon: const Icon(Icons.file_open, size: 16),
-                label: const Text('源文件'),
-                onPressed: revealInput,
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.folder_open, size: 16),
-                label: const Text('输出文件'),
-                onPressed: item.isSuccessful ? revealOutput : null,
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const Divider(),
-          const SizedBox(height: 16),
-
-          // Details
-          _DetailRow('状态', item.status.displayName),
-          _DetailRow('输出计划', item.outputPlanStatus.displayName),
-          if (item.startedAt != null)
-            _DetailRow(
-                '开始', '${item.startedAt!.hour.toString().padLeft(2, '0')}:${item.startedAt!.minute.toString().padLeft(2, '0')}:${item.startedAt!.second.toString().padLeft(2, '0')}'),
-          if (item.finishedAt != null)
-            _DetailRow(
-                '结束', '${item.finishedAt!.hour.toString().padLeft(2, '0')}:${item.finishedAt!.minute.toString().padLeft(2, '0')}:${item.finishedAt!.second.toString().padLeft(2, '0')}'),
-          if (item.duration != null)
-            _DetailRow('耗时', '${item.duration!.inMilliseconds / 1000} 秒'),
-          _DetailPathRow('输入路径', item.inputPath, revealInput),
-          _DetailPathRow('输出路径', item.outputPath, revealOutput),
-        ],
       ),
     );
   }

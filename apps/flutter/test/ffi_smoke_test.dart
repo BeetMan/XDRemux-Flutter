@@ -12,9 +12,15 @@ final class ConversionResult extends Struct {
   external Pointer<Utf8> errorMessage;
 }
 
+String get _libraryPath {
+  if (Platform.isMacOS) return 'libxdremux_core.dylib';
+  if (Platform.isWindows) return 'xdremux_core.dll';
+  return 'libxdremux_core.so';
+}
+
 void main() {
   test('version returns non-null', () {
-    final lib = DynamicLibrary.open('libxdremux_core.dylib');
+    final lib = DynamicLibrary.open(_libraryPath);
     final versionFn = lib.lookupFunction<
         Pointer<Utf8> Function(),
         Pointer<Utf8> Function()>('xdremux_version');
@@ -30,7 +36,7 @@ void main() {
   });
 
   test('verify junk data returns false', () {
-    final lib = DynamicLibrary.open('libxdremux_core.dylib');
+    final lib = DynamicLibrary.open(_libraryPath);
     final verifyFn = lib.lookupFunction<
         Bool Function(Pointer<Utf8>),
         bool Function(Pointer<Utf8>)>('xdremux_verify_output');
