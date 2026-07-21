@@ -8,7 +8,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'models/app_models.dart';
+import 'models/checkpoint_model.dart';
 import 'services/xdremux_service.dart';
+import 'services/checkpoint_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
 void main() {
@@ -71,6 +73,7 @@ class _HomePageState extends State<HomePage> {
 
   String _version = '';
   Timer? _configSaveTimer;
+  Checkpoint? _checkpoint;
   static const _dropChannel = MethodChannel('xdremux/drop');
 
   @override
@@ -88,6 +91,74 @@ class _HomePageState extends State<HomePage> {
       _version = 'core error: $e';
     }
     if (mounted) setState(() {});
+
+    // M6: Check for resumable checkpoint
+    await _checkForResumeCheckpoint();
+  }
+
+  /// Check if a previous incomplete checkpoint exists and prompt to resume.
+  Future<void> _checkForResumeCheckpoint() async {
+    final checkpoint = await CheckpointService.load();
+    if (checkpoint == null) return;
+    if (checkpoint.allSuccess) {
+      // Previous run completed successfully, clean up stale checkpoint
+      await CheckpointService.delete();
+      return;
+    }
+    if (!mounted) return;
+
+    // Show resume dialog
+    final shouldResume = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _ResumeCheckpointDialog(checkpoint: checkpoint),
+    );
+
+    if (shouldResume == true && mounted) {
+      _restoreFromCheckpoint(checkpoint);
+    } else {
+      // User declined or dismissed — discard old checkpoint
+      await CheckpointService.delete();
+    }
+  }
+
+  /// Restore queue state from a checkpoint.
+  void _restoreFromCheckpoint(Checkpoint checkpoint) {
+    final existing = _queue.map((item) => item.inputPath).toSet();
+
+    for (final cpItem in checkpoint.items) {
+      if (existing.contains(cpItem.inputPath)) continue;
+
+      final QueueItemStatus status;
+      switch (cpItem.status) {
+        case CheckpointItemStatus.converted:
+          status = QueueItemStatus.converted;
+        case CheckpointItemStatus.skippedExisting:
+          status = QueueItemStatus.skippedExisting;
+        case CheckpointItemStatus.failed:
+          status = QueueItemStatus.failed;
+        case CheckpointItemStatus.pending:
+          status = QueueItemStatus.pending;
+      }
+
+      _queue.add(QueueItem(
+        id: _makeId(),
+        inputPath: cpItem.inputPath,
+        outputPath: cpItem.outputPath,
+        status: status,
+        errorMessage: cpItem.error,
+        outputPlanStatus: _computeOutputPlan(cpItem.inputPath, cpItem.outputPath),
+        finishedAt: cpItem.finishedAt,
+      ));
+      existing.add(cpItem.inputPath);
+    }
+
+    _checkpoint = checkpoint;
+    _validateOutputPlans();
+    _updateStatusText();
+    setState(() {
+      _currentFileName = '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度';
+    });
   }
 
   void _initDropChannel() {
@@ -333,6 +404,9 @@ class _HomePageState extends State<HomePage> {
       _statusText = '准备转换...';
     });
 
+    // M6: Create or update checkpoint
+    _initCheckpoint();
+
     final concurrency = _config.maxConcurrentJobs.clamp(1, 4);
     _currentConcurrency = concurrency;
 
@@ -369,6 +443,7 @@ class _HomePageState extends State<HomePage> {
           _currentFileName = '';
         });
         _updateStatusText();
+        _onBatchComplete();
       }
     }
 
@@ -431,6 +506,9 @@ class _HomePageState extends State<HomePage> {
     item.finishedAt = DateTime.now();
     item.progress = null;
     if (mounted) setState(() {});
+
+    // M6: Update checkpoint after each file completes
+    _updateCheckpointForItem(item);
   }
 
   void _cancelConversion() {
@@ -449,6 +527,113 @@ class _HomePageState extends State<HomePage> {
         _queue[i].finishedAt ??= DateTime.now();
       }
     }
+    // M6: Save checkpoint on cancel so progress is preserved
+    _saveCheckpoint();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Checkpoint (M6)
+  // ---------------------------------------------------------------------------
+
+  /// Initialize checkpoint at the start of a batch conversion.
+  /// If resuming, keep existing completed items; otherwise create fresh.
+  void _initCheckpoint() {
+    final configHash = CheckpointService.computeConfigHash(_config);
+
+    if (_checkpoint != null && _checkpoint!.header.configHash == configHash) {
+      // Resuming: update pending items from current queue, preserve completed
+      final cpItems = _checkpoint!.items;
+      final cpByPath = {for (final ci in cpItems) ci.inputPath: ci};
+
+      for (final qItem in _queue) {
+        if (!cpByPath.containsKey(qItem.inputPath)) {
+          // New item not in checkpoint
+          cpItems.add(CheckpointItem(
+            inputPath: qItem.inputPath,
+            outputPath: qItem.outputPath,
+            status: CheckpointItemStatus.pending,
+            inputSize: _fileSize(qItem.inputPath),
+            inputMtimeMs: _fileMtimeMs(qItem.inputPath),
+          ));
+        }
+      }
+    } else {
+      // Fresh start: create new checkpoint from queue
+      _checkpoint = Checkpoint(
+        header: CheckpointHeader(
+          configHash: configHash,
+          totalJobs: _queue.length,
+          startedAt: DateTime.now(),
+          appVersion: _version,
+        ),
+        items: CheckpointService.createItemsFromQueue(_queue),
+      );
+    }
+    _saveCheckpoint();
+  }
+
+  /// Update checkpoint status for a completed queue item and persist.
+  void _updateCheckpointForItem(QueueItem item) {
+    if (_checkpoint == null) return;
+
+    final CheckpointItemStatus cpStatus;
+    switch (item.status) {
+      case QueueItemStatus.converted:
+        cpStatus = CheckpointItemStatus.converted;
+      case QueueItemStatus.skippedExisting:
+        cpStatus = CheckpointItemStatus.skippedExisting;
+      case QueueItemStatus.failed:
+        cpStatus = CheckpointItemStatus.failed;
+      default:
+        return; // Don't record non-terminal states
+    }
+
+    CheckpointService.updateItemStatus(
+      _checkpoint!,
+      item.inputPath,
+      cpStatus,
+      error: item.errorMessage,
+    );
+    _saveCheckpoint();
+  }
+
+  /// Persist current checkpoint to disk.
+  void _saveCheckpoint() {
+    if (_checkpoint == null) return;
+    CheckpointService.save(_checkpoint!);
+  }
+
+  /// Called when the entire batch finishes.
+  /// Deletes checkpoint if zero failures; otherwise keeps it for resume.
+  void _onBatchComplete() {
+    if (_checkpoint == null) return;
+
+    if (_failedCount == 0) {
+      // All success — remove checkpoint
+      CheckpointService.delete();
+      _checkpoint = null;
+    } else {
+      // Has failures — keep checkpoint for potential resume
+      _saveCheckpoint();
+    }
+  }
+
+  static int _fileSize(String path) {
+    try {
+      final f = File(path);
+      return f.existsSync() ? f.lengthSync() : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static int _fileMtimeMs(String path) {
+    try {
+      final f = File(path);
+      return f.existsSync() ? f.statSync().modified.millisecondsSinceEpoch : 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   void _clearQueue() {
@@ -459,6 +644,9 @@ class _HomePageState extends State<HomePage> {
       _statusText = '就绪';
       _currentFileName = '';
     });
+    // M6: Clear checkpoint when queue is manually cleared
+    _checkpoint = null;
+    CheckpointService.delete();
   }
 
   void _clearCompleted() {
@@ -1814,6 +2002,83 @@ class _ItemDetailSheet extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+// ============================================================================
+// Resume checkpoint dialog (M6)
+// ============================================================================
+
+class _ResumeCheckpointDialog extends StatelessWidget {
+  final Checkpoint checkpoint;
+
+  const _ResumeCheckpointDialog({required this.checkpoint});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final completed = checkpoint.completedCount;
+    final failed = checkpoint.failedCount;
+    final pending = checkpoint.pendingCount;
+    final total = checkpoint.items.length;
+    final startedAt = checkpoint.header.startedAt;
+    final timeStr =
+        '${startedAt.month}/${startedAt.day} ${startedAt.hour.toString().padLeft(2, '0')}:${startedAt.minute.toString().padLeft(2, '0')}';
+
+    return AlertDialog(
+      title: const Text('发现未完成的转换任务'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '上次转换开始于 $timeStr，共 $total 个文件：',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _cpStat('已完成', completed, Colors.green),
+              const SizedBox(width: 12),
+              _cpStat('失败', failed, failed > 0 ? Colors.red : Colors.grey),
+              const SizedBox(width: 12),
+              _cpStat('待处理', pending, Colors.orange),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '是否恢复并继续转换未完成的文件？',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('放弃'),
+        ),
+        FilledButton.icon(
+          icon: const Icon(Icons.play_arrow, size: 18),
+          label: const Text('恢复'),
+          onPressed: () => Navigator.of(context).pop(true),
+        ),
+      ],
+    );
+  }
+
+  Widget _cpStat(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        '$label $count',
+        style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
+      ),
     );
   }
 }
