@@ -13,6 +13,7 @@ import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
+import 'services/file_action_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
 void main() {
@@ -179,6 +180,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _initDropChannel() {
+    // Desktop-only: native window sends dropped file paths via MethodChannel.
+    if (Platform.isAndroid || Platform.isIOS) return;
     _dropChannel.setMethodCallHandler((call) async {
       if (call.method == 'onFilesDropped') {
         final paths = List<String>.from(call.arguments as List);
@@ -744,6 +747,8 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   Widget _buildDropTarget(BuildContext context, Widget child) {
+    // Drag & drop is desktop-only; on mobile just return the child directly.
+    if (Platform.isAndroid || Platform.isIOS) return child;
     return DragTarget<List<String>>(
       onWillAcceptWithDetails: (_) => _canEditQueue,
       onAcceptWithDetails: (details) => _handleDrop(details.data),
@@ -803,16 +808,17 @@ class _HomePageState extends State<HomePage> {
       // Open containing directory
       Process.run('xdg-open', [File(path).parent.path]);
     } else if (Platform.isAndroid) {
-      // Android: no file explorer intent available without extra plugins;
-      // show a snackbar with the path instead.
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('文件位置: $path'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      // Android: open file with system default app (Gallery/file viewer).
+      FileActionService.openFile(path).then((ok) {
+        if (!ok && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('无法打开: $path'),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      });
     }
   }
 
@@ -829,6 +835,81 @@ class _HomePageState extends State<HomePage> {
     } else if (Platform.isAndroid) {
       _revealInExplorer(outputs.first);
     }
+  }
+
+  /// Android: show bottom sheet with output file actions.
+  void _showOutputActions(QueueItem item) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('保存到图库'),
+                subtitle: const Text('DCIM/XDRemux'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final hasAccess = await FileActionService.hasGalleryPermission();
+                  if (!hasAccess) {
+                    final granted = await FileActionService.requestGalleryPermission();
+                    if (!granted) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('未获得存储权限')),
+                        );
+                      }
+                      return;
+                    }
+                  }
+                  final ok = await FileActionService.saveToGallery(item.outputPath);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(ok ? '已保存到图库' : '保存失败')),
+                    );
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.share),
+                title: const Text('分享'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  FileActionService.shareFile(item.outputPath);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.open_in_new),
+                title: const Text('打开'),
+                subtitle: const Text('用系统图库打开'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  FileActionService.openFile(item.outputPath);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_copy),
+                title: const Text('保存到源目录'),
+                subtitle: Text(File(item.inputPath).parent.path),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final dest = await FileActionService.copyToSourceDir(
+                    item.outputPath, item.inputPath);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(
+                        dest != null ? '已复制到: $dest' : '复制失败')),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   static String _makeId() {
@@ -864,16 +945,19 @@ class _HomePageState extends State<HomePage> {
             tooltip: '添加 HEIC',
             onPressed: _canEditQueue ? _addFiles : null,
           ),
+          // Start conversion (icon-only on narrow screens)
+          _canStart
+              ? FilledButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: MediaQuery.of(context).size.width < 480
+                      ? const SizedBox.shrink()
+                      : const Text('开始'),
+                  onPressed: _startConversion,
+                )
+              : const SizedBox.shrink(),
           const SizedBox(width: 4),
-          // Start conversion
-          FilledButton.icon(
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('开始'),
-            onPressed: _canStart ? _startConversion : null,
-          ),
-          const SizedBox(width: 8),
-          // OPPO compatibility toggle
-          if (_canEditQueue)
+          // OPPO compatibility toggle (hide on very narrow screens)
+          if (_canEditQueue && MediaQuery.of(context).size.width >= 480)
             _OppoCompatToggle(
               mode: _config.oppoCompatibility,
               onChanged: (v) {
@@ -881,28 +965,25 @@ class _HomePageState extends State<HomePage> {
                 _scheduleConfigSave();
               },
             ),
-          const SizedBox(width: 4),
           // Cancel
           IconButton(
             icon: const Icon(Icons.stop),
             tooltip: '取消',
             onPressed: _isProcessing ? _cancelConversion : null,
           ),
-          const SizedBox(width: 4),
           // Settings
           IconButton(
             icon: const Icon(Icons.tune),
             tooltip: '设置',
             onPressed: () => _openSettings(context),
           ),
-          const SizedBox(width: 4),
           // Clear
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: '清空队列',
             onPressed: _canEditQueue && _queue.isNotEmpty ? _clearQueue : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
         ],
       ),
       body: _buildDropTarget(
@@ -1065,9 +1146,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildEmptyState(ThemeData theme) {
+    final isAndroid = Platform.isAndroid;
     return Center(
       child: Card(
-        margin: const EdgeInsets.all(48),
+        margin: const EdgeInsets.all(24),
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(
@@ -1076,7 +1158,10 @@ class _HomePageState extends State<HomePage> {
               Icon(Icons.cloud_upload_outlined,
                   size: 64, color: theme.colorScheme.primary.withAlpha(150)),
               const SizedBox(height: 16),
-              Text('拖拽 HEIC 文件到窗口', style: theme.textTheme.titleMedium),
+              Text(
+                isAndroid ? '添加 HEIC 文件' : '拖拽 HEIC 文件到窗口',
+                style: theme.textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               Text('将 OPPO / OnePlus / realme 拍摄的 ProXDR HEIC\n转换为 ISO 21496-1 HDR HEIC',
                   style: theme.textTheme.bodySmall
@@ -1108,27 +1193,39 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.85,
-      ),
-      itemCount: _queue.length,
-      itemBuilder: (context, index) {
-        return _PhotoCard(
-          item: _queue[index],
-          isSelected: index == _selectedIndex,
-          onTap: () {
-            setState(() => _selectedIndex = index);
-            _showItemDetail(_queue[index]);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Responsive columns: 2 on narrow phones, 3 on wider screens.
+        final crossAxisCount = constraints.maxWidth < 480 ? 2 : 3;
+        return GridView.builder(
+          padding: const EdgeInsets.all(12),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 0.85,
+          ),
+          itemCount: _queue.length,
+          itemBuilder: (context, index) {
+            return _PhotoCard(
+              item: _queue[index],
+              isSelected: index == _selectedIndex,
+              onTap: () {
+                setState(() => _selectedIndex = index);
+                _showItemDetail(_queue[index]);
+              },
+              onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
+              onRevealOutput: () {
+                if (Platform.isAndroid) {
+                  _showOutputActions(_queue[index]);
+                } else {
+                  _revealInExplorer(_queue[index].outputPath);
+                }
+              },
+              onRetry: () => _retryFailed(),
+              onRemove: () => _removeItem(index),
+            );
           },
-          onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
-          onRevealOutput: () => _revealInExplorer(_queue[index].outputPath),
-          onRetry: () => _retryFailed(),
-          onRemove: () => _removeItem(index),
         );
       },
     );
@@ -1148,14 +1245,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildFooter(ThemeData theme) {
+    final narrow = MediaQuery.of(context).size.width < 480;
     return Container(
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
-          if (_failedCount > 0)
+          if (_failedCount > 0 && !narrow)
             Expanded(
               child: Text(
                 _queue.reversed
@@ -1171,22 +1269,22 @@ class _HomePageState extends State<HomePage> {
           const Spacer(),
           TextButton.icon(
             icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('重试失败'),
+            label: narrow ? const SizedBox.shrink() : const Text('重试失败'),
             onPressed: _canEditQueue && _failedCount > 0 ? _retryFailed : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.checklist, size: 16),
-            label: const Text('清除已完成'),
+            label: narrow ? const SizedBox.shrink() : const Text('清除已完成'),
             onPressed: _canEditQueue &&
                     (_convertedCount + _skippedCount) > 0
                 ? _clearCompleted
                 : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.folder_open, size: 16),
-            label: const Text('打开输出目录'),
+            label: narrow ? const SizedBox.shrink() : const Text('打开输出目录'),
             onPressed: _queue.any((item) => item.isSuccessful)
                 ? _revealOutputs
                 : null,
@@ -1332,12 +1430,16 @@ class _OutputPreview extends StatelessWidget {
   }
 
   Future<Uint8List?> _generatePreview() async {
-    final List<String> ffmpegPaths;
+    // Android: use Rust FFI thumbnail extraction (no ffmpeg subprocess).
     if (Platform.isAndroid) {
-      ffmpegPaths = [resolveFfmpegPath()];
-    } else {
-      ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+      try {
+        return XdRemuxFFI.extractThumbnail(outputPath);
+      } catch (_) {
+        return null;
+      }
     }
+
+    final ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
     for (final ffmpeg in ffmpegPaths) {
       if (!File(ffmpeg).existsSync()) continue;
       try {
@@ -1348,7 +1450,7 @@ class _OutputPreview extends StatelessWidget {
           '-f', 'image2pipe',
           '-c:v', 'png',
           'pipe:1',
-        ], environment: androidFfmpegEnv());
+        ]);
         if (result.exitCode == 0 && result.stdout is List<int>) {
           return Uint8List.fromList(result.stdout as List<int>);
         }

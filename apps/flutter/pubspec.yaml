@@ -26,6 +26,15 @@ dependencies:
   # Persistent user settings
   shared_preferences: ^2.2.0
 
+  # Save images/videos to system gallery (MediaStore on Android)
+  gal: ^2.3.0
+
+  # Share files via system share sheet (ACTION_SEND)
+  share_plus: ^10.0.0
+
+  # Open files with system default app
+  open_filex: ^4.5.0
+
   # Cupertino icons
   cupertino_icons: ^1.0.8
 

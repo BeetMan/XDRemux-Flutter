@@ -1,5 +1,6 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 extension ToDartStringOrNull on ffi.Pointer<Utf8> {
@@ -34,6 +35,17 @@ final class ConversionResult extends ffi.Struct {
   external double gainMapMax;
 
   external ffi.Pointer<Utf8> errorMessage;
+}
+
+/// Result of thumbnail extraction. Must be freed with [freeThumbnail].
+final class ThumbnailResult extends ffi.Struct {
+  external ffi.Pointer<ffi.Uint8> data;
+
+  @ffi.IntPtr()
+  external int len;
+
+  @ffi.Bool()
+  external bool success;
 }
 
 /// Low-level FFI bindings to the Rust core dynamic library.
@@ -135,6 +147,14 @@ class XdRemuxFFI {
       ffi.Void Function(ffi.Pointer<ffi.Uint32>),
       void Function(ffi.Pointer<ffi.Uint32>)>('xdremux_read_progress');
 
+  static final _extractThumbnail = _lib.lookupFunction<
+      ThumbnailResult Function(ffi.Pointer<Utf8>),
+      ThumbnailResult Function(ffi.Pointer<Utf8>)>('xdremux_extract_thumbnail');
+
+  static final _freeThumbnail = _lib.lookupFunction<
+      ffi.Void Function(ThumbnailResult),
+      void Function(ThumbnailResult)>('xdremux_free_thumbnail');
+
   /// Returns the Rust core version string (e.g. "0.1.0").
   static String version() {
     final ptr = _version();
@@ -196,6 +216,26 @@ class XdRemuxFFI {
       return (buf[0], buf[1], buf[2]);
     } finally {
       calloc.free(buf);
+    }
+  }
+
+  /// Extract an embedded JPEG thumbnail from a HEIC file.
+  ///
+  /// Returns JPEG bytes or null if no thumbnail is found.
+  static Uint8List? extractThumbnail(String inputPath) {
+    final path = inputPath.toNativeUtf8();
+    try {
+      final result = _extractThumbnail(path);
+      if (!result.success || result.data == ffi.nullptr || result.len == 0) {
+        _freeThumbnail(result);
+        return null;
+      }
+      final bytes = result.data.asTypedList(result.len);
+      final copy = Uint8List.fromList(bytes);
+      _freeThumbnail(result);
+      return copy;
+    } finally {
+      calloc.free(path);
     }
   }
 }

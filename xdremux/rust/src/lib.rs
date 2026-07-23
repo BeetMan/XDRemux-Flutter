@@ -457,6 +457,211 @@ fn check_tmap_dimg_in_iref(data: &[u8], meta_kids: &[isobmff::BoxHeader]) -> boo
 }
 
 // ---------------------------------------------------------------------------
+// FFI: thumbnail extraction
+// ---------------------------------------------------------------------------
+
+/// Result of thumbnail extraction. Dart must call `xdremux_free_thumbnail`.
+#[repr(C)]
+pub struct ThumbnailResult {
+    pub data: *mut u8,
+    pub len: usize,
+    pub success: bool,
+}
+
+/// Extract an embedded JPEG thumbnail from a HEIC file.
+///
+/// Strategy:
+/// 1. Parse ISOBMFF → find `Exif` item → read EXIF blob from mdat
+/// 2. Parse TIFF/EXIF → find JPEGInterchangeFormat (tag 0x0201) in IFD1
+/// 3. Return the thumbnail JPEG bytes
+///
+/// Falls back to scanning the file for the first embedded JPEG if EXIF
+/// thumbnail is not found.
+#[no_mangle]
+pub extern "C" fn xdremux_extract_thumbnail(path: *const c_char) -> ThumbnailResult {
+    let fail = ThumbnailResult { data: ptr::null_mut(), len: 0, success: false };
+
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return fail,
+    };
+
+    let data = match std::fs::read(path_str) {
+        Ok(d) => d,
+        Err(_) => return fail,
+    };
+
+    // Try EXIF thumbnail first
+    if let Some(jpeg) = extract_exif_thumbnail(&data) {
+        return return_thumbnail(jpeg);
+    }
+
+    // Fallback: scan for any embedded JPEG (e.g. gain map preview)
+    if let Some(jpeg) = find_first_jpeg(&data) {
+        return return_thumbnail(jpeg);
+    }
+
+    fail
+}
+
+fn return_thumbnail(jpeg: Vec<u8>) -> ThumbnailResult {
+    let len = jpeg.len();
+    let mut boxed = jpeg.into_boxed_slice();
+    let data = boxed.as_mut_ptr();
+    std::mem::forget(boxed);
+    ThumbnailResult { data, len, success: true }
+}
+
+/// Free a `ThumbnailResult` previously returned by `xdremux_extract_thumbnail`.
+#[no_mangle]
+pub extern "C" fn xdremux_free_thumbnail(result: ThumbnailResult) {
+    if !result.data.is_null() && result.len > 0 {
+        unsafe {
+            let slice = std::slice::from_raw_parts_mut(result.data, result.len);
+            drop(Box::from_raw(slice));
+        }
+    }
+}
+
+/// Extract JPEG thumbnail from EXIF data embedded in a HEIC container.
+fn extract_exif_thumbnail(data: &[u8]) -> Option<Vec<u8>> {
+    let top = isobmff::parse_boxes(data, 0, data.len());
+    let meta = top.iter().find(|b| &b.btype == b"meta")?;
+    let meta_kids = isobmff::parse_boxes(data, meta.data_start + 4, meta.data_end);
+
+    let iinf = meta_kids.iter().find(|b| &b.btype == b"iinf")?;
+    let iloc = meta_kids.iter().find(|b| &b.btype == b"iloc")?;
+
+    let items = isobmff::parse_iinf(data, iinf).ok()?;
+    let iloc_entries = isobmff::parse_iloc(data, iloc).ok()?;
+
+    // Find the Exif item
+    let exif_item = items.iter().find(|it| it.itype == "Exif")?;
+    let exif_id = exif_item.item_id;
+
+    // Get its data location from iloc
+    let iloc_entry = iloc_entries.iter().find(|e| e.item_id == exif_id)?;
+    let (offset, length) = iloc_entry.extents.first()?;
+    let start = *offset as usize;
+    let end = start + *length as usize;
+    if end > data.len() {
+        return None;
+    }
+
+    let exif_blob = &data[start..end];
+
+    // HEIC Exif item: first 4 bytes = offset to TIFF header (usually 0 or 6)
+    if exif_blob.len() < 8 {
+        return None;
+    }
+    let tiff_offset = u32::from_be_bytes([exif_blob[0], exif_blob[1], exif_blob[2], exif_blob[3]]) as usize;
+    if tiff_offset + 8 > exif_blob.len() {
+        return None;
+    }
+    let tiff = &exif_blob[tiff_offset..];
+
+    // Parse TIFF header
+    let little_endian = match &tiff[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+
+    let read_u16 = |buf: &[u8], pos: usize| -> u16 {
+        if pos + 2 > buf.len() { return 0; }
+        if little_endian { u16::from_le_bytes([buf[pos], buf[pos + 1]]) }
+        else { u16::from_be_bytes([buf[pos], buf[pos + 1]]) }
+    };
+    let read_u32 = |buf: &[u8], pos: usize| -> u32 {
+        if pos + 4 > buf.len() { return 0; }
+        if little_endian { u32::from_le_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) }
+        else { u32::from_be_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) }
+    };
+
+    // Verify TIFF magic (42)
+    if read_u16(tiff, 2) != 42 {
+        return None;
+    }
+
+    // Walk IFD chain: IFD0 → next IFD (IFD1 = thumbnail)
+    let ifd0_offset = read_u32(tiff, 4) as usize;
+    if ifd0_offset == 0 || ifd0_offset + 2 > tiff.len() {
+        return None;
+    }
+
+    // Find next IFD pointer at end of IFD0
+    let entry_count = read_u16(tiff, ifd0_offset) as usize;
+    let next_ifd_pos = ifd0_offset + 2 + entry_count * 12;
+    if next_ifd_pos + 4 > tiff.len() {
+        return None;
+    }
+    let ifd1_offset = read_u32(tiff, next_ifd_pos) as usize;
+    if ifd1_offset == 0 || ifd1_offset + 2 > tiff.len() {
+        return None;
+    }
+
+    // Parse IFD1 for JPEGInterchangeFormat (0x0201) and JPEGInterchangeFormatLength (0x0202)
+    let ifd1_count = read_u16(tiff, ifd1_offset) as usize;
+    let mut thumb_offset: Option<u32> = None;
+    let mut thumb_length: Option<u32> = None;
+
+    for i in 0..ifd1_count {
+        let entry_pos = ifd1_offset + 2 + i * 12;
+        if entry_pos + 12 > tiff.len() {
+            break;
+        }
+        let tag = read_u16(tiff, entry_pos);
+        let value = read_u32(tiff, entry_pos + 8);
+        match tag {
+            0x0201 => thumb_offset = Some(value),
+            0x0202 => thumb_length = Some(value),
+            _ => {}
+        }
+    }
+
+    let (t_off, t_len) = match (thumb_offset, thumb_length) {
+        (Some(o), Some(l)) if o > 0 && l > 0 => (o as usize, l as usize),
+        _ => return None,
+    };
+
+    if t_off + t_len > tiff.len() {
+        return None;
+    }
+
+    let jpeg = &tiff[t_off..t_off + t_len];
+    // Verify JPEG SOI marker
+    if jpeg.len() >= 2 && jpeg[0] == 0xFF && jpeg[1] == 0xD8 {
+        Some(jpeg.to_vec())
+    } else {
+        None
+    }
+}
+
+/// Scan raw bytes for the first complete JPEG blob.
+fn find_first_jpeg(data: &[u8]) -> Option<Vec<u8>> {
+    let soi = b"\xff\xd8\xff";
+    let mut pos = 0;
+    while pos + 3 < data.len() {
+        if let Some(hit) = data[pos..].windows(3).position(|w| w == soi) {
+            let start = pos + hit;
+            // Find EOI
+            if let Some(eoi) = data[start + 3..].windows(2).position(|w| w == b"\xff\xd9") {
+                let end = start + 3 + eoi + 2;
+                let blob = &data[start..end];
+                // Only accept reasonably-sized thumbnails (>1KB, <2MB)
+                if blob.len() > 1024 && blob.len() < 2 * 1024 * 1024 {
+                    return Some(blob.to_vec());
+                }
+            }
+            pos = start + 3;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // FFI: free
 // ---------------------------------------------------------------------------
 
