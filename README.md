@@ -23,17 +23,22 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 ### Flutter App
 
 - ✅ Windows 桌面应用（含 Gyan.dev ffmpeg 捆绑分发）
-- ✅ 拖拽 HEIC 文件到窗口（原生 `WM_DROPFILES`）
-- ✅ 文件选择器（`file_picker`）兼容其他平台
+- ✅ Android 移动端应用（x265 静态链接 + 纯 Rust JPEG 解码，无需 ffmpeg）
+- ✅ 拖拽 HEIC 文件到窗口（Windows 原生 `WM_DROPFILES`）
+- ✅ 文件选择器（`file_picker`）兼容所有平台
 - ✅ 多文件队列，并行转换（可配置 1–4 线程）
 - ✅ 实时进度条（HEVC tile 级进度：编码第 N/总数 个瓦片）
 - ✅ 深色/浅色主题（跟随系统）
-- ✅ 中文界面（微软雅黑）
+- ✅ 中文界面
 - ✅ OPPO 兼容模式开关
 - ✅ 跳过已有有效输出文件
 - ✅ 可配置输出目录或文件名后缀
-- ✅ 应用图标（同 macOS 版）
-- ✅ 鼠标悬停拖拽提示
+- ✅ 缩略图预览（桌面 ffmpeg / Android Rust FFI 提取 EXIF 缩略图）
+- ✅ Android 保存到图库（MediaStore DCIM/XDRemux）
+- ✅ Android 分享（ACTION_SEND）
+- ✅ Android 系统图库打开（ACTION_VIEW）
+- ✅ 断点续传（批量转换中断后可恢复）
+- ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
 
 ### 一致性验证
 
@@ -47,9 +52,9 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 |------|------|------|
 | Windows | ✅ 可运行 | ffmpeg 捆绑、原生拖拽、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载 + macOS Runner 已验证 |
+| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、缩略图 FFI、MediaStore 保存 |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
 | iOS | ❌ 未创建 | `flutter create` 待执行 |
-| Android | ❌ 未适配 | Gradle 骨架存在，NDK + FFI + ffmpeg 集成待做 |
 
 ## 快速开始
 
@@ -66,6 +71,12 @@ cargo build -p xdremux-core --release
 # Windows
 cd apps/flutter
 flutter build windows --debug
+
+# Android（需 cargo-ndk + NDK）
+cd xdremux/rust
+cargo ndk -t arm64-v8a -o "../../apps/flutter/android/app/src/main/jniLibs" build --release
+cd ../../apps/flutter
+flutter build apk --debug
 ```
 
 ### Rust CLI
@@ -84,7 +95,9 @@ cargo build --workspace --release
 | `xdremux_convert(in, out, config)` | 转换 ProXDR → ISO HDR |
 | `xdremux_read_progress(buf)` | 读取转换进度（阶段 + 当前/总数） |
 | `xdremux_verify_output(path)` | 验证输出是否包含 ISO gain map |
+| `xdremux_extract_thumbnail(path)` | 提取 HEIC 内嵌 EXIF JPEG 缩略图 |
 | `xdremux_free_result(r)` | 释放 inspect/convert 返回的结果 |
+| `xdremux_free_thumbnail(r)` | 释放缩略图结果 |
 
 ## 输出模式
 
@@ -110,7 +123,6 @@ cargo build --workspace --release
 
 ### UI 与体验
 
-- [ ] 缩略图预览（当前 `generateThumbnail` 已有实现，但未接入 UI）
 - [ ] 转换结果预览（源 ↔ 输出对比）
 - [ ] 拖入非 HEIC 文件时给出友好提示（当前静默丢弃）
 - [ ] 批量输出到自定义目录时保留子目录结构
@@ -119,7 +131,6 @@ cargo build --workspace --release
 
 ### 核心功能
 
-- [ ] Android 移动端适配（FFI 跨平台已就绪，Android NDK 构建待配）
 - [ ] 转换后回退到 OPPO 相册编辑再保存时，HDR Gain Map 不丢失
 - [ ] 增量转换——仅重新编码变化的瓦片
 - [ ] GPU 加速 HEVC 编码（h265_amf / hevc_nvenc 替代 libx265 软件编码）
@@ -129,7 +140,6 @@ cargo build --workspace --release
 - [ ] macOS App Store 签名与公证
 - [ ] Linux 测试与打包（AppImage / Flatpak）
 - [ ] iOS 适配（`flutter create` 待执行）
-- [ ] Android 适配（NDK + FFI + ffmpeg 跨编译集成）
 
 ### 工程
 
@@ -142,7 +152,8 @@ cargo build --workspace --release
 - 转换前请备份原始文件。
 - 转换后回到 OPPO 相册编辑再保存，HDR Gain Map 可能丢失。
 - Windows 端 ffmpeg 捆绑包体积较大（~200MB），计划调研缩小方案。
-- 仅接受 `.heic` 文件拖入（不区分大小写）。
+- 仅接受 `.heic` 文件（不区分大小写）。
+- Android 缩略图依赖 EXIF 内嵌 JPEG，部分文件可能无缩略图。
 
 ## 运行验证
 

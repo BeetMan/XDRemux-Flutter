@@ -936,7 +936,7 @@ class _HomePageState extends State<HomePage> {
         key: _rootKey,
         child: Scaffold(
       appBar: AppBar(
-        title: Text('XDRemux$_versionSuffix'),
+        title: Text(MediaQuery.of(context).size.width < 480 ? 'XDRemux' : 'XDRemux$_versionSuffix'),
         backgroundColor: theme.colorScheme.inversePrimary,
         actions: [
           // Add files
@@ -956,8 +956,8 @@ class _HomePageState extends State<HomePage> {
                 )
               : const SizedBox.shrink(),
           const SizedBox(width: 4),
-          // OPPO compatibility toggle (hide on very narrow screens)
-          if (_canEditQueue && MediaQuery.of(context).size.width >= 480)
+          // OPPO compatibility toggle
+          if (_canEditQueue)
             _OppoCompatToggle(
               mode: _config.oppoCompatibility,
               onChanged: (v) {
@@ -1029,7 +1029,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String get _versionSuffix => _version.isNotEmpty ? '  $_version' : '';
+  String get _versionSuffix => _version.isNotEmpty ? ' $_version' : '';
 
   // Keyboard handler for screenshot capture (Ctrl+Shift+S).
   final FocusNode _captureFocusNode = FocusNode();
@@ -1044,45 +1044,39 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildProgressBar(ThemeData theme) {
     final currentItem = _queue.where((i) => i.status == QueueItemStatus.running).firstOrNull;
+    final narrow = MediaQuery.of(context).size.width < 480;
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: EdgeInsets.symmetric(horizontal: narrow ? 12 : 16, vertical: narrow ? 8 : 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Current conversion indicator
-          if (currentItem != null) ...[
-            Row(
-              children: [
-                Icon(Icons.bolt, size: 16, color: Colors.blue.shade700),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '${currentItem.fileName}  ${currentItem.progressLabel}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.blue.shade700,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-          ],
-          // Overall status
+          // Status row: status text + file count
           Row(
             children: [
-              Text(_statusText,
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              Text('$_processedCount / $_totalFiles',
+              if (currentItem != null)
+                Icon(Icons.bolt, size: 14, color: Colors.blue.shade700),
+              if (currentItem != null) const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  currentItem != null
+                      ? '${currentItem.progressLabel} · ${currentItem.fileName}'
+                      : _statusText,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: currentItem != null ? Colors.blue.shade700 : null,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
+              Text('$_processedCount/$_totalFiles',
                   style: theme.textTheme.bodySmall
                       ?.copyWith(fontFamily: 'monospace')),
             ],
           ),
           const SizedBox(height: 4),
+          // Progress bar + stat chips
           Row(
             children: [
               Expanded(
@@ -1092,41 +1086,46 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(3),
                 ),
               ),
-              const SizedBox(width: 12),
-              _buildStatChip('已转换', _convertedCount, Colors.green),
-              const SizedBox(width: 4),
-              _buildStatChip('跳过', _skippedCount, Colors.grey),
-              const SizedBox(width: 4),
-              _buildStatChip(
-                  '失败', _failedCount, _failedCount > 0 ? Colors.red : Colors.grey),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              const Icon(Icons.memory, size: 14),
-              const SizedBox(width: 4),
-              Text(
-                '并发 ${_currentConcurrency > 0 ? _currentConcurrency : _config.maxConcurrentJobs}',
-                style: theme.textTheme.labelSmall,
-              ),
-              const SizedBox(width: 16),
-              const Icon(Icons.schedule, size: 14),
-              const SizedBox(width: 4),
-              Text('待处理 $_pendingCount', style: theme.textTheme.labelSmall),
-              const SizedBox(width: 16),
-              if (_currentFileName.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    _currentFileName,
-                    style: theme.textTheme.labelSmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+              const SizedBox(width: 8),
+              _buildStatChip('✓', _convertedCount, Colors.green),
+              if (_skippedCount > 0) ...[
+                const SizedBox(width: 4),
+                _buildStatChip('⏭', _skippedCount, Colors.grey),
+              ],
+              if (_failedCount > 0) ...[
+                const SizedBox(width: 4),
+                _buildStatChip('✗', _failedCount, Colors.red),
               ],
             ],
           ),
+          // Extra info row (desktop only)
+          if (!narrow) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.memory, size: 14),
+                const SizedBox(width: 4),
+                Text(
+                  '并发 ${_currentConcurrency > 0 ? _currentConcurrency : _config.maxConcurrentJobs}',
+                  style: theme.textTheme.labelSmall,
+                ),
+                const SizedBox(width: 16),
+                const Icon(Icons.schedule, size: 14),
+                const SizedBox(width: 4),
+                Text('待处理 $_pendingCount', style: theme.textTheme.labelSmall),
+                const SizedBox(width: 16),
+                if (_currentFileName.isNotEmpty) ...[
+                  Flexible(
+                    child: Text(
+                      _currentFileName,
+                      style: theme.textTheme.labelSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -1866,8 +1865,8 @@ class _PhotoCard extends StatelessWidget {
                   if (isRunning)
                     _OverlayBadge(
                       icon: Icons.bolt,
-                      label: item.progressLabel.isNotEmpty
-                          ? item.progressLabel
+                      label: item.progress != null
+                          ? '${item.progress!.current}/${item.progress!.total}'
                           : '转换中',
                       color: Colors.blue,
                       bottom: 0,
@@ -1897,42 +1896,33 @@ class _PhotoCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+              padding: const EdgeInsets.fromLTRB(8, 4, 4, 2),
+              child: Row(
                 children: [
-                  Text(
-                    item.fileName,
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(fontWeight: FontWeight.w500),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                  Expanded(
+                    child: Text(
+                      item.fileName,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(fontWeight: FontWeight.w500, fontSize: 11),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
                   ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      _statusChip(theme, item.status),
-                      if (item.status == QueueItemStatus.running &&
-                          item.progress != null) ...[
-                        const SizedBox(width: 4),
-                        Text(
-                          '${item.progress!.current}/${item.progress!.total}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                      ],
-                      const Spacer(),
-                      _cardAction(theme, Icons.file_open, onRevealInput),
-                      if (item.isSuccessful)
-                        _cardAction(theme, Icons.check_circle, onRevealOutput),
-                      if (isFailed || status == QueueItemStatus.cancelled)
-                        _cardAction(theme, Icons.refresh, onRetry),
-                      _cardAction(theme, Icons.close, onRemove),
-                    ],
-                  ),
+                  if (item.status == QueueItemStatus.running &&
+                      item.progress != null)
+                    Text(
+                      '${item.progress!.current}/${item.progress!.total}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.blue.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  if (item.isSuccessful)
+                    _cardAction(theme, Icons.check_circle, onRevealOutput),
+                  if (isFailed || status == QueueItemStatus.cancelled)
+                    _cardAction(theme, Icons.refresh, onRetry),
+                  _cardAction(theme, Icons.close, onRemove),
                 ],
               ),
             ),
@@ -1942,48 +1932,14 @@ class _PhotoCard extends StatelessWidget {
     );
   }
 
-  Widget _statusChip(ThemeData theme, QueueItemStatus status) {
-    final color = switch (status) {
-      QueueItemStatus.pending => Colors.grey,
-      QueueItemStatus.running => Colors.blue,
-      QueueItemStatus.converted => Colors.green,
-      QueueItemStatus.skippedExisting => Colors.grey,
-      QueueItemStatus.failed => Colors.red,
-      QueueItemStatus.cancelled => Colors.orange,
-    };
-    final label = switch (status) {
-      QueueItemStatus.pending => '待处理',
-      QueueItemStatus.running => '转换中',
-      QueueItemStatus.converted => '已转换',
-      QueueItemStatus.skippedExisting => '已跳过',
-      QueueItemStatus.failed => '失败',
-      QueueItemStatus.cancelled => '已取消',
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-
   Widget _cardAction(ThemeData theme, IconData icon, VoidCallback onTap) {
-    return IconButton(
-      icon: Icon(icon, size: 14),
-      onPressed: onTap,
-      visualDensity: VisualDensity.compact,
-      tooltip: switch (icon) {
-        Icons.file_open => '源文件',
-        Icons.check_circle => '输出文件',
-        Icons.refresh => '重试',
-        Icons.close => '移除',
-        _ => '',
-      },
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
+      ),
     );
   }
 }
@@ -2110,7 +2066,9 @@ class _ItemDetailSheet extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
                 children: [
                   _StatusChip(
                       label: item.status.displayName,
@@ -2119,7 +2077,6 @@ class _ItemDetailSheet extends StatelessWidget {
                           : item.status == QueueItemStatus.failed
                               ? Colors.red
                               : Colors.grey),
-                  const SizedBox(width: 8),
                   _StatusChip(
                       label: item.outputPlanStatus.displayName,
                       color: item.outputPlanStatus.blocksConversion
@@ -2134,14 +2091,15 @@ class _ItemDetailSheet extends StatelessWidget {
               ],
               if (item.isSuccessful && item.status == QueueItemStatus.converted)
                 _OutputPreview(outputPath: item.outputPath),
-              Row(
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
                     icon: const Icon(Icons.file_open, size: 16),
                     label: const Text('源文件'),
                     onPressed: revealInput,
                   ),
-                  const SizedBox(width: 8),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.folder_open, size: 16),
                     label: const Text('输出文件'),
