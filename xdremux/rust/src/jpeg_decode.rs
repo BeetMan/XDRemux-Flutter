@@ -1,123 +1,61 @@
-//! JPEG decode via ffmpeg subprocess.
+//! JPEG decode via the `jpeg-decoder` crate (pure Rust, no subprocess).
 //!
-//! Decodes a JPEG byte buffer to raw 8-bit grayscale pixels using `ffmpeg`
-//! as a subprocess. We use two passes:
-//! 1. `ffprobe` to get width/height from the JPEG header
-//! 2. `ffmpeg` to decode to raw grayscale
+//! Decodes a JPEG byte buffer to raw pixels. Works on all platforms
+//! including Android where subprocess execution is restricted by SELinux.
 
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::thread;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
-/// `CREATE_NO_WINDOW` — suppresses the console window flash for every ffmpeg
-/// subprocess on Windows (const 0x08000000, from winbase.h).
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-fn resolve_exe(name: &str) -> PathBuf {
-    // 1. Check next to our own executable (bundled distribution).
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let bare = exe_dir.join(name);
-            if bare.exists() {
-                return bare;
-            }
-            if cfg!(windows) {
-                let with_ext = exe_dir.join(format!("{}.exe", name));
-                if with_ext.exists() {
-                    return with_ext;
-                }
-            }
-        }
-    }
-    // 2. Search PATH (wrap `where` / `which` in CREATE_NO_WINDOW on Windows).
-    let which_cmd = if cfg!(windows) { "where" } else { "which" };
-    let mut cmd = Command::new(which_cmd);
-    cmd.arg(name).stdout(Stdio::piped()).stderr(Stdio::null());
-    #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    if let Ok(output) = cmd.output() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(line) = stdout.lines().next() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed);
-            }
-        }
-    }
-    // 3. macOS homebrew fallback.
-    if cfg!(target_os = "macos") {
-        for dir in &["/opt/homebrew/bin", "/usr/local/bin"] {
-            let candidate = PathBuf::from(dir).join(name);
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-    }
-    PathBuf::from(name)
-}
+use std::io::Cursor;
 
 /// Decode a JPEG byte buffer to raw RGB pixels (3 bytes per pixel, R-G-B).
 ///
 /// Returns `(pixels, width, height)` where `pixels` is row-major
 /// with stride = width * 3.
-///
-/// Uses a background thread to pump stdin so neither pipe deadlocks on
-/// Windows' 64 KiB buffer.
 pub fn decode_jpeg_to_rgb(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u32)> {
-    let (width, height) = probe_jpeg_dimensions(jpeg_data)?;
+    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(jpeg_data));
+    let pixels = decoder.decode().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("JPEG decode error: {e}"))
+    })?;
+    let info = decoder.info().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "failed to read JPEG info")
+    })?;
 
-    let ffmpeg = resolve_exe("ffmpeg");
-    let mut cmd = Command::new(&ffmpeg);
-    cmd.args([
-        "-v", "quiet",
-        "-f", "jpeg_pipe",
-        "-i", "pipe:0",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
-        "pipe:1",
-    ])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-    #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let mut child = cmd.spawn()?;
+    let width = info.width as u32;
+    let height = info.height as u32;
 
-    let owned = jpeg_data.to_vec();
-    let mut stdin = child.stdin.take().unwrap();
-    thread::spawn(move || { let _ = stdin.write_all(&owned); });
-
-    let mut stdout = child.stdout.take().unwrap();
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf)?;
-
-    let mut stderr = child.stderr.take().unwrap();
-    let mut err_buf = Vec::new();
-    stderr.read_to_end(&mut err_buf)?;
-
-    let status = child.wait()?;
-    if !status.success() {
-        let err_str = String::from_utf8_lossy(&err_buf);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("ffmpeg failed to decode JPEG to RGB: {}", err_str.trim()),
-        ));
-    }
+    // jpeg-decoder always outputs RGB (3 components) for color images,
+    // or grayscale (1 component) for gray images.
+    let rgb = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => pixels,
+        jpeg_decoder::PixelFormat::L8 | jpeg_decoder::PixelFormat::L16 => {
+            // Convert grayscale to RGB
+            pixels.iter().flat_map(|&g| [g, g, g]).collect()
+        }
+        jpeg_decoder::PixelFormat::CMYK32 => {
+            // Convert CMYK to RGB
+            pixels.chunks_exact(4).flat_map(|cmyk| {
+                let (c, m, y, k) = (cmyk[0] as u16, cmyk[1] as u16, cmyk[2] as u16, cmyk[3] as u16);
+                let r = ((255 - c) * (255 - k) / 255) as u8;
+                let g = ((255 - m) * (255 - k) / 255) as u8;
+                let b = ((255 - y) * (255 - k) / 255) as u8;
+                [r, g, b]
+            }).collect()
+        }
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("unsupported JPEG pixel format: {:?}", info.pixel_format),
+            ));
+        }
+    };
 
     let expected = (width * height * 3) as usize;
-    if buf.len() < expected {
+    if rgb.len() < expected {
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
-            format!("decoded {} bytes, expected {expected} ({}x{}x3)", buf.len(), width, height),
+            format!("decoded {} bytes, expected {expected} ({}x{}x3)", rgb.len(), width, height),
         ));
     }
 
-    Ok((buf[..expected].to_vec(), width, height))
+    Ok((rgb[..expected].to_vec(), width, height))
 }
 
 /// Decode a JPEG byte buffer to raw 8-bit grayscale pixels.
@@ -125,150 +63,57 @@ pub fn decode_jpeg_to_rgb(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u3
 /// Returns `(pixels, width, height)` where `pixels` is row-major
 /// with stride = width (tightly packed).
 pub fn decode_jpeg_to_gray(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u32)> {
-    // Pass 1: probe dimensions using ffprobe
-    let (width, height) = probe_jpeg_dimensions(jpeg_data)?;
+    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(jpeg_data));
+    let pixels = decoder.decode().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("JPEG decode error: {e}"))
+    })?;
+    let info = decoder.info().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "failed to read JPEG info")
+    })?;
 
-    // Pass 2: decode to raw grayscale
-    let pixels = decode_jpeg_raw(jpeg_data, width, height)?;
+    let width = info.width as u32;
+    let height = info.height as u32;
 
-    Ok((pixels, width, height))
-}
-
-fn probe_jpeg_dimensions(jpeg_data: &[u8]) -> std::io::Result<(u32, u32)> {
-    let ffprobe = resolve_exe("ffprobe");
-    let mut cmd = Command::new(&ffprobe);
-    cmd.args([
-        "-v", "quiet",
-        "-print_format", "csv=p=0",
-        "-show_entries", "stream=width,height",
-        "-f", "jpeg_pipe",
-        "-i", "pipe:0",
-    ])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-    #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let mut child = cmd.spawn()?;
-
-    let owned = jpeg_data.to_vec();
-    let mut stdin = child.stdin.take().unwrap();
-    thread::spawn(move || { let _ = stdin.write_all(&owned); });
-
-    let mut stdout = child.stdout.take().unwrap();
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf)?;
-
-    let mut stderr = child.stderr.take().unwrap();
-    let mut err_buf = Vec::new();
-    stderr.read_to_end(&mut err_buf)?;
-
-    let status = child.wait()?;
-    if !status.success() {
-        let err_str = String::from_utf8_lossy(&err_buf);
-        eprintln!("ffprobe stderr: {}", err_str.trim());
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("ffprobe failed to probe JPEG dimensions: {}", err_str.trim()),
-        ));
-    }
-
-    let csv = String::from_utf8_lossy(&buf);
-    let csv = csv.trim();
-    // Format: "width,height"
-    let mut parts = csv.split(',');
-    let width: u32 = parts
-        .next()
-        .and_then(|s| s.trim().parse().ok())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "failed to parse width"))?;
-    let height: u32 = parts
-        .next()
-        .and_then(|s| s.trim().parse().ok())
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "failed to parse height"))?;
-
-    Ok((width, height))
-}
-
-fn decode_jpeg_raw(jpeg_data: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
-    let ffmpeg = resolve_exe("ffmpeg");
-    let mut cmd = Command::new(&ffmpeg);
-    cmd.args([
-        "-v", "quiet",
-        "-f", "jpeg_pipe",
-        "-i", "pipe:0",
-        "-f", "rawvideo",
-        "-pix_fmt", "gray",
-        "pipe:1",
-    ])
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-    #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let mut child = cmd.spawn()?;
-
-    let owned = jpeg_data.to_vec();
-    let mut stdin = child.stdin.take().unwrap();
-    thread::spawn(move || { let _ = stdin.write_all(&owned); });
-
-    let mut stdout = child.stdout.take().unwrap();
-    let mut buf = Vec::new();
-    stdout.read_to_end(&mut buf)?;
-
-    let mut stderr = child.stderr.take().unwrap();
-    let mut err_buf = Vec::new();
-    stderr.read_to_end(&mut err_buf)?;
-
-    let status = child.wait()?;
-    if !status.success() {
-        let err_str = String::from_utf8_lossy(&err_buf);
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("ffmpeg failed to decode JPEG: {}", err_str.trim()),
-        ));
-    }
+    let gray = match info.pixel_format {
+        jpeg_decoder::PixelFormat::L8 | jpeg_decoder::PixelFormat::L16 => pixels,
+        jpeg_decoder::PixelFormat::RGB24 => {
+            // Convert RGB to grayscale using BT.601 luminance
+            pixels.chunks_exact(3).map(|rgb| {
+                ((rgb[0] as u32 * 77 + rgb[1] as u32 * 150 + rgb[2] as u32 * 29) >> 8) as u8
+            }).collect()
+        }
+        jpeg_decoder::PixelFormat::CMYK32 => {
+            // Convert CMYK to grayscale via RGB
+            pixels.chunks_exact(4).map(|cmyk| {
+                let (c, m, y, k) = (cmyk[0] as u16, cmyk[1] as u16, cmyk[2] as u16, cmyk[3] as u16);
+                let r = (255 - c) * (255 - k) / 255;
+                let g = (255 - m) * (255 - k) / 255;
+                let b = (255 - y) * (255 - k) / 255;
+                ((r * 77 + g * 150 + b * 29) >> 8) as u8
+            }).collect()
+        }
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("unsupported JPEG pixel format: {:?}", info.pixel_format),
+            ));
+        }
+    };
 
     let expected = (width * height) as usize;
-    if buf.len() < expected {
+    if gray.len() < expected {
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
-            format!("decoded {} bytes, expected {expected} ({}×{})", buf.len(), width, height),
+            format!("decoded {} bytes, expected {expected} ({}x{})", gray.len(), width, height),
         ));
     }
 
-    Ok(buf[..expected].to_vec())
+    Ok((gray[..expected].to_vec(), width, height))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Create a minimal valid JPEG (1×1 black pixel).
-    fn make_minimal_jpeg() -> Vec<u8> {
-        // SOI, APP0 (JFIF), DQT, SOF0 (1×1 grayscale), DHT, SOS, EOI
-        // This is a hand-crafted minimal JPEG for a 2×2 single-color image
-        // Using a simpler approach: encode a tiny image via external tool
-        // For CI reliability, we just test the error case
-        vec![
-            0xff, 0xd8, // SOI
-            0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // APP0
-            0xff, 0xdb, 0x00, 0x43, 0x00, // DQT
-            // quant table (64 bytes all-1)
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-            0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x02, 0x00, 0x02, 0x01, 0x01, 0x01, 0x00, // SOF0 (2×2, 1 component)
-            0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, // DHT
-            0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, // SOS
-            0xaa, 0x55, // compressed data (bare minimum)
-            0xff, 0xd9, // EOI
-        ]
-    }
 
     #[test]
     fn decode_empty_jpeg_errors() {
@@ -280,23 +125,6 @@ mod tests {
     fn decode_junk_data_errors() {
         let result = decode_jpeg_to_gray(&[0u8; 100]);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn probe_minimal_jpeg() {
-        let jpeg = make_minimal_jpeg();
-        let result = probe_jpeg_dimensions(&jpeg);
-        // The hand-crafted minimal JPEG may not be parseable by ffprobe.
-        // The important thing is: it doesn't panic and either succeeds
-        // with valid dimensions or returns a clean error.
-        if let Ok((w, h)) = result {
-            // If ffprobe somehow succeeds, dimensions must be positive
-            if w == 0 || h == 0 {
-                // ffprobe returned 0 — the JPEG is too minimal. Not an error.
-                eprintln!("note: minimal JPEG returned 0×0 from ffprobe (expected)");
-            }
-        }
-        // Test passes either way — no panic
     }
 
     #[test]

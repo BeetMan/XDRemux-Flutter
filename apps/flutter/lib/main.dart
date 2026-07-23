@@ -6,6 +6,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
@@ -74,6 +76,8 @@ class _HomePageState extends State<HomePage> {
   String _version = '';
   Timer? _configSaveTimer;
   Checkpoint? _checkpoint;
+  /// Android: app-specific external directory for output (scoped storage).
+  String? _androidOutputDir;
   static const _dropChannel = MethodChannel('xdremux/drop');
 
   @override
@@ -89,6 +93,19 @@ class _HomePageState extends State<HomePage> {
       _version = await XdRemuxService.getVersion();
     } catch (e) {
       _version = 'core error: $e';
+    }
+    // Android: resolve app-specific external output directory
+    if (Platform.isAndroid) {
+      try {
+        final dir = await getExternalStorageDirectory();
+        if (dir != null) {
+          _androidOutputDir = dir.path;
+          // Ensure the output subdirectory exists
+          final outDir = Directory('${dir.path}${Platform.pathSeparator}output');
+          if (!outDir.existsSync()) outDir.createSync(recursive: true);
+          _androidOutputDir = outDir.path;
+        }
+      } catch (_) {}
     }
     if (mounted) setState(() {});
 
@@ -266,8 +283,37 @@ class _HomePageState extends State<HomePage> {
   // File selection
   // ---------------------------------------------------------------------------
 
+  /// Request storage/photo read permission on Android.
+  /// permission_handler internally maps to the correct permission per API level:
+  /// - Android 13+ (API 33): READ_MEDIA_IMAGES
+  /// - Older: READ_EXTERNAL_STORAGE
+  Future<void> _requestStoragePermission() async {
+    try {
+      // Try photos first (Android 13+); fall back to storage for older devices.
+      var status = await Permission.photos.request();
+      if (status.isPermanentlyDenied) {
+        status = await Permission.storage.request();
+      }
+      if (!status.isGranted && !status.isLimited && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('未获得存储权限，可能无法读取文件'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (_) {
+      // Permission request failed; file_picker may still work via SAF.
+    }
+  }
+
   Future<void> _addFiles() async {
     if (!_canEditQueue) return;
+
+    // Android: request storage/photo permission before picking files
+    if (Platform.isAndroid) {
+      await _requestStoragePermission();
+    }
 
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -286,7 +332,7 @@ class _HomePageState extends State<HomePage> {
       if (existing.contains(path)) continue;
 
       try {
-        final outputPath = _config.outputPathFor(path);
+        final outputPath = _config.outputPathFor(path, fallbackDir: _androidOutputDir);
         _queue.add(QueueItem(
           id: _makeId(),
           inputPath: path,
@@ -360,7 +406,7 @@ class _HomePageState extends State<HomePage> {
       if (item.status == QueueItemStatus.pending ||
           item.status == QueueItemStatus.failed ||
           item.status == QueueItemStatus.cancelled) {
-        item.outputPath = _config.outputPathFor(item.inputPath);
+        item.outputPath = _config.outputPathFor(item.inputPath, fallbackDir: _androidOutputDir);
         item.outputPlanStatus =
             _computeOutputPlan(item.inputPath, item.outputPath);
       }
@@ -731,7 +777,7 @@ class _HomePageState extends State<HomePage> {
     for (final path in paths) {
       if (!path.toLowerCase().endsWith('.heic')) continue;
       if (existing.contains(path)) continue;
-      final outputPath = _config.outputPathFor(path);
+      final outputPath = _config.outputPathFor(path, fallbackDir: _androidOutputDir);
       _queue.add(QueueItem(
         id: _makeId(),
         inputPath: path,
@@ -756,6 +802,17 @@ class _HomePageState extends State<HomePage> {
     } else if (Platform.isLinux) {
       // Open containing directory
       Process.run('xdg-open', [File(path).parent.path]);
+    } else if (Platform.isAndroid) {
+      // Android: no file explorer intent available without extra plugins;
+      // show a snackbar with the path instead.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('文件位置: $path'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
@@ -769,6 +826,8 @@ class _HomePageState extends State<HomePage> {
       Process.run('explorer', ['/select,', outputs.first]);
     } else if (Platform.isMacOS) {
       Process.run('open', ['-R', outputs.first]);
+    } else if (Platform.isAndroid) {
+      _revealInExplorer(outputs.first);
     }
   }
 
@@ -1273,7 +1332,12 @@ class _OutputPreview extends StatelessWidget {
   }
 
   Future<Uint8List?> _generatePreview() async {
-    final ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+    final List<String> ffmpegPaths;
+    if (Platform.isAndroid) {
+      ffmpegPaths = [resolveFfmpegPath()];
+    } else {
+      ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+    }
     for (final ffmpeg in ffmpegPaths) {
       if (!File(ffmpeg).existsSync()) continue;
       try {
@@ -1284,7 +1348,7 @@ class _OutputPreview extends StatelessWidget {
           '-f', 'image2pipe',
           '-c:v', 'png',
           'pipe:1',
-        ]);
+        ], environment: androidFfmpegEnv());
         if (result.exitCode == 0 && result.stdout is List<int>) {
           return Uint8List.fromList(result.stdout as List<int>);
         }

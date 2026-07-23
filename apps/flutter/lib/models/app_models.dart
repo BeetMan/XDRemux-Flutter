@@ -198,9 +198,12 @@ class ConversionConfig {
       );
 
   /// Compute output path for a given input file.
-  String outputPathFor(String inputPath) {
+  ///
+  /// [fallbackDir] is used when [outputDirectory] is null and the platform
+  /// requires an app-specific writable directory (e.g. Android scoped storage).
+  String outputPathFor(String inputPath, {String? fallbackDir}) {
     final input = File(inputPath);
-    final dir = outputDirectory ?? input.parent.path;
+    final dir = outputDirectory ?? fallbackDir ?? input.parent.path;
     final stem = input.uri.pathSegments.last.replaceAll(RegExp(r'\.heic$', caseSensitive: false), '');
     return '$dir${Platform.pathSeparator}$stem$fileNameSuffix.heic';
   }

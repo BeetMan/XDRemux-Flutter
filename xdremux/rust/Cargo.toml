@@ -10,3 +10,7 @@ description = "XDRemux cross-platform HEIC conversion core (Rust)"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+jpeg-decoder = "0.3"
+
+[build-dependencies]
+cc = "1"

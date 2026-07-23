@@ -52,6 +52,13 @@ apps/flutter/libxdremux_core.dylib
 *.tar.gz
 *.zip
 
+# Android native libs (built artifacts, rebuildable)
+apps/flutter/android/app/src/main/jniLibs/
+.android-tools/
+
+# x265 vendor source (re-clonable)
+xdremux/rust/vendor/
+
 # Local agent / project scaffolding (not for tracking)
 .codex/
 .claude/

@@ -13,6 +13,9 @@ pub mod jpeg_decode;
 pub mod hevc;
 pub mod progress;
 
+#[cfg(target_os = "android")]
+pub mod x265_ffi;
+
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
 

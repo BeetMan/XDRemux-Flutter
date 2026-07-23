@@ -53,6 +53,7 @@ class CheckpointService {
   /// Save checkpoint to disk (atomic write via temp file + rename).
   static Future<void> save(Checkpoint checkpoint) async {
     final file = await _getFile();
+    await file.parent.create(recursive: true);
     final tmpPath = '${file.path}.tmp';
     final tmpFile = File(tmpPath);
     await tmpFile.writeAsString(checkpoint.toJsonl(), flush: true);

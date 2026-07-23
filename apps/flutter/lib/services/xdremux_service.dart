@@ -9,10 +9,12 @@ import '../models/app_models.dart';
 
 /// Resolve the ffmpeg executable path, checking the app's own directory first
 /// (bundled distribution) before falling back to PATH.
-String _resolveFfmpeg() {
+String resolveFfmpegPath() {
   try {
-    // On Windows, check next to our own executable first.
-    if (Platform.isWindows) {
+    if (Platform.isAndroid) {
+      return _resolveAndroidExe('ffmpeg');
+    } else if (Platform.isWindows) {
+      // On Windows, check next to our own executable first.
       final exeDir = File(Platform.resolvedExecutable).parent;
       final bundled = File('${exeDir.path}\\ffmpeg.exe');
       if (bundled.existsSync()) return bundled.path;
@@ -34,6 +36,54 @@ String _resolveFfmpeg() {
   }
   // Fall back to whatever is on PATH (or bare name on other platforms).
   return 'ffmpeg';
+}
+
+/// On Android, find the native library directory via /proc/self/maps,
+/// copy the bundled executable to cache/bin with execute permission.
+String _resolveAndroidExe(String name) {
+  final libDir = _androidNativeLibDir();
+  if (libDir == null) return name;
+
+  // Copy to cache/bin with execute permission
+  final source = File('$libDir/lib$name.so');
+  if (!source.existsSync()) return name;
+
+  // Read package name from /proc/self/cmdline
+  final cmdline = File('/proc/self/cmdline').readAsStringSync();
+  final pkg = cmdline.split('\x00').first;
+  final binDir = Directory('/data/data/$pkg/code_cache/bin');
+  binDir.createSync(recursive: true);
+
+  final target = File('${binDir.path}/$name');
+  if (!target.existsSync() || target.lengthSync() != source.lengthSync()) {
+    source.copySync(target.path);
+  }
+  // chmod 755
+  Process.runSync('chmod', ['755', target.path]);
+  return target.path;
+}
+
+/// On Android, find the native library directory from /proc/self/maps.
+String? _androidNativeLibDir() {
+  try {
+    final maps = File('/proc/self/maps').readAsLinesSync();
+    for (final line in maps) {
+      if (line.contains('libxdremux_core.so')) {
+        final path = line.split(RegExp(r'\s+')).last;
+        final idx = path.lastIndexOf('/');
+        if (idx > 0) return path.substring(0, idx);
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// On Android, returns environment with LD_LIBRARY_PATH set for ffmpeg.
+Map<String, String>? androidFfmpegEnv() {
+  if (!Platform.isAndroid) return null;
+  final libDir = _androidNativeLibDir();
+  if (libDir == null) return null;
+  return {'LD_LIBRARY_PATH': libDir};
 }
 
 /// Higher-level service that wraps raw FFI calls and manages settings.
@@ -111,7 +161,7 @@ class XdRemuxService {
     int maxPixelSize = 320,
   }) async {
     try {
-      final ffmpeg = _resolveFfmpeg();
+      final ffmpeg = resolveFfmpegPath();
       print('generateThumbnail: ffmpeg=$ffmpeg');
       // Output PNG (not rawvideo) so Image.memory() can decode it.
       // Use -s (simple scale) to avoid complex filtergraph errors on HEIC.
@@ -124,7 +174,7 @@ class XdRemuxService {
         '-f', 'image2pipe',
         '-c:v', 'png',
         'pipe:1',
-      ], runInShell: false, stdoutEncoding: null);
+      ], runInShell: false, stdoutEncoding: null, environment: androidFfmpegEnv());
       if (result.exitCode == 0 && result.stdout is List<int> && result.stdout.isNotEmpty) {
         return Uint8List.fromList(result.stdout as List<int>);
       }
