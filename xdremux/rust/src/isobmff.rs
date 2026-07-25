@@ -88,51 +88,90 @@ pub struct ParsedMeta {
 
 /// ISO 21496-1 auxiliary type marker: `urn:iso:std:iso:ts:21496:-1`
 pub const AUX_C_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x28, 0x61, 0x75, 0x78, 0x43,
-    0x00, 0x00, 0x00, 0x00, 0x75, 0x72, 0x6e, 0x3a,
-    0x69, 0x73, 0x6f, 0x3a, 0x73, 0x74, 0x64, 0x3a,
-    0x69, 0x73, 0x6f, 0x3a, 0x74, 0x73, 0x3a, 0x32,
+    0x00, 0x00, 0x00, 0x28, 0x61, 0x75, 0x78, 0x43, 0x00, 0x00, 0x00, 0x00, 0x75, 0x72, 0x6e, 0x3a,
+    0x69, 0x73, 0x6f, 0x3a, 0x73, 0x74, 0x64, 0x3a, 0x69, 0x73, 0x6f, 0x3a, 0x74, 0x73, 0x3a, 0x32,
     0x31, 0x34, 0x39, 0x36, 0x3a, 0x2d, 0x31, 0x00,
 ];
 
 /// Data information box with dref + url.
 pub const DINF_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x24, 0x64, 0x69, 0x6e, 0x66,
-    0x00, 0x00, 0x00, 0x1c, 0x64, 0x72, 0x65, 0x66,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-    0x00, 0x00, 0x00, 0x0c, 0x75, 0x72, 0x6c, 0x20,
+    0x00, 0x00, 0x00, 0x24, 0x64, 0x69, 0x6e, 0x66, 0x00, 0x00, 0x00, 0x1c, 0x64, 0x72, 0x65, 0x66,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, 0x75, 0x72, 0x6c, 0x20,
     0x00, 0x00, 0x00, 0x01,
 ];
 
 /// Image rotation box (rotation = 0).
-pub const IROT_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x09, 0x69, 0x72, 0x6f, 0x74, 0x00,
-];
+pub const IROT_BOX: &[u8] = &[0x00, 0x00, 0x00, 0x09, 0x69, 0x72, 0x6f, 0x74, 0x00];
+
+/// Build an `irot` box from counter-clockwise quarter turns.
+pub fn make_irot_box(quarter_turns_ccw: u8) -> Vec<u8> {
+    make_box(b"irot", &[quarter_turns_ccw & 0x03])
+}
+
+/// Read the dimensions from a complete `ispe` property box.
+pub fn ispe_dimensions(ispe: &[u8]) -> Result<(u32, u32), String> {
+    if ispe.len() < 20 || &ispe[4..8] != b"ispe" {
+        return Err("invalid ispe property".into());
+    }
+    Ok((read_u32be(ispe, 12), read_u32be(ispe, 16)))
+}
+
+/// Read the counter-clockwise quarter-turn count from a complete `irot`
+/// property box.
+pub fn irot_quarter_turns(irot: &[u8]) -> Result<u8, String> {
+    if irot.len() < 9 || &irot[4..8] != b"irot" {
+        return Err("invalid irot property".into());
+    }
+    Ok(irot[8] & 0x03)
+}
+
+/// Build the tmap `ispe` geometry expected by ImageIO. The tmap item shares
+/// the primary image's orientation, so odd `irot` values swap its dimensions.
+pub fn make_imageio_canonical_tmap_ispe_box(
+    primary_ispe: &[u8],
+    irot: &[u8],
+) -> Result<Vec<u8>, String> {
+    let (width, height) = ispe_dimensions(primary_ispe)?;
+    let quarter_turns = irot_quarter_turns(irot)?;
+    if quarter_turns % 2 == 0 {
+        Ok(make_ispe_box(width, height))
+    } else {
+        Ok(make_ispe_box(height, width))
+    }
+}
 
 /// sRGB color box (nclx: primaries=2, transfer=2, matrix=2).
 pub const COLR_SRGB_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
-    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72, 0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
     0x00, 0x02, 0x80,
 ];
 
 /// BT.2020 PQ color box (nclx: primaries=9, transfer=16, matrix=9).
 pub const COLR_BT2020_PQ_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72,
-    0x6e, 0x63, 0x6c, 0x78, 0x00, 0x09, 0x00, 0x10,
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72, 0x6e, 0x63, 0x6c, 0x78, 0x00, 0x09, 0x00, 0x10,
     0x00, 0x09, 0x80,
+];
+
+/// Unspecified BT.601 color box (nclx: primaries=2, transfer=2, matrix=6).
+/// This is the color metadata expected for RGB compatibility gain-map tiles.
+pub const COLR_UNSPECIFIED_BT601_BOX: &[u8] = &[
+    0x00, 0x00, 0x00, 0x13, 0x63, 0x6f, 0x6c, 0x72, 0x6e, 0x63, 0x6c, 0x78, 0x00, 0x02, 0x00, 0x02,
+    0x00, 0x06, 0x80,
+];
+
+/// Pixel information: 1 channel × 8 bits.
+pub const PIXI_MONO8_BOX: &[u8] = &[
+    0x00, 0x00, 0x00, 0x0e, 0x70, 0x69, 0x78, 0x69, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08,
 ];
 
 /// Pixel information: 3 channels × 8 bits.
 pub const PIXI_RGB8_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
-    0x00, 0x00, 0x00, 0x00, 0x03, 0x08, 0x08, 0x08,
+    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69, 0x00, 0x00, 0x00, 0x00, 0x03, 0x08, 0x08, 0x08,
 ];
 
 /// Pixel information: 3 channels × 10 bits.
 pub const PIXI_RGB10_BOX: &[u8] = &[
-    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69,
-    0x00, 0x00, 0x00, 0x00, 0x03, 0x0a, 0x0a, 0x0a,
+    0x00, 0x00, 0x00, 0x10, 0x70, 0x69, 0x78, 0x69, 0x00, 0x00, 0x00, 0x00, 0x03, 0x0a, 0x0a, 0x0a,
 ];
 
 // ---------------------------------------------------------------------------
@@ -146,14 +185,25 @@ pub fn read_u16be(data: &[u8], offset: usize) -> u16 {
 
 /// Read a big-endian u32 at `offset`. Caller must ensure `offset+4 <= data.len()`.
 pub fn read_u32be(data: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 /// Read a big-endian u64 at `offset`. Caller must ensure `offset+8 <= data.len()`.
 pub fn read_u64be(data: &[u8], offset: usize) -> u64 {
     u64::from_be_bytes([
-        data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+        data[offset + 4],
+        data[offset + 5],
+        data[offset + 6],
+        data[offset + 7],
     ])
 }
 
@@ -339,10 +389,18 @@ pub fn make_ipma_entry(item_id: u32, assocs: &[(u32, bool)], flags: u32) -> Vec<
     out.push(assocs.len() as u8);
     for &(index, essential) in assocs {
         if use_large {
-            let val = if essential { 0x8000 | (index as u16) } else { index as u16 };
+            let val = if essential {
+                0x8000 | (index as u16)
+            } else {
+                index as u16
+            };
             write_u16be(val, &mut out);
         } else {
-            let val = if essential { 0x80 | (index as u8) } else { index as u8 };
+            let val = if essential {
+                0x80 | (index as u8)
+            } else {
+                index as u8
+            };
             out.push(val);
         }
     }
@@ -585,7 +643,9 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         while p < infe_end && data[p] != 0 {
             p += 1;
         }
-        let itype = std::str::from_utf8(&data[type_start..p]).unwrap_or("????").to_string();
+        let itype = std::str::from_utf8(&data[type_start..p])
+            .unwrap_or("????")
+            .to_string();
         // p is at null byte; advance past it
         p += 1;
         let _ = p; // suppress unused-assignment warning
@@ -673,7 +733,10 @@ pub fn parse_ipma(data: &[u8], box_hdr: &BoxHeader) -> (u32, Vec<IpmaEntry>) {
 }
 
 /// Parse iprp box → extract property infos from ipco.
-pub fn parse_iprp_properties(data: &[u8], iprp_box: &BoxHeader) -> Result<Vec<PropertyInfo>, String> {
+pub fn parse_iprp_properties(
+    data: &[u8],
+    iprp_box: &BoxHeader,
+) -> Result<Vec<PropertyInfo>, String> {
     let children = parse_boxes(data, iprp_box.data_start, iprp_box.data_end);
     let ipco = children
         .iter()
@@ -684,7 +747,9 @@ pub fn parse_iprp_properties(data: &[u8], iprp_box: &BoxHeader) -> Result<Vec<Pr
     let mut result = Vec::with_capacity(props.len());
 
     for (i, prop_box) in props.iter().enumerate() {
-        let ptype = std::str::from_utf8(&prop_box.btype).unwrap_or("????").to_string();
+        let ptype = std::str::from_utf8(&prop_box.btype)
+            .unwrap_or("????")
+            .to_string();
         let raw = data[prop_box.box_start..prop_box.data_end].to_vec();
         result.push(PropertyInfo {
             index: (i + 1) as u32, // 1-based
@@ -705,7 +770,9 @@ pub fn parse_iref(data: &[u8], box_hdr: &BoxHeader) -> (u8, Vec<IrefEntry>) {
     let mut refs = Vec::with_capacity(children.len());
 
     for child in &children {
-        let rtype = std::str::from_utf8(&child.btype).unwrap_or("????").to_string();
+        let rtype = std::str::from_utf8(&child.btype)
+            .unwrap_or("????")
+            .to_string();
         let mut pos = child.data_start;
 
         let from: u32 = if id_size_4 {
@@ -796,6 +863,81 @@ pub fn parse_source_meta(data: &[u8]) -> Result<ParsedMeta, String> {
         pitm_version: data[pitm_box.data_start],
         iinf_version: data[iinf_box.data_start],
     })
+}
+
+/// Return true when an existing ISO 21496 gain-map graph is encoded as
+/// 4:2:0. The primary image is intentionally excluded: ordinary HEIC primary
+/// images are often 4:2:0, whereas only the `auxC`/`auxl`-linked gain tiles
+/// are relevant to lossy gain-map promotion.
+pub fn has_lossy_iso_gainmap_420(data: &[u8]) -> bool {
+    parse_source_meta(data)
+        .map(|meta| has_lossy_iso_gainmap_420_in_meta(&meta))
+        .unwrap_or(false)
+}
+
+fn has_lossy_iso_gainmap_420_in_meta(meta: &ParsedMeta) -> bool {
+    let gain_map_items: Vec<u32> = meta
+        .refs
+        .iter()
+        .filter(|reference| {
+            reference.rtype == "auxl"
+                && reference.to.contains(&meta.primary_id)
+                && item_has_iso_auxc(meta, reference.from)
+        })
+        .flat_map(|reference| {
+            let tiles: Vec<u32> = meta
+                .refs
+                .iter()
+                .filter(|candidate| candidate.rtype == "dimg" && candidate.from == reference.from)
+                .flat_map(|candidate| candidate.to.iter().copied())
+                .collect();
+            if tiles.is_empty() {
+                vec![reference.from]
+            } else {
+                tiles
+            }
+        })
+        .collect();
+
+    gain_map_items.into_iter().any(|item_id| {
+        item_property(meta, item_id, "hvcC")
+            .and_then(|property| hvcc_chroma_format_idc(&property.raw))
+            == Some(1)
+    })
+}
+
+fn item_has_iso_auxc(meta: &ParsedMeta, item_id: u32) -> bool {
+    item_property(meta, item_id, "auxC").is_some_and(|property| {
+        property
+            .raw
+            .windows(b"urn:iso:std:iso:ts:21496:-1".len())
+            .any(|window| window == b"urn:iso:std:iso:ts:21496:-1")
+    })
+}
+
+fn item_property<'a>(
+    meta: &'a ParsedMeta,
+    item_id: u32,
+    property_type: &str,
+) -> Option<&'a PropertyInfo> {
+    let associations = meta
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == item_id)?;
+    associations.associations.iter().find_map(|(index, _)| {
+        meta.props
+            .iter()
+            .find(|property| property.index == *index && property.ptype == property_type)
+    })
+}
+
+/// Read `chroma_format_idc` from a complete `hvcC` property box. ISO/IEC
+/// 14496-15 stores it in the low two bits of byte 16 of the hvcC payload.
+fn hvcc_chroma_format_idc(hvcc: &[u8]) -> Option<u8> {
+    if hvcc.len() < 25 || &hvcc[4..8] != b"hvcC" {
+        return None;
+    }
+    Some(hvcc[24] & 0x03)
 }
 
 // ---------------------------------------------------------------------------
@@ -903,6 +1045,8 @@ mod tests {
         assert_eq!(&IROT_BOX[4..8], b"irot");
         assert_eq!(&COLR_SRGB_BOX[4..8], b"colr");
         assert_eq!(&COLR_BT2020_PQ_BOX[4..8], b"colr");
+        assert_eq!(&COLR_UNSPECIFIED_BT601_BOX[4..8], b"colr");
+        assert_eq!(&PIXI_MONO8_BOX[4..8], b"pixi");
         assert_eq!(&PIXI_RGB8_BOX[4..8], b"pixi");
         assert_eq!(&PIXI_RGB10_BOX[4..8], b"pixi");
     }
@@ -936,6 +1080,15 @@ mod tests {
         let h = read_u32be(&ispe, boxes[0].data_start + 8);
         assert_eq!(w, 512);
         assert_eq!(h, 1024);
+    }
+
+    #[test]
+    fn canonical_tmap_ispe_swaps_dimensions_for_odd_irot() {
+        let primary_ispe = make_ispe_box(4000, 3000);
+        let even = make_imageio_canonical_tmap_ispe_box(&primary_ispe, &make_irot_box(2)).unwrap();
+        let odd = make_imageio_canonical_tmap_ispe_box(&primary_ispe, &make_irot_box(3)).unwrap();
+        assert_eq!(ispe_dimensions(&even).unwrap(), (4000, 3000));
+        assert_eq!(ispe_dimensions(&odd).unwrap(), (3000, 4000));
     }
 
     #[test]
@@ -1023,6 +1176,73 @@ mod tests {
 
         let infe = make_infe_box(11, "grid", 1);
         assert!(infe.windows(4).any(|w| w == b"grid"));
+    }
+
+    fn test_hvcc(chroma_format_idc: u8) -> Vec<u8> {
+        let mut raw = vec![0u8; 25];
+        raw[4..8].copy_from_slice(b"hvcC");
+        raw[24] = chroma_format_idc;
+        raw
+    }
+
+    fn test_iso_gainmap_meta(chroma_format_idc: u8) -> ParsedMeta {
+        ParsedMeta {
+            iloc_entries: Vec::new(),
+            ipma_entries: vec![
+                IpmaEntry {
+                    item_id: 20,
+                    associations: vec![(1, true)],
+                },
+                IpmaEntry {
+                    item_id: 21,
+                    associations: vec![(2, true)],
+                },
+            ],
+            ipma_flags: 0,
+            items: Vec::new(),
+            refs: vec![
+                IrefEntry {
+                    rtype: "auxl".into(),
+                    from: 20,
+                    to: vec![1],
+                },
+                IrefEntry {
+                    rtype: "dimg".into(),
+                    from: 20,
+                    to: vec![21],
+                },
+            ],
+            props: vec![
+                PropertyInfo {
+                    index: 1,
+                    ptype: "auxC".into(),
+                    raw: AUX_C_BOX.to_vec(),
+                },
+                PropertyInfo {
+                    index: 2,
+                    ptype: "hvcC".into(),
+                    raw: test_hvcc(chroma_format_idc),
+                },
+            ],
+            primary_id: 1,
+            pitm_version: 0,
+            iinf_version: 0,
+        }
+    }
+
+    #[test]
+    fn detects_only_iso_gain_tiles_with_420_chroma() {
+        assert!(has_lossy_iso_gainmap_420_in_meta(&test_iso_gainmap_meta(1)));
+        assert!(!has_lossy_iso_gainmap_420_in_meta(&test_iso_gainmap_meta(
+            3
+        )));
+
+        let mut only_primary_is_420 = test_iso_gainmap_meta(3);
+        only_primary_is_420.ipma_entries.push(IpmaEntry {
+            item_id: 1,
+            associations: vec![(2, true)],
+        });
+        assert!(!has_lossy_iso_gainmap_420_in_meta(&only_primary_is_420));
     }
 
     #[test]

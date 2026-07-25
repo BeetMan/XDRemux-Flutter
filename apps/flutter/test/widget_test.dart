@@ -28,7 +28,9 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('Settings button opens bottom sheet', (WidgetTester tester) async {
+  testWidgets('Settings button opens bottom sheet', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const XdRemuxApp());
 
     // Tap the settings (tune) icon button
@@ -41,7 +43,9 @@ void main() {
     expect(find.text('高级'), findsOneWidget);
   });
 
-  testWidgets('Add files button is visible and enabled', (WidgetTester tester) async {
+  testWidgets('Add files button is visible and enabled', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const XdRemuxApp());
 
     // The empty-state button
@@ -49,5 +53,21 @@ void main() {
 
     // The AppBar add button
     expect(find.byIcon(Icons.add_photo_alternate), findsOneWidget);
+  });
+
+  testWidgets('Mobile layout keeps primary actions in the bottom action bar', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const XdRemuxApp());
+
+    expect(find.text('开始转换'), findsOneWidget);
+    expect(find.byIcon(Icons.add_photo_alternate), findsNothing);
+    expect(find.byIcon(Icons.add_photo_alternate_outlined), findsWidgets);
+    expect(find.byType(GridView), findsNothing);
   });
 }

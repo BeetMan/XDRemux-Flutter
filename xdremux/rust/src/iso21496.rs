@@ -51,7 +51,11 @@ pub struct OppoUhdrInfo {
 
 /// Safe log2: returns 0.0 for values ≤ 0.
 fn safe_log2(v: f32) -> f32 {
-    if v > 0.0 { v.log2() } else { 0.0 }
+    if v > 0.0 {
+        v.log2()
+    } else {
+        0.0
+    }
 }
 
 fn fmt_float(value: f32) -> String {
@@ -127,11 +131,7 @@ pub fn build_iso_metadata_from_uhdr(floats: &[f32]) -> Result<IsoMeta, String> {
         .iter()
         .map(|&v| safe_log2(v).max(0.0))
         .collect();
-    let gain_map_max: Vec<f32> = info
-        .ratio_max
-        .iter()
-        .map(|&v| safe_log2(v))
-        .collect();
+    let gain_map_max: Vec<f32> = info.ratio_max.iter().map(|&v| safe_log2(v)).collect();
     let cap_min = safe_log2(info.display_ratio_sdr).max(0.0);
     let cap_max = safe_log2(info.display_ratio_hdr);
     let base_hdr = info.base_image_type > 0.5;
@@ -288,7 +288,8 @@ pub fn format_minimal_xmp() -> String {
       </rdf:Description>
    </rdf:RDF>
 </x:xmpmeta>
-<?xpacket end="w"?>"##.to_string()
+<?xpacket end="w"?>"##
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -349,13 +350,20 @@ pub fn make_apple_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
 
     // 14 values in the exact order from Swift makeAppleTmapPayload
     let values: [f32; 14] = [
-        cap_min, 1.0,
-        cap_max, 1.0,
-        gain_min, 1.0,
-        gain_max, 1.0,
-        gamma, 1.0,
-        base_offset, 1.0,
-        alt_offset, 1.0,
+        cap_min,
+        1.0,
+        cap_max,
+        1.0,
+        gain_min,
+        1.0,
+        gain_max,
+        1.0,
+        gamma,
+        1.0,
+        base_offset,
+        1.0,
+        alt_offset,
+        1.0,
     ];
 
     let mut out = Vec::with_capacity(62);
@@ -418,12 +426,12 @@ pub fn make_imageio_native_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
     out.push(0x00);
 
     // Common header (21 bytes)
-    append_u16be(0, &mut out);  // minimum_version
-    append_u16be(0, &mut out);  // writer_version
-    out.push(0xC0);             // flags: multichannel=1, use_base_colour_space=1
-    append_u32be(fixed_u32(cap_min), &mut out);  // base_hdr_headroom numerator
+    append_u16be(0, &mut out); // minimum_version
+    append_u16be(0, &mut out); // writer_version
+    out.push(0xC0); // flags: multichannel=1, use_base_colour_space=1
+    append_u32be(fixed_u32(cap_min), &mut out); // base_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // base_hdr_headroom denominator
-    append_u32be(fixed_u32(cap_max), &mut out);  // alternate_hdr_headroom numerator
+    append_u32be(fixed_u32(cap_max), &mut out); // alternate_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // alternate_hdr_headroom denominator
 
     // 3 channels × 40 bytes (same values for all channels, matching 62B payload)
@@ -440,8 +448,32 @@ pub fn make_imageio_native_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
         append_u32be(RATIONAL_DEN as u32, &mut out);
     }
 
-    debug_assert_eq!(out.len(), 142, "ImageIO-native tmap payload must be exactly 142 bytes");
+    debug_assert_eq!(
+        out.len(),
+        142,
+        "ImageIO-native tmap payload must be exactly 142 bytes"
+    );
     out
+}
+
+/// Convert a 62-byte Apple or 142-byte ImageIO tmap payload to ISO 21496-1
+/// strict form. The standard reserves three bytes immediately after the
+/// version/dimensions/flags header, producing 65-byte and 145-byte payloads.
+pub fn make_strict_tmap_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
+    match payload.len() {
+        62 | 142 => {}
+        length => {
+            return Err(format!(
+                "strict tmap requires a 62- or 142-byte ImageIO payload, got {length} bytes"
+            ))
+        }
+    }
+
+    let mut strict = Vec::with_capacity(payload.len() + 3);
+    strict.extend_from_slice(&payload[..6]);
+    strict.extend_from_slice(&[0, 0, 0]);
+    strict.extend_from_slice(&payload[6..]);
+    Ok(strict)
 }
 
 // ---------------------------------------------------------------------------
@@ -499,15 +531,15 @@ pub fn make_iso21496_metadata_payload(meta: &IsoMeta) -> Vec<u8> {
     let channel_count = channel_count_for_iso_meta(meta);
     let is_multichannel = channel_count == 3;
     let use_base_color_space = true; // matches Python default
-    let flags: u8 = (if is_multichannel { 0x80 } else { 0 })
-        | (if use_base_color_space { 0x40 } else { 0 });
+    let flags: u8 =
+        (if is_multichannel { 0x80 } else { 0 }) | (if use_base_color_space { 0x40 } else { 0 });
 
     let mut out = Vec::with_capacity(if is_multichannel { 144 } else { 64 });
 
     // GainMapVersion
     append_u16be(0, &mut out); // minimum_version
     append_u16be(0, &mut out); // writer_version
-    // flags byte + 3 padding bytes
+                               // flags byte + 3 padding bytes
     out.push(flags);
     out.push(0);
     out.push(0);
@@ -562,16 +594,16 @@ mod tests {
 
     fn make_sample_uhdr_floats() -> Vec<f32> {
         vec![
-            1.0, 1.0, 1.0,   // ratioMin
-            1.0,              // padding
+            1.0, 1.0, 1.0, // ratioMin
+            1.0, // padding
             4.926, 4.926, 4.926, // ratioMax
-            1.0, 1.0, 1.0,   // gamma
-            0.0, 0.0, 0.0,   // epsilonSdr
+            1.0, 1.0, 1.0, // gamma
+            0.0, 0.0, 0.0, // epsilonSdr
             0.0, 0.0, 0.0,   // epsilonHdr
-            1.0,              // displayRatioSdr
-            4.926,            // displayRatioHdr
-            4.926,            // scale
-            0.0,              // baseImageType
+            1.0,   // displayRatioSdr
+            4.926, // displayRatioHdr
+            4.926, // scale
+            0.0,   // baseImageType
         ]
     }
 
@@ -667,9 +699,15 @@ mod tests {
         let meta = build_iso_metadata(4.0);
         let xmp = format_hdrgm_xmp(&meta);
         // gainMapMin = 0.0
-        assert!(xmp.contains("0.000000"), "expected '0.000000' in XMP, got: {xmp}");
+        assert!(
+            xmp.contains("0.000000"),
+            "expected '0.000000' in XMP, got: {xmp}"
+        );
         // gainMapMax = 2.0
-        assert!(xmp.contains("2.000000"), "expected '2.000000' in XMP, got: {xmp}");
+        assert!(
+            xmp.contains("2.000000"),
+            "expected '2.000000' in XMP, got: {xmp}"
+        );
         assert!(xmp.contains("False"), "expected 'False' in XMP, got: {xmp}");
     }
 
@@ -717,6 +755,26 @@ mod tests {
         let payload = make_imageio_native_tmap_payload(&floats);
         // flags at offset 5 (after version + two u16)
         assert_eq!(payload[5], 0xC0);
+    }
+
+    #[test]
+    fn strict_tmap_adds_reserved_bytes_after_the_six_byte_header() {
+        let floats = make_sample_uhdr_floats();
+        for payload in [
+            make_apple_tmap_payload(&floats),
+            make_imageio_native_tmap_payload(&floats),
+        ] {
+            let strict = make_strict_tmap_payload(&payload).expect("strict tmap");
+            assert_eq!(strict.len(), payload.len() + 3);
+            assert_eq!(&strict[..6], &payload[..6]);
+            assert_eq!(&strict[6..9], &[0, 0, 0]);
+            assert_eq!(&strict[9..], &payload[6..]);
+        }
+    }
+
+    #[test]
+    fn strict_tmap_rejects_unknown_payload_lengths() {
+        assert!(make_strict_tmap_payload(&[0; 61]).is_err());
     }
 
     #[test]
@@ -774,14 +832,22 @@ mod tests {
         meta.offset_hdr = vec![0.0, 0.0, 0.0];
         meta.channel_count = 3;
         let payload = make_iso21496_metadata_payload(&meta);
-        assert_eq!(payload.len(), 144, "multichannel ISO 21496-1 must be 144 bytes");
+        assert_eq!(
+            payload.len(),
+            144,
+            "multichannel ISO 21496-1 must be 144 bytes"
+        );
     }
 
     #[test]
     fn iso21496_payload_monochannel_is_64_bytes() {
         let meta = build_iso_metadata(4.0);
         let payload = make_iso21496_metadata_payload(&meta);
-        assert_eq!(payload.len(), 64, "monochannel ISO 21496-1 must be 64 bytes");
+        assert_eq!(
+            payload.len(),
+            64,
+            "monochannel ISO 21496-1 must be 64 bytes"
+        );
     }
 
     #[test]

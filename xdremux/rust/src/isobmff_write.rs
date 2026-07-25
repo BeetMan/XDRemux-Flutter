@@ -9,17 +9,18 @@
 //! Ported from Swift `writePrivateJPEGPassthroughOutput()` /
 //! `writeHybridPrimaryPassthrough()` and informed by Python `heif_io`.
 
-use crate::exif::{self, OppoCompat};
+use crate::container::OppoCameraTail;
+use crate::exif::{self, ExifOrientation, OppoCompat};
 use crate::isobmff::{
     self, BoxHeader, IlocEntry, IrefEntry, AUX_C_BOX, COLR_BT2020_PQ_BOX, COLR_SRGB_BOX,
-    DINF_BOX, IROT_BOX, PIXI_RGB10_BOX, PIXI_RGB8_BOX,
+    COLR_UNSPECIFIED_BT601_BOX, DINF_BOX, PIXI_MONO8_BOX, PIXI_RGB10_BOX, PIXI_RGB8_BOX,
 };
 
 /// Context for output assembly.
 struct OutputConfig {
     _oppo_compat: OppoCompat,
-    oppo_rgb: bool,      // true for OPPO LHDR RGB-copy or UHDR 3ch
-    filter_hdr: bool,    // filter private HDR entries from the OPPO tail
+    oppo_rgb: bool, // true for OPPO LHDR RGB-copy or UHDR 3ch
+    tail_policy: OppoCameraTail,
     tile_payloads: Vec<Vec<u8>>,
     tile_ids: Vec<u32>,
     gain_grid_id: u32,
@@ -28,7 +29,7 @@ struct OutputConfig {
     group_id: u32,
     tmap_payload: Vec<u8>,
     xmp_bytes: Vec<u8>,
-    gain_hvcc: Vec<u8>,  // pre-extracted HEVC decoder config (byte-stream → hvcC)
+    gain_hvcc: Vec<u8>, // pre-extracted HEVC decoder config (byte-stream → hvcC)
 }
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,8 @@ pub fn write_lhdr_iso_output(
     meta_floats: &[f32],
     edr_scale: f32,
     oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
@@ -52,9 +55,15 @@ pub fn write_lhdr_iso_output(
     let mdat = find(&top, b"mdat")?;
 
     let (parsed, mut source_mdat, idat_opt) = parse_source_structure(source_data, &top, meta)?;
+    let orientation = exif::read_heif_exif_orientation(
+        source_data,
+        &parsed.items,
+        &parsed.iloc_entries,
+        idat_opt.as_ref(),
+    )?;
 
     // Reconstruct gain map pixels
-    let mut gainmap = crate::gainmap::reconstruct(
+    let gainmap = crate::gainmap::reconstruct(
         mask_pixels,
         mask_width as usize,
         mask_height as usize,
@@ -63,32 +72,43 @@ pub fn write_lhdr_iso_output(
         meta_floats[0],
     );
     let aligned_row = ((mask_width as usize + 255) / 256) * 256;
+    let (mut gainmap, gain_width, gain_height) = orient_gainmap_pixels(
+        &gainmap,
+        mask_width,
+        mask_height,
+        1,
+        aligned_row,
+        orientation,
+    )?;
 
     // OPPO compat: replicate gray → RGB
-    let (hevc_pixels, pixel_bytes, encode_fn): (&[u8], usize, fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>) =
-        if oppo_compat.wants_oppo_rgb() {
-            // RGB-copy for OPPO Gallery recognition
-            let n_pixels = (mask_width * mask_height) as usize;
-            let mut rgb = vec![0u8; n_pixels * 3];
-            for i in 0..n_pixels {
-                let v = gainmap[aligned_row * (i / mask_width as usize) + (i % mask_width as usize)];
-                rgb[i * 3] = v;
-                rgb[i * 3 + 1] = v;
-                rgb[i * 3 + 2] = v;
-            }
-            gainmap = rgb;
-            (&gainmap[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
-        } else {
-            (&gainmap[..], 1, crate::hevc::encode_hevc_tile_gray as _)
-        };
+    let (hevc_pixels, pixel_bytes, encode_fn): (
+        &[u8],
+        usize,
+        fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
+    ) = if oppo_compat.wants_oppo_rgb() {
+        // RGB-copy for OPPO Gallery recognition
+        let n_pixels = (gain_width * gain_height) as usize;
+        let mut rgb = vec![0u8; n_pixels * 3];
+        for i in 0..n_pixels {
+            let v = gainmap[i];
+            rgb[i * 3] = v;
+            rgb[i * 3 + 1] = v;
+            rgb[i * 3 + 2] = v;
+        }
+        gainmap = rgb;
+        (&gainmap[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
+    } else {
+        (&gainmap[..], 1, crate::hevc::encode_hevc_tile_gray as _)
+    };
 
     // Tile & HEVC-encode
     let (tile_payloads, tile_ids, cols, rows, gain_hvcc) = tile_and_encode(
         hevc_pixels,
-        mask_width,
-        mask_height,
+        gain_width,
+        gain_height,
         pixel_bytes,
-        aligned_row / pixel_bytes,
+        gain_width as usize * pixel_bytes,
         encode_fn,
         &parsed,
     )?;
@@ -108,14 +128,20 @@ pub fn write_lhdr_iso_output(
     } else {
         crate::iso21496::make_apple_tmap_payload(meta_floats)
     };
+    let tmap_payload = if strict_tmap {
+        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
+    } else {
+        tmap_payload
+    };
 
     // Item IDs
-    let (gain_grid_id, tmap_id, xmp_id, group_id) = assign_new_ids(&parsed, tile_payloads.len() as u32);
+    let (gain_grid_id, tmap_id, xmp_id, group_id) =
+        assign_new_ids(&parsed, tile_payloads.len() as u32);
 
     let cfg = OutputConfig {
         _oppo_compat: oppo_compat,
         oppo_rgb: oppo_compat.wants_oppo_rgb(),
-        filter_hdr: !oppo_compat.wants_patch(),
+        tail_policy,
         tile_payloads: tile_payloads.clone(),
         tile_ids: tile_ids.clone(),
         gain_grid_id,
@@ -133,9 +159,20 @@ pub fn write_lhdr_iso_output(
     }
 
     assemble_and_write(
-        source_data, ftyp, meta, mdat, &parsed,
-        idat_opt, &source_mdat, mask_width, mask_height,
-        cols, rows, &cfg, output_path,
+        source_data,
+        ftyp,
+        meta,
+        mdat,
+        &parsed,
+        idat_opt,
+        &source_mdat,
+        gain_width,
+        gain_height,
+        cols,
+        rows,
+        orientation,
+        &cfg,
+        output_path,
     )
 }
 
@@ -152,6 +189,8 @@ pub fn write_uhdr_iso_output(
     gainmap_jpeg: &[u8],
     meta_floats: &[f32],
     oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
@@ -160,30 +199,39 @@ pub fn write_uhdr_iso_output(
     let mdat = find(&top, b"mdat")?;
 
     let (parsed, mut source_mdat, idat_opt) = parse_source_structure(source_data, &top, meta)?;
+    let orientation = exif::read_heif_exif_orientation(
+        source_data,
+        &parsed.items,
+        &parsed.iloc_entries,
+        idat_opt.as_ref(),
+    )?;
 
     // Decode gain map JPEG to raw pixels
     // UHDR gain maps are RGB JPEGs; we decode to RGB and optionally extract gray
     let (rgb_pixels, gm_w, gm_h) = crate::jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg)
         .map_err(|e| format!("UHDR gain map JPEG decode failed: {e}"))?;
+    let (rgb_pixels, gain_width, gain_height) =
+        orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?;
 
-    let (hevc_pixels, pixel_bytes, encode_fn): (&[u8], usize, fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>) =
-        if oppo_compat.wants_oppo_rgb() {
-            // Keep RGB for OPPO
-            (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
-        } else {
-            // Clean UHDR: still 3-channel (UHDR gain maps are inherently 3ch)
-            (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
-        };
-
-    let rgb_stride = gm_w as usize * 3;
+    let (hevc_pixels, pixel_bytes, encode_fn): (
+        &[u8],
+        usize,
+        fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
+    ) = if oppo_compat.wants_oppo_rgb() {
+        // Keep RGB for OPPO
+        (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
+    } else {
+        // Clean UHDR: still 3-channel (UHDR gain maps are inherently 3ch)
+        (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
+    };
 
     // Tile & HEVC-encode
     let (tile_payloads, tile_ids, cols, rows, gain_hvcc) = tile_and_encode(
         hevc_pixels,
-        gm_w,
-        gm_h,
+        gain_width,
+        gain_height,
         pixel_bytes,
-        rgb_stride,
+        gain_width as usize * pixel_bytes,
         encode_fn,
         &parsed,
     )?;
@@ -203,14 +251,20 @@ pub fn write_uhdr_iso_output(
     } else {
         crate::iso21496::make_apple_tmap_payload(meta_floats)
     };
+    let tmap_payload = if strict_tmap {
+        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
+    } else {
+        tmap_payload
+    };
 
     // Item IDs
-    let (gain_grid_id, tmap_id, xmp_id, group_id) = assign_new_ids(&parsed, tile_payloads.len() as u32);
+    let (gain_grid_id, tmap_id, xmp_id, group_id) =
+        assign_new_ids(&parsed, tile_payloads.len() as u32);
 
     let cfg = OutputConfig {
         _oppo_compat: oppo_compat,
         oppo_rgb: true, // UHDR gain maps are always 3-channel
-        filter_hdr: !oppo_compat.wants_patch(),
+        tail_policy,
         tile_payloads: tile_payloads.clone(),
         tile_ids: tile_ids.clone(),
         gain_grid_id,
@@ -228,9 +282,20 @@ pub fn write_uhdr_iso_output(
     }
 
     assemble_and_write(
-        source_data, ftyp, meta, mdat, &parsed,
-        idat_opt, &source_mdat, gm_w, gm_h,
-        cols, rows, &cfg, output_path,
+        source_data,
+        ftyp,
+        meta,
+        mdat,
+        &parsed,
+        idat_opt,
+        &source_mdat,
+        gain_width,
+        gain_height,
+        cols,
+        rows,
+        orientation,
+        &cfg,
+        output_path,
     )
 }
 
@@ -276,7 +341,11 @@ fn parse_source_structure(
     let props = isobmff::parse_iprp_properties(source_data, iprp)?;
 
     let ipma_data = isobmff::parse_boxes(source_data, iprp.data_start, iprp.data_end);
-    let ipma_box = ipma_data.iter().find(|b| &b.btype == b"ipma").ok_or("ipma missing")?.clone();
+    let ipma_box = ipma_data
+        .iter()
+        .find(|b| &b.btype == b"ipma")
+        .ok_or("ipma missing")?
+        .clone();
     let (ipma_flags, ipma_entries) = isobmff::parse_ipma(source_data, &ipma_box);
 
     let (iref_version, refs) = if let Some(iref) = &iref_opt {
@@ -312,8 +381,125 @@ fn parse_source_structure(
 }
 
 // ---------------------------------------------------------------------------
+// Gain-map orientation
+// ---------------------------------------------------------------------------
+
+/// Apply the primary image's EXIF storage-to-presentation transform to a gain
+/// map. Input rows may be padded; the returned raster is tightly packed.
+fn orient_gainmap_pixels(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    stride: usize,
+    orientation: ExifOrientation,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    if width == 0 || height == 0 || pixel_bytes == 0 {
+        return Err("gain map has invalid dimensions or pixel format".into());
+    }
+    let packed_row = width as usize * pixel_bytes;
+    if stride < packed_row {
+        return Err("gain map stride is smaller than a packed row".into());
+    }
+    let required_len = stride
+        .checked_mul(height as usize)
+        .ok_or("gain map input size overflow")?;
+    if pixels.len() < required_len {
+        return Err("gain map buffer is shorter than its declared geometry".into());
+    }
+
+    let (out_width, out_height) = orientation.output_dimensions(width, height);
+    let out_len = (out_width as usize)
+        .checked_mul(out_height as usize)
+        .and_then(|pixels| pixels.checked_mul(pixel_bytes))
+        .ok_or("gain map output size overflow")?;
+    let mut output = vec![0u8; out_len];
+
+    for source_y in 0..height {
+        for source_x in 0..width {
+            let (dest_x, dest_y) = match orientation {
+                ExifOrientation::Normal => (source_x, source_y),
+                ExifOrientation::FlipHorizontal => (width - 1 - source_x, source_y),
+                ExifOrientation::Rotate180 => (width - 1 - source_x, height - 1 - source_y),
+                ExifOrientation::FlipVertical => (source_x, height - 1 - source_y),
+                ExifOrientation::Transpose => (source_y, source_x),
+                ExifOrientation::Rotate90Clockwise => (height - 1 - source_y, source_x),
+                ExifOrientation::Transverse => (height - 1 - source_y, width - 1 - source_x),
+                ExifOrientation::Rotate90CounterClockwise => (source_y, width - 1 - source_x),
+            };
+            let source_start = source_y as usize * stride + source_x as usize * pixel_bytes;
+            let dest_start = (dest_y as usize * out_width as usize + dest_x as usize) * pixel_bytes;
+            output[dest_start..dest_start + pixel_bytes]
+                .copy_from_slice(&pixels[source_start..source_start + pixel_bytes]);
+        }
+    }
+
+    Ok((output, out_width, out_height))
+}
+
+// ---------------------------------------------------------------------------
 // Shared: tile & encode
 // ---------------------------------------------------------------------------
+
+const GAIN_TILE_SIZE: u32 = 512;
+
+/// Copy one logical gain-map tile into a full-size HEVC input tile. Edge pixels
+/// are replicated only to the right and bottom, so the top-left origin remains
+/// identical to the source raster and the ImageGrid can crop the padded tail.
+fn build_padded_gain_tile(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    stride: usize,
+    x0: u32,
+    y0: u32,
+) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 || pixel_bytes == 0 || x0 >= width || y0 >= height {
+        return Err("gain-map tile has invalid geometry".into());
+    }
+    let packed_row = width as usize * pixel_bytes;
+    if stride < packed_row {
+        return Err("gain-map tile stride is smaller than a packed row".into());
+    }
+    let required_len = stride
+        .checked_mul(height as usize)
+        .ok_or("gain-map tile input size overflow")?;
+    if pixels.len() < required_len {
+        return Err("gain-map tile input is shorter than its declared geometry".into());
+    }
+
+    let tw = GAIN_TILE_SIZE.min(width - x0);
+    let th = GAIN_TILE_SIZE.min(height - y0);
+    let tile_row_stride = GAIN_TILE_SIZE as usize * pixel_bytes;
+    let copy_len = tw as usize * pixel_bytes;
+    let mut tile = vec![0u8; GAIN_TILE_SIZE as usize * tile_row_stride];
+
+    for ty in 0..th {
+        let src = (y0 + ty) as usize * stride + x0 as usize * pixel_bytes;
+        let dst = ty as usize * tile_row_stride;
+        tile[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
+        for tx in tw..GAIN_TILE_SIZE {
+            let dst_col = dst + tx as usize * pixel_bytes;
+            let src_last = src + copy_len - pixel_bytes;
+            tile[dst_col..dst_col + pixel_bytes]
+                .copy_from_slice(&pixels[src_last..src_last + pixel_bytes]);
+        }
+    }
+    for ty in th..GAIN_TILE_SIZE {
+        let src_row = (y0 + th - 1) as usize * stride + x0 as usize * pixel_bytes;
+        let dst = ty as usize * tile_row_stride;
+        tile[dst..dst + copy_len].copy_from_slice(&pixels[src_row..src_row + copy_len]);
+        for tx in tw..GAIN_TILE_SIZE {
+            let dst_col = dst + tx as usize * pixel_bytes;
+            let src_last = src_row + copy_len - pixel_bytes;
+            tile[dst_col..dst_col + pixel_bytes]
+                .copy_from_slice(&pixels[src_last..src_last + pixel_bytes]);
+        }
+    }
+
+    Ok(tile)
+}
 
 fn tile_and_encode(
     pixels: &[u8],
@@ -324,7 +510,7 @@ fn tile_and_encode(
     encode_fn: fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
     parsed: &ParsedSource,
 ) -> Result<(Vec<Vec<u8>>, Vec<u32>, u32, u32, Vec<u8>), String> {
-    let tile_size: u32 = 512;
+    let tile_size = GAIN_TILE_SIZE;
     let cols = ((width + tile_size - 1) / tile_size).max(1);
     let rows = ((height + tile_size - 1) / tile_size).max(1);
     let mut tile_payloads: Vec<Vec<u8>> = Vec::with_capacity((rows * cols) as usize);
@@ -338,40 +524,10 @@ fn tile_and_encode(
         for col in 0..cols {
             let x0 = col * tile_size;
             let y0 = row * tile_size;
-            let tw = tile_size.min(width - x0);
-            let th = tile_size.min(height - y0);
+            let tile = build_padded_gain_tile(pixels, width, height, pixel_bytes, stride, x0, y0)?;
 
-            let mut tile = vec![0u8; (tile_size * tile_size * pixel_bytes as u32) as usize];
-            let tile_row_stride = tile_size as usize * pixel_bytes;
-            let copy_len = tw as usize * pixel_bytes;
-
-            for ty in 0..th {
-                let src = (y0 + ty) as usize * stride + x0 as usize * pixel_bytes;
-                let dst = ty as usize * tile_row_stride;
-                tile[dst..dst + copy_len].copy_from_slice(&pixels[src..src + copy_len]);
-                // Replicate last column for edge columns
-                for tx in tw..tile_size {
-                    let dst_col = dst + tx as usize * pixel_bytes;
-                    let src_last = src + copy_len - pixel_bytes;
-                    tile[dst_col..dst_col + pixel_bytes]
-                        .copy_from_slice(&pixels[src_last..src_last + pixel_bytes]);
-                }
-            }
-            // Replicate last row for edge rows
-            for ty in th..tile_size {
-                let src_row = (y0 + th - 1) as usize * stride + x0 as usize * pixel_bytes;
-                let dst = ty as usize * tile_row_stride;
-                tile[dst..dst + copy_len].copy_from_slice(&pixels[src_row..src_row + copy_len]);
-                for tx in tw..tile_size {
-                    let dst_col = dst + tx as usize * pixel_bytes;
-                    let src_last = src_row + copy_len - pixel_bytes;
-                    tile[dst_col..dst_col + pixel_bytes]
-                        .copy_from_slice(&pixels[src_last..src_last + pixel_bytes]);
-                }
-            }
-
-            let hevc_bs = encode_fn(&tile, tile_size, tile_size)
-                .map_err(|e| format!("HEVC encode: {e}"))?;
+            let hevc_bs =
+                encode_fn(&tile, tile_size, tile_size).map_err(|e| format!("HEVC encode: {e}"))?;
 
             // Extract hvcC from the first tile's byte-stream HEVC (before
             // length-prefix conversion). extract_hvcc_config searches for
@@ -392,7 +548,9 @@ fn tile_and_encode(
     }
 
     let first_new = (parsed.max_src_id + 1).max(2);
-    let tile_ids: Vec<u32> = (0..tile_payloads.len()).map(|i| first_new + i as u32).collect();
+    let tile_ids: Vec<u32> = (0..tile_payloads.len())
+        .map(|i| first_new + i as u32)
+        .collect();
 
     Ok((tile_payloads, tile_ids, cols, rows, gain_hvcc))
 }
@@ -423,10 +581,11 @@ fn assemble_and_write(
     mask_height: u32,
     cols: u32,
     rows: u32,
+    orientation: ExifOrientation,
     cfg: &OutputConfig,
     output_path: &str,
 ) -> Result<(), String> {
-    let tile_size: u32 = 512;
+    let tile_size = GAIN_TILE_SIZE;
 
     // Extract hvcC from the pre-extracted gain tile HEVC config (already
     // extracted from byte-stream format before length-prefix conversion).
@@ -434,51 +593,80 @@ fn assemble_and_write(
 
     // Find source's first colr property index (ICC profile, primary color).
     // Gain tiles and primary items reference this.
-    let first_colr_idx = parsed.props.iter()
+    let first_colr_idx = parsed
+        .props
+        .iter()
         .position(|p| p.ptype == "colr")
         .map(|i| i as u32 + 1);
 
     // Find source's first hvcC property index (primary HEVC config).
-    let _first_hvcc_idx = parsed.props.iter()
+    let _first_hvcc_idx = parsed
+        .props
+        .iter()
         .position(|p| p.ptype == "hvcC")
         .map(|i| i as u32 + 1);
 
-    // Find source's irot property index.
-    let source_irot_idx = parsed.props.iter()
-        .position(|p| p.ptype == "irot")
-        .map(|i| i as u32 + 1);
-
-    // New property indices (1-based, after existing props).
-    let old_n = parsed.props.len() as u32;
-    let _auxc_i      = old_n + 1;  // auxC
-    let irot_i      = old_n + 2;  // irot (rotation=0)
-    let pq_colr_i   = old_n + 3;  // colr nclx BT.2020 PQ (for tmap)
-    let srgb_colr_i = old_n + 4;  // colr nclx sRGB (for gain grid)
-    let pixi10_i    = old_n + 5;  // pixi 3ch 10bpp
-    let pixi8_i     = old_n + 6;  // pixi 3ch 8bpp
-    let gm_hvcc_i   = old_n + 7;  // hvcC for gain tiles
-    let gm_grid_ispe_i = old_n + 8;  // ispe for gain grid
-    let gm_tile_ispe_i = old_n + 9;  // ispe for gain tiles (512x512)
+    // The primary item's associated `irot`, when present, is authoritative.
+    // Otherwise synthesize the ImageIO-compatible rotation from EXIF.
+    let primary_irot_idx = item_property_index(parsed, parsed.primary_id, "irot");
+    let primary_ispe_idx = item_property_index(parsed, parsed.primary_id, "ispe")
+        .ok_or("primary item has no ispe property association")?;
+    let primary_ispe = parsed
+        .props
+        .get(primary_ispe_idx as usize - 1)
+        .ok_or("primary ispe property index is invalid")?;
+    let generated_irot = isobmff::make_irot_box(orientation.irot_quarter_turns_ccw());
+    let selected_irot = primary_irot_idx
+        .and_then(|index| parsed.props.get(index as usize - 1))
+        .map(|property| property.raw.as_slice())
+        .unwrap_or(generated_irot.as_slice());
+    let tmap_ispe_box =
+        isobmff::make_imageio_canonical_tmap_ispe_box(&primary_ispe.raw, selected_irot)?;
 
     // Build ipco (source + new properties, matching Python reference order)
-    let (ipco_start, ipco_end) = parsed.ipco_box_raw.as_ref()
+    let (ipco_start, ipco_end) = parsed
+        .ipco_box_raw
+        .as_ref()
         .map(|b| (b.data_start, b.data_end))
         .unwrap_or((0, 0));
     let mut ipco = source_data[ipco_start..ipco_end].to_vec();
-    ipco.extend_from_slice(AUX_C_BOX);
-    ipco.extend_from_slice(IROT_BOX);
-    ipco.extend_from_slice(COLR_BT2020_PQ_BOX);          // for tmap
-    ipco.extend_from_slice(COLR_SRGB_BOX);                // for gain grid
-    ipco.extend_from_slice(PIXI_RGB10_BOX);               // for tmap/primary
-    ipco.extend_from_slice(PIXI_RGB8_BOX);                // for gain grid
-    ipco.extend_from_slice(&gain_hvcc_box);               // gain tile HEVC config
-    ipco.extend_from_slice(&isobmff::make_ispe_box(mask_width.max(1), mask_height.max(1))); // gain grid
-    ipco.extend_from_slice(&isobmff::make_ispe_box(tile_size, tile_size)); // gain tile
+    let mut next_property_index = parsed.props.len() as u32;
+    let mut append_property = |property: &[u8]| {
+        next_property_index += 1;
+        ipco.extend_from_slice(property);
+        next_property_index
+    };
+    let auxc_i = append_property(AUX_C_BOX);
+    let irot_i = append_property(&generated_irot);
+    let pq_colr_i = append_property(COLR_BT2020_PQ_BOX);
+    let srgb_colr_i = append_property(COLR_SRGB_BOX);
+    let pixi10_i = append_property(PIXI_RGB10_BOX);
+    let gain_pixi_i = append_property(if cfg.oppo_rgb {
+        PIXI_RGB8_BOX
+    } else {
+        PIXI_MONO8_BOX
+    });
+    let gain_tile_colr_i = if cfg.oppo_rgb {
+        append_property(COLR_UNSPECIFIED_BT601_BOX)
+    } else {
+        srgb_colr_i
+    };
+    let gm_hvcc_i = append_property(&gain_hvcc_box);
+    let gm_grid_ispe_i = append_property(&isobmff::make_ispe_box(
+        mask_width.max(1),
+        mask_height.max(1),
+    ));
+    let gm_tile_ispe_i = append_property(&isobmff::make_ispe_box(tile_size, tile_size));
+    let tmap_ispe_i = if tmap_ispe_box == primary_ispe.raw {
+        primary_ispe_idx
+    } else {
+        append_property(&tmap_ispe_box)
+    };
 
     // Build ipma — rebuild from parsed entries, augmenting primary grid's
     // associations to match Python reference (Apple ImageIO requirement).
     let colr_prof = first_colr_idx.unwrap_or(1);
-    let irot_pick = source_irot_idx.unwrap_or(irot_i);
+    let irot_pick = primary_irot_idx.unwrap_or(irot_i);
     let mut ipma_body = Vec::new();
     let total_entries = parsed.ipma_entries.len() + cfg.tile_payloads.len() + 2;
     isobmff::write_u32be(total_entries as u32, &mut ipma_body);
@@ -496,49 +684,50 @@ fn assemble_and_write(
             }
         }
         ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
-            entry.item_id, &assocs, parsed.ipma_flags,
+            entry.item_id,
+            &assocs,
+            parsed.ipma_flags,
         ));
     }
 
-    // Gain tiles (hvc1 items): hvcC(e) + ispe(e) + colr(prof)(e)
+    // Gain tiles (hvc1 items): hvcC(e) + ispe(e) + color matching their
+    // actual channel layout (sRGB mono or BT.601 unspecified RGB).
     for tid in &cfg.tile_ids {
         ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
-            *tid, &[(gm_hvcc_i, true), (gm_tile_ispe_i, true), (colr_prof, true)], parsed.ipma_flags,
+            *tid,
+            &[
+                (gm_hvcc_i, true),
+                (gm_tile_ispe_i, true),
+                (gain_tile_colr_i, true),
+            ],
+            parsed.ipma_flags,
         ));
     }
-    // Gain grid: ispe(grid)(e) + colr(sRGB)(e) + pixi8(e) + irot(e) + auxC(e)
-    let auxc_i = old_n + 1;
-    let irot_pick = source_irot_idx.unwrap_or(irot_i);
-    ipma_body.extend_from_slice(&isobmff::make_ipma_entry(cfg.gain_grid_id, &[
-        (gm_grid_ispe_i, true), (srgb_colr_i, true), (pixi8_i, true), (irot_pick, true),
-        (auxc_i, true),
-    ], parsed.ipma_flags));
-    // tmap: colr(PQ)(e) + pixi10(e) + ispe(primary_grid)(e) + irot(e)
-    // Find primary grid ispe index from source
-    let _primary_ispe_idx = parsed.props.iter()
-        .position(|p| p.ptype == "ispe")
-        .map(|_i| {
-            // The second ispe (index 2) is the primary grid ispe; first is tile ispe
-            // Actually we need the one with big dimensions. Use the last source ispe.
-            parsed.props.iter()
-                .enumerate()
-                .rev()
-                .find(|(_, p)| p.ptype == "ispe")
-                .map(|(i, _)| i as u32 + 1)
-                .unwrap_or(1)
-        })
-        .unwrap_or(1);
-    // Better: scan for the ispe that matches 4096x3072-ish (big dimensions)
-    let primary_ispe_idx = parsed.props.iter()
-        .enumerate()
-        .filter(|(_, p)| p.ptype == "ispe")
-        .map(|(i, _)| i as u32 + 1)
-        .last()  // last ispe is usually the grid-level one with biggest dims
-        .unwrap_or(4);
-    ipma_body.extend_from_slice(&isobmff::make_ipma_entry(cfg.tmap_id, &[
-        (pq_colr_i, true), (pixi10_i, true), (primary_ispe_idx, true),
-        (irot_pick, true),
-    ], parsed.ipma_flags));
+    // Gain grid: ispe(grid)(e) + sRGB colr(e) + channel-matched pixi(e)
+    // + irot(e) + auxC(e).
+    let irot_pick = primary_irot_idx.unwrap_or(irot_i);
+    ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
+        cfg.gain_grid_id,
+        &[
+            (gm_grid_ispe_i, true),
+            (srgb_colr_i, true),
+            (gain_pixi_i, true),
+            (irot_pick, true),
+            (auxc_i, true),
+        ],
+        parsed.ipma_flags,
+    ));
+    // tmap: colr(PQ)(e) + pixi10(e) + oriented primary ispe(e) + irot(e)
+    ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
+        cfg.tmap_id,
+        &[
+            (pq_colr_i, true),
+            (pixi10_i, true),
+            (tmap_ispe_i, true),
+            (irot_pick, true),
+        ],
+        parsed.ipma_flags,
+    ));
 
     let ipma_header = &source_data[parsed.ipma_box.data_start..parsed.ipma_box.data_start + 4]; // version+flags only
     let mut ipma_full = ipma_header.to_vec();
@@ -557,7 +746,9 @@ fn assemble_and_write(
 
     // Build iref
     let had_iref = parsed.refs.iter().any(|r| r.rtype != "grpl");
-    let mut output_refs: Vec<IrefEntry> = parsed.refs.iter()
+    let mut output_refs: Vec<IrefEntry> = parsed
+        .refs
+        .iter()
         .filter(|r| r.rtype != "grpl")
         .cloned()
         .collect();
@@ -566,7 +757,10 @@ fn assemble_and_write(
     // in-place, rather than creating duplicate standalone entries.
     for r in &mut output_refs {
         if r.rtype == "cdsc" {
-            let is_exif = parsed.items.iter().any(|it| it.item_id == r.from && it.itype == "Exif");
+            let is_exif = parsed
+                .items
+                .iter()
+                .any(|it| it.item_id == r.from && it.itype == "Exif");
             if is_exif && !r.to.contains(&cfg.tmap_id) {
                 r.to.push(cfg.tmap_id);
             }
@@ -575,22 +769,29 @@ fn assemble_and_write(
 
     if !cfg.tile_ids.is_empty() {
         output_refs.push(IrefEntry {
-            rtype: "dimg".into(), from: cfg.gain_grid_id, to: cfg.tile_ids.clone(),
+            rtype: "dimg".into(),
+            from: cfg.gain_grid_id,
+            to: cfg.tile_ids.clone(),
         });
     }
     output_refs.push(IrefEntry {
-        rtype: "dimg".into(), from: cfg.tmap_id,
+        rtype: "dimg".into(),
+        from: cfg.tmap_id,
         to: vec![parsed.primary_id, cfg.gain_grid_id],
     });
     output_refs.push(IrefEntry {
-        rtype: "auxl".into(), from: cfg.gain_grid_id,
+        rtype: "auxl".into(),
+        from: cfg.gain_grid_id,
         to: vec![parsed.primary_id, cfg.tmap_id],
     });
     output_refs.push(IrefEntry {
-        rtype: "cdsc".into(), from: cfg.xmp_id,
+        rtype: "cdsc".into(),
+        from: cfg.xmp_id,
         to: vec![parsed.primary_id, cfg.tmap_id],
     });
-    let use_ver1 = output_refs.iter().any(|r| r.from > 0xffff || r.to.iter().any(|&id| id > 0xffff));
+    let use_ver1 = output_refs
+        .iter()
+        .any(|r| r.from > 0xffff || r.to.iter().any(|&id| id > 0xffff));
     let iref_v = if use_ver1 { 1u8 } else { parsed.iref_version };
 
     // Build idat
@@ -611,29 +812,35 @@ fn assemble_and_write(
     let xmp_off = idat.len();
     idat.extend_from_slice(&cfg.xmp_bytes);
     let grid_off = idat.len();
-    let grid_box = isobmff::make_grid_box(tile_size, tile_size, rows, cols, mask_width, mask_height);
+    let grid_box =
+        isobmff::make_grid_box(tile_size, tile_size, rows, cols, mask_width, mask_height);
     idat.extend_from_slice(&grid_box[8..]);
 
     // iloc
     let mut all_iloc: Vec<IlocEntry> = parsed.iloc_entries.clone();
     for (i, tile) in cfg.tile_payloads.iter().enumerate() {
         all_iloc.push(IlocEntry {
-            item_id: cfg.tile_ids[i], construction_method: 0,
-            data_reference_index: 0, extents: vec![(0, tile.len() as u64)],
+            item_id: cfg.tile_ids[i],
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, tile.len() as u64)],
         });
     }
     all_iloc.push(IlocEntry {
-        item_id: cfg.gain_grid_id, construction_method: 1,
+        item_id: cfg.gain_grid_id,
+        construction_method: 1,
         data_reference_index: 0,
         extents: vec![(grid_off as u64, (grid_box.len() - 8) as u64)],
     });
     all_iloc.push(IlocEntry {
-        item_id: cfg.tmap_id, construction_method: 1,
+        item_id: cfg.tmap_id,
+        construction_method: 1,
         data_reference_index: 0,
         extents: vec![(idat_base as u64, cfg.tmap_payload.len() as u64)],
     });
     all_iloc.push(IlocEntry {
-        item_id: cfg.xmp_id, construction_method: 1,
+        item_id: cfg.xmp_id,
+        construction_method: 1,
         data_reference_index: 0,
         extents: vec![(xmp_off as u64, cfg.xmp_bytes.len() as u64)],
     });
@@ -642,10 +849,22 @@ fn assemble_and_write(
     let pass1_iloc = isobmff::make_iloc_box(&all_iloc);
     let meta_kids = isobmff::parse_boxes(source_data, meta.data_start + 4, meta.data_end);
     let meta_part1 = assemble_meta(
-        source_data, meta, &meta_kids, parsed.primary_id, parsed.pitm_version,
-        &iinf_box, &pass1_iloc, &ipco, &ipma_full,
-        &output_refs, had_iref, iref_v, &idat,
-        cfg.group_id, cfg.tmap_id, parsed.primary_id,
+        source_data,
+        meta,
+        &meta_kids,
+        parsed.primary_id,
+        parsed.pitm_version,
+        &iinf_box,
+        &pass1_iloc,
+        &ipco,
+        &ipma_full,
+        &output_refs,
+        had_iref,
+        iref_v,
+        &idat,
+        cfg.group_id,
+        cfg.tmap_id,
+        parsed.primary_id,
     );
 
     let ftyp_box = isobmff::make_ftyp_box(&source_data[ftyp.data_start..ftyp.data_end]);
@@ -654,20 +873,25 @@ fn assemble_and_write(
 
     // --- Fix iloc offsets ---
     let file_delta = new_mdat_data_start as i64 - mdat.data_start as i64;
-    let mut final_iloc: Vec<IlocEntry> = all_iloc.iter().map(|e| {
-        if e.construction_method == 0 {
-            IlocEntry {
-                item_id: e.item_id,
-                construction_method: e.construction_method,
-                data_reference_index: e.data_reference_index,
-                extents: e.extents.iter()
-                    .map(|(off, len)| ((*off as i64 + file_delta) as u64, *len))
-                    .collect(),
+    let mut final_iloc: Vec<IlocEntry> = all_iloc
+        .iter()
+        .map(|e| {
+            if e.construction_method == 0 {
+                IlocEntry {
+                    item_id: e.item_id,
+                    construction_method: e.construction_method,
+                    data_reference_index: e.data_reference_index,
+                    extents: e
+                        .extents
+                        .iter()
+                        .map(|(off, len)| ((*off as i64 + file_delta) as u64, *len))
+                        .collect(),
+                }
+            } else {
+                e.clone()
             }
-        } else {
-            e.clone()
-        }
-    }).collect();
+        })
+        .collect();
     // Fix tile offsets: they come after source mdat
     let mut toff = new_mdat_data_start + source_mdat.len();
     for (i, tile) in cfg.tile_payloads.iter().enumerate() {
@@ -680,10 +904,22 @@ fn assemble_and_write(
 
     // --- PASS 2: final meta ---
     let final_meta = assemble_meta(
-        source_data, meta, &meta_kids, parsed.primary_id, parsed.pitm_version,
-        &iinf_box, &pass2_iloc, &ipco, &ipma_full,
-        &output_refs, had_iref, iref_v, &idat,
-        cfg.group_id, cfg.tmap_id, parsed.primary_id,
+        source_data,
+        meta,
+        &meta_kids,
+        parsed.primary_id,
+        parsed.pitm_version,
+        &iinf_box,
+        &pass2_iloc,
+        &ipco,
+        &ipma_full,
+        &output_refs,
+        had_iref,
+        iref_v,
+        &idat,
+        cfg.group_id,
+        cfg.tmap_id,
+        parsed.primary_id,
     );
 
     // Build mdat
@@ -700,13 +936,9 @@ fn assemble_and_write(
     out.extend_from_slice(between);
     out.extend_from_slice(&mdat_box);
 
-    // Preserve OPPO/QTI/FileExtendedContainer tail.  In standard ISO mode
-    // the private HDR entries (local.uhdr.*, local.hdr.*, src.local.hdr.*,
-    // hdr.*) are removed; the non-HDR metadata (watermark, camera params,
-    // portrait data) is kept.  In OPPO-compatible mode the entire tail is
-    // preserved.
-    let filter_hdr = cfg.filter_hdr;
-    if let Some(tail) = crate::container::get_oppo_tail(source_data, filter_hdr) {
+    // Preserve OPPO/QTI/FileExtendedContainer metadata using the configured
+    // policy (watermark-only, compact, portrait filtering, or full tail).
+    if let Some(tail) = crate::container::get_oppo_tail(source_data, cfg.tail_policy) {
         out.extend_from_slice(&tail);
     }
 
@@ -715,8 +947,27 @@ fn assemble_and_write(
 }
 
 fn find<'a>(boxes: &'a [BoxHeader], btype: &[u8; 4]) -> Result<&'a BoxHeader, String> {
-    boxes.iter().find(|b| &b.btype == btype)
+    boxes
+        .iter()
+        .find(|b| &b.btype == btype)
         .ok_or_else(|| format!("{} missing", String::from_utf8_lossy(btype)))
+}
+
+/// Return the first property of `property_type` explicitly associated with an
+/// item. Looking at the primary item's IPMA associations avoids accidentally
+/// selecting a tile `ispe` from elsewhere in the property container.
+fn item_property_index(parsed: &ParsedSource, item_id: u32, property_type: &str) -> Option<u32> {
+    let entry = parsed
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == item_id)?;
+    entry.associations.iter().find_map(|(index, _)| {
+        parsed
+            .props
+            .get(index.checked_sub(1)? as usize)
+            .filter(|property| property.ptype == property_type)
+            .map(|_| *index)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -766,14 +1017,24 @@ fn assemble_meta(
             b"iinf" => parts.push(iinf_box.to_vec()),
             b"iloc" => parts.push(iloc_box.to_vec()),
             b"iprp" => parts.push(iprp_box.clone()),
-            b"iref" => { parts.push(iref_box.clone()); shown_iref = true; }
-            b"idat" => { parts.push(idat_box.clone()); shown_idat = true; }
+            b"iref" => {
+                parts.push(iref_box.clone());
+                shown_iref = true;
+            }
+            b"idat" => {
+                parts.push(idat_box.clone());
+                shown_idat = true;
+            }
             b"grpl" => { /* drop old grpl */ }
             _ => parts.push(source[kid.box_start..kid.box_start + kid.size].to_vec()),
         }
     }
-    if !shown_iref { parts.push(iref_box); }
-    if !shown_idat { parts.push(idat_box); }
+    if !shown_iref {
+        parts.push(iref_box);
+    }
+    if !shown_idat {
+        parts.push(idat_box);
+    }
     parts.push(grpl_box);
 
     let mut payload = meta_ver.to_vec();
@@ -791,7 +1052,7 @@ impl OppoCompat {
     /// Whether this mode wants OPPO-oriented output (RGB gain map, 142B tmap,
     /// BT.2020 PQ colr).
     fn wants_oppo_rgb(self) -> bool {
-        !matches!(self, OppoCompat::Off)
+        self.wants_oppo_compat()
     }
 }
 
@@ -803,9 +1064,105 @@ impl OppoCompat {
 mod tests {
     use super::*;
 
+    #[test]
+    fn orient_gainmap_applies_all_exif_transforms() {
+        // Two 3-pixel rows with one byte of padding each. The transform must
+        // ignore the padding and emit a tightly packed raster.
+        let input = [1, 2, 3, 99, 4, 5, 6, 99];
+        let cases = [
+            (ExifOrientation::Normal, (3, 2), vec![1, 2, 3, 4, 5, 6]),
+            (
+                ExifOrientation::FlipHorizontal,
+                (3, 2),
+                vec![3, 2, 1, 6, 5, 4],
+            ),
+            (ExifOrientation::Rotate180, (3, 2), vec![6, 5, 4, 3, 2, 1]),
+            (
+                ExifOrientation::FlipVertical,
+                (3, 2),
+                vec![4, 5, 6, 1, 2, 3],
+            ),
+            (ExifOrientation::Transpose, (2, 3), vec![1, 4, 2, 5, 3, 6]),
+            (
+                ExifOrientation::Rotate90Clockwise,
+                (2, 3),
+                vec![4, 1, 5, 2, 6, 3],
+            ),
+            (ExifOrientation::Transverse, (2, 3), vec![6, 3, 5, 2, 4, 1]),
+            (
+                ExifOrientation::Rotate90CounterClockwise,
+                (2, 3),
+                vec![3, 6, 2, 5, 1, 4],
+            ),
+        ];
+
+        for (orientation, dimensions, expected) in cases {
+            let (output, width, height) =
+                orient_gainmap_pixels(&input, 3, 2, 1, 4, orientation).unwrap();
+            assert_eq!((width, height), dimensions, "{orientation:?}");
+            assert_eq!(output, expected, "{orientation:?}");
+        }
+    }
+
+    #[test]
+    fn orient_gainmap_preserves_multibyte_pixels() {
+        let input = [1, 2, 3, 4, 5, 6];
+        let (output, width, height) =
+            orient_gainmap_pixels(&input, 2, 1, 3, 6, ExifOrientation::FlipHorizontal).unwrap();
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(output, vec![4, 5, 6, 1, 2, 3]);
+    }
+
+    #[test]
+    fn edge_tiles_preserve_origin_and_pad_only_bottom_right() {
+        let width = 513u32;
+        let height = 515u32;
+        let pixels: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).map(move |x| ((y * 31 + x * 17) % 251) as u8))
+            .collect();
+        let at = |x: u32, y: u32| pixels[(y * width + x) as usize];
+
+        let origin = build_padded_gain_tile(&pixels, width, height, 1, width as usize, 0, 0)
+            .expect("origin tile");
+        assert_eq!(origin[0], at(0, 0));
+        assert_eq!(origin[511 * GAIN_TILE_SIZE as usize + 511], at(511, 511));
+
+        let edge = build_padded_gain_tile(
+            &pixels,
+            width,
+            height,
+            1,
+            width as usize,
+            GAIN_TILE_SIZE,
+            GAIN_TILE_SIZE,
+        )
+        .expect("bottom-right edge tile");
+        let row = GAIN_TILE_SIZE as usize;
+        assert_eq!(edge[0], at(512, 512));
+        assert_eq!(edge[2 * row], at(512, 514));
+        assert_eq!(edge[row - 1], at(512, 512), "right edge is replicated");
+        assert_eq!(edge[2 * row + row - 1], at(512, 514));
+        assert_eq!(
+            edge[(row - 1) * row],
+            at(512, 514),
+            "bottom edge is replicated"
+        );
+        assert_eq!(edge[row * row - 1], at(512, 514));
+
+        let grid = isobmff::make_grid_box(GAIN_TILE_SIZE, GAIN_TILE_SIZE, 2, 2, width, height);
+        assert_eq!(&grid[10..12], &[1, 1], "two rows and columns");
+        assert_eq!(isobmff::read_u16be(&grid, 12), width as u16);
+        assert_eq!(isobmff::read_u16be(&grid, 14), height as u16);
+    }
+
     /// Build a minimal valid ISOBMFF HEIC buffer for testing.
     fn make_minimal_heic() -> Vec<u8> {
+        make_minimal_heic_with_exif_orientation(None)
+    }
+
+    fn make_minimal_heic_with_exif_orientation(orientation: Option<u16>) -> Vec<u8> {
         let mut out = Vec::new();
+        let exif_blob = orientation.map(heif_exif_blob);
 
         // ftyp
         let mut ftyp_payload = Vec::new();
@@ -817,7 +1174,7 @@ mod tests {
 
         // ipco with ispe
         let mut ipco = Vec::new();
-        ipco.extend_from_slice(&isobmff::make_ispe_box(512, 512));
+        ipco.extend_from_slice(&isobmff::make_ispe_box(512, 256));
         let ipco_box = isobmff::make_box(b"ipco", &ipco);
 
         // ipma
@@ -833,17 +1190,31 @@ mod tests {
 
         let infe1 = isobmff::make_infe_box(1, "hvc1", 0);
         let mut iinf_payload = vec![0, 0, 0, 0];
-        isobmff::write_u16be(1, &mut iinf_payload);
+        isobmff::write_u16be(if exif_blob.is_some() { 2 } else { 1 }, &mut iinf_payload);
         iinf_payload.extend_from_slice(&infe1);
+        if exif_blob.is_some() {
+            iinf_payload.extend_from_slice(&isobmff::make_infe_box(2, "Exif", 0));
+        }
         let iinf_box = isobmff::make_box(b"iinf", &iinf_payload);
 
         let pitm_box = isobmff::make_pitm_box(0, 1);
 
-        let iloc = isobmff::make_iloc_box(&[IlocEntry {
-            item_id: 1, construction_method: 0, data_reference_index: 0,
+        let mut iloc_entries = vec![IlocEntry {
+            item_id: 1,
+            construction_method: 0,
+            data_reference_index: 0,
             extents: vec![(0, 4)],
-        }]);
-        let idat_box = isobmff::make_box(b"idat", &[0u8; 4]);
+        }];
+        if let Some(blob) = &exif_blob {
+            iloc_entries.push(IlocEntry {
+                item_id: 2,
+                construction_method: 1,
+                data_reference_index: 0,
+                extents: vec![(0, blob.len() as u64)],
+            });
+        }
+        let iloc = isobmff::make_iloc_box(&iloc_entries);
+        let idat_box = isobmff::make_box(b"idat", exif_blob.as_deref().unwrap_or(&[]));
         let hdlr = isobmff::make_box(b"hdlr", &[0u8; 8]);
 
         let mut meta_kids = Vec::new();
@@ -862,17 +1233,49 @@ mod tests {
         out
     }
 
+    fn heif_exif_blob(orientation: u16) -> Vec<u8> {
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42u16.to_le_bytes());
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&orientation.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0]);
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut blob = 6u32.to_be_bytes().to_vec();
+        blob.extend_from_slice(b"Exif\0\0");
+        blob.extend_from_slice(&tiff);
+        blob
+    }
+
     #[test]
     fn write_lhdr_minimal_smoke() {
         let source = make_minimal_heic();
         let mask = vec![128u8; 16];
         let mut meta = [0.0f32; 36];
-        meta[0] = 3.5; meta[2] = 144.0; meta[5] = -1.0; meta[18] = 10.0; meta[19] = 6.0;
-        meta[29] = 200.0; meta[32] = 30000.0;
+        meta[0] = 3.5;
+        meta[2] = 144.0;
+        meta[5] = -1.0;
+        meta[18] = 10.0;
+        meta[19] = 6.0;
+        meta[29] = 200.0;
+        meta[32] = 30000.0;
 
         let tmp = std::env::temp_dir().join("xdremux_test_m3_output.heic");
         let result = write_lhdr_iso_output(
-            &source, &mask, 4, 4, &meta, 3.0, OppoCompat::Off,
+            &source,
+            &mask,
+            4,
+            4,
+            &meta,
+            3.0,
+            OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off),
+            false,
             tmp.to_str().unwrap(),
         );
         if let Err(ref e) = result {
@@ -887,6 +1290,240 @@ mod tests {
             assert!(boxes.iter().any(|b| &b.btype == b"mdat"), "mdat missing");
             let _ = std::fs::remove_file(&tmp);
         }
+    }
+
+    fn associated_property<'a>(
+        meta: &'a isobmff::ParsedMeta,
+        item_id: u32,
+        property_type: &str,
+    ) -> &'a isobmff::PropertyInfo {
+        let association = meta
+            .ipma_entries
+            .iter()
+            .find(|entry| entry.item_id == item_id)
+            .unwrap_or_else(|| panic!("item {item_id} has no property associations"));
+        let (property_index, _) = association
+            .associations
+            .iter()
+            .find(|(index, _)| {
+                meta.props
+                    .iter()
+                    .any(|property| property.index == *index && property.ptype == property_type)
+            })
+            .unwrap_or_else(|| panic!("item {item_id} has no {property_type} property"));
+        meta.props
+            .iter()
+            .find(|property| property.index == *property_index)
+            .expect("associated property is present in ipco")
+    }
+
+    fn write_minimal_lhdr_for_properties(oppo_compat: OppoCompat) -> isobmff::ParsedMeta {
+        let source = make_minimal_heic();
+        let mask = vec![128u8; 16];
+        let mut meta = [0.0f32; 36];
+        meta[0] = 3.5;
+        meta[2] = 144.0;
+        meta[5] = -1.0;
+        meta[18] = 10.0;
+        meta[19] = 6.0;
+        meta[29] = 200.0;
+        meta[32] = 30000.0;
+
+        let unique = format!(
+            "xdremux_test_gain_properties_{}_{}.heic",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos(),
+        );
+        let tmp = std::env::temp_dir().join(unique);
+        write_lhdr_iso_output(
+            &source,
+            &mask,
+            4,
+            4,
+            &meta,
+            3.0,
+            oppo_compat,
+            OppoCameraTail::default_for_compat(oppo_compat),
+            false,
+            tmp.to_str().expect("temporary path is valid UTF-8"),
+        )
+        .expect("writer accepts a minimal LHDR source");
+
+        let written = std::fs::read(&tmp).expect("read generated HEIC");
+        std::fs::remove_file(&tmp).expect("remove generated HEIC");
+        isobmff::parse_source_meta(&written).expect("parse generated HEIC metadata")
+    }
+
+    #[test]
+    fn gain_map_properties_match_mono_and_rgb_channel_layouts() {
+        let mono = write_minimal_lhdr_for_properties(OppoCompat::Off);
+        let mono_grid_id = mono
+            .items
+            .iter()
+            .find(|item| item.itype == "grid")
+            .expect("generated mono gain grid")
+            .item_id;
+        assert_eq!(
+            associated_property(&mono, mono_grid_id, "pixi").raw,
+            isobmff::PIXI_MONO8_BOX
+        );
+        assert_eq!(
+            associated_property(&mono, mono_grid_id, "colr").raw,
+            isobmff::COLR_SRGB_BOX
+        );
+        let mono_tile_id = mono
+            .refs
+            .iter()
+            .find(|reference| reference.rtype == "dimg" && reference.from == mono_grid_id)
+            .and_then(|reference| reference.to.first())
+            .copied()
+            .expect("mono gain grid references a tile");
+        assert_eq!(
+            associated_property(&mono, mono_tile_id, "colr").raw,
+            isobmff::COLR_SRGB_BOX
+        );
+
+        let rgb = write_minimal_lhdr_for_properties(OppoCompat::On);
+        let rgb_grid_id = rgb
+            .items
+            .iter()
+            .find(|item| item.itype == "grid")
+            .expect("generated RGB gain grid")
+            .item_id;
+        assert_eq!(
+            associated_property(&rgb, rgb_grid_id, "pixi").raw,
+            isobmff::PIXI_RGB8_BOX
+        );
+        assert_eq!(
+            associated_property(&rgb, rgb_grid_id, "colr").raw,
+            isobmff::COLR_SRGB_BOX
+        );
+        let rgb_tile_id = rgb
+            .refs
+            .iter()
+            .find(|reference| reference.rtype == "dimg" && reference.from == rgb_grid_id)
+            .and_then(|reference| reference.to.first())
+            .copied()
+            .expect("RGB gain grid references a tile");
+        assert_eq!(
+            associated_property(&rgb, rgb_tile_id, "colr").raw,
+            isobmff::COLR_UNSPECIFIED_BT601_BOX
+        );
+    }
+
+    #[test]
+    fn strict_tmap_is_written_as_a_65_byte_item() {
+        let source = make_minimal_heic();
+        let mask = vec![128u8; 16];
+        let mut meta = [0.0f32; 36];
+        meta[0] = 3.5;
+        meta[2] = 144.0;
+        meta[5] = -1.0;
+        meta[18] = 10.0;
+        meta[19] = 6.0;
+        meta[29] = 200.0;
+        meta[32] = 30000.0;
+
+        let unique = format!(
+            "xdremux_test_strict_tmap_{}_{}.heic",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos(),
+        );
+        let tmp = std::env::temp_dir().join(unique);
+        write_lhdr_iso_output(
+            &source,
+            &mask,
+            4,
+            4,
+            &meta,
+            3.0,
+            OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off),
+            true,
+            tmp.to_str().expect("temporary path is valid UTF-8"),
+        )
+        .expect("writer accepts strict tmap output");
+
+        let written = std::fs::read(&tmp).expect("read generated HEIC");
+        std::fs::remove_file(&tmp).expect("remove generated HEIC");
+        let parsed = isobmff::parse_source_meta(&written).expect("parse generated HEIC metadata");
+        let tmap_id = parsed
+            .items
+            .iter()
+            .find(|item| item.itype == "tmap")
+            .expect("generated tmap item")
+            .item_id;
+        let tmap_extent = parsed
+            .iloc_entries
+            .iter()
+            .find(|entry| entry.item_id == tmap_id)
+            .and_then(|entry| entry.extents.first())
+            .expect("tmap item extent");
+        assert_eq!(tmap_extent.1, 65);
+    }
+
+    #[test]
+    fn write_lhdr_uses_exif_orientation_for_irot_and_tmap_dimensions() {
+        let source = make_minimal_heic_with_exif_orientation(Some(6));
+        let mask = vec![128u8; 16];
+        let mut meta = [0.0f32; 36];
+        meta[0] = 3.5;
+        meta[2] = 144.0;
+        meta[5] = -1.0;
+        meta[18] = 10.0;
+        meta[19] = 6.0;
+        meta[29] = 200.0;
+        meta[32] = 30000.0;
+
+        let unique = format!(
+            "xdremux_test_exif_orientation_{}_{}.heic",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos(),
+        );
+        let tmp = std::env::temp_dir().join(unique);
+        write_lhdr_iso_output(
+            &source,
+            &mask,
+            4,
+            4,
+            &meta,
+            3.0,
+            OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off),
+            false,
+            tmp.to_str().expect("temporary path is valid UTF-8"),
+        )
+        .expect("writer accepts a valid HEIC with EXIF orientation");
+
+        let written = std::fs::read(&tmp).expect("read generated HEIC");
+        let parsed = isobmff::parse_source_meta(&written).expect("parse generated HEIC metadata");
+        let primary_irot = associated_property(&parsed, parsed.primary_id, "irot");
+        assert_eq!(isobmff::irot_quarter_turns(&primary_irot.raw).unwrap(), 3);
+
+        let tmap_id = parsed
+            .items
+            .iter()
+            .find(|item| item.itype == "tmap")
+            .expect("generated tmap item")
+            .item_id;
+        let tmap_irot = associated_property(&parsed, tmap_id, "irot");
+        assert_eq!(isobmff::irot_quarter_turns(&tmap_irot.raw).unwrap(), 3);
+        let tmap_ispe = associated_property(&parsed, tmap_id, "ispe");
+        assert_eq!(
+            isobmff::ispe_dimensions(&tmap_ispe.raw).unwrap(),
+            (256, 512)
+        );
+
+        std::fs::remove_file(&tmp).expect("remove generated HEIC");
     }
 
     #[test]

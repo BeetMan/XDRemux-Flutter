@@ -70,6 +70,28 @@ class XdRemuxService {
   }
 
   // -----------------------------------------------------------------------
+  // Capture-mode classification
+  // -----------------------------------------------------------------------
+
+  static Future<Map<String, dynamic>> classify(String inputPath) {
+    return Isolate.run(() {
+      final result = XdRemuxFFI.classify(inputPath);
+      try {
+        return {
+          'modeKey': result.modeKey.toDartStringOrNull(),
+          'folderName': result.folderName.toDartStringOrNull(),
+          'status': result.status.toDartStringOrNull(),
+          'rawUserComment': result.rawUserComment.toDartStringOrNull(),
+          'tagFlags': result.hasTagFlags ? result.tagFlags : null,
+          'unknownFlags': result.unknownFlags,
+        };
+      } finally {
+        XdRemuxFFI.freeClassificationResult(result);
+      }
+    });
+  }
+
+  // -----------------------------------------------------------------------
   // Convert (runs in background isolate to keep UI responsive)
   // -----------------------------------------------------------------------
 
@@ -77,9 +99,17 @@ class XdRemuxService {
     String inputPath,
     String outputPath, {
     int oppoCompat = 0,
+    int oppoCameraTail = 255,
+    bool strictTmap = false,
   }) {
     return Isolate.run(() {
-      final result = XdRemuxFFI.convert(inputPath, outputPath, oppoCompat: oppoCompat);
+      final result = XdRemuxFFI.convert(
+        inputPath,
+        outputPath,
+        oppoCompat: oppoCompat,
+        oppoCameraTail: oppoCameraTail,
+        strictTmap: strictTmap,
+      );
       final map = {
         'success': result.success,
         'mode': result.mode.toDartStringOrNull(),
@@ -184,9 +214,12 @@ class XdRemuxService {
   static const _keyFamily = 'family';
   static const _keyOutputDirectory = 'outputDirectory';
   static const _keyOppoCompat = 'oppoCompatibility';
+  static const _keyOppoCameraTail = 'oppoCameraTail';
+  static const _keyStrictTmap = 'strictTmap';
   static const _keySkipExisting = 'skipExisting';
   static const _keyMaxConcurrentJobs = 'maxConcurrentJobs';
   static const _keyFileNameSuffix = 'fileNameSuffix';
+  static const _keyCategorizeOutputByMode = 'categorizeOutputByMode';
 
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -200,9 +233,16 @@ class XdRemuxService {
         (e) => e.name == prefs.getString(_keyOppoCompat),
         orElse: () => OppoCompatMode.off,
       ),
+      oppoCameraTail: OppoCameraTailMode.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyOppoCameraTail),
+        orElse: () => OppoCameraTailMode.automatic,
+      ),
+      strictTmap: prefs.getBool(_keyStrictTmap) ?? false,
       skipExisting: prefs.getBool(_keySkipExisting) ?? true,
       maxConcurrentJobs: prefs.getInt(_keyMaxConcurrentJobs) ?? 4,
       fileNameSuffix: prefs.getString(_keyFileNameSuffix) ?? '_iso',
+      categorizeOutputByMode:
+          prefs.getBool(_keyCategorizeOutputByMode) ?? false,
     );
   }
 
@@ -215,8 +255,12 @@ class XdRemuxService {
       await prefs.remove(_keyOutputDirectory);
     }
     await prefs.setString(_keyOppoCompat, config.oppoCompatibility.name);
+    await prefs.setString(_keyOppoCameraTail, config.oppoCameraTail.name);
+    await prefs.setBool(_keyStrictTmap, config.strictTmap);
     await prefs.setBool(_keySkipExisting, config.skipExisting);
     await prefs.setInt(_keyMaxConcurrentJobs, config.maxConcurrentJobs);
     await prefs.setString(_keyFileNameSuffix, config.fileNameSuffix);
+    await prefs.setBool(
+        _keyCategorizeOutputByMode, config.categorizeOutputByMode);
   }
 }

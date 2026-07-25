@@ -14,8 +14,7 @@ pub fn run(input: &Path, output: &Path, oppo_compat: u8) -> Result<(), String> {
     let result = xdremux_core::container::extract_lhdr(input_str)
         .map_err(|e| format!("extract failed: {e}"))?;
 
-    let source = std::fs::read(input_str)
-        .map_err(|e| format!("cannot read input: {e}"))?;
+    let source = std::fs::read(input_str).map_err(|e| format!("cannot read input: {e}"))?;
 
     let oppo_compat_enum = xdremux_core::exif::OppoCompat::from_u8(oppo_compat);
 
@@ -29,7 +28,7 @@ pub fn run(input: &Path, output: &Path, oppo_compat: u8) -> Result<(), String> {
     Ok(())
 }
 
-use xdremux_core::container::ExtractedLhdr;
+use xdremux_core::container::{ExtractedLhdr, OppoCameraTail};
 use xdremux_core::exif::OppoCompat;
 
 fn convert_lhdr(
@@ -43,13 +42,23 @@ fn convert_lhdr(
     use xdremux_core::jpeg_decode;
 
     let edr_scale = edr::edr_scale_calculator(&extracted.meta_floats);
-    let mask_data = extracted.mask_data.as_ref()
+    let mask_data = extracted
+        .mask_data
+        .as_ref()
         .ok_or_else(|| "no mask JPEG in extracted LHDR data".to_string())?;
     let (mask_pixels, mask_w, mask_h) = jpeg_decode::decode_jpeg_to_gray(mask_data)
         .map_err(|e| format!("mask JPEG decode failed: {e}"))?;
     isobmff_write::write_lhdr_iso_output(
-        source, &mask_pixels, mask_w, mask_h,
-        &extracted.meta_floats, edr_scale, oppo_compat, output,
+        source,
+        &mask_pixels,
+        mask_w,
+        mask_h,
+        &extracted.meta_floats,
+        edr_scale,
+        oppo_compat,
+        OppoCameraTail::default_for_compat(oppo_compat),
+        false,
+        output,
     )?;
     Ok(())
 }
@@ -62,10 +71,18 @@ fn convert_uhdr(
 ) -> Result<(), String> {
     use xdremux_core::isobmff_write;
 
-    let gainmap_jpeg = extracted.gainmap_data.as_ref()
+    let gainmap_jpeg = extracted
+        .gainmap_data
+        .as_ref()
         .ok_or_else(|| "no gainmap JPEG in extracted UHDR data".to_string())?;
     isobmff_write::write_uhdr_iso_output(
-        source, gainmap_jpeg, &extracted.meta_floats, oppo_compat, output,
+        source,
+        gainmap_jpeg,
+        &extracted.meta_floats,
+        oppo_compat,
+        OppoCameraTail::default_for_compat(oppo_compat),
+        false,
+        output,
     )?;
     Ok(())
 }

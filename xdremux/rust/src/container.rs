@@ -7,7 +7,7 @@ use std::fmt::Write;
 /// Parsed result of container extraction.
 #[derive(Debug, Clone)]
 pub struct ExtractedLhdr {
-    pub mode: String,                  // "lhdr" or "uhdr"
+    pub mode: String, // "lhdr" or "uhdr"
     pub meta_bytes: Vec<u8>,
     pub meta_floats: Vec<f32>,
     pub mask_data: Option<Vec<u8>>,
@@ -49,6 +49,86 @@ const FLOAT_144_BYTES: [u8; 4] = 144.0_f32.to_le_bytes();
 
 const JPEG_START: &[u8] = b"\xff\xd8\xff";
 const JPEG_END: &[u8] = b"\xff\xd9";
+
+const WATERMARK_AUXILIARY_ENTRY_NAMES: &[&str] = &[
+    "color.space",
+    "gr.effect.info",
+    "master.mode.preset.info",
+    "private.emptyspace",
+];
+
+const PORTRAIT_EDITING_ENTRY_NAMES: &[&str] = &[
+    "crop.region",
+    "front.depth",
+    "front.depth.config",
+    "front.hair.mask",
+    "front.matter.info",
+    "front.negevimg",
+    "front.segment",
+    "mesh.coord",
+    "mesh.coord.config",
+    "rear.depth",
+    "rear.depth.config",
+    "rear.spotlight",
+    "src.image",
+    "src.image.block",
+];
+
+const PRIVATE_UHDR_ENTRY_NAMES: &[&str] = &["local.uhdr.gainmap.data", "local.uhdr.gainmap.info"];
+
+/// Policy controlling which OPPO camera-tail entries are copied to output.
+/// Values 0 through 9 mirror upstream `OppoCameraTail`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OppoCameraTail {
+    Off,
+    Watermark,
+    Compact,
+    Preserve,
+    PreserveWithoutPortrait,
+    PreserveWithoutPortraitOrPrivateHdr,
+    PreserveWithoutPrivateUhdr,
+    PreserveWithoutPrivateHdr,
+    PreserveNoUhdr,
+    PreserveNoHdr,
+}
+
+impl OppoCameraTail {
+    /// FFI value that asks the library to select the legacy-compatible default.
+    pub const AUTOMATIC: u8 = u8::MAX;
+
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Off),
+            1 => Some(Self::Watermark),
+            2 => Some(Self::Compact),
+            3 => Some(Self::Preserve),
+            4 => Some(Self::PreserveWithoutPortrait),
+            5 => Some(Self::PreserveWithoutPortraitOrPrivateHdr),
+            6 => Some(Self::PreserveWithoutPrivateUhdr),
+            7 => Some(Self::PreserveWithoutPrivateHdr),
+            8 => Some(Self::PreserveNoUhdr),
+            9 => Some(Self::PreserveNoHdr),
+            _ => None,
+        }
+    }
+
+    /// Preserve the old default: clean ISO removes private HDR entries, while
+    /// OPPO-compatible output retains the entire camera tail.
+    pub const fn default_for_compat(oppo_compat: crate::exif::OppoCompat) -> Self {
+        if oppo_compat.wants_oppo_compat() {
+            Self::Preserve
+        } else {
+            Self::PreserveWithoutPrivateHdr
+        }
+    }
+
+    pub const fn resolve(value: u8, oppo_compat: crate::exif::OppoCompat) -> Self {
+        match Self::from_u8(value) {
+            Some(mode) => mode,
+            None => Self::default_for_compat(oppo_compat),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -142,21 +222,12 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
 /// Extract the complete OPPO/QTI/FileExtendedContainer tail bytes from a
 /// source HEIC file. Returns `None` if no extension region is found.
 ///
-/// Includes the ISOBMFF QTI box header (size + type) so the preserved tail
-/// remains a valid box structure.
-///
-/// When `filter_hdr` is true (standard ISO mode), private HDR entries
-/// (local.uhdr.*, local.hdr.*, src.local.hdr.*, hdr.*) are removed,
-/// matching Python's `filter_private_hdr_tail` and Swift's
-/// `.preserveWithoutPrivateHDR` default mode.
-pub fn get_oppo_tail(data: &[u8], filter_hdr: bool) -> Option<Vec<u8>> {
+/// The policy supports compact watermark-only tails, portrait-editing removal,
+/// private-HDR removal, and full preservation. `Off` removes the tail.
+pub fn get_oppo_tail(data: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
     let tail_start = find_qti_box_start(data)?;
     let raw_tail = &data[tail_start..];
-    if filter_hdr {
-        filter_private_hdr_tail(raw_tail)
-    } else {
-        Some(raw_tail.to_vec())
-    }
+    apply_oppo_tail_policy(raw_tail, policy)
 }
 
 /// Find the start of the QTI box in the data. Returns the absolute offset
@@ -172,58 +243,69 @@ fn find_qti_box_start(data: &[u8]) -> Option<usize> {
     None
 }
 
-/// Remove private HDR entries from the OPPO tail while preserving all
-/// non-HDR manifested entries (watermark, depth, vendor data, etc.).
-///
-/// Ported from Python `container.filter_private_hdr_tail()`.
-fn filter_private_hdr_tail(tail: &[u8]) -> Option<Vec<u8>> {
-    let (entries, json_start, json_end) = parse_manifest(tail)?;
-    if entries.is_empty() || !has_private_hdr_entries(&entries) {
-        return Some(tail.to_vec());
-    }
-
-    // Collect kept entries with their source byte ranges.
-    let mut kept: Vec<(usize, &ManifestEntry)> = Vec::new();
-    for (_index, entry) in entries.iter().enumerate() {
-        if is_private_hdr_tail_entry(&entry.name) {
-            continue;
+/// Apply a camera-tail policy to a raw source tail.
+fn apply_oppo_tail_policy(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
+    match policy {
+        OppoCameraTail::Off => return None,
+        OppoCameraTail::Preserve => return Some(tail.to_vec()),
+        OppoCameraTail::PreserveNoUhdr | OppoCameraTail::PreserveNoHdr => {
+            return neutralize_oppo_tail_entries(tail, policy)
         }
-        let source_start = (json_start as i64 - entry.offset as i64) as usize;
-        kept.push((source_start, entry));
-    }
-    if kept.is_empty() {
-        return Some(Vec::new());
+        OppoCameraTail::Watermark
+        | OppoCameraTail::Compact
+        | OppoCameraTail::PreserveWithoutPortrait
+        | OppoCameraTail::PreserveWithoutPortraitOrPrivateHdr
+        | OppoCameraTail::PreserveWithoutPrivateUhdr
+        | OppoCameraTail::PreserveWithoutPrivateHdr => {}
     }
 
-    /// Rebuild payload: kept entry bytes + new manifest + jxrs footer.
+    let (entries, json_start, _json_end) = parse_manifest(tail)?;
+    let mut kept: Vec<(usize, &ManifestEntry)> = entries
+        .iter()
+        .filter(|entry| should_preserve_oppo_tail_entry(&entry.name, policy))
+        .filter_map(|entry| {
+            let source_start = json_start.checked_sub(entry.offset as usize)?;
+            let source_end = source_start.checked_add(entry.length as usize)?;
+            (source_end <= tail.len()).then_some((source_start, entry))
+        })
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    kept.sort_by_key(|(source_start, _)| *source_start);
+
+    // Rebuild payload: kept entry bytes + new manifest + vendor footer.
     let mut payload = Vec::new();
-    let mut offsets_from_start: Vec<usize> = Vec::new(); // payload offset for each kept entry
+    let mut offsets_from_start: Vec<usize> = Vec::new();
     for (source_start, entry) in &kept {
         let start_in_payload = payload.len();
         let end = source_start + entry.length as usize;
-        if end <= tail.len() {
-            payload.extend_from_slice(&tail[*source_start..end]);
-        }
+        payload.extend_from_slice(&tail[*source_start..end]);
         offsets_from_start.push(start_in_payload);
     }
 
-    // Build new manifest: JSON array of { "length":..., "name":..., "offset":..., "version":1 }
+    let payload_length = payload.len();
+    // The manifest offset is measured backwards from its own start, matching
+    // OPPO's `jsonStart - entry.offset` lookup convention.
     let mut manifest = String::from("[");
     for (i, (start_in_payload, (_, entry))) in offsets_from_start.iter().zip(&kept).enumerate() {
         if i > 0 {
             manifest.push(',');
         }
-        // offset = distance from start of payload to entry start
-        let offset = *start_in_payload;
-        write!(&mut manifest, r#"{{"length":{},"name":"{}","offset":{},"version":1}}"#,
-            entry.length, entry.name, offset).unwrap();
+        let offset = payload_length - *start_in_payload;
+        write!(
+            &mut manifest,
+            r#"{{"length":{},"name":"{}","offset":{},"version":1}}"#,
+            entry.length, entry.name, offset
+        )
+        .unwrap();
     }
     manifest.push(']');
     let manifest_bytes = manifest.as_bytes();
     payload.extend_from_slice(manifest_bytes);
     payload.push(0); // null before footer
 
-    // jxrs footer (manifest_len + 9 as little-endian u32)
+    // Footer is NUL + vendor tag + manifest length, just as in source tails.
     let footer_size = (manifest_bytes.len() + 9) as u32;
     payload.extend_from_slice(b"jxrs");
     payload.extend_from_slice(&footer_size.to_le_bytes());
@@ -231,15 +313,57 @@ fn filter_private_hdr_tail(tail: &[u8]) -> Option<Vec<u8>> {
     Some(payload)
 }
 
-/// Check if any manifest entry is a private HDR entry.
-fn has_private_hdr_entries(entries: &[ManifestEntry]) -> bool {
-    entries.iter().any(|e| is_private_hdr_tail_entry(&e.name))
+fn neutralize_oppo_tail_entries(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
+    let (entries, json_start, json_end) = parse_manifest(tail)?;
+    let mut result = tail.to_vec();
+    for entry in entries {
+        if !should_neutralize_oppo_tail_entry(&entry.name, policy) {
+            continue;
+        }
+        let name_bytes = entry.name.as_bytes();
+        let name_offset = result[json_start..json_end]
+            .windows(name_bytes.len())
+            .position(|window| window == name_bytes)?
+            + json_start;
+        result[name_offset] = b'x';
+    }
+    Some(result)
 }
 
-/// Mirror of Python's `is_private_hdr_tail_entry`.
+/// Mirror of upstream `shouldPreserveOppoCameraTailEntry`.
+fn should_preserve_oppo_tail_entry(name: &str, policy: OppoCameraTail) -> bool {
+    match policy {
+        OppoCameraTail::Off => false,
+        OppoCameraTail::Watermark => {
+            name.starts_with("watermark.") || WATERMARK_AUXILIARY_ENTRY_NAMES.contains(&name)
+        }
+        OppoCameraTail::Compact => {
+            should_preserve_oppo_tail_entry(name, OppoCameraTail::Watermark)
+                || PORTRAIT_EDITING_ENTRY_NAMES.contains(&name)
+                || matches!(name, "hdr.transform.data" | "src.local.hdr.linear.mask")
+        }
+        OppoCameraTail::PreserveWithoutPortrait => !PORTRAIT_EDITING_ENTRY_NAMES.contains(&name),
+        OppoCameraTail::PreserveWithoutPortraitOrPrivateHdr => {
+            !PORTRAIT_EDITING_ENTRY_NAMES.contains(&name) && !is_private_hdr_tail_entry(name)
+        }
+        OppoCameraTail::PreserveWithoutPrivateUhdr => !PRIVATE_UHDR_ENTRY_NAMES.contains(&name),
+        OppoCameraTail::PreserveWithoutPrivateHdr => !is_private_hdr_tail_entry(name),
+        OppoCameraTail::Preserve
+        | OppoCameraTail::PreserveNoUhdr
+        | OppoCameraTail::PreserveNoHdr => true,
+    }
+}
+
+fn should_neutralize_oppo_tail_entry(name: &str, policy: OppoCameraTail) -> bool {
+    match policy {
+        OppoCameraTail::PreserveNoUhdr => PRIVATE_UHDR_ENTRY_NAMES.contains(&name),
+        OppoCameraTail::PreserveNoHdr => is_private_hdr_tail_entry(name),
+        _ => false,
+    }
+}
+
 fn is_private_hdr_tail_entry(name: &str) -> bool {
-    name == "local.uhdr.gainmap.data"
-        || name == "local.uhdr.gainmap.info"
+    PRIVATE_UHDR_ENTRY_NAMES.contains(&name)
         || name.starts_with("hdr.")
         || name.starts_with("local.hdr.")
         || name.starts_with("src.local.hdr.")
@@ -407,7 +531,11 @@ fn parse_one_manifest_entry(obj: &str) -> Option<ManifestEntry> {
                 if bytes[pos] == b'"' {
                     let val_start = pos + 1;
                     let val_end = bytes[val_start..].iter().position(|&b| b == b'"')? + val_start;
-                    name = Some(std::str::from_utf8(&bytes[val_start..val_end]).ok()?.to_string());
+                    name = Some(
+                        std::str::from_utf8(&bytes[val_start..val_end])
+                            .ok()?
+                            .to_string(),
+                    );
                     pos = val_end + 1;
                 }
             }
@@ -490,10 +618,7 @@ fn extract_lhdr_meta_float144(data: &[u8]) -> Option<(Vec<u8>, Vec<f32>)> {
     let mut best_sc = 0;
     let mut off = 0;
 
-    while let Some(hit) = data[off..]
-        .windows(4)
-        .position(|w| w == FLOAT_144_BYTES)
-    {
+    while let Some(hit) = data[off..].windows(4).position(|w| w == FLOAT_144_BYTES) {
         let hit = off + hit;
         let start = hit.wrapping_sub(8);
         if start + 144 <= data.len() {
@@ -565,7 +690,12 @@ fn find_jpeg_in_data(data: &[u8], target_length: Option<usize>) -> Option<Vec<u8
 
 /// Read a big-endian u32 at `offset`.
 fn read_u32_be(data: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 /// Interpret a byte slice as little-endian f32 values.
@@ -652,12 +782,125 @@ mod tests {
         let ext_size: u32 = 154;
         let mut data = Vec::new();
         data.extend_from_slice(&ext_size.to_be_bytes()); // offset 0-4: size
-        data.extend_from_slice(b"QTI Debug");            // offset 4-13: marker
-        data.extend_from_slice(&[0xAAu8; 100]);          // extension content
+        data.extend_from_slice(b"QTI Debug"); // offset 4-13: marker
+        data.extend_from_slice(&[0xAAu8; 100]); // extension content
 
         // find_extension_start finds "QTI Debug" at pos=4, reads size from pos-4=0,
         // returns pos-4 + size = 0 + 154
         let ext_start = find_extension_start(&data).unwrap();
         assert_eq!(ext_start, ext_size as usize);
+    }
+
+    fn make_manifest_tail(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        let mut positions = Vec::new();
+        for (_, bytes) in entries {
+            positions.push(payload.len());
+            payload.extend_from_slice(bytes);
+        }
+        let payload_len = payload.len();
+        let mut manifest = String::from("[");
+        for (index, ((name, bytes), start)) in entries.iter().zip(&positions).enumerate() {
+            if index > 0 {
+                manifest.push(',');
+            }
+            write!(
+                &mut manifest,
+                r#"{{"length":{},"name":"{}","offset":{},"version":1}}"#,
+                bytes.len(),
+                name,
+                payload_len - start,
+            )
+            .unwrap();
+        }
+        manifest.push(']');
+        payload.extend_from_slice(manifest.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(b"jxrs");
+        payload.extend_from_slice(&((manifest.len() + 9) as u32).to_le_bytes());
+        payload
+    }
+
+    fn manifest_names(tail: &[u8]) -> Vec<String> {
+        parse_manifest(tail)
+            .unwrap()
+            .0
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect()
+    }
+
+    #[test]
+    fn camera_tail_policies_select_watermark_compact_and_non_portrait_entries() {
+        let tail = make_manifest_tail(&[
+            ("watermark.text", b"w"),
+            ("color.space", b"c"),
+            ("front.depth", b"d"),
+            ("hdr.transform.data", b"t"),
+            ("local.uhdr.gainmap.data", b"u"),
+            ("camera.params", b"p"),
+        ]);
+
+        assert_eq!(
+            manifest_names(
+                &apply_oppo_tail_policy(&tail, OppoCameraTail::Watermark).expect("watermark tail"),
+            ),
+            vec!["watermark.text", "color.space"],
+        );
+        assert_eq!(
+            manifest_names(
+                &apply_oppo_tail_policy(&tail, OppoCameraTail::Compact).expect("compact tail"),
+            ),
+            vec![
+                "watermark.text",
+                "color.space",
+                "front.depth",
+                "hdr.transform.data"
+            ],
+        );
+        let without_portrait = manifest_names(
+            &apply_oppo_tail_policy(&tail, OppoCameraTail::PreserveWithoutPortrait)
+                .expect("non-portrait tail"),
+        );
+        assert!(!without_portrait.contains(&"front.depth".to_string()));
+        assert!(without_portrait.contains(&"local.uhdr.gainmap.data".to_string()));
+        assert!(without_portrait.contains(&"camera.params".to_string()));
+    }
+
+    #[test]
+    fn filtered_tail_manifest_offsets_remain_readable() {
+        let tail = make_manifest_tail(&[
+            ("camera.params", b"first"),
+            ("local.hdr.meta.data", b"discard"),
+            ("watermark.text", b"last"),
+        ]);
+        let filtered = apply_oppo_tail_policy(&tail, OppoCameraTail::PreserveWithoutPrivateHdr)
+            .expect("filtered tail");
+        let (entries, json_start, _) = parse_manifest(&filtered).expect("rebuilt manifest");
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            let start = json_start - entry.offset as usize;
+            let end = start + entry.length as usize;
+            assert!(
+                end <= filtered.len(),
+                "{} must point inside the tail",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn no_hdr_policy_neutralizes_manifest_names_in_place() {
+        let tail = make_manifest_tail(&[
+            ("local.uhdr.gainmap.data", b"u"),
+            ("hdr.transform.data", b"h"),
+            ("camera.params", b"p"),
+        ]);
+        let neutralized =
+            apply_oppo_tail_policy(&tail, OppoCameraTail::PreserveNoHdr).expect("neutralized tail");
+        let names = manifest_names(&neutralized);
+        assert!(!names.iter().any(|name| name == "local.uhdr.gainmap.data"));
+        assert!(!names.iter().any(|name| name == "hdr.transform.data"));
+        assert!(names.iter().any(|name| name == "camera.params"));
     }
 }

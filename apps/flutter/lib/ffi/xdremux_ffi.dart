@@ -13,10 +13,20 @@ extension ToDartStringOrNull on ffi.Pointer<Utf8> {
 /// Configuration passed to `xdremux_convert`.
 ///
 /// Fields match the Rust `ConvertConfig`:
-/// - `oppoCompat`: 0=off, 1=auto, 2=on, 3=tail (alias for on)
+/// - `oppoCompat`: 0=off, 1=auto, 2=on, 3=tail, 4=iso,
+///   5=iso-no-local, 6=iso-graph
+/// - `oppoCameraTail`: 0=off through 9=preserve-no-hdr; 255=automatic
+/// - `strictTmap`: false=ImageIO-compatible 62/142-byte payload;
+///   true=strict ISO 65/145-byte payload
 final class ConvertConfig extends ffi.Struct {
   @ffi.Uint8()
   external int oppoCompat;
+
+  @ffi.Uint8()
+  external int oppoCameraTail;
+
+  @ffi.Uint8()
+  external int strictTmap;
 }
 
 /// Opaque C struct returned by Rust. Must be freed with [freeResult].
@@ -35,6 +45,27 @@ final class ConversionResult extends ffi.Struct {
   external double gainMapMax;
 
   external ffi.Pointer<Utf8> errorMessage;
+}
+
+/// Capture-mode result returned by `xdremux_classify`.
+/// Must be released with [freeClassificationResult].
+final class ClassificationResult extends ffi.Struct {
+  external ffi.Pointer<Utf8> modeKey;
+
+  external ffi.Pointer<Utf8> folderName;
+
+  external ffi.Pointer<Utf8> status;
+
+  external ffi.Pointer<Utf8> rawUserComment;
+
+  @ffi.Bool()
+  external bool hasTagFlags;
+
+  @ffi.Uint64()
+  external int tagFlags;
+
+  @ffi.Uint64()
+  external int unknownFlags;
 }
 
 /// Result of thumbnail extraction. Must be freed with [freeThumbnail].
@@ -131,6 +162,10 @@ class XdRemuxFFI {
       ConversionResult Function(ffi.Pointer<Utf8>),
       ConversionResult Function(ffi.Pointer<Utf8>)>('xdremux_inspect');
 
+  static final _classify = _lib.lookupFunction<
+      ClassificationResult Function(ffi.Pointer<Utf8>),
+      ClassificationResult Function(ffi.Pointer<Utf8>)>('xdremux_classify');
+
   static final _convert = _lib.lookupFunction<
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>),
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>)>('xdremux_convert');
@@ -142,6 +177,10 @@ class XdRemuxFFI {
   static final _freeResult = _lib.lookupFunction<
       ffi.Void Function(ConversionResult),
       void Function(ConversionResult)>('xdremux_free_result');
+
+  static final _freeClassificationResult = _lib.lookupFunction<
+      ffi.Void Function(ClassificationResult),
+      void Function(ClassificationResult)>('xdremux_free_classification_result');
 
   static final _readProgress = _lib.lookupFunction<
       ffi.Void Function(ffi.Pointer<ffi.Uint32>),
@@ -175,14 +214,33 @@ class XdRemuxFFI {
     }
   }
 
+  /// Classify an image from its EXIF UserComment capture-mode flags.
+  static ClassificationResult classify(String inputPath) {
+    final input = inputPath.toNativeUtf8();
+    try {
+      return _classify(input);
+    } finally {
+      calloc.free(input);
+    }
+  }
+
   /// Convert a single file. Returns a [ConversionResult] that the caller must free.
   ///
-  /// [oppoCompat] — 0=off, 1=auto, 2=on, 3=tail (alias for on).
-  static ConversionResult convert(String inputPath, String outputPath, {int oppoCompat = 0}) {
+  /// [oppoCompat] — 0=off, 1=auto, 2=on, 3=tail, 4=iso,
+  /// 5=iso-no-local, 6=iso-graph. [oppoCameraTail] uses 0..9, or 255 for auto.
+  static ConversionResult convert(
+    String inputPath,
+    String outputPath, {
+    int oppoCompat = 0,
+    int oppoCameraTail = 255,
+    bool strictTmap = false,
+  }) {
     final input = inputPath.toNativeUtf8();
     final output = outputPath.toNativeUtf8();
     final cfg = calloc<ConvertConfig>();
-    cfg.ref.oppoCompat = oppoCompat.clamp(0, 3);
+    cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
+    cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
+    cfg.ref.strictTmap = strictTmap ? 1 : 0;
     try {
       return _convert(input, output, cfg);
     } finally {
@@ -203,6 +261,10 @@ class XdRemuxFFI {
 
   static void freeResult(ConversionResult result) {
     _freeResult(result);
+  }
+
+  static void freeClassificationResult(ClassificationResult result) {
+    _freeClassificationResult(result);
   }
 
   /// Read the current conversion progress.

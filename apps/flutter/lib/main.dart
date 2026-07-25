@@ -34,23 +34,64 @@ class XdRemuxApp extends StatelessWidget {
       theme: ThemeData(
         fontFamily: fontFamily,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFF2856D7),
           brightness: Brightness.light,
         ),
         useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF8F9FC),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
+        ),
       ),
       darkTheme: ThemeData(
         fontFamily: fontFamily,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFF7C9AFF),
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        cardTheme: CardThemeData(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
+        ),
       ),
       home: const HomePage(),
     );
   }
 }
+
+enum _QueueMenuAction { retryFailed, clearCompleted, revealOutputs, clearQueue }
 
 // ============================================================================
 // HomePage
@@ -77,6 +118,7 @@ class _HomePageState extends State<HomePage> {
   String _version = '';
   Timer? _configSaveTimer;
   Checkpoint? _checkpoint;
+
   /// Android: app-specific external directory for output (scoped storage).
   String? _androidOutputDir;
   static const _dropChannel = MethodChannel('xdremux/drop');
@@ -102,7 +144,9 @@ class _HomePageState extends State<HomePage> {
         if (dir != null) {
           _androidOutputDir = dir.path;
           // Ensure the output subdirectory exists
-          final outDir = Directory('${dir.path}${Platform.pathSeparator}output');
+          final outDir = Directory(
+            '${dir.path}${Platform.pathSeparator}output',
+          );
           if (!outDir.existsSync()) outDir.createSync(recursive: true);
           _androidOutputDir = outDir.path;
         }
@@ -159,15 +203,20 @@ class _HomePageState extends State<HomePage> {
           status = QueueItemStatus.pending;
       }
 
-      _queue.add(QueueItem(
-        id: _makeId(),
-        inputPath: cpItem.inputPath,
-        outputPath: cpItem.outputPath,
-        status: status,
-        errorMessage: cpItem.error,
-        outputPlanStatus: _computeOutputPlan(cpItem.inputPath, cpItem.outputPath),
-        finishedAt: cpItem.finishedAt,
-      ));
+      _queue.add(
+        QueueItem(
+          id: _makeId(),
+          inputPath: cpItem.inputPath,
+          outputPath: cpItem.outputPath,
+          status: status,
+          errorMessage: cpItem.error,
+          outputPlanStatus: _computeOutputPlan(
+            cpItem.inputPath,
+            cpItem.outputPath,
+          ),
+          finishedAt: cpItem.finishedAt,
+        ),
+      );
       existing.add(cpItem.inputPath);
     }
 
@@ -175,7 +224,8 @@ class _HomePageState extends State<HomePage> {
     _validateOutputPlans();
     _updateStatusText();
     setState(() {
-      _currentFileName = '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度';
+      _currentFileName =
+          '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度';
     });
   }
 
@@ -185,7 +235,7 @@ class _HomePageState extends State<HomePage> {
     _dropChannel.setMethodCallHandler((call) async {
       if (call.method == 'onFilesDropped') {
         final paths = List<String>.from(call.arguments as List);
-        _handleDrop(paths);
+        await _handleDrop(paths);
       }
     });
   }
@@ -211,10 +261,13 @@ class _HomePageState extends State<HomePage> {
 
   bool get _canEditQueue => !_isProcessing;
 
-  bool get _canStart => !_isProcessing &&
-      _queue.any((item) =>
-          item.status == QueueItemStatus.pending &&
-          !item.outputPlanStatus.blocksConversion);
+  bool get _canStart =>
+      !_isProcessing &&
+      _queue.any(
+        (item) =>
+            item.status == QueueItemStatus.pending &&
+            !item.outputPlanStatus.blocksConversion,
+      );
 
   int get _totalFiles => _queue.length;
 
@@ -335,13 +388,24 @@ class _HomePageState extends State<HomePage> {
       if (existing.contains(path)) continue;
 
       try {
-        final outputPath = _config.outputPathFor(path, fallbackDir: _androidOutputDir);
-        _queue.add(QueueItem(
-          id: _makeId(),
-          inputPath: path,
-          outputPath: outputPath,
-          outputPlanStatus: _computeOutputPlan(path, outputPath),
-        ));
+        final classification = await XdRemuxService.classify(path);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          path,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
+        _queue.add(
+          QueueItem(
+            id: _makeId(),
+            inputPath: path,
+            outputPath: outputPath,
+            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            captureModeKey: classification['modeKey'] as String?,
+            captureModeFolderName: folderName,
+            classificationStatus: classification['status'] as String?,
+          ),
+        );
         existing.add(path);
         added++;
       } catch (e) {
@@ -363,7 +427,8 @@ class _HomePageState extends State<HomePage> {
 
       final outputFile = File(outputPath);
       final parent = outputFile.parent;
-      if (parent.existsSync() && !parent.path.endsWith(Platform.pathSeparator)) {
+      if (parent.existsSync() &&
+          !parent.path.endsWith(Platform.pathSeparator)) {
         try {
           if (FileSystemEntity.typeSync(parent.path) !=
               FileSystemEntityType.directory) {
@@ -409,9 +474,15 @@ class _HomePageState extends State<HomePage> {
       if (item.status == QueueItemStatus.pending ||
           item.status == QueueItemStatus.failed ||
           item.status == QueueItemStatus.cancelled) {
-        item.outputPath = _config.outputPathFor(item.inputPath, fallbackDir: _androidOutputDir);
-        item.outputPlanStatus =
-            _computeOutputPlan(item.inputPath, item.outputPath);
+        item.outputPath = _config.outputPathFor(
+          item.inputPath,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: item.captureModeFolderName,
+        );
+        item.outputPlanStatus = _computeOutputPlan(
+          item.inputPath,
+          item.outputPath,
+        );
       }
     }
     _validateOutputPlans();
@@ -510,7 +581,11 @@ class _HomePageState extends State<HomePage> {
       try {
         final (stage, current, total) = XdRemuxFFI.readProgress();
         if (_queue.length > index) {
-          _queue[index].progress = (stage: stage, current: current, total: total);
+          _queue[index].progress = (
+            stage: stage,
+            current: current,
+            total: total,
+          );
           _updateStatusText();
           setState(() {});
         }
@@ -539,6 +614,8 @@ class _HomePageState extends State<HomePage> {
         item.inputPath,
         item.outputPath,
         oppoCompat: runConfig.oppoCompatibility.rustValue,
+        oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+        strictTmap: runConfig.strictTmap,
       );
 
       if (result['success'] == true) {
@@ -597,13 +674,15 @@ class _HomePageState extends State<HomePage> {
       for (final qItem in _queue) {
         if (!cpByPath.containsKey(qItem.inputPath)) {
           // New item not in checkpoint
-          cpItems.add(CheckpointItem(
-            inputPath: qItem.inputPath,
-            outputPath: qItem.outputPath,
-            status: CheckpointItemStatus.pending,
-            inputSize: _fileSize(qItem.inputPath),
-            inputMtimeMs: _fileMtimeMs(qItem.inputPath),
-          ));
+          cpItems.add(
+            CheckpointItem(
+              inputPath: qItem.inputPath,
+              outputPath: qItem.outputPath,
+              status: CheckpointItemStatus.pending,
+              inputSize: _fileSize(qItem.inputPath),
+              inputMtimeMs: _fileMtimeMs(qItem.inputPath),
+            ),
+          );
         }
       }
     } else {
@@ -702,7 +781,10 @@ class _HomePageState extends State<HomePage> {
     if (!_canEditQueue) return;
     setState(() {
       _queue.removeWhere(
-          (item) => item.status == QueueItemStatus.converted || item.status == QueueItemStatus.skippedExisting);
+        (item) =>
+            item.status == QueueItemStatus.converted ||
+            item.status == QueueItemStatus.skippedExisting,
+      );
       if (_selectedIndex != null && _selectedIndex! >= _queue.length) {
         _selectedIndex = _queue.isEmpty ? null : _queue.length - 1;
       }
@@ -776,21 +858,36 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _handleDrop(List<String> paths) {
+  Future<void> _handleDrop(List<String> paths) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     for (final path in paths) {
       if (!path.toLowerCase().endsWith('.heic')) continue;
       if (existing.contains(path)) continue;
-      final outputPath = _config.outputPathFor(path, fallbackDir: _androidOutputDir);
-      _queue.add(QueueItem(
-        id: _makeId(),
-        inputPath: path,
-        outputPath: outputPath,
-        outputPlanStatus: _computeOutputPlan(path, outputPath),
-      ));
-      existing.add(path);
-      added++;
+      try {
+        final classification = await XdRemuxService.classify(path);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          path,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
+        _queue.add(
+          QueueItem(
+            id: _makeId(),
+            inputPath: path,
+            outputPath: outputPath,
+            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            captureModeKey: classification['modeKey'] as String?,
+            captureModeFolderName: folderName,
+            classificationStatus: classification['status'] as String?,
+          ),
+        );
+        existing.add(path);
+        added++;
+      } catch (_) {
+        // Keep drag-and-drop responsive even if metadata classification fails.
+      }
     }
     if (added > 0) {
       _validateOutputPlans();
@@ -852,9 +949,11 @@ class _HomePageState extends State<HomePage> {
                 subtitle: const Text('DCIM/XDRemux'),
                 onTap: () async {
                   Navigator.pop(ctx);
-                  final hasAccess = await FileActionService.hasGalleryPermission();
+                  final hasAccess =
+                      await FileActionService.hasGalleryPermission();
                   if (!hasAccess) {
-                    final granted = await FileActionService.requestGalleryPermission();
+                    final granted =
+                        await FileActionService.requestGalleryPermission();
                     if (!granted) {
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -864,7 +963,9 @@ class _HomePageState extends State<HomePage> {
                       return;
                     }
                   }
-                  final ok = await FileActionService.saveToGallery(item.outputPath);
+                  final ok = await FileActionService.saveToGallery(
+                    item.outputPath,
+                  );
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(ok ? '已保存到图库' : '保存失败')),
@@ -896,11 +997,14 @@ class _HomePageState extends State<HomePage> {
                 onTap: () async {
                   Navigator.pop(ctx);
                   final dest = await FileActionService.copyToSourceDir(
-                    item.outputPath, item.inputPath);
+                    item.outputPath,
+                    item.inputPath,
+                  );
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(
-                        dest != null ? '已复制到: $dest' : '复制失败')),
+                      SnackBar(
+                        content: Text(dest != null ? '已复制到: $dest' : '复制失败'),
+                      ),
                     );
                   }
                 },
@@ -925,9 +1029,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final selectedItem = _selectedIndex != null && _selectedIndex! < _queue.length
-        ? _queue[_selectedIndex!]
-        : (_queue.isNotEmpty ? _queue.first : null);
+    final compact = MediaQuery.sizeOf(context).width < 600;
 
     return KeyboardListener(
       focusNode: _captureFocusNode,
@@ -935,73 +1037,173 @@ class _HomePageState extends State<HomePage> {
       child: RepaintBoundary(
         key: _rootKey,
         child: Scaffold(
-      appBar: AppBar(
-        title: Text(MediaQuery.of(context).size.width < 480 ? 'XDRemux' : 'XDRemux$_versionSuffix'),
-        backgroundColor: theme.colorScheme.inversePrimary,
-        actions: [
-          // Add files
-          IconButton(
-            icon: const Icon(Icons.add_photo_alternate),
-            tooltip: '添加 HEIC',
-            onPressed: _canEditQueue ? _addFiles : null,
-          ),
-          // Start conversion (icon-only on narrow screens)
-          _canStart
-              ? FilledButton.icon(
-                  icon: const Icon(Icons.play_arrow),
-                  label: MediaQuery.of(context).size.width < 480
-                      ? const SizedBox.shrink()
-                      : const Text('开始'),
-                  onPressed: _startConversion,
-                )
-              : const SizedBox.shrink(),
-          const SizedBox(width: 4),
-          // OPPO compatibility toggle
-          if (_canEditQueue)
-            _OppoCompatToggle(
-              mode: _config.oppoCompatibility,
-              onChanged: (v) {
-                setState(() => _config.oppoCompatibility = v);
-                _scheduleConfigSave();
-              },
+          appBar: _buildAppBar(theme, compact),
+          bottomNavigationBar: compact ? _buildMobileActionBar(theme) : null,
+          body: _buildDropTarget(
+            context,
+            Column(
+              children: [
+                _buildProgressBar(theme),
+                const Divider(height: 1),
+                Expanded(
+                  child: _queue.isEmpty
+                      ? _buildEmptyState(theme)
+                      : _buildQueueView(theme, compact),
+                ),
+                if (_queue.isNotEmpty && !compact) _buildFooter(theme),
+              ],
             ),
-          // Cancel
-          IconButton(
-            icon: const Icon(Icons.stop),
-            tooltip: '取消',
-            onPressed: _isProcessing ? _cancelConversion : null,
           ),
-          // Settings
-          IconButton(
-            icon: const Icon(Icons.tune),
-            tooltip: '设置',
-            onPressed: () => _openSettings(context),
-          ),
-          // Clear
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: '清空队列',
-            onPressed: _canEditQueue && _queue.isNotEmpty ? _clearQueue : null,
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: _buildDropTarget(
-        context,
-        Column(
-          children: [
-            // Progress bar
-            _buildProgressBar(theme),
-            const Divider(height: 1),
-            // Main content
-            Expanded(
-              child: _queue.isEmpty ? _buildEmptyState(theme) : _buildQueueView(theme, selectedItem),
-            ),
-            // Footer
-            if (_queue.isNotEmpty) _buildFooter(theme),
-          ],
         ),
       ),
+    );
+  }
+
+  AppBar _buildAppBar(ThemeData theme, bool compact) {
+    final actions = <Widget>[
+      if (!compact)
+        IconButton(
+          icon: const Icon(Icons.add_photo_alternate),
+          tooltip: '添加 HEIC',
+          onPressed: _canEditQueue ? _addFiles : null,
+        ),
+      if (!compact && _canStart)
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: FilledButton.icon(
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('开始'),
+            onPressed: _startConversion,
+          ),
+        ),
+      if (_canEditQueue)
+        Padding(
+          padding: EdgeInsets.only(left: compact ? 0 : 4),
+          child: _OppoCompatToggle(
+            mode: _config.oppoCompatibility,
+            onChanged: (mode) {
+              setState(() => _config.oppoCompatibility = mode);
+              _scheduleConfigSave();
+            },
+          ),
+        ),
+      if (!compact)
+        IconButton(
+          icon: const Icon(Icons.stop),
+          tooltip: '取消',
+          onPressed: _isProcessing ? _cancelConversion : null,
+        ),
+      IconButton(
+        icon: const Icon(Icons.tune),
+        tooltip: '设置',
+        onPressed: () => _openSettings(context),
+      ),
+      _buildQueueOverflowMenu(),
+      const SizedBox(width: 4),
+    ];
+
+    return AppBar(
+      titleSpacing: compact ? 16 : null,
+      title: compact ? const Text('XDRemux') : Text('XDRemux$_versionSuffix'),
+      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+      surfaceTintColor: Colors.transparent,
+      actions: actions,
+    );
+  }
+
+  Widget _buildQueueOverflowMenu() {
+    return PopupMenuButton<_QueueMenuAction>(
+      tooltip: '更多操作',
+      icon: const Icon(Icons.more_vert),
+      onSelected: (action) {
+        switch (action) {
+          case _QueueMenuAction.retryFailed:
+            _retryFailed();
+          case _QueueMenuAction.clearCompleted:
+            _clearCompleted();
+          case _QueueMenuAction.revealOutputs:
+            _revealOutputs();
+          case _QueueMenuAction.clearQueue:
+            _clearQueue();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: _QueueMenuAction.retryFailed,
+          enabled: _canEditQueue && _failedCount > 0,
+          child: const ListTile(
+            leading: Icon(Icons.refresh),
+            title: Text('重试失败项'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem(
+          value: _QueueMenuAction.clearCompleted,
+          enabled: _canEditQueue && (_convertedCount + _skippedCount) > 0,
+          child: const ListTile(
+            leading: Icon(Icons.checklist),
+            title: Text('清除已完成'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem(
+          value: _QueueMenuAction.revealOutputs,
+          enabled: _queue.any((item) => item.isSuccessful),
+          child: const ListTile(
+            leading: Icon(Icons.folder_open),
+            title: Text('打开输出目录'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: _QueueMenuAction.clearQueue,
+          enabled: _canEditQueue && _queue.isNotEmpty,
+          child: const ListTile(
+            leading: Icon(Icons.delete_outline),
+            title: Text('清空队列'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobileActionBar(ThemeData theme) {
+    final primaryLabel = _isProcessing ? '取消转换' : '开始转换';
+    final primaryIcon = _isProcessing
+        ? Icons.stop_circle_outlined
+        : Icons.play_arrow;
+    final primaryAction = _isProcessing
+        ? _cancelConversion
+        : (_canStart ? _startConversion : null);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(top: BorderSide(color: theme.dividerColor)),
+      ),
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text('添加文件'),
+                onPressed: _canEditQueue ? _addFiles : null,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                icon: Icon(primaryIcon),
+                label: Text(primaryLabel),
+                onPressed: primaryAction,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1010,7 +1212,8 @@ class _HomePageState extends State<HomePage> {
   /// Save a PNG screenshot of the app window to the project screenshots dir.
   Future<void> _captureScreenshot() async {
     try {
-      final boundary = _rootKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      final boundary =
+          _rootKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
       final image = await boundary.toImage(pixelRatio: 1.0);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -1043,11 +1246,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildProgressBar(ThemeData theme) {
-    final currentItem = _queue.where((i) => i.status == QueueItemStatus.running).firstOrNull;
+    final currentItem = _queue
+        .where((i) => i.status == QueueItemStatus.running)
+        .firstOrNull;
     final narrow = MediaQuery.of(context).size.width < 480;
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
-      padding: EdgeInsets.symmetric(horizontal: narrow ? 12 : 16, vertical: narrow ? 8 : 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: narrow ? 12 : 16,
+        vertical: narrow ? 8 : 12,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1070,9 +1278,12 @@ class _HomePageState extends State<HomePage> {
                   maxLines: 1,
                 ),
               ),
-              Text('$_processedCount/$_totalFiles',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(fontFamily: 'monospace')),
+              Text(
+                '$_processedCount/$_totalFiles',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -1138,71 +1349,180 @@ class _HomePageState extends State<HomePage> {
         color: color.withAlpha(30),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text('$label $count',
-          style: TextStyle(
-              fontSize: 11, color: color, fontWeight: FontWeight.w600)),
+      child: Text(
+        '$label $count',
+        style: TextStyle(
+          fontSize: 11,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 
   Widget _buildEmptyState(ThemeData theme) {
     final isAndroid = Platform.isAndroid;
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return Center(
-      child: Card(
-        margin: const EdgeInsets.all(24),
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.cloud_upload_outlined,
-                  size: 64, color: theme.colorScheme.primary.withAlpha(150)),
-              const SizedBox(height: 16),
-              Text(
-                isAndroid ? '添加 HEIC 文件' : '拖拽 HEIC 文件到窗口',
-                style: theme.textTheme.titleMedium,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(compact ? 20 : 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Card(
+            color: theme.colorScheme.surface,
+            child: Padding(
+              padding: EdgeInsets.all(compact ? 24 : 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: compact ? 72 : 88,
+                    height: compact ? 72 : 88,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Icon(
+                      Icons.auto_awesome,
+                      size: compact ? 36 : 44,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 20 : 24),
+                  Text(
+                    '让 ProXDR HEIC 更容易分享',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    isAndroid
+                        ? '选择 OPPO / OnePlus / realme 的 HEIC，转换为通用 HDR 格式。'
+                        : '拖拽 HEIC 到窗口，或选择文件后转换为通用 HDR 格式。',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.45,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.add_photo_alternate_outlined),
+                    label: const Text('添加文件'),
+                    onPressed: _addFiles,
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: const [
+                      _FeatureChip(icon: Icons.shield_outlined, label: '本地处理'),
+                      _FeatureChip(
+                        icon: Icons.hdr_on_outlined,
+                        label: '保留 HDR',
+                      ),
+                      _FeatureChip(
+                        icon: Icons.batch_prediction_outlined,
+                        label: '支持批量',
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text('将 OPPO / OnePlus / realme 拍摄的 ProXDR HEIC\n转换为 ISO 21496-1 HDR HEIC',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('添加文件'),
-                onPressed: _addFiles,
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildQueueView(ThemeData theme, QueueItem? selectedItem) {
-    return _buildPhotoGrid(theme);
+  Widget _buildQueueView(ThemeData theme, bool compact) {
+    return compact ? _buildMobileQueue(theme) : _buildPhotoGrid(theme);
+  }
+
+  Widget _buildMobileQueue(ThemeData theme) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
+      itemCount: _queue.length + 1,
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 2),
+            child: Row(
+              children: [
+                Text(
+                  '转换队列',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_queue.length} 个文件',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final itemIndex = index - 1;
+        final item = _queue[itemIndex];
+        return _MobileQueueCard(
+          item: item,
+          isSelected: itemIndex == _selectedIndex,
+          onTap: () {
+            setState(() => _selectedIndex = itemIndex);
+            _showItemDetail(item);
+          },
+          onRevealOutput: () {
+            if (Platform.isAndroid) {
+              _showOutputActions(item);
+            } else {
+              _revealInExplorer(item.outputPath);
+            }
+          },
+          onRetry: _retryFailed,
+          onRemove: () => _removeItem(itemIndex),
+        );
+      },
+    );
   }
 
   Widget _buildPhotoGrid(ThemeData theme) {
     if (_queue.isEmpty) {
       return Center(
-        child: Text('选择队列项目查看详情',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        child: Text(
+          '选择队列项目查看详情',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
       );
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Responsive columns: 2 on narrow phones, 3 on wider screens.
-        final crossAxisCount = constraints.maxWidth < 480 ? 2 : 3;
+        final crossAxisCount = constraints.maxWidth >= 1500
+            ? 5
+            : constraints.maxWidth >= 1120
+            ? 4
+            : constraints.maxWidth >= 800
+            ? 3
+            : 2;
         return GridView.builder(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.85,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: 0.9,
           ),
           itemCount: _queue.length,
           itemBuilder: (context, index) {
@@ -1231,10 +1551,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showItemDetail(QueueItem item) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      constraints: BoxConstraints(maxWidth: compact ? double.infinity : 720),
       builder: (ctx) => _ItemDetailSheet(
         item: item,
         revealInput: () => _revealInExplorer(item.inputPath),
@@ -1256,11 +1578,12 @@ class _HomePageState extends State<HomePage> {
             Expanded(
               child: Text(
                 _queue.reversed
-                        .where((item) => item.status == QueueItemStatus.failed)
-                        .take(3)
-                        .map((item) =>
-                            '${item.fileName}: ${item.errorMessage ?? '?'}')
-                        .join(' | '),
+                    .where((item) => item.status == QueueItemStatus.failed)
+                    .take(3)
+                    .map(
+                      (item) => '${item.fileName}: ${item.errorMessage ?? '?'}',
+                    )
+                    .join(' | '),
                 style: theme.textTheme.labelSmall?.copyWith(color: Colors.red),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -1275,8 +1598,7 @@ class _HomePageState extends State<HomePage> {
           TextButton.icon(
             icon: const Icon(Icons.checklist, size: 16),
             label: narrow ? const SizedBox.shrink() : const Text('清除已完成'),
-            onPressed: _canEditQueue &&
-                    (_convertedCount + _skippedCount) > 0
+            onPressed: _canEditQueue && (_convertedCount + _skippedCount) > 0
                 ? _clearCompleted
                 : null,
           ),
@@ -1294,10 +1616,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openSettings(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      constraints: BoxConstraints(maxWidth: compact ? double.infinity : 720),
       builder: (ctx) => _SettingsSheet(
         config: _config,
         onChanged: () {
@@ -1352,8 +1676,11 @@ class _ExpandableErrorState extends State<_ExpandableError> {
                     overflow: _expanded ? null : TextOverflow.ellipsis,
                   ),
                 ),
-                Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16, color: Colors.red),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: Colors.red,
+                ),
               ],
             ),
             if (_expanded) ...[
@@ -1373,8 +1700,13 @@ class _ExpandableErrorState extends State<_ExpandableError> {
                   children: [
                     Icon(Icons.copy, size: 12, color: Colors.red.shade300),
                     const SizedBox(width: 4),
-                    Text('复制错误信息',
-                        style: TextStyle(fontSize: 11, color: Colors.red.shade300)),
+                    Text(
+                      '复制错误信息',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.red.shade300,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1438,16 +1770,24 @@ class _OutputPreview extends StatelessWidget {
       }
     }
 
-    final ffmpegPaths = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
+    final ffmpegPaths = [
+      'ffmpeg',
+      '/opt/homebrew/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+    ];
     for (final ffmpeg in ffmpegPaths) {
       if (!File(ffmpeg).existsSync()) continue;
       try {
         final result = await Process.run(ffmpeg, [
           '-y',
-          '-i', outputPath,
-          '-vf', 'scale=min(320,iw):min(320,ih):force_original_aspect_ratio=decrease',
-          '-f', 'image2pipe',
-          '-c:v', 'png',
+          '-i',
+          outputPath,
+          '-vf',
+          'scale=min(320,iw):min(320,ih):force_original_aspect_ratio=decrease',
+          '-f',
+          'image2pipe',
+          '-c:v',
+          'png',
           'pipe:1',
         ]);
         if (result.exitCode == 0 && result.stdout is List<int>) {
@@ -1473,9 +1813,14 @@ class _StatusChip extends StatelessWidget {
         color: color.withAlpha(30),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(label,
-          style: TextStyle(
-              fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -1495,10 +1840,14 @@ class _DetailRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-              width: 80,
-              child: Text(label,
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
+            width: 80,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
           Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
         ],
       ),
@@ -1523,9 +1872,12 @@ class _DetailPathRow extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(label,
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
               const Spacer(),
               InkWell(
                 onTap: onReveal,
@@ -1534,10 +1886,12 @@ class _DetailPathRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 2),
-          Text(path,
-              style: theme.textTheme.bodySmall,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis),
+          Text(
+            path,
+            style: theme.textTheme.bodySmall,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
       ),
     );
@@ -1629,9 +1983,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.family = _cfg.family;
     widget.config.outputDirectory = _cfg.outputDirectory;
     widget.config.oppoCompatibility = _cfg.oppoCompatibility;
+    widget.config.oppoCameraTail = _cfg.oppoCameraTail;
+    widget.config.strictTmap = _cfg.strictTmap;
     widget.config.skipExisting = _cfg.skipExisting;
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
     widget.config.fileNameSuffix = _cfg.fileNameSuffix;
+    widget.config.categorizeOutputByMode = _cfg.categorizeOutputByMode;
     widget.onChanged();
     setState(() {});
   }
@@ -1649,168 +2006,521 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final compact = MediaQuery.sizeOf(context).width < 600;
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('转换设置', style: theme.textTheme.titleLarge),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
+    return SizedBox(
+      height: compact ? MediaQuery.sizeOf(context).height * 0.9 : null,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          compact ? 20 : 28,
+          compact ? 10 : 28,
+          compact ? 20 : 28,
+          compact ? 16 : 28,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (compact)
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurfaceVariant.withAlpha(90),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Flexible(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Family
-                  Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  SegmentedButton<Family>(
-                    segments: Family.values
-                        .map((f) => ButtonSegment<Family>(
-                            value: f, label: Text(f.appTitle)))
-                        .toList(),
-                    selected: {_cfg.family},
-                    onSelectionChanged: (v) {
-                      setState(() => _cfg.family = v.first);
-                      _emit();
-                    },
-                  ),
-                  const SizedBox(height: 4),
-                  Text('Auto 自动检测 X6/X7 设备族。',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  const SizedBox(height: 20),
+            Row(
+              children: [
+                Text('转换设置', style: theme.textTheme.titleLarge),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Family
+                    Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    SegmentedButton<Family>(
+                      segments: Family.values
+                          .map(
+                            (f) => ButtonSegment<Family>(
+                              value: f,
+                              label: Text(f.appTitle),
+                            ),
+                          )
+                          .toList(),
+                      selected: {_cfg.family},
+                      onSelectionChanged: (v) {
+                        setState(() => _cfg.family = v.first);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Auto 自动检测 X6/X7 设备族。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
 
-                  // Output directory
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _cfg.outputDirectory ?? '使用源文件目录',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: _cfg.outputDirectory == null
-                                ? theme.colorScheme.onSurfaceVariant
-                                : null,
+                    // Output directory
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _cfg.outputDirectory ?? '使用源文件目录',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: _cfg.outputDirectory == null
+                                  ? theme.colorScheme.onSurfaceVariant
+                                  : null,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          overflow: TextOverflow.ellipsis,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.folder_open),
+                          tooltip: '选择目录',
+                          onPressed: _chooseDirectory,
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.clear),
+                          tooltip: '清除',
+                          onPressed: _cfg.outputDirectory != null
+                              ? () {
+                                  setState(() => _cfg.outputDirectory = null);
+                                  _emit();
+                                }
+                              : null,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('按拍摄模式分目录输出'),
+                      subtitle: const Text('将已识别的照片写入“大师模式 / 人像 / 夜景”等子目录。'),
+                      value: _cfg.categorizeOutputByMode,
+                      onChanged: (value) {
+                        setState(() => _cfg.categorizeOutputByMode = value);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    DropdownButtonFormField<OppoCompatMode>(
+                      initialValue: _cfg.oppoCompatibility,
+                      decoration: const InputDecoration(
+                        labelText: 'OPPO 兼容模式',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: OppoCompatMode.values
+                          .map(
+                            (mode) => DropdownMenuItem(
+                              value: mode,
+                              child: Text(mode.appTitle),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (mode) {
+                        if (mode == null) return;
+                        setState(() => _cfg.oppoCompatibility = mode);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _cfg.oppoCompatibility.appHelp,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    DropdownButtonFormField<OppoCameraTailMode>(
+                      initialValue: _cfg.oppoCameraTail,
+                      decoration: const InputDecoration(
+                        labelText: 'OPPO 相机尾部元数据',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: OppoCameraTailMode.values
+                          .map(
+                            (mode) => DropdownMenuItem(
+                              value: mode,
+                              child: Text(mode.appTitle),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (mode) {
+                        if (mode == null) return;
+                        setState(() => _cfg.oppoCameraTail = mode);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _cfg.oppoCameraTail.appHelp,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('使用严格 ISO tmap'),
+                      subtitle: const Text(
+                        '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
+                      ),
+                      value: _cfg.strictTmap,
+                      onChanged: (value) {
+                        setState(() => _cfg.strictTmap = value);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Advanced settings (collapsible)
+                    ExpansionTile(
+                      title: Text(
+                        '高级',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.folder_open),
-                        tooltip: '选择目录',
-                        onPressed: _chooseDirectory,
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.clear),
-                        tooltip: '清除',
-                        onPressed: _cfg.outputDirectory != null
-                            ? () {
-                                setState(() => _cfg.outputDirectory = null);
-                                _emit();
-                              }
-                            : null,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Advanced settings (collapsible)
-                  ExpansionTile(
-                    title: Text('高级',
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w600)),
-                    tilePadding: EdgeInsets.zero,
-                    initiallyExpanded: false,
-                    childrenPadding: const EdgeInsets.only(top: 8),
-                    children: [
-                      // Skip existing
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('跳过已有有效输出'),
-                        subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
-                        value: _cfg.skipExisting,
-                        dense: true,
-                        onChanged: (v) {
-                          setState(() => _cfg.skipExisting = v);
-                          _emit();
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Concurrency
-                      Row(
-                        children: [
-                          Text('最大并行数', style: theme.textTheme.bodyLarge),
-                          const Spacer(),
-                          IconButton(
-                            icon: const Icon(Icons.remove),
-                            onPressed: _cfg.maxConcurrentJobs > 1
-                                ? () {
-                                    setState(() => _cfg.maxConcurrentJobs--);
-                                    _emit();
-                                  }
-                                : null,
-                          ),
-                          Text('${_cfg.maxConcurrentJobs}',
-                              style: theme.textTheme.titleMedium
-                                  ?.copyWith(fontFamily: 'monospace')),
-                          IconButton(
-                            icon: const Icon(Icons.add),
-                            onPressed: _cfg.maxConcurrentJobs < 4
-                                ? () {
-                                    setState(() => _cfg.maxConcurrentJobs++);
-                                    _emit();
-                                  }
-                                : null,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-
-                      // File name suffix
-                      TextField(
-                        decoration: const InputDecoration(
-                          labelText: '输出文件名后缀',
-                          hintText: '_iso',
-                          border: OutlineInputBorder(),
-                          isDense: true,
+                      tilePadding: EdgeInsets.zero,
+                      initiallyExpanded: false,
+                      childrenPadding: const EdgeInsets.only(top: 8),
+                      children: [
+                        // Skip existing
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('跳过已有有效输出'),
+                          subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
+                          value: _cfg.skipExisting,
+                          dense: true,
+                          onChanged: (v) {
+                            setState(() => _cfg.skipExisting = v);
+                            _emit();
+                          },
                         ),
-                        enabled: _cfg.outputDirectory == null,
-                        controller: TextEditingController(text: _cfg.fileNameSuffix),
-                        onChanged: (v) {
-                          _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
-                          _emit();
-                        },
-                      ),
-                      const SizedBox(height: 4),
-                      Text('设置输出目录后，后缀将被忽略。',
-                          style: theme.textTheme.bodySmall
-                              ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                  ),
-                ],
+                        const SizedBox(height: 12),
+
+                        // Concurrency
+                        Row(
+                          children: [
+                            Text('最大并行数', style: theme.textTheme.bodyLarge),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.remove),
+                              onPressed: _cfg.maxConcurrentJobs > 1
+                                  ? () {
+                                      setState(() => _cfg.maxConcurrentJobs--);
+                                      _emit();
+                                    }
+                                  : null,
+                            ),
+                            Text(
+                              '${_cfg.maxConcurrentJobs}',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add),
+                              onPressed: _cfg.maxConcurrentJobs < 4
+                                  ? () {
+                                      setState(() => _cfg.maxConcurrentJobs++);
+                                      _emit();
+                                    }
+                                  : null,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+
+                        // File name suffix
+                        TextField(
+                          decoration: const InputDecoration(
+                            labelText: '输出文件名后缀',
+                            hintText: '_iso',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          enabled: _cfg.outputDirectory == null,
+                          controller: TextEditingController(
+                            text: _cfg.fileNameSuffix,
+                          ),
+                          onChanged: (v) {
+                            _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '设置输出目录后，后缀将被忽略。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
 // ============================================================================
-// Photo card (grid cell)
+// Queue cards
+// ============================================================================
+
+class _FeatureChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _FeatureChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 5),
+          Text(label, style: theme.textTheme.labelMedium),
+        ],
+      ),
+    );
+  }
+}
+
+class _MobileQueueCard extends StatelessWidget {
+  final QueueItem item;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final VoidCallback onRevealOutput;
+  final VoidCallback onRetry;
+  final VoidCallback onRemove;
+
+  const _MobileQueueCard({
+    required this.item,
+    required this.isSelected,
+    required this.onTap,
+    required this.onRevealOutput,
+    required this.onRetry,
+    required this.onRemove,
+  });
+
+  Color _statusColor(ThemeData theme) {
+    return switch (item.status) {
+      QueueItemStatus.converted => Colors.green.shade700,
+      QueueItemStatus.failed => theme.colorScheme.error,
+      QueueItemStatus.running => theme.colorScheme.primary,
+      QueueItemStatus.skippedExisting ||
+      QueueItemStatus.cancelled => theme.colorScheme.onSurfaceVariant,
+      QueueItemStatus.pending => Colors.orange.shade800,
+    };
+  }
+
+  String get _supportingText {
+    if (item.status == QueueItemStatus.running) {
+      return item.progressLabel.isEmpty ? '正在准备转换…' : item.progressLabel;
+    }
+    if (item.status == QueueItemStatus.failed) {
+      return item.errorMessage ?? '转换未完成，轻触查看详情。';
+    }
+    if (item.isSuccessful) return item.outputPlanStatus.displayName;
+    return item.outputPlanStatus.blocksConversion
+        ? item.outputPlanStatus.displayName
+        : item.classificationLabel;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final statusColor = _statusColor(theme);
+    final canRetry =
+        item.status == QueueItemStatus.failed ||
+        item.status == QueueItemStatus.cancelled;
+
+    return Card(
+      color: isSelected
+          ? theme.colorScheme.secondaryContainer.withAlpha(150)
+          : theme.colorScheme.surface,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: isSelected
+            ? BorderSide(color: theme.colorScheme.primary, width: 1.5)
+            : BorderSide(color: theme.dividerColor.withAlpha(90)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 76,
+                height: 76,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: _ThumbnailWidget(inputPath: item.inputPath),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.fileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _MobileStatusPill(
+                          label: item.status.displayName,
+                          color: statusColor,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      item.captureModeLabel ?? item.classificationLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      _supportingText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: item.status == QueueItemStatus.failed
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<_MobileQueueAction>(
+                tooltip: '项目操作',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (action) {
+                  switch (action) {
+                    case _MobileQueueAction.revealOutput:
+                      onRevealOutput();
+                    case _MobileQueueAction.retry:
+                      onRetry();
+                    case _MobileQueueAction.remove:
+                      onRemove();
+                  }
+                },
+                itemBuilder: (context) => [
+                  if (item.isSuccessful)
+                    const PopupMenuItem(
+                      value: _MobileQueueAction.revealOutput,
+                      child: ListTile(
+                        leading: Icon(Icons.folder_open),
+                        title: Text('查看输出文件'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  if (canRetry)
+                    const PopupMenuItem(
+                      value: _MobileQueueAction.retry,
+                      child: ListTile(
+                        leading: Icon(Icons.refresh),
+                        title: Text('重新尝试'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  const PopupMenuItem(
+                    value: _MobileQueueAction.remove,
+                    child: ListTile(
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('移出队列'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _MobileQueueAction { revealOutput, retry, remove }
+
+class _MobileStatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _MobileStatusPill({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(24),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Desktop photo card (grid cell)
 // ============================================================================
 
 class _PhotoCard extends StatelessWidget {
@@ -1862,6 +2572,29 @@ class _PhotoCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   _ThumbnailWidget(inputPath: item.inputPath),
+                  if (item.captureModeLabel != null)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(160),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          item.captureModeLabel!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (isRunning)
                     _OverlayBadge(
                       icon: Icons.bolt,
@@ -1902,8 +2635,10 @@ class _PhotoCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       item.fileName,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(fontWeight: FontWeight.w500, fontSize: 11),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        fontSize: 11,
+                      ),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                     ),
@@ -1954,8 +2689,7 @@ class _ThumbnailWidget extends StatelessWidget {
     return FutureBuilder<Uint8List?>(
       future: _PhotoCard._thumbCache.containsKey(inputPath)
           ? Future.value(_PhotoCard._thumbCache[inputPath])
-          : XdRemuxService.getThumbnail(inputPath, maxPixelSize: 256)
-              .then((t) {
+          : XdRemuxService.getThumbnail(inputPath, maxPixelSize: 256).then((t) {
               _PhotoCard._thumbCache[inputPath] = t;
               return t;
             }),
@@ -2041,23 +2775,44 @@ class _ItemDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final compact = MediaQuery.sizeOf(context).width < 600;
 
     return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.4,
-      maxChildSize: 0.9,
+      initialChildSize: compact ? 0.82 : 0.6,
+      minChildSize: compact ? 0.58 : 0.4,
+      maxChildSize: 0.94,
       expand: false,
       builder: (ctx, scrollController) {
         return SingleChildScrollView(
           controller: scrollController,
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.fromLTRB(
+            compact ? 20 : 28,
+            compact ? 10 : 28,
+            compact ? 20 : 28,
+            28,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (compact)
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurfaceVariant.withAlpha(90),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(
-                    child: Text(item.fileName, style: theme.textTheme.titleLarge),
+                    child: Text(
+                      item.fileName,
+                      style: theme.textTheme.titleLarge,
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
@@ -2071,17 +2826,25 @@ class _ItemDetailSheet extends StatelessWidget {
                 runSpacing: 4,
                 children: [
                   _StatusChip(
-                      label: item.status.displayName,
-                      color: item.status == QueueItemStatus.converted
-                          ? Colors.green
-                          : item.status == QueueItemStatus.failed
-                              ? Colors.red
-                              : Colors.grey),
+                    label: item.status.displayName,
+                    color: item.status == QueueItemStatus.converted
+                        ? Colors.green
+                        : item.status == QueueItemStatus.failed
+                        ? Colors.red
+                        : Colors.grey,
+                  ),
                   _StatusChip(
-                      label: item.outputPlanStatus.displayName,
-                      color: item.outputPlanStatus.blocksConversion
-                          ? Colors.red
-                          : Colors.orange.shade300),
+                    label: item.outputPlanStatus.displayName,
+                    color: item.outputPlanStatus.blocksConversion
+                        ? Colors.red
+                        : Colors.orange.shade300,
+                  ),
+                  if (item.classificationStatus != null ||
+                      item.captureModeLabel != null)
+                    _StatusChip(
+                      label: item.classificationLabel,
+                      color: Colors.deepPurple,
+                    ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -2114,10 +2877,14 @@ class _ItemDetailSheet extends StatelessWidget {
               _DetailRow('输出计划', item.outputPlanStatus.displayName),
               if (item.startedAt != null)
                 _DetailRow(
-                    '开始', '${item.startedAt!.hour.toString().padLeft(2, '0')}:${item.startedAt!.minute.toString().padLeft(2, '0')}:${item.startedAt!.second.toString().padLeft(2, '0')}'),
+                  '开始',
+                  '${item.startedAt!.hour.toString().padLeft(2, '0')}:${item.startedAt!.minute.toString().padLeft(2, '0')}:${item.startedAt!.second.toString().padLeft(2, '0')}',
+                ),
               if (item.finishedAt != null)
                 _DetailRow(
-                    '结束', '${item.finishedAt!.hour.toString().padLeft(2, '0')}:${item.finishedAt!.minute.toString().padLeft(2, '0')}:${item.finishedAt!.second.toString().padLeft(2, '0')}'),
+                  '结束',
+                  '${item.finishedAt!.hour.toString().padLeft(2, '0')}:${item.finishedAt!.minute.toString().padLeft(2, '0')}:${item.finishedAt!.second.toString().padLeft(2, '0')}',
+                ),
               if (item.duration != null)
                 _DetailRow('耗时', '${item.duration!.inMilliseconds / 1000} 秒'),
               _DetailPathRow('输入路径', item.inputPath, revealInput),
@@ -2173,8 +2940,9 @@ class _ResumeCheckpointDialog extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             '是否恢复并继续转换未完成的文件？',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -2201,7 +2969,11 @@ class _ResumeCheckpointDialog extends StatelessWidget {
       ),
       child: Text(
         '$label $count',
-        style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 12,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

@@ -2,15 +2,16 @@
 //!
 //! Exposes a small C FFI surface consumed by Flutter via `dart:ffi`.
 
+pub mod categorize;
 pub mod container;
 pub mod edr;
 pub mod exif;
 pub mod gainmap;
+pub mod hevc;
 pub mod iso21496;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
-pub mod hevc;
 pub mod progress;
 
 #[cfg(target_os = "android")]
@@ -19,6 +20,7 @@ pub mod x265_ffi;
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
 
+use container::OppoCameraTail;
 use exif::OppoCompat;
 
 /// Opaque result struct returned to Dart. Dart must call `xdremux_free_result`.
@@ -32,13 +34,34 @@ pub struct ConversionResult {
     pub error_message: *mut c_char,
 }
 
+/// Capture-mode result returned to Dart by `xdremux_classify`.
+/// All string pointers are owned by Rust and must be released with
+/// `xdremux_free_classification_result`.
+#[repr(C)]
+pub struct ClassificationResult {
+    pub mode_key: *mut c_char,
+    pub folder_name: *mut c_char,
+    pub status: *mut c_char,
+    pub raw_user_comment: *mut c_char,
+    pub has_tag_flags: bool,
+    pub tag_flags: u64,
+    pub unknown_flags: u64,
+}
+
 /// Configuration for conversion.
 ///
 /// Fields match the Swift `OppoCompatibility` enum:
-/// - `oppo_compat`: 0=off, 1=auto, 2=on, 3=tail (alias for on)
+/// - `oppo_compat`: 0=off, 1=auto, 2=on, 3=tail, 4=iso,
+///   5=iso-no-local, 6=iso-graph
+/// - `oppo_camera_tail`: 0=off through 9=preserve-no-hdr;
+///   255 selects the compatibility-dependent default.
+/// - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
+///   ISO 21496-1 65/145-byte payload.
 #[repr(C)]
 pub struct ConvertConfig {
     pub oppo_compat: u8,
+    pub oppo_camera_tail: u8,
+    pub strict_tmap: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +103,63 @@ pub extern "C" fn xdremux_read_progress(buf: *mut u32) {
         *buf = stage;
         *buf.add(1) = current;
         *buf.add(2) = total;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FFI: capture-mode classification
+// ---------------------------------------------------------------------------
+
+fn ffi_string(value: Option<&str>) -> *mut c_char {
+    value
+        .and_then(|text| CString::new(text).ok())
+        .map(CString::into_raw)
+        .unwrap_or(ptr::null_mut())
+}
+
+fn classification_result(classification: categorize::Classification) -> ClassificationResult {
+    let mode = classification.mode;
+    ClassificationResult {
+        mode_key: ffi_string(mode.map(|value| value.key())),
+        folder_name: ffi_string(mode.map(|value| value.folder_name())),
+        status: ffi_string(Some(classification.status.as_str())),
+        raw_user_comment: ffi_string(classification.raw_user_comment.as_deref()),
+        has_tag_flags: classification.tag_flags.is_some(),
+        tag_flags: classification.tag_flags.unwrap_or(0),
+        unknown_flags: classification.unknown_flags,
+    }
+}
+
+/// Classify one image into an OPPO/OnePlus capture mode.
+///
+/// The result always contains a status. `mode_key` and `folder_name` are null
+/// for unreadable, missing, malformed, or unknown-only UserComment metadata.
+#[no_mangle]
+pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationResult {
+    if input_path.is_null() {
+        return classification_result(categorize::classify_path(""));
+    }
+    let classification = unsafe { CStr::from_ptr(input_path) }
+        .to_str()
+        .map(categorize::classify_path)
+        .unwrap_or_else(|_| categorize::classify_path(""));
+    classification_result(classification)
+}
+
+/// Free a `ClassificationResult` previously returned by `xdremux_classify`.
+#[no_mangle]
+pub extern "C" fn xdremux_free_classification_result(result: ClassificationResult) {
+    for value in [
+        result.mode_key,
+        result.folder_name,
+        result.status,
+        result.raw_user_comment,
+    ] {
+        if !value.is_null() {
+            unsafe {
+                drop(CString::from_raw(value));
+            }
+        }
     }
 }
 
@@ -126,11 +206,17 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
                     1.0
                 };
                 let ratio_max = if extracted.meta_floats.len() >= 7 {
-                    extracted.meta_floats[4].max(extracted.meta_floats[5]).max(extracted.meta_floats[6])
+                    extracted.meta_floats[4]
+                        .max(extracted.meta_floats[5])
+                        .max(extracted.meta_floats[6])
                 } else {
                     1.0
                 };
-                let gm_max = if ratio_max > 0.0 { ratio_max.log2() } else { 0.0 };
+                let gm_max = if ratio_max > 0.0 {
+                    ratio_max.log2()
+                } else {
+                    0.0
+                };
                 (scale as f64, gm_max as f64)
             } else {
                 let edr = edr::edr_scale_calculator(&extracted.meta_floats);
@@ -170,7 +256,7 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
 
 /// Convert a single ProXDR HEIC file to ISO 21496-1 HDR HEIC.
 ///
-/// `config` can be null (treated as `oppo_compat=0` / off).
+/// `config` can be null (treated as clean ISO with its legacy tail policy).
 /// Returns a [ConversionResult] that the caller must free.
 #[no_mangle]
 pub extern "C" fn xdremux_convert(
@@ -178,10 +264,21 @@ pub extern "C" fn xdremux_convert(
     output_path: *const c_char,
     config: *const ConvertConfig,
 ) -> ConversionResult {
-    let oppo_compat = if config.is_null() {
-        OppoCompat::Off
+    let (oppo_compat, oppo_camera_tail, strict_tmap) = if config.is_null() {
+        let oppo_compat = OppoCompat::Off;
+        (
+            oppo_compat,
+            OppoCameraTail::default_for_compat(oppo_compat),
+            false,
+        )
     } else {
-        OppoCompat::from_u8(unsafe { (*config).oppo_compat })
+        let oppo_compat = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
+        let tail_value = unsafe { (*config).oppo_camera_tail };
+        (
+            oppo_compat,
+            OppoCameraTail::resolve(tail_value, oppo_compat),
+            unsafe { (*config).strict_tmap != 0 },
+        )
     };
 
     let input = match unsafe { CStr::from_ptr(input_path) }.to_str() {
@@ -215,22 +312,8 @@ pub extern "C" fn xdremux_convert(
         }
     };
 
-    // 1. Extract from source
-    let extracted = match container::extract_lhdr(input) {
-        Ok(e) => e,
-        Err(e) => {
-            return ConversionResult {
-                success: false,
-                mode: ptr::null_mut(),
-                family: ptr::null_mut(),
-                edr_scale: 0.0,
-                gain_map_max: 0.0,
-                error_message: CString::new(e).unwrap().into_raw(),
-            };
-        }
-    };
-
-    // 2. Read source HEIC bytes (needed by both paths)
+    // 1. Read source HEIC bytes before parsing. This permits a clear rejection
+    // for already-lossy ISO inputs instead of attempting an invalid promotion.
     let source = match std::fs::read(input) {
         Ok(d) => d,
         Err(e) => {
@@ -247,6 +330,32 @@ pub extern "C" fn xdremux_convert(
         }
     };
 
+    if let Err(error) = reject_lossy_gainmap_promotion(&source, oppo_compat) {
+        return ConversionResult {
+            success: false,
+            mode: ptr::null_mut(),
+            family: ptr::null_mut(),
+            edr_scale: 0.0,
+            gain_map_max: 0.0,
+            error_message: CString::new(error).unwrap().into_raw(),
+        };
+    }
+
+    // 2. Extract source metadata from the already-read bytes.
+    let extracted = match container::extract_lhdr_from_bytes(&source) {
+        Ok(e) => e,
+        Err(e) => {
+            return ConversionResult {
+                success: false,
+                mode: ptr::null_mut(),
+                family: ptr::null_mut(),
+                edr_scale: 0.0,
+                gain_map_max: 0.0,
+                error_message: CString::new(e).unwrap().into_raw(),
+            };
+        }
+    };
+
     let family = if extracted.meta_floats[0] >= 3.0 || extracted.mode == "uhdr" {
         "x7"
     } else {
@@ -255,9 +364,23 @@ pub extern "C" fn xdremux_convert(
 
     // 3. Route to UHDR or LHDR path
     let result = if extracted.mode == "uhdr" {
-        convert_uhdr(&extracted, &source, output, oppo_compat)
+        convert_uhdr(
+            &extracted,
+            &source,
+            output,
+            oppo_compat,
+            oppo_camera_tail,
+            strict_tmap,
+        )
     } else {
-        convert_lhdr(&extracted, &source, output, oppo_compat)
+        convert_lhdr(
+            &extracted,
+            &source,
+            output,
+            oppo_compat,
+            oppo_camera_tail,
+            strict_tmap,
+        )
     };
 
     match result {
@@ -280,17 +403,40 @@ pub extern "C" fn xdremux_convert(
     }
 }
 
+fn reject_lossy_gainmap_promotion(source: &[u8], oppo_compat: OppoCompat) -> Result<(), String> {
+    if should_reject_lossy_gainmap_promotion(
+        isobmff::has_lossy_iso_gainmap_420(source),
+        oppo_compat,
+    ) {
+        return Err(
+            "cannot promote an existing 4:2:0 gain map to high-spec 4:4:4 because chroma information has already been discarded".into(),
+        );
+    }
+    Ok(())
+}
+
+const fn should_reject_lossy_gainmap_promotion(
+    has_lossy_gainmap: bool,
+    oppo_compat: OppoCompat,
+) -> bool {
+    has_lossy_gainmap && !oppo_compat.wants_oppo_compat()
+}
+
 fn convert_lhdr(
     extracted: &container::ExtractedLhdr,
     source: &[u8],
     output: &str,
     oppo_compat: OppoCompat,
+    oppo_camera_tail: OppoCameraTail,
+    strict_tmap: bool,
 ) -> Result<(f32, f32), String> {
     progress::set_progress(1, 0, 0); // extract
 
     let edr = edr::edr_scale_calculator(&extracted.meta_floats);
 
-    let mask_data = extracted.mask_data.as_ref()
+    let mask_data = extracted
+        .mask_data
+        .as_ref()
         .ok_or_else(|| "no mask JPEG in extracted LHDR data".to_string())?;
 
     progress::set_progress(2, 0, 0); // decode JPEG
@@ -299,8 +445,16 @@ fn convert_lhdr(
 
     progress::set_progress(4, 1, 1); // assemble
     isobmff_write::write_lhdr_iso_output(
-        source, &mask_pixels, mask_w, mask_h,
-        &extracted.meta_floats, edr, oppo_compat, output,
+        source,
+        &mask_pixels,
+        mask_w,
+        mask_h,
+        &extracted.meta_floats,
+        edr,
+        oppo_compat,
+        oppo_camera_tail,
+        strict_tmap,
+        output,
     )?;
 
     progress::set_progress(0, 0, 0); // done
@@ -313,17 +467,27 @@ fn convert_uhdr(
     source: &[u8],
     output: &str,
     oppo_compat: OppoCompat,
+    oppo_camera_tail: OppoCameraTail,
+    strict_tmap: bool,
 ) -> Result<(f32, f32), String> {
     progress::set_progress(1, 0, 0); // extract
 
-    let gainmap_jpeg = extracted.gainmap_data.as_ref()
+    let gainmap_jpeg = extracted
+        .gainmap_data
+        .as_ref()
         .ok_or_else(|| "no gainmap JPEG in extracted UHDR data".to_string())?;
 
     progress::set_progress(2, 0, 0); // decode JPEG
 
     progress::set_progress(4, 1, 1); // assemble
     isobmff_write::write_uhdr_iso_output(
-        source, gainmap_jpeg, &extracted.meta_floats, oppo_compat, output,
+        source,
+        gainmap_jpeg,
+        &extracted.meta_floats,
+        oppo_compat,
+        oppo_camera_tail,
+        strict_tmap,
+        output,
     )?;
 
     progress::set_progress(0, 0, 0); // done
@@ -333,11 +497,17 @@ fn convert_uhdr(
         1.0
     };
     let ratio_max = if extracted.meta_floats.len() >= 7 {
-        extracted.meta_floats[4].max(extracted.meta_floats[5]).max(extracted.meta_floats[6])
+        extracted.meta_floats[4]
+            .max(extracted.meta_floats[5])
+            .max(extracted.meta_floats[6])
     } else {
         1.0
     };
-    let gm_max = if ratio_max > 0.0 { ratio_max.log2() } else { 0.0 };
+    let gm_max = if ratio_max > 0.0 {
+        ratio_max.log2()
+    } else {
+        0.0
+    };
     Ok((scale, gm_max))
 }
 
@@ -453,7 +623,8 @@ fn check_tmap_dimg_in_iref(data: &[u8], meta_kids: &[isobmff::BoxHeader]) -> boo
     };
     let (_, refs) = isobmff::parse_iref(data, iref);
     // Check that tmap has a dimg reference to at least one other item
-    refs.iter().any(|r| r.rtype == "dimg" && r.from == tmap_id && !r.to.is_empty())
+    refs.iter()
+        .any(|r| r.rtype == "dimg" && r.from == tmap_id && !r.to.is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +650,11 @@ pub struct ThumbnailResult {
 /// thumbnail is not found.
 #[no_mangle]
 pub extern "C" fn xdremux_extract_thumbnail(path: *const c_char) -> ThumbnailResult {
-    let fail = ThumbnailResult { data: ptr::null_mut(), len: 0, success: false };
+    let fail = ThumbnailResult {
+        data: ptr::null_mut(),
+        len: 0,
+        success: false,
+    };
 
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(s) => s,
@@ -509,7 +684,11 @@ fn return_thumbnail(jpeg: Vec<u8>) -> ThumbnailResult {
     let mut boxed = jpeg.into_boxed_slice();
     let data = boxed.as_mut_ptr();
     std::mem::forget(boxed);
-    ThumbnailResult { data, len, success: true }
+    ThumbnailResult {
+        data,
+        len,
+        success: true,
+    }
 }
 
 /// Free a `ThumbnailResult` previously returned by `xdremux_extract_thumbnail`.
@@ -554,7 +733,8 @@ fn extract_exif_thumbnail(data: &[u8]) -> Option<Vec<u8>> {
     if exif_blob.len() < 8 {
         return None;
     }
-    let tiff_offset = u32::from_be_bytes([exif_blob[0], exif_blob[1], exif_blob[2], exif_blob[3]]) as usize;
+    let tiff_offset =
+        u32::from_be_bytes([exif_blob[0], exif_blob[1], exif_blob[2], exif_blob[3]]) as usize;
     if tiff_offset + 8 > exif_blob.len() {
         return None;
     }
@@ -568,14 +748,24 @@ fn extract_exif_thumbnail(data: &[u8]) -> Option<Vec<u8>> {
     };
 
     let read_u16 = |buf: &[u8], pos: usize| -> u16 {
-        if pos + 2 > buf.len() { return 0; }
-        if little_endian { u16::from_le_bytes([buf[pos], buf[pos + 1]]) }
-        else { u16::from_be_bytes([buf[pos], buf[pos + 1]]) }
+        if pos + 2 > buf.len() {
+            return 0;
+        }
+        if little_endian {
+            u16::from_le_bytes([buf[pos], buf[pos + 1]])
+        } else {
+            u16::from_be_bytes([buf[pos], buf[pos + 1]])
+        }
     };
     let read_u32 = |buf: &[u8], pos: usize| -> u32 {
-        if pos + 4 > buf.len() { return 0; }
-        if little_endian { u32::from_le_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) }
-        else { u32::from_be_bytes([buf[pos], buf[pos+1], buf[pos+2], buf[pos+3]]) }
+        if pos + 4 > buf.len() {
+            return 0;
+        }
+        if little_endian {
+            u32::from_le_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+        } else {
+            u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+        }
     };
 
     // Verify TIFF magic (42)
@@ -694,6 +884,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lossy_gainmap_promotion_is_rejected_only_for_clean_iso_output() {
+        assert!(should_reject_lossy_gainmap_promotion(true, OppoCompat::Off));
+        assert!(!should_reject_lossy_gainmap_promotion(
+            false,
+            OppoCompat::Off
+        ));
+        assert!(!should_reject_lossy_gainmap_promotion(
+            true,
+            OppoCompat::Auto
+        ));
+        assert!(!should_reject_lossy_gainmap_promotion(true, OppoCompat::On));
+        assert!(!should_reject_lossy_gainmap_promotion(
+            true,
+            OppoCompat::Iso
+        ));
+    }
+
+    #[test]
     fn version_returns_non_null() {
         let v = xdremux_version();
         assert!(!v.is_null());
@@ -716,27 +924,71 @@ mod tests {
         xdremux_free_result(res);
     }
 
+    #[test]
+    fn classify_nonexistent_returns_unreadable_status() {
+        let path = CString::new("nonexistent_classify_test.heic").unwrap();
+        let result = xdremux_classify(path.as_ptr());
+        assert_eq!(
+            unsafe { CStr::from_ptr(result.status) }.to_str().unwrap(),
+            "unreadable-image"
+        );
+        assert!(result.mode_key.is_null());
+        xdremux_free_classification_result(result);
+    }
+
+    #[test]
+    fn classify_ffi_returns_mode_key_and_folder_name() {
+        let path =
+            std::env::temp_dir().join(format!("xdremux_classify_ffi_{}.heic", std::process::id()));
+        std::fs::write(&path, b"metadata Oplus_16").unwrap();
+        let path_c = CString::new(path.to_str().unwrap()).unwrap();
+        let result = xdremux_classify(path_c.as_ptr());
+        assert_eq!(
+            unsafe { CStr::from_ptr(result.mode_key) }.to_str().unwrap(),
+            "portrait"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(result.folder_name) }
+                .to_str()
+                .unwrap(),
+            "人像"
+        );
+        assert!(result.has_tag_flags);
+        assert_eq!(result.tag_flags, 16);
+        xdremux_free_classification_result(result);
+        std::fs::remove_file(path).unwrap();
+    }
+
     /// Diagnostic: dump source and output ISOBMFF structures for comparison.
     #[test]
+    #[ignore = "local diagnostic; set XDREMUX_DIAGNOSTIC_SOURCE and XDREMUX_DIAGNOSTIC_OUTPUT"]
     fn dump_diagnostics() {
-        let input_path = "C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155054.heic";
-        let output_path = "C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155054_out.heic";
+        let input_path = std::env::var("XDREMUX_DIAGNOSTIC_SOURCE")
+            .expect("set XDREMUX_DIAGNOSTIC_SOURCE to a source HEIC path");
+        let output_path = std::env::var("XDREMUX_DIAGNOSTIC_OUTPUT")
+            .expect("set XDREMUX_DIAGNOSTIC_OUTPUT to a converted HEIC path");
 
-        let src = std::fs::read(input_path).unwrap();
-        let out = std::fs::read(output_path).unwrap();
+        let src = std::fs::read(&input_path).unwrap();
+        let out = std::fs::read(&output_path).unwrap();
 
         fn dump(name: &str, data: &[u8]) {
-            fn btype_str(b: &[u8;4]) -> String {
+            fn btype_str(b: &[u8; 4]) -> String {
                 String::from_utf8_lossy(b).to_string()
             }
 
             let top = isobmff::parse_boxes(data, 0, data.len());
             eprintln!("\n===== {name} =====");
-            eprintln!("Top: {:?}", top.iter().map(|b| btype_str(&b.btype)).collect::<Vec<_>>());
+            eprintln!(
+                "Top: {:?}",
+                top.iter().map(|b| btype_str(&b.btype)).collect::<Vec<_>>()
+            );
 
             let meta = top.iter().find(|b| &b.btype == b"meta").unwrap();
             let kids = isobmff::parse_boxes(data, meta.data_start + 4, meta.data_end);
-            eprintln!("Meta kids: {:?}", kids.iter().map(|b| btype_str(&b.btype)).collect::<Vec<_>>());
+            eprintln!(
+                "Meta kids: {:?}",
+                kids.iter().map(|b| btype_str(&b.btype)).collect::<Vec<_>>()
+            );
 
             if let Some(pitm) = kids.iter().find(|b| &b.btype == b"pitm") {
                 eprintln!("pitm primary: {}", isobmff::parse_pitm(data, pitm));
@@ -744,7 +996,12 @@ mod tests {
             if let Some(iinf) = kids.iter().find(|b| &b.btype == b"iinf") {
                 let items = isobmff::parse_iinf(data, iinf).unwrap();
                 let max_id = items.iter().map(|i| i.item_id).max().unwrap_or(0);
-                eprintln!("iinf v{}: {} items, max_id={}", data[iinf.data_start], items.len(), max_id);
+                eprintln!(
+                    "iinf v{}: {} items, max_id={}",
+                    data[iinf.data_start],
+                    items.len(),
+                    max_id
+                );
                 for it in &items {
                     eprintln!("  id={} type={} flags={}", it.item_id, it.itype, it.flags);
                 }
@@ -752,10 +1009,23 @@ mod tests {
             if let Some(iloc) = kids.iter().find(|b| &b.btype == b"iloc") {
                 let entries = isobmff::parse_iloc(data, iloc).unwrap();
                 eprintln!("iloc v{}: {} entries", data[iloc.data_start], entries.len());
-                let mut entry_strs: Vec<String> = entries.iter().map(|e| {
-                    let ext_strs: Vec<String> = e.extents.iter().map(|(o,l)| format!("({}+{})", o, l)).collect();
-                    format!("id={} cm={} dr={} ext=[{}]", e.item_id, e.construction_method, e.data_reference_index, ext_strs.join(","))
-                }).collect();
+                let mut entry_strs: Vec<String> = entries
+                    .iter()
+                    .map(|e| {
+                        let ext_strs: Vec<String> = e
+                            .extents
+                            .iter()
+                            .map(|(o, l)| format!("({}+{})", o, l))
+                            .collect();
+                        format!(
+                            "id={} cm={} dr={} ext=[{}]",
+                            e.item_id,
+                            e.construction_method,
+                            e.data_reference_index,
+                            ext_strs.join(",")
+                        )
+                    })
+                    .collect();
                 entry_strs.sort_by_key(|s| s.split_whitespace().next().unwrap_or("").to_string());
                 for s in &entry_strs {
                     eprintln!("  {}", s);
@@ -776,7 +1046,10 @@ mod tests {
                     let btype = std::str::from_utf8(&p.raw[4..8]).unwrap_or("?");
                     eprintln!("  [{}] {} ({}B)", p.index, p.ptype, p.raw.len());
                     if btype == "colr" && p.raw.len() >= 16 {
-                        eprintln!("       nclx: prim={} tf={} matrix={}", p.raw[12], p.raw[13], p.raw[14]);
+                        eprintln!(
+                            "       nclx: prim={} tf={} matrix={}",
+                            p.raw[12], p.raw[13], p.raw[14]
+                        );
                     }
                     if btype == "pixi" && p.raw.len() >= 15 {
                         eprintln!("       bits: {:?}", &p.raw[12..15]);
@@ -792,7 +1065,11 @@ mod tests {
                     let (flags, entries) = isobmff::parse_ipma(data, ipma);
                     eprintln!("ipma: flags={} large={}", flags, (flags & 1) != 0);
                     for e in &entries {
-                        let a: Vec<String> = e.associations.iter().map(|(i,ess)| format!("{}{}", i, if *ess{"!"}else{""})).collect();
+                        let a: Vec<String> = e
+                            .associations
+                            .iter()
+                            .map(|(i, ess)| format!("{}{}", i, if *ess { "!" } else { "" }))
+                            .collect();
                         eprintln!("  id={}: [{}]", e.item_id, a.join(","));
                     }
                 }
@@ -811,15 +1088,21 @@ mod tests {
 
     /// Side-by-side comparison of tmap, XMP, and colr between PY and RUST outputs.
     #[test]
+    #[ignore = "local diagnostic; set XDREMUX_DIAGNOSTIC_PY_OUTPUT and XDREMUX_DIAGNOSTIC_RUST_OUTPUT"]
     fn compare_py_rust_payloads() {
-        let py_path = "C:/Users/Beet/Desktop/duibi/IMG20260707155054_py.heic";
-        let rust_path = "C:/Users/Beet/Desktop/duibi/IMG20260707155054_out.heic";
+        let py_path = std::env::var("XDREMUX_DIAGNOSTIC_PY_OUTPUT")
+            .expect("set XDREMUX_DIAGNOSTIC_PY_OUTPUT to a Python-converted HEIC path");
+        let rust_path = std::env::var("XDREMUX_DIAGNOSTIC_RUST_OUTPUT")
+            .expect("set XDREMUX_DIAGNOSTIC_RUST_OUTPUT to a Rust-converted HEIC path");
 
-        let py_data = std::fs::read(py_path).unwrap();
-        let rust_data = std::fs::read(rust_path).unwrap();
+        let py_data = std::fs::read(&py_path).unwrap();
+        let rust_data = std::fs::read(&rust_path).unwrap();
 
         fn hex(data: &[u8]) -> String {
-            data.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
+            data.iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join("")
         }
 
         // Use iloc + iinf to find exact tmap/xmp offsets in idat
@@ -838,10 +1121,15 @@ mod tests {
             let entries = isobmff::parse_iloc(data, iloc).unwrap();
 
             let find_item = |itype: &str| -> u32 {
-                items.iter().find(|i| i.itype == itype).map(|i| i.item_id).unwrap_or(0)
+                items
+                    .iter()
+                    .find(|i| i.itype == itype)
+                    .map(|i| i.item_id)
+                    .unwrap_or(0)
             };
             let find_extent = |item_id: u32| -> (usize, usize) {
-                entries.iter()
+                entries
+                    .iter()
                     .find(|e| e.item_id == item_id)
                     .and_then(|e| e.extents.first())
                     .map(|&(off, len)| (off as usize, len as usize))
@@ -859,8 +1147,16 @@ mod tests {
             let tmap = idat[tmap_off..tmap_off + tmap_len].to_vec();
             let xmp = idat[xmp_off..xmp_off + xmp_len].to_vec();
 
-            eprintln!("  idat={}B tmap@{} len={} xmp@{} len={} grid@{} len={}",
-                idat.len(), tmap_off, tmap_len, xmp_off, xmp_len, _grid_off, _grid_len);
+            eprintln!(
+                "  idat={}B tmap@{} len={} xmp@{} len={} grid@{} len={}",
+                idat.len(),
+                tmap_off,
+                tmap_len,
+                xmp_off,
+                xmp_len,
+                _grid_off,
+                _grid_len
+            );
 
             (idat, tmap, xmp)
         }
@@ -877,16 +1173,26 @@ mod tests {
         eprintln!("Match: {}", py_tmap == rust_tmap);
 
         let tmap_i32 = |data: &[u8]| -> Vec<i32> {
-            (0..data.len()).step_by(4).take(data.len()/4).map(|i| {
-                i32::from_be_bytes([data[i], data[i+1], data[i+2], data[i+3]])
-            }).collect()
+            (0..data.len())
+                .step_by(4)
+                .take(data.len() / 4)
+                .map(|i| i32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]))
+                .collect()
         };
         eprintln!("PY  tmap i32: {:?}", tmap_i32(&py_tmap));
         eprintln!("RUST tmap i32: {:?}", tmap_i32(&rust_tmap));
 
         eprintln!("\n--- XMP ---");
-        eprintln!("PY  XMP ({}B): {}", py_xmp.len(), String::from_utf8_lossy(&py_xmp));
-        eprintln!("RUST XMP ({}B): {}", rust_xmp.len(), String::from_utf8_lossy(&rust_xmp));
+        eprintln!(
+            "PY  XMP ({}B): {}",
+            py_xmp.len(),
+            String::from_utf8_lossy(&py_xmp)
+        );
+        eprintln!(
+            "RUST XMP ({}B): {}",
+            rust_xmp.len(),
+            String::from_utf8_lossy(&rust_xmp)
+        );
         eprintln!("XMP Match: {}", py_xmp == rust_xmp);
 
         // Compare colr nclx boxes
@@ -900,8 +1206,14 @@ mod tests {
                 if p.ptype == "colr" && p.raw.len() >= 16 {
                     let ct = std::str::from_utf8(&p.raw[8..12]).unwrap_or("?");
                     if ct == "nclx" {
-                        eprintln!("{label} colr nclx [{}]: prim={} tf={} matrix={} full_range={}",
-                            p.index, p.raw[12], p.raw[13], p.raw[14], p.raw[15] & 0x80 != 0);
+                        eprintln!(
+                            "{label} colr nclx [{}]: prim={} tf={} matrix={} full_range={}",
+                            p.index,
+                            p.raw[12],
+                            p.raw[13],
+                            p.raw[14],
+                            p.raw[15] & 0x80 != 0
+                        );
                         eprintln!("{label}   raw: {}", hex(&p.raw));
                     }
                 }
@@ -939,7 +1251,8 @@ mod tests {
 
             let iinf = kids.iter().find(|b| &b.btype == b"iinf").unwrap();
             let items = isobmff::parse_iinf(data, iinf).unwrap();
-            let item_map: std::collections::HashMap<u32, &str> = items.iter()
+            let item_map: std::collections::HashMap<u32, &str> = items
+                .iter()
                 .map(|it| (it.item_id, it.itype.as_str()))
                 .collect();
 
@@ -952,7 +1265,8 @@ mod tests {
             let (flags, entries) = isobmff::parse_ipma(data, ipma);
 
             let key_types = ["grid", "tmap", "hvc1", "Exif", "mime"];
-            let mut key_ids: Vec<u32> = items.iter()
+            let mut key_ids: Vec<u32> = items
+                .iter()
                 .filter(|it| key_types.contains(&it.itype.as_str()))
                 .map(|it| it.item_id)
                 .collect();
@@ -964,7 +1278,11 @@ mod tests {
             for e in &entries {
                 if key_ids.contains(&e.item_id) {
                     let it = item_map.get(&e.item_id).map(|s| *s).unwrap_or("?");
-                    let a: Vec<String> = e.associations.iter().map(|(i,ess)| format!("{i}{}", if *ess{"!"}else{""})).collect();
+                    let a: Vec<String> = e
+                        .associations
+                        .iter()
+                        .map(|(i, ess)| format!("{i}{}", if *ess { "!" } else { "" }))
+                        .collect();
                     eprintln!("  id={} ({it}): [{a}]", e.item_id, a = a.join(","));
                 }
             }
@@ -985,12 +1303,14 @@ mod tests {
             let entries = isobmff::parse_iloc(data, iloc).unwrap();
 
             let key_types = ["grid", "tmap", "hvc1", "mime"];
-            let mut key_ids: Vec<u32> = items.iter()
+            let mut key_ids: Vec<u32> = items
+                .iter()
                 .filter(|it| key_types.contains(&it.itype.as_str()))
                 .map(|it| it.item_id)
                 .collect();
             // Add a few gain tile IDs (the first few hvc1 items for gain map)
-            let gain_tiles: Vec<u32> = items.iter()
+            let gain_tiles: Vec<u32> = items
+                .iter()
                 .filter(|it| it.itype == "hvc1" && it.item_id >= 10050)
                 .map(|it| it.item_id)
                 .take(3)
@@ -1002,9 +1322,19 @@ mod tests {
             eprintln!("{label} iloc key entries:");
             for e in &entries {
                 if key_ids.contains(&e.item_id) {
-                    let it = items.iter().find(|i| i.item_id == e.item_id).map(|i| i.itype.as_str()).unwrap_or("?");
-                    let ext_strs: Vec<String> = e.extents.iter().map(|(o,l)| format!("{o}+{l}")).collect();
-                    eprintln!("  id={} ({it}) cm={} ext=[{}]", e.item_id, e.construction_method, ext_strs.join(","));
+                    let it = items
+                        .iter()
+                        .find(|i| i.item_id == e.item_id)
+                        .map(|i| i.itype.as_str())
+                        .unwrap_or("?");
+                    let ext_strs: Vec<String> =
+                        e.extents.iter().map(|(o, l)| format!("{o}+{l}")).collect();
+                    eprintln!(
+                        "  id={} ({it}) cm={} ext=[{}]",
+                        e.item_id,
+                        e.construction_method,
+                        ext_strs.join(",")
+                    );
                 }
             }
         };
@@ -1022,8 +1352,16 @@ mod tests {
             let items = isobmff::parse_iinf(data, iinf).unwrap();
             eprintln!("{label} iinf ({} items):", items.len());
             for it in &items {
-                if it.flags != 0 || it.itype == "grid" || it.itype == "tmap" || it.itype == "Exif" || it.itype == "mime" {
-                    eprintln!("  id={} type={} flags=0x{:06x}", it.item_id, it.itype, it.flags);
+                if it.flags != 0
+                    || it.itype == "grid"
+                    || it.itype == "tmap"
+                    || it.itype == "Exif"
+                    || it.itype == "mime"
+                {
+                    eprintln!(
+                        "  id={} type={} flags=0x{:06x}",
+                        it.item_id, it.itype, it.flags
+                    );
                 }
             }
         };
@@ -1051,87 +1389,7 @@ mod tests {
         assert!(!verify_iso_gain_map(&[0u8; 1024]));
     }
 
-    #[test]
-    fn convert_photo1_55054() {
-        use std::ffi::CString;
-        let input = CString::new("C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155054.heic").unwrap();
-        let output = CString::new("C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155054_out.heic").unwrap();
-        let cfg = ConvertConfig { oppo_compat: 0 };
-        let res = xdremux_convert(input.as_ptr(), output.as_ptr(), &cfg);
-        let msg = unsafe { if res.error_message.is_null() { "(null)".to_string() } else { CStr::from_ptr(res.error_message).to_str().unwrap_or("?").to_string() } };
-        let ok = res.success;
-        let m = unsafe { if res.mode.is_null() { "?".to_string() } else { CStr::from_ptr(res.mode).to_str().unwrap_or("?").to_string() } };
-        let f = unsafe { if res.family.is_null() { "?".to_string() } else { CStr::from_ptr(res.family).to_str().unwrap_or("?").to_string() } };
-        eprintln!("convert: success={ok} mode={m} family={f} edr={} gm={} msg={msg}", res.edr_scale, res.gain_map_max);
-        xdremux_free_result(res);
-        if !ok {
-            eprintln!("SKIP verify — conversion failed");
-            return;
-        }
-        let vo = xdremux_verify_output(output.as_ptr());
-        eprintln!("verify_output: {vo}");
-        assert!(vo, "verify_output returned false");
-    }
-
-    #[test]
-    fn convert_photo1_oppo() {
-        use std::ffi::CString;
-        let input = CString::new("C:/Users/Beet/Desktop/duibi/IMG20260707155054.heic").unwrap();
-        let output = CString::new("C:/Users/Beet/Desktop/duibi/IMG20260707155054_rust_oppo.heic").unwrap();
-        let cfg = ConvertConfig { oppo_compat: 1 };
-        let res = xdremux_convert(input.as_ptr(), output.as_ptr(), &cfg);
-        let msg = unsafe { if res.error_message.is_null() { "(null)".to_string() } else { CStr::from_ptr(res.error_message).to_str().unwrap_or("?").to_string() } };
-        let ok = res.success;
-        let m = unsafe { if res.mode.is_null() { "?".to_string() } else { CStr::from_ptr(res.mode).to_str().unwrap_or("?").to_string() } };
-        let f = unsafe { if res.family.is_null() { "?".to_string() } else { CStr::from_ptr(res.family).to_str().unwrap_or("?").to_string() } };
-        eprintln!("OPPO convert: success={ok} mode={m} family={f} edr={} gm={} msg={msg}", res.edr_scale, res.gain_map_max);
-        xdremux_free_result(res);
-        assert!(ok, "OPPO conversion failed: {msg}");
-    }
-
-    #[test]
-    fn convert_121521_all() {
-        use std::ffi::CString;
-        let input = CString::new("C:/Users/Beet/Desktop/IMG20260711121521.heic").unwrap();
-
-        // 1. Normal mode
-        let out1 = CString::new("C:/Users/Beet/Desktop/IMG20260711121521_normal.heic").unwrap();
-        let cfg1 = ConvertConfig { oppo_compat: 0 };
-        let r1 = xdremux_convert(input.as_ptr(), out1.as_ptr(), &cfg1);
-        let ok1 = r1.success; let m1 = unsafe { if r1.mode.is_null() { "?".to_string() } else { CStr::from_ptr(r1.mode).to_str().unwrap_or("?").to_string() } };
-        eprintln!("normal: success={ok1} mode={m1} edr={}", r1.edr_scale);
-        xdremux_free_result(r1);
-        assert!(ok1, "normal conversion failed");
-
-        // 2. OPPO mode
-        let out2 = CString::new("C:/Users/Beet/Desktop/IMG20260711121521_oppo.heic").unwrap();
-        let cfg2 = ConvertConfig { oppo_compat: 1 };
-        let r2 = xdremux_convert(input.as_ptr(), out2.as_ptr(), &cfg2);
-        let ok2 = r2.success; let m2 = unsafe { if r2.mode.is_null() { "?".to_string() } else { CStr::from_ptr(r2.mode).to_str().unwrap_or("?").to_string() } };
-        eprintln!("oppo:   success={ok2} mode={m2} edr={}", r2.edr_scale);
-        xdremux_free_result(r2);
-        assert!(ok2, "oppo conversion failed");
-
-        eprintln!("All 3 variants written to Desktop.");
-    }
-
-    #[test]
-    fn convert_photo2_55044() {
-        use std::ffi::CString;
-        let input = CString::new("C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155044.heic").unwrap();
-        let output = CString::new("C:/Users/Beet/Downloads/Telegram Desktop/IMG20260707155044_out.heic").unwrap();
-        let cfg = ConvertConfig { oppo_compat: 0 };
-        let res = xdremux_convert(input.as_ptr(), output.as_ptr(), &cfg);
-        let msg = unsafe { if res.error_message.is_null() { "(null)".to_string() } else { CStr::from_ptr(res.error_message).to_str().unwrap_or("?").to_string() } };
-        let ok = res.success;
-        eprintln!("convert: success={ok} msg={msg}");
-        xdremux_free_result(res);
-        if !ok {
-            eprintln!("SKIP verify — conversion failed");
-            return;
-        }
-        let vo = xdremux_verify_output(output.as_ptr());
-        eprintln!("verify_output: {vo}");
-        assert!(vo, "verify_output returned false");
-    }
+    // Real-photo conversions live in `tests/local_samples.rs`. They are
+    // opt-in, discover their input through XDREMUX_SAMPLE_DIR, and only write
+    // under the operating system temporary directory.
 }
