@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
+import 'organize_page.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
@@ -824,6 +825,12 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  void _openOrganizePage() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const OrganizePage()));
+  }
+
   // ---------------------------------------------------------------------------
   // Drag & drop
   // ---------------------------------------------------------------------------
@@ -1097,6 +1104,11 @@ class _HomePageState extends State<HomePage> {
         icon: const Icon(Icons.tune),
         tooltip: '设置',
         onPressed: () => _openSettings(context),
+      ),
+      IconButton(
+        icon: const Icon(Icons.folder_copy_outlined),
+        tooltip: '按拍摄模式整理',
+        onPressed: _openOrganizePage,
       ),
       _buildQueueOverflowMenu(),
       const SizedBox(width: 4),

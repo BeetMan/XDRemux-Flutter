@@ -15,8 +15,10 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ LHDR（X6 系列）→ ISO 21496-1 HDR HEIC（gray gain map）
 - ✅ UHDR（X7 系列）→ ISO 21496-1 HDR HEIC（RGB gain map）
 - ✅ OPPO 相册兼容模式（RGB gain map + 142B tmap + BT.2020 PQ colr）
+- ✅ EXIF 方向感知（gain map transpose + canonical tmap ispe + irot quarter-turns）
 - ✅ ISO HDR 元数据：XMP hdrgm:*、tmap box、auxC URN、tone map LUTs
 - ✅ EXIF UserComment patch（`tail` 标记 OPPO 路由）
+- ✅ 拍摄模式分类（15 种 OPPO 拍摄模式：普通拍照 / 大师模式 / 人像 / 夜景 / 全景 / 延时 / 超清 / 证件照 / 贴纸 / 超级文本 / 合影 / 双重曝光 / 美颜 / 专业模式 / RICOH GR）
 - ✅ `xdremux_verify_output` — 验证输出文件是否包含有效 ISO gain map
 - ✅ Bit-exact SDR base image（源文件直达，不重新编码）
 
@@ -30,9 +32,12 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 实时进度条（HEVC tile 级进度：编码第 N/总数 个瓦片）
 - ✅ 深色/浅色主题（跟随系统）
 - ✅ 中文界面
-- ✅ OPPO 兼容模式开关
+- ✅ OPPO 兼容模式开关（7 档：Off / Auto / On / Tail / ISO / ISO-NoLocal / ISO-Graph）
+- ✅ OPPO 相机尾部元数据策略（11 档：自动 / 不保留 / 仅水印 / 紧凑 / 完整保留 / 多种过滤组合）
+- ✅ 严格 ISO tmap 选项（65/145 字节 vs ImageIO 62/142 字节）
 - ✅ 跳过已有有效输出文件
 - ✅ 可配置输出目录或文件名后缀
+- ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …）
 - ✅ 缩略图预览（桌面 ffmpeg / Android Rust FFI 提取 EXIF 缩略图）
 - ✅ Android 保存到图库（MediaStore DCIM/XDRemux）
 - ✅ Android 分享（ACTION_SEND）
@@ -40,10 +45,11 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
 - ✅ 输出操作菜单（保存到图库 / 分享 / 系统打开 / 保存到源目录）
+- ✅ 独立"按拍摄模式整理"页（扫描 → 预览 → 复制分类）
 
 ### 一致性验证
 
-- ✅ 97 个 Rust 单元测试全部通过
+- ✅ 120 个 Rust 单元测试全部通过
 - ✅ Tier 1–4 跨实现一致性（vs 原版 Python）通过
 - ✅ Apple ImageIO 验证通过
 
@@ -97,21 +103,26 @@ cargo build --workspace --release
 | `xdremux_read_progress(buf)` | 读取转换进度（阶段 + 当前/总数） |
 | `xdremux_verify_output(path)` | 验证输出是否包含 ISO gain map |
 | `xdremux_extract_thumbnail(path)` | 提取 HEIC 内嵌 EXIF JPEG 缩略图 |
+| `xdremux_classify(path)` | 解析拍摄模式，返回 modeKey / folderName / status |
 | `xdremux_free_result(r)` | 释放 inspect/convert 返回的结果 |
+| `xdremux_free_classification_result(r)` | 释放 classify 返回的结果 |
 | `xdremux_free_thumbnail(r)` | 释放缩略图结果 |
 
 ## 输出模式
 
 | 模式 | oppo_compat | Gain map | colr | URN | 目标 |
 |------|-------------|----------|------|-----|------|
-| 标准 ISO | 0 | 1ch gray HEVC | sRGB | Apple URN | iOS / macOS 相册 |
-| OPPO 相册兼容 | 1 | 3ch RGB HEVC | BT.2020 PQ | ImageIO native URN | OPPO 相册 |
+| 标准 ISO | 0 (off) | 1ch gray HEVC | sRGB | Apple URN | iOS / macOS 相册 |
+| OPPO 相册兼容 | 1-3 (auto/on/tail) | 3ch RGB HEVC 4:2:0 | BT.2020 PQ | ImageIO native URN | OPPO 相册 |
+| ISO 路由 | 4-6 (iso/iso-no-local/iso-graph) | 1ch gray 或 3ch RGB | sRGB | Apple URN | 通用 ISO HDR |
+
+`oppo_compat` 完整取值：0=off, 1=auto, 2=on, 3=tail, 4=iso, 5=iso-no-local, 6=iso-graph。
 
 ## 仓库结构
 
 | 路径 | 用途 |
 |------|------|
-| `xdremux/rust/` | Rust 核心库 |
+| `xdremux/rust/` | Rust 核心库（含 `categorize.rs` 拍摄模式分类） |
 | `xdremux/swift-cli/` | Swift CLI（Apple ImageIO 参考实现） |
 | `xdremux/python/` | Python CLI（跨平台参考实现） |
 | `apps/flutter/` | Flutter 跨平台 App（Windows / macOS / Android） |
