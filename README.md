@@ -37,12 +37,13 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ Android 保存到图库（MediaStore DCIM/XDRemux）
 - ✅ Android 分享（ACTION_SEND）
 - ✅ Android 系统图库打开（ACTION_VIEW）
-- ✅ 断点续传（批量转换中断后可恢复）
+- ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
+- ✅ 输出操作菜单（保存到图库 / 分享 / 系统打开 / 保存到源目录）
 
 ### 一致性验证
 
-- ✅ 99 个 Rust 单元测试全部通过
+- ✅ 97 个 Rust 单元测试全部通过
 - ✅ Tier 1–4 跨实现一致性（vs 原版 Python）通过
 - ✅ Apple ImageIO 验证通过
 
@@ -113,7 +114,7 @@ cargo build --workspace --release
 | `xdremux/rust/` | Rust 核心库 |
 | `xdremux/swift-cli/` | Swift CLI（Apple ImageIO 参考实现） |
 | `xdremux/python/` | Python CLI（跨平台参考实现） |
-| `apps/flutter/` | Flutter 跨平台 App |
+| `apps/flutter/` | Flutter 跨平台 App（Windows / macOS / Android） |
 | `apps/macos/XDRemuxApp/` | macOS SwiftUI App |
 | `tests/conformance/` | 跨实现一致性验证 |
 | `fixtures/` | 测试样本说明 |
@@ -144,8 +145,8 @@ cargo build --workspace --release
 ### 工程
 
 - [ ] CI/CD（GitHub Actions 编译测试 + 发布）
-- [ ] Flutter widget 测试覆盖
 - [ ] macOS / Linux 原生拖拽支持（当前仅 Windows 实现 `WM_DROPFILES`）
+- [ ] Android 缩略图解码回退（当前仅支持 EXIF 内嵌 JPEG，无 ffmpeg 兜底）
 
 ## 已知限制
 
