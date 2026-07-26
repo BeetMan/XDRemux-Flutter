@@ -4,6 +4,8 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
+**[下载 v0.1.0（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+
 ## 截图
 
 ![Windows 主界面](screenshots/windows_main.png)
