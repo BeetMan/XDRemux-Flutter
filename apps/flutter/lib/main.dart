@@ -8,10 +8,12 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
 import 'organize_page.dart';
+import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
@@ -129,6 +131,27 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _initAsync();
     _initDropChannel();
+    _checkForUpdate();
+  }
+
+  /// Silent GitHub Releases check; shows a SnackBar only when a newer
+  /// version exists. Never blocks startup or reports errors.
+  Future<void> _checkForUpdate() async {
+    final update = await UpdateService.checkForUpdate();
+    if (update == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 10),
+        content: Text('发现新版本 ${update.releaseName}'),
+        action: SnackBarAction(
+          label: '去下载',
+          onPressed: () => launchUrl(
+            Uri.parse(update.releaseUrl),
+            mode: LaunchMode.externalApplication,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _initAsync() async {

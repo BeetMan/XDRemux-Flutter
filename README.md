@@ -46,6 +46,8 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
 - ✅ 输出操作菜单（保存到图库 / 分享 / 系统打开 / 保存到源目录）
 - ✅ 独立"按拍摄模式整理"页（扫描 → 预览 → 复制分类）
+- ✅ 自动更新检查（启动时静默查询 GitHub Releases，新版本 SnackBar + 跳转下载页）
+- ✅ Windows MSIX 安装包（`dart run msix:create`）
 
 ### 一致性验证
 
@@ -68,6 +70,14 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 ### Windows 预构建包
 
 下载 Release，解压即用（HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg）。
+也提供 MSIX 安装包（双击安装，出现开始菜单项）。
+
+自行打包 MSIX：
+
+```bash
+flutter build windows --release
+dart run msix:create        # 测试证书签名；正式分发需替换为自己的证书
+```
 
 ### 从源码构建
 
@@ -156,8 +166,8 @@ cargo build --workspace --release
 - [ ] 转换结果预览（源 ↔ 输出对比）
 - [ ] 拖入非 HEIC 文件时给出友好提示（当前静默丢弃）
 - [ ] 批量输出到自定义目录时保留子目录结构
-- [ ] Windows 安装程序（NSIS / MSIX）
-- [ ] 自动更新检查
+- [x] Windows 安装程序（MSIX，`dart run msix:create`）
+- [x] 自动更新检查（启动时查询 GitHub Releases，新版本 SnackBar 提示）
 
 ### 核心功能
 

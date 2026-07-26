@@ -38,10 +38,22 @@ dependencies:
   # Cupertino icons
   cupertino_icons: ^1.0.8
 
+  # HTTP client for update checks
+  http: ^1.6.0
+
+  # App version info for update checks
+  package_info_plus: ^9.0.1
+
+  # Open release page in browser
+  url_launcher: ^6.3.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+  # Windows MSIX installer packaging (dart run msix:create)
+  msix: ^3.18.0
 
 flutter:
   uses-material-design: true
@@ -49,3 +61,12 @@ flutter:
   # Rust core DLL is bundled at build time for Windows;
   # Android copies the .so into jniLibs via Gradle hooks.
   # No explicit asset entries needed for the dynamic library.
+
+# MSIX installer configuration (Windows).
+# Build with: flutter build windows --release && dart run msix:create
+msix_config:
+  display_name: XDRemux
+  publisher_display_name: BeetMan
+  identity_name: io.github.beetman.xdremux
+  logo_path: windows/runner/resources/app_icon.ico
+  capabilities: internetClient
