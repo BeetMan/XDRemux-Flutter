@@ -2,7 +2,7 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5 项已完成；第 6 项 CI/CD 与 v0.1.1 工作流已落地，待推送 tag 后完成远端实跑验收。
+> 状态更新：2026-07-27 — 第 5、6 项均已完成；CI 已通过，v0.1.1 Windows 安装包与 Android APK 已发布。
 > 本批次完成后发布 **v0.1.1**。
 
 ## 批次总览
@@ -45,7 +45,7 @@
 
 ---
 
-## 6. CI/CD（GitHub Actions）+ 版本号 0.1.1（实现完成，待远端验证）
+## 6. CI/CD（GitHub Actions）+ 版本号 0.1.1 ✅ 已完成
 
 **现状问题**
 
@@ -58,18 +58,18 @@
 
 `.github/workflows/ci.yml`：
 
-- **job: rust** — `ubuntu-latest`，`cargo test --workspace`（纯 Rust，不依赖 x265 静态库也能跑大部分测试；需要 x265 的 hevc 测试走 `XDREMUX_USE_FFMPEG=1` 回退或在 CI 里先编 x265——见"决策点"）
-- **job: flutter** — `ubuntu-latest`，`flutter analyze` + `flutter test`（不构建平台产物，速度快）
+- **job: rust** — `ubuntu-latest`，缓存并构建 x265、安装 `libnuma-dev` 后执行 `cargo test --workspace`
+- **job: flutter** — `ubuntu-latest`，使用项目 pub 镜像，构建 FFI smoke test 所需的 Linux `.so`，再执行 `flutter analyze` + `flutter test`
 
 ### 6b. Release（打 `v*` tag 时）
 
 `.github/workflows/release.yml`：
 
-- **job: windows** — `windows-latest`
+- **job: windows** — `windows-2022`
   - 编 x265 静态库（cmake，`-DXDREMUX_SKIP_RC=ON`，缓存 `vendor/x265/build_windows/Release/x265-static.lib`）
   - `cargo build -p xdremux-core --release`
   - `flutter build windows --release`
-  - Inno Setup 打包（`iscc tools/installer/xdremux.iss`）
+  - Inno Setup 打包（`iscc tools/installer/xdremux.iss`，使用 runner 自带语言资源）
   - 上传 `XDRemuxSetup-<version>.exe` 到该 tag 的 Release
 - **job: android** — `ubuntu-latest`
   - 编 x265 Android 静态库（`build_android/libx265.a`，缓存）
@@ -104,9 +104,9 @@
 
 **验证**
 
-- CI：随便一个 push 触发，两个 job 绿
-- Release：本地先 `act` 模拟不了（x265/Windows 依赖重），直接打 `v0.1.1` tag 实战验证；失败就删 tag 重来
-- 产物：Release 页面自动出现 exe + apk，版本号正确
+- CI：已通过 [CI run 30213489285](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30213489285)
+- Release：已通过 [Release run 30213513064](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30213513064)
+- 产物：[`v0.1.1 Release`](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.1.1) 已出现 Windows exe 与 Android apk
 
 **当前实现**
 
