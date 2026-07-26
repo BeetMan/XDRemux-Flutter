@@ -6,7 +6,9 @@
 ; Produces: apps\flutter\build\installer\XDRemuxSetup-<version>.exe
 
 #define AppName "XDRemux"
-#define AppVersion "0.1.0"
+#ifndef AppVersion
+#define AppVersion "0.1.1"
+#endif
 #define AppPublisher "BeetMan"
 #define AppURL "https://github.com/BeetMan/XDRemux-Flutter"
 #define AppExeName "xdremux.exe"

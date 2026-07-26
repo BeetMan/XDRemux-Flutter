@@ -27,7 +27,10 @@ xdremux.app
 .codex/
 .claude/
 .sisyphus/
-.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/*.yml
 skills/
 docs/
 AGENTS.md

@@ -194,7 +194,7 @@ class XdRemuxFFI {
       ffi.Void Function(ThumbnailResult),
       void Function(ThumbnailResult)>('xdremux_free_thumbnail');
 
-  /// Returns the Rust core version string (e.g. "0.1.0").
+  /// Returns the Rust core version string (e.g. "0.1.1").
   static String version() {
     final ptr = _version();
     try {
