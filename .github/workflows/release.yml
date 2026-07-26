@@ -67,6 +67,11 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Release tag must look like v0.1.1, got ${{ github.ref_name }}"
           }
+          $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+          $pubspecName = $pubspecVersion.Split('+')[0]
+          if ($pubspecName -ne $version) {
+            throw "Release tag $version does not match pubspec version $pubspecName"
+          }
           "APP_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Build Rust core
@@ -183,7 +188,19 @@ jobs:
             echo "Release tag must look like v0.1.1, got $GITHUB_REF_NAME" >&2
             exit 1
           fi
+          pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+          pubspec_name="${pubspec_version%%+*}"
+          pubspec_code="${pubspec_version##*+}"
+          if [[ "$pubspec_name" != "$version" ]]; then
+            echo "Release tag $version does not match pubspec version $pubspec_name" >&2
+            exit 1
+          fi
+          if [[ ! "$pubspec_code" =~ ^[1-9][0-9]*$ ]]; then
+            echo "pubspec build number must be a positive integer, got $pubspec_code" >&2
+            exit 1
+          fi
           echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=$pubspec_code" >> "$GITHUB_ENV"
 
       - name: Build Rust Android library
         working-directory: xdremux/rust
@@ -193,9 +210,31 @@ jobs:
         working-directory: apps/flutter
         run: flutter pub get
 
+      - name: Configure Android release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for variable in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "Missing GitHub Actions secret: $variable" >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > apps/flutter/android/xdremux-release.keystore
+          printf 'storeFile=xdremux-release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" \
+            > apps/flutter/android/key.properties
+          chmod 600 apps/flutter/android/xdremux-release.keystore apps/flutter/android/key.properties
+          echo 'XDREMUX_REQUIRE_RELEASE_SIGNING=true' >> "$GITHUB_ENV"
+
       - name: Build Android APK
         working-directory: apps/flutter
-        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="${{ github.run_number }}"
+        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
@@ -218,6 +257,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body_path: tools/installer/RELEASE_NOTES_${{ github.ref_name }}.md
           files: |
             dist/windows-installer/XDRemuxSetup-*.exe
             dist/android-apk/app-release.apk

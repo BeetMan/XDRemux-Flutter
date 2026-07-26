@@ -1,0 +1,4 @@
+storeFile=xdremux-release.keystore
+storePassword=replace-with-keystore-password
+keyAlias=xdremux-release
+keyPassword=replace-with-key-password
