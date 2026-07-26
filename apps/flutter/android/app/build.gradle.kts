@@ -1,7 +1,33 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val signingProperties = Properties()
+val signingPropertiesFile = rootProject.file("key.properties")
+if (signingPropertiesFile.isFile) {
+    signingPropertiesFile.inputStream().use { signingProperties.load(it) }
+}
+
+fun signingProperty(name: String): String? =
+    signingProperties.getProperty(name)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingProperty("storeFile")?.let { rootProject.file(it) }
+val releaseStorePassword = signingProperty("storePassword")
+val releaseKeyAlias = signingProperty("keyAlias")
+val releaseKeyPassword = signingProperty("keyPassword")
+val releaseSigningConfigured = releaseStoreFile?.isFile == true &&
+    releaseStorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null
+
+if (System.getenv("XDREMUX_REQUIRE_RELEASE_SIGNING") == "true" && !releaseSigningConfigured) {
+    throw GradleException(
+        "Release signing is required, but android/key.properties and its keystore are not configured.",
+    )
 }
 
 android {
@@ -32,11 +58,26 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Local builds fall back to debug only when no release key is configured.
+            // CI sets XDREMUX_REQUIRE_RELEASE_SIGNING and must use the shared key.
+            signingConfig = if (releaseSigningConfigured) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

@@ -10,7 +10,8 @@
     <application
         android:label="XDRemux"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher_xdremux"
+        android:roundIcon="@mipmap/ic_launcher_xdremux">
         <activity
             android:name=".MainActivity"
             android:exported="true"
