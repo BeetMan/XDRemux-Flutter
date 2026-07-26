@@ -1,20 +1,21 @@
 //! HEVC tile encoder.
 //!
-//! - Desktop (Windows/macOS): calls `ffmpeg` as a subprocess (zero link-time deps).
-//! - Android: links x265 statically and calls the C API directly (SELinux
-//!   prohibits executing files from the app data directory).
+//! - Default (all platforms): x265 static-linked, C API called directly.
+//! - Optional fallback: `XDREMUX_USE_FFMPEG=1` at build time compiles out the
+//!   x265 path and calls `ffmpeg` as a subprocess instead (desktop only).
 
+#[cfg(xdremux_ffmpeg_fallback)]
 use std::io::{Read, Write};
+#[cfg(xdremux_ffmpeg_fallback)]
 use std::path::PathBuf;
+#[cfg(xdremux_ffmpeg_fallback)]
 use std::process::{Command, Stdio};
+#[cfg(xdremux_ffmpeg_fallback)]
 use std::thread;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 /// `CREATE_NO_WINDOW` — suppresses the console window flash for every ffmpeg
 /// subprocess on Windows (const 0x08000000, from winbase.h).
-#[cfg(windows)]
+#[cfg(all(windows, xdremux_ffmpeg_fallback))]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // ===========================================================================
@@ -25,11 +26,11 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// elementary stream. `pixels` must be `width * height` bytes, row-major.
 pub fn encode_hevc_tile_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     assert_eq!(pixels.len() as u32, width * height);
-    #[cfg(target_os = "android")]
+    #[cfg(not(xdremux_ffmpeg_fallback))]
     {
         return x265_encode_gray(pixels, width, height);
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(xdremux_ffmpeg_fallback)]
     {
         encode_raw_tile(pixels, "gray", width, height)
     }
@@ -40,43 +41,52 @@ pub fn encode_hevc_tile_gray(pixels: &[u8], width: u32, height: u32) -> std::io:
 /// resolution is preserved.
 pub fn encode_hevc_tile_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     assert_eq!(pixels.len() as u32, width * height * 3);
-    #[cfg(target_os = "android")]
+    #[cfg(not(xdremux_ffmpeg_fallback))]
     {
         return x265_encode_rgb(pixels, width, height);
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(xdremux_ffmpeg_fallback)]
     {
         encode_raw_tile(pixels, "rgb24", width, height)
     }
 }
 
 // ===========================================================================
-// Android: x265 static-linked encoder
+// x265 static-linked encoder (default on all platforms)
 // ===========================================================================
 
-/// Android log helper — writes to logcat with tag "xdremux_x265".
-#[cfg(target_os = "android")]
-fn alog(msg: &str) {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
-    extern "C" {
-        fn __android_log_print(prio: i32, tag: *const c_char, fmt: *const c_char, ...) -> i32;
+/// Debug log helper — logcat on Android, stderr elsewhere.
+#[cfg(not(xdremux_ffmpeg_fallback))]
+fn xlog(msg: &str) {
+    #[cfg(target_os = "android")]
+    {
+        use std::ffi::CString;
+        use std::os::raw::c_char;
+        extern "C" {
+            fn __android_log_print(prio: i32, tag: *const c_char, fmt: *const c_char, ...) -> i32;
+        }
+        let tag = CString::new("xdremux_x265").unwrap();
+        let fmt = CString::new("%s").unwrap();
+        let m = CString::new(msg).unwrap_or_else(|_| CString::new("(bad utf8)").unwrap());
+        unsafe {
+            __android_log_print(4, tag.as_ptr(), fmt.as_ptr(), m.as_ptr()); // 4=INFO
+        }
     }
-    let tag = CString::new("xdremux_x265").unwrap();
-    let fmt = CString::new("%s").unwrap();
-    let m = CString::new(msg).unwrap_or_else(|_| CString::new("(bad utf8)").unwrap());
-    unsafe {
-        __android_log_print(4, tag.as_ptr(), fmt.as_ptr(), m.as_ptr()); // 4=INFO
+    #[cfg(not(target_os = "android"))]
+    {
+        if std::env::var_os("XDREMUX_X265_DEBUG").is_some() {
+            eprintln!("[xdremux_x265] {msg}");
+        }
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
     use std::os::raw::c_void;
 
-    alog(&format!("x265 gray {}x{}", width, height));
+    xlog(&format!("x265 gray {}x{}", width, height));
 
     // Expand gray to YUV444: Y=pixel, U=128, V=128 (iOS expects chroma_format_idc=3)
     let plane_size = (width * height) as usize;
@@ -108,14 +118,14 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
         set_param(param, "frame-threads", "1");
         set_param(param, "pools", "1");
 
-        alog("opening encoder");
+        xlog("opening encoder");
         let encoder = x265_encoder_open_216(param);
         if encoder.is_null() {
-            alog("encoder open FAILED");
+            xlog("encoder open FAILED");
             x265_param_free(param);
             return Err(io_err("x265_encoder_open failed"));
         }
-        alog("encoder opened OK");
+        xlog("encoder opened OK");
 
         let pic = x265_picture_alloc();
         x265_picture_init(param, pic);
@@ -140,13 +150,13 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
     use std::os::raw::c_void;
 
-    alog(&format!("x265 rgb {}x{}", width, height));
+    xlog(&format!("x265 rgb {}x{}", width, height));
 
     // Convert RGB24 → YUV444 planar (BT.709, full range)
     let plane_size = (width * height) as usize;
@@ -195,14 +205,14 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
         set_param(param, "frame-threads", "1");
         set_param(param, "pools", "1");
 
-        alog("opening encoder");
+        xlog("opening encoder");
         let encoder = x265_encoder_open_216(param);
         if encoder.is_null() {
-            alog("encoder open FAILED");
+            xlog("encoder open FAILED");
             x265_param_free(param);
             return Err(io_err("x265_encoder_open failed"));
         }
-        alog("encoder opened OK");
+        xlog("encoder opened OK");
 
         let pic = x265_picture_alloc();
         x265_picture_init(param, pic);
@@ -228,7 +238,7 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
 }
 
 /// Run the encoder: feed one frame, then flush. Collect all output NALs.
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 unsafe fn do_encode(
     encoder: *mut crate::x265_ffi::x265_encoder,
     pic_in: *mut crate::x265_ffi::x265_picture,
@@ -265,7 +275,7 @@ unsafe fn do_encode(
 }
 
 /// Copy NAL payloads into the output buffer (they include start codes already).
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 unsafe fn append_nals(output: &mut Vec<u8>, nals: *mut crate::x265_ffi::x265_nal, count: u32) {
     for i in 0..count as usize {
         let nal = &*nals.add(i);
@@ -275,7 +285,7 @@ unsafe fn append_nals(output: &mut Vec<u8>, nals: *mut crate::x265_ffi::x265_nal
 }
 
 /// Set a param by name/value strings (with logging on failure).
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 unsafe fn set_param(
     param: *mut crate::x265_ffi::x265_param,
     name: &str,
@@ -285,20 +295,20 @@ unsafe fn set_param(
     let v = std::ffi::CString::new(value).unwrap();
     let ret = crate::x265_ffi::x265_param_parse(param, n.as_ptr(), v.as_ptr());
     if ret != 0 {
-        alog(&format!("param_parse FAILED: {}={} ret={}", name, value, ret));
+        xlog(&format!("param_parse FAILED: {}={} ret={}", name, value, ret));
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 fn io_err(msg: &str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, msg.to_string())
 }
 
 // ===========================================================================
-// Desktop: ffmpeg subprocess encoder
+// Optional fallback: ffmpeg subprocess encoder (build with XDREMUX_USE_FFMPEG=1)
 // ===========================================================================
 
-#[cfg(not(target_os = "android"))]
+#[cfg(xdremux_ffmpeg_fallback)]
 fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     let pix_fmt_out = match pix_fmt_in {
         "gray" => "yuv444p",
@@ -379,7 +389,7 @@ fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> 
 
 /// Resolve `name` (e.g. "ffmpeg") to an absolute path, falling back to the bare
 /// name if resolution fails.
-#[cfg(not(target_os = "android"))]
+#[cfg(xdremux_ffmpeg_fallback)]
 fn resolve_exe(name: &str) -> PathBuf {
     // 1. Check next to our own executable (bundled distribution).
     if let Ok(exe_path) = std::env::current_exe() {

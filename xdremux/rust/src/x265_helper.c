@@ -1,10 +1,20 @@
 //! Minimal C helper for x265 FFI — sets struct fields that are impractical
 //! to replicate in Rust (x265_picture is a large version-dependent struct).
 
+#if defined(_MSC_VER) && !defined(__cplusplus)
+/* MSVC's C mode has no `bool` keyword; x265.h uses it only in declarations we
+   never touch. A byte-sized typedef keeps layout compatible. */
+typedef unsigned char bool;
+#endif
+
 #include "x265.h"
 #include <string.h>
 
+#ifdef _MSC_VER
+#define EXPORT __declspec(dllexport)
+#else
 #define EXPORT __attribute__((visibility("default")))
+#endif
 
 EXPORT void xdremux_pic_set_planes(x265_picture *pic, void *p0, void *p1, void *p2,
                             int s0, int s1, int s2) {

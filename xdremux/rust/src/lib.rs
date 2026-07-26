@@ -14,7 +14,7 @@ pub mod isobmff_write;
 pub mod jpeg_decode;
 pub mod progress;
 
-#[cfg(target_os = "android")]
+#[cfg(not(xdremux_ffmpeg_fallback))]
 pub mod x265_ffi;
 
 use std::ffi::{c_char, CStr, CString};

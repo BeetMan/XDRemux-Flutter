@@ -24,7 +24,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 ### Flutter App
 
-- ✅ Windows 桌面应用（含 Gyan.dev ffmpeg 捆绑分发）
+- ✅ Windows 桌面应用（x265 静态链接，无需 ffmpeg）
 - ✅ Android 移动端应用（x265 静态链接 + 纯 Rust JPEG 解码，无需 ffmpeg）
 - ✅ 拖拽 HEIC 文件到窗口（Windows 原生 `WM_DROPFILES`）
 - ✅ 文件选择器（`file_picker`）兼容所有平台
@@ -38,7 +38,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 跳过已有有效输出文件
 - ✅ 可配置输出目录或文件名后缀
 - ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …）
-- ✅ 缩略图预览（桌面 ffmpeg / Android Rust FFI 提取 EXIF 缩略图）
+- ✅ 缩略图预览（全平台 Rust FFI 提取 EXIF 内嵌 JPEG 缩略图）
 - ✅ Android 保存到图库（MediaStore DCIM/XDRemux）
 - ✅ Android 分享（ACTION_SEND）
 - ✅ Android 系统图库打开（ACTION_VIEW）
@@ -57,7 +57,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 | 平台 | 状态 | 备注 |
 |------|------|------|
-| Windows | ✅ 可运行 | ffmpeg 捆绑、原生拖拽、DLL 完整工作 |
+| Windows | ✅ 可运行 | x265 静态链接、原生拖拽、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载 + macOS Runner 已验证 |
 | Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、缩略图 FFI、MediaStore 保存 |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
@@ -67,9 +67,27 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 ### Windows 预构建包
 
-下载 Release，解压即用（ffmpeg 已内置，无需额外安装）。
+下载 Release，解压即用（HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg）。
 
 ### 从源码构建
+
+HEVC 编码由静态链接的 x265 完成（Windows/macOS/Android 同一路径），需先从
+`xdremux/rust/vendor/x265/` 构建静态库（vendored 源码，约 2 分钟）：
+
+```bash
+# Windows（MSVC，一次即可）
+cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_windows \
+  -G "Visual Studio 17 2022" -A x64 -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \
+  -DENABLE_ASSEMBLY=OFF -DXDREMUX_SKIP_RC=ON
+cmake --build xdremux/rust/vendor/x265/build_windows --config Release --target x265-static
+
+# macOS / Linux
+cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
+  -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF
+cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j
+```
+
+如需回退到 ffmpeg 子进程编码（调试用），构建 Rust 时设 `XDREMUX_USE_FFMPEG=1`。
 
 ```bash
 # Rust 核心
@@ -157,13 +175,12 @@ cargo build --workspace --release
 
 - [ ] CI/CD（GitHub Actions 编译测试 + 发布）
 - [ ] macOS / Linux 原生拖拽支持（当前仅 Windows 实现 `WM_DROPFILES`）
-- [ ] Android 缩略图解码回退（当前仅支持 EXIF 内嵌 JPEG，无 ffmpeg 兜底）
+- [ ] 缩略图解码回退（当前仅支持 EXIF 内嵌 JPEG，无兜底）
 
 ## 已知限制
 
 - 转换前请备份原始文件。
 - 转换后回到 OPPO 相册编辑再保存，HDR Gain Map 可能丢失。
-- Windows 端 ffmpeg 捆绑包体积较大（~200MB），计划调研缩小方案。
 - 仅接受 `.heic` 文件（不区分大小写）。
 - Android 缩略图依赖 EXIF 内嵌 JPEG，部分文件可能无缩略图。
 

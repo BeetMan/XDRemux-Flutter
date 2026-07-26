@@ -96,16 +96,8 @@ else()
   message(WARNING "Rust core DLL not found at ${XDREMUX_RUST_DLL}. Build it with: cargo build --release")
 endif()
 
-# Bundle ffmpeg executables for offline distribution.
-set(FFMPEG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/ffmpeg/windows")
-if(EXISTS "${FFMPEG_DIR}")
-  install(FILES
-    "${FFMPEG_DIR}/ffmpeg.exe"
-    "${FFMPEG_DIR}/ffprobe.exe"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
-else()
-  message(WARNING "ffmpeg binaries not found at ${FFMPEG_DIR}. Download them from https://www.gyan.dev/ffmpeg/builds/")
-endif()
+# ffmpeg is no longer bundled: HEVC encoding uses static-linked x265 and
+# thumbnails use Rust FFI (embedded EXIF JPEG extraction).
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")

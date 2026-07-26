@@ -1773,41 +1773,12 @@ class _OutputPreview extends StatelessWidget {
   }
 
   Future<Uint8List?> _generatePreview() async {
-    // Android: use Rust FFI thumbnail extraction (no ffmpeg subprocess).
-    if (Platform.isAndroid) {
-      try {
-        return XdRemuxFFI.extractThumbnail(outputPath);
-      } catch (_) {
-        return null;
-      }
+    // All platforms: Rust FFI extracts the embedded EXIF JPEG thumbnail.
+    try {
+      return XdRemuxFFI.extractThumbnail(outputPath);
+    } catch (_) {
+      return null;
     }
-
-    final ffmpegPaths = [
-      'ffmpeg',
-      '/opt/homebrew/bin/ffmpeg',
-      '/usr/local/bin/ffmpeg',
-    ];
-    for (final ffmpeg in ffmpegPaths) {
-      if (!File(ffmpeg).existsSync()) continue;
-      try {
-        final result = await Process.run(ffmpeg, [
-          '-y',
-          '-i',
-          outputPath,
-          '-vf',
-          'scale=min(320,iw):min(320,ih):force_original_aspect_ratio=decrease',
-          '-f',
-          'image2pipe',
-          '-c:v',
-          'png',
-          'pipe:1',
-        ]);
-        if (result.exitCode == 0 && result.stdout is List<int>) {
-          return Uint8List.fromList(result.stdout as List<int>);
-        }
-      } catch (_) {}
-    }
-    return null;
   }
 }
 

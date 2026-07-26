@@ -2,6 +2,7 @@
 
 > 整理日期：2026-07-25
 > 前置状态：上游 v1.3 同步已全部完成（见 `v1.3-sync-plan.md`），Windows / macOS / Android 三端可运行，120 个 Rust 测试 + 7 个 Flutter 测试通过。
+> 状态更新：2026-07-26 — **第 1 项（砍 ffmpeg）已完成**：Windows 与 Android 统一走 x265 静态链接（`build_windows/Release/x265-static.lib`，MSVC Release），缩略图/预览全平台切换为 Rust FFI（EXIF 内嵌 JPEG 提取），`tools/ffmpeg/windows`（195MB）与 CMake install 块已移除；ffmpeg 子进程保留为编译期回退（`XDREMUX_USE_FFMPEG=1`）。116 Rust 测试通过，Flutter analyze/test/build 全绿，真实 OPPO 样本端到端转换验证通过。
 
 ## 优先级总览
 

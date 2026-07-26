@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -6,38 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
-
-/// Resolve the ffmpeg executable path, checking the app's own directory first
-/// (bundled distribution) before falling back to PATH.
-///
-/// Note: On Android, ffmpeg subprocess is NOT available (SELinux restriction).
-/// Thumbnail/preview on Android uses Rust FFI instead.
-String resolveFfmpegPath() {
-  try {
-    if (Platform.isWindows) {
-      // On Windows, check next to our own executable first.
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final bundled = File('${exeDir.path}\\ffmpeg.exe');
-      if (bundled.existsSync()) return bundled.path;
-    } else if (Platform.isMacOS) {
-      // macOS app bundle: check Frameworks and executable directory.
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final bundled = File('${exeDir.path}/ffmpeg');
-      if (bundled.existsSync()) return bundled.path;
-      final frameworksDir = File('${exeDir.path}/../Frameworks/ffmpeg');
-      if (frameworksDir.existsSync()) return frameworksDir.path;
-      // Homebrew paths (app launched from Finder has minimal PATH).
-      const homebrew = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'];
-      for (final p in homebrew) {
-        if (File(p).existsSync()) return p;
-      }
-    }
-  } catch (e) {
-    print('_resolveFfmpeg error: $e');
-  }
-  // Fall back to whatever is on PATH (or bare name on other platforms).
-  return 'ffmpeg';
-}
 
 /// Higher-level service that wraps raw FFI calls and manages settings.
 class XdRemuxService {
@@ -137,51 +104,17 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// Desktop: uses ffmpeg subprocess.
-  /// Android: uses Rust FFI to extract embedded EXIF JPEG thumbnail.
+  /// All platforms: uses Rust FFI to extract the embedded EXIF JPEG thumbnail.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
-    // Android: use Rust FFI thumbnail extraction (no ffmpeg subprocess).
-    if (Platform.isAndroid) {
-      try {
-        return XdRemuxFFI.extractThumbnail(inputPath);
-      } catch (e) {
-        print('generateThumbnail Android FFI error: $e');
-        return null;
-      }
-    }
-
     try {
-      final ffmpeg = resolveFfmpegPath();
-      print('generateThumbnail: ffmpeg=$ffmpeg');
-      // Output PNG (not rawvideo) so Image.memory() can decode it.
-      // Use -s (simple scale) to avoid complex filtergraph errors on HEIC.
-      final result = await Process.run(ffmpeg, [
-        '-y',
-        '-ss', '0',
-        '-i', inputPath,
-        '-vframes', '1',
-        '-s', '${maxPixelSize}x${maxPixelSize}',
-        '-f', 'image2pipe',
-        '-c:v', 'png',
-        'pipe:1',
-      ], runInShell: false, stdoutEncoding: null);
-      if (result.exitCode == 0 && result.stdout is List<int> && result.stdout.isNotEmpty) {
-        return Uint8List.fromList(result.stdout as List<int>);
-      }
-      // ffmpeg binary output should be List<int>; if it's String (e.g. error
-      // message), print a snippet for debugging.
-      final stdoutSnippet = result.stdout is String
-          ? (result.stdout as String).substring(0, (result.stdout as String).length.clamp(0, 200))
-          : 'type=${result.stdout.runtimeType} len=${result.stdout.length}';
-      print('generateThumbnail: exit=${result.exitCode}, stdoutSnippet=$stdoutSnippet, stderr=${result.stderr.toString().substring(0, result.stderr.toString().length.clamp(0, 200))}');
-    } catch (e, st) {
-      print('generateThumbnail ERROR: $e');
-      print(st);
+      return XdRemuxFFI.extractThumbnail(inputPath);
+    } catch (e) {
+      print('generateThumbnail FFI error: $e');
+      return null;
     }
-    return null;
   }
 
   // -----------------------------------------------------------------------
