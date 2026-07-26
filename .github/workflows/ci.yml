@@ -83,5 +83,15 @@ jobs:
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos
 
+      - name: Build native FFI library
+        working-directory: .
+        env:
+          # CI smoke tests only exercise the FFI surface; use the desktop
+          # fallback here and keep the x265 build in the Rust job/release job.
+          XDREMUX_USE_FFMPEG: '1'
+        run: |
+          cargo build -p xdremux-core --release
+          cp target/release/libxdremux_core.so apps/flutter/libxdremux_core.so
+
       - name: Run Flutter tests
         run: flutter test

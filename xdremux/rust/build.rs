@@ -89,6 +89,11 @@ fn main() {
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=m");
             println!("cargo:rustc-link-lib=pthread");
+            if target_os == "linux" {
+                // x265 detects libnuma during its static build, so the
+                // dependency must be repeated when the archive is linked.
+                println!("cargo:rustc-link-lib=numa");
+            }
         }
     }
 
