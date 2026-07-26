@@ -256,7 +256,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          generate_release_notes: false
           body_path: tools/installer/RELEASE_NOTES_${{ github.ref_name }}.md
           files: |
             dist/windows-installer/XDRemuxSetup-*.exe
