@@ -39,7 +39,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 可配置输出目录或文件名后缀
 - ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …）
 - ✅ 缩略图预览（全平台 Rust FFI 提取 EXIF 内嵌 JPEG 缩略图）
-- ✅ Android 保存到图库（MediaStore；开启"按拍摄模式分目录"时按模式分相册，否则 DCIM/XDRemux）
+- ✅ Android 保存到图库（MediaStore；开启"按拍摄模式分目录"时按模式分相册，否则 Pictures/XDRemux）
 - ✅ Android 分享（ACTION_SEND）
 - ✅ Android 系统图库打开（ACTION_VIEW）
 - ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）

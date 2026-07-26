@@ -977,7 +977,8 @@ class _HomePageState extends State<HomePage> {
 
   String _galleryAlbumSubtitle(QueueItem item) {
     final album = _galleryAlbum(item) ?? 'XDRemux';
-    return 'DCIM/$album';
+    // gal/MediaStore places image albums under Pictures/, not DCIM/.
+    return 'Pictures/$album';
   }
 
   /// Android: show bottom sheet with output file actions.

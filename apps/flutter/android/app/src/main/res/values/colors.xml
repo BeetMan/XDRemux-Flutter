@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive icon background: matches the icon's dark navy edge color -->
+    <color name="ic_launcher_background">#101A27</color>
+</resources>

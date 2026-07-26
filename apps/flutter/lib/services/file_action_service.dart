@@ -11,7 +11,7 @@ class FileActionService {
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
   /// On Android this inserts the file into MediaStore (DCIM or Pictures).
-  /// [album] overrides the MediaStore album (relative DCIM subfolder);
+  /// [album] overrides the MediaStore album (MediaStore album name, placed under Pictures/);
   /// defaults to 'XDRemux'.
   /// On desktop this is a no-op (files are already accessible).
   /// Returns true on success.
@@ -59,10 +59,21 @@ class FileActionService {
   /// Open a file with the system default application.
   ///
   /// On Android this fires an ACTION_VIEW intent (opens in Gallery/file viewer).
+  /// The MIME type is forced to image/* for HEIC/HEIF: open_filex's built-in
+  /// table doesn't know the .heic extension and would fall back to
+  /// application/octet-stream, for which no gallery app registers.
   static Future<bool> openFile(String filePath) async {
     try {
       if (!File(filePath).existsSync()) return false;
-      final result = await OpenFilex.open(filePath);
+      final lower = filePath.toLowerCase();
+      final isHeic = lower.endsWith('.heic') || lower.endsWith('.heif');
+      final result = await OpenFilex.open(
+        filePath,
+        type: isHeic ? 'image/*' : null,
+      );
+      if (result.type != ResultType.done) {
+        print('openFile failed: ${result.type} ${result.message}');
+      }
       return result.type == ResultType.done;
     } catch (e) {
       print('openFile error: $e');
