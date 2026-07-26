@@ -11,13 +11,15 @@ class FileActionService {
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
   /// On Android this inserts the file into MediaStore (DCIM or Pictures).
+  /// [album] overrides the MediaStore album (relative DCIM subfolder);
+  /// defaults to 'XDRemux'.
   /// On desktop this is a no-op (files are already accessible).
   /// Returns true on success.
-  static Future<bool> saveToGallery(String filePath) async {
+  static Future<bool> saveToGallery(String filePath, {String? album}) async {
     try {
       if (!File(filePath).existsSync()) return false;
       // gal handles Android MediaStore insertion and iOS PHPhotoLibrary.
-      await Gal.putImage(filePath, album: 'XDRemux');
+      await Gal.putImage(filePath, album: album ?? 'XDRemux');
       return true;
     } catch (e) {
       print('saveToGallery error: $e');

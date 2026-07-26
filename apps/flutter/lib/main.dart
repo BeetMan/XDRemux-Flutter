@@ -964,9 +964,24 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Gallery album for an output item: capture-mode folder name when
+  /// categorize-by-mode is on and the mode was recognized, else 'XDRemux'.
+  String? _galleryAlbum(QueueItem item) {
+    if (_config.categorizeOutputByMode &&
+        item.captureModeFolderName != null &&
+        item.captureModeFolderName!.isNotEmpty) {
+      return item.captureModeFolderName;
+    }
+    return null; // service default 'XDRemux'
+  }
+
+  String _galleryAlbumSubtitle(QueueItem item) {
+    final album = _galleryAlbum(item) ?? 'XDRemux';
+    return 'DCIM/$album';
+  }
+
   /// Android: show bottom sheet with output file actions.
-  void _showOutputActions(QueueItem item) {
-    showModalBottomSheet(
+  void _showOutputActions(QueueItem item) {    showModalBottomSheet(
       context: context,
       builder: (ctx) {
         return SafeArea(
@@ -976,7 +991,7 @@ class _HomePageState extends State<HomePage> {
               ListTile(
                 leading: const Icon(Icons.photo_library),
                 title: const Text('保存到图库'),
-                subtitle: const Text('DCIM/XDRemux'),
+                subtitle: Text(_galleryAlbumSubtitle(item)),
                 onTap: () async {
                   Navigator.pop(ctx);
                   final hasAccess =
@@ -995,6 +1010,7 @@ class _HomePageState extends State<HomePage> {
                   }
                   final ok = await FileActionService.saveToGallery(
                     item.outputPath,
+                    album: _galleryAlbum(item),
                   );
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -1018,25 +1034,6 @@ class _HomePageState extends State<HomePage> {
                 onTap: () {
                   Navigator.pop(ctx);
                   FileActionService.openFile(item.outputPath);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder_copy),
-                title: const Text('保存到源目录'),
-                subtitle: Text(File(item.inputPath).parent.path),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final dest = await FileActionService.copyToSourceDir(
-                    item.outputPath,
-                    item.inputPath,
-                  );
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(dest != null ? '已复制到: $dest' : '复制失败'),
-                      ),
-                    );
-                  }
                 },
               ),
             ],
@@ -1128,11 +1125,13 @@ class _HomePageState extends State<HomePage> {
         tooltip: '设置',
         onPressed: () => _openSettings(context),
       ),
-      IconButton(
-        icon: const Icon(Icons.folder_copy_outlined),
-        tooltip: '按拍摄模式整理',
-        onPressed: _openOrganizePage,
-      ),
+      // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 下不可用。
+      if (!Platform.isAndroid)
+        IconButton(
+          icon: const Icon(Icons.folder_copy_outlined),
+          tooltip: '按拍摄模式整理',
+          onPressed: _openOrganizePage,
+        ),
       _buildQueueOverflowMenu(),
       const SizedBox(width: 4),
     ];
@@ -1181,15 +1180,16 @@ class _HomePageState extends State<HomePage> {
             contentPadding: EdgeInsets.zero,
           ),
         ),
-        PopupMenuItem(
-          value: _QueueMenuAction.revealOutputs,
-          enabled: _queue.any((item) => item.isSuccessful),
-          child: const ListTile(
-            leading: Icon(Icons.folder_open),
-            title: Text('打开输出目录'),
-            contentPadding: EdgeInsets.zero,
+        if (!Platform.isAndroid)
+          PopupMenuItem(
+            value: _QueueMenuAction.revealOutputs,
+            enabled: _queue.any((item) => item.isSuccessful),
+            child: const ListTile(
+              leading: Icon(Icons.folder_open),
+              title: Text('打开输出目录'),
+              contentPadding: EdgeInsets.zero,
+            ),
           ),
-        ),
         const PopupMenuDivider(),
         PopupMenuItem(
           value: _QueueMenuAction.clearQueue,
@@ -2082,38 +2082,43 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 20),
 
-                    // Output directory
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _cfg.outputDirectory ?? '使用源文件目录',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: _cfg.outputDirectory == null
-                                  ? theme.colorScheme.onSurfaceVariant
-                                  : null,
+                    // Output directory — desktop only. Android scoped storage
+                    // makes an arbitrary writable directory impossible without
+                    // MANAGE_EXTERNAL_STORAGE; output goes to the app-specific
+                    // dir and is exported via 保存到图库 / 分享.
+                    if (!Platform.isAndroid) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _cfg.outputDirectory ?? '使用源文件目录',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: _cfg.outputDirectory == null
+                                    ? theme.colorScheme.onSurfaceVariant
+                                    : null,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.folder_open),
-                          tooltip: '选择目录',
-                          onPressed: _chooseDirectory,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.clear),
-                          tooltip: '清除',
-                          onPressed: _cfg.outputDirectory != null
-                              ? () {
-                                  setState(() => _cfg.outputDirectory = null);
-                                  _emit();
-                                }
-                              : null,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
+                          IconButton(
+                            icon: const Icon(Icons.folder_open),
+                            tooltip: '选择目录',
+                            onPressed: _chooseDirectory,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.clear),
+                            tooltip: '清除',
+                            onPressed: _cfg.outputDirectory != null
+                                ? () {
+                                    setState(() => _cfg.outputDirectory = null);
+                                    _emit();
+                                  }
+                                : null,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                    ],
 
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
