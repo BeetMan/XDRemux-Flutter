@@ -84,7 +84,9 @@ proxdr-probe-app/
 test-samples/
 tmp-samples/
 tmp/
-tools/
+tools/*
+# Packaging scripts under tools/ are source, not artifacts — keep them tracked.
+!tools/installer/
 
 # Recreatable
 final-output/

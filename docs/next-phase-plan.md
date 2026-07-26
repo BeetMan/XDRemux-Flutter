@@ -50,12 +50,14 @@ Android 端已验证可行：`26487c5 feat(android): x265 static-linked HEVC enc
 - `tools/ffmpeg/windows/`（删除）
 - `.gitignore`、`README.md`
 
-### 2. Windows 安装程序（MSIX）
+### 2. Windows 安装程序（exe / MSIX）✅ 已完成
 
-- `flutter build windows` 产物用 MSIX 打包
-- 一键安装、开始菜单项、可选商店分发
-- 比 NSIS 更现代，微软官方方向
-- 前置依赖：第 1 项完成后包体积才合理
+- Inno Setup 6 脚本 `tools/installer/xdremux.iss`：`iscc` 编译产出 ~12MB 的
+  `XDRemuxSetup-<version>.exe`（lzma2/ultra64 压缩 32MB Release 目录），
+  支持中文界面、per-user 安装（免管理员）、桌面/开始菜单快捷方式；
+  安装 → 运行 → 静默卸载全链路已验证
+- MSIX 也可用（`dart run msix:create`，95MB），但签名信任链对侧载分发不友好，
+  保留为未来上架 Microsoft Store 的通道
 
 ### 3. 自动更新检查
 

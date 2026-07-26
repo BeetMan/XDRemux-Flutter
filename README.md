@@ -69,15 +69,18 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 ### Windows 预构建包
 
-下载 Release，解压即用（HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg）。
-也提供 MSIX 安装包（双击安装，出现开始菜单项）。
+下载 Release 的 `XDRemuxSetup-x.y.z.exe`（Inno Setup 安装包，~12MB），双击安装，
+开始菜单/桌面快捷方式自动生成；HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg。
 
-自行打包 MSIX：
+自行打包：
 
 ```bash
 flutter build windows --release
-dart run msix:create        # 测试证书签名；正式分发需替换为自己的证书
+iscc tools\installer\xdremux.iss   # 需 Inno Setup 6
+# 产物：apps/flutter/build/installer/XDRemuxSetup-<version>.exe
 ```
+
+也支持 MSIX（`dart run msix:create`），适合未来上架 Microsoft Store。
 
 ### 从源码构建
 
