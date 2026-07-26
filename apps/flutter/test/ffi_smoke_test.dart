@@ -15,7 +15,8 @@ final class ConversionResult extends Struct {
 String get _libraryPath {
   if (Platform.isMacOS) return 'libxdremux_core.dylib';
   if (Platform.isWindows) return 'xdremux_core.dll';
-  return 'libxdremux_core.so';
+  // Linux does not search the current directory for a bare library name.
+  return './libxdremux_core.so';
 }
 
 void main() {

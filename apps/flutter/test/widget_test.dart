@@ -4,6 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xdremux/main.dart';
 
 void main() {
+  test('input path filter accepts HEIC/HEIF and rejects unrelated files', () {
+    expect(isSupportedInputPath('photo.HEIC'), isTrue);
+    expect(isSupportedInputPath('photo.heif'), isTrue);
+    expect(isSupportedInputPath('photo.jpg'), isFalse);
+    expect(isSupportedInputPath('photo.heic.jpg'), isFalse);
+  });
+
   testWidgets('XdRemuxApp renders home page', (WidgetTester tester) async {
     await tester.pumpWidget(const XdRemuxApp());
 

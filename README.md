@@ -196,7 +196,7 @@ cargo build --workspace --release
 
 - 转换前请备份原始文件。
 - 转换后回到 OPPO 相册编辑再保存，HDR Gain Map 可能丢失。
-- 仅接受 `.heic` 文件（不区分大小写）。
+- 转换输入接受 `.heic` / `.heif` 文件（不区分大小写）；拖入其他格式时会明确提示忽略数量。
 - Android 缩略图依赖 EXIF 内嵌 JPEG，部分文件可能无缩略图。
 
 ## 运行验证

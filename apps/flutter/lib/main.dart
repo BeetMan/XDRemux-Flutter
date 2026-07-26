@@ -19,6 +19,12 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
+/// File extensions accepted by both the picker and the desktop drop target.
+bool isSupportedInputPath(String path) {
+  final lower = path.toLowerCase();
+  return lower.endsWith('.heic') || lower.endsWith('.heif');
+}
+
 void main() {
   runApp(const XdRemuxApp());
 }
@@ -397,7 +403,7 @@ class _HomePageState extends State<HomePage> {
 
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['heic', 'HEIC'],
+      allowedExtensions: ['heic', 'heif'],
       allowMultiple: true,
     );
 
@@ -891,8 +897,12 @@ class _HomePageState extends State<HomePage> {
   Future<void> _handleDrop(List<String> paths) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
+    int ignored = 0;
     for (final path in paths) {
-      if (!path.toLowerCase().endsWith('.heic')) continue;
+      if (!isSupportedInputPath(path)) {
+        ignored++;
+        continue;
+      }
       if (existing.contains(path)) continue;
       try {
         final classification = await XdRemuxService.classify(path);
@@ -922,7 +932,19 @@ class _HomePageState extends State<HomePage> {
     if (added > 0) {
       _validateOutputPlans();
       _updateStatusText();
-      setState(() => _currentFileName = '已拖入 $added 个文件');
+    }
+    if (added == 0 && ignored == 0) return;
+
+    final summary = added > 0 && ignored > 0
+        ? '已拖入 $added 个文件，已忽略 $ignored 个非 HEIC 文件'
+        : added > 0
+        ? '已拖入 $added 个文件'
+        : '未添加：$ignored 个文件都不是 HEIC';
+    setState(() => _currentFileName = summary);
+    if (ignored > 0 && mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(summary)));
     }
   }
 
@@ -982,7 +1004,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Android: show bottom sheet with output file actions.
-  void _showOutputActions(QueueItem item) {    showModalBottomSheet(
+  void _showOutputActions(QueueItem item) {
+    showModalBottomSheet(
       context: context,
       builder: (ctx) {
         return SafeArea(

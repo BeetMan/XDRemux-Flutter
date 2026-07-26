@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Project memory: pub packages are fetched through the China mirror.
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
+  X265_TAG: 4.2
+
+jobs:
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libnuma-dev
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-linux-${{ env.X265_TAG }}
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch "$X265_TAG" \
+            https://bitbucket.org/multicoreware/x265_git.git \
+            xdremux/rust/vendor/x265
+          mkdir -p xdremux/rust/vendor/x265/include
+          cp xdremux/rust/vendor/x265/source/x265.h \
+            xdremux/rust/vendor/x265/include/x265.h
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_desktop \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DENABLE_ASSEMBLY=OFF \
+            -DXDREMUX_SKIP_RC=ON
+          cmake --build xdremux/rust/vendor/x265/build_desktop \
+            --target x265-static --parallel 2
+          cp xdremux/rust/vendor/x265/build_desktop/x265_config.h \
+            xdremux/rust/vendor/x265/include/x265_config.h
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+  flutter:
+    name: Flutter analyze and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/flutter
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+          cache: true
+
+      - name: Install Dart dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build native FFI library
+        working-directory: .
+        env:
+          # CI smoke tests only exercise the FFI surface; use the desktop
+          # fallback here and keep the x265 build in the Rust job/release job.
+          XDREMUX_USE_FFMPEG: '1'
+        run: |
+          cargo build -p xdremux-core --release
+          cp target/release/libxdremux_core.so apps/flutter/libxdremux_core.so
+
+      - name: Run Flutter tests
+        run: flutter test

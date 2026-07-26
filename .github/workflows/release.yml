@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  # Project memory: pub packages are fetched through the China mirror.
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
+  X265_TAG: 4.2
+  ANDROID_NDK_VERSION: 28.2.13676358
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-windows-${{ env.X265_TAG }}
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:X265_TAG `
+            https://bitbucket.org/multicoreware/x265_git.git `
+            xdremux/rust/vendor/x265
+          New-Item -ItemType Directory -Force `
+            xdremux/rust/vendor/x265/include | Out-Null
+          Copy-Item xdremux/rust/vendor/x265/source/x265.h `
+            xdremux/rust/vendor/x265/include/x265.h
+          cmake -S xdremux/rust/vendor/x265/source `
+            -B xdremux/rust/vendor/x265/build_windows `
+            -G 'Visual Studio 17 2022' -A x64 `
+            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
+            -DENABLE_ASSEMBLY=OFF -DXDREMUX_SKIP_RC=ON
+          cmake --build xdremux/rust/vendor/x265/build_windows `
+            --config Release --target x265-static
+          Copy-Item xdremux/rust/vendor/x265/build_windows/x265_config.h `
+            xdremux/rust/vendor/x265/include/x265_config.h
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+          cache: true
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^[vV]', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag must look like v0.1.1, got ${{ github.ref_name }}"
+          }
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build Rust core
+        run: cargo build -p xdremux-core --release
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      - name: Build Windows app
+        working-directory: apps/flutter
+        run: flutter build windows --release --build-name="$env:APP_VERSION"
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          }
+          if (-not (Test-Path $iscc)) {
+            throw 'Inno Setup compiler was not found on the runner'
+          }
+          & $iscc "/DAppVersion=$env:APP_VERSION" tools/installer/xdremux.iss
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: apps/flutter/build/installer/XDRemuxSetup-${{ env.APP_VERSION }}.exe
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" \
+            "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-android-arm64-${{ env.X265_TAG }}-ndk-${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          git clone --depth 1 --branch "$X265_TAG" \
+            https://bitbucket.org/multicoreware/x265_git.git \
+            xdremux/rust/vendor/x265
+          mkdir -p xdremux/rust/vendor/x265/include
+          cp xdremux/rust/vendor/x265/source/x265.h \
+            xdremux/rust/vendor/x265/include/x265.h
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_android \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DENABLE_ASSEMBLY=OFF \
+            -DXDREMUX_SKIP_RC=ON
+          cmake --build xdremux/rust/vendor/x265/build_android \
+            --target x265-static --parallel 2
+          cp xdremux/rust/vendor/x265/build_android/x265_config.h \
+            xdremux/rust/vendor/x265/include/x265_config.h
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+          cache: true
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must look like v0.1.1, got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build Rust Android library
+        working-directory: xdremux/rust
+        run: cargo ndk -t arm64-v8a -o ../../apps/flutter/android/app/src/main/jniLibs build --release
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      - name: Build Android APK
+        working-directory: apps/flutter
+        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="${{ github.run_number }}"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apps/flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/windows-installer/XDRemuxSetup-*.exe
+            dist/android-apk/app-release.apk
