@@ -58,6 +58,15 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# flutter_local_notifications_windows 2.x compiles WinRT headers under C++17,
+# which trips VS2026's hard error on deprecated <experimental/coroutine>.
+# The silencing define in APPLY_STANDARD_SETTINGS only covers the runner
+# target, so add it to the plugin's shared library target directly.
+if(TARGET flutter_local_notifications_windows)
+  target_compile_definitions(flutter_local_notifications_windows
+    PRIVATE "_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
+endif()
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

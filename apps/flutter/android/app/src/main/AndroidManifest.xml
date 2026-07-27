@@ -6,6 +6,8 @@
         android:maxSdkVersion="32" />
     <!-- Android 13+ granular media access -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Batch-conversion completion notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="XDRemux"

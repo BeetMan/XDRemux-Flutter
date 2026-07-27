@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
 import 'organize_page.dart';
+import 'services/notification_service.dart';
 import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
@@ -142,6 +143,7 @@ class _HomePageState extends State<HomePage> {
     _initAsync();
     _initDropChannel();
     _initShareIntake();
+    NotificationService.init();
     _checkForUpdate();
   }
 
@@ -920,6 +922,16 @@ class _HomePageState extends State<HomePage> {
     } else {
       // Has failures — keep checkpoint for potential resume
       _saveCheckpoint();
+    }
+
+    // System notification so background batches are observable.
+    final done = _convertedCount + _skippedCount + _failedCount;
+    if (done > 0) {
+      NotificationService.notifyBatchComplete(
+        converted: _convertedCount,
+        skipped: _skippedCount,
+        failed: _failedCount,
+      );
     }
   }
 
