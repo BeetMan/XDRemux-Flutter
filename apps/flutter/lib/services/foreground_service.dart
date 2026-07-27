@@ -19,11 +19,13 @@ class ForegroundService {
     if (_initialized || !Platform.isAndroid) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'xdremux_conversion',
+        channelId: 'xdremux_conversion_v2',
         channelName: '转换进度',
         channelDescription: '批量转换进行时显示的前台服务通知',
-        channelImportance: NotificationChannelImportance.LOW,
-        priority: NotificationPriority.LOW,
+        // DEFAULT importance: ColorOS kills foreground services whose
+        // notification is IMPORTANCE_LOW (folded as "unimportant").
+        channelImportance: NotificationChannelImportance.DEFAULT,
+        priority: NotificationPriority.DEFAULT,
         onlyAlertOnce: true,
       ),
       iosNotificationOptions: const IOSNotificationOptions(),

@@ -134,6 +134,7 @@ class _HomePageState extends State<HomePage> {
   /// Android: app-specific external directory for output (scoped storage).
   String? _androidOutputDir;
   static const _dropChannel = MethodChannel('xdremux/drop');
+  static const _batteryChannel = MethodChannel('xdremux/battery');
 
   /// Android: stream of media shared into the app while it is running.
   StreamSubscription<List<SharedMediaFile>>? _shareSubscription;
@@ -277,6 +278,58 @@ class _HomePageState extends State<HomePage> {
         await _handleDrop(paths);
       }
     });
+  }
+
+  /// Android: prompt the user to exempt the app from battery optimization
+  /// if not already done. Without this, ColorOS and other OEM ROMs freeze
+  /// the Dart VM in background even with a foreground service.
+  Future<void> _checkBatteryOptimization() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final ignoring = await _batteryChannel.invokeMethod<bool>(
+        'isIgnoringBatteryOptimizations',
+      );
+      if (ignoring == true) return;
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(Icons.battery_saver),
+          title: const Text('后台转换需要关闭电池限制'),
+          content: const Text(
+            '切换到后台时，系统会冻结应用以省电，导致转换暂停。\n\n'
+            '需要完成两步设置：\n'
+            '1. 允许"忽略电池优化"（系统对话框）\n'
+            '2. 在"耗电行为控制"中设为"允许后台运行"（OPPO/一加/realme）',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('暂不'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _batteryChannel.invokeMethod<bool>('openOemBatterySettings');
+              },
+              child: const Text('耗电行为控制'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _batteryChannel.invokeMethod<bool>(
+                  'requestIgnoreBatteryOptimizations',
+                );
+              },
+              child: const Text('忽略电池优化'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      debugPrint('[XDRemux][battery] check failed: $e');
+    }
   }
 
   /// Android-only: accept HEIC files shared from the gallery or a file
@@ -677,6 +730,12 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startConversion() async {
     if (!_canStart) return;
 
+    // Android: check battery optimization before starting a batch.
+    // ColorOS/other OEMs freeze the Dart VM in background without this.
+    if (Platform.isAndroid) {
+      await _checkBatteryOptimization();
+    }
+
     // Retry failed, reset cancelled
     for (int i = 0; i < _queue.length; i++) {
       if (_queue[i].status == QueueItemStatus.failed ||
@@ -715,6 +774,9 @@ class _HomePageState extends State<HomePage> {
     final concurrency = _config.maxConcurrentJobs.clamp(1, 4);
     _currentConcurrency = concurrency;
 
+    // Single batch-level progress timer.
+    _startProgressTimer(concurrency);
+
     int active = 0;
     int cursor = 0;
 
@@ -742,6 +804,7 @@ class _HomePageState extends State<HomePage> {
 
       // Check if done
       if (active == 0 && cursor >= _queue.length) {
+        _progressTimer?.cancel();
         setState(() {
           _isProcessing = false;
           _currentConcurrency = 0;
@@ -759,31 +822,6 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
-
-    // Start polling progress from the Rust core.
-    _progressTimer?.cancel();
-    _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
-      if (!mounted) return;
-      try {
-        final (stage, current, total) = XdRemuxFFI.readProgress();
-        if (_queue.length > index) {
-          _queue[index].progress = (
-            stage: stage,
-            current: current,
-            total: total,
-          );
-          _updateStatusText();
-          setState(() {});
-          // Sync progress to the foreground service notification.
-          if (total > 0) {
-            final pct = (_progressFraction * 100).toStringAsFixed(0);
-            ForegroundService.updateProgress(
-              '${_convertedCount + _skippedCount}/$_totalFiles 完成 ($pct%) — ${item.fileName}',
-            );
-          }
-        }
-      } catch (_) {}
-    });
 
     try {
       // Check skipExisting
@@ -828,6 +866,58 @@ class _HomePageState extends State<HomePage> {
 
     // M6: Update checkpoint after each file completes
     _updateCheckpointForItem(item);
+  }
+
+  /// Single batch-level progress timer. With concurrency=1, reads the Rust
+  /// tile-level progress buffer for the sole running item. With higher
+  /// concurrency, estimates progress from elapsed time (the global buffer
+  /// is shared by all concurrent conversions and would be garbled).
+  void _startProgressTimer(int concurrency) {
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
+      if (!mounted || !_isProcessing) return;
+      try {
+        if (concurrency == 1) {
+          final (stage, current, total) = XdRemuxFFI.readProgress();
+          // Find the single running item and update its progress.
+          for (int i = 0; i < _queue.length; i++) {
+            if (_queue[i].status == QueueItemStatus.running) {
+              _queue[i].progress = (
+                stage: stage,
+                current: current,
+                total: total,
+              );
+              break;
+            }
+          }
+        } else {
+          // Concurrent mode: estimate per-file progress from elapsed time.
+          final now = DateTime.now();
+          for (int i = 0; i < _queue.length; i++) {
+            final item = _queue[i];
+            if (item.status == QueueItemStatus.running &&
+                item.startedAt != null) {
+              final elapsed = now.difference(item.startedAt!).inMilliseconds;
+              // Ramp to 90% over 15 seconds, then hold.
+              final estimated = (elapsed / 15000).clamp(0.0, 0.9);
+              item.progress = (
+                stage: 3,
+                current: (estimated * 100).round(),
+                total: 100,
+              );
+            }
+          }
+        }
+        _updateStatusText();
+        setState(() {});
+        // Sync progress to the foreground service notification.
+        final done = _convertedCount + _skippedCount;
+        final pct = (_progressFraction * 100).toStringAsFixed(0);
+        ForegroundService.updateProgress(
+          '$done/$_totalFiles 完成 ($pct%)',
+        );
+      } catch (_) {}
+    });
   }
 
   void _cancelConversion() {
@@ -2494,6 +2584,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
+                        const SizedBox(height: 20),
+
+                        // Cache management (Android only)
+                        if (Platform.isAndroid) ...[
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          _CacheManagementTile(),
+                        ],
                       ],
                     ),
                   ],
@@ -2503,6 +2601,86 @@ class _SettingsSheetState extends State<_SettingsSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Android: shows picked-files cache size and lets the user clear it.
+/// The file picker and share intake write OEM provider bytes into the app
+/// cache; these accumulate over time and are never auto-cleaned.
+class _CacheManagementTile extends StatefulWidget {
+  @override
+  State<_CacheManagementTile> createState() => _CacheManagementTileState();
+}
+
+class _CacheManagementTileState extends State<_CacheManagementTile> {
+  int _cacheSize = 0;
+  bool _cleared = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final pickedDir = Directory(
+        '${tempDir.path}${Platform.pathSeparator}picked_files',
+      );
+      if (!pickedDir.existsSync()) {
+        if (mounted) setState(() => _cacheSize = 0);
+        return;
+      }
+      int total = 0;
+      await for (final entity in pickedDir.list()) {
+        if (entity is File) total += await entity.length();
+      }
+      if (mounted) setState(() { _cacheSize = total; _cleared = false; });
+    } catch (_) {}
+  }
+
+  Future<void> _clear() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final pickedDir = Directory(
+        '${tempDir.path}${Platform.pathSeparator}picked_files',
+      );
+      if (pickedDir.existsSync()) {
+        await pickedDir.delete(recursive: true);
+      }
+      if (mounted) setState(() { _cacheSize = 0; _cleared = true; });
+    } catch (_) {}
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        _cleared ? Icons.check_circle_outline : Icons.delete_sweep_outlined,
+        color: _cleared ? Colors.green : null,
+      ),
+      title: const Text('清除文件缓存'),
+      subtitle: Text(
+        _cleared
+            ? '已清除'
+            : _cacheSize > 0
+            ? '已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）'
+            : '无缓存文件',
+        style: theme.textTheme.bodySmall,
+      ),
+      trailing: _cacheSize > 0
+          ? TextButton(onPressed: _clear, child: const Text('清除'))
+          : null,
     );
   }
 }
@@ -2656,6 +2834,25 @@ class _MobileQueueCard extends StatelessWidget {
                             : theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    // Per-file progress bar for the running item.
+                    if (item.status == QueueItemStatus.running) ...[
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: item.progress != null &&
+                                  item.progress!.total > 0
+                              ? item.progress!.current / item.progress!.total
+                              : null,
+                          minHeight: 4,
+                          backgroundColor:
+                              theme.colorScheme.surfaceContainerHighest,
+                          valueColor: AlwaysStoppedAnimation(
+                            theme.colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2814,13 +3011,42 @@ class _PhotoCard extends StatelessWidget {
                       ),
                     ),
                   if (isRunning)
-                    _OverlayBadge(
-                      icon: Icons.bolt,
-                      label: item.progress != null
-                          ? '${item.progress!.current}/${item.progress!.total}'
-                          : '转换中',
-                      color: Colors.blue,
+                    Positioned(
+                      left: 0,
+                      right: 0,
                       bottom: 0,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _OverlayBadge(
+                            icon: Icons.bolt,
+                            label: item.progress != null
+                                ? '${item.progress!.current}/${item.progress!.total}'
+                                : '转换中',
+                            color: Colors.blue,
+                            bottom: 0,
+                          ),
+                          const SizedBox(height: 4),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(2),
+                              child: LinearProgressIndicator(
+                                value: item.progress != null &&
+                                        item.progress!.total > 0
+                                    ? item.progress!.current /
+                                        item.progress!.total
+                                    : null,
+                                minHeight: 4,
+                                backgroundColor: Colors.white.withAlpha(80),
+                                valueColor: const AlwaysStoppedAnimation(
+                                  Colors.blue,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   if (isDone)
                     const _OverlayBadge(
