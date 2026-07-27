@@ -4,7 +4,7 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
-**[下载 v0.1.7（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+**[下载 v0.1.8（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
 
 ## 截图
 
@@ -39,20 +39,24 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ OPPO 兼容模式开关（7 档：Off / Auto / On / Tail / ISO / ISO-NoLocal / ISO-Graph）
 - ✅ OPPO 相机尾部元数据策略（11 档：自动 / 不保留 / 仅水印 / 紧凑 / 完整保留 / 多种过滤组合）
 - ✅ 严格 ISO tmap 选项（65/145 字节 vs ImageIO 62/142 字节）
-- ✅ 跳过已有有效输出文件
+- ✅ 跳过已有有效输出文件（入队时自动检测已转换的 ISO HDR 照片）
 - ✅ 可配置输出目录或文件名后缀
-- ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …）
+- ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …；Android 保存到图库时按模式分相册）
 - ✅ 缩略图预览（全平台 Rust FFI 提取 EXIF 内嵌 JPEG 缩略图）
-- ✅ Android 保存到图库（MediaStore；开启"按拍摄模式分目录"时按模式分相册，否则 Pictures/XDRemux）
+- ✅ Android 保存到图库（MediaStore；按拍摄模式分相册 Pictures/大师模式 等，否则 Pictures/XDRemux）
+- ✅ Android 一键保存全部到图库
 - ✅ Android 分享（ACTION_SEND）
 - ✅ Android 系统图库打开（ACTION_VIEW）
+- ✅ Android 后台转换（前台服务保持进程存活，通知栏实时进度，完成时弹通知）
+- ✅ Android 电池优化引导（首次转换时引导设置白名单，含 OPPO 耗电行为控制直达入口）
+- ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
 - ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
-- ✅ 输出操作菜单（保存到图库 / 分享 / 系统打开；桌面另支持保存到源目录、打开输出目录）
+- ✅ 队列卡片操作（完成 → 保存/分享/打开；失败 → 重试）
 - ✅ 独立"按拍摄模式整理"页（扫描 → 预览 → 复制分类）
 - ✅ 自动更新检查（启动时静默查询 GitHub Releases，新版本 SnackBar + 跳转下载页）
-- ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
 - ✅ 转换完成系统通知（Windows toast / Android notification，批量完成时弹出摘要）
+- ✅ 缓存与输出目录管理（设置页显示大小，一键清除）
 - ✅ Windows MSIX 安装包（`dart run msix:create`）
 
 ### 一致性验证
@@ -67,7 +71,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 |------|------|------|
 | Windows | ✅ 可运行 | x265 静态链接、原生拖拽、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载 + macOS Runner 已验证 |
-| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、缩略图 FFI、MediaStore 保存 |
+| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存 |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
 | iOS | ❌ 未创建 | `flutter create` 待执行 |
 
