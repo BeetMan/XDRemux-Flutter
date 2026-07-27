@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
 import 'organize_page.dart';
+import 'services/foreground_service.dart';
 import 'services/notification_service.dart';
 import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
@@ -144,6 +145,7 @@ class _HomePageState extends State<HomePage> {
     _initDropChannel();
     _initShareIntake();
     NotificationService.init();
+    ForegroundService.init();
     _checkForUpdate();
   }
 
@@ -703,6 +705,10 @@ class _HomePageState extends State<HomePage> {
       _statusText = '准备转换...';
     });
 
+    // Android: start foreground service so the OS doesn't freeze the
+    // conversion isolates when the app goes to background.
+    await ForegroundService.start();
+
     // M6: Create or update checkpoint
     _initCheckpoint();
 
@@ -742,6 +748,7 @@ class _HomePageState extends State<HomePage> {
           _currentFileName = '';
         });
         _updateStatusText();
+        ForegroundService.stop();
         _onBatchComplete();
       }
     }
@@ -767,6 +774,13 @@ class _HomePageState extends State<HomePage> {
           );
           _updateStatusText();
           setState(() {});
+          // Sync progress to the foreground service notification.
+          if (total > 0) {
+            final pct = (_progressFraction * 100).toStringAsFixed(0);
+            ForegroundService.updateProgress(
+              '${_convertedCount + _skippedCount}/$_totalFiles 完成 ($pct%) — ${item.fileName}',
+            );
+          }
         }
       } catch (_) {}
     });
@@ -824,6 +838,7 @@ class _HomePageState extends State<HomePage> {
       _currentConcurrency = 0;
       _currentFileName = '';
     });
+    ForegroundService.stop();
     // Mark running/pending as cancelled
     for (int i = 0; i < _queue.length; i++) {
       if (_queue[i].status == QueueItemStatus.running ||
