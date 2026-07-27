@@ -2,8 +2,8 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.4 云端 APK 经真机实际点选 HEIC 仍复现导入失败，正在发布 v0.1.5 修复。
-> 当前修复版本：**v0.1.5（待云端 Release 验证）**。
+> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.5 云端 APK 已定位为缺少 `libc++_shared.so`，正在发布 v0.1.6 修复。
+> 当前修复版本：**v0.1.6（待云端 Release 验证）**。
 
 ## 批次总览
 
@@ -134,7 +134,7 @@
 
 ---
 
-## 7. Android release 文件导入回归 ✅ 已完成（v0.1.5）
+## 7. Android release 文件导入回归 ✅ 已完成（v0.1.6）
 
 **问题定位**
 
@@ -142,13 +142,15 @@
 - 本地 APK 是临时调试修复后的旧构建产物；GitHub 从 tag 干净构建时重新编译了当前源码。
 - v0.1.4 云端 APK 在 OPPO 真机上完成文件选择后仍显示 `0 / 0`；之前的安装、签名和构建检查不足以证明导入链路正常。
 - Android OEM 文件选择器的返回结果需要同时兼容本地路径和文件字节；原逻辑对路径/分类异常静默跳过，用户只能看到队列为空。
+- v0.1.5 云端 APK 已通过真实选择流程复现，logcat 明确显示 `libxdremux_core.so` 依赖的 `libc++_shared.so` 缺失；本地构建之所以正常，是因为本机 `jniLibs` 中已有该文件。
 
 **修复**
 
 - 将 `classify()` 的 FFI 调用移回 root isolate；`convert()` 继续保留后台 isolate。
 - `pickFiles()` 启用 `withData`；路径不可读时将字节写入应用私有缓存，确保 Rust 核心拿到真实文件路径。
 - 增加文件选择结果、路径回退和分类失败的状态提示与日志，避免静默丢失。
-- 版本升级到 `0.1.5+7`，新增 `RELEASE_NOTES_v0.1.5.md`。
+- Release workflow 显式复制 NDK 的 `libc++_shared.so` 到 `arm64-v8a`，避免云端 APK 的 Rust 动态库加载失败。
+- 版本升级到 `0.1.6+8`，新增 `RELEASE_NOTES_v0.1.6.md`。
 - Android Gradle 仓库改为官方 `google()` / `mavenCentral()` 优先，阿里云仓库仅作为后备，避免 GitHub runner 遇到镜像 502 时整次 release 失败。
 
 **验收**
@@ -158,4 +160,5 @@
 - 首次 v0.1.3 Release run 的 Android 逻辑修复已通过，但构建因阿里云 Maven 502 失败；该失败 tag 不复用。
 - CI：[`30261265186`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261265186) 通过。
 - Release：[`30261267514`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261267514) 通过；但 v0.1.4 APK 在真机实际点选 HEIC 后仍为 `0 / 0`，该版本不视为导入修复完成。
-- 本地 v0.1.5 候选 Release APK 已在解锁的 OPPO 真机上实际选择 `IMG20260711155540_iso.heic`，队列显示 `1 个文件`，分类显示“大师模式 / 待处理”；云端 v0.1.5 Release 验证待完成。
+- 本地 v0.1.5 APK 已在解锁的 OPPO 真机上实际选择 `IMG20260711155540_iso.heic`，队列显示 `1 个文件`，分类显示“大师模式 / 待处理”。
+- 云端 v0.1.5 APK 已安装并完成真实选择复测，但因缺少 `libc++_shared.so` 分类失败；v0.1.6 云端 Release 验证待完成。
