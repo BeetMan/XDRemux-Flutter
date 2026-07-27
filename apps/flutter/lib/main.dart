@@ -393,6 +393,59 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Resolve a file returned by Android's document picker to a real local
+  /// path. Some OEM document providers return readable bytes but no usable
+  /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
+  /// that case.
+  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {
+    final pickedPath = file.path;
+    if (pickedPath != null && pickedPath.isNotEmpty) {
+      try {
+        final entity = await File(pickedPath).stat();
+        if (entity.type == FileSystemEntityType.file && entity.size > 0) {
+          return pickedPath;
+        }
+        debugPrint(
+          '[XDRemux][file_picker] path is not a readable file: '
+          '$pickedPath (type=${entity.type}, size=${entity.size})',
+        );
+      } catch (e) {
+        debugPrint(
+          '[XDRemux][file_picker] returned path cannot be read: '
+          '$pickedPath ($e)',
+        );
+      }
+    }
+
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      debugPrint(
+        '[XDRemux][file_picker] no usable path or bytes for '
+        '${file.name} (identifier=${file.identifier})',
+      );
+      return null;
+    }
+
+    final tempRoot = await getTemporaryDirectory();
+    final importDir = Directory(
+      '${tempRoot.path}${Platform.pathSeparator}picked_files',
+    );
+    await importDir.create(recursive: true);
+    final safeName = file.name.replaceAll(
+      RegExp(r'[<>:"/\\|?*\x00-\x1F]'),
+      '_',
+    );
+    final name = safeName.isEmpty ? 'picked_$index.heic' : safeName;
+    final cachedPath =
+        '${importDir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}_$name';
+    await File(cachedPath).writeAsBytes(bytes, flush: true);
+    debugPrint(
+      '[XDRemux][file_picker] materialized ${file.name} '
+      '(${bytes.length} bytes) at $cachedPath',
+    );
+    return cachedPath;
+  }
+
   Future<void> _addFiles() async {
     if (!_canEditQueue) return;
 
@@ -405,16 +458,38 @@ class _HomePageState extends State<HomePage> {
       type: FileType.custom,
       allowedExtensions: ['heic', 'heif'],
       allowMultiple: true,
+      // Keep a byte fallback for OEM pickers that don't return a path from
+      // their content provider. The Rust core requires a local filesystem
+      // path, so _resolvePickedFile() materializes these bytes into cache.
+      withData: true,
     );
 
-    if (result == null || result.files.isEmpty) return;
+    if (result == null) {
+      debugPrint('[XDRemux][file_picker] picker returned null');
+      if (mounted) setState(() => _currentFileName = '未选择文件');
+      return;
+    }
+    debugPrint(
+      '[XDRemux][file_picker] returned ${result.files.length} file(s): '
+      '${result.files.map((file) => '${file.name}|path=${file.path}|bytes=${file.bytes?.length}|id=${file.identifier}').join('; ')}',
+    );
+    if (result.files.isEmpty) {
+      if (mounted) setState(() => _currentFileName = '文件选择器未返回文件');
+      return;
+    }
 
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
+    int skipped = 0;
+    String? firstError;
 
-    for (final file in result.files) {
-      if (file.path == null) continue;
-      final path = file.path!;
+    for (var index = 0; index < result.files.length; index++) {
+      final file = result.files[index];
+      final path = await _resolvePickedFile(file, index);
+      if (path == null) {
+        skipped++;
+        continue;
+      }
       if (existing.contains(path)) continue;
 
       try {
@@ -439,6 +514,8 @@ class _HomePageState extends State<HomePage> {
         existing.add(path);
         added++;
       } catch (e) {
+        firstError ??= '$e';
+        debugPrint('[XDRemux][file_picker] classify failed for $path: $e');
         if (mounted) {
           setState(() => _currentFileName = '添加失败: $e');
         }
@@ -447,7 +524,23 @@ class _HomePageState extends State<HomePage> {
 
     _validateOutputPlans();
     _updateStatusText();
-    setState(() => _currentFileName = added > 0 ? '已添加 $added 个文件' : '未添加新文件');
+    if (!mounted) return;
+    setState(() {
+      if (added > 0 && skipped == 0 && firstError == null) {
+        _currentFileName = '已添加 $added 个文件';
+      } else if (added > 0) {
+        _currentFileName =
+            '已添加 $added 个文件'
+            '${skipped > 0 ? '，$skipped 个文件无法读取' : ''}'
+            '${firstError != null ? '，$firstError' : ''}';
+      } else if (firstError != null) {
+        _currentFileName = '添加失败：$firstError';
+      } else if (skipped > 0) {
+        _currentFileName = '未添加：$skipped 个文件无法读取';
+      } else {
+        _currentFileName = '未添加新文件';
+      }
+    });
   }
 
   OutputPlanStatus _computeOutputPlan(String inputPath, String outputPath) {

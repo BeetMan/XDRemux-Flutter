@@ -2,7 +2,7 @@ name: xdremux
 description: XDRemux cross-platform ProXDR HEIC to ISO 21496-1 HDR converter
 publish_to: 'none'
 
-version: 0.1.4+6
+version: 0.1.5+7
 
 environment:
   sdk: ^3.8.1
