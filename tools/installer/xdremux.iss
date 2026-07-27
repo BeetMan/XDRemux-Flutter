@@ -7,7 +7,7 @@
 
 #define AppName "XDRemux"
 #ifndef AppVersion
-#define AppVersion "0.1.4"
+#define AppVersion "0.1.7"
 #endif
 #define AppPublisher "BeetMan"
 #define AppURL "https://github.com/BeetMan/XDRemux-Flutter"
