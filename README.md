@@ -4,7 +4,7 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
-**[下载 v0.1.0（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+**[下载 v0.1.7（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
 
 ## 截图
 
@@ -49,6 +49,8 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 输出操作菜单（保存到图库 / 分享 / 系统打开；桌面另支持保存到源目录、打开输出目录）
 - ✅ 独立"按拍摄模式整理"页（扫描 → 预览 → 复制分类）
 - ✅ 自动更新检查（启动时静默查询 GitHub Releases，新版本 SnackBar + 跳转下载页）
+- ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
+- ✅ 转换完成系统通知（Windows toast / Android notification，批量完成时弹出摘要）
 - ✅ Windows MSIX 安装包（`dart run msix:create`）
 
 ### 一致性验证
