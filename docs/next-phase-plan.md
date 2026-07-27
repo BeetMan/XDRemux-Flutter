@@ -4,6 +4,8 @@
 > 前置状态：上游 v1.3 同步已全部完成（见 `v1.3-sync-plan.md`），Windows / macOS / Android 三端可运行，120 个 Rust 测试 + 7 个 Flutter 测试通过。
 > 状态更新：2026-07-26 — **第 1 项（砍 ffmpeg）已完成**：Windows 与 Android 统一走 x265 静态链接（`build_windows/Release/x265-static.lib`，MSVC Release），缩略图/预览全平台切换为 Rust FFI（EXIF 内嵌 JPEG 提取），`tools/ffmpeg/windows`（195MB）与 CMake install 块已移除；ffmpeg 子进程保留为编译期回退（`XDREMUX_USE_FFMPEG=1`）。116 Rust 测试通过，Flutter analyze/test/build 全绿，真实 OPPO 样本端到端转换验证通过。
 > 状态更新：2026-07-26 — **第 2、3 项已完成**：MSIX 打包（`msix` dev 依赖 + pubspec `msix_config`，`dart run msix:create`，产物 95MB；注意 msix 包自带 Redist makeappx 侧加载失败，用 Windows SDK `makeappx.exe` 成功）；自动更新检查（`update_service.dart` 查询 GitHub Releases API + SnackBar 提示，`package_info_plus` 比对版本号）；`Runner.rc` 的 `com.example` 占位符改为 BeetMan/XDRemux。
+> 状态更新：2026-07-27 — **第一、二批全部完成，当前版本 v0.1.6**：第 5、6 项（非 HEIC 提示 + CI/CD）已落地并实战跑通（详见 `phase2-plan.md`），v0.1.1–v0.1.6 六个版本全部由 GitHub Actions 自动构建发布；第 4 项（转换结果预览）经评估暂缓——完整的图片查看/对比功能投入产出比不高，缩略图 + verify_output 已能覆盖"转完对不对"的确认需求。上游 v1.3.1 已评估：仅 Apple 摄影风格求解器改进，无可同步项（见文末）。
+> 剩余待办：仅第三批平台扩展（iOS / Linux）。
 
 ## 优先级总览
 
@@ -70,24 +72,15 @@ Android 端已验证可行：`26487c5 feat(android): x265 static-linked HEVC enc
 
 ## 第二批：体验完善
 
-### 4. 转换结果预览（源 ↔ 输出对比）
+### 4. 转换结果预览（源 ↔ 输出对比）⏸️ 暂缓（2026-07-27）
 
-- 转换完成后可并排查看源文件与输出文件
-- 对比内容：缩略图、mode（LHDR/UHDR）、edr_scale、gainMapMax、文件大小
-- 入口：队列项详情页 / `_ItemDetailSheet` 增加"对比"标签
-- 用户价值：直接确认"转完到底对不对"
+- 原计划：转换完成后并排查看源文件与输出文件（缩略图、mode、edr_scale、gainMapMax、文件大小）
+- 暂缓原因：做好需要完整的图片查看/对比功能（缩放、滑块对比、HDR 渲染），投入产出比不高；现有缩略图 + `xdremux_verify_output` 已能覆盖"转完对不对"的基本确认需求
+- 若日后重做，建议最小实现：详情 sheet 加"对比"标签，仅静态缩略图 + 元数据表，不做交互式对比
 
-### 5. 拖入非 HEIC 文件给出提示
+### 5. 拖入非 HEIC 文件给出提示 ✅ 已完成（v0.1.1，详见 `phase2-plan.md`）
 
-- 当前静默丢弃，用户不知道文件没进去
-- 加 SnackBar："已忽略 N 个非 HEIC 文件"
-- 实现量极小，体验提升明显
-
-### 6. CI/CD（GitHub Actions）
-
-- 每次 push：`cargo test --workspace` + `flutter test` + `flutter analyze`
-- Release tag：自动构建 Windows（x265 静态链接后）+ Android APK + macOS
-- 前置建议放在第二批但越早越好——没有 CI 兜底，后续改动容易出回归
+### 6. CI/CD（GitHub Actions）✅ 已完成（v0.1.1，详见 `phase2-plan.md`）
 
 ---
 
@@ -116,21 +109,29 @@ Android 端已验证可行：`26487c5 feat(android): x265 static-linked HEVC enc
 | 增量转换（只重编变化的 tile） | 收益场景窄（仅重复转换同批文件时有意义），实现复杂度高 |
 | Apple 摄影风格 / 人像 | v1.3 已明确跳过：~12,000 行依赖 Vision/CoreImage/VideoToolbox，macOS 专属，Rust 重写不可行 |
 | 转换后回退 OPPO 相册编辑再保存不丢 Gain Map | 依赖 OPPO 相册自身行为，非我们能控制 |
+| 转换结果预览 | 2026-07-27 评估：需要完整图片查看/对比功能，投入产出比低；缩略图 + verify_output 已够基本确认 |
 
 ---
 
-## 建议执行顺序
+## 上游版本跟踪
+
+- **v1.3**（tag `bb72ef5`）：已同步，见 `v1.3-sync-plan.md`
+- **v1.3.1**（tag `6d99b56`，2026-07-27）：评估完成，**无可同步项**。单提交 PR #11"Align Photographic Styles editor response with native envelope"，改动全部位于 `XDRemuxAppleFeatures` 摄影风格求解器（ConstrainedPolynomialStyleDataProducer +967 行、ResponseObjectiveTests、Python 测量脚本），属于 v1.3 已明确跳过的 Apple 专属特性范畴；核心转换层（XDRemuxCore / Python CLI）零改动。
+
+---
+
+## 建议执行顺序（已于 2026-07-27 全部走完）
 
 ```
-1. 砍 ffmpeg（x265 静态链接 Windows 化）
-   ↓ 包体积合理化后
-2. MSIX 安装程序 + 自动更新检查
-   ↓ 分发链路打通后
-3. CI/CD（防止后续改动出回归）
+1. 砍 ffmpeg（x265 静态链接 Windows 化）        ✅
    ↓
-4. 转换结果预览 + 非 HEIC 提示（体验完善）
+2. MSIX/Inno 安装程序 + 自动更新检查             ✅
    ↓
-5. iOS 适配 → Linux（平台扩展）
+3. CI/CD（防止后续改动出回归）                   ✅
+   ↓
+4. 非 HEIC 提示 ✅（转换结果预览暂缓）
+   ↓
+5. iOS 适配 → Linux（平台扩展）                  ⬅ 剩余待办
 ```
 
-第一步从 **砍 ffmpeg** 开始——它是目前最大的分发障碍，Android 端已趟过路，且能顺带消除一整类 Windows 特有 bug。
+第一、二批已收官（v0.1.6）。下一步只剩第三批平台扩展：iOS 适配优先于 Linux（Linux 用户可暂用 Python CLI）。
