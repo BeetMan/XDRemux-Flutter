@@ -2,8 +2,8 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.2 的 Android 发布构建经真机复核后发现文件导入回归，已进入 v0.1.3 修复发布。
-> 当前修复版本：**v0.1.3**。
+> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.2 的 Android 发布构建经真机复核后发现文件导入回归，已进入 v0.1.4 修复发布。
+> 当前修复版本：**v0.1.4**。
 
 ## 批次总览
 
@@ -134,7 +134,7 @@
 
 ---
 
-## 7. Android release 文件导入回归 ✅ 修复中（v0.1.3）
+## 7. Android release 文件导入回归 ✅ 修复中（v0.1.4）
 
 **问题定位**
 
@@ -145,10 +145,12 @@
 **修复**
 
 - 将 `classify()` 的 FFI 调用移回 root isolate；`convert()` 继续保留后台 isolate。
-- 版本升级到 `0.1.3+5`，新增 `RELEASE_NOTES_v0.1.3.md`。
+- 版本升级到 `0.1.4+6`，新增 `RELEASE_NOTES_v0.1.4.md`。
+- Android Gradle 仓库改为官方 `google()` / `mavenCentral()` 优先，阿里云仓库仅作为后备，避免 GitHub runner 遇到镜像 502 时整次 release 失败。
 
 **验收**
 
 - `cargo test -p xdremux-core`：116 passed，2 ignored。
 - `flutter analyze`：无 error；现有 7 条 `avoid_print` info。
-- 待 v0.1.3 GitHub Actions APK 完成后，用同一台 Android 真机安装并重新验证 HEIC/HEIF 添加流程。
+- 首次 v0.1.3 Release run 的 Android 逻辑修复已通过，但构建因阿里云 Maven 502 失败；该失败 tag 不复用。
+- 待 v0.1.4 GitHub Actions APK 完成后，用同一台 Android 真机安装并重新验证 HEIC/HEIF 添加流程。
