@@ -103,7 +103,13 @@ class XdRemuxApp extends StatelessWidget {
   }
 }
 
-enum _QueueMenuAction { retryFailed, clearCompleted, revealOutputs, clearQueue }
+enum _QueueMenuAction {
+  retryFailed,
+  clearCompleted,
+  saveAllToGallery,
+  revealOutputs,
+  clearQueue,
+}
 
 // ============================================================================
 // HomePage
@@ -434,19 +440,14 @@ class _HomePageState extends State<HomePage> {
     // Count fully completed files.
     final completed = _convertedCount + _skippedCount + _failedCount;
 
-    // Add partial progress from the currently-running items.
+    // Sum partial progress from ALL currently-running items.
     double partial = 0.0;
     for (final item in _queue) {
       final p = item.progress;
       if (p != null && item.status == QueueItemStatus.running) {
-        // The HEVC tile encoding phase (~stage 3) dominates runtime.
-        // Other stages contribute a fixed small fraction each.
-        if (p.stage == 3 && p.total > 0) {
-          partial += p.current / p.total;
+        if (p.total > 0) {
+          partial += (p.current / p.total).clamp(0.0, 1.0);
         }
-        // Give each running job equal weight.
-        partial = partial.clamp(0.0, 1.0);
-        break; // only show the first running job's granular progress
       }
     }
 
@@ -592,6 +593,7 @@ class _HomePageState extends State<HomePage> {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skipped = 0;
+    int skippedExisting = 0;
     String? firstError;
 
     for (var index = 0; index < result.files.length; index++) {
@@ -611,6 +613,16 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        // Skip files that are already converted ISO HDR outputs —
+        // re-converting produces a broken nested gain map.
+        if (_config.skipExisting) {
+          final inputIsConverted = await XdRemuxService.verifyOutput(path);
+          debugPrint('[XDRemux][skip] input=$path verifyOutput=$inputIsConverted');
+          if (inputIsConverted) {
+            skippedExisting++;
+            continue;
+          }
+        }
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -637,21 +649,20 @@ class _HomePageState extends State<HomePage> {
     _updateStatusText();
     if (!mounted) return;
     setState(() {
-      if (added > 0 && skipped == 0 && firstError == null) {
-        _currentFileName = '已添加 $added 个文件';
-      } else if (added > 0) {
-        _currentFileName =
-            '已添加 $added 个文件'
-            '${skipped > 0 ? '，$skipped 个文件无法读取' : ''}'
-            '${firstError != null ? '，$firstError' : ''}';
-      } else if (firstError != null) {
-        _currentFileName = '添加失败：$firstError';
-      } else if (skipped > 0) {
-        _currentFileName = '未添加：$skipped 个文件无法读取';
-      } else {
-        _currentFileName = '未添加新文件';
-      }
+      final parts = <String>[];
+      if (added > 0) parts.add('已添加 $added 个文件');
+      if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+      if (skipped > 0) parts.add('$skipped 个无法读取');
+      if (firstError != null) parts.add(firstError);
+      _currentFileName = parts.isEmpty ? '未添加新文件' : parts.join('，');
     });
+    if (skippedExisting > 0 && mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过')),
+        );
+    }
   }
 
   OutputPlanStatus _computeOutputPlan(String inputPath, String outputPath) {
@@ -824,10 +835,10 @@ class _HomePageState extends State<HomePage> {
     final runConfig = _config.copy();
 
     try {
-      // Check skipExisting
+      // Skip if the input is already a converted ISO HDR output —
+      // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
-          File(item.outputPath).existsSync() &&
-          await XdRemuxService.verifyOutput(item.outputPath)) {
+          await XdRemuxService.verifyOutput(item.inputPath)) {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
         item.progress = null;
@@ -892,14 +903,17 @@ class _HomePageState extends State<HomePage> {
           }
         } else {
           // Concurrent mode: estimate per-file progress from elapsed time.
+          // Ramp to 95% over 20s with a smooth curve (fast start, slow tail),
+          // so it doesn't hit a visible plateau before the real completion.
           final now = DateTime.now();
           for (int i = 0; i < _queue.length; i++) {
             final item = _queue[i];
             if (item.status == QueueItemStatus.running &&
                 item.startedAt != null) {
               final elapsed = now.difference(item.startedAt!).inMilliseconds;
-              // Ramp to 90% over 15 seconds, then hold.
-              final estimated = (elapsed / 15000).clamp(0.0, 0.9);
+              // Asymptotic: 1 - e^(-t/8s), capped at 95%.
+              final t = elapsed / 8000.0;
+              final estimated = (1.0 - (1.0 / (1.0 + t * t))) * 0.95;
               item.progress = (
                 stage: 3,
                 current: (estimated * 100).round(),
@@ -912,9 +926,16 @@ class _HomePageState extends State<HomePage> {
         setState(() {});
         // Sync progress to the foreground service notification.
         final done = _convertedCount + _skippedCount;
-        final pct = (_progressFraction * 100).toStringAsFixed(0);
+        final running = _queue
+            .where((i) => i.status == QueueItemStatus.running)
+            .map((i) => i.fileName)
+            .take(3)
+            .toList();
+        final runningText = running.isEmpty
+            ? ''
+            : ' — ${running.join(', ')}${running.length < _queue.where((i) => i.status == QueueItemStatus.running).length ? '…' : ''}';
         ForegroundService.updateProgress(
-          '$done/$_totalFiles 完成 ($pct%)',
+          '$done/$_totalFiles 完成$runningText',
         );
       } catch (_) {}
     });
@@ -1171,6 +1192,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
+    int skippedExisting = 0;
     for (final path in paths) {
       if (!isSupportedInputPath(path)) {
         ignored++;
@@ -1185,6 +1207,16 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        // Skip files that are already converted ISO HDR outputs —
+        // re-converting produces a broken nested gain map.
+        if (_config.skipExisting) {
+          final inputIsConverted = await XdRemuxService.verifyOutput(path);
+          debugPrint('[XDRemux][skip] input=$path verifyOutput=$inputIsConverted');
+          if (inputIsConverted) {
+            skippedExisting++;
+            continue;
+          }
+        }
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -1206,18 +1238,21 @@ class _HomePageState extends State<HomePage> {
       _validateOutputPlans();
       _updateStatusText();
     }
-    if (added == 0 && ignored == 0) return;
+    if (added == 0 && ignored == 0 && skippedExisting == 0) return;
 
-    final summary = added > 0 && ignored > 0
-        ? '已$verb $added 个文件，已忽略 $ignored 个非 HEIC 文件'
-        : added > 0
-        ? '已$verb $added 个文件'
-        : '未添加：$ignored 个文件都不是 HEIC';
+    final parts = <String>[];
+    if (added > 0) parts.add('已$verb $added 个文件');
+    if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+    if (ignored > 0) parts.add('忽略 $ignored 个非 HEIC');
+    final summary = parts.isEmpty ? '未添加新文件' : parts.join('，');
     setState(() => _currentFileName = summary);
-    if (ignored > 0 && mounted) {
+    if ((ignored > 0 || skippedExisting > 0) && mounted) {
+      final snackText = skippedExisting > 0
+          ? '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过'
+          : summary;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(summary)));
+        ..showSnackBar(SnackBar(content: Text(snackText)));
     }
   }
 
@@ -1256,6 +1291,50 @@ class _HomePageState extends State<HomePage> {
       Process.run('open', ['-R', outputs.first]);
     } else if (Platform.isAndroid) {
       _revealInExplorer(outputs.first);
+    }
+  }
+
+  /// Android: batch-save all converted outputs to the gallery.
+  /// Uses per-item albums (capture mode folder) when categorize is on.
+  Future<void> _saveAllToGallery() async {
+    final items = _queue
+        .where((item) => item.status == QueueItemStatus.converted)
+        .toList();
+    if (items.isEmpty) return;
+
+    final hasAccess = await FileActionService.hasGalleryPermission();
+    if (!hasAccess) {
+      final granted = await FileActionService.requestGalleryPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('未获得存储权限')));
+        }
+        return;
+      }
+    }
+
+    int saved = 0, failed = 0;
+    for (final item in items) {
+      final ok = await FileActionService.saveToGallery(
+        item.outputPath,
+        album: _galleryAlbum(item),
+      );
+      if (ok) {
+        saved++;
+      } else {
+        failed++;
+      }
+    }
+
+    if (mounted) {
+      final msg = failed > 0
+          ? '已保存 $saved 个到图库，$failed 个失败'
+          : '已保存 $saved 个到图库';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
@@ -1452,6 +1531,8 @@ class _HomePageState extends State<HomePage> {
             _retryFailed();
           case _QueueMenuAction.clearCompleted:
             _clearCompleted();
+          case _QueueMenuAction.saveAllToGallery:
+            _saveAllToGallery();
           case _QueueMenuAction.revealOutputs:
             _revealOutputs();
           case _QueueMenuAction.clearQueue:
@@ -1477,6 +1558,16 @@ class _HomePageState extends State<HomePage> {
             contentPadding: EdgeInsets.zero,
           ),
         ),
+        if (Platform.isAndroid)
+          PopupMenuItem(
+            value: _QueueMenuAction.saveAllToGallery,
+            enabled: _canEditQueue && _convertedCount > 0,
+            child: const ListTile(
+              leading: Icon(Icons.photo_library),
+              title: Text('全部保存到图库'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
         if (!Platform.isAndroid)
           PopupMenuItem(
             value: _QueueMenuAction.revealOutputs,
@@ -1811,16 +1902,9 @@ class _HomePageState extends State<HomePage> {
           isSelected: itemIndex == _selectedIndex,
           onTap: () {
             setState(() => _selectedIndex = itemIndex);
-            _showItemDetail(item);
+            _handleItemTap(item);
           },
-          onRevealOutput: () {
-            if (Platform.isAndroid) {
-              _showOutputActions(item);
-            } else {
-              _revealInExplorer(item.outputPath);
-            }
-          },
-          onRetry: _retryFailed,
+          onRetry: () => _retryItem(itemIndex),
           onRemove: () => _removeItem(itemIndex),
         );
       },
@@ -1863,7 +1947,7 @@ class _HomePageState extends State<HomePage> {
               isSelected: index == _selectedIndex,
               onTap: () {
                 setState(() => _selectedIndex = index);
-                _showItemDetail(_queue[index]);
+                _handleItemTap(_queue[index]);
               },
               onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
               onRevealOutput: () {
@@ -1873,7 +1957,7 @@ class _HomePageState extends State<HomePage> {
                   _revealInExplorer(_queue[index].outputPath);
                 }
               },
-              onRetry: () => _retryFailed(),
+              onRetry: () => _retryItem(index),
               onRemove: () => _removeItem(index),
             );
           },
@@ -1882,19 +1966,32 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _showItemDetail(QueueItem item) {
-    final compact = MediaQuery.sizeOf(context).width < 600;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      constraints: BoxConstraints(maxWidth: compact ? double.infinity : 720),
-      builder: (ctx) => _ItemDetailSheet(
-        item: item,
-        revealInput: () => _revealInExplorer(item.inputPath),
-        revealOutput: () => _revealInExplorer(item.outputPath),
-      ),
-    );
+  /// Tap behavior per item status:
+  /// - Completed → output actions (save/share/open)
+  /// - Failed/cancelled → retry
+  /// - Everything else → no-op
+  void _handleItemTap(QueueItem item) {
+    if (item.isSuccessful) {
+      if (Platform.isAndroid) {
+        _showOutputActions(item);
+      } else {
+        _revealInExplorer(item.outputPath);
+      }
+    } else if (item.status == QueueItemStatus.failed ||
+        item.status == QueueItemStatus.cancelled) {
+      final index = _queue.indexOf(item);
+      if (index >= 0) _retryItem(index);
+    }
+  }
+
+  void _retryItem(int index) {
+    if (index < 0 || index >= _queue.length) return;
+    setState(() {
+      _queue[index].status = QueueItemStatus.pending;
+      _queue[index].errorMessage = null;
+      _queue[index].startedAt = null;
+      _queue[index].finishedAt = null;
+    });
   }
 
   Widget _buildFooter(ThemeData theme) {
@@ -1960,242 +2057,6 @@ class _HomePageState extends State<HomePage> {
           _scheduleConfigSave();
           _refreshOutputPaths();
         },
-      ),
-    );
-  }
-}
-
-// ============================================================================
-// Expandable error message
-// ============================================================================
-
-class _ExpandableError extends StatefulWidget {
-  final String message;
-
-  const _ExpandableError({required this.message});
-
-  @override
-  State<_ExpandableError> createState() => _ExpandableErrorState();
-}
-
-class _ExpandableErrorState extends State<_ExpandableError> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => setState(() => _expanded = !_expanded),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.red.withAlpha(20),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.red.withAlpha(80)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.error_outline, size: 16, color: Colors.red),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    widget.message,
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
-                    maxLines: _expanded ? null : 2,
-                    overflow: _expanded ? null : TextOverflow.ellipsis,
-                  ),
-                ),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: Colors.red,
-                ),
-              ],
-            ),
-            if (_expanded) ...[
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: () {
-                  Clipboard.setData(ClipboardData(text: widget.message));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('已复制错误信息'),
-                      duration: Duration(seconds: 1),
-                    ),
-                  );
-                },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.copy, size: 12, color: Colors.red.shade300),
-                    const SizedBox(width: 4),
-                    Text(
-                      '复制错误信息',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.red.shade300,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================================================
-// Output preview
-// ============================================================================
-
-class _OutputPreview extends StatelessWidget {
-  final String outputPath;
-
-  const _OutputPreview({required this.outputPath});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: FutureBuilder<Uint8List?>(
-        future: _generatePreview(),
-        builder: (context, snapshot) {
-          if (snapshot.hasData && snapshot.data != null) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('输出预览', style: theme.textTheme.titleSmall),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    snapshot.data!,
-                    fit: BoxFit.contain,
-                    width: double.infinity,
-                    height: 240,
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-            );
-          }
-          return const SizedBox.shrink();
-        },
-      ),
-    );
-  }
-
-  Future<Uint8List?> _generatePreview() async {
-    // All platforms: Rust FFI extracts the embedded EXIF JPEG thumbnail.
-    try {
-      return XdRemuxFFI.extractThumbnail(outputPath);
-    } catch (_) {
-      return null;
-    }
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  final String label;
-  final Color color;
-
-  const _StatusChip({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          color: color,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _DetailRow(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailPathRow extends StatelessWidget {
-  final String label;
-  final String path;
-  final VoidCallback onReveal;
-
-  const _DetailPathRow(this.label, this.path, this.onReveal);
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const Spacer(),
-              InkWell(
-                onTap: onReveal,
-                child: const Icon(Icons.open_in_new, size: 14),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            path,
-            style: theme.textTheme.bodySmall,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
       ),
     );
   }
@@ -2419,8 +2280,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('按拍摄模式分目录输出'),
-                      subtitle: const Text('将已识别的照片写入“大师模式 / 人像 / 夜景”等子目录。'),
+                      title: Text(
+                        Platform.isAndroid ? '按拍摄模式分相册' : '按拍摄模式分目录输出',
+                      ),
+                      subtitle: Text(
+                        Platform.isAndroid
+                            ? '保存到图库时按"大师模式 / 人像 / 夜景"等分相册。'
+                            : '将已识别的照片写入"大师模式 / 人像 / 夜景"等子目录。',
+                      ),
                       value: _cfg.categorizeOutputByMode,
                       onChanged: (value) {
                         setState(() => _cfg.categorizeOutputByMode = value);
@@ -2501,99 +2368,109 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
 
-                    // Advanced settings (collapsible)
-                    ExpansionTile(
-                      title: Text(
-                        '高级',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      tilePadding: EdgeInsets.zero,
-                      initiallyExpanded: false,
-                      childrenPadding: const EdgeInsets.only(top: 8),
+                    // Skip existing
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('跳过已有有效输出'),
+                      subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
+                      value: _cfg.skipExisting,
+                      dense: true,
+                      onChanged: (v) {
+                        setState(() => _cfg.skipExisting = v);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Concurrency
+                    Row(
                       children: [
-                        // Skip existing
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('跳过已有有效输出'),
-                          subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
-                          value: _cfg.skipExisting,
-                          dense: true,
-                          onChanged: (v) {
-                            setState(() => _cfg.skipExisting = v);
-                            _emit();
-                          },
+                        Text('最大并行数', style: theme.textTheme.bodyLarge),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.remove),
+                          onPressed: _cfg.maxConcurrentJobs > 1
+                              ? () {
+                                  setState(() => _cfg.maxConcurrentJobs--);
+                                  _emit();
+                                }
+                              : null,
                         ),
-                        const SizedBox(height: 12),
-
-                        // Concurrency
-                        Row(
-                          children: [
-                            Text('最大并行数', style: theme.textTheme.bodyLarge),
-                            const Spacer(),
-                            IconButton(
-                              icon: const Icon(Icons.remove),
-                              onPressed: _cfg.maxConcurrentJobs > 1
-                                  ? () {
-                                      setState(() => _cfg.maxConcurrentJobs--);
-                                      _emit();
-                                    }
-                                  : null,
-                            ),
-                            Text(
-                              '${_cfg.maxConcurrentJobs}',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontFamily: 'monospace',
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.add),
-                              onPressed: _cfg.maxConcurrentJobs < 4
-                                  ? () {
-                                      setState(() => _cfg.maxConcurrentJobs++);
-                                      _emit();
-                                    }
-                                  : null,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-
-                        // File name suffix
-                        TextField(
-                          decoration: const InputDecoration(
-                            labelText: '输出文件名后缀',
-                            hintText: '_iso',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          enabled: _cfg.outputDirectory == null,
-                          controller: TextEditingController(
-                            text: _cfg.fileNameSuffix,
-                          ),
-                          onChanged: (v) {
-                            _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
-                            _emit();
-                          },
-                        ),
-                        const SizedBox(height: 4),
                         Text(
-                          '设置输出目录后，后缀将被忽略。',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+                          '${_cfg.maxConcurrentJobs}',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontFamily: 'monospace',
                           ),
                         ),
-                        const SizedBox(height: 20),
-
-                        // Cache management (Android only)
-                        if (Platform.isAndroid) ...[
-                          const Divider(),
-                          const SizedBox(height: 8),
-                          _CacheManagementTile(),
-                        ],
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: _cfg.maxConcurrentJobs < 4
+                              ? () {
+                                  setState(() => _cfg.maxConcurrentJobs++);
+                                  _emit();
+                                }
+                              : null,
+                        ),
                       ],
                     ),
+                    const SizedBox(height: 12),
+
+                    // File name suffix
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: '输出文件名后缀',
+                        hintText: '_iso',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      enabled: _cfg.outputDirectory == null,
+                      controller: TextEditingController(
+                        text: _cfg.fileNameSuffix,
+                      ),
+                      onChanged: (v) {
+                        _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    if (!Platform.isAndroid)
+                      Text(
+                        '设置输出目录后，后缀将被忽略。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    const SizedBox(height: 20),
+
+                    // Battery optimization entry (Android only)
+                    if (Platform.isAndroid) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.battery_saver),
+                        title: const Text('后台转换'),
+                        subtitle: Text(
+                          '设置耗电行为控制以保持后台转换',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        trailing: const Icon(Icons.open_in_new, size: 18),
+                        onTap: () {
+                          const batteryChannel = MethodChannel(
+                            'xdremux/battery',
+                          );
+                          batteryChannel.invokeMethod<bool>(
+                            'openOemBatterySettings',
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // Cache management (Android only)
+                    if (Platform.isAndroid) ...[
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      _CacheManagementTile(),
+                    ],
                   ],
                 ),
               ),
@@ -2615,6 +2492,7 @@ class _CacheManagementTile extends StatefulWidget {
 
 class _CacheManagementTileState extends State<_CacheManagementTile> {
   int _cacheSize = 0;
+  int _outputSize = 0;
   bool _cleared = false;
 
   @override
@@ -2623,64 +2501,138 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
     _refresh();
   }
 
+  Future<int> _dirSize(Directory dir) async {
+    if (!dir.existsSync()) return 0;
+    int total = 0;
+    await for (final entity in dir.list(recursive: true)) {
+      if (entity is File) total += await entity.length();
+    }
+    return total;
+  }
+
   Future<void> _refresh() async {
     try {
+      // Cache: picked_files (file picker / share intake fallback)
       final tempDir = await getTemporaryDirectory();
       final pickedDir = Directory(
         '${tempDir.path}${Platform.pathSeparator}picked_files',
       );
-      if (!pickedDir.existsSync()) {
-        if (mounted) setState(() => _cacheSize = 0);
-        return;
+      final cacheSize = await _dirSize(pickedDir);
+
+      // Output: app-specific external dir (Android scoped storage)
+      int outputSize = 0;
+      final extDir = await getExternalStorageDirectory();
+      if (extDir != null) {
+        outputSize = await _dirSize(extDir);
       }
-      int total = 0;
-      await for (final entity in pickedDir.list()) {
-        if (entity is File) total += await entity.length();
+
+      if (mounted) {
+        setState(() {
+          _cacheSize = cacheSize;
+          _outputSize = outputSize;
+          _cleared = false;
+        });
       }
-      if (mounted) setState(() { _cacheSize = total; _cleared = false; });
     } catch (_) {}
   }
 
-  Future<void> _clear() async {
+  Future<void> _clearCache() async {
     try {
       final tempDir = await getTemporaryDirectory();
       final pickedDir = Directory(
         '${tempDir.path}${Platform.pathSeparator}picked_files',
       );
-      if (pickedDir.existsSync()) {
-        await pickedDir.delete(recursive: true);
-      }
+      if (pickedDir.existsSync()) await pickedDir.delete(recursive: true);
       if (mounted) setState(() { _cacheSize = 0; _cleared = true; });
+    } catch (_) {}
+  }
+
+  Future<void> _clearOutput() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber),
+        title: const Text('清除输出目录？'),
+        content: const Text('输出目录中的已转换文件将被删除，此操作不可撤销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认清除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final extDir = await getExternalStorageDirectory();
+      if (extDir != null && extDir.existsSync()) {
+        await for (final entity in extDir.list()) {
+          if (entity is File) await entity.delete();
+          if (entity is Directory) await entity.delete(recursive: true);
+        }
+        // Recreate the output subdirectory so the next conversion doesn't
+        // write into a nonexistent path.
+        final outDir = Directory(
+          '${extDir.path}${Platform.pathSeparator}output',
+        );
+        if (!outDir.existsSync()) await outDir.create(recursive: true);
+      }
+      if (mounted) setState(() => _outputSize = 0);
     } catch (_) {}
   }
 
   String _formatSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        _cleared ? Icons.check_circle_outline : Icons.delete_sweep_outlined,
-        color: _cleared ? Colors.green : null,
-      ),
-      title: const Text('清除文件缓存'),
-      subtitle: Text(
-        _cleared
-            ? '已清除'
-            : _cacheSize > 0
-            ? '已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）'
-            : '无缓存文件',
-        style: theme.textTheme.bodySmall,
-      ),
-      trailing: _cacheSize > 0
-          ? TextButton(onPressed: _clear, child: const Text('清除'))
-          : null,
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            _cleared && _cacheSize == 0
+                ? Icons.check_circle_outline
+                : Icons.delete_sweep_outlined,
+            color: _cleared && _cacheSize == 0 ? Colors.green : null,
+          ),
+          title: const Text('清除文件缓存'),
+          subtitle: Text(
+            _cacheSize > 0
+                ? '已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）'
+                : '无缓存文件',
+            style: theme.textTheme.bodySmall,
+          ),
+          trailing: _cacheSize > 0
+              ? TextButton(onPressed: _clearCache, child: const Text('清除'))
+              : null,
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.output_outlined),
+          title: const Text('清除输出目录'),
+          subtitle: Text(
+            _outputSize > 0
+                ? '已转换文件共 ${_formatSize(_outputSize)}'
+                : '输出目录为空',
+            style: theme.textTheme.bodySmall,
+          ),
+          trailing: _outputSize > 0
+              ? TextButton(onPressed: _clearOutput, child: const Text('清除'))
+              : null,
+        ),
+      ],
     );
   }
 }
@@ -2720,7 +2672,6 @@ class _MobileQueueCard extends StatelessWidget {
   final QueueItem item;
   final bool isSelected;
   final VoidCallback onTap;
-  final VoidCallback onRevealOutput;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
 
@@ -2728,7 +2679,6 @@ class _MobileQueueCard extends StatelessWidget {
     required this.item,
     required this.isSelected,
     required this.onTap,
-    required this.onRevealOutput,
     required this.onRetry,
     required this.onRemove,
   });
@@ -2856,48 +2806,39 @@ class _MobileQueueCard extends StatelessWidget {
                   ],
                 ),
               ),
-              PopupMenuButton<_MobileQueueAction>(
-                tooltip: '项目操作',
-                icon: const Icon(Icons.more_vert),
-                onSelected: (action) {
-                  switch (action) {
-                    case _MobileQueueAction.revealOutput:
-                      onRevealOutput();
-                    case _MobileQueueAction.retry:
-                      onRetry();
-                    case _MobileQueueAction.remove:
-                      onRemove();
-                  }
-                },
-                itemBuilder: (context) => [
-                  if (item.isSuccessful)
+              // Only show menu when there's something to do.
+              if (canRetry || item.status != QueueItemStatus.running)
+                PopupMenuButton<_MobileQueueAction>(
+                  tooltip: '项目操作',
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (action) {
+                    switch (action) {
+                      case _MobileQueueAction.retry:
+                        onRetry();
+                      case _MobileQueueAction.remove:
+                        onRemove();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    if (canRetry)
+                      const PopupMenuItem(
+                        value: _MobileQueueAction.retry,
+                        child: ListTile(
+                          leading: Icon(Icons.refresh),
+                          title: Text('重新尝试'),
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
                     const PopupMenuItem(
-                      value: _MobileQueueAction.revealOutput,
+                      value: _MobileQueueAction.remove,
                       child: ListTile(
-                        leading: Icon(Icons.folder_open),
-                        title: Text('查看输出文件'),
+                        leading: Icon(Icons.delete_outline),
+                        title: Text('移出队列'),
                         contentPadding: EdgeInsets.zero,
                       ),
                     ),
-                  if (canRetry)
-                    const PopupMenuItem(
-                      value: _MobileQueueAction.retry,
-                      child: ListTile(
-                        leading: Icon(Icons.refresh),
-                        title: Text('重新尝试'),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  const PopupMenuItem(
-                    value: _MobileQueueAction.remove,
-                    child: ListTile(
-                      leading: Icon(Icons.delete_outline),
-                      title: Text('移出队列'),
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
             ],
           ),
         ),
@@ -2906,7 +2847,7 @@ class _MobileQueueCard extends StatelessWidget {
   }
 }
 
-enum _MobileQueueAction { revealOutput, retry, remove }
+enum _MobileQueueAction { retry, remove }
 
 class _MobileStatusPill extends StatelessWidget {
   final String label;
@@ -3197,146 +3138,6 @@ class _OverlayBadge extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-// ============================================================================
-// Item detail bottom sheet
-// ============================================================================
-
-class _ItemDetailSheet extends StatelessWidget {
-  final QueueItem item;
-  final VoidCallback revealInput;
-  final VoidCallback revealOutput;
-
-  const _ItemDetailSheet({
-    required this.item,
-    required this.revealInput,
-    required this.revealOutput,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final compact = MediaQuery.sizeOf(context).width < 600;
-
-    return DraggableScrollableSheet(
-      initialChildSize: compact ? 0.82 : 0.6,
-      minChildSize: compact ? 0.58 : 0.4,
-      maxChildSize: 0.94,
-      expand: false,
-      builder: (ctx, scrollController) {
-        return SingleChildScrollView(
-          controller: scrollController,
-          padding: EdgeInsets.fromLTRB(
-            compact ? 20 : 28,
-            compact ? 10 : 28,
-            compact ? 20 : 28,
-            28,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (compact)
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.onSurfaceVariant.withAlpha(90),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      item.fileName,
-                      style: theme.textTheme.titleLarge,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  _StatusChip(
-                    label: item.status.displayName,
-                    color: item.status == QueueItemStatus.converted
-                        ? Colors.green
-                        : item.status == QueueItemStatus.failed
-                        ? Colors.red
-                        : Colors.grey,
-                  ),
-                  _StatusChip(
-                    label: item.outputPlanStatus.displayName,
-                    color: item.outputPlanStatus.blocksConversion
-                        ? Colors.red
-                        : Colors.orange.shade300,
-                  ),
-                  if (item.classificationStatus != null ||
-                      item.captureModeLabel != null)
-                    _StatusChip(
-                      label: item.classificationLabel,
-                      color: Colors.deepPurple,
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (item.errorMessage != null) ...[
-                _ExpandableError(message: item.errorMessage!),
-                const SizedBox(height: 16),
-              ],
-              if (item.isSuccessful && item.status == QueueItemStatus.converted)
-                _OutputPreview(outputPath: item.outputPath),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.file_open, size: 16),
-                    label: const Text('源文件'),
-                    onPressed: revealInput,
-                  ),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.folder_open, size: 16),
-                    label: const Text('输出文件'),
-                    onPressed: item.isSuccessful ? revealOutput : null,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              _DetailRow('状态', item.status.displayName),
-              _DetailRow('输出计划', item.outputPlanStatus.displayName),
-              if (item.startedAt != null)
-                _DetailRow(
-                  '开始',
-                  '${item.startedAt!.hour.toString().padLeft(2, '0')}:${item.startedAt!.minute.toString().padLeft(2, '0')}:${item.startedAt!.second.toString().padLeft(2, '0')}',
-                ),
-              if (item.finishedAt != null)
-                _DetailRow(
-                  '结束',
-                  '${item.finishedAt!.hour.toString().padLeft(2, '0')}:${item.finishedAt!.minute.toString().padLeft(2, '0')}:${item.finishedAt!.second.toString().padLeft(2, '0')}',
-                ),
-              if (item.duration != null)
-                _DetailRow('耗时', '${item.duration!.inMilliseconds / 1000} 秒'),
-              _DetailPathRow('输入路径', item.inputPath, revealInput),
-              _DetailPathRow('输出路径', item.outputPath, revealOutput),
-            ],
-          ),
-        );
-      },
     );
   }
 }

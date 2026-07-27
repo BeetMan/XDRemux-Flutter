@@ -58,7 +58,7 @@ void main() {
     // Settings sheet should show its title and the sections that now exist.
     expect(find.text('转换设置'), findsOneWidget);
     expect(find.text('输入 HDR 类型'), findsOneWidget);
-    expect(find.text('高级'), findsOneWidget);
+    expect(find.text('跳过已有有效输出'), findsOneWidget);
   });
 
   testWidgets('Add files button is visible and enabled', (

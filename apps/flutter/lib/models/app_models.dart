@@ -346,9 +346,13 @@ class ConversionConfig {
   }) {
     final input = File(inputPath);
     final baseDirectory = outputDirectory ?? fallbackDir ?? input.parent.path;
-    final dir = categorizeOutputByMode &&
-            captureModeFolderName != null &&
-            captureModeFolderName.isNotEmpty
+    // Android: capture-mode subdirectories are handled by the gallery album
+    // (Pictures/<mode>), not the file system. Desktop: use subdirectories.
+    final useSubdir = categorizeOutputByMode &&
+        captureModeFolderName != null &&
+        captureModeFolderName.isNotEmpty &&
+        !Platform.isAndroid;
+    final dir = useSubdir
         ? '$baseDirectory${Platform.pathSeparator}$captureModeFolderName'
         : baseDirectory;
     final stem = input.uri.pathSegments.last.replaceAll(RegExp(r'\.heic$', caseSensitive: false), '');
