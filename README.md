@@ -8,7 +8,9 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 ## 截图
 
-![Windows 主界面](screenshots/windows_main.png)
+| Windows | Android |
+|---------|---------|
+| ![Windows 主界面](screenshots/windows_main.png) | ![Android 主界面](screenshots/android_main.png) |
 
 ## 已实现功能
 
