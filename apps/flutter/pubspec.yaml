@@ -32,6 +32,9 @@ dependencies:
   # Share files via system share sheet (ACTION_SEND)
   share_plus: ^10.0.0
 
+  # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
+  receive_sharing_intent: ^1.8.1
+
   # Open files with system default app
   open_filex: ^4.5.0
 

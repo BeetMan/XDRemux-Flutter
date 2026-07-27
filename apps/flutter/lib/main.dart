@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
@@ -132,11 +133,15 @@ class _HomePageState extends State<HomePage> {
   String? _androidOutputDir;
   static const _dropChannel = MethodChannel('xdremux/drop');
 
+  /// Android: stream of media shared into the app while it is running.
+  StreamSubscription<List<SharedMediaFile>>? _shareSubscription;
+
   @override
   void initState() {
     super.initState();
     _initAsync();
     _initDropChannel();
+    _initShareIntake();
     _checkForUpdate();
   }
 
@@ -270,10 +275,59 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// Android-only: accept HEIC files shared from the gallery or a file
+  /// manager via ACTION_SEND / ACTION_SEND_MULTIPLE. The plugin copies the
+  /// content-URI bytes into the app cache, so incoming paths are already
+  /// plain local files the Rust FFI layer can read.
+  void _initShareIntake() {
+    if (!Platform.isAndroid) return;
+    _shareSubscription = ReceiveSharingIntent.instance.getMediaStream().listen(
+      (files) => _handleSharedMedia(files),
+      onError: (Object e) =>
+          debugPrint('[XDRemux][share] media stream error: $e'),
+    );
+    ReceiveSharingIntent.instance.getInitialMedia().then((files) async {
+      await _handleSharedMedia(files);
+      // Tell the plugin the cold-start payload was consumed so it isn't
+      // delivered again on the next launch.
+      await ReceiveSharingIntent.instance.reset();
+    });
+  }
+
+  Future<void> _handleSharedMedia(List<SharedMediaFile> files) async {
+    if (files.isEmpty || !mounted) return;
+    final paths = <String>[];
+    int ignored = 0;
+    int unreadable = 0;
+    for (final file in files) {
+      if (!isSupportedInputPath(file.path)) {
+        ignored++;
+        continue;
+      }
+      try {
+        final entity = await File(file.path).stat();
+        if (entity.type == FileSystemEntityType.file && entity.size > 0) {
+          paths.add(file.path);
+        } else {
+          unreadable++;
+          debugPrint(
+            '[XDRemux][share] not a readable file: ${file.path} '
+            '(type=${entity.type}, size=${entity.size})',
+          );
+        }
+      } catch (e) {
+        unreadable++;
+        debugPrint('[XDRemux][share] cannot read ${file.path}: $e');
+      }
+    }
+    await _enqueuePaths(paths, verb: '接收', ignored: ignored + unreadable);
+  }
+
   @override
   void dispose() {
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
+    _shareSubscription?.cancel();
     _captureFocusNode.dispose();
     super.dispose();
   }
@@ -987,10 +1041,19 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _handleDrop(List<String> paths) async {
+  Future<void> _handleDrop(List<String> paths) =>
+      _enqueuePaths(paths, verb: '拖入');
+
+  /// Shared intake for desktop drop and Android share: classifies each
+  /// supported path and appends it to the queue, then reports how many
+  /// files were added and how many were ignored as non-HEIC.
+  Future<void> _enqueuePaths(
+    List<String> paths, {
+    required String verb,
+    int ignored = 0,
+  }) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
-    int ignored = 0;
     for (final path in paths) {
       if (!isSupportedInputPath(path)) {
         ignored++;
@@ -1019,7 +1082,7 @@ class _HomePageState extends State<HomePage> {
         existing.add(path);
         added++;
       } catch (_) {
-        // Keep drag-and-drop responsive even if metadata classification fails.
+        // Keep the intake responsive even if metadata classification fails.
       }
     }
     if (added > 0) {
@@ -1029,9 +1092,9 @@ class _HomePageState extends State<HomePage> {
     if (added == 0 && ignored == 0) return;
 
     final summary = added > 0 && ignored > 0
-        ? '已拖入 $added 个文件，已忽略 $ignored 个非 HEIC 文件'
+        ? '已$verb $added 个文件，已忽略 $ignored 个非 HEIC 文件'
         : added > 0
-        ? '已拖入 $added 个文件'
+        ? '已$verb $added 个文件'
         : '未添加：$ignored 个文件都不是 HEIC';
     setState(() => _currentFileName = summary);
     if (ignored > 0 && mounted) {

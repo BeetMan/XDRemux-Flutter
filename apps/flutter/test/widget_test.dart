@@ -1,9 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'package:xdremux/main.dart';
 
 void main() {
+  setUpAll(() {
+    // receive_sharing_intent's mobile implementation touches MethodChannels
+    // unconditionally; stub it so widget tests run on the host without a
+    // platform side.
+    ReceiveSharingIntent.setMockValues(
+      initialMedia: const [],
+      mediaStream: const Stream.empty(),
+    );
+  });
+
   test('input path filter accepts HEIC/HEIF and rejects unrelated files', () {
     expect(isSupportedInputPath('photo.HEIC'), isTrue);
     expect(isSupportedInputPath('photo.heif'), isTrue);
