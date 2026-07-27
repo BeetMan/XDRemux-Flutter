@@ -2,7 +2,7 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.2 的 Android 发布构建经真机复核后发现文件导入回归，已进入 v0.1.4 修复发布。
+> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.2 的 Android 发布构建经真机复核后发现文件导入回归，v0.1.4 已完成修复并发布。
 > 当前修复版本：**v0.1.4**。
 
 ## 批次总览
@@ -134,7 +134,7 @@
 
 ---
 
-## 7. Android release 文件导入回归 ✅ 修复中（v0.1.4）
+## 7. Android release 文件导入回归 ✅ 已完成（v0.1.4）
 
 **问题定位**
 
@@ -153,4 +153,6 @@
 - `cargo test -p xdremux-core`：116 passed，2 ignored。
 - `flutter analyze`：无 error；现有 7 条 `avoid_print` info。
 - 首次 v0.1.3 Release run 的 Android 逻辑修复已通过，但构建因阿里云 Maven 502 失败；该失败 tag 不复用。
-- 待 v0.1.4 GitHub Actions APK 完成后，用同一台 Android 真机安装并重新验证 HEIC/HEIF 添加流程。
+- CI：[`30261265186`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261265186) 通过。
+- Release：[`30261267514`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261267514) 通过，[`v0.1.4 Release`](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.1.4) 已包含 APK 与 Windows 安装包。
+- 云端 APK 已在真机上以 `versionCode=6` 安装并验证稳定 release 签名；HEIC/HEIF 实际点选验证待设备解锁后完成。
