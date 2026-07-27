@@ -2,8 +2,8 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5、6 项均已完成；CI 已通过，v0.1.1 Windows 安装包与 Android APK 已发布。
-> 本批次完成后发布 **v0.1.1**。
+> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.2 的 Android 发布构建经真机复核后发现文件导入回归，已进入 v0.1.3 修复发布。
+> 当前修复版本：**v0.1.3**。
 
 ## 批次总览
 
@@ -131,3 +131,24 @@
 ```
 
 完成后 v0.1.1 即为首个 CI 保障 + 自动构建产物的版本。
+
+---
+
+## 7. Android release 文件导入回归 ✅ 修复中（v0.1.3）
+
+**问题定位**
+
+- 手机上正常的本地 APK 与 GitHub v0.1.2 APK 的签名一致，但 `libapp.so` 与 Rust native library 不同。
+- 本地 APK 是临时调试修复后的旧构建产物；GitHub 从 tag 干净构建时重新编译了当前源码。
+- `XdRemuxService.classify()` 在 spawned isolate 中调用动态加载的 Rust FFI，Android release 路径会导致选择文件后分类失败，表现为文件未加入队列。
+
+**修复**
+
+- 将 `classify()` 的 FFI 调用移回 root isolate；`convert()` 继续保留后台 isolate。
+- 版本升级到 `0.1.3+5`，新增 `RELEASE_NOTES_v0.1.3.md`。
+
+**验收**
+
+- `cargo test -p xdremux-core`：116 passed，2 ignored。
+- `flutter analyze`：无 error；现有 7 条 `avoid_print` info。
+- 待 v0.1.3 GitHub Actions APK 完成后，用同一台 Android 真机安装并重新验证 HEIC/HEIF 添加流程。

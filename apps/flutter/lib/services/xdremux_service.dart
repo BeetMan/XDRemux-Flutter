@@ -40,22 +40,23 @@ class XdRemuxService {
   // Capture-mode classification
   // -----------------------------------------------------------------------
 
-  static Future<Map<String, dynamic>> classify(String inputPath) {
-    return Isolate.run(() {
-      final result = XdRemuxFFI.classify(inputPath);
-      try {
-        return {
-          'modeKey': result.modeKey.toDartStringOrNull(),
-          'folderName': result.folderName.toDartStringOrNull(),
-          'status': result.status.toDartStringOrNull(),
-          'rawUserComment': result.rawUserComment.toDartStringOrNull(),
-          'tagFlags': result.hasTagFlags ? result.tagFlags : null,
-          'unknownFlags': result.unknownFlags,
-        };
-      } finally {
-        XdRemuxFFI.freeClassificationResult(result);
-      }
-    });
+  static Future<Map<String, dynamic>> classify(String inputPath) async {
+    // Keep this FFI call on the root isolate. Android release builds can fail
+    // when the dynamically loaded Rust library is opened from a spawned
+    // isolate, which makes the file picker appear to add nothing.
+    final result = XdRemuxFFI.classify(inputPath);
+    try {
+      return {
+        'modeKey': result.modeKey.toDartStringOrNull(),
+        'folderName': result.folderName.toDartStringOrNull(),
+        'status': result.status.toDartStringOrNull(),
+        'rawUserComment': result.rawUserComment.toDartStringOrNull(),
+        'tagFlags': result.hasTagFlags ? result.tagFlags : null,
+        'unknownFlags': result.unknownFlags,
+      };
+    } finally {
+      XdRemuxFFI.freeClassificationResult(result);
+    }
   }
 
   // -----------------------------------------------------------------------
