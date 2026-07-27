@@ -2,8 +2,8 @@
 
 > 整理日期：2026-07-27
 > 前置状态：第一批（分发与减负）全部完成，v0.1.0 已发布（Windows exe 安装包 + Android APK）。
-> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.5 云端 APK 已定位为缺少 `libc++_shared.so`，正在发布 v0.1.6 修复。
-> 当前修复版本：**v0.1.6（待云端 Release 验证）**。
+> 状态更新：2026-07-27 — 第 5、6 项已完成；v0.1.5 云端 APK 的 `libc++_shared.so` 缺失已修复，v0.1.6 已完成云端发版和真机验证。
+> 当前修复版本：**v0.1.6**。
 
 ## 批次总览
 
@@ -161,4 +161,7 @@
 - CI：[`30261265186`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261265186) 通过。
 - Release：[`30261267514`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30261267514) 通过；但 v0.1.4 APK 在真机实际点选 HEIC 后仍为 `0 / 0`，该版本不视为导入修复完成。
 - 本地 v0.1.5 APK 已在解锁的 OPPO 真机上实际选择 `IMG20260711155540_iso.heic`，队列显示 `1 个文件`，分类显示“大师模式 / 待处理”。
-- 云端 v0.1.5 APK 已安装并完成真实选择复测，但因缺少 `libc++_shared.so` 分类失败；v0.1.6 云端 Release 验证待完成。
+- 云端 v0.1.5 APK 已安装并完成真实选择复测，但因缺少 `libc++_shared.so` 分类失败；v0.1.5 Release 已补充已知问题说明。
+- CI：[`30265885199`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30265885199) 通过。
+- Release：[`30265887854`](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/30265887854) 通过，[`v0.1.6 Release`](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.1.6) 已包含 APK 与 Windows 安装包。
+- 云端 APK SHA-256：`4c37c32f3e0cb5f6a5bd647a951d38bb2efbf03ac904bd235d11bfdecbe4a990`；真机安装为 `versionCode=8`，实际选择 `IMG20260711155540_iso.heic` 后队列显示 `1 个文件`，分类显示“大师模式 / 待处理”，logcat 无 C++ runtime 缺失或崩溃。
