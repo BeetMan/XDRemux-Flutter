@@ -57,7 +57,7 @@ fn main() {
              Build it first (see docs/next-phase-plan.md):\n\
              - Windows: cmake -S vendor/x265/source -B vendor/x265/build_windows \\\n\
                  -G \"Visual Studio 17 2022\" -A x64 -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \\\n\
-                 -DENABLE_ASSEMBLY=OFF -DXDREMUX_SKIP_RC=ON && \\\n\
+                 -DXDREMUX_SKIP_RC=ON && \\\n\
                cmake --build vendor/x265/build_windows --config Release --target x265-static\n\
              - macOS/Linux: cmake -S vendor/x265/source -B vendor/x265/build_desktop \\\n\
                  -DENABLE_SHARED=OFF -DENABLE_CLI=OFF && \\\n\

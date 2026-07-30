@@ -273,6 +273,7 @@ class ConversionConfig {
   int maxConcurrentJobs;
   String fileNameSuffix;
   bool categorizeOutputByMode;
+  bool autoSaveToGallery;
 
   ConversionConfig({
     this.family = Family.auto,
@@ -284,6 +285,7 @@ class ConversionConfig {
     this.maxConcurrentJobs = 4,
     this.fileNameSuffix = '_iso',
     this.categorizeOutputByMode = false,
+    this.autoSaveToGallery = false,
   });
 
   /// Persist to SharedPreferences.
@@ -297,6 +299,7 @@ class ConversionConfig {
         'maxConcurrentJobs': maxConcurrentJobs,
         'fileNameSuffix': fileNameSuffix,
         'categorizeOutputByMode': categorizeOutputByMode,
+        'autoSaveToGallery': autoSaveToGallery,
       };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
@@ -320,6 +323,7 @@ class ConversionConfig {
       fileNameSuffix: json['fileNameSuffix'] as String? ?? '_iso',
       categorizeOutputByMode:
           json['categorizeOutputByMode'] as bool? ?? false,
+      autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
     );
   }
 
@@ -333,6 +337,7 @@ class ConversionConfig {
         maxConcurrentJobs: maxConcurrentJobs,
         fileNameSuffix: fileNameSuffix,
         categorizeOutputByMode: categorizeOutputByMode,
+        autoSaveToGallery: autoSaveToGallery,
       );
 
   /// Compute output path for a given input file.

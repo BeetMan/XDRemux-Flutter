@@ -27,7 +27,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-windows-${{ env.X265_TAG }}
+          key: x265-windows-${{ env.X265_TAG }}-asm
+
+      - name: Install NASM
+        shell: pwsh
+        run: choco install nasm -y --no-progress
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -44,7 +48,7 @@ jobs:
             -B xdremux/rust/vendor/x265/build_windows `
             -G 'Visual Studio 17 2022' -A x64 `
             -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
-            -DENABLE_ASSEMBLY=OFF -DXDREMUX_SKIP_RC=ON
+            -DXDREMUX_SKIP_RC=ON
           cmake --build xdremux/rust/vendor/x265/build_windows `
             --config Release --target x265-static
           Copy-Item xdremux/rust/vendor/x265/build_windows/x265_config.h `
@@ -134,7 +138,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-android-arm64-${{ env.X265_TAG }}-ndk-${{ env.ANDROID_NDK_VERSION }}
+          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -158,7 +162,6 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DENABLE_SHARED=OFF \
             -DENABLE_CLI=OFF \
-            -DENABLE_ASSEMBLY=OFF \
             -DXDREMUX_SKIP_RC=ON
           cmake --build xdremux/rust/vendor/x265/build_android \
             --target x265-static --parallel 2

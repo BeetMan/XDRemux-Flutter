@@ -31,7 +31,12 @@ class NotificationService {
           guid: '7E9F2A41-3B6D-4E8A-9C2F-1D5B8A0E6F3C',
         ),
       );
-      final ok = await _plugin.initialize(settings: settings);
+      final ok = await _plugin.initialize(
+        settings: settings,
+        // Tapping the notification brings the app forward (Android) or
+        // focuses/launches it (Windows toast activation). No deep link needed.
+        onDidReceiveNotificationResponse: (_) {},
+      );
       _initialized = ok ?? false;
       if (_initialized && Platform.isAndroid) {
         await _plugin

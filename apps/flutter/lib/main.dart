@@ -16,6 +16,7 @@ import 'models/checkpoint_model.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
 import 'services/notification_service.dart';
+import 'services/tray_service.dart';
 import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
@@ -107,7 +108,7 @@ enum _QueueMenuAction {
   retryFailed,
   clearCompleted,
   saveAllToGallery,
-  revealOutputs,
+  minimizeToTray,
   clearQueue,
 }
 
@@ -153,6 +154,12 @@ class _HomePageState extends State<HomePage> {
     _initShareIntake();
     NotificationService.init();
     ForegroundService.init();
+    if (Platform.isWindows) {
+      TrayService.init(
+        onShowWindow: TrayService.showWindow,
+        onExit: () => exit(0),
+      );
+    }
     _checkForUpdate();
   }
 
@@ -937,6 +944,13 @@ class _HomePageState extends State<HomePage> {
         ForegroundService.updateProgress(
           '$done/$_totalFiles 完成$runningText',
         );
+        // Keep the Windows tray tooltip in sync so the batch stays
+        // observable while the window is hidden.
+        if (Platform.isWindows && TrayService.isHidden) {
+          TrayService.setToolTip(
+            'XDRemux — $done/$_totalFiles 完成',
+          );
+        }
       } catch (_) {}
     });
   }
@@ -950,6 +964,7 @@ class _HomePageState extends State<HomePage> {
       _currentFileName = '';
     });
     ForegroundService.stop();
+    if (Platform.isWindows) TrayService.setToolTip('XDRemux');
     // Mark running/pending as cancelled
     for (int i = 0; i < _queue.length; i++) {
       if (_queue[i].status == QueueItemStatus.running ||
@@ -1059,6 +1074,19 @@ class _HomePageState extends State<HomePage> {
         failed: _failedCount,
       );
     }
+
+    // Android: optional auto-save of every converted output to the gallery.
+    if (Platform.isAndroid && _config.autoSaveToGallery && _convertedCount > 0) {
+      _saveAllConvertedToGallery().then((result) {
+        if (result == null) return;
+        final (saved, failed) = result;
+        if (failed > 0) {
+          debugPrint('[XDRemux][gallery] auto-save: $saved saved, $failed failed');
+        }
+      });
+    }
+
+    if (Platform.isWindows) TrayService.setToolTip('XDRemux');
   }
 
   static int _fileSize(String path) {
@@ -1246,7 +1274,8 @@ class _HomePageState extends State<HomePage> {
     if (ignored > 0) parts.add('忽略 $ignored 个非 HEIC');
     final summary = parts.isEmpty ? '未添加新文件' : parts.join('，');
     setState(() => _currentFileName = summary);
-    if ((ignored > 0 || skippedExisting > 0) && mounted) {
+    if (ignored > 0 || skippedExisting > 0 || verb == '接收') {
+      if (!mounted) return;
       final snackText = skippedExisting > 0
           ? '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过'
           : summary;
@@ -1297,21 +1326,37 @@ class _HomePageState extends State<HomePage> {
   /// Android: batch-save all converted outputs to the gallery.
   /// Uses per-item albums (capture mode folder) when categorize is on.
   Future<void> _saveAllToGallery() async {
+    final result = await _saveAllConvertedToGallery(showDeniedHint: true);
+    if (result == null || !mounted) return;
+    final (saved, failed) = result;
+    final msg = failed > 0
+        ? '已保存 $saved 个到图库，$failed 个失败'
+        : '已保存 $saved 个到图库';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Core of the gallery batch-save. Returns (saved, failed), or null when
+  /// there was nothing to save or gallery permission was denied.
+  Future<(int, int)?> _saveAllConvertedToGallery({
+    bool showDeniedHint = false,
+  }) async {
     final items = _queue
         .where((item) => item.status == QueueItemStatus.converted)
         .toList();
-    if (items.isEmpty) return;
+    if (items.isEmpty) return null;
 
     final hasAccess = await FileActionService.hasGalleryPermission();
     if (!hasAccess) {
       final granted = await FileActionService.requestGalleryPermission();
       if (!granted) {
-        if (mounted) {
+        if (showDeniedHint && mounted) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('未获得存储权限')));
         }
-        return;
+        return null;
       }
     }
 
@@ -1327,15 +1372,7 @@ class _HomePageState extends State<HomePage> {
         failed++;
       }
     }
-
-    if (mounted) {
-      final msg = failed > 0
-          ? '已保存 $saved 个到图库，$failed 个失败'
-          : '已保存 $saved 个到图库';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(msg)));
-    }
+    return (saved, failed);
   }
 
   /// Gallery album for an output item: capture-mode folder name when
@@ -1496,6 +1533,16 @@ class _HomePageState extends State<HomePage> {
           tooltip: '取消',
           onPressed: _isProcessing ? _cancelConversion : null,
         ),
+      // Desktop: one-tap output-folder access without digging the menu.
+      if (!Platform.isAndroid)
+        IconButton(
+          icon: const Icon(Icons.folder_open),
+          tooltip: '打开输出目录',
+          onPressed:
+              !_isProcessing && _queue.any((item) => item.isSuccessful)
+                  ? _revealOutputs
+                  : null,
+        ),
       IconButton(
         icon: const Icon(Icons.tune),
         tooltip: '设置',
@@ -1533,8 +1580,8 @@ class _HomePageState extends State<HomePage> {
             _clearCompleted();
           case _QueueMenuAction.saveAllToGallery:
             _saveAllToGallery();
-          case _QueueMenuAction.revealOutputs:
-            _revealOutputs();
+          case _QueueMenuAction.minimizeToTray:
+            TrayService.hideWindow();
           case _QueueMenuAction.clearQueue:
             _clearQueue();
         }
@@ -1568,13 +1615,12 @@ class _HomePageState extends State<HomePage> {
               contentPadding: EdgeInsets.zero,
             ),
           ),
-        if (!Platform.isAndroid)
+        if (Platform.isWindows)
           PopupMenuItem(
-            value: _QueueMenuAction.revealOutputs,
-            enabled: _queue.any((item) => item.isSuccessful),
+            value: _QueueMenuAction.minimizeToTray,
             child: const ListTile(
-              leading: Icon(Icons.folder_open),
-              title: Text('打开输出目录'),
+              leading: Icon(Icons.minimize),
+              title: Text('最小化到托盘'),
               contentPadding: EdgeInsets.zero,
             ),
           ),
@@ -2153,6 +2199,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
     widget.config.fileNameSuffix = _cfg.fileNameSuffix;
     widget.config.categorizeOutputByMode = _cfg.categorizeOutputByMode;
+    widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
     widget.onChanged();
     setState(() {});
   }
@@ -2441,6 +2488,25 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                       ),
                     const SizedBox(height: 20),
+
+                    // Auto-save to gallery (Android only)
+                    if (Platform.isAndroid) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('转换完成后自动保存到图库'),
+                        subtitle: Text(
+                          '批量转换结束后自动存入 Pictures（遵循分相册设置）。',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        value: _cfg.autoSaveToGallery,
+                        dense: true,
+                        onChanged: (v) {
+                          setState(() => _cfg.autoSaveToGallery = v);
+                          _emit();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
 
                     // Battery optimization entry (Android only)
                     if (Platform.isAndroid) ...[

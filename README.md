@@ -98,15 +98,15 @@ HEVC 编码由静态链接的 x265 完成（Windows/macOS/Android 同一路径�
 `xdremux/rust/vendor/x265/` 构建静态库（vendored 源码，约 2 分钟）：
 
 ```bash
-# Windows（MSVC，一次即可）
+# Windows（MSVC，一次即可；需 NASM 以启用 x265 SIMD 汇编加速，否则自动退回纯 C 构建）
 cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_windows \
   -G "Visual Studio 17 2022" -A x64 -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \
-  -DENABLE_ASSEMBLY=OFF -DXDREMUX_SKIP_RC=ON
+  -DXDREMUX_SKIP_RC=ON
 cmake --build xdremux/rust/vendor/x265/build_windows --config Release --target x265-static
 
 # macOS / Linux
 cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
-  -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF
+  -DENABLE_SHARED=OFF -DENABLE_CLI=OFF
 cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j
 ```
 
