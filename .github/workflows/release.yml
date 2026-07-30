@@ -68,15 +68,18 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace '^[vV]', ''
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Release tag must look like v0.1.1, got ${{ github.ref_name }}"
+          # Strip a pre-release suffix (-pre.N) for the numeric checks; pubspec
+          # carries the plain semver, the tag marks it pre-release.
+          $baseVersion = ($version -replace '-.*$', '')
+          if ($baseVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag must look like v0.1.1 or v0.1.1-pre.1, got ${{ github.ref_name }}"
           }
           $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
           $pubspecName = $pubspecVersion.Split('+')[0]
-          if ($pubspecName -ne $version) {
+          if ($pubspecName -ne $baseVersion) {
             throw "Release tag $version does not match pubspec version $pubspecName"
           }
-          "APP_VERSION=$version" >> $env:GITHUB_ENV
+          "APP_VERSION=$baseVersion" >> $env:GITHUB_ENV
 
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
@@ -187,14 +190,17 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must look like v0.1.1, got $GITHUB_REF_NAME" >&2
+          # Strip a pre-release suffix (-pre.N) for the numeric version checks;
+          # pubspec carries the plain semver, the tag marks it pre-release.
+          base_version="${version%%-*}"
+          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must look like v0.1.1 or v0.1.1-pre.1, got $GITHUB_REF_NAME" >&2
             exit 1
           fi
           pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
           pubspec_name="${pubspec_version%%+*}"
           pubspec_code="${pubspec_version##*+}"
-          if [[ "$pubspec_name" != "$version" ]]; then
+          if [[ "$pubspec_name" != "$base_version" ]]; then
             echo "Release tag $version does not match pubspec version $pubspec_name" >&2
             exit 1
           fi
@@ -202,7 +208,7 @@ jobs:
             echo "pubspec build number must be a positive integer, got $pubspec_code" >&2
             exit 1
           fi
-          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$base_version" >> "$GITHUB_ENV"
           echo "APP_BUILD_NUMBER=$pubspec_code" >> "$GITHUB_ENV"
 
       - name: Build Rust Android library
@@ -271,6 +277,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
+          # Tags carrying a -suffix (v0.1.9-pre.1) publish as pre-release so
+          # they don't become /releases/latest or trigger in-app update checks.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: tools/installer/RELEASE_NOTES_${{ github.ref_name }}.md
           files: |
             dist/windows-installer/XDRemuxSetup-*.exe
