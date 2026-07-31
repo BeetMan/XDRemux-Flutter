@@ -197,6 +197,19 @@ Win32Window::MessageHandler(HWND hwnd,
 
       return 0;
     }
+    case WM_GETMINMAXINFO: {
+      // Minimum window size — allow a narrow phone-like portrait ratio; the
+      // photo-wall grid adapts its column count so the UI never overlaps.
+      auto minmax = reinterpret_cast<MINMAXINFO*>(lparam);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(
+          MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
+      double scale_factor = dpi / 96.0;
+      minmax->ptMinTrackSize.x =
+          static_cast<LONG>(Scale(480, scale_factor));
+      minmax->ptMinTrackSize.y =
+          static_cast<LONG>(Scale(800, scale_factor));
+      return 0;
+    }
     case WM_SIZE: {
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {

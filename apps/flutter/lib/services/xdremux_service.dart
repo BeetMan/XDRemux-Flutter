@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
@@ -115,11 +117,24 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// All platforms: uses Rust FFI to extract the embedded EXIF JPEG thumbnail.
+  /// macOS: native ImageIO decode (full-resolution HEIC, HDR tone-mapped) so
+  /// the photo wall is crisp. Other platforms: Rust FFI extracts the embedded
+  /// EXIF JPEG thumbnail.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
+    if (Platform.isMacOS) {
+      try {
+        const channel = MethodChannel('xdremux/thumbnail');
+        return await channel.invokeMethod<Uint8List>('render', {
+          'path': inputPath,
+          'maxPixelSize': maxPixelSize,
+        });
+      } catch (e) {
+        print('generateThumbnail native error: $e');
+      }
+    }
     try {
       return XdRemuxFFI.extractThumbnail(inputPath);
     } catch (e) {

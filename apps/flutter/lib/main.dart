@@ -866,11 +866,11 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Android + toggle on: try the hardware (MediaCodec) path. Any failure
-      // (no encoder, encode error, prepare/assemble error) falls back to the
-      // proven software path so conversion never silently breaks.
+      // Android (MediaCodec) + macOS (VideoToolbox) + toggle on: try the
+      // hardware encode path. Any failure falls back to the proven software
+      // path so conversion never silently breaks.
       Map<String, dynamic>? result;
-      if (Platform.isAndroid &&
+      if ((Platform.isAndroid || Platform.isMacOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
         result = await _convertOneHardware(item, runConfig);
@@ -2285,6 +2285,7 @@ class _SettingsSheet extends StatefulWidget {
 
 class _SettingsSheetState extends State<_SettingsSheet> {
   late ConversionConfig _cfg;
+  late final TextEditingController _suffixController;
 
   /// Hardware-encoding availability probe result (null = not yet known).
   /// Only probed on Android, where the MediaCodec path exists.
@@ -2294,11 +2295,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   void initState() {
     super.initState();
     _cfg = widget.config.copy();
-    if (Platform.isAndroid) {
+    _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
+    if (Platform.isAndroid || Platform.isMacOS) {
       HardwareEncodeService.isAvailable().then((ok) {
         if (mounted) setState(() => _hwAvailable = ok);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _suffixController.dispose();
+    super.dispose();
   }
 
   void _emit() {
@@ -2644,11 +2652,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         isDense: true,
                       ),
                       enabled: _cfg.outputDirectory == null,
-                      controller: TextEditingController(
-                        text: _cfg.fileNameSuffix,
-                      ),
+                      controller: _suffixController,
                       onChanged: (v) {
-                        _cfg.fileNameSuffix = v.isEmpty ? '_iso' : v;
+                        // Allow empty to mean "no suffix" instead of forcing
+                        // back to '_iso' (which made clearing the field stick).
+                        _cfg.fileNameSuffix = v.trim();
                         _emit();
                       },
                     ),
@@ -2704,16 +2712,17 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 8),
                     ],
 
-                    // Hardware encoding toggle (Android only, experimental)
-                    if (Platform.isAndroid) ...[
+                    // Hardware encoding toggle (Android MediaCodec / macOS
+                    // VideoToolbox, experimental)
+                    if (Platform.isAndroid || Platform.isMacOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('GPU 硬件编码（实验）'),
                         subtitle: Text(
-                          '用 MediaCodec 硬件编码 gain map，大幅提速；'
-                          '默认关闭，开启后仅设备支持时生效（不支持自动回退软件编码）。'
-                          '开启后 gain map 降至 4:2:0（画质微降），'
-                          '已在骁龙 8 Elite / 8 Gen 3 上验证通过。'
+                          '用系统硬件编码器（Android MediaCodec / macOS VideoToolbox）'
+                          '编码 gain map，大幅提速；默认关闭，开启后仅设备支持时生效'
+                          '（不支持自动回退软件编码）。开启后 gain map 降至 4:2:0'
+                          '（画质微降，但与 OPPO 图库读取兼容），并强制 OPPO 兼容模式。'
                           '${switch (_hwAvailable) {
                             null => '正在检测本机编码器…',
                             true => '本机硬件编码：可用',
@@ -2724,6 +2733,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         value: _cfg.hardwareEncode,
                         dense: true,
                         onChanged: (v) {
+                          // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
+                          // 需要的格式。开启时强制 OPPO 兼容模式，保证输出能
+                          // 被 OPPO 图库识别。
+                          if (v && _cfg.oppoCompatibility != OppoCompatMode.on) {
+                            _cfg.oppoCompatibility = OppoCompatMode.on;
+                          }
                           setState(() => _cfg.hardwareEncode = v);
                           _emit();
                         },
@@ -3044,7 +3059,12 @@ class _MobileQueueCard extends StatelessWidget {
                 height: 76,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: _ThumbnailWidget(inputPath: item.inputPath),
+                  child: _ThumbnailWidget(
+                    inputPath: item.inputPath,
+                    outputPath: item.outputPath,
+                    showToggle: false,
+                    isConverted: item.status == QueueItemStatus.converted,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -3234,7 +3254,11 @@ class _PhotoCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _ThumbnailWidget(inputPath: item.inputPath),
+                  _ThumbnailWidget(
+                    inputPath: item.inputPath,
+                    outputPath: item.outputPath,
+                    isConverted: isDone,
+                  ),
                   if (item.captureModeLabel != null)
                     Positioned(
                       top: 6,
@@ -3371,36 +3395,125 @@ class _PhotoCard extends StatelessWidget {
   }
 }
 
-class _ThumbnailWidget extends StatelessWidget {
+class _ThumbnailWidget extends StatefulWidget {
   final String inputPath;
+  final String? outputPath;
 
-  const _ThumbnailWidget({required this.inputPath});
+  /// Whether to show the "source / converted" toggle chip. Disabled for tiny
+  /// thumbnails (list view) where the chip would be unusable.
+  final bool showToggle;
+
+  /// Whether this item was actually converted in this session. The "converted"
+  /// (HDR) view must only be offered when the item really went through
+  /// conversion — otherwise a pre-existing output file would wrongly show the
+  /// toggle before conversion.
+  final bool isConverted;
+
+  const _ThumbnailWidget({
+    required this.inputPath,
+    this.outputPath,
+    this.showToggle = true,
+    this.isConverted = false,
+  });
+
+  @override
+  State<_ThumbnailWidget> createState() => _ThumbnailWidgetState();
+}
+
+class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
+  /// Whether to show the converted output (HDR) instead of the source.
+  /// Only meaningful on macOS where native ImageIO applies the HDR boost.
+  bool _showOutput = true;
+
+  /// The path to render: only show the converted output when this item was
+  /// actually converted this session (isConverted). Otherwise a stale output
+  /// file from a previous run would mask the source thumbnail.
+  String get _displayPath {
+    final out = widget.outputPath;
+    if (widget.isConverted &&
+        _showOutput &&
+        out != null &&
+        out.isNotEmpty &&
+        File(out).existsSync()) {
+      return out;
+    }
+    return widget.inputPath;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List?>(
-      future: _PhotoCard._thumbCache.containsKey(inputPath)
-          ? Future.value(_PhotoCard._thumbCache[inputPath])
-          : XdRemuxService.getThumbnail(inputPath, maxPixelSize: 256).then((t) {
-              _PhotoCard._thumbCache[inputPath] = t;
-              return t;
-            }),
-      builder: (context, snapshot) {
-        if (snapshot.hasData && snapshot.data != null) {
-          return Image.memory(
-            snapshot.data!,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-          );
-        }
-        return Container(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: const Center(
-            child: Icon(Icons.photo, size: 32, color: Colors.grey),
+    final theme = Theme.of(context);
+    final path = _displayPath;
+    final hasOutput = widget.isConverted &&
+        widget.outputPath != null &&
+        widget.outputPath!.isNotEmpty &&
+        File(widget.outputPath!).existsSync();
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        FutureBuilder<Uint8List?>(
+          future: _PhotoCard._thumbCache.containsKey(path)
+              ? Future.value(_PhotoCard._thumbCache[path])
+              : XdRemuxService.getThumbnail(path, maxPixelSize: 256).then((t) {
+                  _PhotoCard._thumbCache[path] = t;
+                  return t;
+                }),
+          builder: (context, snapshot) {
+            if (snapshot.hasData && snapshot.data != null) {
+              return Image.memory(
+                snapshot.data!,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+              );
+            }
+            return Container(
+              color: theme.colorScheme.surfaceContainerHighest,
+              child: const Center(
+                child: Icon(Icons.photo, size: 32, color: Colors.grey),
+              ),
+            );
+          },
+        ),
+        // Source / converted toggle — macOS only, and only once a converted
+        // output exists. Lets you A/B the HDR result against the original.
+        // Bottom-right so it does not clash with the status badge (bottom-left).
+        if (Platform.isMacOS && hasOutput && widget.showToggle)
+          Positioned(
+            right: 6,
+            bottom: 6,
+            child: InkWell(
+              onTap: () => setState(() => _showOutput = !_showOutput),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.black.withAlpha(180),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _showOutput ? Icons.hdr_on : Icons.photo_outlined,
+                      size: 12,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _showOutput ? '转换后' : '源',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        );
-      },
+      ],
     );
   }
 }

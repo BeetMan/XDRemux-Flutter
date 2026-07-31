@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 /// A gain-map tile to hardware-encode: packed I420 (Y, then U, then V) and its
@@ -41,6 +43,13 @@ class HardwareEncodeService {
   /// preserving input order. Returns null if any tile fails to encode.
   static Future<List<Uint8List>?> encodeTiles(List<TileInput> tiles) async {
     if (tiles.isEmpty) return <Uint8List>[];
+    // macOS VideoToolbox: reset the "first tile" flag so this batch's first
+    // tile carries VPS/SPS/PPS for hvcC extraction. No-op on Android.
+    if (Platform.isMacOS) {
+      try {
+        await _channel.invokeMethod<void>('reset');
+      } catch (_) {}
+    }
     final streams = <Uint8List>[];
     for (final tile in tiles) {
       final stream = await _channel.invokeMethod<Uint8List>(
