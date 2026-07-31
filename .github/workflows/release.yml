@@ -156,11 +156,14 @@ jobs:
           mkdir -p xdremux/rust/vendor/x265/include
           cp xdremux/rust/vendor/x265/source/x265.h \
             xdremux/rust/vendor/x265/include/x265.h
-          # The x265 asm path sets -march=armv8-a* as per-source COMPILE_FLAGS
-          # on .S files, which the Android NDK Clang rejects ("unknown target
-          # CPU 'armv8-a'"). Override those flag variables to -mcpu=…, which
-          # Clang's assembler accepts, keeping NEON SIMD enabled. SVE/SVE2 are
-          # off: NDK r28 assembler lacks full SVE2 support for these sources.
+          # x265's add_custom_command for .S files expands ${CMAKE_CXX_COMPILER}
+          # to the NDK's bare clang++ (x86_64 host), not the aarch64 wrapper,
+          # so -march=armv8-a hits "unknown target CPU". Patch the custom
+          # commands to cross-compile with an explicit --target. The NDK CMake
+          # already sets CMAKE_CXX_COMPILER_TARGET to the right triple.
+          sed -i \
+            's|ARGS ${ARM_ARGS} ${ASM_FLAGS} ${AARCH64_NEON_FLAG}|ARGS ${ARM_ARGS} ${ASM_FLAGS} --target=${CMAKE_CXX_COMPILER_TARGET} ${AARCH64_NEON_FLAG}|; s|ARGS ${ARM_ARGS} ${ASM_FLAGS} ${AARCH64_NEON_DOTPROD_FLAG}|ARGS ${ARM_ARGS} ${ASM_FLAGS} --target=${CMAKE_CXX_COMPILER_TARGET} ${AARCH64_NEON_DOTPROD_FLAG}|; s|ARGS ${ARM_ARGS} ${ASM_FLAGS} ${AARCH64_NEON_I8MM_FLAG}|ARGS ${ARM_ARGS} ${ASM_FLAGS} --target=${CMAKE_CXX_COMPILER_TARGET} ${AARCH64_NEON_I8MM_FLAG}|' \
+            xdremux/rust/vendor/x265/source/CMakeLists.txt
           cmake -S xdremux/rust/vendor/x265/source \
             -B xdremux/rust/vendor/x265/build_android \
             -G Ninja \
@@ -168,9 +171,6 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
-            -DAARCH64_NEON_FLAG="-mcpu=armv8-a" \
-            -DAARCH64_NEON_DOTPROD_FLAG="-mcpu=armv8.2-a+dotprod" \
-            -DAARCH64_NEON_I8MM_FLAG="-mcpu=armv8.2-a+dotprod+i8mm" \
             -DENABLE_SHARED=OFF \
             -DENABLE_CLI=OFF \
             -DENABLE_SVE=OFF \
