@@ -386,6 +386,12 @@ class QueueItem {
   /// meaning HEVC tile 12 / 48 is being encoded. Null when idle or done.
   ({int stage, int current, int total})? progress;
 
+  /// Rust progress handle bound to this item's in-flight conversion (from
+  /// `XdRemuxFFI.progressBegin`). Lets the poll loop read this item's real
+  /// tile progress even while sibling conversions run concurrently.
+  /// 0 when no conversion is running for this item.
+  int progressHandle = 0;
+
   /// Human-readable progress label derived from [progress].
   String get progressLabel {
     final p = progress;

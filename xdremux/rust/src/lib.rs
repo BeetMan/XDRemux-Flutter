@@ -106,6 +106,27 @@ pub extern "C" fn xdremux_read_progress(buf: *mut u32) {
     }
 }
 
+/// Read the progress tuple for a specific conversion handle.
+///
+/// `handle` must be the value from [xdremux_progress_begin] (or 0 for the
+/// legacy most-recent view). `buf` must point to 3 × u32.
+#[no_mangle]
+pub extern "C" fn xdremux_read_progress_for(handle: u32, buf: *mut u32) {
+    if buf.is_null() {
+        return;
+    }
+    let (stage, current, total) = if handle == 0 {
+        progress::read_progress()
+    } else {
+        progress::read_progress_for(handle).unwrap_or((0, 0, 0))
+    };
+    unsafe {
+        *buf = stage;
+        *buf.add(1) = current;
+        *buf.add(2) = total;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FFI: capture-mode classification
 // ---------------------------------------------------------------------------
@@ -258,8 +279,53 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
 ///
 /// `config` can be null (treated as clean ISO with its legacy tail policy).
 /// Returns a [ConversionResult] that the caller must free.
+/// Allocate a progress handle and bind it to the calling thread. The UI calls
+/// this on the main isolate, passes the handle to the worker, then polls with
+/// [xdremux_read_progress_for]. Release with [xdremux_progress_end].
+#[no_mangle]
+pub extern "C" fn xdremux_progress_begin() -> u32 {
+    progress::begin_progress()
+}
+
+/// Release a progress handle allocated by [xdremux_progress_begin].
+#[no_mangle]
+pub extern "C" fn xdremux_progress_end(handle: u32) {
+    progress::end_progress_with(handle);
+}
+
 #[no_mangle]
 pub extern "C" fn xdremux_convert(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+) -> ConversionResult {
+    // Legacy path: own a progress slot for this thread so the plain
+    // `xdremux_read_progress` view tracks this conversion.
+    progress::begin_progress();
+    let result = xdremux_convert_impl(input_path, output_path, config);
+    progress::end_progress();
+    result
+}
+
+/// Convert with a caller-supplied progress handle (from
+/// [xdremux_progress_begin]). The handle is adopted for this thread's
+/// duration; the caller keeps ownership and releases it after polling.
+#[no_mangle]
+pub extern "C" fn xdremux_convert_with_progress(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+    handle: u32,
+) -> ConversionResult {
+    progress::begin_progress_with(handle);
+    let result = xdremux_convert_impl(input_path, output_path, config);
+    // Detach from this thread only; the caller releases the handle itself so
+    // it can read the final stage after we return.
+    progress::end_progress();
+    result
+}
+
+fn xdremux_convert_impl(
     input_path: *const c_char,
     output_path: *const c_char,
     config: *const ConvertConfig,

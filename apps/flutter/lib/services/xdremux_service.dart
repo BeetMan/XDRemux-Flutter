@@ -69,15 +69,25 @@ class XdRemuxService {
     int oppoCompat = 0,
     int oppoCameraTail = 255,
     bool strictTmap = false,
+    int progressHandle = 0,
   }) {
     return Isolate.run(() {
-      final result = XdRemuxFFI.convert(
-        inputPath,
-        outputPath,
-        oppoCompat: oppoCompat,
-        oppoCameraTail: oppoCameraTail,
-        strictTmap: strictTmap,
-      );
+      final result = progressHandle != 0
+          ? XdRemuxFFI.convertWithProgress(
+              inputPath,
+              outputPath,
+              progressHandle: progressHandle,
+              oppoCompat: oppoCompat,
+              oppoCameraTail: oppoCameraTail,
+              strictTmap: strictTmap,
+            )
+          : XdRemuxFFI.convert(
+              inputPath,
+              outputPath,
+              oppoCompat: oppoCompat,
+              oppoCameraTail: oppoCameraTail,
+              strictTmap: strictTmap,
+            );
       final map = {
         'success': result.success,
         'mode': result.mode.toDartStringOrNull(),

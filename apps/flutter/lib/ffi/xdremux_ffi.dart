@@ -170,6 +170,22 @@ class XdRemuxFFI {
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>),
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>)>('xdremux_convert');
 
+  static final _convertWithProgress = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, ffi.Uint32),
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, int)>('xdremux_convert_with_progress');
+
+  static final _progressBegin = _lib.lookupFunction<
+      ffi.Uint32 Function(),
+      int Function()>('xdremux_progress_begin');
+
+  static final _progressEnd = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32),
+      void Function(int)>('xdremux_progress_end');
+
+  static final _readProgressFor = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32, ffi.Pointer<ffi.Uint32>),
+      void Function(int, ffi.Pointer<ffi.Uint32>)>('xdremux_read_progress_for');
+
   static final _verifyOutput = _lib.lookupFunction<
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_output');
@@ -250,6 +266,41 @@ class XdRemuxFFI {
     }
   }
 
+  /// Convert like [convert], but report tile progress into the given
+  /// [progressHandle] (from [progressBegin]) so the caller can poll this
+  /// conversion's real progress via [readProgressFor] while sibling
+  /// conversions run concurrently.
+  static ConversionResult convertWithProgress(
+    String inputPath,
+    String outputPath, {
+    required int progressHandle,
+    int oppoCompat = 0,
+    int oppoCameraTail = 255,
+    bool strictTmap = false,
+  }) {
+    final input = inputPath.toNativeUtf8();
+    final output = outputPath.toNativeUtf8();
+    final cfg = calloc<ConvertConfig>();
+    cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
+    cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
+    cfg.ref.strictTmap = strictTmap ? 1 : 0;
+    try {
+      return _convertWithProgress(input, output, cfg, progressHandle);
+    } finally {
+      calloc.free(input);
+      calloc.free(output);
+      calloc.free(cfg);
+    }
+  }
+
+  /// Allocate a Rust progress handle on the calling thread. Poll it with
+  /// [readProgressFor] while the conversion runs on a worker isolate, then
+  /// release it with [progressEnd].
+  static int progressBegin() => _progressBegin();
+
+  /// Release a progress handle allocated by [progressBegin].
+  static void progressEnd(int handle) => _progressEnd(handle);
+
   static bool verifyOutput(String path) {
     final ptr = path.toNativeUtf8();
     try {
@@ -275,6 +326,18 @@ class XdRemuxFFI {
     final buf = calloc<ffi.Uint32>(3);
     try {
       _readProgress(buf);
+      return (buf[0], buf[1], buf[2]);
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  /// Read progress for the conversion bound to [handle] (from
+  /// [progressBegin]). Returns (0, 0, 0) once the handle is released.
+  static (int, int, int) readProgressFor(int handle) {
+    final buf = calloc<ffi.Uint32>(3);
+    try {
+      _readProgressFor(handle, buf);
       return (buf[0], buf[1], buf[2]);
     } finally {
       calloc.free(buf);

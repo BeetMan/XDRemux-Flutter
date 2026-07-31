@@ -841,6 +841,10 @@ class _HomePageState extends State<HomePage> {
     final item = _queue[index];
     final runConfig = _config.copy();
 
+    // Claim a Rust progress handle up front so the poll loop can read this
+    // item's real tile progress while sibling conversions run concurrently.
+    item.progressHandle = XdRemuxFFI.progressBegin();
+
     try {
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
@@ -865,6 +869,7 @@ class _HomePageState extends State<HomePage> {
         oppoCompat: runConfig.oppoCompatibility.rustValue,
         oppoCameraTail: runConfig.oppoCameraTail.rustValue,
         strictTmap: runConfig.strictTmap,
+        progressHandle: item.progressHandle,
       );
 
       if (result['success'] == true) {
@@ -878,6 +883,10 @@ class _HomePageState extends State<HomePage> {
       item.errorMessage = e.toString();
     }
 
+    if (item.progressHandle != 0) {
+      XdRemuxFFI.progressEnd(item.progressHandle);
+      item.progressHandle = 0;
+    }
     item.finishedAt = DateTime.now();
     item.progress = null;
     if (mounted) setState(() {});
@@ -890,43 +899,26 @@ class _HomePageState extends State<HomePage> {
   /// tile-level progress buffer for the sole running item. With higher
   /// concurrency, estimates progress from elapsed time (the global buffer
   /// is shared by all concurrent conversions and would be garbled).
+  /// Single batch-level progress timer. Every running item reports its real
+  /// Rust tile progress through its own handle, so per-file bars are accurate
+  /// in both single and concurrent modes.
   void _startProgressTimer(int concurrency) {
     _progressTimer?.cancel();
     _progressTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
       if (!mounted || !_isProcessing) return;
       try {
-        if (concurrency == 1) {
-          final (stage, current, total) = XdRemuxFFI.readProgress();
-          // Find the single running item and update its progress.
-          for (int i = 0; i < _queue.length; i++) {
-            if (_queue[i].status == QueueItemStatus.running) {
-              _queue[i].progress = (
-                stage: stage,
-                current: current,
-                total: total,
-              );
-              break;
-            }
-          }
-        } else {
-          // Concurrent mode: estimate per-file progress from elapsed time.
-          // Ramp to 95% over 20s with a smooth curve (fast start, slow tail),
-          // so it doesn't hit a visible plateau before the real completion.
-          final now = DateTime.now();
-          for (int i = 0; i < _queue.length; i++) {
-            final item = _queue[i];
-            if (item.status == QueueItemStatus.running &&
-                item.startedAt != null) {
-              final elapsed = now.difference(item.startedAt!).inMilliseconds;
-              // Asymptotic: 1 - e^(-t/8s), capped at 95%.
-              final t = elapsed / 8000.0;
-              final estimated = (1.0 - (1.0 / (1.0 + t * t))) * 0.95;
-              item.progress = (
-                stage: 3,
-                current: (estimated * 100).round(),
-                total: 100,
-              );
-            }
+        for (int i = 0; i < _queue.length; i++) {
+          final item = _queue[i];
+          if (item.status == QueueItemStatus.running &&
+              item.progressHandle != 0) {
+            final (stage, current, total) = XdRemuxFFI.readProgressFor(
+              item.progressHandle,
+            );
+            item.progress = (
+              stage: stage,
+              current: current,
+              total: total,
+            );
           }
         }
         _updateStatusText();
