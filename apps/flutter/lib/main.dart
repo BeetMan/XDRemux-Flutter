@@ -870,7 +870,9 @@ class _HomePageState extends State<HomePage> {
       // (no encoder, encode error, prepare/assemble error) falls back to the
       // proven software path so conversion never silently breaks.
       Map<String, dynamic>? result;
-      if (Platform.isAndroid && runConfig.hardwareEncode) {
+      if (Platform.isAndroid &&
+          runConfig.hardwareEncode &&
+          await HardwareEncodeService.isAvailable()) {
         result = await _convertOneHardware(item, runConfig);
       }
       result ??= await XdRemuxService.convert(
@@ -2700,9 +2702,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         title: const Text('GPU 硬件编码（实验）'),
                         subtitle: Text(
                           '用 MediaCodec 硬件编码 gain map，大幅提速；'
-                          '默认关闭。开启后 gain map 降至 4:2:0（画质微降），'
-                          '目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过，'
-                          '失败会自动回退软件编码。',
+                          '默认开启，仅设备支持时生效（不支持自动回退软件编码）。'
+                          '开启后 gain map 降至 4:2:0（画质微降），'
+                          '目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过。',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.hardwareEncode,

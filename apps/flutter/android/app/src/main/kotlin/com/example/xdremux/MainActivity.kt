@@ -77,6 +77,14 @@ class MainActivity : FlutterActivity() {
                             }
                         }.start()
                     }
+                    "canEncode" -> {
+                        Thread {
+                            val ok = MediaCodecHevcEncoder.canEncode420()
+                            runOnUiThread {
+                                result.success(ok)
+                            }
+                        }.start()
+                    }
                     else -> result.notImplemented()
                 }
             }

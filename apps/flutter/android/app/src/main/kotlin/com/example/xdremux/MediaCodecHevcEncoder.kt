@@ -23,6 +23,36 @@ object MediaCodecHevcEncoder {
     private const val MIME = MediaFormat.MIMETYPE_VIDEO_HEVC
 
     /**
+     * Whether this device can actually drive a 4:2:0 HEVC encoder. Ground
+     * truth is a real configure attempt — advertised formats alone over-report
+     * support, and configure() does not validate color formats. A 64×64
+     * YUV420Flexible config succeeding means the hardware path is viable.
+     */
+    fun canEncode420(): Boolean {
+        var codec: MediaCodec? = null
+        return try {
+            val f = MediaFormat.createVideoFormat(MIME, 64, 64)
+            f.setInteger(
+                MediaFormat.KEY_COLOR_FORMAT,
+                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
+            )
+            f.setInteger(MediaFormat.KEY_BIT_RATE, 200_000)
+            f.setInteger(MediaFormat.KEY_FRAME_RATE, 1)
+            f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            codec = MediaCodec.createEncoderByType(MIME)
+            codec.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            true
+        } catch (_: Exception) {
+            false
+        } finally {
+            try {
+                codec?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
      * Encode one I420 frame of `width`×`height` into an Annex-B HEVC stream.
      * `yuv` layout: Y (width*height), then U ((w/2)*(h/2)), then V.
      * Returns null on any error.

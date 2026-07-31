@@ -188,7 +188,7 @@ class XdRemuxService {
       fileNameSuffix: prefs.getString(_keyFileNameSuffix) ?? '_iso',
       categorizeOutputByMode:
           prefs.getBool(_keyCategorizeOutputByMode) ?? false,
-      hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? false,
+      hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? true,
     );
   }
 

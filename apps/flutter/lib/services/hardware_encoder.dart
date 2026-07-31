@@ -20,6 +20,23 @@ class HardwareEncodeService {
   static const _channel = MethodChannel('xdremux/hw-encode');
   static const _tileSize = 512;
 
+  /// Whether this device can actually encode 4:2:0 HEVC (a real configure
+  /// attempt). Cached after the first probe. Any error → false (falls back to
+  /// the software path). Must be called on Android only.
+  static Future<bool>? _availability;
+
+  static Future<bool> isAvailable() {
+    return _availability ??= _probe();
+  }
+
+  static Future<bool> _probe() async {
+    try {
+      return await _channel.invokeMethod<bool>('canEncode') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Encode `tiles` (all `_tileSize`×`_tileSize` I420) to HEVC byte streams,
   /// preserving input order. Returns null if any tile fails to encode.
   static Future<List<Uint8List>?> encodeTiles(List<TileInput> tiles) async {
