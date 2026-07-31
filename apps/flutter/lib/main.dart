@@ -2693,13 +2693,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 8),
                     ],
 
-                    // Hardware encoding toggle (Android only)
+                    // Hardware encoding toggle (Android only, experimental)
                     if (Platform.isAndroid) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('硬件编码'),
+                        title: const Text('GPU 硬件编码（实验）'),
                         subtitle: Text(
-                          '用 MediaCodec 硬件编码 gain map，失败时自动回退软件编码。',
+                          '用 MediaCodec 硬件编码 gain map，大幅提速；'
+                          '默认关闭。开启后 gain map 降至 4:2:0（画质微降），'
+                          '目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过，'
+                          '失败会自动回退软件编码。',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.hardwareEncode,
