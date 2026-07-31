@@ -563,6 +563,86 @@ pub fn extract_hvcc_config(hevc_data: &[u8]) -> Option<Vec<u8>> {
     extract_hvcc_config_with_chroma(hevc_data, chroma)
 }
 
+/// Strip emulation-prevention bytes (`00 00 03` → `00 00`) from a NAL payload,
+/// keeping the leading NAL header byte.
+fn rbsp(nal: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(nal.len());
+    let mut i = 0;
+    while i < nal.len() {
+        if i + 2 < nal.len() && nal[i] == 0 && nal[i + 1] == 0 && nal[i + 2] == 3 {
+            out.push(0);
+            out.push(0);
+            i += 3;
+        } else {
+            out.push(nal[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// MSB-first bit reader over a byte slice.
+struct BitReader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl BitReader<'_> {
+    fn read(&mut self, n: u32) -> u32 {
+        let mut val = 0u32;
+        for _ in 0..n {
+            let byte = self.data[self.pos / 8];
+            let bit = (byte >> (7 - (self.pos % 8))) & 1;
+            val = (val << 1) | bit as u32;
+            self.pos += 1;
+        }
+        val
+    }
+}
+
+/// Parse profile_tier_level from an SPS (after NAL header): `sps_..._id(4)
+/// max_sub_layers_minus1(3) temporal_id_nesting(1)` then profile_space(2)
+/// tier(1) profile_idc(5) compat(32) constraint(48) level(8).
+/// Returns (profile_byte, compat_flags, level_idc).
+fn sps_ptl(sps: &[u8]) -> Option<(u8, u32, u8)> {
+    let rbsp = rbsp(sps);
+    if rbsp.len() < 15 {
+        return None;
+    }
+    let mut br = BitReader { data: &rbsp[1..], pos: 0 };
+    br.read(4); // sps_video_parameter_set_id
+    br.read(3); // sps_max_sub_layers_minus1
+    br.read(1); // sps_temporal_id_nesting_flag
+    let profile = br.read(8) as u8;
+    let compat = br.read(32);
+    br.read(48); // general_constraint_indicator_flags
+    let level = br.read(8) as u8;
+    Some((profile, compat, if level != 0 { level } else { 0x5a }))
+}
+
+/// Like [sps_ptl], but for a VPS (used as a fallback when the SPS is too
+/// short): vps_id(4) base_internal(1) base_available(1) max_layers(6)
+/// max_sub_layers(3) nesting(1) reserved_0xffff(16) then profile_tier_level.
+fn vps_ptl(vps: &[u8]) -> Option<(u8, u32, u8)> {
+    let rbsp = rbsp(vps);
+    if rbsp.len() < 21 {
+        return None;
+    }
+    let mut br = BitReader { data: &rbsp[1..], pos: 0 };
+    br.read(4); // vps_video_parameter_set_id
+    br.read(1); // vps_base_layer_internal_flag
+    br.read(1); // vps_base_layer_available_flag
+    br.read(6); // vps_max_layers_minus1
+    br.read(3); // vps_max_sub_layers_minus1
+    br.read(1); // vps_temporal_id_nesting_flag
+    br.read(16); // vps_reserved_0xffff_16bits
+    let profile = br.read(8) as u8;
+    let compat = br.read(32);
+    br.read(48);
+    let level = br.read(8) as u8;
+    Some((profile, compat, if level != 0 { level } else { 0x5a }))
+}
+
 /// Like [extract_hvcc_config], but with an explicit chroma format idc. The
 /// hardware-encoding split path always produces 4:2:0 (MediaCodec has no
 /// 4:4:4 encoder), so its hvcC must claim chroma 1 even when the x265 fallback
@@ -627,15 +707,13 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
     let mut hvcc = Vec::new();
     hvcc.push(1); // configurationVersion
 
-    // Profile / compat / level from VPS PTL
-    let (profile_byte, compat_flags, level_idc) = if vps.len() >= 19 {
-        let ptl_byte = vps[6];
-        let compat = u32::from_be_bytes([vps[7], vps[8], vps[9], vps[10]]);
-        let lvl = if vps[18] != 0 { vps[18] } else { 0x5a };
-        (ptl_byte, compat, lvl)
-    } else {
-        (0x04, 0x08000000u32, 0x5a)
-    };
+    // Profile / compat / level from the SPS's profile_tier_level, parsed from
+    // the RBSP (after removing emulation-prevention bytes). This is reliable
+    // for both x265 and MediaCodec streams, whereas reading the VPS at fixed
+    // offsets only works for x265's VPS layout.
+    let (profile_byte, compat_flags, level_idc) = sps_ptl(sps)
+        .or_else(|| vps_ptl(vps))
+        .unwrap_or((0x04, 0x08000000u32, 0x5a));
 
     // Always claim Main 4:4:4 compatibility for yuv444p
     let compat_flags = if chroma == 3u8 {

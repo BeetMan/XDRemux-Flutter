@@ -552,12 +552,18 @@ pub fn assemble_prepared_tiles(
     } else {
         crate::iso21496::build_iso_metadata(prepared.edr_scale)
     };
-    let xmp_bytes: Vec<u8> = if prepared.oppo_rgb {
+    // tmap/xmp format follows the user's OPPO compat mode, exactly like the
+    // software path (`write_uhdr_iso_output`). `oppo_rgb` (UHDR 3-channel
+    // layout) must NOT drive this: an OPPO-native 142-byte tmap paired with a
+    // MediaCodec 4:2:0 stream breaks OPPO gallery decoding (color channel
+    // mismatch → garbled image).
+    let oppo_meta = prepared.oppo_compat.wants_oppo_rgb();
+    let xmp_bytes: Vec<u8> = if oppo_meta {
         crate::iso21496::format_minimal_xmp().into_bytes()
     } else {
         crate::iso21496::format_hdrgm_xmp(&iso_meta).into_bytes()
     };
-    let tmap_payload = if prepared.oppo_rgb {
+    let tmap_payload = if oppo_meta {
         crate::iso21496::make_imageio_native_tmap_payload(&prepared.meta_floats)
     } else {
         crate::iso21496::make_apple_tmap_payload(&prepared.meta_floats)
