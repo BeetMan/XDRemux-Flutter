@@ -106,6 +106,7 @@ pub fn write_lhdr_iso_output(
         pixel_bytes,
         gain_width as usize * pixel_bytes,
         &parsed,
+        oppo_compat,
     )?;
 
     // ISO metadata
@@ -219,6 +220,7 @@ pub fn write_uhdr_iso_output(
         pixel_bytes,
         gain_width as usize * pixel_bytes,
         &parsed,
+        oppo_compat,
     )?;
 
     // ISO metadata from UHDR 20-float info
@@ -829,6 +831,7 @@ fn tile_and_encode(
     pixel_bytes: usize,
     stride: usize, // bytes per row of the input pixel buffer
     parsed: &ParsedSource,
+    oppo_compat: OppoCompat,
 ) -> Result<(Vec<Vec<u8>>, Vec<u32>, u32, u32, Vec<u8>), String> {
     let tile_size = GAIN_TILE_SIZE;
     let cols = ((width + tile_size - 1) / tile_size).max(1);
@@ -858,8 +861,19 @@ fn tile_and_encode(
     }
 
     let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
-    let batch_streams = crate::hevc::x265_encode_tiles(&tile_refs, tile_size, tile_size, pixel_bytes)
-        .map_err(|e| format!("HEVC batch encode: {e}"))?;
+    // 4:2:0 gain maps are only required for OPPO-compatible output (OPPO
+    // Gallery reads 4:2:0 only). When OPPO compat is off, keep 4:4:4 for the
+    // best chroma precision — this is also what Windows/Android originally
+    // produced.
+    let use_420 = oppo_compat.wants_oppo_compat();
+    let batch_streams = crate::hevc::x265_encode_tiles(
+        &tile_refs,
+        tile_size,
+        tile_size,
+        pixel_bytes,
+        use_420,
+    )
+    .map_err(|e| format!("HEVC batch encode: {e}"))?;
     debug_assert_eq!(batch_streams.len(), total_tiles as usize);
 
     for (i, hevc_bs) in batch_streams.iter().enumerate() {
@@ -867,7 +881,11 @@ fn tile_and_encode(
         // length-prefix conversion). extract_hvcc_config searches for
         // 00 00 00 01 start codes, which only exist in byte-stream format.
         if gain_hvcc.is_empty() {
-            gain_hvcc = crate::hevc::extract_hvcc_config(hevc_bs).unwrap_or_default();
+            gain_hvcc = crate::hevc::extract_hvcc_config_with_chroma(
+                hevc_bs,
+                if use_420 { 1u8 } else { 3u8 },
+            )
+            .unwrap_or_default();
         }
 
         // Convert from byte-stream (00 00 00 01 start codes) to length-prefixed
@@ -1005,8 +1023,9 @@ fn assemble_and_write(
     for entry in &parsed.ipma_entries {
         let mut assocs = entry.associations.clone();
         if entry.item_id == parsed.primary_id {
-            // Python reference augments the primary grid item with colr(e),
-            // irot(e) — Apple ImageIO requires these for HDR detection.
+            // The primary grid references the source ICC colour profile
+            // (matching Swift/ImageIO), plus a rotation so ImageIO can
+            // identify the file as an ISO 21496-1 gain-map image.
             if !assocs.iter().any(|(idx, _)| *idx == colr_prof) {
                 assocs.push((colr_prof, true));
             }
@@ -1021,40 +1040,41 @@ fn assemble_and_write(
         ));
     }
 
-    // Gain tiles (hvc1 items): hvcC(e) + ispe(e) + color matching their
-    // actual channel layout (sRGB mono or BT.601 unspecified RGB).
+    // Gain tiles (hvc1 items): hvcC(e) + ispe(e) + a colour box matching the
+    // Swift/ImageIO reference (BT.601 nclx for OPPO RGB gain maps).
     for tid in &cfg.tile_ids {
         ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
             *tid,
             &[
-                (gm_hvcc_i, true),
                 (gm_tile_ispe_i, true),
                 (gain_tile_colr_i, true),
+                (gm_hvcc_i, true),
             ],
             parsed.ipma_flags,
         ));
     }
-    // Gain grid: ispe(grid)(e) + sRGB colr(e) + channel-matched pixi(e)
-    // + irot(e) + auxC(e).
+    // Gain grid: BT.601 colr(e) + ispe(grid)(e) + pixi(e) + irot(e) + auxC(e).
+    // auxC is required for macOS ImageIO to recognize the ISO gain map, and is
+    // present in the Swift/ImageIO reference that OPPO Gallery accepts.
     let irot_pick = primary_irot_idx.unwrap_or(irot_i);
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
         cfg.gain_grid_id,
         &[
+            (gain_tile_colr_i, true),
             (gm_grid_ispe_i, true),
-            (srgb_colr_i, true),
             (gain_pixi_i, true),
             (irot_pick, true),
             (auxc_i, true),
         ],
         parsed.ipma_flags,
     ));
-    // tmap: colr(PQ)(e) + pixi10(e) + oriented primary ispe(e) + irot(e)
+    // tmap: PQ colr(e) + ispe(e) + pixi10(e) + irot(e), matching Swift/ImageIO.
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
         cfg.tmap_id,
         &[
             (pq_colr_i, true),
-            (pixi10_i, true),
             (tmap_ispe_i, true),
+            (pixi10_i, true),
             (irot_pick, true),
         ],
         parsed.ipma_flags,

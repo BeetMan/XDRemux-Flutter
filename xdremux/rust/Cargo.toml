@@ -19,3 +19,4 @@ jpeg-decoder = "0.3"
 
 [build-dependencies]
 cc = "1"
+

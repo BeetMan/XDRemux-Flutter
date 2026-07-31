@@ -18,19 +18,22 @@ use std::thread;
 #[cfg(all(windows, xdremux_ffmpeg_fallback))]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Feature flag: encode gain maps as 4:2:0 instead of 4:4:4.
+/// Feature flag: encode single-tile gain maps as 4:2:0 instead of 4:4:4.
 ///
-/// Enabled either at build time (`RUSTFLAGS="--cfg xdremux_gm_420"` — used for
-/// the Android test build, where env vars aren't settable) or at runtime
-/// (`XDREMUX_GM_420=1`). 4:4:4 remains the default. Used to A/B test whether
-/// iOS accepts a 4:2:0 gain map (needed for the MediaCodec hardware-encoding
-/// path, whose encoders only support 4:2:0).
+/// The batch/production path (`x265_encode_tiles`) decides 4:2:0 vs 4:4:4 from
+/// the OPPO compat mode (OPPO output requires 4:2:0 for Gallery recognition).
+/// This flag only drives the standalone single-tile helpers used in tests /
+/// fallbacks, defaulting to 4:4:4 for best chroma precision. Set
+/// `XDREMUX_GM_420=1` to force 4:2:0 here too.
 fn gain_map_420_enabled() -> bool {
     #[cfg(xdremux_gm_420)]
     {
         return true;
     }
-    std::env::var_os("XDREMUX_GM_420").is_some()
+    match std::env::var_os("XDREMUX_GM_420") {
+        None => false,
+        Some(v) => v != "0",
+    }
 }
 
 /// Convert full-resolution RGB24 to planar YUV420 (BT.709, full range).
@@ -190,7 +193,15 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
         set_param(param, "range", "full");
         set_param(param, "repeat-headers", "1");
         set_param(param, "keyint", "1");
-        let prof = CString::new(if use_420 { "main" } else { "main444-8" }).unwrap();
+        let prof = CString::new(if use_420 {
+            // Single-frame gain-map tiles: Main Still Picture, matching the
+            // Swift/ImageIO reference. "main" emits a Main-profile SPS that
+            // hvcC extraction then mislabels, which ImageIO rejects.
+            "mainstillpicture"
+        } else {
+            "main444-8"
+        })
+        .unwrap();
         x265_param_apply_profile(param, prof.as_ptr());
         set_param(param, "frame-threads", "1");
         set_param(param, "pools", "1");
@@ -273,7 +284,15 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
         set_param(param, "range", "full");
         set_param(param, "repeat-headers", "1");
         set_param(param, "keyint", "1");
-        let prof = CString::new(if use_420 { "main" } else { "main444-8" }).unwrap();
+        let prof = CString::new(if use_420 {
+            // Single-frame gain-map tiles: Main Still Picture, matching the
+            // Swift/ImageIO reference. "main" emits a Main-profile SPS that
+            // hvcC extraction then mislabels, which ImageIO rejects.
+            "mainstillpicture"
+        } else {
+            "main444-8"
+        })
+        .unwrap();
         x265_param_apply_profile(param, prof.as_ptr());
         set_param(param, "colormatrix", "bt709");
         set_param(param, "colorprim", "bt709");
@@ -373,12 +392,12 @@ unsafe fn open_encoder(
     width: u32,
     height: u32,
     pixel_bytes: usize,
+    use_420: bool,
 ) -> std::io::Result<(*mut crate::x265_ffi::x265_param, *mut crate::x265_ffi::x265_encoder)> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
 
     let is_rgb = pixel_bytes == 3;
-    let use_420 = gain_map_420_enabled();
 
     let param = x265_param_alloc();
     if param.is_null() {
@@ -396,9 +415,23 @@ unsafe fn open_encoder(
     set_param(param, "fps", "1");
     set_param(param, "crf", if is_rgb { "14" } else { "18" });
     set_param(param, "range", "full");
-    set_param(param, "repeat-headers", "1");
+    // Parameter sets are emitted once at the head of the stream (and written
+    // into hvcC); each keyframe tile is then only its IDR slice. The split
+    // logic below gives tile 0 the parameter sets and later tiles pure IDRs,
+    // which is what ImageIO's ISO-gain-map decoder expects (it reads params
+    // from hvcC). With repeat-headers=1 every tile carried VPS/SPS/PPS, which
+    // ImageIO rejects (fails to decode the gain map).
+    set_param(param, "repeat-headers", "0");
     set_param(param, "keyint", "1");
-    let prof = CString::new(if use_420 { "main" } else { "main444-8" }).unwrap();
+    let prof = CString::new(if use_420 {
+            // Single-frame gain-map tiles: Main Still Picture, matching the
+            // Swift/ImageIO reference. "main" emits a Main-profile SPS that
+            // hvcC extraction then mislabels, which ImageIO rejects.
+            "mainstillpicture"
+        } else {
+            "main444-8"
+        })
+        .unwrap();
     x265_param_apply_profile(param, prof.as_ptr());
     // Batch path: keep per-frame WPP row parallelism (default thread pool)
     // but disable B-frames / lookahead so frames are emitted strictly in
@@ -438,6 +471,7 @@ pub fn x265_encode_tiles(
     width: u32,
     height: u32,
     pixel_bytes: usize,
+    use_420: bool,
 ) -> std::io::Result<Vec<Vec<u8>>> {
     use crate::x265_ffi::*;
 
@@ -452,20 +486,21 @@ pub fn x265_encode_tiles(
     }
 
     unsafe {
-        let (param, encoder) = open_encoder(width, height, pixel_bytes)?;
-        let pic_out = x265_picture_alloc();
-        let mut nals: *mut x265_nal = std::ptr::null_mut();
-        let mut nal_count: u32 = 0;
-
-        // Canonical multi-frame-pipeline usage: feed frame N, then drain the
-        // output that becomes ready (it belongs to an earlier frame). Each
-        // tile gets a fresh picture so in-flight plane pointers stay valid.
-        let mut all = Vec::new();
+        // Encode each tile with its own single-frame encoder session. This is
+        // deterministic (no multi-frame pipeline reordering to split), and lets
+        // us emit tile 0 with its parameter sets (VPS/SPS/PPS, needed for hvcC
+        // extraction) while every other tile is a pure IDR slice — the shape
+        // ImageIO's ISO 21496-1 gain-map decoder expects (it reads the decoder
+        // config from hvcC, not from each tile).
+        let mut results: Vec<Vec<u8>> = Vec::with_capacity(tiles.len());
         for (idx, tile) in tiles.iter().enumerate() {
+            let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420)?;
             let pic = x265_picture_alloc();
-            let (y, u, v, _stride) =
-                setup_pic_planes(pic, param, tile, width, height, pixel_bytes);
-            xdremux_pic_set_pts(pic, idx as i64);
+            let (y, u, v, _stride) = setup_pic_planes(pic, param, tile, width, height, pixel_bytes);
+            let pic_out = x265_picture_alloc();
+            let mut nals: *mut x265_nal = std::ptr::null_mut();
+            let mut nal_count: u32 = 0;
+            xdremux_pic_set_pts(pic, 0);
             let ret = x265_encoder_encode(encoder, &mut nals, &mut nal_count, pic, pic_out);
             drop(y);
             drop(u);
@@ -477,106 +512,80 @@ pub fn x265_encode_tiles(
                 x265_param_free(param);
                 return Err(io_err("x265_encoder_encode failed"));
             }
-            if ret > 0 {
-                append_nals(&mut all, nals, nal_count);
-            }
-        }
 
-        // Drain the tail of the pipeline (frames still in flight).
-        let mut empty_runs = 0u32;
-        loop {
-            let ret = x265_encoder_encode(
-                encoder,
-                &mut nals,
-                &mut nal_count,
-                std::ptr::null_mut(),
-                pic_out,
-            );
-            if ret < 0 {
-                x265_picture_free(pic_out);
-                x265_encoder_close(encoder);
-                x265_param_free(param);
-                return Err(io_err("x265_encoder_encode failed (flush)"));
-            }
+            // Flush the tail of the pipeline.
+            let mut chunk = Vec::new();
             if ret > 0 {
-                append_nals(&mut all, nals, nal_count);
-                empty_runs = 0;
-            } else {
-                empty_runs += 1;
-                if empty_runs >= 2 {
-                    break; // drained
+                append_nals(&mut chunk, nals, nal_count);
+            }
+            loop {
+                let r = x265_encoder_encode(
+                    encoder,
+                    &mut nals,
+                    &mut nal_count,
+                    std::ptr::null_mut(),
+                    pic_out,
+                );
+                if r < 0 {
+                    break;
+                }
+                if r > 0 {
+                    append_nals(&mut chunk, nals, nal_count);
+                } else {
+                    break;
                 }
             }
-        }
+            x265_picture_free(pic_out);
+            x265_encoder_close(encoder);
+            x265_param_free(param);
 
-        x265_picture_free(pic_out);
-        x265_encoder_close(encoder);
-        x265_param_free(param);
-
-        // Split `all` into per-tile chunks at IDR boundaries. With
-        // repeat-headers the first IDR carries VPS/SPS/PPS, later IDRs don't;
-        // every tile needs its own parameter set for standalone decoding, so
-        // prepend the first chunk's VPS/SPS/PPS to each.
-        let idr_positions = nal_type_positions(&all, 19)
-            .into_iter()
-            .chain(nal_type_positions(&all, 20))
-            .chain(nal_type_positions(&all, 21))
-            .collect::<Vec<_>>();
-        if idr_positions.len() != tiles.len() {
-            let msg = format!(
-                "batch split mismatch: {} IDR chunks for {} tiles",
-                idr_positions.len(),
-                tiles.len()
-            );
-            return Err(io_err(&msg));
-        }
-
-        // First chunk = everything up to the second IDR (VPS/SPS/PPS + frame 0).
-        let first_end = idr_positions.get(1).copied().unwrap_or(all.len());
-        let header = all[0..first_end].to_vec();
-
-        let mut results: Vec<Vec<u8>> = Vec::with_capacity(idr_positions.len());
-        for (i, &start) in idr_positions.iter().enumerate() {
-            let end = idr_positions.get(i + 1).copied().unwrap_or(all.len());
-            if i == 0 {
-                results.push(all[start..end].to_vec());
-            } else {
-                let mut chunk = header.clone();
-                chunk.extend_from_slice(&all[start..end]);
+            if idx == 0 {
+                // Tile 0 keeps its parameter sets (hvcC extraction source).
                 results.push(chunk);
+            } else {
+                // Later tiles: keep only the IDR slice, drop VPS/SPS/PPS.
+                results.push(drop_parameter_nals(&chunk));
             }
-        }
-
-        if results.len() != tiles.len() {
-            let msg = format!(
-                "batch split mismatch: {} chunks for {} tiles",
-                results.len(),
-                tiles.len()
-            );
-            return Err(io_err(&msg));
         }
         Ok(results)
     }
 }
 
-/// Positions (byte offsets) of NAL start codes whose type equals `wanted`.
-fn nal_type_positions(data: &[u8], wanted: u8) -> Vec<usize> {
+/// Remove VPS/SPS/PPS NALs from a single-frame HEVC byte stream, keeping only
+/// the IDR slice. Used so gain-map tiles beyond tile 0 are pure IDR slices.
+fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
+    let nal_3b: &[u8] = &[0, 0, 1];
+    let nal_4b: &[u8] = &[0, 0, 0, 1];
     let mut out = Vec::new();
     let mut pos = 0;
     while pos < data.len() {
-        let sc = if data[pos..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if pos + 3 <= data.len() && data[pos..].starts_with(&[0, 0, 1]) {
-            3
+        let (_sc_len, nal_start) = if data[pos..].starts_with(nal_4b) {
+            (4, pos + 4)
+        } else if pos + 3 <= data.len() && data[pos..].starts_with(nal_3b) {
+            (3, pos + 3)
         } else {
             pos += 1;
             continue;
         };
-        let start = pos + sc;
-        if start < data.len() && ((data[start] >> 1) & 0x3f) == wanted {
-            out.push(pos);
+        let nal_end = if let Some(next) = data[nal_start..]
+            .windows(4)
+            .position(|w| w == nal_4b)
+        {
+            nal_start + next
+        } else if let Some(next) = data[nal_start..]
+            .windows(3)
+            .position(|w| w == nal_3b)
+        {
+            nal_start + next
+        } else {
+            data.len()
+        };
+        let nal_type = (data[nal_start] >> 1) & 0x3f;
+        // 32=VPS, 33=SPS, 34=PPS — drop. 39=prefix SEI also dropped.
+        if nal_type != 32 && nal_type != 33 && nal_type != 34 && nal_type != 39 {
+            out.extend_from_slice(&data[pos..nal_end]);
         }
-        pos = start;
+        pos = nal_end;
     }
     out
 }
@@ -872,10 +881,11 @@ impl BitReader<'_> {
 /// Returns (profile_byte, compat_flags, level_idc).
 fn sps_ptl(sps: &[u8]) -> Option<(u8, u32, u8)> {
     let rbsp = rbsp(sps);
-    if rbsp.len() < 15 {
+    if rbsp.len() < 16 {
         return None;
     }
-    let mut br = BitReader { data: &rbsp[1..], pos: 0 };
+    // HEVC NAL header is 2 bytes (forbidden_bit + type + layer_id + tid_plus1).
+    let mut br = BitReader { data: &rbsp[2..], pos: 0 };
     br.read(4); // sps_video_parameter_set_id
     br.read(3); // sps_max_sub_layers_minus1
     br.read(1); // sps_temporal_id_nesting_flag
@@ -891,10 +901,11 @@ fn sps_ptl(sps: &[u8]) -> Option<(u8, u32, u8)> {
 /// max_sub_layers(3) nesting(1) reserved_0xffff(16) then profile_tier_level.
 fn vps_ptl(vps: &[u8]) -> Option<(u8, u32, u8)> {
     let rbsp = rbsp(vps);
-    if rbsp.len() < 21 {
+    if rbsp.len() < 22 {
         return None;
     }
-    let mut br = BitReader { data: &rbsp[1..], pos: 0 };
+    // VPS NAL header is also 2 bytes.
+    let mut br = BitReader { data: &rbsp[2..], pos: 0 };
     br.read(4); // vps_video_parameter_set_id
     br.read(1); // vps_base_layer_internal_flag
     br.read(1); // vps_base_layer_available_flag
