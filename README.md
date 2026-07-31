@@ -4,7 +4,7 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
-**[下载 v0.1.8（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+**[下载 v0.2.0（Windows 安装包 / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
 
 ## 截图
 
@@ -50,6 +50,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ Android 后台转换（前台服务保持进程存活，通知栏实时进度，完成时弹通知）
 - ✅ Android 电池优化引导（首次转换时引导设置白名单，含 OPPO 耗电行为控制直达入口）
 - ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
+- ✅ Android GPU 硬件编码（实验，默认关闭）：MediaCodec 硬件编码 gain map，单 tile ~40ms，比软件 x265 快一个数量级；开启后 gain map 降至 4:2:0，目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过，失败自动回退软件编码
 - ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
 - ✅ 队列卡片操作（完成 → 保存/分享/打开；失败 → 重试）
@@ -71,7 +72,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 |------|------|------|
 | Windows | ✅ 可运行 | x265 静态链接、原生拖拽、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载 + macOS Runner 已验证 |
-| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存 |
+| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码（实验） |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
 | iOS | ❌ 未创建 | `flutter create` 待执行 |
 
@@ -186,7 +187,7 @@ cargo build --workspace --release
 
 - [ ] 转换后回退到 OPPO 相册编辑再保存时，HDR Gain Map 不丢失
 - [ ] 增量转换——仅重新编码变化的瓦片
-- [ ] GPU 加速 HEVC 编码（h265_amf / hevc_nvenc 替代 libx265 软件编码）
+- [ ] 桌面 GPU 加速 HEVC 编码（h265_amf / hevc_nvenc 替代 libx265 软件编码；Android 端已通过 MediaCodec 实现，见"已实现功能"）
 
 ### 多平台
 
