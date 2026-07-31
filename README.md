@@ -50,7 +50,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ Android 后台转换（前台服务保持进程存活，通知栏实时进度，完成时弹通知）
 - ✅ Android 电池优化引导（首次转换时引导设置白名单，含 OPPO 耗电行为控制直达入口）
 - ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
-- ✅ Android GPU 硬件编码（实验，默认关闭）：MediaCodec 硬件编码 gain map，单 tile ~40ms，比软件 x265 快一个数量级；开启后 gain map 降至 4:2:0，目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过，失败自动回退软件编码
+- ✅ Android GPU 硬件编码（实验，默认开启，自动探测）：MediaCodec 硬件编码 gain map，单 tile ~40ms，比软件 x265 快一个数量级；开启后 gain map 降至 4:2:0，已在骁龙 8 Elite / 8 Gen 3 上验证通过，设备不支持时自动回退软件编码
 - ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
 - ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列）
 - ✅ 队列卡片操作（完成 → 保存/分享/打开；失败 → 重试）

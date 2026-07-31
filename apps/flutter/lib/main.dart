@@ -2704,7 +2704,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           '用 MediaCodec 硬件编码 gain map，大幅提速；'
                           '默认开启，仅设备支持时生效（不支持自动回退软件编码）。'
                           '开启后 gain map 降至 4:2:0（画质微降），'
-                          '目前仅在骁龙 8 Elite（OPPO/OnePlus/realme）上验证通过。',
+                          '已在骁龙 8 Elite / 8 Gen 3 上验证通过。',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.hardwareEncode,
