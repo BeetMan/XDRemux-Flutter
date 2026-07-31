@@ -287,7 +287,7 @@ class ConversionConfig {
     this.fileNameSuffix = '_iso',
     this.categorizeOutputByMode = false,
     this.autoSaveToGallery = false,
-    this.hardwareEncode = true,
+    this.hardwareEncode = false,
   });
 
   /// Persist to SharedPreferences.
@@ -327,7 +327,7 @@ class ConversionConfig {
       categorizeOutputByMode:
           json['categorizeOutputByMode'] as bool? ?? false,
       autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
-      hardwareEncode: json['hardwareEncode'] as bool? ?? true,
+      hardwareEncode: json['hardwareEncode'] as bool? ?? false,
     );
   }
 

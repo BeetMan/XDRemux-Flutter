@@ -2711,7 +2711,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         title: const Text('GPU 硬件编码（实验）'),
                         subtitle: Text(
                           '用 MediaCodec 硬件编码 gain map，大幅提速；'
-                          '默认开启，仅设备支持时生效（不支持自动回退软件编码）。'
+                          '默认关闭，开启后仅设备支持时生效（不支持自动回退软件编码）。'
                           '开启后 gain map 降至 4:2:0（画质微降），'
                           '已在骁龙 8 Elite / 8 Gen 3 上验证通过。'
                           '${switch (_hwAvailable) {
