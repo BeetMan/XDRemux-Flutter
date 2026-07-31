@@ -260,7 +260,7 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
             return Err(io_err("x265_param_alloc failed"));
         }
 
-        let preset = CString::new("slower").unwrap();
+        let preset = CString::new("medium").unwrap();
         if x265_param_default_preset(param, preset.as_ptr(), std::ptr::null()) != 0 {
             x265_param_free(param);
             return Err(io_err("x265_param_default_preset failed"));
@@ -406,7 +406,7 @@ fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> 
         "range=full:colormatrix=bt709:colorprim=bt709:transfer=bt709:psy-rd=0:aq-mode=1"
     };
 
-    let preset = if pix_fmt_in == "gray" { "ultrafast" } else { "slower" };
+    let preset = if pix_fmt_in == "gray" { "ultrafast" } else { "medium" };
 
     let ffmpeg = resolve_exe("ffmpeg");
     let mut cmd = Command::new(&ffmpeg);
