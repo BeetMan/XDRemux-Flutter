@@ -160,18 +160,68 @@ object MediaCodecHevcEncoder {
         image: Image,
     ) {
         val planes = image.planes
-        copyPlane(planes[0], yuv, 0, width, height, pixelOffset = 0)
-        copyPlane(planes[1], yuv, ySize, width / 2, height / 2, pixelOffset = 0)
-        copyPlane(planes[2], yuv, ySize + cSize, width / 2, height / 2, pixelOffset = 1)
+        copyPlane(planes[0], yuv, 0, width, height)
+        copyChroma(planes, yuv, ySize, cSize)
+    }
+
+    /**
+     * Copy the packed I420 chroma (U then V) into the encoder's chroma
+     * planes. Handles both planar (pixelStride == 1, separate buffers) and
+     * semi-planar NV12 (pixelStride == 2, one shared interleaved buffer).
+     * For the shared case both U and V are written through the first chroma
+     * plane's buffer (even/odd offsets) — some drivers report a V-plane view
+     * whose limit is one byte short, which would silently drop V data if we
+     * wrote through it.
+     */
+    private fun copyChroma(
+        planes: Array<Image.Plane>,
+        yuv: ByteArray,
+        ySize: Int,
+        cSize: Int,
+    ) {
+        val pu = planes[1]
+        val pv = planes[2]
+        // columns per chroma row derived from rowStride: NV12 row is 2x columns
+        val chromaCols = pu.rowStride / 2
+        val chromaRows = cSize / chromaCols
+        val ps = pu.pixelStride
+        val bufU = pu.buffer
+        val bufV = pv.buffer
+
+        if (ps == 1) {
+            // Planar: separate buffers, each chromaCols × chromaRows
+            copyPlane(pu, yuv, ySize, chromaCols, chromaRows)
+            copyPlane(pv, yuv, ySize + cSize, chromaCols, chromaRows)
+            return
+        }
+
+        // Semi-planar NV12: one shared buffer; write U at even, V at odd.
+        val shared = bufU
+        val limit = shared.limit()
+        // rowStride for NV12 = 2 * chromaCols bytes (interleaved U/V per row)
+        var rowStride = pu.rowStride
+        for (row in 0 until chromaRows) {
+            var srcU = ySize + row * chromaCols
+            var srcV = ySize + cSize + row * chromaCols
+            var dst = row * rowStride
+            for (col in 0 until chromaCols) {
+                if (dst + 1 >= limit) break
+                shared.put(dst, yuv[srcU])       // U at even offset
+                shared.put(dst + 1, yuv[srcV])   // V at odd offset
+                dst += 2
+                srcU += 1
+                srcV += 1
+            }
+            if (dst + 1 >= limit) break
+        }
     }
 
     /**
      * Copy a packed source plane into a MediaCodec input plane, honoring the
-     * plane's rowStride and pixelStride. For semi-planar chroma the U and V
-     * planes share one buffer; [pixelOffset] selects the channel (0 for U,
-     * 1 for V). Writes are clamped to the plane buffer's limit — some drivers
-     * shrink the V-plane limit by one byte, and dropping a single edge chroma
-     * sample is harmless for a gain map.
+     * plane's rowStride and pixelStride (handles planar chroma with row
+     * padding). Semi-planar NV12 chroma is written by [copyChroma] instead,
+     * because some drivers expose a V-plane view whose limit is one byte short
+     * and would silently drop V data.
      */
     private fun copyPlane(
         plane: Image.Plane,
@@ -179,7 +229,6 @@ object MediaCodecHevcEncoder {
         srcOffset: Int,
         planeWidth: Int,
         planeHeight: Int,
-        pixelOffset: Int,
     ) {
         val rowStride = plane.rowStride
         val pixelStride = plane.pixelStride
@@ -207,7 +256,7 @@ object MediaCodecHevcEncoder {
 
         for (row in 0 until planeHeight) {
             var src = srcOffset + row * planeWidth
-            var dst = row * rowStride + pixelOffset
+            var dst = row * rowStride
             for (col in 0 until planeWidth) {
                 if (dst >= limit) break
                 buf.put(dst, yuv[src])
