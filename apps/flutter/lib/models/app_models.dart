@@ -279,7 +279,7 @@ class ConversionConfig {
   ConversionConfig({
     this.family = Family.auto,
     this.outputDirectory,
-    this.oppoCompatibility = OppoCompatMode.off,
+    this.oppoCompatibility = OppoCompatMode.on,
     this.oppoCameraTail = OppoCameraTailMode.automatic,
     this.strictTmap = false,
     this.skipExisting = true,
@@ -314,7 +314,7 @@ class ConversionConfig {
       outputDirectory: json['outputDirectory'] as String?,
       oppoCompatibility: OppoCompatMode.values.firstWhere(
         (e) => e.name == json['oppoCompatibility'],
-        orElse: () => OppoCompatMode.off,
+        orElse: () => OppoCompatMode.on,
       ),
       oppoCameraTail: OppoCameraTailMode.values.firstWhere(
         (e) => e.name == json['oppoCameraTail'],
