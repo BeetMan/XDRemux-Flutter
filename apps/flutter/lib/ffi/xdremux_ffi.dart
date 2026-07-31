@@ -79,6 +79,30 @@ final class ThumbnailResult extends ffi.Struct {
   external bool success;
 }
 
+/// Result of `xdremux_prepare_tiles`. Must be freed with [freePrepared].
+final class PreparedTilesResult extends ffi.Struct {
+  @ffi.Bool()
+  external bool success;
+
+  external ffi.Pointer<ffi.Void> opaque;
+
+  external ffi.Pointer<ffi.Uint8> tileData;
+
+  @ffi.IntPtr()
+  external int tileDataLen;
+
+  @ffi.Uint32()
+  external int tileW;
+
+  @ffi.Uint32()
+  external int tileH;
+
+  @ffi.Uint32()
+  external int tileCount;
+
+  external ffi.Pointer<Utf8> errorMessage;
+}
+
 /// Low-level FFI bindings to the Rust core dynamic library.
 class XdRemuxFFI {
   static ffi.DynamicLibrary get _lib {
@@ -209,6 +233,22 @@ class XdRemuxFFI {
   static final _freeThumbnail = _lib.lookupFunction<
       ffi.Void Function(ThumbnailResult),
       void Function(ThumbnailResult)>('xdremux_free_thumbnail');
+
+  static final _prepareTiles = _lib.lookupFunction<
+      PreparedTilesResult Function(ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, ffi.Uint32),
+      PreparedTilesResult Function(ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, int)>('xdremux_prepare_tiles');
+
+  static final _freePrepared = _lib.lookupFunction<
+      ffi.Void Function(PreparedTilesResult),
+      void Function(PreparedTilesResult)>('xdremux_free_prepared');
+
+  static final _assembleTiles = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.IntPtr>, ffi.IntPtr, ffi.Pointer<Utf8>, ffi.Uint32),
+      ConversionResult Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.IntPtr>, int, ffi.Pointer<Utf8>, int)>('xdremux_assemble_tiles');
+
+  static final _progressReport = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32, ffi.Uint32, ffi.Uint32),
+      void Function(int, int, int)>('xdremux_progress_report');
 
   /// Returns the Rust core version string (e.g. "0.1.1").
   static String version() {
@@ -361,6 +401,87 @@ class XdRemuxFFI {
       return copy;
     } finally {
       calloc.free(path);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Hardware-encoding split: prepare → Dart/MediaCodec encodes tiles → assemble
+  // -------------------------------------------------------------------------
+
+  /// Parse a HEIC, reconstruct the gain map, and pack each 512×512 tile as
+  /// YUV420 (I420) into one contiguous buffer (Y,U,V per tile). Returns the
+  /// owned [PreparedTilesResult]; caller must [freePrepared] it when done.
+  static PreparedTilesResult prepareTiles(
+    String inputPath, {
+    int oppoCompat = 0,
+    int oppoCameraTail = 255,
+    bool strictTmap = false,
+    int progressHandle = 0,
+  }) {
+    final path = inputPath.toNativeUtf8();
+    final cfg = calloc<ConvertConfig>();
+    cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
+    cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
+    cfg.ref.strictTmap = strictTmap ? 1 : 0;
+    try {
+      return _prepareTiles(path, cfg, progressHandle);
+    } finally {
+      calloc.free(path);
+      calloc.free(cfg);
+    }
+  }
+
+  /// Free a [PreparedTilesResult] from [prepareTiles].
+  static void freePrepared(PreparedTilesResult result) => _freePrepared(result);
+
+  /// Report per-tile encode progress into a Rust progress handle (from
+  /// [progressBegin]) so the UI can show real tile progress during the
+  /// Dart-side MediaCodec loop.
+  static void progressReport(int handle, int current, int total) {
+    _progressReport(handle, current, total);
+  }
+
+  /// Assemble the final HEIC from externally-encoded per-tile HEVC byte
+  /// streams. [opaque] comes from a [PreparedTilesResult]. Returns a
+  /// [ConversionResult] that the caller must free.
+  static ConversionResult assembleTiles(
+    ffi.Pointer<ffi.Void> opaque,
+    List<Uint8List> tileStreams,
+    String outputPath, {
+    int progressHandle = 0,
+  }) {
+    // Copy each stream into a native buffer; Rust copies it out synchronously.
+    final ptrs = calloc<ffi.Pointer<ffi.Uint8>>(tileStreams.length);
+    final lengths = calloc<ffi.IntPtr>(tileStreams.length);
+    final natives = <ffi.Pointer<ffi.Uint8>>[];
+    try {
+      for (var i = 0; i < tileStreams.length; i++) {
+        final stream = tileStreams[i];
+        final native = calloc<ffi.Uint8>(stream.length);
+        native.asTypedList(stream.length).setAll(0, stream);
+        natives.add(native);
+        ptrs[i] = native;
+        lengths[i] = stream.length;
+      }
+      final out = outputPath.toNativeUtf8();
+      try {
+        return _assembleTiles(
+          opaque,
+          ptrs,
+          lengths,
+          tileStreams.length,
+          out,
+          progressHandle,
+        );
+      } finally {
+        calloc.free(out);
+      }
+    } finally {
+      for (final n in natives) {
+        calloc.free(n);
+      }
+      calloc.free(ptrs);
+      calloc.free(lengths);
     }
   }
 }

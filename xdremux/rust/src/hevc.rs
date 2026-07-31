@@ -18,6 +18,71 @@ use std::thread;
 #[cfg(all(windows, xdremux_ffmpeg_fallback))]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Feature flag: encode gain maps as 4:2:0 instead of 4:4:4.
+///
+/// Enabled either at build time (`RUSTFLAGS="--cfg xdremux_gm_420"` — used for
+/// the Android test build, where env vars aren't settable) or at runtime
+/// (`XDREMUX_GM_420=1`). 4:4:4 remains the default. Used to A/B test whether
+/// iOS accepts a 4:2:0 gain map (needed for the MediaCodec hardware-encoding
+/// path, whose encoders only support 4:2:0).
+fn gain_map_420_enabled() -> bool {
+    #[cfg(xdremux_gm_420)]
+    {
+        return true;
+    }
+    std::env::var_os("XDREMUX_GM_420").is_some()
+}
+
+/// Convert full-resolution RGB24 to planar YUV420 (BT.709, full range).
+/// Chroma is 2x2 box-filtered and subsampled to width/2 × height/2.
+/// Returns (y, u, v).
+pub fn rgb_to_yuv420(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (y_plane, u_plane, v_plane) = rgb_to_yuv444(pixels, width, height);
+    let chroma_w = ((width + 1) / 2) as usize;
+    let chroma_h = ((height + 1) / 2) as usize;
+    let mut u_small = Vec::with_capacity(chroma_w * chroma_h);
+    let mut v_small = Vec::with_capacity(chroma_w * chroma_h);
+    for cy in 0..chroma_h {
+        for cx in 0..chroma_w {
+            let mut usum = 0u32;
+            let mut vsum = 0u32;
+            let mut n = 0u32;
+            for dy in 0..2 {
+                let sy = (cy * 2 + dy).min(height as usize - 1);
+                for dx in 0..2 {
+                    let sx = (cx * 2 + dx).min(width as usize - 1);
+                    let i = sy * width as usize + sx;
+                    usum += u_plane[i] as u32;
+                    vsum += v_plane[i] as u32;
+                    n += 1;
+                }
+            }
+            u_small.push((usum / n) as u8);
+            v_small.push((vsum / n) as u8);
+        }
+    }
+    (y_plane, u_small, v_small)
+}
+
+/// Convert full-resolution RGB24 to planar YUV444 (BT.709, full range).
+/// Returns (y, u, v), each width × height.
+pub fn rgb_to_yuv444(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let plane_size = (width * height) as usize;
+    let mut y_plane = vec![0u8; plane_size];
+    let mut u_plane = vec![0u8; plane_size];
+    let mut v_plane = vec![0u8; plane_size];
+    for i in 0..plane_size {
+        let r = pixels[i * 3] as f32;
+        let g = pixels[i * 3 + 1] as f32;
+        let b = pixels[i * 3 + 2] as f32;
+        let yy = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        y_plane[i] = yy.round().clamp(0.0, 255.0) as u8;
+        u_plane[i] = ((b - yy) * 0.5389 + 128.0).round().clamp(0.0, 255.0) as u8;
+        v_plane[i] = ((r - yy) * 0.6350 + 128.0).round().clamp(0.0, 255.0) as u8;
+    }
+    (y_plane, u_plane, v_plane)
+}
+
 // ===========================================================================
 // Public API
 // ===========================================================================
@@ -88,11 +153,23 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
 
     xlog(&format!("x265 gray {}x{}", width, height));
 
-    // Expand gray to YUV444: Y=pixel, U=128, V=128 (iOS expects chroma_format_idc=3)
+    let use_420 = gain_map_420_enabled();
+
+    // Gray → YUV. 4:4:4: full-res U/V = 128 (iOS expects chroma_format_idc=3).
+    // 4:2:0: Y is the gray, chroma is half-res 128.
     let plane_size = (width * height) as usize;
     let y_plane = pixels.to_vec();
-    let u_plane = vec![128u8; plane_size];
-    let v_plane = vec![128u8; plane_size];
+    let (u_plane, v_plane, chroma_stride) = if use_420 {
+        let cw = ((width + 1) / 2) as usize;
+        let ch = ((height + 1) / 2) as usize;
+        (
+            vec![128u8; cw * ch],
+            vec![128u8; cw * ch],
+            ((width + 1) / 2) as i32,
+        )
+    } else {
+        (vec![128u8; plane_size], vec![128u8; plane_size], width as i32)
+    };
 
     unsafe {
         let param = x265_param_alloc();
@@ -106,14 +183,14 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
             return Err(io_err("x265_param_default_preset failed"));
         }
 
-        set_param(param, "input-csp", "i444");
+        set_param(param, "input-csp", if use_420 { "i420" } else { "i444" });
         xdremux_param_set_basic(param, width as i32, height as i32, 8, 1);
         set_param(param, "fps", "1");
         set_param(param, "crf", "18");
         set_param(param, "range", "full");
         set_param(param, "repeat-headers", "1");
         set_param(param, "keyint", "1");
-        let prof = CString::new("main444-8").unwrap();
+        let prof = CString::new(if use_420 { "main" } else { "main444-8" }).unwrap();
         x265_param_apply_profile(param, prof.as_ptr());
         set_param(param, "frame-threads", "1");
         set_param(param, "pools", "1");
@@ -135,8 +212,8 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
             u_plane.as_ptr() as *mut c_void,
             v_plane.as_ptr() as *mut c_void,
             width as i32,
-            width as i32,
-            width as i32,
+            chroma_stride,
+            chroma_stride,
         );
         xdremux_pic_set_pts(pic, 0);
 
@@ -158,22 +235,23 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
 
     xlog(&format!("x265 rgb {}x{}", width, height));
 
-    // Convert RGB24 → YUV444 planar (BT.709, full range)
-    let plane_size = (width * height) as usize;
-    let mut y_plane = vec![0u8; plane_size];
-    let mut u_plane = vec![0u8; plane_size];
-    let mut v_plane = vec![0u8; plane_size];
+    let use_420 = gain_map_420_enabled();
 
-    for i in 0..plane_size {
-        let r = pixels[i * 3] as f32;
-        let g = pixels[i * 3 + 1] as f32;
-        let b = pixels[i * 3 + 2] as f32;
-        let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        let u = (b - y) * 0.5389 + 128.0;
-        let v = (r - y) * 0.6350 + 128.0;
-        y_plane[i] = y.round().clamp(0.0, 255.0) as u8;
-        u_plane[i] = u.round().clamp(0.0, 255.0) as u8;
-        v_plane[i] = v.round().clamp(0.0, 255.0) as u8;
+    // Convert RGB24 → planar YUV (BT.709, full range). 4:4:4 keeps full-res
+    // chroma; 4:2:0 downsamples chroma 2x2 (for the MediaCodec path test).
+    let (y_plane, u_plane, v_plane, chroma_stride);
+    if use_420 {
+        let (y, u, v) = rgb_to_yuv420(pixels, width, height);
+        y_plane = y;
+        u_plane = u;
+        v_plane = v;
+        chroma_stride = ((width + 1) / 2) as i32;
+    } else {
+        let (y, u, v) = rgb_to_yuv444(pixels, width, height);
+        y_plane = y;
+        u_plane = u;
+        v_plane = v;
+        chroma_stride = width as i32;
     }
 
     unsafe {
@@ -188,14 +266,14 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
             return Err(io_err("x265_param_default_preset failed"));
         }
 
-        set_param(param, "input-csp", "i444");
+        set_param(param, "input-csp", if use_420 { "i420" } else { "i444" });
         xdremux_param_set_basic(param, width as i32, height as i32, 8, 1);
         set_param(param, "fps", "1");
         set_param(param, "crf", "14");
         set_param(param, "range", "full");
         set_param(param, "repeat-headers", "1");
         set_param(param, "keyint", "1");
-        let prof = CString::new("main444-8").unwrap();
+        let prof = CString::new(if use_420 { "main" } else { "main444-8" }).unwrap();
         x265_param_apply_profile(param, prof.as_ptr());
         set_param(param, "colormatrix", "bt709");
         set_param(param, "colorprim", "bt709");
@@ -222,8 +300,8 @@ fn x265_encode_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Ve
             u_plane.as_ptr() as *mut c_void,
             v_plane.as_ptr() as *mut c_void,
             width as i32,
-            width as i32,
-            width as i32,
+            chroma_stride,
+            chroma_stride,
         );
         xdremux_pic_set_pts(pic, 0);
 
@@ -481,6 +559,15 @@ pub fn hevc_byte_stream_to_length_prefixed(data: &[u8]) -> Vec<u8> {
 
 /// Extract hvcC (HEVC decoder configuration record) from an HEVC elementary stream.
 pub fn extract_hvcc_config(hevc_data: &[u8]) -> Option<Vec<u8>> {
+    let chroma = if gain_map_420_enabled() { 1u8 } else { 3u8 };
+    extract_hvcc_config_with_chroma(hevc_data, chroma)
+}
+
+/// Like [extract_hvcc_config], but with an explicit chroma format idc. The
+/// hardware-encoding split path always produces 4:2:0 (MediaCodec has no
+/// 4:4:4 encoder), so its hvcC must claim chroma 1 even when the x265 fallback
+/// default is still 4:4:4.
+pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<Vec<u8>> {
     let nal_3b: &[u8] = &[0, 0, 1];
     let nal_4b: &[u8] = &[0, 0, 0, 1];
     let mut nal_positions: Vec<usize> = Vec::new();
@@ -539,8 +626,6 @@ pub fn extract_hvcc_config(hevc_data: &[u8]) -> Option<Vec<u8>> {
     // Build hvcC record per ISO 14496-15
     let mut hvcc = Vec::new();
     hvcc.push(1); // configurationVersion
-
-    let chroma = 3u8; // 4:4:4
 
     // Profile / compat / level from VPS PTL
     let (profile_byte, compat_flags, level_idc) = if vps.len() >= 19 {

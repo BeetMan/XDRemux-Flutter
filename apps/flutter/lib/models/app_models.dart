@@ -274,6 +274,7 @@ class ConversionConfig {
   String fileNameSuffix;
   bool categorizeOutputByMode;
   bool autoSaveToGallery;
+  bool hardwareEncode;
 
   ConversionConfig({
     this.family = Family.auto,
@@ -286,6 +287,7 @@ class ConversionConfig {
     this.fileNameSuffix = '_iso',
     this.categorizeOutputByMode = false,
     this.autoSaveToGallery = false,
+    this.hardwareEncode = true,
   });
 
   /// Persist to SharedPreferences.
@@ -300,6 +302,7 @@ class ConversionConfig {
         'fileNameSuffix': fileNameSuffix,
         'categorizeOutputByMode': categorizeOutputByMode,
         'autoSaveToGallery': autoSaveToGallery,
+        'hardwareEncode': hardwareEncode,
       };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
@@ -324,6 +327,7 @@ class ConversionConfig {
       categorizeOutputByMode:
           json['categorizeOutputByMode'] as bool? ?? false,
       autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
+      hardwareEncode: json['hardwareEncode'] as bool? ?? true,
     );
   }
 
@@ -338,6 +342,7 @@ class ConversionConfig {
         fileNameSuffix: fileNameSuffix,
         categorizeOutputByMode: categorizeOutputByMode,
         autoSaveToGallery: autoSaveToGallery,
+        hardwareEncode: hardwareEncode,
       );
 
   /// Compute output path for a given input file.

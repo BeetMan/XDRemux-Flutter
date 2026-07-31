@@ -300,6 +300,336 @@ pub fn write_uhdr_iso_output(
 }
 
 // ---------------------------------------------------------------------------
+// Split encode: prepare (gain map → tiled YUV420) + assemble (HEVC → ISO)
+//
+// Used by the Android hardware-encoding path: Rust decodes/rebuilds/orients
+// the gain map and tiles it into 512×512 YUV420 buffers; Dart drives a
+// MediaCodec encoder over those buffers; the resulting HEVC byte-streams are
+// handed back here to be wrapped into the final ISO 21496-1 HEIC.
+// ---------------------------------------------------------------------------
+
+/// Everything needed to assemble the final HEIC once per-tile HEVC encoding
+/// is done. Owns the source bytes so assembly is self-contained.
+pub struct PreparedOutput {
+    pub source: Vec<u8>,
+    pub meta_floats: Vec<f32>,
+    pub edr_scale: f32,
+    pub mode_key: String,
+    pub family: String,
+    pub oppo_compat: OppoCompat,
+    pub tail_policy: OppoCameraTail,
+    pub strict_tmap: bool,
+    pub orientation: ExifOrientation,
+    pub gain_width: u32,
+    pub gain_height: u32,
+    pub cols: u32,
+    pub rows: u32,
+    /// Whether the gain map is RGB (3ch, OPPO / UHDR) or gray (1ch, clean LHDR).
+    pub oppo_rgb: bool,
+}
+
+/// Grid dimensions for a gain map at [GAIN_TILE_SIZE] tiles.
+fn tile_grid_dims(width: u32, height: u32) -> (u32, u32) {
+    let cols = ((width + GAIN_TILE_SIZE - 1) / GAIN_TILE_SIZE).max(1);
+    let rows = ((height + GAIN_TILE_SIZE - 1) / GAIN_TILE_SIZE).max(1);
+    (cols, rows)
+}
+
+/// Tile a gain map into [GAIN_TILE_SIZE]-square 4:2:0 YUV buffers, packed
+/// contiguously as [Y][U][V] per tile in row-major order. Gray input (1 byte
+/// per pixel) becomes Y = gray with chroma at 128; RGB input is converted with
+/// BT.709 full-range coefficients.
+fn tile_all_to_yuv420(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let stride = width as usize * pixel_bytes;
+    let (cols, rows) = tile_grid_dims(width, height);
+    let mut out = Vec::with_capacity((rows * cols) as usize * 512 * 512 * 3 / 2);
+    for row in 0..rows {
+        for col in 0..cols {
+            let tile = build_padded_gain_tile(
+                pixels,
+                width,
+                height,
+                pixel_bytes,
+                stride,
+                col * GAIN_TILE_SIZE,
+                row * GAIN_TILE_SIZE,
+            )?;
+            tile_to_yuv420_into(&tile, pixel_bytes, &mut out)?;
+        }
+    }
+    Ok(out)
+}
+
+fn tile_to_yuv420_into(tile: &[u8], pixel_bytes: usize, out: &mut Vec<u8>) -> Result<(), String> {
+    let tw = GAIN_TILE_SIZE as usize;
+    match pixel_bytes {
+        1 => {
+            out.extend_from_slice(tile);
+            let chroma = vec![128u8; (tw / 2) * (tw / 2)];
+            out.extend_from_slice(&chroma);
+            out.extend_from_slice(&chroma);
+        }
+        3 => {
+            let (y, u, v) = crate::hevc::rgb_to_yuv420(tile, GAIN_TILE_SIZE, GAIN_TILE_SIZE);
+            out.extend_from_slice(&y);
+            out.extend_from_slice(&u);
+            out.extend_from_slice(&v);
+        }
+        other => return Err(format!("unsupported gain-map pixel bytes: {other}")),
+    }
+    Ok(())
+}
+
+/// Prepare an LHDR source for external tile encoding: reconstruct the gain
+/// map, apply EXIF orientation, tile, and pack YUV420. Returns the prepared
+/// context plus the packed YUV tile buffer.
+pub fn prepare_lhdr_tiles(
+    source_data: &[u8],
+    mask_pixels: &[u8],
+    mask_width: u32,
+    mask_height: u32,
+    meta_floats: &[f32],
+    edr_scale: f32,
+    oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
+) -> Result<(PreparedOutput, Vec<u8>), String> {
+    let top = isobmff::parse_boxes(source_data, 0, source_data.len());
+    let meta = find(&top, b"meta")?;
+    let (parsed, _, idat_opt) = parse_source_structure(source_data, &top, meta)?;
+    let orientation = exif::read_heif_exif_orientation(
+        source_data,
+        &parsed.items,
+        &parsed.iloc_entries,
+        idat_opt.as_ref(),
+    )?;
+
+    let gainmap = crate::gainmap::reconstruct(
+        mask_pixels,
+        mask_width as usize,
+        mask_height as usize,
+        mask_width as usize,
+        edr_scale,
+        meta_floats[0],
+    );
+    let aligned_row = ((mask_width as usize + 255) / 256) * 256;
+    let (mut gainmap, gain_width, gain_height) = orient_gainmap_pixels(
+        &gainmap,
+        mask_width,
+        mask_height,
+        1,
+        aligned_row,
+        orientation,
+    )?;
+
+    let oppo_rgb = oppo_compat.wants_oppo_rgb();
+    let (hevc_pixels, pixel_bytes) = if oppo_rgb {
+        let n_pixels = (gain_width * gain_height) as usize;
+        let mut rgb = vec![0u8; n_pixels * 3];
+        for i in 0..n_pixels {
+            let v = gainmap[i];
+            rgb[i * 3] = v;
+            rgb[i * 3 + 1] = v;
+            rgb[i * 3 + 2] = v;
+        }
+        gainmap = rgb;
+        (&gainmap[..], 3)
+    } else {
+        (&gainmap[..], 1)
+    };
+
+    let yuv = tile_all_to_yuv420(hevc_pixels, gain_width, gain_height, pixel_bytes)?;
+    let (cols, rows) = tile_grid_dims(gain_width, gain_height);
+    let family = if meta_floats[0] >= 3.0 { "x7" } else { "x6" };
+
+    Ok((
+        PreparedOutput {
+            source: source_data.to_vec(),
+            meta_floats: meta_floats.to_vec(),
+            edr_scale,
+            mode_key: "lhdr".into(),
+            family: family.into(),
+            oppo_compat,
+            tail_policy,
+            strict_tmap,
+            orientation,
+            gain_width,
+            gain_height,
+            cols,
+            rows,
+            oppo_rgb,
+        },
+        yuv,
+    ))
+}
+
+/// Prepare a UHDR source for external tile encoding. UHDR gain maps are
+/// pre-computed RGB JPEGs; the decoded raster is oriented, tiled, and packed.
+pub fn prepare_uhdr_tiles(
+    source_data: &[u8],
+    gainmap_jpeg: &[u8],
+    meta_floats: &[f32],
+    oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
+) -> Result<(PreparedOutput, Vec<u8>), String> {
+    let top = isobmff::parse_boxes(source_data, 0, source_data.len());
+    let meta = find(&top, b"meta")?;
+    let (parsed, _, idat_opt) = parse_source_structure(source_data, &top, meta)?;
+    let orientation = exif::read_heif_exif_orientation(
+        source_data,
+        &parsed.items,
+        &parsed.iloc_entries,
+        idat_opt.as_ref(),
+    )?;
+
+    let (rgb_pixels, gm_w, gm_h) = crate::jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg)
+        .map_err(|e| format!("UHDR gain map JPEG decode failed: {e}"))?;
+    let (rgb_pixels, gain_width, gain_height) =
+        orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?;
+
+    let yuv = tile_all_to_yuv420(&rgb_pixels, gain_width, gain_height, 3)?;
+    let (cols, rows) = tile_grid_dims(gain_width, gain_height);
+
+    Ok((
+        PreparedOutput {
+            source: source_data.to_vec(),
+            meta_floats: meta_floats.to_vec(),
+            edr_scale: meta_floats.get(18).copied().unwrap_or(1.0),
+            mode_key: "uhdr".into(),
+            family: "x7".into(),
+            oppo_compat,
+            tail_policy,
+            strict_tmap,
+            orientation,
+            gain_width,
+            gain_height,
+            cols,
+            rows,
+            oppo_rgb: true, // UHDR gain maps are always 3-channel
+        },
+        yuv,
+    ))
+}
+
+/// Wrap per-tile HEVC byte-streams (row-major, one per tile) into the final
+/// ISO 21496-1 HEIC. Extracts hvcC from the first stream, length-prefixes the
+/// NALs, and reuses the shared assembler. Returns (edr_scale, gain_map_max).
+pub fn assemble_prepared_tiles(
+    prepared: &PreparedOutput,
+    tile_streams: &[&[u8]],
+    output_path: &str,
+) -> Result<(f32, f32), String> {
+    let top = isobmff::parse_boxes(&prepared.source, 0, prepared.source.len());
+    let ftyp = find(&top, b"ftyp")?;
+    let meta = find(&top, b"meta")?;
+    let mdat = find(&top, b"mdat")?;
+    let (parsed, mut source_mdat, idat_opt) =
+        parse_source_structure(&prepared.source, &top, meta)?;
+
+    let mut tile_payloads: Vec<Vec<u8>> = Vec::with_capacity(tile_streams.len());
+    let mut gain_hvcc: Vec<u8> = Vec::new();
+    for (i, stream) in tile_streams.iter().enumerate() {
+        if gain_hvcc.is_empty() {
+            // The hardware path always encodes 4:2:0 (MediaCodec has no 4:4:4),
+            // so the hvcC must claim chroma_format_idc=1 regardless of the
+            // x265 fallback's cfg/env-driven default.
+            gain_hvcc =
+                crate::hevc::extract_hvcc_config_with_chroma(stream, 1).unwrap_or_default();
+        }
+        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(stream));
+        crate::progress::set_progress(4, (i + 1) as u32, tile_streams.len() as u32);
+    }
+
+    let iso_meta = if prepared.mode_key == "uhdr" {
+        crate::iso21496::build_iso_metadata_from_uhdr(&prepared.meta_floats)
+            .map_err(|e| format!("UHDR metadata: {e}"))?
+    } else {
+        crate::iso21496::build_iso_metadata(prepared.edr_scale)
+    };
+    let xmp_bytes: Vec<u8> = if prepared.oppo_rgb {
+        crate::iso21496::format_minimal_xmp().into_bytes()
+    } else {
+        crate::iso21496::format_hdrgm_xmp(&iso_meta).into_bytes()
+    };
+    let tmap_payload = if prepared.oppo_rgb {
+        crate::iso21496::make_imageio_native_tmap_payload(&prepared.meta_floats)
+    } else {
+        crate::iso21496::make_apple_tmap_payload(&prepared.meta_floats)
+    };
+    let tmap_payload = if prepared.strict_tmap {
+        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
+    } else {
+        tmap_payload
+    };
+
+    let tile_ids: Vec<u32> = {
+        let first_new = (parsed.max_src_id + 1).max(2);
+        (0..tile_payloads.len())
+            .map(|i| first_new + i as u32)
+            .collect()
+    };
+    let (gain_grid_id, tmap_id, xmp_id, group_id) =
+        assign_new_ids(&parsed, tile_payloads.len() as u32);
+
+    let cfg = OutputConfig {
+        _oppo_compat: prepared.oppo_compat,
+        oppo_rgb: prepared.oppo_rgb,
+        tail_policy: prepared.tail_policy,
+        tile_payloads: tile_payloads.clone(),
+        tile_ids: tile_ids.clone(),
+        gain_grid_id,
+        tmap_id,
+        xmp_id,
+        group_id,
+        tmap_payload: tmap_payload.clone(),
+        xmp_bytes: xmp_bytes.clone(),
+        gain_hvcc,
+    };
+
+    if prepared.oppo_compat.wants_patch() {
+        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, prepared.oppo_compat);
+    }
+
+    assemble_and_write(
+        &prepared.source,
+        ftyp,
+        meta,
+        mdat,
+        &parsed,
+        idat_opt,
+        &source_mdat,
+        prepared.gain_width,
+        prepared.gain_height,
+        prepared.cols,
+        prepared.rows,
+        prepared.orientation,
+        &cfg,
+        output_path,
+    )?;
+
+    if prepared.mode_key == "uhdr" {
+        let scale = prepared.meta_floats.get(18).copied().unwrap_or(1.0);
+        let ratio_max = prepared
+            .meta_floats
+            .get(4..7)
+            .map(|s| s.iter().copied().fold(0.0f32, f32::max))
+            .unwrap_or(0.0);
+        let gm_max = if ratio_max > 0.0 { ratio_max.log2() } else { 0.0 };
+        Ok((scale, gm_max))
+    } else {
+        let edr = prepared.edr_scale;
+        let gm_max = if edr > 1.0 { edr.log2() } else { 0.0 };
+        Ok((edr, gm_max))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared: source parsing
 // ---------------------------------------------------------------------------
 
@@ -1533,5 +1863,74 @@ mod tests {
         assert!(top.iter().any(|b| &b.btype == b"ftyp"));
         assert!(top.iter().any(|b| &b.btype == b"meta"));
         assert!(top.iter().any(|b| &b.btype == b"mdat"));
+    }
+
+    #[test]
+    fn prepare_assemble_split_matches_direct_lhdr_write() {
+        // The split path (prepare → yuv tiles → assemble) must produce a
+        // working ISO output for the same minimal LHDR source as the direct
+        // writer, and the YUV tile buffer must be non-empty with the expected
+        // per-tile 4:2:0 geometry.
+        let source = make_minimal_heic();
+        let mask = vec![128u8; 16];
+        let mut meta = [0.0f32; 36];
+        meta[0] = 3.5;
+        meta[2] = 144.0;
+        meta[5] = -1.0;
+        meta[18] = 10.0;
+        meta[19] = 6.0;
+        meta[29] = 200.0;
+        meta[32] = 30000.0;
+
+        // Compensate for tile padding: a 4x4 gain map gets tiled/padded to
+        // 512x512 with edge replication; encode with the gray path's own tile.
+        let (prepared, yuv) = prepare_lhdr_tiles(
+            &source,
+            &mask,
+            4,
+            4,
+            &meta,
+            3.0,
+            OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off),
+            false,
+        )
+        .expect("prepare_lhdr_tiles succeeds");
+        assert_eq!(prepared.rows, 1);
+        assert_eq!(prepared.cols, 1);
+        assert_eq!(prepared.gain_width, 4);
+        assert_eq!(prepared.gain_height, 4);
+        // One 512x512 tile, gray → Y(512²) + U(256²) + V(256²)
+        let per_tile = 512 * 512 + 256 * 256 + 256 * 256;
+        assert_eq!(yuv.len(), per_tile, "single gray tile in 4:2:0 YUV");
+
+        // Encode the tile back with the same x265 path and reassemble.
+        // The split path hardcodes hvcC chroma=1 (MediaCodec only does 4:2:0),
+        // so re-encode the tile as 4:2:0 gray to keep SPS and hvcC consistent.
+        let tile = yuv.clone();
+        std::env::set_var("XDREMUX_GM_420", "1");
+        let hevc = crate::hevc::encode_hevc_tile_gray(&tile[..512 * 512], 512, 512)
+            .expect("re-encode prepared Y tile");
+        std::env::remove_var("XDREMUX_GM_420");
+        assert!(
+            hevc.len() > 100,
+            "tile stream should contain NALs (got {} bytes)",
+            hevc.len()
+        );
+        let streams: Vec<&[u8]> = vec![hevc.as_slice()];
+        let tmp = std::env::temp_dir().join("xdremux_split_assemble_test.heic");
+        let (edr, gm) = assemble_prepared_tiles(&prepared, &streams, tmp.to_str().unwrap())
+            .expect("assemble_prepared_tiles succeeds");
+        assert!(edr > 0.0);
+        assert!(gm > 0.0);
+
+        let written = std::fs::read(&tmp).unwrap();
+        assert!(written.len() > 100, "output should be > 100 bytes");
+        let tmp_c = std::ffi::CString::new(tmp.to_str().unwrap()).unwrap();
+        assert!(
+            crate::xdremux_verify_output(tmp_c.as_ptr()),
+            "output verifies as ISO HDR"
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 }

@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
@@ -21,6 +23,7 @@ import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
+import 'services/hardware_encoder.dart';
 import 'ffi/xdremux_ffi.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
@@ -863,7 +866,14 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      final result = await XdRemuxService.convert(
+      // Android + toggle on: try the hardware (MediaCodec) path. Any failure
+      // (no encoder, encode error, prepare/assemble error) falls back to the
+      // proven software path so conversion never silently breaks.
+      Map<String, dynamic>? result;
+      if (Platform.isAndroid && runConfig.hardwareEncode) {
+        result = await _convertOneHardware(item, runConfig);
+      }
+      result ??= await XdRemuxService.convert(
         item.inputPath,
         item.outputPath,
         oppoCompat: runConfig.oppoCompatibility.rustValue,
@@ -893,6 +903,105 @@ class _HomePageState extends State<HomePage> {
 
     // M6: Update checkpoint after each file completes
     _updateCheckpointForItem(item);
+  }
+
+  /// Hardware-encoding conversion path:
+  /// 1. Rust prepares tiled YUV420 (+ owns an opaque context).
+  /// 2. MediaCodec encodes each tile to an HEVC byte stream.
+  /// 3. Rust assembles the final ISO HEIC.
+  /// Returns null on any failure so the caller falls back to software encode.
+  Future<Map<String, dynamic>?> _convertOneHardware(
+    QueueItem item,
+    ConversionConfig runConfig,
+  ) async {
+    final handle = item.progressHandle;
+    PreparedTilesResult? prepared;
+    try {
+      // Synchronous FFI call — do not block the UI isolate. prepareTiles is
+      // short (parse + decode + tile), but keep the same isolate discipline as
+      // the software path.
+      prepared = await Isolate.run(() => XdRemuxFFI.prepareTiles(
+            item.inputPath,
+            oppoCompat: runConfig.oppoCompatibility.rustValue,
+            oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+            strictTmap: runConfig.strictTmap,
+            progressHandle: handle,
+          ));
+      if (prepared == null) return null;
+      if (!prepared.success ||
+          prepared.opaque == ffi.nullptr ||
+          prepared.tileData == ffi.nullptr) {
+        // Hardware path unavailable — fall back to software encode.
+        return null;
+      }
+      // `prepared` is captured by the finally block, so promotion is lost
+      // across awaits — hold a final non-null reference for the rest.
+      final prep = prepared;
+
+      // Slice the packed tile buffer into per-tile YUV420 frames.
+      final ySize = prep.tileW * prep.tileH;
+      final cSize = (prep.tileW ~/ 2) * (prep.tileH ~/ 2);
+      final perTile = ySize + 2 * cSize;
+      final tileData = prep.tileData.asTypedList(prep.tileDataLen);
+      final tiles = <TileInput>[];
+      for (var i = 0; i < prep.tileCount; i++) {
+        final start = i * perTile;
+        tiles.add(TileInput(
+          Uint8List.sublistView(tileData, start, start + perTile),
+          i,
+        ));
+      }
+
+      final streams = await HardwareEncodeService.encodeTiles(tiles);
+      if (streams == null) {
+        // A tile failed to encode — fall back to software encode.
+        return null;
+      }
+      if (streams.length != prep.tileCount) {
+        return null;
+      }
+
+      // Report progress so the UI bar reflects the encode loop.
+      for (var i = 0; i < streams.length; i++) {
+        XdRemuxFFI.progressReport(handle, i + 1, streams.length);
+      }
+
+      final assembled = await Isolate.run(() => XdRemuxFFI.assembleTiles(
+            prep.opaque,
+            streams,
+            item.outputPath,
+            progressHandle: handle,
+          ));
+      try {
+        if (!assembled.success) {
+          // Assembly failed — fall back to the proven software path.
+          return null;
+        }
+        // Structural sanity check: a corrupt assembly must not be kept, or the
+        // user gets a silently broken HDR file. Fall back if it fails.
+        final valid = await XdRemuxService.verifyOutput(item.outputPath);
+        if (!valid) {
+          return null;
+        }
+        return {
+          'success': true,
+          'mode': assembled.mode.toDartStringOrNull(),
+          'family': assembled.family.toDartStringOrNull(),
+          'edrScale': assembled.edrScale,
+          'gainMapMax': assembled.gainMapMax,
+          'errorMessage': null,
+        };
+      } finally {
+        XdRemuxFFI.freeResult(assembled);
+      }
+    } catch (e) {
+      // Any error here must fall back to software encoding, not fail the item.
+      return null;
+    } finally {
+      if (prepared != null) {
+        XdRemuxFFI.freePrepared(prepared);
+      }
+    }
   }
 
   /// Single batch-level progress timer. With concurrency=1, reads the Rust
@@ -2192,6 +2301,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.fileNameSuffix = _cfg.fileNameSuffix;
     widget.config.categorizeOutputByMode = _cfg.categorizeOutputByMode;
     widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
+    widget.config.hardwareEncode = _cfg.hardwareEncode;
     widget.onChanged();
     setState(() {});
   }
@@ -2204,6 +2314,66 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         _emit();
       }
     }
+  }
+
+  /// Render the MediaCodec probe result returned by the Kotlin side.
+  void _showProbeResultDialog(Map<Object?, Object?>? raw) {
+    final result = raw?.map((k, v) => MapEntry(k.toString(), v));
+    final encoders = result?['encoders'] as List<dynamic>? ?? [];
+    final colorFormats = result?['colorFormats'] as List<dynamic>? ?? [];
+    final config420 = result?['config420Flexible'];
+    final config444 = result?['config444Flexible'];
+
+    String colorNames(int fmt) => switch (fmt) {
+          0x13 => 'YUV420 semi-planar (0x13)',
+          0x7F420888 => 'YUV420 flexible (0x7F420888)',
+          0x7F420789 => 'YUV420 tiled (0x7F420789)',
+          0x7F420444 => 'YUV444 flexible (0x7F420444)',
+          _ => '0x${fmt.toRadixString(16)}',
+        };
+
+    final content = StringBuffer()
+      ..writeln('设备：${result?['manufacturer']} ${result?['model']}')
+      ..writeln('系统：SDK ${result?['sdkInt']}')
+      ..writeln('芯片：${result?['chipset']}')
+      ..writeln('')
+      ..writeln('HEVC 编码器：')
+      ..writeln(encoders.isEmpty ? '  (无)' : encoders.map((e) => '  $e').join('\n'))
+      ..writeln('')
+      ..writeln('支持颜色格式：')
+      ..writeln(
+        colorFormats.isEmpty
+            ? '  (无)'
+            : colorFormats.map((f) => '  ${colorNames(f as int)}').join('\n'),
+      )
+      ..writeln('')
+      ..writeln('4:2:0 flexible 配置：$config420')
+      ..writeln('4:4:4 flexible 配置：$config444');
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('硬件编码检测结果'),
+        content: SingleChildScrollView(
+          child: SelectableText(content.toString()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: content.toString()));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+            },
+            child: const Text('复制'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -2518,6 +2688,66 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           batteryChannel.invokeMethod<bool>(
                             'openOemBatterySettings',
                           );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // Hardware encoding toggle (Android only)
+                    if (Platform.isAndroid) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('硬件编码'),
+                        subtitle: Text(
+                          '用 MediaCodec 硬件编码 gain map，失败时自动回退软件编码。',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        value: _cfg.hardwareEncode,
+                        dense: true,
+                        onChanged: (v) {
+                          setState(() => _cfg.hardwareEncode = v);
+                          _emit();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // Hardware-encoding diagnostic probe (Android only, dev)
+                    if (Platform.isAndroid) ...[
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.speed),
+                        title: const Text('硬件编码检测'),
+                        subtitle: Text(
+                          '检测 MediaCodec HEVC 编码器对 4:4:4 的支持（开发用）',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        trailing: const Icon(Icons.open_in_new, size: 18),
+                        onTap: () async {
+                          const probeChannel = MethodChannel(
+                            'xdremux/hevc-probe',
+                          );
+                          try {
+                            final result = await probeChannel.invokeMethod<
+                                Map<Object?, Object?>>('probe');
+                            if (!context.mounted) return;
+                            _showProbeResultDialog(result);
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            showDialog<void>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('硬件编码检测失败'),
+                                content: Text('$e'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('知道了'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
                         },
                       ),
                       const SizedBox(height: 8),

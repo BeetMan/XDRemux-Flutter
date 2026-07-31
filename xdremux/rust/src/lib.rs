@@ -22,6 +22,7 @@ use std::ptr;
 
 use container::OppoCameraTail;
 use exif::OppoCompat;
+use isobmff_write::PreparedOutput;
 
 /// Opaque result struct returned to Dart. Dart must call `xdremux_free_result`.
 #[repr(C)]
@@ -575,6 +576,239 @@ fn convert_uhdr(
         0.0
     };
     Ok((scale, gm_max))
+}
+
+// ---------------------------------------------------------------------------
+// FFI: hardware-encoding split (prepare → Dart encodes tiles → assemble)
+// ---------------------------------------------------------------------------
+
+/// Result of `xdremux_prepare_tiles`. All pointers are owned by Rust and must
+/// be released with `xdremux_free_prepared`.
+#[repr(C)]
+pub struct PreparedTilesResult {
+    pub success: bool,
+    pub opaque: *mut std::os::raw::c_void,
+    pub tile_data: *mut u8,
+    pub tile_data_len: usize,
+    pub tile_w: u32,
+    pub tile_h: u32,
+    pub tile_count: u32,
+    pub error_message: *mut c_char,
+}
+
+/// `xdremux_convert_impl` internals reuse `progress::begin_progress` per-call.
+/// These split helpers accept an explicit `handle` from the caller so the UI
+/// can poll real per-tile progress across the Dart-side MediaCodec loop.
+#[no_mangle]
+pub extern "C" fn xdremux_prepare_tiles(
+    input_path: *const c_char,
+    config: *const ConvertConfig,
+    handle: u32,
+) -> PreparedTilesResult {
+    let fail = PreparedTilesResult {
+        success: false,
+        opaque: ptr::null_mut(),
+        tile_data: ptr::null_mut(),
+        tile_data_len: 0,
+        tile_w: 0,
+        tile_h: 0,
+        tile_count: 0,
+        error_message: ptr::null_mut(),
+    };
+    let (oppo_compat, tail_policy, strict_tmap) = if config.is_null() {
+        let c = OppoCompat::Off;
+        (c, OppoCameraTail::default_for_compat(c), false)
+    } else {
+        let c = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
+        (
+            c,
+            OppoCameraTail::resolve(unsafe { (*config).oppo_camera_tail }, c),
+            unsafe { (*config).strict_tmap != 0 },
+        )
+    };
+    let input = match unsafe { CStr::from_ptr(input_path) }.to_str() {
+        Ok(p) => p,
+        Err(_) => {
+            return PreparedTilesResult { error_message: CString::new("input path is not valid UTF-8").unwrap().into_raw(), ..fail };
+        }
+    };
+
+    if handle != 0 {
+        progress::begin_progress_with(handle);
+    }
+
+    progress::set_progress(1, 0, 0); // extract
+
+    let result = (|| -> Result<(PreparedOutput, Vec<u8>), String> {
+        let source = std::fs::read(input).map_err(|e| format!("cannot read input: {e}"))?;
+        let extracted = container::extract_lhdr_from_bytes(&source)
+            .map_err(|e| e.to_string())?;
+        if extracted.mode == "uhdr" {
+            let gm = extracted.gainmap_data.as_ref().ok_or("no gainmap JPEG in UHDR data")?;
+            progress::set_progress(2, 0, 0); // decode JPEG
+            isobmff_write::prepare_uhdr_tiles(
+                &source,
+                gm,
+                &extracted.meta_floats,
+                oppo_compat,
+                tail_policy,
+                strict_tmap,
+            )
+        } else {
+            let mask = extracted
+                .mask_data
+                .as_ref()
+                .ok_or("no mask JPEG in extracted LHDR data")?;
+            progress::set_progress(2, 0, 0); // decode JPEG
+            let (mp, mw, mh) = jpeg_decode::decode_jpeg_to_gray(mask)
+                .map_err(|e| format!("mask JPEG decode failed: {e}"))?;
+            let edr = edr::edr_scale_calculator(&extracted.meta_floats);
+            isobmff_write::prepare_lhdr_tiles(
+                &source,
+                &mp,
+                mw,
+                mh,
+                &extracted.meta_floats,
+                edr,
+                oppo_compat,
+                tail_policy,
+                strict_tmap,
+            )
+        }
+    })();
+
+    if handle != 0 {
+        progress::end_progress();
+    }
+
+    match result {
+        Ok((prepared, yuv)) => {
+            let tile_count = (prepared.rows * prepared.cols) as u32;
+            let mut yuv_box = yuv.into_boxed_slice();
+            let tile_data = yuv_box.as_mut_ptr();
+            let tile_data_len = yuv_box.len();
+            std::mem::forget(yuv_box);
+            let opaque = Box::into_raw(Box::new(prepared)) as *mut std::os::raw::c_void;
+            PreparedTilesResult {
+                success: true,
+                opaque,
+                tile_data,
+                tile_data_len,
+                tile_w: 512,
+                tile_h: 512,
+                tile_count,
+                error_message: ptr::null_mut(),
+            }
+        }
+        Err(e) => PreparedTilesResult {
+            error_message: CString::new(e).unwrap().into_raw(),
+            ..fail
+        },
+    }
+}
+
+/// Free a `PreparedTilesResult` returned by `xdremux_prepare_tiles`.
+#[no_mangle]
+pub extern "C" fn xdremux_free_prepared(result: PreparedTilesResult) {
+    if !result.tile_data.is_null() && result.tile_data_len > 0 {
+        unsafe {
+            let slice = std::slice::from_raw_parts_mut(result.tile_data, result.tile_data_len);
+            drop(Box::from_raw(slice));
+        }
+    }
+    if !result.opaque.is_null() {
+        unsafe {
+            drop(Box::from_raw(result.opaque as *mut PreparedOutput));
+        }
+    }
+    if !result.error_message.is_null() {
+        unsafe {
+            drop(CString::from_raw(result.error_message));
+        }
+    }
+}
+
+/// Assemble the final HEIC from externally-encoded tile byte-streams.
+///
+/// `tile_streams` points to `tile_count` elements; each is a null-terminated
+/// list of pointers to byte-stream HEVC NAL data with per-stream lengths in
+/// `tile_lengths`. Returns a `ConversionResult` like `xdremux_convert`.
+#[no_mangle]
+pub extern "C" fn xdremux_assemble_tiles(
+    opaque: *mut std::os::raw::c_void,
+    tile_streams: *const *const c_char,
+    tile_lengths: *const usize,
+    tile_count: usize,
+    output_path: *const c_char,
+    handle: u32,
+) -> ConversionResult {
+    let fail = ConversionResult {
+        success: false,
+        mode: ptr::null_mut(),
+        family: ptr::null_mut(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: ptr::null_mut(),
+    };
+    if opaque.is_null() || tile_streams.is_null() || tile_lengths.is_null() {
+        return ConversionResult { error_message: CString::new("invalid prepared tiles handle").unwrap().into_raw(), ..fail };
+    }
+    let output = match unsafe { CStr::from_ptr(output_path) }.to_str() {
+        Ok(p) => p,
+        Err(_) => {
+            return ConversionResult { error_message: CString::new("output path is not valid UTF-8").unwrap().into_raw(), ..fail };
+        }
+    };
+
+    // Collect the tile streams into owned Vec<u8> for the assembler.
+    let mut streams: Vec<Vec<u8>> = Vec::with_capacity(tile_count);
+    for i in 0..tile_count {
+        let ptr = unsafe { *tile_streams.add(i) };
+        let len = unsafe { *tile_lengths.add(i) };
+        if ptr.is_null() {
+            return ConversionResult { error_message: CString::new(format!("tile {i} stream is null")).unwrap().into_raw(), ..fail };
+        }
+        let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+        streams.push(slice.to_vec());
+    }
+
+    if handle != 0 {
+        progress::begin_progress_with(handle);
+    }
+
+    let result = (|| -> Result<(f32, f32), String> {
+        let prepared = unsafe { &*(opaque as *const PreparedOutput) };
+        let refs: Vec<&[u8]> = streams.iter().map(|s| s.as_slice()).collect();
+        isobmff_write::assemble_prepared_tiles(prepared, &refs, output)
+    })();
+
+    if handle != 0 {
+        progress::end_progress();
+    }
+
+    match result {
+        Ok((edr, gm_max)) => {
+            let prepared = unsafe { &*(opaque as *const PreparedOutput) };
+            ConversionResult {
+                success: true,
+                mode: CString::new(prepared.mode_key.as_str()).unwrap().into_raw(),
+                family: CString::new(prepared.family.as_str()).unwrap().into_raw(),
+                edr_scale: edr as f64,
+                gain_map_max: gm_max as f64,
+                error_message: ptr::null_mut(),
+            }
+        }
+        Err(e) => ConversionResult {
+            error_message: CString::new(e).unwrap().into_raw(),
+            ..fail
+        },
+    }
+}
+
+/// Report per-tile encode progress into a handle from the Dart encoding loop.
+#[no_mangle]
+pub extern "C" fn xdremux_progress_report(handle: u32, current: u32, total: u32) {
+    progress::set_progress_for(handle, 3, current, total);
 }
 
 // ---------------------------------------------------------------------------

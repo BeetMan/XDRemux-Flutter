@@ -164,6 +164,7 @@ class XdRemuxService {
   static const _keyMaxConcurrentJobs = 'maxConcurrentJobs';
   static const _keyFileNameSuffix = 'fileNameSuffix';
   static const _keyCategorizeOutputByMode = 'categorizeOutputByMode';
+  static const _keyHardwareEncode = 'hardwareEncode';
 
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -187,6 +188,7 @@ class XdRemuxService {
       fileNameSuffix: prefs.getString(_keyFileNameSuffix) ?? '_iso',
       categorizeOutputByMode:
           prefs.getBool(_keyCategorizeOutputByMode) ?? false,
+      hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? true,
     );
   }
 
@@ -206,5 +208,6 @@ class XdRemuxService {
     await prefs.setString(_keyFileNameSuffix, config.fileNameSuffix);
     await prefs.setBool(
         _keyCategorizeOutputByMode, config.categorizeOutputByMode);
+    await prefs.setBool(_keyHardwareEncode, config.hardwareEncode);
   }
 }

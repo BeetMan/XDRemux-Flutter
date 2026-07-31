@@ -110,6 +110,12 @@ pub fn end_progress_with(handle: u32) {
 /// Update progress state for the calling thread's handle. Thread-safe.
 pub fn set_progress(stage: u32, current: u32, total: u32) {
     let handle = TL_HANDLE.with(|h| h.get());
+    set_progress_for(handle, stage, current, total);
+}
+
+/// Update progress state for an explicit handle (used by the prepare/assemble
+/// FFI split where the tile-encoding loop runs outside Rust). Thread-safe.
+pub fn set_progress_for(handle: u32, stage: u32, current: u32, total: u32) {
     if handle == 0 {
         return;
     }
