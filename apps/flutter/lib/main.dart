@@ -2286,10 +2286,19 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   late ConversionConfig _cfg;
 
+  /// Hardware-encoding availability probe result (null = not yet known).
+  /// Only probed on Android, where the MediaCodec path exists.
+  bool? _hwAvailable;
+
   @override
   void initState() {
     super.initState();
     _cfg = widget.config.copy();
+    if (Platform.isAndroid) {
+      HardwareEncodeService.isAvailable().then((ok) {
+        if (mounted) setState(() => _hwAvailable = ok);
+      });
+    }
   }
 
   void _emit() {
@@ -2704,7 +2713,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           '用 MediaCodec 硬件编码 gain map，大幅提速；'
                           '默认开启，仅设备支持时生效（不支持自动回退软件编码）。'
                           '开启后 gain map 降至 4:2:0（画质微降），'
-                          '已在骁龙 8 Elite / 8 Gen 3 上验证通过。',
+                          '已在骁龙 8 Elite / 8 Gen 3 上验证通过。'
+                          '${switch (_hwAvailable) {
+                            null => '正在检测本机编码器…',
+                            true => '本机硬件编码：可用',
+                            false => '本机硬件编码：不可用（将使用软件编码）',
+                          }}',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.hardwareEncode,
