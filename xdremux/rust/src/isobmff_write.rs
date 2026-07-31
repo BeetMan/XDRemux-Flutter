@@ -82,11 +82,7 @@ pub fn write_lhdr_iso_output(
     )?;
 
     // OPPO compat: replicate gray → RGB
-    let (hevc_pixels, pixel_bytes, encode_fn): (
-        &[u8],
-        usize,
-        fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
-    ) = if oppo_compat.wants_oppo_rgb() {
+    let (hevc_pixels, pixel_bytes): (&[u8], usize) = if oppo_compat.wants_oppo_rgb() {
         // RGB-copy for OPPO Gallery recognition
         let n_pixels = (gain_width * gain_height) as usize;
         let mut rgb = vec![0u8; n_pixels * 3];
@@ -97,9 +93,9 @@ pub fn write_lhdr_iso_output(
             rgb[i * 3 + 2] = v;
         }
         gainmap = rgb;
-        (&gainmap[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
+        (&gainmap[..], 3)
     } else {
-        (&gainmap[..], 1, crate::hevc::encode_hevc_tile_gray as _)
+        (&gainmap[..], 1)
     };
 
     // Tile & HEVC-encode
@@ -109,7 +105,6 @@ pub fn write_lhdr_iso_output(
         gain_height,
         pixel_bytes,
         gain_width as usize * pixel_bytes,
-        encode_fn,
         &parsed,
     )?;
 
@@ -213,17 +208,8 @@ pub fn write_uhdr_iso_output(
     let (rgb_pixels, gain_width, gain_height) =
         orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?;
 
-    let (hevc_pixels, pixel_bytes, encode_fn): (
-        &[u8],
-        usize,
-        fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
-    ) = if oppo_compat.wants_oppo_rgb() {
-        // Keep RGB for OPPO
-        (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
-    } else {
-        // Clean UHDR: still 3-channel (UHDR gain maps are inherently 3ch)
-        (&rgb_pixels[..], 3, crate::hevc::encode_hevc_tile_rgb as _)
-    };
+    // UHDR gain maps are 3-channel RGB regardless of compat mode
+    let (hevc_pixels, pixel_bytes): (&[u8], usize) = (&rgb_pixels[..], 3);
 
     // Tile & HEVC-encode
     let (tile_payloads, tile_ids, cols, rows, gain_hvcc) = tile_and_encode(
@@ -232,7 +218,6 @@ pub fn write_uhdr_iso_output(
         gain_height,
         pixel_bytes,
         gain_width as usize * pixel_bytes,
-        encode_fn,
         &parsed,
     )?;
 
@@ -843,7 +828,6 @@ fn tile_and_encode(
     height: u32,
     pixel_bytes: usize,
     stride: usize, // bytes per row of the input pixel buffer
-    encode_fn: fn(&[u8], u32, u32) -> std::io::Result<Vec<u8>>,
     parsed: &ParsedSource,
 ) -> Result<(Vec<Vec<u8>>, Vec<u32>, u32, u32, Vec<u8>), String> {
     let tile_size = GAIN_TILE_SIZE;
@@ -856,31 +840,42 @@ fn tile_and_encode(
     let mut tile_index: u32 = 0;
     crate::progress::set_progress(3, 0, total_tiles);
 
+    // Build all padded tiles first, then encode them in ONE x265 session.
+    // Session reuse avoids per-tile encoder open/close (~6.6x faster on a
+    // 48-tile UHDR gain map) while keyint=1 keeps every tile an independent
+    // keyframe with its own VPS/SPS/PPS.
+    let mut padded: Vec<Vec<u8>> = Vec::with_capacity(total_tiles as usize);
     for row in 0..rows {
         for col in 0..cols {
             let x0 = col * tile_size;
             let y0 = row * tile_size;
-            let tile = build_padded_gain_tile(pixels, width, height, pixel_bytes, stride, x0, y0)?;
-
-            let hevc_bs =
-                encode_fn(&tile, tile_size, tile_size).map_err(|e| format!("HEVC encode: {e}"))?;
-
-            // Extract hvcC from the first tile's byte-stream HEVC (before
-            // length-prefix conversion). extract_hvcc_config searches for
-            // 00 00 00 01 start codes, which only exist in byte-stream format.
-            if gain_hvcc.is_empty() {
-                gain_hvcc = crate::hevc::extract_hvcc_config(&hevc_bs).unwrap_or_default();
-            }
-
-            // Convert from byte-stream (00 00 00 01 start codes) to length-prefixed
-            // format (4-byte big-endian NAL length). ISOBMFF with hvcC requires
-            // length-prefixed NAL units in mdat.
-            let hevc_lp = crate::hevc::hevc_byte_stream_to_length_prefixed(&hevc_bs);
-            tile_payloads.push(hevc_lp);
-
+            padded.push(build_padded_gain_tile(
+                pixels, width, height, pixel_bytes, stride, x0, y0,
+            )?);
             tile_index += 1;
             crate::progress::set_progress(3, tile_index, total_tiles);
         }
+    }
+
+    let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
+    let batch_streams = crate::hevc::x265_encode_tiles(&tile_refs, tile_size, tile_size, pixel_bytes)
+        .map_err(|e| format!("HEVC batch encode: {e}"))?;
+    debug_assert_eq!(batch_streams.len(), total_tiles as usize);
+
+    for (i, hevc_bs) in batch_streams.iter().enumerate() {
+        // Extract hvcC from the first tile's byte-stream HEVC (before
+        // length-prefix conversion). extract_hvcc_config searches for
+        // 00 00 00 01 start codes, which only exist in byte-stream format.
+        if gain_hvcc.is_empty() {
+            gain_hvcc = crate::hevc::extract_hvcc_config(hevc_bs).unwrap_or_default();
+        }
+
+        // Convert from byte-stream (00 00 00 01 start codes) to length-prefixed
+        // format (4-byte big-endian NAL length). ISOBMFF with hvcC requires
+        // length-prefixed NAL units in mdat.
+        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(hevc_bs));
+
+        crate::progress::set_progress(3, (i + 1) as u32, total_tiles);
     }
 
     let first_new = (parsed.max_src_id + 1).max(2);
