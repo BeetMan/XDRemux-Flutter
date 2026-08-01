@@ -18,6 +18,35 @@ use std::thread;
 #[cfg(all(windows, xdremux_ffmpeg_fallback))]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// ffmpeg-fallback batch encoder: loops the single-tile subprocess path.
+/// Only used by the `XDREMUX_USE_FFMPEG=1` desktop smoke build, so per-tile
+/// parameter sets (which the production x265 loop deliberately avoids) are
+/// acceptable here. `use_420` is ignored — the fallback always encodes the
+/// tile's native pixel layout.
+#[cfg(xdremux_ffmpeg_fallback)]
+pub fn x265_encode_tiles(
+    tiles: &[&[u8]],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    _use_420: bool,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    let format = match pixel_bytes {
+        1 => "gray",
+        3 => "rgb24",
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("unsupported pixel_bytes {pixel_bytes}"),
+            ))
+        }
+    };
+    tiles
+        .iter()
+        .map(|t| encode_raw_tile(t, format, width, height))
+        .collect()
+}
+
 /// Feature flag: encode single-tile gain maps as 4:2:0 instead of 4:4:4.
 ///
 /// The batch/production path (`x265_encode_tiles`) decides 4:2:0 vs 4:4:4 from
@@ -1078,9 +1107,10 @@ mod tests {
 
     #[test]
     fn batch_encode_matches_single_tile_headers() {
-        // Batch encoding (one encoder, session reuse) must still give every
-        // tile its own VPS/SPS/PPS + IDR, since each tile's mdat payload is
-        // decoded standalone in the container.
+        // Single-frame loop encoding: tile 0 keeps VPS/SPS/PPS (source for
+        // the hvcC config record), later tiles carry pure IDR slices. This
+        // is what ImageIO's ISO gain-map decoder requires — embedded
+        // parameter sets in every tile used to break macOS recognition.
         let w = 512u32;
         let h = 512u32;
         let make = |seed: u8| {
@@ -1093,11 +1123,11 @@ mod tests {
         let tiles: Vec<Vec<u8>> = (0..4).map(|s| make(s)).collect();
         let refs: Vec<&[u8]> = tiles.iter().map(|t| t.as_slice()).collect();
 
-        let streams = x265_encode_tiles(&refs, w, h, 1).expect("batch encode failed");
+        let streams =
+            x265_encode_tiles(&refs, w, h, 1, false).expect("batch encode failed");
         assert_eq!(streams.len(), 4, "one stream per tile");
 
         for (i, s) in streams.iter().enumerate() {
-            // Each stream must contain VPS(32), SPS(33), PPS(34), IDR(19/20)
             let nal_types: Vec<u8> = {
                 let mut pos = 0;
                 let mut types = Vec::new();
@@ -1113,17 +1143,24 @@ mod tests {
                 }
                 types
             };
-            assert!(nal_types.contains(&32), "tile {i} missing VPS: {nal_types:?}");
-            assert!(nal_types.contains(&33), "tile {i} missing SPS: {nal_types:?}");
-            assert!(nal_types.contains(&34), "tile {i} missing PPS: {nal_types:?}");
+            // Every tile must decode standalone → IDR present in each.
             assert!(
                 nal_types.iter().any(|&t| t == 19 || t == 20 || t == 21),
                 "tile {i} missing IDR: {nal_types:?}"
             );
-            // hvcC must extract from the batch stream too
-            let hvcc = extract_hvcc_config(s).expect("hvcC from batch tile");
-            assert!(!hvcc.is_empty(), "tile {i} hvcC empty");
+            if i == 0 {
+                assert!(nal_types.contains(&32), "tile 0 missing VPS: {nal_types:?}");
+                assert!(nal_types.contains(&33), "tile 0 missing SPS: {nal_types:?}");
+                assert!(nal_types.contains(&34), "tile 0 missing PPS: {nal_types:?}");
+                // hvcC extracts from tile 0 (the parameter-set carrier).
+                let hvcc = extract_hvcc_config(s).expect("hvcC from tile 0");
+                assert!(!hvcc.is_empty(), "tile 0 hvcC empty");
+            } else {
+                assert!(!nal_types.contains(&32), "tile {i} has embedded VPS: {nal_types:?}");
+                assert!(!nal_types.contains(&33), "tile {i} has embedded SPS: {nal_types:?}");
+                assert!(!nal_types.contains(&34), "tile {i} has embedded PPS: {nal_types:?}");
+            }
         }
-        eprintln!("✓ batch_encode_matches_single_tile_headers: 4 tiles, per-tile headers intact");
+        eprintln!("✓ batch_encode_matches_single_tile_headers: tile0 params + pure-IDR rest");
     }
 }

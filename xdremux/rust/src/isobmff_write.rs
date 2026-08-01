@@ -1750,7 +1750,7 @@ mod tests {
         );
         assert_eq!(
             associated_property(&rgb, rgb_grid_id, "colr").raw,
-            isobmff::COLR_SRGB_BOX
+            isobmff::COLR_UNSPECIFIED_BT601_BOX
         );
         let rgb_tile_id = rgb
             .refs
