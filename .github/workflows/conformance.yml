@@ -20,6 +20,9 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Install ffmpeg (encoder fallback)
+        run: brew install ffmpeg
+
       - name: Build workspace
         run: cargo build --workspace
 
