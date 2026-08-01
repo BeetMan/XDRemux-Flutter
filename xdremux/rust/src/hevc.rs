@@ -1149,7 +1149,13 @@ mod tests {
                 nal_types.iter().any(|&t| t == 19 || t == 20 || t == 21),
                 "tile {i} missing IDR: {nal_types:?}"
             );
-            if i == 0 {
+            if cfg!(xdremux_ffmpeg_fallback) {
+                // The ffmpeg fallback encodes tiles independently, so every
+                // tile is self-contained with its own parameter sets.
+                assert!(nal_types.contains(&32), "tile {i} missing VPS: {nal_types:?}");
+                assert!(nal_types.contains(&33), "tile {i} missing SPS: {nal_types:?}");
+                assert!(nal_types.contains(&34), "tile {i} missing PPS: {nal_types:?}");
+            } else if i == 0 {
                 assert!(nal_types.contains(&32), "tile 0 missing VPS: {nal_types:?}");
                 assert!(nal_types.contains(&33), "tile 0 missing SPS: {nal_types:?}");
                 assert!(nal_types.contains(&34), "tile 0 missing PPS: {nal_types:?}");
