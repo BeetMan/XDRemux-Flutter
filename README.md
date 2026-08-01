@@ -4,7 +4,7 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
-**[下载 v0.2.1（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+**[下载 v0.2.2（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
 
 ## 截图
 
@@ -83,8 +83,8 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 |------|------|------|
 | Windows | ✅ 可运行 | x265 静态链接、原生拖拽、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载、VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、源/转换后切换 |
-| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码（实验） |
-| iOS | ⚠️ 骨架已创建 | Rust core + x265 交叉编译静态库、FFI 链接已通；UI/Share Extension 待完善 |
+| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码 |
+| iOS | ✅ 真机验证通过 | VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、Share Extension 系统分享、保存到相册、Files 集成 |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
 
 ## 快速开始
@@ -114,13 +114,66 @@ HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg。
 
 ```bash
 flutter build macos --release
-# 产物：apps/flutter/build/macos/Build/Products/Release/xdremux.app
+# 产物：apps/flutter/build/macos/Build/Products/Release/XDRemux.app
 # 打成 dmg（含 Applications 快捷方式）：
-mkdir -p /tmp/dmg && cp -R apps/flutter/build/macos/Build/Products/Release/xdremux.app /tmp/dmg/
+mkdir -p /tmp/dmg && cp -R apps/flutter/build/macos/Build/Products/Release/XDRemux.app /tmp/dmg/
 ln -s /Applications /tmp/dmg/Applications
 hdiutil create -volname "XDRemux x.y.z" -srcfolder /tmp/dmg -ov -format UDZO \
   XDRemux-x.y.z-macos.dmg
 ```
+
+### iOS 部署（真机）
+
+iOS 不走 Release 分发（无付费开发者账号时无法 TestFlight/App Store），用免费
+Apple ID 签名侧载即可，全流程如下。
+
+**前提**
+
+- Xcode（或 Xcode-beta，需支持设备 iOS 版本），命令行工具已选
+  定：`sudo xcode-select -s /Applications/Xcode[-beta].app`
+- CocoaPods（`sudo gem install cocoapods` 或 brew）
+- iPhone 开启**开发者模式**：设置 → 隐私与安全性 → 开发者模式（需重启）
+- iPhone 数据线连接并**信任此电脑**
+
+**一次性准备**
+
+1. Xcode → Settings → Accounts → `+` 登录 Apple ID（免费账号即可），
+   选中账号 → Manage Certificates → `+` → **Apple Development**
+2. 交叉编译 Rust + x265 静态库（约几分钟，之后不用重复）：
+
+   ```bash
+   rustup target add aarch64-apple-ios
+   cd xdremux/rust && ./build_ios.sh   # 产物 stage 到 ~/xdremux_ios_libs
+   ```
+
+**构建并安装**
+
+```bash
+cd apps/flutter
+flutter build ios --release            # 自动 pod install + 签名（工程已内置 Team ID）
+xcrun devicectl device install app --device <设备UDID> build/ios/iphoneos/Runner.app
+# 或者用 flutter run --release -d <设备UDID> 一步构建+安装+启动
+```
+
+设备 UDID 用 `flutter devices` 查看。首次构建若报 "No Account for Team"，
+说明 Xcode Accounts 里账号会话失效，重新登录即可；工程里的
+`DEVELOPMENT_TEAM` 取自证书 OU 字段（`security find-certificate -c
+"Apple Development" -p | openssl x509 -noout -subject`），换账号时需同步改
+`ios/Runner.xcodeproj/project.pbxproj`。
+
+**手机上最后一步**
+
+设置 → 通用 → VPN与设备管理 → 开发者APP 下的你的邮箱 → **信任**，然后即可打开。
+
+**免费签名限制**
+
+- app **7 天过期**，到期需重新安装（数据保留）
+- 最多同时装 3 个自签名 app
+- App Groups（Share Extension 依赖）免费账号可用
+
+**功能说明**：相册/文件里「分享 → XDRemux」可直接导入 HEIC（Share Extension
+经 app group 传文件并自动跳转）；输出在「文件 → 我的 iPhone → XDRemux」可见；
+转换结果可一键存回相册（按拍摄模式分相册）。
 
 ### 从源码构建
 
@@ -156,7 +209,7 @@ cargo ndk -t arm64-v8a -o "../../apps/flutter/android/app/src/main/jniLibs" buil
 cd ../../apps/flutter
 flutter build apk --debug
 
-# iOS（骨架已创建；需 rustup target add aarch64-apple-ios）
+# iOS（需 rustup target add aarch64-apple-ios，部署细节见上文「iOS 部署（真机）」）
 cd xdremux/rust
 ./build_ios.sh   # 交叉编译 x265 + Rust staticlib，stage 到 ~/xdremux_ios_libs
 cd ../../apps/flutter
@@ -232,14 +285,14 @@ cargo build --workspace --release
 
 - [ ] macOS App Store 签名与公证
 - [ ] Linux 测试与打包（AppImage / Flatpak）
-- [ ] iOS 适配（`flutter create` 待执行）
+- [ ] iOS 正式分发（TestFlight / App Store，需付费开发者账号）
 
 ### 工程
 
 - [x] CI/CD（GitHub Actions 编译测试 + 发布）——Windows/Android 已自动发布
 - [x] macOS 原生拖拽支持（NSView 覆层 MethodChannel）
 - [ ] macOS 加入 release CI（当前手动构建 dmg）
-- [ ] iOS 完善（Share Extension、后台转换、真机验证）
+- [x] iOS 完善（Share Extension、真机验证均已落地；后台转换受 iOS 限制未做）
 - [ ] Linux 版（`flutter create` 待执行）
 
 ## 已知限制
