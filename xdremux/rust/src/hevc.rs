@@ -582,6 +582,7 @@ pub fn x265_encode_tiles(
 
 /// Remove VPS/SPS/PPS NALs from a single-frame HEVC byte stream, keeping only
 /// the IDR slice. Used so gain-map tiles beyond tile 0 are pure IDR slices.
+#[cfg(not(xdremux_ffmpeg_fallback))]
 fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
     let nal_3b: &[u8] = &[0, 0, 1];
     let nal_4b: &[u8] = &[0, 0, 0, 1];

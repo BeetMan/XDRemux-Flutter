@@ -12,7 +12,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # Custom cfg emitted by build.rs when XDREMUX_USE_FFMPEG=1 (ffmpeg subprocess
 # fallback instead of the default x265 static-linked encoder).
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_ffmpeg_fallback)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_ffmpeg_fallback)", "cfg(xdremux_gm_420)"] }
 
 [dependencies]
 jpeg-decoder = "0.3"

@@ -9,6 +9,7 @@ use std::io::Cursor;
 ///
 /// Returns `(pixels, width, height)` where `pixels` is row-major
 /// with stride = width * 3.
+#[allow(unreachable_patterns)] // jpeg_decoder::PixelFormat 未来新增变体时的兜底
 pub fn decode_jpeg_to_rgb(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u32)> {
     let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(jpeg_data));
     let pixels = decoder.decode().map_err(|e| {
@@ -62,6 +63,7 @@ pub fn decode_jpeg_to_rgb(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u3
 ///
 /// Returns `(pixels, width, height)` where `pixels` is row-major
 /// with stride = width (tightly packed).
+#[allow(unreachable_patterns)]
 pub fn decode_jpeg_to_gray(jpeg_data: &[u8]) -> std::io::Result<(Vec<u8>, u32, u32)> {
     let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(jpeg_data));
     let pixels = decoder.decode().map_err(|e| {
