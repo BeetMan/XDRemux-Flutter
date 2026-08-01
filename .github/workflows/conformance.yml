@@ -9,6 +9,10 @@ on:
 jobs:
   rust-build-and-test:
     runs-on: macos-latest
+    env:
+      # Vendored x265 is gitignored; use the ffmpeg-subprocess fallback for
+      # CI builds (same as the CI workflow's smoke job).
+      XDREMUX_USE_FFMPEG: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +32,8 @@ jobs:
   conformance-inspect:
     runs-on: macos-latest
     needs: rust-build-and-test
+    env:
+      XDREMUX_USE_FFMPEG: '1'
     steps:
       - uses: actions/checkout@v4
 
