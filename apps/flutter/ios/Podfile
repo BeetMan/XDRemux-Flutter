@@ -55,12 +55,24 @@ post_install do |installer|
   # pbxproj value), so we patch that file directly. Force-load from a space-free
   # dir (repo path has spaces). Staged by build_ios.sh.
   libdir = File.join(Dir.home, 'xdremux_ios_libs')
-  force = "-force_load #{File.join(libdir, 'libx265.a')} -force_load #{File.join(libdir, 'libxdremux_core.a')} -lc++ -framework Security"
+  # Dart resolves FFI symbols at runtime via DynamicLibrary.process(), so the
+  # linker sees no compile-time reference and would strip them with
+  # -dead_strip (force_load alone doesn't stop that). Mark every FFI entry
+  # as needed with -u so the symbols survive linking.
+  ffisyms = %w[
+    _xdremux_assemble_tiles _xdremux_classify _xdremux_convert
+    _xdremux_convert_with_progress _xdremux_extract_thumbnail
+    _xdremux_free_classification_result _xdremux_free_prepared
+    _xdremux_free_result _xdremux_free_string _xdremux_free_thumbnail
+    _xdremux_inspect _xdremux_prepare_tiles _xdremux_progress_begin
+    _xdremux_progress_end _xdremux_progress_report _xdremux_read_progress
+    _xdremux_read_progress_for _xdremux_verify_output _xdremux_version
+    _xdremux_param_set_basic _xdremux_pic_set_planes _xdremux_pic_set_pts
+  ]
+  keep = ffisyms.map { |s| "-u #{s}" }.join(' ')
+  force = "-force_load #{File.join(libdir, 'libx265.a')} -force_load #{File.join(libdir, 'libxdremux_core.a')} -lc++ -framework Security #{keep}"
   Dir.glob(File.join(File.expand_path('Pods', __dir__), 'Target Support Files', 'Pods-Runner', '*.xcconfig')).each do |f|
     content = File.read(f)
-    # Replace the whole OTHER_LDFLAGS line: keep inherited + plugin frameworks,
-    # drop the auto -l"x265"/-l"xdremux_core" (they'd double-link), append the
-    # force-load flags.
     content = content.sub(
       /^OTHER_LDFLAGS = .*$/,
       "OTHER_LDFLAGS = $(inherited) -ObjC -framework \"flutter_foreground_task\" -framework \"open_filex\" -framework \"Security\" #{force}"
