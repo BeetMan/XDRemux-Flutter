@@ -191,7 +191,7 @@ class XdRemuxService {
       outputDirectory: prefs.getString(_keyOutputDirectory),
       oppoCompatibility: OppoCompatMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyOppoCompat),
-        orElse: () => OppoCompatMode.off,
+        orElse: () => OppoCompatMode.on,
       ),
       oppoCameraTail: OppoCameraTailMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyOppoCameraTail),

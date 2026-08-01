@@ -358,12 +358,13 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Android-only: accept HEIC files shared from the gallery or a file
-  /// manager via ACTION_SEND / ACTION_SEND_MULTIPLE. The plugin copies the
-  /// content-URI bytes into the app cache, so incoming paths are already
-  /// plain local files the Rust FFI layer can read.
+  /// Android / iOS: accept HEIC files shared from the gallery or a file
+  /// manager. On Android the plugin copies content-URI bytes into the app
+  /// cache; on iOS the Share Extension copies them into the app group
+  /// container. Either way incoming paths are plain local files the Rust
+  /// FFI layer can read.
   void _initShareIntake() {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     _shareSubscription = ReceiveSharingIntent.instance.getMediaStream().listen(
       (files) => _handleSharedMedia(files),
       onError: (Object e) =>
@@ -1445,8 +1446,8 @@ class _HomePageState extends State<HomePage> {
     if (result == null || !mounted) return;
     final (saved, failed) = result;
     final msg = failed > 0
-        ? '已保存 $saved 个到图库，$failed 个失败'
-        : '已保存 $saved 个到图库';
+        ? '已保存 $saved 个到相册，$failed 个失败'
+        : '已保存 $saved 个到相册';
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(msg)));
@@ -1503,6 +1504,7 @@ class _HomePageState extends State<HomePage> {
 
   String _galleryAlbumSubtitle(QueueItem item) {
     final album = _galleryAlbum(item) ?? 'XDRemux';
+    if (Platform.isIOS) return '相册「$album」';
     // gal/MediaStore places image albums under Pictures/, not DCIM/.
     return 'Pictures/$album';
   }
@@ -1518,7 +1520,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               ListTile(
                 leading: const Icon(Icons.photo_library),
-                title: const Text('保存到图库'),
+                title: const Text('保存到相册'),
                 subtitle: Text(_galleryAlbumSubtitle(item)),
                 onTap: () async {
                   Navigator.pop(ctx);
@@ -1542,7 +1544,7 @@ class _HomePageState extends State<HomePage> {
                   );
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(ok ? '已保存到图库' : '保存失败')),
+                      SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')),
                     );
                   }
                 },
@@ -1649,7 +1651,9 @@ class _HomePageState extends State<HomePage> {
           onPressed: _isProcessing ? _cancelConversion : null,
         ),
       // Desktop: one-tap output-folder access without digging the menu.
-      if (!Platform.isAndroid)
+      // iOS 上 open_filex 只能预览单个文件而非打开目录，改为设置页入口
+      // （shareddocuments:// 跳转 Files）。
+      if (!Platform.isAndroid && !Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.folder_open),
           tooltip: '打开输出目录',
@@ -1663,8 +1667,9 @@ class _HomePageState extends State<HomePage> {
         tooltip: '设置',
         onPressed: () => _openSettings(context),
       ),
-      // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 下不可用。
-      if (!Platform.isAndroid)
+      // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
+      // iOS 沙盒下都不可用。
+      if (!Platform.isAndroid && !Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.folder_copy_outlined),
           tooltip: '按拍摄模式整理',
@@ -1720,13 +1725,13 @@ class _HomePageState extends State<HomePage> {
             contentPadding: EdgeInsets.zero,
           ),
         ),
-        if (Platform.isAndroid)
+        if (Platform.isAndroid || Platform.isIOS)
           PopupMenuItem(
             value: _QueueMenuAction.saveAllToGallery,
             enabled: _canEditQueue && _convertedCount > 0,
             child: const ListTile(
               leading: Icon(Icons.photo_library),
-              title: Text('全部保存到图库'),
+              title: Text('全部保存到相册'),
               contentPadding: EdgeInsets.zero,
             ),
           ),
@@ -1761,7 +1766,9 @@ class _HomePageState extends State<HomePage> {
     final primaryAction = _isProcessing
         ? _cancelConversion
         : (_canStart ? _startConversion : null);
+    final showSaveAll = !_isProcessing && _convertedCount > 0;
 
+    // 两侧的辅助动作用纯图标按钮，给中间的主按钮留足文字空间，避免换行。
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
@@ -1772,12 +1779,10 @@ class _HomePageState extends State<HomePage> {
         minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
         child: Row(
           children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                label: const Text('添加文件'),
-                onPressed: _canEditQueue ? _addFiles : null,
-              ),
+            IconButton.filledTonal(
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              tooltip: '添加文件',
+              onPressed: _canEditQueue ? _addFiles : null,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1787,6 +1792,14 @@ class _HomePageState extends State<HomePage> {
                 onPressed: primaryAction,
               ),
             ),
+            if (showSaveAll) ...[
+              const SizedBox(width: 12),
+              IconButton.filledTonal(
+                icon: const Icon(Icons.photo_library_outlined),
+                tooltip: '全部保存到相册',
+                onPressed: _saveAllToGallery,
+              ),
+            ],
           ],
         ),
       ),
@@ -2112,7 +2125,7 @@ class _HomePageState extends State<HomePage> {
               },
               onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
               onRevealOutput: () {
-                if (Platform.isAndroid) {
+                if (Platform.isAndroid || Platform.isIOS) {
                   _showOutputActions(_queue[index]);
                 } else {
                   _revealInExplorer(_queue[index].outputPath);
@@ -2133,7 +2146,7 @@ class _HomePageState extends State<HomePage> {
   /// - Everything else → no-op
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid || Platform.isIOS) {
         _showOutputActions(item);
       } else {
         _revealInExplorer(item.outputPath);
@@ -2733,12 +2746,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('GPU 硬件编码（实验）'),
+                        title: const Text('GPU 硬件编码'),
                         subtitle: Text(
-                          '用系统硬件编码器（Android MediaCodec / macOS VideoToolbox）'
-                          '编码 gain map，大幅提速；默认关闭，开启后仅设备支持时生效'
-                          '（不支持自动回退软件编码）。开启后 gain map 降至 4:2:0'
-                          '（画质微降，但与 OPPO 图库读取兼容），并强制 OPPO 兼容模式。'
+                          '用系统硬件编码器（Android MediaCodec / Apple VideoToolbox）'
+                          '编码 gain map，速度大幅提升；设备不支持时自动回退软件编码。'
+                          '开启后 gain map 为 4:2:0（与 OPPO 图库要求一致），'
+                          '并自动开启 OPPO 兼容模式。'
                           '${switch (_hwAvailable) {
                             null => '正在检测本机编码器…',
                             true => '本机硬件编码：可用',
@@ -2803,8 +2816,27 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 8),
                     ],
 
-                    // Cache management (Android only)
-                    if (Platform.isAndroid) ...[
+                    // iOS: jump to the app's Documents in Files
+                    // (shareddocuments:// is the system URL for that).
+                    if (Platform.isIOS) ...[
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.folder_open),
+                        title: const Text('打开输出目录'),
+                        subtitle: Text(
+                          '在「文件」App 中查看已转换的照片',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        onTap: () => launchUrl(
+                          Uri.parse('shareddocuments://'),
+                        ),
+                      ),
+                    ],
+
+                    // Cache management (Android / iOS)
+                    if (Platform.isAndroid || Platform.isIOS) ...[
                       const Divider(),
                       const SizedBox(height: 8),
                       _CacheManagementTile(),
@@ -2820,9 +2852,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   }
 }
 
-/// Android: shows picked-files cache size and lets the user clear it.
-/// The file picker and share intake write OEM provider bytes into the app
-/// cache; these accumulate over time and are never auto-cleaned.
+/// Android / iOS: shows picked-files cache and output-dir sizes, with
+/// buttons to clear them. The file picker and share intake write provider
+/// bytes into the app cache; converted outputs accumulate in the app-scoped
+/// output dir; neither is auto-cleaned.
 class _CacheManagementTile extends StatefulWidget {
   @override
   State<_CacheManagementTile> createState() => _CacheManagementTileState();
@@ -2837,6 +2870,16 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  /// App-scoped output directory: Android external files dir, iOS
+  /// Documents/output. Returns null when unavailable.
+  Future<Directory?> _outputDir() async {
+    if (Platform.isIOS) {
+      final docs = await getApplicationDocumentsDirectory();
+      return Directory('${docs.path}${Platform.pathSeparator}output');
+    }
+    return await getExternalStorageDirectory();
   }
 
   Future<int> _dirSize(Directory dir) async {
@@ -2857,11 +2900,10 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
       );
       final cacheSize = await _dirSize(pickedDir);
 
-      // Output: app-specific external dir (Android scoped storage)
       int outputSize = 0;
-      final extDir = await getExternalStorageDirectory();
-      if (extDir != null) {
-        outputSize = await _dirSize(extDir);
+      final outDir = await _outputDir();
+      if (outDir != null) {
+        outputSize = await _dirSize(outDir);
       }
 
       if (mounted) {
@@ -2906,17 +2948,12 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
     );
     if (confirmed != true) return;
     try {
-      final extDir = await getExternalStorageDirectory();
-      if (extDir != null && extDir.existsSync()) {
-        await for (final entity in extDir.list()) {
+      final outDir = await _outputDir();
+      if (outDir != null && outDir.existsSync()) {
+        await for (final entity in outDir.list()) {
           if (entity is File) await entity.delete();
           if (entity is Directory) await entity.delete(recursive: true);
         }
-        // Recreate the output subdirectory so the next conversion doesn't
-        // write into a nonexistent path.
-        final outDir = Directory(
-          '${extDir.path}${Platform.pathSeparator}output',
-        );
         if (!outDir.existsSync()) await outDir.create(recursive: true);
       }
       if (mounted) setState(() => _outputSize = 0);
