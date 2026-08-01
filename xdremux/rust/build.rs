@@ -42,6 +42,7 @@ fn main() {
     // Static libx265 location per platform.
     let (link_search, lib_name) = match target_os.as_str() {
         "android" => (format!("{x265_root}/build_android"), "x265".to_string()),
+        "ios" => (format!("{x265_root}/build_ios"), "x265".to_string()),
         "windows" => (format!("{x265_root}/build_windows/Release"), "x265-static".to_string()),
         _ => (format!("{x265_root}/build_desktop"), "x265".to_string()),
     };
@@ -67,7 +68,9 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={link_search}");
-    println!("cargo:rustc-link-lib=static={lib_name}");
+    if target_os != "ios" {
+        println!("cargo:rustc-link-lib=static={lib_name}");
+    }
 
     match target_os.as_str() {
         "android" => {
@@ -84,6 +87,14 @@ fn main() {
         "macos" => {
             println!("cargo:rustc-link-lib=c++");
             println!("cargo:rustc-link-lib=m");
+        }
+        "ios" => {
+            // iOS uses libc++ (not libstdc++); m/pthread are part of libSystem.
+            // libx265.a has internal cross-references between the common and
+            // encoder objects; force-load so no object is dropped by the
+            // linker's dead-strip / ordering.
+            println!("cargo:rustc-link-lib=c++");
+            println!("cargo:rustc-link-arg=-Wl,-force_load,{link_search}/libx265.a");
         }
         _ => {
             println!("cargo:rustc-link-lib=stdc++");

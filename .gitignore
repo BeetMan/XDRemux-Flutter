@@ -99,3 +99,9 @@ final-output/
 organized/
 organized_customers.tar.gz
 apps/flutter/README.md
+
+# iOS
+apps/flutter/ios/Pods/
+apps/flutter/ios/Libraries/
+apps/flutter/ios/Runner/Frameworks/
+apps/flutter/ios/Flutter/ephemeral/
