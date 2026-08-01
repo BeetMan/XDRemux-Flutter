@@ -43,9 +43,9 @@ class HardwareEncodeService {
   /// preserving input order. Returns null if any tile fails to encode.
   static Future<List<Uint8List>?> encodeTiles(List<TileInput> tiles) async {
     if (tiles.isEmpty) return <Uint8List>[];
-    // macOS VideoToolbox: reset the "first tile" flag so this batch's first
+    // macOS/iOS VideoToolbox: reset the "first tile" flag so this batch's first
     // tile carries VPS/SPS/PPS for hvcC extraction. No-op on Android.
-    if (Platform.isMacOS) {
+    if (Platform.isMacOS || Platform.isIOS) {
       try {
         await _channel.invokeMethod<void>('reset');
       } catch (_) {}

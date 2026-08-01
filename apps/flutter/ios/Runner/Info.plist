@@ -18,6 +18,10 @@
 	<string>xdremux</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>保存转换后的 HDR 照片到相册</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>读取相册中的 HEIC 照片进行 HDR 转换</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>

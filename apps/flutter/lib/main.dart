@@ -193,7 +193,8 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       _version = 'core error: $e';
     }
-    // Android: resolve app-specific external output directory
+    // Mobile: resolve the app-scoped output directory.
+    // Android: app-specific external storage. iOS: Documents/ (sandboxed).
     if (Platform.isAndroid) {
       try {
         final dir = await getExternalStorageDirectory();
@@ -206,6 +207,15 @@ class _HomePageState extends State<HomePage> {
           if (!outDir.existsSync()) outDir.createSync(recursive: true);
           _androidOutputDir = outDir.path;
         }
+      } catch (_) {}
+    } else if (Platform.isIOS) {
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        final outDir = Directory(
+          '${dir.path}${Platform.pathSeparator}output',
+        );
+        if (!outDir.existsSync()) outDir.createSync(recursive: true);
+        _androidOutputDir = outDir.path;
       } catch (_) {}
     }
     if (mounted) setState(() {});
@@ -866,11 +876,11 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Android (MediaCodec) + macOS (VideoToolbox) + toggle on: try the
-      // hardware encode path. Any failure falls back to the proven software
-      // path so conversion never silently breaks.
+      // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
+      // try the hardware encode path. Any failure falls back to the proven
+      // software path so conversion never silently breaks.
       Map<String, dynamic>? result;
-      if ((Platform.isAndroid || Platform.isMacOS) &&
+      if ((Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
         result = await _convertOneHardware(item, runConfig);
@@ -1178,8 +1188,10 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    // Android: optional auto-save of every converted output to the gallery.
-    if (Platform.isAndroid && _config.autoSaveToGallery && _convertedCount > 0) {
+    // Mobile: optional auto-save of every converted output to the gallery.
+    if ((Platform.isAndroid || Platform.isIOS) &&
+        _config.autoSaveToGallery &&
+        _convertedCount > 0) {
       _saveAllConvertedToGallery().then((result) {
         if (result == null) return;
         final (saved, failed) = result;
@@ -1396,8 +1408,8 @@ class _HomePageState extends State<HomePage> {
     } else if (Platform.isLinux) {
       // Open containing directory
       Process.run('xdg-open', [File(path).parent.path]);
-    } else if (Platform.isAndroid) {
-      // Android: open file with system default app (Gallery/file viewer).
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      // Mobile: open file with system default app (Gallery/file viewer).
       FileActionService.openFile(path).then((ok) {
         if (!ok && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1421,7 +1433,7 @@ class _HomePageState extends State<HomePage> {
       Process.run('explorer', ['/select,', outputs.first]);
     } else if (Platform.isMacOS) {
       Process.run('open', ['-R', outputs.first]);
-    } else if (Platform.isAndroid) {
+    } else if (Platform.isAndroid || Platform.isIOS) {
       _revealInExplorer(outputs.first);
     }
   }
@@ -2296,7 +2308,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     super.initState();
     _cfg = widget.config.copy();
     _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
-    if (Platform.isAndroid || Platform.isMacOS) {
+    if (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) {
       HardwareEncodeService.isAvailable().then((ok) {
         if (mounted) setState(() => _hwAvailable = ok);
       });
@@ -2469,10 +2481,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     const SizedBox(height: 20),
 
                     // Output directory — desktop only. Android scoped storage
-                    // makes an arbitrary writable directory impossible without
-                    // MANAGE_EXTERNAL_STORAGE; output goes to the app-specific
-                    // dir and is exported via 保存到图库 / 分享.
-                    if (!Platform.isAndroid) ...[
+                    // and the iOS sandbox both make an arbitrary writable
+                    // directory impossible; output goes to the app-scoped dir
+                    // and is exported via 保存到图库 / 分享.
+                    if (!Platform.isAndroid && !Platform.isIOS) ...[
                       Row(
                         children: [
                           Expanded(
@@ -2509,10 +2521,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: Text(
-                        Platform.isAndroid ? '按拍摄模式分相册' : '按拍摄模式分目录输出',
+                        (Platform.isAndroid || Platform.isIOS)
+                            ? '按拍摄模式分相册'
+                            : '按拍摄模式分目录输出',
                       ),
                       subtitle: Text(
-                        Platform.isAndroid
+                        (Platform.isAndroid || Platform.isIOS)
                             ? '保存到图库时按"大师模式 / 人像 / 夜景"等分相册。'
                             : '将已识别的照片写入"大师模式 / 人像 / 夜景"等子目录。',
                       ),
@@ -2661,7 +2675,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       },
                     ),
                     const SizedBox(height: 4),
-                    if (!Platform.isAndroid)
+                    if (!Platform.isAndroid && !Platform.isIOS)
                       Text(
                         '设置输出目录后，后缀将被忽略。',
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -2670,13 +2684,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                     const SizedBox(height: 20),
 
-                    // Auto-save to gallery (Android only)
-                    if (Platform.isAndroid) ...[
+                    // Auto-save to gallery (mobile: Android/iOS)
+                    if (Platform.isAndroid || Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('转换完成后自动保存到图库'),
                         subtitle: Text(
-                          '批量转换结束后自动存入 Pictures（遵循分相册设置）。',
+                          '批量转换结束后自动存入相册（遵循分相册设置）。',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.autoSaveToGallery,
@@ -2712,9 +2726,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 8),
                     ],
 
-                    // Hardware encoding toggle (Android MediaCodec / macOS
-                    // VideoToolbox, experimental)
-                    if (Platform.isAndroid || Platform.isMacOS) ...[
+                    // Hardware encoding toggle (Android MediaCodec / Apple
+                    // VideoToolbox on macOS+iOS, experimental)
+                    if (Platform.isAndroid ||
+                        Platform.isMacOS ||
+                        Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('GPU 硬件编码（实验）'),
