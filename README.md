@@ -4,6 +4,8 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
+> 目前主要适配验证于 **OPPO Find X8 Ultra 大师模式**拍摄的照片，此机型/模式已充分验证（含 OPPO 相册回读）。其他拍摄模式或机型如有转换异常，欢迎提交 [Issue](https://github.com/BeetMan/XDRemux-Flutter/issues) 反馈（附上原图与机型/模式信息）。
+
 **[下载 v0.2.2（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
 
 ## 截图
