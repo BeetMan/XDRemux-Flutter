@@ -36,6 +36,23 @@ struct OutputConfig {
     tmap_clli: Vec<u8>,
 }
 
+/// Locate the source Exif item and apply the OPPO UserComment patch to the
+/// source mdat payload, confined to the Exif iloc extent (Swift
+/// `applyOppoUserCommentPatch` behaviour). Returns `None` when no patch is
+/// wanted, the Exif item is absent, or the patch would not apply.
+fn patch_oppo_usercomment(
+    parsed: &ParsedSource,
+    source_mdat: &mut Vec<u8>,
+    mdat_data_start: usize,
+    oppo_compat: OppoCompat,
+) -> Option<exif::OppoUserCommentPatch> {
+    if !oppo_compat.wants_patch() {
+        return None;
+    }
+    let exif_entry = exif::find_exif_iloc_entry(&parsed.items, &parsed.iloc_entries)?;
+    exif::apply_oppo_usercomment_patch(source_mdat, mdat_data_start, exif_entry, oppo_compat)
+}
+
 // ---------------------------------------------------------------------------
 // LHDR output
 // ---------------------------------------------------------------------------
@@ -163,11 +180,7 @@ pub fn write_lhdr_iso_output(
     };
 
     // OPPO UserComment patch
-    let patch = if oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat)
-    } else {
-        None
-    };
+    let patch = patch_oppo_usercomment(&parsed, &mut source_mdat, mdat.data_start as usize, oppo_compat);
 
     assemble_and_write(
         source_data,
@@ -282,11 +295,7 @@ pub fn write_uhdr_iso_output(
     };
 
     // OPPO UserComment patch
-    let patch = if oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat)
-    } else {
-        None
-    };
+    let patch = patch_oppo_usercomment(&parsed, &mut source_mdat, mdat.data_start as usize, oppo_compat);
 
     assemble_and_write(
         source_data,
@@ -608,11 +617,12 @@ pub fn assemble_prepared_tiles(
         tmap_clli: crate::iso21496::make_iso_clli_box(&iso_meta, true),
     };
 
-    let patch = if prepared.oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, prepared.oppo_compat)
-    } else {
-        None
-    };
+    let patch = patch_oppo_usercomment(
+        &parsed,
+        &mut source_mdat,
+        mdat.data_start as usize,
+        prepared.oppo_compat,
+    );
 
     assemble_and_write(
         &prepared.source,
@@ -968,12 +978,12 @@ fn assemble_and_write(
     parsed: &ParsedSource,
     idat_opt: Option<BoxHeader>,
     source_mdat: &[u8],
-    // OPPO UserComment patch info: (offset in patched source_mdat, byte delta).
-    // The patch inserts/removes bytes inside source_mdat (usually in the EXIF
-    // UserComment), so every cm=0 extent whose source-relative offset falls
-    // after the original patch point must shift by delta; items at or before it
-    // (the EXIF item itself) keep their layout.
-    patch: Option<(usize, i64)>,
+    // OPPO UserComment patch. The patch only changes the Exif item's payload
+    // (value appended to the item end), so cm=0 extents are adjusted with the
+    // Swift `adjustedExtentForOppoUserCommentPatch` rule: before the Exif item
+    // → unchanged; after → shifted by delta; the Exif item itself → length
+    // grows by delta with offset kept.
+    patch: Option<exif::OppoUserCommentPatch>,
     mask_width: u32,
     mask_height: u32,
     cols: u32,
@@ -1238,6 +1248,7 @@ fn assemble_and_write(
 
     // iloc
     let mut all_iloc: Vec<IlocEntry> = parsed.iloc_entries.clone();
+    let source_iloc_count = all_iloc.len();
     for (i, tile) in cfg.tile_payloads.iter().enumerate() {
         all_iloc.push(IlocEntry {
             item_id: cfg.tile_ids[i],
@@ -1294,31 +1305,46 @@ fn assemble_and_write(
     // --- Fix iloc offsets ---
     // `mdat.data_start` is the source mdat content start; `new_mdat_data_start`
     // is the new mdat content start. Source items are byte-for-byte copies, but
-    // the OPPO UserComment patch may have inserted bytes inside source_mdat.
-    // `patch.0` is the patch point in the PATCHED source_mdat, so its original
-    // position is `patch.0 - patch.1`. Items whose source-relative offset is
-    // beyond that point shift by the patch delta; earlier items keep layout.
+    // the OPPO UserComment patch only grew the Exif item's payload. Each cm=0
+    // extent is adjusted with the Swift `adjustedExtentForOppoUserCommentPatch`
+    // rule, then shifted by `file_delta` into the new file layout.
     let file_delta = new_mdat_data_start as i64 - mdat.data_start as i64;
     let mut final_iloc: Vec<IlocEntry> = all_iloc
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(index, e)| {
             if e.construction_method == 0 {
-                IlocEntry {
-                    item_id: e.item_id,
-                    construction_method: e.construction_method,
-                    data_reference_index: e.data_reference_index,
-                    extents: e
-                        .extents
-                        .iter()
-                        .map(|(off, len)| {
-                            let off_rel = *off as i64 - mdat.data_start as i64;
-                            let shift = match patch {
-                                Some((start, delta)) if off_rel > (start as i64 - delta) => delta,
-                                _ => 0,
-                            };
-                            ((*off as i64 + file_delta + shift) as u64, *len)
-                        })
-                        .collect(),
+                // Only source cm=0 extents carry real offsets that shift under
+                // the UserComment patch. Newly appended gain tiles use offset 0
+                // placeholders (their real offsets are fixed below), so they
+                // must not run through adjusted_extent_for_patch.
+                if index < source_iloc_count {
+                    IlocEntry {
+                        item_id: e.item_id,
+                        construction_method: e.construction_method,
+                        data_reference_index: e.data_reference_index,
+                        extents: e
+                            .extents
+                            .iter()
+                            .map(|(off, len)| {
+                                let (adj_off, adj_len) = exif::adjusted_extent_for_patch(
+                                    *off,
+                                    *len,
+                                    patch.as_ref(),
+                                )
+                                .expect("OPPO UserComment patch crosses an item extent boundary");
+                                let shifted = adj_off as i64 + file_delta;
+                                ((shifted as u64), adj_len)
+                            })
+                            .collect(),
+                    }
+                } else {
+                    IlocEntry {
+                        item_id: e.item_id,
+                        construction_method: e.construction_method,
+                        data_reference_index: e.data_reference_index,
+                        extents: e.extents.clone(),
+                    }
                 }
             } else {
                 e.clone()

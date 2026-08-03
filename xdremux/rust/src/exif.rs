@@ -452,171 +452,234 @@ pub fn adjust_oppo_usercomment(tag: &TagFlag, mode: OppoCompat) -> Option<(usize
     Some((tag.digits_start, tag.digits_end, replacement))
 }
 
-/// Apply the OPPO UserComment patch to a mutable byte buffer.
+/// Result of patching the OPPO UserComment inside the source Exif item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OppoUserCommentPatch {
+    /// Absolute offset range (in the source file) of the Exif item extent
+    /// whose payload grew/shrunk.
+    pub source_range: (usize, usize),
+    /// Byte delta applied to the Exif extent (positive = grew).
+    pub delta: i64,
+}
+
+/// Locate the iloc entry of the source Exif item.
+pub fn find_exif_iloc_entry<'a>(
+    items: &'a [ItemInfo],
+    iloc_entries: &'a [IlocEntry],
+) -> Option<&'a IlocEntry> {
+    let exif_id = items.iter().find(|item| item.itype == "Exif")?.item_id;
+    iloc_entries
+        .iter()
+        .find(|entry| entry.item_id == exif_id)
+}
+
+/// Apply the OPPO UserComment patch to the source mdat payload, confined to
+/// the Exif item extent. Ported from Swift `applyOppoUserCommentPatch`.
 ///
-/// Finds the first tag-flag, computes the adjustment for `mode`, and replaces
-/// the digit portion in-place. If the replacement width differs from the
-/// original, the buffer is resized (only works with `Vec<u8>`, not plain slices).
+/// The Exif item is located via its iloc extent (construction method 0), the
+/// UserComment entry is found by walking the TIFF IFD chain, and the adjusted
+/// value is **appended to the end of the Exif payload** with the entry's count
+/// and offset rewritten. Bytes outside the Exif item (GPS sub-IFD tables,
+/// primary-image tiles, later items) are never touched, so a length change only
+/// shifts the item extent — not the surrounding data.
 ///
-/// Returns `(patch_offset, byte_delta)` if a patch was applied, or `None`
-/// if no tag-flag was found or no change was needed.
-pub fn apply_oppo_usercomment_patch_vec(
-    data: &mut Vec<u8>,
+/// `mdat_data_start` is the source mdat content start (matching the absolute
+/// extent offsets returned by `parse_iloc`).
+pub fn apply_oppo_usercomment_patch(
+    mdat_payload: &mut Vec<u8>,
+    mdat_data_start: usize,
+    exif_entry: &IlocEntry,
     mode: OppoCompat,
-) -> Option<(usize, i64)> {
-    let tags = find_oppo_tagflags(data);
-    if tags.is_empty() {
+) -> Option<OppoUserCommentPatch> {
+    if exif_entry.construction_method != 0 || exif_entry.extents.len() != 1 {
+        return None;
+    }
+    let (offset, length) = exif_entry.extents[0];
+    if length == 0 {
+        return None;
+    }
+    let local_start = offset as i64 - mdat_data_start as i64;
+    if local_start < 0 {
+        return None;
+    }
+    let local_start = local_start as usize;
+    let local_end = local_start.checked_add(length as usize)?;
+    if local_end > mdat_payload.len() {
+        return None;
+    }
+    let mut exif_payload = mdat_payload[local_start..local_end].to_vec();
+    if exif_payload.len() < 12 {
         return None;
     }
 
-    let tag = &tags[0];
-    let (start, end, replacement) = adjust_oppo_usercomment(tag, mode)?;
-
-    let orig_len = end - start;
-    let new_len = replacement.len();
-    let delta = new_len as i64 - orig_len as i64;
-
-    // Replace in-place, shifting trailing data if needed
-    data.splice(start..end, replacement);
-
-    // The splice shifted every byte after the patch point. EXIF data stores
-    // absolute file offsets inside its TIFF IFD entries (and next-IFD
-    // pointers); any of them that fall after the patch point must be
-    // adjusted so the EXIF structure stays valid. Skipping this makes other
-    // parsers (Android/OPPO gallery, ffprobe) read garbage.
-    if delta != 0 {
-        fix_tiff_offsets_after_patch(data, start, delta);
+    // TIFF byte-order marker sits after the 4-byte Exif-to-TIFF offset field
+    // ("Exif\0\0"). Swift reads that field as a BE u32; OPPO files use 6.
+    let tiff_offset = u32::from_be_bytes(exif_payload[0..4].try_into().expect("4-byte field")) as usize;
+    let tiff_start = 4 + tiff_offset;
+    if tiff_start < 4 || tiff_start + 8 > exif_payload.len() {
+        return None;
     }
-
-    Some((start, delta))
-}
-
-/// Rewrite TIFF IFD value offsets and next-IFD pointers that point past
-/// `patch_pos` so they account for the `delta` bytes inserted/removed there.
-/// Walks IFD0, the EXIF/GPS sub-IFDs it points to, and the next-IFD chain.
-///
-/// `patch_pos` is the patch point in the PATCHED buffer; its pre-patch position
-/// is `patch_pos - delta`. TIFF value offsets were written pre-patch, so that
-/// is the boundary they must be compared against. TIFF container offsets (the
-/// absolute positions of IFD entries) are unaffected as long as the patch sits
-/// inside the TIFF payload — which is the case for the OPPO UserComment patch.
-fn fix_tiff_offsets_after_patch(data: &mut [u8], patch_pos: usize, delta: i64) {
-    let patch_orig = patch_pos as i64 - delta;
-    // Find the TIFF byte-order marker. The Exif item is either bare TIFF
-    // ("II"/"MM") or prefixed with a 4-byte offset + "Exif\0\0".
-    let tiff_start = (0..patch_orig.clamp(0, data.len() as i64) as usize)
-        .rev()
-        .find(|&i| data[i] == b'I' && (data[i + 1] == b'I' || data[i + 1] == b'M'))
-        .filter(|&i| matches!(&data[i + 2..i + 4], b"*\x00" | b"\x00*"))
-        .unwrap_or(0);
-
-    if tiff_start + 8 > data.len() {
-        return;
-    }
-    let little_endian = match &data[tiff_start..tiff_start + 2] {
+    let little_endian = match &exif_payload[tiff_start..tiff_start + 2] {
         b"II" => true,
         b"MM" => false,
-        _ => return,
+        _ => return None,
+    };
+    let Ok(magic) = read_tiff_u16(&exif_payload, tiff_start + 2, little_endian) else {
+        return None;
+    };
+    if magic != 42 {
+        return None;
+    }
+    let Ok(first_ifd) = read_tiff_u32(&exif_payload, tiff_start + 4, little_endian) else {
+        return None;
     };
 
+    // Walk the IFD chain (dedup by relative offset, cap entry count) to find
+    // the UserComment entry (tag 0x9286), following ExifIFD/GPSIFD pointers.
+    let mut pending = vec![first_ifd as usize];
     let mut visited = std::collections::HashSet::new();
-    let mut stack: Vec<usize> = Vec::new();
-    let ifd0 = match read_tiff_u32(data, tiff_start + 4, little_endian) {
-        Ok(off) if off != 0 => tiff_start + off as usize,
-        _ => return,
-    };
-    stack.push(ifd0);
-
-    while let Some(ifd_abs) = stack.pop() {
-        // Only walk IFDs inside the Exif TIFF (before the patch point). The
-        // primary-image HEVC tiles follow the patch; their byte patterns can
-        // look like IFD entries whose "offset" fields would then get rewritten
-        // (+delta), corrupting the tiles.
-        if ifd_abs as i64 > patch_orig {
+    let mut user_comment_entry: Option<usize> = None;
+    while let Some(relative_ifd) = pending.pop() {
+        if user_comment_entry.is_some() {
+            break;
+        }
+        if !visited.insert(relative_ifd) {
             continue;
         }
-        if !visited.insert(ifd_abs) || ifd_abs + 2 > data.len() {
-            continue;
-        }
-        let Ok(entry_count) = read_tiff_u16(data, ifd_abs, little_endian) else {
-            continue;
+        let ifd = tiff_start + relative_ifd;
+        let Ok(count) = read_tiff_u16(&exif_payload, ifd, little_endian) else {
+            return None;
         };
-        for index in 0..entry_count {
-            let entry = ifd_abs + 2 + index as usize * 12;
-            if entry + 12 > data.len() {
+        if count > 4096 {
+            return None;
+        }
+        for index in 0..count as usize {
+            let entry = ifd + 2 + index * 12;
+            if entry + 12 > exif_payload.len() {
+                return None;
+            }
+            let Ok(tag) = read_tiff_u16(&exif_payload, entry, little_endian) else {
+                return None;
+            };
+            if tag == 0x9286 {
+                user_comment_entry = Some(entry);
                 break;
             }
-            let Ok(field_type) = read_tiff_u16(data, entry + 2, little_endian) else {
-                continue;
-            };
-            let Ok(count) = read_tiff_u32(data, entry + 4, little_endian) else {
-                continue;
-            };
-            let value_size = tiff_field_size(field_type)
-                .checked_mul(count as usize)
-                .unwrap_or(usize::MAX);
-            if value_size > 4 {
-                // value field stores a data offset relative to the TIFF start
-                let val_abs = tiff_start + read_tiff_u32(data, entry + 8, little_endian).unwrap_or(0) as usize;
-                if val_abs as i64 > patch_orig {
-                    let new_off = (val_abs as i64 + delta) as usize - tiff_start;
-                    let bytes = if little_endian {
-                        (new_off as u32).to_le_bytes()
-                    } else {
-                        (new_off as u32).to_be_bytes()
-                    };
-                    data[entry + 8..entry + 12].copy_from_slice(&bytes);
-                }
-            } else {
-                // Sub-IFD pointers (ExifIFD=0x8769, GPSIFD=0x8825, Interop) live inline.
-                let Ok(tag) = read_tiff_u16(data, entry, little_endian) else { continue };
-                let val_abs = tiff_start + read_tiff_u32(data, entry + 8, little_endian).unwrap_or(0) as usize;
-                if tag == 0x8769 || tag == 0x8825 {
-                    if val_abs as i64 > patch_orig {
-                        let new_off = (val_abs as i64 + delta) as usize - tiff_start;
-                        let bytes = if little_endian {
-                            (new_off as u32).to_le_bytes()
-                        } else {
-                            (new_off as u32).to_be_bytes()
-                        };
-                        data[entry + 8..entry + 12].copy_from_slice(&bytes);
-                    }
-                    if val_abs < data.len() {
-                        stack.push(val_abs);
-                    }
-                }
-            }
-        }
-        // next IFD pointer
-        let next_abs = ifd_abs + 2 + entry_count as usize * 12;
-        if next_abs + 4 <= data.len() {
-            let next_off = read_tiff_u32(data, next_abs, little_endian).unwrap_or(0) as usize;
-            if next_off != 0 {
-                let next_abs_2 = tiff_start + next_off;
-                if next_abs_2 as i64 > patch_orig {
-                    let new_off = (next_abs_2 as i64 + delta) as usize - tiff_start;
-                    let bytes = if little_endian {
-                        (new_off as u32).to_le_bytes()
-                    } else {
-                        (new_off as u32).to_be_bytes()
-                    };
-                    data[next_abs..next_abs + 4].copy_from_slice(&bytes);
-                }
-                stack.push(next_abs_2);
+            if tag == 0x8769 || tag == 0x8825 {
+                let Ok(child) = read_tiff_u32(&exif_payload, entry + 8, little_endian) else {
+                    return None;
+                };
+                pending.push(child as usize);
             }
         }
     }
+
+    let entry = user_comment_entry?;
+    let Ok(field_type) = read_tiff_u16(&exif_payload, entry + 2, little_endian) else {
+        return None;
+    };
+    if field_type != 7 {
+        return None;
+    }
+    let Ok(old_count) = read_tiff_u32(&exif_payload, entry + 4, little_endian) else {
+        return None;
+    };
+    if old_count == 0 {
+        return None;
+    }
+    let Ok(old_value_offset) = read_tiff_u32(&exif_payload, entry + 8, little_endian) else {
+        return None;
+    };
+    let old_value_start = if old_count <= 4 {
+        entry + 8
+    } else {
+        tiff_start + old_value_offset as usize
+    };
+    let old_value_end = old_value_start.checked_add(old_count as usize)?;
+    if old_value_end > exif_payload.len() {
+        return None;
+    }
+    let mut new_value = exif_payload[old_value_start..old_value_end].to_vec();
+
+    // Find the OPPO tag-flag (prefix + digits) inside the UserComment value.
+    let tags = find_oppo_tagflags(&new_value);
+    if tags.is_empty() {
+        return None;
+    }
+    let tag = &tags[0];
+    let (digits_start, digits_end, replacement) = adjust_oppo_usercomment(tag, mode)?;
+
+    // Rebuild the value: bytes before prefix + prefix + new digits + trailing.
+    let mut rebuilt =
+        Vec::with_capacity(new_value.len() + replacement.len().saturating_sub(digits_end - digits_start));
+    rebuilt.extend_from_slice(&new_value[..tag.offset]);
+    rebuilt.extend_from_slice(&new_value[tag.offset..digits_start]);
+    rebuilt.extend_from_slice(&replacement);
+    rebuilt.extend_from_slice(&new_value[digits_end..]);
+    new_value = rebuilt;
+
+    // Append the adjusted value at the end of the Exif item, 4-byte aligned.
+    while exif_payload.len() % 4 != 0 {
+        exif_payload.push(0);
+    }
+    let new_value_offset = exif_payload.len() - tiff_start;
+    let new_value_len = new_value.len();
+    exif_payload.append(&mut new_value);
+
+    // Rewrite count + offset in the UserComment entry.
+    let count_bytes = if little_endian {
+        (new_value_len as u32).to_le_bytes()
+    } else {
+        (new_value_len as u32).to_be_bytes()
+    };
+    exif_payload[entry + 4..entry + 8].copy_from_slice(&count_bytes);
+    let offset_bytes = if little_endian {
+        (new_value_offset as u32).to_le_bytes()
+    } else {
+        (new_value_offset as u32).to_be_bytes()
+    };
+    exif_payload[entry + 8..entry + 12].copy_from_slice(&offset_bytes);
+
+    let delta = exif_payload.len() as i64 - length as i64;
+    let source_range = (offset as usize, (offset + length) as usize);
+    mdat_payload.splice(local_start..local_end, exif_payload);
+    Some(OppoUserCommentPatch {
+        source_range,
+        delta,
+    })
 }
 
-/// TIFF field type byte widths.
-fn tiff_field_size(field_type: u16) -> usize {
-    match field_type {
-        1 | 2 | 6 | 7 => 1,
-        3 | 8 => 2,
-        4 | 9 | 11 => 4,
-        5 | 10 | 12 => 8,
-        _ => 0,
+/// Adjust a construction-method-0 item extent for the bytes inserted/removed
+/// inside the Exif item. Ported from Swift `adjustedExtentForOppoUserCommentPatch`.
+///
+/// - extent entirely before the Exif item → unchanged
+/// - extent entirely after → offset shifted by `delta`
+/// - the Exif item itself (patch lies inside it) → length grows by `delta`, offset kept
+/// - any other extent straddling the boundary → `None` (invalid container)
+pub fn adjusted_extent_for_patch(
+    offset: u64,
+    length: u64,
+    patch: Option<&OppoUserCommentPatch>,
+) -> Option<(u64, u64)> {
+    let Some(patch) = patch else {
+        return Some((offset, length));
+    };
+    if patch.delta == 0 {
+        return Some((offset, length));
     }
+    let upper = offset.checked_add(length)?;
+    let patch_lower = patch.source_range.0 as u64;
+    let patch_upper = patch.source_range.1 as u64;
+    if upper <= patch_lower {
+        return Some((offset, length));
+    }
+    if offset >= patch_upper {
+        return Some(((offset as i128 + patch.delta as i128) as u64, length));
+    }
+    if offset <= patch_lower && upper >= patch_upper {
+        return Some((offset, (length as i128 + patch.delta as i128) as u64));
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -829,24 +892,121 @@ mod tests {
         assert!(adjust_oppo_usercomment(&tags[0], OppoCompat::Auto).is_none());
     }
 
-    // ---------- apply_oppo_usercomment_patch_vec ----------
+    // ---------- apply_oppo_usercomment_patch ----------
 
     #[test]
     fn apply_patch_modifies_bytes() {
-        let mut data = make_test_data("ASCIIOplus_", 0x00000100);
-        let result = apply_oppo_usercomment_patch_vec(&mut data, OppoCompat::On);
-        assert!(result.is_some());
+        // Build a minimal Exif payload: "Exif\0\0" + TIFF with IFD0 → ExifIFD →
+        // UserComment. Confine it to an iloc extent; the patch must append the
+        // new value to the extent and never touch the trailing marker.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&6u32.to_be_bytes()); // Exif→TIFF offset
+        payload.extend_from_slice(b"Exif\0\0");
+        let tiff_origin = payload.len(); // == 10
+        payload.extend_from_slice(b"II");
+        payload.extend_from_slice(&42u16.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes()); // IFD0 at +8
 
-        // Re-parse to verify the value was modified
-        let tags = find_oppo_tagflags(&data);
-        assert_eq!(tags[0].value, 0x20000100);
+        // IFD0 (1 entry): ExifIFD sub-IFD pointer. The pointer value must be
+        // recorded after the whole IFD0 (entries + next-IFD) is laid out.
+        let ifd0_entry = payload.len();
+        payload.extend_from_slice(&1u16.to_le_bytes()); // entry count
+        payload.extend_from_slice(&0x8769u16.to_le_bytes()); // ExifIFD tag
+        payload.extend_from_slice(&4u16.to_le_bytes()); // type LONG
+        payload.extend_from_slice(&1u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes()); // placeholder offset
+        payload.extend_from_slice(&0u32.to_le_bytes()); // next IFD = 0
+        let exif_ifd_rel = (payload.len() - tiff_origin) as u32;
+        payload[ifd0_entry + 10..ifd0_entry + 14].copy_from_slice(&exif_ifd_rel.to_le_bytes());
+
+        // ExifIFD (1 entry): UserComment type=7, value out-of-line.
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&0x9286u16.to_le_bytes());
+        payload.extend_from_slice(&7u16.to_le_bytes());
+        payload.extend_from_slice(&21u32.to_le_bytes()); // count of value bytes
+        let uc_entry_slot = payload.len();
+        payload.extend_from_slice(&0u32.to_le_bytes()); // placeholder offset
+        let uc_offset_rel = (payload.len() - tiff_origin) as u32;
+        let slot = &mut payload[uc_entry_slot..uc_entry_slot + 4];
+        slot.copy_from_slice(&uc_offset_rel.to_le_bytes());
+        payload.extend_from_slice(b"ASCII\0\0\0oplus_1441792");
+        // trailing bytes that must survive untouched at their original offset
+        let trailing = b"TAIL-DATA";
+        let trailing_start = payload.len();
+        payload.extend_from_slice(trailing);
+        assert_eq!(uc_entry_slot + 4 + 21, trailing_start, "value is 21 bytes after the offset field");
+
+        let extent_off = 100u64;
+        let mut mdat = vec![0u8; extent_off as usize];
+        mdat.extend_from_slice(&payload);
+        let entry = IlocEntry {
+            item_id: 7,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(extent_off, payload.len() as u64)],
+        };
+        let patch = apply_oppo_usercomment_patch(&mut mdat, 0, &entry, OppoCompat::On).unwrap();
+        assert!(patch.delta > 0);
+        assert_eq!(patch.source_range, (100, 100 + payload.len()));
+
+        // The UserComment entry must now point at the new value appended at the
+        // end of the item (the old value bytes remain as dead data, matching
+        // Swift), and the trailing marker stays untouched.
+        let new_payload = &mdat[100..];
+        let tiff = tiff_start_of(&new_payload);
+        let le = new_payload[tiff] == b'I';
+        let ifd0 = read_tiff_u32(new_payload, tiff + 4, le).unwrap() as usize;
+        let exif_ifd_rel = read_tiff_u32(new_payload, tiff + ifd0 + 10, le).unwrap() as usize;
+        let exif_ifd = tiff + exif_ifd_rel;
+        let entry_off = exif_ifd + 2;
+        assert_eq!(read_tiff_u16(new_payload, entry_off, le).unwrap(), 0x9286);
+        assert_eq!(read_tiff_u16(new_payload, entry_off + 2, le).unwrap(), 7);
+        let count = read_tiff_u32(new_payload, entry_off + 4, le).unwrap();
+        let val_off = read_tiff_u32(new_payload, entry_off + 8, le).unwrap() as usize;
+        let val_start = tiff + val_off;
+        let value = String::from_utf8_lossy(&new_payload[val_start..val_start + count as usize]);
+        assert!(value.contains("538312704"), "got: {value}");
+        assert_eq!(
+            &new_payload[trailing_start..trailing_start + trailing.len()],
+            trailing
+        );
+    }
+
+    /// Locate the TIFF byte-order marker in an Exif item payload (which may be
+    /// bare TIFF or "offset + Exif\0\0" prefixed), matching `parse_heif_exif_orientation`.
+    fn tiff_start_of(exif_blob: &[u8]) -> usize {
+        if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
+            return 0;
+        }
+        let offset = u32::from_be_bytes(exif_blob[0..4].try_into().expect("4-byte field")) as usize;
+        [offset, offset + 4]
+            .into_iter()
+            .find(|&start| {
+                exif_blob
+                    .get(start..)
+                    .is_some_and(|c| c.starts_with(b"II") || c.starts_with(b"MM"))
+            })
+            .unwrap()
     }
 
     #[test]
     fn apply_patch_no_tag_returns_none() {
-        let mut data = b"No tag here".to_vec();
-        let result = apply_oppo_usercomment_patch_vec(&mut data, OppoCompat::On);
-        assert!(result.is_none());
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&6u32.to_be_bytes());
+        payload.extend_from_slice(b"Exif\0\0");
+        payload.extend_from_slice(b"II");
+        payload.extend_from_slice(&42u16.to_le_bytes());
+        payload.extend_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes()); // no entries
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        let entry = IlocEntry {
+            item_id: 7,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, payload.len() as u64)],
+        };
+        let mut mdat = payload.clone();
+        assert!(apply_oppo_usercomment_patch(&mut mdat, 0, &entry, OppoCompat::On).is_none());
     }
 
     #[test]
