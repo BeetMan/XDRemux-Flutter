@@ -504,7 +504,8 @@ fn fix_tiff_offsets_after_patch(data: &mut [u8], patch_pos: usize, delta: i64) {
     let patch_orig = patch_pos as i64 - delta;
     // Find the TIFF byte-order marker. The Exif item is either bare TIFF
     // ("II"/"MM") or prefixed with a 4-byte offset + "Exif\0\0".
-    let tiff_start = (0..data.len().saturating_sub(4))
+    let tiff_start = (0..patch_orig.clamp(0, data.len() as i64) as usize)
+        .rev()
         .find(|&i| data[i] == b'I' && (data[i + 1] == b'I' || data[i + 1] == b'M'))
         .filter(|&i| matches!(&data[i + 2..i + 4], b"*\x00" | b"\x00*"))
         .unwrap_or(0);
@@ -527,6 +528,13 @@ fn fix_tiff_offsets_after_patch(data: &mut [u8], patch_pos: usize, delta: i64) {
     stack.push(ifd0);
 
     while let Some(ifd_abs) = stack.pop() {
+        // Only walk IFDs inside the Exif TIFF (before the patch point). The
+        // primary-image HEVC tiles follow the patch; their byte patterns can
+        // look like IFD entries whose "offset" fields would then get rewritten
+        // (+delta), corrupting the tiles.
+        if ifd_abs as i64 > patch_orig {
+            continue;
+        }
         if !visited.insert(ifd_abs) || ifd_abs + 2 > data.len() {
             continue;
         }
