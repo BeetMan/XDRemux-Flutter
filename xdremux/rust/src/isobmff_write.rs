@@ -13,7 +13,7 @@ use crate::container::OppoCameraTail;
 use crate::exif::{self, ExifOrientation, OppoCompat};
 use crate::isobmff::{
     self, BoxHeader, IlocEntry, IrefEntry, AUX_C_BOX, COLR_BT2020_PQ_BOX, COLR_SRGB_BOX,
-    COLR_UNSPECIFIED_BT601_BOX, DINF_BOX, PIXI_MONO8_BOX, PIXI_RGB10_BOX, PIXI_RGB8_BOX,
+    COLR_UNSPECIFIED_BT601_BOX, DINF_BOX, PIXI_RGB10_BOX, PIXI_RGB8_BOX,
 };
 
 /// Context for output assembly.
@@ -81,9 +81,12 @@ pub fn write_lhdr_iso_output(
         orientation,
     )?;
 
-    // OPPO compat: replicate gray → RGB
+    // Gain-map pixels: match the Python reference. The underlying tile data is
+    // monochrome (the OPPO mask is a single channel) and the HEVC stream is
+    // encoded gray — pyref's decoded gain-map stream is `gray` with no colour
+    // VUI. Only the container pixi declares RGB; do not force RGB encoding.
     let (hevc_pixels, pixel_bytes): (&[u8], usize) = if oppo_compat.wants_oppo_rgb() {
-        // RGB-copy for OPPO Gallery recognition
+        // OPPO Gallery reads a 4:2:0 RGB stream; replicate gray → RGB.
         let n_pixels = (gain_width * gain_height) as usize;
         let mut rgb = vec![0u8; n_pixels * 3];
         for i in 0..n_pixels {
@@ -912,7 +915,17 @@ fn tile_and_encode(
         // Convert from byte-stream (00 00 00 01 start codes) to length-prefixed
         // format (4-byte big-endian NAL length). ISOBMFF with hvcC requires
         // length-prefixed NAL units in mdat.
-        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(hevc_bs));
+        //
+        // Strip VPS/SPS/PPS (and SEI) from EVERY tile, including tile 0, so
+        // each gain-map tile is a pure IDR slice — exactly what libheif (the
+        // Python reference) writes. The decoder config lives only in hvcC;
+        // Android's gain-map path (Google Photos, OPPO gallery) fails to apply
+        // a tile that carries its own parameter sets.
+        #[cfg(not(xdremux_ffmpeg_fallback))]
+        let idr_bs = crate::hevc::drop_parameter_nals(hevc_bs);
+        #[cfg(xdremux_ffmpeg_fallback)]
+        let idr_bs = hevc_bs.to_vec();
+        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(&idr_bs));
 
         crate::progress::set_progress(3, (i + 1) as u32, total_tiles);
     }
@@ -1021,11 +1034,12 @@ fn assemble_and_write(
     let pixi10_i = append_property(PIXI_RGB10_BOX);
     let base_clli_i = append_property(&cfg.base_clli);
     let tmap_clli_i = append_property(&cfg.tmap_clli);
-    let gain_pixi_i = append_property(if cfg.oppo_rgb {
-        PIXI_RGB8_BOX
-    } else {
-        PIXI_MONO8_BOX
-    });
+    // Gain map pixi always declares RGB, matching the Python reference
+    // (write_heic_passthrough appends PIXI_RGB8_BOX for the gain map even
+    // when the underlying data is monochrome). Google Photos' Ultra HDR
+    // detection keys on the declared channel count: a pixi of 1 (mono)
+    // makes it refuse the gain-map item, while RGB is accepted.
+    let gain_pixi_i = append_property(PIXI_RGB8_BOX);
     let gain_tile_colr_i = if cfg.oppo_rgb {
         append_property(COLR_UNSPECIFIED_BT601_BOX)
     } else {
@@ -1769,17 +1783,20 @@ mod tests {
     }
 
     #[test]
-    fn gain_map_properties_match_mono_and_rgb_channel_layouts() {
+    fn gain_map_properties_match_iso_and_oppo_channel_layouts() {
+        // Both the clean (ISO) and OPPO paths declare the gain map pixi as RGB
+        // (matching the Python reference), even when the clean gain-map data
+        // is monochrome — Google Photos keys on the declared channel count.
         let mono = write_minimal_lhdr_for_properties(OppoCompat::Off);
         let mono_grid_id = mono
             .items
             .iter()
             .find(|item| item.itype == "grid")
-            .expect("generated mono gain grid")
+            .expect("generated gain grid")
             .item_id;
         assert_eq!(
             associated_property(&mono, mono_grid_id, "pixi").raw,
-            isobmff::PIXI_MONO8_BOX
+            isobmff::PIXI_RGB8_BOX
         );
         assert_eq!(
             associated_property(&mono, mono_grid_id, "colr").raw,

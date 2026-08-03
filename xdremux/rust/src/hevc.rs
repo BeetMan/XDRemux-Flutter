@@ -593,9 +593,11 @@ pub fn x265_encode_tiles(
 }
 
 /// Remove VPS/SPS/PPS NALs from a single-frame HEVC byte stream, keeping only
-/// the IDR slice. Used so gain-map tiles beyond tile 0 are pure IDR slices.
+/// the IDR slice. Used so gain-map tiles are pure IDR slices — libheif (the
+/// Python reference) writes every gain-map tile as a single IDR with no
+/// parameter sets; the decoder config lives only in hvcC.
 #[cfg(not(xdremux_ffmpeg_fallback))]
-fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
+pub fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
     let nal_3b: &[u8] = &[0, 0, 1];
     let nal_4b: &[u8] = &[0, 0, 0, 1];
     let mut out = Vec::new();
@@ -1055,10 +1057,12 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
     hvcc.push(3); // numOfArrays
 
     fn push_nal_array(hvcc: &mut Vec<u8>, nal_type: u8, nal_data: &[u8]) {
-        // array_completeness=0 (matches libheif / Python reference gain-map
-        // hvcC output). Android's MediaExtractor rejects gain-map hvcC arrays
-        // that claim completeness=1.
-        hvcc.push(nal_type & 0x3f);
+        // array_completeness=0, reserved=1 — matches the exact byte pattern
+        // pillow-heif / libheif writes for gain-map hvcC arrays (0x60/0x61/0x62
+        // for VPS/SPS/PPS). Google Photos' Ultra HDR detector compares the
+        // gain-map hvcC arrays byte-for-byte with what its own reference
+        // encoder produces; a plain 0x20 pattern (reserved=0) is rejected.
+        hvcc.push(0x40 | (nal_type & 0x3f));
         hvcc.extend_from_slice(&1u16.to_be_bytes());
         hvcc.extend_from_slice(&(nal_data.len() as u16).to_be_bytes());
         hvcc.extend_from_slice(nal_data);
@@ -1070,7 +1074,6 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
 
     Some(hvcc)
 }
-
 // ===========================================================================
 // Tests
 // ===========================================================================
