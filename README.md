@@ -259,13 +259,12 @@ cargo build --workspace --release
 | 路径 | 用途 |
 |------|------|
 | `xdremux/rust/` | Rust 核心库（含 `categorize.rs` 拍摄模式分类） |
-| `xdremux/swift-cli/` | Swift CLI（Apple ImageIO 参考实现） |
-| `xdremux/python/` | Python CLI（跨平台参考实现） |
 | `apps/flutter/` | Flutter 跨平台 App（Windows / macOS / Android） |
-| `apps/macos/XDRemuxApp/` | macOS SwiftUI App |
 | `tests/conformance/` | 跨实现一致性验证 |
 | `fixtures/` | 测试样本说明 |
 | `screenshots/` | 应用截图 |
+
+原版 Swift/Python 参考实现在上游仓库 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux)，本地不再保留副本，需要时 `git clone` 拉取。
 
 ## 未完成 / 未来计划
 
