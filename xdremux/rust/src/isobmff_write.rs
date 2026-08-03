@@ -46,7 +46,7 @@ pub fn write_lhdr_iso_output(
     mask_pixels: &[u8],
     mask_width: u32,
     mask_height: u32,
-    _meta_floats: &[f32],
+    meta_floats: &[f32],
     edr_scale: f32,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
@@ -66,12 +66,20 @@ pub fn write_lhdr_iso_output(
         idat_opt.as_ref(),
     )?;
 
-    // Gain map pixels: the OPPO `local.hdr.linear.mask` JPEG is itself the
-    // reconstructed gain map on this device generation — the mask value is
-    // already the per-pixel boost. Reconstructing it through the Reinhard
-    // knee LUT chain (designed for older mask semantics) collapses the data
-    // to near-black (mean ≈ 0.2). Use the mask pixels directly as the gain map.
-    let gainmap = mask_pixels.to_vec();
+    // Reconstruct the gain map from the OPPO mask through the Reinhard knee
+    // LUT chain, exactly like the Swift reference (GainMapReconstructor).
+    // Verified against Swift's debug output: for this x6 LHDR sample the mask
+    // (mean ≈ 46) reconstructs to a gain map with mean ≈ 31.5. Using the mask
+    // pixels directly (mean ≈ 18.6 after tiling) produces a different, brighter
+    // result that does not match Swift.
+    let gainmap = crate::gainmap::reconstruct(
+        mask_pixels,
+        mask_width as usize,
+        mask_height as usize,
+        mask_width as usize,
+        edr_scale,
+        meta_floats.first().copied().unwrap_or(3.0),
+    );
     let (mut gainmap, gain_width, gain_height) = orient_gainmap_pixels(
         &gainmap,
         mask_width,
