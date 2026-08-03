@@ -429,13 +429,25 @@ fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
 }
 
 /// Find the start of the OPPO extension region via QTI Debug marker.
+///
+/// The size header preceding the marker must be plausible (in-bounds and a
+/// sensible box length); otherwise a `QTI ` sequence inside compressed or
+/// embedded data (e.g. the HDR container in a camera JPEG) would be misread
+/// as an extension header and produce an out-of-range slice.
 fn find_extension_start(data: &[u8]) -> Result<usize, String> {
     for marker in QTI_MARKERS {
         if let Some(pos) = data.windows(marker.len()).position(|w| w == *marker) {
             if pos >= 4 {
                 let box_start = pos - 4;
                 let box_size = read_u32_be(data, box_start) as usize;
-                return Ok(box_start + box_size);
+                if box_size >= 8
+                    && box_size <= 100_000_000
+                    && box_start
+                        .checked_add(box_size)
+                        .is_some_and(|end| end <= data.len())
+                {
+                    return Ok(box_start + box_size);
+                }
             }
         }
     }
@@ -828,12 +840,32 @@ mod tests {
         let mut data = Vec::new();
         data.extend_from_slice(&ext_size.to_be_bytes()); // offset 0-4: size
         data.extend_from_slice(b"QTI Debug"); // offset 4-13: marker
-        data.extend_from_slice(&[0xAAu8; 100]); // extension content
+        data.extend_from_slice(&[0xAAu8; 200]); // extension content (≥ size)
 
         // find_extension_start finds "QTI Debug" at pos=4, reads size from pos-4=0,
         // returns pos-4 + size = 0 + 154
         let ext_start = find_extension_start(&data).unwrap();
         assert_eq!(ext_start, ext_size as usize);
+    }
+
+    #[test]
+    fn find_qti_rejects_bogus_size_header() {
+        // A `QTI ` sequence inside compressed/embedded data whose preceding
+        // 4 bytes are not a plausible box size must be ignored, not treated
+        // as an extension header (previously caused out-of-range slicing on
+        // camera JPEGs that embed an Ultra HDR container).
+        let mut data = Vec::new();
+        data.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        data.extend_from_slice(b"QTI Debug");
+        data.extend_from_slice(&[0xAAu8; 32]);
+        assert!(find_extension_start(&data).is_err());
+
+        // Sanity: the valid form still resolves.
+        let mut valid = Vec::new();
+        valid.extend_from_slice(&60u32.to_be_bytes());
+        valid.extend_from_slice(b"QTI Debug");
+        valid.extend_from_slice(&[0xAAu8; 100]);
+        assert_eq!(find_extension_start(&valid).unwrap(), 60);
     }
 
     fn make_manifest_tail(entries: &[(&str, &[u8])]) -> Vec<u8> {
