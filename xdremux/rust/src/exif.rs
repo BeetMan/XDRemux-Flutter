@@ -479,7 +479,136 @@ pub fn apply_oppo_usercomment_patch_vec(
     // Replace in-place, shifting trailing data if needed
     data.splice(start..end, replacement);
 
+    // The splice shifted every byte after the patch point. EXIF data stores
+    // absolute file offsets inside its TIFF IFD entries (and next-IFD
+    // pointers); any of them that fall after the patch point must be
+    // adjusted so the EXIF structure stays valid. Skipping this makes other
+    // parsers (Android/OPPO gallery, ffprobe) read garbage.
+    if delta != 0 {
+        fix_tiff_offsets_after_patch(data, start, delta);
+    }
+
     Some((start, delta))
+}
+
+/// Rewrite TIFF IFD value offsets and next-IFD pointers that point past
+/// `patch_pos` so they account for the `delta` bytes inserted/removed there.
+/// Walks IFD0, the EXIF/GPS sub-IFDs it points to, and the next-IFD chain.
+///
+/// `patch_pos` is the patch point in the PATCHED buffer; its pre-patch position
+/// is `patch_pos - delta`. TIFF value offsets were written pre-patch, so that
+/// is the boundary they must be compared against. TIFF container offsets (the
+/// absolute positions of IFD entries) are unaffected as long as the patch sits
+/// inside the TIFF payload — which is the case for the OPPO UserComment patch.
+fn fix_tiff_offsets_after_patch(data: &mut [u8], patch_pos: usize, delta: i64) {
+    let patch_orig = patch_pos as i64 - delta;
+    // Find the TIFF byte-order marker. The Exif item is either bare TIFF
+    // ("II"/"MM") or prefixed with a 4-byte offset + "Exif\0\0".
+    let tiff_start = (0..data.len().saturating_sub(4))
+        .find(|&i| data[i] == b'I' && (data[i + 1] == b'I' || data[i + 1] == b'M'))
+        .filter(|&i| matches!(&data[i + 2..i + 4], b"*\x00" | b"\x00*"))
+        .unwrap_or(0);
+
+    if tiff_start + 8 > data.len() {
+        return;
+    }
+    let little_endian = match &data[tiff_start..tiff_start + 2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return,
+    };
+
+    let mut visited = std::collections::HashSet::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let ifd0 = match read_tiff_u32(data, tiff_start + 4, little_endian) {
+        Ok(off) if off != 0 => tiff_start + off as usize,
+        _ => return,
+    };
+    stack.push(ifd0);
+
+    while let Some(ifd_abs) = stack.pop() {
+        if !visited.insert(ifd_abs) || ifd_abs + 2 > data.len() {
+            continue;
+        }
+        let Ok(entry_count) = read_tiff_u16(data, ifd_abs, little_endian) else {
+            continue;
+        };
+        for index in 0..entry_count {
+            let entry = ifd_abs + 2 + index as usize * 12;
+            if entry + 12 > data.len() {
+                break;
+            }
+            let Ok(field_type) = read_tiff_u16(data, entry + 2, little_endian) else {
+                continue;
+            };
+            let Ok(count) = read_tiff_u32(data, entry + 4, little_endian) else {
+                continue;
+            };
+            let value_size = tiff_field_size(field_type)
+                .checked_mul(count as usize)
+                .unwrap_or(usize::MAX);
+            if value_size > 4 {
+                // value field stores a data offset relative to the TIFF start
+                let val_abs = tiff_start + read_tiff_u32(data, entry + 8, little_endian).unwrap_or(0) as usize;
+                if val_abs as i64 > patch_orig {
+                    let new_off = (val_abs as i64 + delta) as usize - tiff_start;
+                    let bytes = if little_endian {
+                        (new_off as u32).to_le_bytes()
+                    } else {
+                        (new_off as u32).to_be_bytes()
+                    };
+                    data[entry + 8..entry + 12].copy_from_slice(&bytes);
+                }
+            } else {
+                // Sub-IFD pointers (ExifIFD=0x8769, GPSIFD=0x8825, Interop) live inline.
+                let Ok(tag) = read_tiff_u16(data, entry, little_endian) else { continue };
+                let val_abs = tiff_start + read_tiff_u32(data, entry + 8, little_endian).unwrap_or(0) as usize;
+                if tag == 0x8769 || tag == 0x8825 {
+                    if val_abs as i64 > patch_orig {
+                        let new_off = (val_abs as i64 + delta) as usize - tiff_start;
+                        let bytes = if little_endian {
+                            (new_off as u32).to_le_bytes()
+                        } else {
+                            (new_off as u32).to_be_bytes()
+                        };
+                        data[entry + 8..entry + 12].copy_from_slice(&bytes);
+                    }
+                    if val_abs < data.len() {
+                        stack.push(val_abs);
+                    }
+                }
+            }
+        }
+        // next IFD pointer
+        let next_abs = ifd_abs + 2 + entry_count as usize * 12;
+        if next_abs + 4 <= data.len() {
+            let next_off = read_tiff_u32(data, next_abs, little_endian).unwrap_or(0) as usize;
+            if next_off != 0 {
+                let next_abs_2 = tiff_start + next_off;
+                if next_abs_2 as i64 > patch_orig {
+                    let new_off = (next_abs_2 as i64 + delta) as usize - tiff_start;
+                    let bytes = if little_endian {
+                        (new_off as u32).to_le_bytes()
+                    } else {
+                        (new_off as u32).to_be_bytes()
+                    };
+                    data[next_abs..next_abs + 4].copy_from_slice(&bytes);
+                }
+                stack.push(next_abs_2);
+            }
+        }
+    }
+}
+
+/// TIFF field type byte widths.
+fn tiff_field_size(field_type: u16) -> usize {
+    match field_type {
+        1 | 2 | 6 | 7 => 1,
+        3 | 8 => 2,
+        4 | 9 | 11 => 4,
+        5 | 10 | 12 => 8,
+        _ => 0,
+    }
 }
 
 // ---------------------------------------------------------------------------

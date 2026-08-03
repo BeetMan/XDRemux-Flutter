@@ -242,7 +242,11 @@ pub fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
 
 /// Build the ftyp box with required brands appended.
 pub fn make_ftyp_box(original_ftyp_payload: &[u8]) -> Vec<u8> {
-    let required_brands: &[&[u8]] = &[b"tmap", b"MiHE", b"miaf", b"MiHB"];
+    // Advertise the ISO 21496-1 gain-map brands exactly like the Python/Swift
+    // reference outputs. `tmap`/`MiHE`/`MiHB` are what Google's Ultra HDR /
+    // Gain Map tooling and Apple ImageIO use to recognize the file as an
+    // ISO 21496-1 image.
+    let required_brands: &[&[u8]] = &[b"tmap", b"MiHE", b"MiHB"];
 
     // Collect existing brands from the original payload
     let existing_bytes: Vec<Vec<u8>> = original_ftyp_payload[8..]
@@ -1061,7 +1065,9 @@ mod tests {
         original.extend_from_slice(b"mif1");
 
         let new_ftyp = make_ftyp_box(&original);
-        // Should contain tmap, MiHE, miaf, MiHB
+        // Adds the ISO 21496-1 gain-map brands, matching the Python/Swift
+        // reference output (`tmap`/`MiHE`/`MiHB`) that Google's Ultra HDR and
+        // Apple ImageIO use to recognize the file.
         let new_str = String::from_utf8_lossy(&new_ftyp);
         assert!(new_str.contains("tmap"));
         assert!(new_str.contains("MiHE"));

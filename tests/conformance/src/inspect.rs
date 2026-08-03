@@ -248,13 +248,12 @@ fn write_tmap_payloads(s: &mut String, m: Option<&IsoMeta>) {
     // (or from a synthesized 20-float block for LHDR/ISO metadata).
     match m {
         Some(m) => {
-            // Apple 62-byte: from info_floats-style 20 floats
-            let info_floats = synthesize_info_floats(m);
-            let payload = make_apple_tmap_payload(&info_floats);
+            // Apple 62-byte: from IsoMeta directly (matches the writer).
+            let payload = make_apple_tmap_payload(m);
             write_payload_entry(s, "apple_62", &payload, false);
 
             s.push(',');
-            let payload = make_imageio_native_tmap_payload(&info_floats);
+            let payload = make_imageio_native_tmap_payload(m);
             write_payload_entry(s, "imageio_142", &payload, false);
 
             s.push(',');
@@ -267,6 +266,7 @@ fn write_tmap_payloads(s: &mut String, m: Option<&IsoMeta>) {
 
             // Also dump the synthesized 20-float info block for cross-impl
             // inspection of the input contract.
+            let info_floats = synthesize_info_floats(m);
             s.push(',');
             s.push_str("\"info_floats\":[");
             for (i, f) in info_floats.iter().enumerate() {

@@ -613,6 +613,16 @@ fn score_lhdr_meta(floats: &[f32]) -> i32 {
 }
 
 /// Scan for 144-byte LHDR metadata block using the float144 sentinel.
+///
+/// Minimum plausibility score for a float144 LHDR metadata candidate.
+///
+/// A genuine OPPO LHDR block scores ~15: every field occupies its expected
+/// range (f0 ≈ 2-5, f2 == 144, f5 == -1, f18 == 10, f19 == 6, f29 ∈ 0-2000).
+/// A false positive in compressed data typically only matches f2 == 144
+/// (the sentinel itself) and scores 5-6. Requiring 10 keeps the whole-file
+/// fallback path from misclassifying plain HEICs as LHDR.
+const MIN_FLOAT144_SCORE: i32 = 10;
+
 fn extract_lhdr_meta_float144(data: &[u8]) -> Option<(Vec<u8>, Vec<f32>)> {
     let mut best: Option<(Vec<u8>, Vec<f32>)> = None;
     let mut best_sc = 0;
@@ -623,9 +633,9 @@ fn extract_lhdr_meta_float144(data: &[u8]) -> Option<(Vec<u8>, Vec<f32>)> {
         let start = hit.wrapping_sub(8);
         if start + 144 <= data.len() {
             let floats = bytes_to_f32s(&data[start..start + 144]);
-            if floats.len() == 36 {
+            if floats.len() == 36 && plausible_lhdr_meta(&floats) {
                 let sc = score_lhdr_meta(&floats);
-                if sc > best_sc {
+                if sc >= MIN_FLOAT144_SCORE && sc > best_sc {
                     best_sc = sc;
                     best = Some((data[start..start + 144].to_vec(), floats));
                 }
@@ -637,6 +647,20 @@ fn extract_lhdr_meta_float144(data: &[u8]) -> Option<(Vec<u8>, Vec<f32>)> {
         }
     }
     best
+}
+
+/// Reject a candidate whose fields contradict the LHDR block layout even if
+/// individual scoring rules happen to match. `f5` is the first channel's
+/// display-ratio-max; it is -1.0 in every known OPPO LHDR sample. Compressed
+/// data that collides with the 144.0 sentinel almost never satisfies this,
+/// so it acts as a second line of defense behind the score threshold.
+fn plausible_lhdr_meta(floats: &[f32]) -> bool {
+    if floats.len() < 36 {
+        return false;
+    }
+    // f5 is the -1 sentinel that distinguishes genuine LHDR blocks; a
+    // candidate lacking it is not OPPO LHDR.
+    (floats[5] + 1.0).abs() < 0.01
 }
 
 /// Extract LHDR meta via manifest offset calculation.
@@ -760,6 +784,27 @@ mod tests {
         assert_eq!(result.meta_floats.len(), 36);
         assert!((result.meta_floats[0] - 3.5).abs() < 0.001);
         assert!((result.meta_floats[32] - 30000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn float144_rejects_plain_heic_false_positive() {
+        // A candidate matching only the 144.0 sentinel (score 5) with a
+        // nonsensical f5 must be rejected — this is what a plain HEIC's
+        // compressed data produces when the whole file is scanned.
+        let mut floats = [0.0f32; 36];
+        floats[2] = 144.0; // sentinel hit
+        // f0, f5, f18, f19, f29 all left at garbage defaults
+        assert!(!plausible_lhdr_meta(&floats));
+        assert!(score_lhdr_meta(&floats) < MIN_FLOAT144_SCORE);
+
+        // A genuine block still passes.
+        floats[0] = 3.5;
+        floats[5] = -1.0;
+        floats[18] = 10.0;
+        floats[19] = 6.0;
+        floats[29] = 500.0;
+        assert!(plausible_lhdr_meta(&floats));
+        assert!(score_lhdr_meta(&floats) >= MIN_FLOAT144_SCORE);
     }
 
     #[test]

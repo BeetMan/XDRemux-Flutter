@@ -439,7 +439,16 @@ unsafe fn open_encoder(
         return Err(io_err("x265_param_default_preset failed"));
     }
 
-    set_param(param, "input-csp", if use_420 { "i420" } else { "i444" });
+    set_param(param, "input-csp", if use_420 {
+        "i420"
+    } else if !is_rgb {
+        // ISO 21496-1 gain maps are monochrome. Encoding gray through i444
+        // produces a 4:4:4 "pseudo-color" stream that standard decoders
+        // (e.g. Android's gain-map path) refuse to treat as a gain map.
+        "i400"
+    } else {
+        "i444"
+    });
     xdremux_param_set_basic(param, width as i32, height as i32, 8, 1);
     set_param(param, "fps", "1");
     set_param(param, "crf", if is_rgb { "14" } else { "18" });
@@ -457,6 +466,9 @@ unsafe fn open_encoder(
             // Swift/ImageIO reference. "main" emits a Main-profile SPS that
             // hvcC extraction then mislabels, which ImageIO rejects.
             "mainstillpicture"
+        } else if !is_rgb {
+            // Monochrome gain map: Rext/Monochrome profile.
+            "main444-8"
         } else {
             "main444-8"
         })
@@ -1043,7 +1055,10 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
     hvcc.push(3); // numOfArrays
 
     fn push_nal_array(hvcc: &mut Vec<u8>, nal_type: u8, nal_data: &[u8]) {
-        hvcc.push(0x80 | (nal_type & 0x3f));
+        // array_completeness=0 (matches libheif / Python reference gain-map
+        // hvcC output). Android's MediaExtractor rejects gain-map hvcC arrays
+        // that claim completeness=1.
+        hvcc.push(nal_type & 0x3f);
         hvcc.extend_from_slice(&1u16.to_be_bytes());
         hvcc.extend_from_slice(&(nal_data.len() as u16).to_be_bytes());
         hvcc.extend_from_slice(nal_data);

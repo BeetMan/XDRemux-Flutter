@@ -30,6 +30,10 @@ struct OutputConfig {
     tmap_payload: Vec<u8>,
     xmp_bytes: Vec<u8>,
     gain_hvcc: Vec<u8>, // pre-extracted HEVC decoder config (byte-stream → hvcC)
+    // clli (content light level) properties, mirroring the Python/Swift
+    // reference. base_clli goes on the primary grid, tmap_clli on the tmap item.
+    base_clli: Vec<u8>,
+    tmap_clli: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +46,7 @@ pub fn write_lhdr_iso_output(
     mask_pixels: &[u8],
     mask_width: u32,
     mask_height: u32,
-    meta_floats: &[f32],
+    _meta_floats: &[f32],
     edr_scale: f32,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
@@ -62,22 +66,18 @@ pub fn write_lhdr_iso_output(
         idat_opt.as_ref(),
     )?;
 
-    // Reconstruct gain map pixels
-    let gainmap = crate::gainmap::reconstruct(
-        mask_pixels,
-        mask_width as usize,
-        mask_height as usize,
-        mask_width as usize,
-        edr_scale,
-        meta_floats[0],
-    );
-    let aligned_row = ((mask_width as usize + 255) / 256) * 256;
+    // Gain map pixels: the OPPO `local.hdr.linear.mask` JPEG is itself the
+    // reconstructed gain map on this device generation — the mask value is
+    // already the per-pixel boost. Reconstructing it through the Reinhard
+    // knee LUT chain (designed for older mask semantics) collapses the data
+    // to near-black (mean ≈ 0.2). Use the mask pixels directly as the gain map.
+    let gainmap = mask_pixels.to_vec();
     let (mut gainmap, gain_width, gain_height) = orient_gainmap_pixels(
         &gainmap,
         mask_width,
         mask_height,
         1,
-        aligned_row,
+        mask_width as usize,
         orientation,
     )?;
 
@@ -120,9 +120,9 @@ pub fn write_lhdr_iso_output(
         crate::iso21496::format_hdrgm_xmp(&iso_meta).into_bytes()
     };
     let tmap_payload = if oppo_compat.wants_oppo_rgb() {
-        crate::iso21496::make_imageio_native_tmap_payload(meta_floats)
+        crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
-        crate::iso21496::make_apple_tmap_payload(meta_floats)
+        crate::iso21496::make_apple_tmap_payload(&iso_meta)
     };
     let tmap_payload = if strict_tmap {
         crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
@@ -147,12 +147,16 @@ pub fn write_lhdr_iso_output(
         tmap_payload: tmap_payload.clone(),
         xmp_bytes: xmp_bytes.clone(),
         gain_hvcc,
+        base_clli: crate::iso21496::make_iso_clli_box(&iso_meta, false),
+        tmap_clli: crate::iso21496::make_iso_clli_box(&iso_meta, true),
     };
 
     // OPPO UserComment patch
-    if oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat);
-    }
+    let patch = if oppo_compat.wants_patch() {
+        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat)
+    } else {
+        None
+    };
 
     assemble_and_write(
         source_data,
@@ -162,6 +166,7 @@ pub fn write_lhdr_iso_output(
         &parsed,
         idat_opt,
         &source_mdat,
+        patch,
         gain_width,
         gain_height,
         cols,
@@ -234,9 +239,9 @@ pub fn write_uhdr_iso_output(
 
     // tmap: OPPO gets 142-byte ImageIO-native, clean gets 62-byte Apple
     let tmap_payload = if oppo_compat.wants_oppo_rgb() {
-        crate::iso21496::make_imageio_native_tmap_payload(meta_floats)
+        crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
-        crate::iso21496::make_apple_tmap_payload(meta_floats)
+        crate::iso21496::make_apple_tmap_payload(&iso_meta)
     };
     let tmap_payload = if strict_tmap {
         crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
@@ -261,12 +266,16 @@ pub fn write_uhdr_iso_output(
         tmap_payload: tmap_payload.clone(),
         xmp_bytes: xmp_bytes.clone(),
         gain_hvcc,
+        base_clli: crate::iso21496::make_iso_clli_box(&iso_meta, false),
+        tmap_clli: crate::iso21496::make_iso_clli_box(&iso_meta, true),
     };
 
     // OPPO UserComment patch
-    if oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat);
-    }
+    let patch = if oppo_compat.wants_patch() {
+        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, oppo_compat)
+    } else {
+        None
+    };
 
     assemble_and_write(
         source_data,
@@ -276,6 +285,7 @@ pub fn write_uhdr_iso_output(
         &parsed,
         idat_opt,
         &source_mdat,
+        patch,
         gain_width,
         gain_height,
         cols,
@@ -551,9 +561,9 @@ pub fn assemble_prepared_tiles(
         crate::iso21496::format_hdrgm_xmp(&iso_meta).into_bytes()
     };
     let tmap_payload = if oppo_meta {
-        crate::iso21496::make_imageio_native_tmap_payload(&prepared.meta_floats)
+        crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
-        crate::iso21496::make_apple_tmap_payload(&prepared.meta_floats)
+        crate::iso21496::make_apple_tmap_payload(&iso_meta)
     };
     let tmap_payload = if prepared.strict_tmap {
         crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
@@ -583,11 +593,15 @@ pub fn assemble_prepared_tiles(
         tmap_payload: tmap_payload.clone(),
         xmp_bytes: xmp_bytes.clone(),
         gain_hvcc,
+        base_clli: crate::iso21496::make_iso_clli_box(&iso_meta, false),
+        tmap_clli: crate::iso21496::make_iso_clli_box(&iso_meta, true),
     };
 
-    if prepared.oppo_compat.wants_patch() {
-        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, prepared.oppo_compat);
-    }
+    let patch = if prepared.oppo_compat.wants_patch() {
+        exif::apply_oppo_usercomment_patch_vec(&mut source_mdat, prepared.oppo_compat)
+    } else {
+        None
+    };
 
     assemble_and_write(
         &prepared.source,
@@ -597,6 +611,7 @@ pub fn assemble_prepared_tiles(
         &parsed,
         idat_opt,
         &source_mdat,
+        patch,
         prepared.gain_width,
         prepared.gain_height,
         prepared.cols,
@@ -881,11 +896,17 @@ fn tile_and_encode(
         // length-prefix conversion). extract_hvcc_config searches for
         // 00 00 00 01 start codes, which only exist in byte-stream format.
         if gain_hvcc.is_empty() {
-            gain_hvcc = crate::hevc::extract_hvcc_config_with_chroma(
-                hevc_bs,
-                if use_420 { 1u8 } else { 3u8 },
-            )
-            .unwrap_or_default();
+            // Monochrome (gray) gain maps encode as chroma_format_idc=0.
+            // 4:2:0 (OPPO output) is chroma 1; 4:4:4 RGB is chroma 3.
+            let hvc_chroma = if pixel_bytes == 1 {
+                0u8
+            } else if use_420 {
+                1u8
+            } else {
+                3u8
+            };
+            gain_hvcc = crate::hevc::extract_hvcc_config_with_chroma(hevc_bs, hvc_chroma)
+                .unwrap_or_default();
         }
 
         // Convert from byte-stream (00 00 00 01 start codes) to length-prefixed
@@ -926,6 +947,12 @@ fn assemble_and_write(
     parsed: &ParsedSource,
     idat_opt: Option<BoxHeader>,
     source_mdat: &[u8],
+    // OPPO UserComment patch info: (offset in patched source_mdat, byte delta).
+    // The patch inserts/removes bytes inside source_mdat (usually in the EXIF
+    // UserComment), so every cm=0 extent whose source-relative offset falls
+    // after the original patch point must shift by delta; items at or before it
+    // (the EXIF item itself) keep their layout.
+    patch: Option<(usize, i64)>,
     mask_width: u32,
     mask_height: u32,
     cols: u32,
@@ -985,11 +1012,15 @@ fn assemble_and_write(
         ipco.extend_from_slice(property);
         next_property_index
     };
-    let auxc_i = append_property(AUX_C_BOX);
+    // auxC property stays in ipco (ISO 21496-1 signaling) even though the
+    // Python/Swift reference does not associate it in ipma.
+    let _auxc_i = append_property(AUX_C_BOX);
     let irot_i = append_property(&generated_irot);
     let pq_colr_i = append_property(COLR_BT2020_PQ_BOX);
     let srgb_colr_i = append_property(COLR_SRGB_BOX);
     let pixi10_i = append_property(PIXI_RGB10_BOX);
+    let base_clli_i = append_property(&cfg.base_clli);
+    let tmap_clli_i = append_property(&cfg.tmap_clli);
     let gain_pixi_i = append_property(if cfg.oppo_rgb {
         PIXI_RGB8_BOX
     } else {
@@ -1024,10 +1055,13 @@ fn assemble_and_write(
         let mut assocs = entry.associations.clone();
         if entry.item_id == parsed.primary_id {
             // The primary grid references the source ICC colour profile
-            // (matching Swift/ImageIO), plus a rotation so ImageIO can
-            // identify the file as an ISO 21496-1 gain-map image.
+            // (matching Swift/ImageIO), the base clli, and a rotation so
+            // ImageIO/Google identify the file as an ISO 21496-1 gain-map image.
             if !assocs.iter().any(|(idx, _)| *idx == colr_prof) {
                 assocs.push((colr_prof, true));
+            }
+            if !assocs.iter().any(|(idx, _)| *idx == base_clli_i) {
+                assocs.push((base_clli_i, false));
             }
             if !assocs.iter().any(|(idx, _)| *idx == irot_pick) {
                 assocs.push((irot_pick, true));
@@ -1053,28 +1087,29 @@ fn assemble_and_write(
             parsed.ipma_flags,
         ));
     }
-    // Gain grid: BT.601 colr(e) + ispe(grid)(e) + pixi(e) + irot(e) + auxC(e).
-    // auxC is required for macOS ImageIO to recognize the ISO gain map, and is
-    // present in the Swift/ImageIO reference that OPPO Gallery accepts.
+    // Gain grid: ispe(grid)(e) + colr(e) + pixi(e) + irot(e), matching the
+    // Python/Swift reference. (No auxC association here; the auxC property is
+    // still present in ipco for ISO 21496-1 signaling.)
     let irot_pick = primary_irot_idx.unwrap_or(irot_i);
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
         cfg.gain_grid_id,
         &[
-            (gain_tile_colr_i, true),
             (gm_grid_ispe_i, true),
+            (gain_tile_colr_i, true),
             (gain_pixi_i, true),
             (irot_pick, true),
-            (auxc_i, true),
         ],
         parsed.ipma_flags,
     ));
-    // tmap: PQ colr(e) + ispe(e) + pixi10(e) + irot(e), matching Swift/ImageIO.
+    // tmap: PQ colr(e) + pixi10(e) + ispe(e) + tmap clli + irot(e),
+    // matching Python/Swift.
     ipma_body.extend_from_slice(&isobmff::make_ipma_entry(
         cfg.tmap_id,
         &[
             (pq_colr_i, true),
-            (tmap_ispe_i, true),
             (pixi10_i, true),
+            (tmap_ispe_i, true),
+            (tmap_clli_i, false),
             (irot_pick, true),
         ],
         parsed.ipma_flags,
@@ -1104,19 +1139,29 @@ fn assemble_and_write(
         .cloned()
         .collect();
 
-    // Swift behaviour: augment Exif cdsc refs to also point to tmap_id
-    // in-place, rather than creating duplicate standalone entries.
+    // Python/Swift reference behaviour: keep the source EXIF cdsc reference
+    // untouched and add a SEPARATE cdsc entry pointing at [primary, tmap].
+    // (The Rust code previously merged tmap into the source entry in-place,
+    // which differs from the reference and makes Android's MediaExtractor
+    // refuse the file.)
+    let mut extra_cdsc: Vec<IrefEntry> = Vec::new();
     for r in &mut output_refs {
         if r.rtype == "cdsc" {
             let is_exif = parsed
                 .items
                 .iter()
                 .any(|it| it.item_id == r.from && it.itype == "Exif");
-            if is_exif && !r.to.contains(&cfg.tmap_id) {
-                r.to.push(cfg.tmap_id);
+            if is_exif {
+                extra_cdsc.push(IrefEntry {
+                    rtype: "cdsc".into(),
+                    from: r.from,
+                    to: vec![parsed.primary_id, cfg.tmap_id],
+                });
+                r.to = vec![parsed.primary_id];
             }
         }
     }
+    output_refs.extend(extra_cdsc);
 
     if !cfg.tile_ids.is_empty() {
         output_refs.push(IrefEntry {
@@ -1130,11 +1175,9 @@ fn assemble_and_write(
         from: cfg.tmap_id,
         to: vec![parsed.primary_id, cfg.gain_grid_id],
     });
-    output_refs.push(IrefEntry {
-        rtype: "auxl".into(),
-        from: cfg.gain_grid_id,
-        to: vec![parsed.primary_id, cfg.tmap_id],
-    });
+    // NOTE: the Python/Swift reference does not emit an `auxl` reference. It
+    // relies on the tmap/auxC items + grpl/altr grouping alone for ISO 21496-1
+    // signaling; adding auxl was a Rust-only deviation.
     output_refs.push(IrefEntry {
         rtype: "cdsc".into(),
         from: cfg.xmp_id,
@@ -1157,15 +1200,19 @@ fn assemble_and_write(
     } else {
         &[]
     };
-    let idat_base = old_idat.len();
+    let _idat_base = old_idat.len();
+    // Order matches the Python/Swift reference: the gain-map grid box comes
+    // immediately after the retained source idat, then tmap, then XMP. Android's
+    // MediaExtractor resolves the gain-map item before the metadata items.
     let mut idat = old_idat.to_vec();
+    let grid_box =
+        isobmff::make_grid_box(tile_size, tile_size, rows, cols, mask_width, mask_height);
+    let grid_off = idat.len();
+    idat.extend_from_slice(&grid_box[8..]);
+    let tmap_off = idat.len();
     idat.extend_from_slice(&cfg.tmap_payload);
     let xmp_off = idat.len();
     idat.extend_from_slice(&cfg.xmp_bytes);
-    let grid_off = idat.len();
-    let grid_box =
-        isobmff::make_grid_box(tile_size, tile_size, rows, cols, mask_width, mask_height);
-    idat.extend_from_slice(&grid_box[8..]);
 
     // iloc
     let mut all_iloc: Vec<IlocEntry> = parsed.iloc_entries.clone();
@@ -1187,7 +1234,7 @@ fn assemble_and_write(
         item_id: cfg.tmap_id,
         construction_method: 1,
         data_reference_index: 0,
-        extents: vec![(idat_base as u64, cfg.tmap_payload.len() as u64)],
+        extents: vec![(tmap_off as u64, cfg.tmap_payload.len() as u64)],
     });
     all_iloc.push(IlocEntry {
         item_id: cfg.xmp_id,
@@ -1223,6 +1270,12 @@ fn assemble_and_write(
     let new_mdat_data_start = ftyp_box.len() + meta_part1.len() + between.len() + 8; // +8 for mdat box header
 
     // --- Fix iloc offsets ---
+    // `mdat.data_start` is the source mdat content start; `new_mdat_data_start`
+    // is the new mdat content start. Source items are byte-for-byte copies, but
+    // the OPPO UserComment patch may have inserted bytes inside source_mdat.
+    // `patch.0` is the patch point in the PATCHED source_mdat, so its original
+    // position is `patch.0 - patch.1`. Items whose source-relative offset is
+    // beyond that point shift by the patch delta; earlier items keep layout.
     let file_delta = new_mdat_data_start as i64 - mdat.data_start as i64;
     let mut final_iloc: Vec<IlocEntry> = all_iloc
         .iter()
@@ -1235,7 +1288,14 @@ fn assemble_and_write(
                     extents: e
                         .extents
                         .iter()
-                        .map(|(off, len)| ((*off as i64 + file_delta) as u64, *len))
+                        .map(|(off, len)| {
+                            let off_rel = *off as i64 - mdat.data_start as i64;
+                            let shift = match patch {
+                                Some((start, delta)) if off_rel > (start as i64 - delta) => delta,
+                                _ => 0,
+                            };
+                            ((*off as i64 + file_delta + shift) as u64, *len)
+                        })
                         .collect(),
                 }
             } else {

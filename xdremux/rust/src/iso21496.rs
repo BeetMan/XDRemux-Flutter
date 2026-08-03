@@ -172,6 +172,26 @@ pub fn build_iso_metadata(edr_scale: f32) -> IsoMeta {
     }
 }
 
+/// Build a HEIF `clli` (content light level) item property for an ISO 21496-1
+/// gain map. Mirrors the Python reference `_build_clli_box`: the SDR
+/// representation is 203/64 nits, scaled by the headroom (2^hdr_capacity).
+/// `alternate=false` uses hdr_capacity_min (base), `true` uses
+/// hdr_capacity_max (alternate/gain map).
+pub fn make_iso_clli_box(meta: &IsoMeta, alternate: bool) -> Vec<u8> {
+    const REF_MAX_CLL: f32 = 203.0;
+    const REF_MAX_FALL: f32 = 64.0;
+    let headroom = if alternate {
+        meta.hdr_capacity_max.max(0.0)
+    } else {
+        meta.hdr_capacity_min.max(0.0)
+    };
+    let scale = 2.0f32.powf(headroom);
+    let u16_nits = |v: f32| (v.max(1.0).min(65535.0)).round() as u16;
+    let max_cll = u16_nits(REF_MAX_CLL * scale);
+    let max_fall = u16_nits(REF_MAX_FALL * scale);
+    crate::isobmff::make_clli_box(max_cll as u32, max_fall as u32)
+}
+
 // ---------------------------------------------------------------------------
 // UHDR info bytes (reverse: ISO meta → 80-byte OPPO payload)
 // ---------------------------------------------------------------------------
@@ -235,7 +255,35 @@ pub fn build_oppo_uhdr_info_bytes(meta: &IsoMeta) -> Vec<u8> {
 /// Produces a full XMP document with `<x:xmpmeta>` wrapper and xmlns
 /// declarations matching Apple CGImageDestination output, which is
 /// required for CIImage `expandToHDR` Headroom detection.
+///
+/// Per-channel fields (GainMapMin/Max, Gamma, Offsets) are always written as
+/// three space-separated values (Adobe Gain Map tooling reads all three), even
+/// when the metadata is monochrome.
 pub fn format_hdrgm_xmp(meta: &IsoMeta) -> String {
+    // Python reference `fmt()`: a list becomes space-separated `str(x)` values,
+    // padded to three channels. `0.0` / `1.0` instead of `0.000000`.
+    let py_float = |v: f32| {
+        let r = (v * 1e7).round() / 1e7;
+        if r.fract() == 0.0 {
+            format!("{r:.1}")
+        } else {
+            format!("{r}")
+        }
+    };
+    let vec3 = |slice: &[f32], default: f32| -> String {
+        // Single value (monochrome) is replicated to all three channels, like
+        // the Python reference (`[round(x,7)] * 3`).
+        let mut vals: Vec<String> = if slice.len() == 1 {
+            vec![py_float(slice[0]); 3]
+        } else {
+            slice.iter().map(|&v| py_float(v)).collect()
+        };
+        while vals.len() < 3 {
+            vals.push(py_float(default));
+        }
+        vals.join(" ")
+    };
+    let capacity = |v: f32| py_float(v);
     format!(
         r##"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">
@@ -257,13 +305,13 @@ pub fn format_hdrgm_xmp(meta: &IsoMeta) -> String {
    </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>"##,
-        gain_map_min = fmt_slice(&meta.gain_map_min),
-        gain_map_max = fmt_slice(&meta.gain_map_max),
-        gamma = fmt_slice(&meta.gamma),
-        offset_sdr = fmt_slice(&meta.offset_sdr),
-        offset_hdr = fmt_slice(&meta.offset_hdr),
-        hdr_capacity_min = fmt_float(meta.hdr_capacity_min),
-        hdr_capacity_max = fmt_float(meta.hdr_capacity_max),
+        gain_map_min = vec3(&meta.gain_map_min, 0.0),
+        gain_map_max = vec3(&meta.gain_map_max, 0.0),
+        gamma = vec3(&meta.gamma, 1.0),
+        offset_sdr = vec3(&meta.offset_sdr, 0.0),
+        offset_hdr = vec3(&meta.offset_hdr, 0.0),
+        hdr_capacity_min = capacity(meta.hdr_capacity_min),
+        hdr_capacity_max = capacity(meta.hdr_capacity_max),
         base_hdr = if meta.base_rendition_is_hdr {
             "True"
         } else {
@@ -339,14 +387,14 @@ fn _fixed_i32_zero_as_one(value: f32) -> i32 {
 /// + 14 × i32be fixed-point values       // 56 bytes
 /// = 62 bytes
 /// ```
-pub fn make_apple_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
-    let cap_min = safe_log2(info_floats.get(16).copied().unwrap_or(1.0).max(1.0)).max(0.0);
-    let cap_max = safe_log2(info_floats.get(17).copied().unwrap_or(1.0).max(1.0));
-    let gain_min = safe_log2(info_floats.first().copied().unwrap_or(1.0).max(1.0)).max(0.0);
-    let gain_max = safe_log2(info_floats.get(4).copied().unwrap_or(1.0).max(1.0));
-    let gamma = info_floats.get(7).copied().unwrap_or(1.0);
-    let base_offset = info_floats.get(10).copied().unwrap_or(0.0);
-    let alt_offset = info_floats.get(13).copied().unwrap_or(0.0);
+pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
+    let cap_min = meta.hdr_capacity_min.max(0.0);
+    let cap_max = meta.hdr_capacity_max;
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
+    let gamma = meta.gamma.first().copied().unwrap_or(1.0);
+    let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
+    let alt_offset = meta.offset_hdr.first().copied().unwrap_or(0.0);
 
     // 14 values in the exact order from Swift makeAppleTmapPayload
     let values: [f32; 14] = [
@@ -405,14 +453,14 @@ pub fn make_apple_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
 ///   )
 /// = 142 bytes
 /// ```
-pub fn make_imageio_native_tmap_payload(info_floats: &[f32]) -> Vec<u8> {
-    let gain_min = safe_log2(info_floats.first().copied().unwrap_or(1.0).max(1.0)).max(0.0);
-    let gain_max = safe_log2(info_floats.get(4).copied().unwrap_or(1.0).max(1.0));
-    let gamma = info_floats.get(7).copied().unwrap_or(1.0);
-    let base_offset = info_floats.get(10).copied().unwrap_or(0.0);
-    let alt_offset = info_floats.get(13).copied().unwrap_or(0.0);
-    let cap_min = safe_log2(info_floats.get(16).copied().unwrap_or(1.0).max(1.0)).max(0.0);
-    let cap_max = safe_log2(info_floats.get(17).copied().unwrap_or(1.0).max(1.0));
+pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
+    let gamma = meta.gamma.first().copied().unwrap_or(1.0);
+    let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
+    let alt_offset = meta.offset_hdr.first().copied().unwrap_or(0.0);
+    let cap_min = meta.hdr_capacity_min.max(0.0);
+    let cap_max = meta.hdr_capacity_max;
 
     // Python's `_build_imageio_native_tmap_config` does NOT apply
     // `zero_as_one` to base/alt offset here (it does in the 62B Apple
@@ -698,15 +746,15 @@ mod tests {
     fn xmp_contains_known_values() {
         let meta = build_iso_metadata(4.0);
         let xmp = format_hdrgm_xmp(&meta);
-        // gainMapMin = 0.0
+        // Per-channel fields are three space-separated values matching the
+        // Python reference (0.0 / 2.0, not 0.000000 / 2.000000).
         assert!(
-            xmp.contains("0.000000"),
-            "expected '0.000000' in XMP, got: {xmp}"
+            xmp.contains("0.0 0.0 0.0"),
+            "expected '0.0 0.0 0.0' in XMP, got: {xmp}"
         );
-        // gainMapMax = 2.0
         assert!(
-            xmp.contains("2.000000"),
-            "expected '2.000000' in XMP, got: {xmp}"
+            xmp.contains("2.0 2.0 2.0"),
+            "expected '2.0 2.0 2.0' in XMP, got: {xmp}"
         );
         assert!(xmp.contains("False"), "expected 'False' in XMP, got: {xmp}");
     }
@@ -723,46 +771,46 @@ mod tests {
 
     #[test]
     fn apple_tmap_62_bytes() {
-        let floats = make_sample_uhdr_floats();
-        let payload = make_apple_tmap_payload(&floats);
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        let payload = make_apple_tmap_payload(&meta);
         assert_eq!(payload.len(), 62);
     }
 
     #[test]
     fn apple_tmap_header_bytes() {
-        let floats = make_sample_uhdr_floats();
-        let payload = make_apple_tmap_payload(&floats);
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        let payload = make_apple_tmap_payload(&meta);
         assert_eq!(&payload[..6], &[0x00, 0x00, 0x00, 0x00, 0x00, 0x40]);
     }
 
     #[test]
     fn imageio_tmap_142_bytes() {
-        let floats = make_sample_uhdr_floats();
-        let payload = make_imageio_native_tmap_payload(&floats);
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        let payload = make_imageio_native_tmap_payload(&meta);
         assert_eq!(payload.len(), 142);
     }
 
     #[test]
     fn imageio_tmap_version_byte_zero() {
-        let floats = make_sample_uhdr_floats();
-        let payload = make_imageio_native_tmap_payload(&floats);
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        let payload = make_imageio_native_tmap_payload(&meta);
         assert_eq!(payload[0], 0x00);
     }
 
     #[test]
     fn imageio_tmap_flags_byte() {
-        let floats = make_sample_uhdr_floats();
-        let payload = make_imageio_native_tmap_payload(&floats);
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        let payload = make_imageio_native_tmap_payload(&meta);
         // flags at offset 5 (after version + two u16)
         assert_eq!(payload[5], 0xC0);
     }
 
     #[test]
     fn strict_tmap_adds_reserved_bytes_after_the_six_byte_header() {
-        let floats = make_sample_uhdr_floats();
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
         for payload in [
-            make_apple_tmap_payload(&floats),
-            make_imageio_native_tmap_payload(&floats),
+            make_apple_tmap_payload(&meta),
+            make_imageio_native_tmap_payload(&meta),
         ] {
             let strict = make_strict_tmap_payload(&payload).expect("strict tmap");
             assert_eq!(strict.len(), payload.len() + 3);
@@ -778,10 +826,11 @@ mod tests {
     }
 
     #[test]
-    fn tmap_from_minimal_floats() {
-        // Test with only a few floats (should use defaults)
-        let floats = vec![2.0_f32; 5];
-        let payload = make_apple_tmap_payload(&floats);
+    fn tmap_from_default_meta() {
+        // A default IsoMeta (no explicit values) still produces a 62-byte
+        // Apple baseline payload.
+        let meta = build_iso_metadata(2.0);
+        let payload = make_apple_tmap_payload(&meta);
         assert_eq!(payload.len(), 62);
     }
 
