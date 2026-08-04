@@ -28,6 +28,13 @@ jobs:
         with:
           path: xdremux/rust/vendor/x265
           key: x265-windows-${{ env.X265_TAG }}-asm
+          # Release runs on a tag ref, and actions/cache scopes caches to the
+          # ref: a tag run cannot hit a cache saved by a main-branch run even
+          # with an identical key. restore-keys does a prefix match that is not
+          # ref-scoped, so it falls back to the latest main-branch x265 build
+          # instead of recompiling x265 from scratch on every release.
+          restore-keys: |
+            x265-windows-${{ env.X265_TAG }}-asm
 
       - name: Install NASM
         shell: pwsh
@@ -142,6 +149,10 @@ jobs:
         with:
           path: xdremux/rust/vendor/x265
           key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+          # Tag-triggered runs cannot hit main-branch caches (see the Windows
+          # job above); restore-keys falls back to the latest main-branch build.
+          restore-keys: |
+            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
