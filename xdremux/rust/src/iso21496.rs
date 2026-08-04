@@ -58,18 +58,6 @@ fn safe_log2(v: f32) -> f32 {
     }
 }
 
-fn fmt_float(value: f32) -> String {
-    format!("{value:.6}")
-}
-
-fn fmt_slice(values: &[f32]) -> String {
-    values
-        .iter()
-        .map(|v| fmt_float(*v))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn make_vector3(value: &[f32], default: f32) -> [f32; 3] {
     let mut result = [default; 3];
     for (i, &v) in value.iter().enumerate().take(3) {
