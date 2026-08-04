@@ -379,6 +379,27 @@ fn xdremux_convert_impl(
         }
     };
 
+    // Create the output parent directory before writing, matching Swift's
+    // `ensureDirectory(parentURL)`. Without this, clearing the output folder
+    // while the app keeps its path breaks every later conversion with
+    // "write error: No such file or directory".
+    if let Some(parent) = std::path::Path::new(output).parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!("cannot create output directory: {e}"))
+                        .unwrap()
+                        .into_raw(),
+                };
+            }
+        }
+    }
+
     // 1. Read source HEIC bytes before parsing. This permits a clear rejection
     // for already-lossy ISO inputs instead of attempting an invalid promotion.
     let source = match std::fs::read(input) {
