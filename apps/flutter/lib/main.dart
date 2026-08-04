@@ -530,12 +530,20 @@ class _HomePageState extends State<HomePage> {
   /// path. Some OEM document providers return readable bytes but no usable
   /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
   /// that case.
-  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {
-    // On Android, file_picker resolves content:// URIs by copying the file to
+  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {    // On Android, file_picker resolves content:// URIs by copying the file to
     // its own cache directory — and on OPPO/ColorOS that copy drops the EXIF
-    // GPS block, so conversions lose location data. Re-import the original
-    // bytes from the content URI via ContentResolver when we have one.
+    // GPS block, so conversions lose location data. With all-files access we
+    // first read the original file by its real filesystem path (GPS intact);
+    // only fall back to the content-URI copy when no real path resolves.
     if (Platform.isAndroid) {
+      final realPath = _resolveRealPathFromName(file.name);
+      if (realPath != null) {
+        debugPrint(
+          '[XDRemux][file_picker] resolved ${file.name} to real path '
+          '$realPath (GPS preserved)',
+        );
+        return realPath;
+      }
       final identifier = file.identifier;
       if (identifier != null &&
           (identifier.startsWith('content://') ||
@@ -626,24 +634,6 @@ class _HomePageState extends State<HomePage> {
     return cachedPath;
   }
 
-  /// Request MANAGE_EXTERNAL_STORAGE ("all files access"). Returns true when
-  /// granted. On Android 11+ this opens the system Settings page for the app.
-  Future<bool> _ensureAllFilesAccess() async {
-    if (!Platform.isAndroid) return true;
-    try {
-      var status = await Permission.manageExternalStorage.request();
-      if (status.isGranted) return true;
-      if (status.isPermanentlyDenied) {
-        // Jump to the "All files access" settings page.
-        if (mounted) await openAppSettings();
-        status = await Permission.manageExternalStorage.request();
-      }
-      return status.isGranted;
-    } catch (_) {
-      return false;
-    }
-  }
-
   /// With MANAGE_EXTERNAL_STORAGE the app can read any file under
   /// /storage/emulated/0 by path. Try the standard camera/download locations
   /// for a HEIC whose display name we know; reading the real file preserves
@@ -672,120 +662,6 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  /// Pick HEIC files via the system file manager (not the gallery). The file
-  /// manager returns real filesystem paths, so the original bytes — including
-  /// the EXIF GPS block that OPPO's gallery content stream zeroes — are read
-  /// directly.
-  Future<void> _addFilesFromFileManager() async {
-    // All-files access lets us read the original HEIC by filesystem path
-    // (preserving GPS) instead of the OPPO content stream that strips it.
-    final granted = await _ensureAllFilesAccess();
-    if (!granted) {
-      if (mounted) {
-        setState(() => _currentFileName = '需授予「所有文件访问」权限以保留 GPS');
-      }
-      return;
-    }
-
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      allowMultiple: true,
-      withData: false,
-    );
-    if (result == null) {
-      if (mounted) setState(() => _currentFileName = '未选择文件');
-      return;
-    }
-    final files = result.files
-        .where((f) {
-          final name = f.name.toLowerCase();
-          return name.endsWith('.heic') || name.endsWith('.heif');
-        })
-        .toList();
-    debugPrint(
-      '[XDRemux][file_manager] picked ${files.length} HEIC file(s): '
-      '${files.map((f) => '${f.name}|path=${f.path}').join('; ')}',
-    );
-    if (files.isEmpty) {
-      if (mounted) setState(() => _currentFileName = '未找到 HEIC 文件');
-      return;
-    }
-
-    final existing = _queue.map((item) => item.inputPath).toSet();
-    int added = 0;
-    int skipped = 0;
-    int skippedExisting = 0;
-    String? firstError;
-
-    for (var index = 0; index < files.length; index++) {
-      final file = files[index];
-      // Prefer a real filesystem path resolved from the display name: with
-      // all-files access we can read the original Download/DCIM bytes (GPS
-      // intact). Fall back to file_picker's path otherwise.
-      final path = _resolveRealPathFromName(file.name) ?? file.path;
-      if (path == null || path.isEmpty) {
-        skipped++;
-        continue;
-      }
-      if (existing.contains(path)) continue;
-      try {
-        final classification = await XdRemuxService.classify(path);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          path,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        if (_config.skipExisting) {
-          final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          if (inputIsConverted) {
-            skippedExisting++;
-            continue;
-          }
-        }
-        _queue.add(
-          QueueItem(
-            id: _makeId(),
-            inputPath: path,
-            outputPath: outputPath,
-            outputPlanStatus: _computeOutputPlan(path, outputPath),
-            captureModeKey: classification['modeKey'] as String?,
-            captureModeFolderName: folderName,
-            classificationStatus: classification['status'] as String?,
-          ),
-        );
-        existing.add(path);
-        added++;
-      } catch (e) {
-        firstError ??= '$e';
-        if (mounted) {
-          setState(() => _currentFileName = '添加失败: $e');
-        }
-      }
-    }
-
-    _validateOutputPlans();
-    _updateStatusText();
-    if (!mounted) return;
-    if (added > 0) {
-      setState(() {
-        _selectedIndex = 0;
-        _currentFileName = '已添加 $added 个文件';
-      });
-      for (final item in _queue) {
-        _updateCheckpointForItem(item);
-      }
-      return;
-    }
-    if (skippedExisting > 0) {
-      setState(() => _currentFileName = '所选文件已是转换后的 HDR 照片，已跳过');
-    } else if (firstError != null) {
-      setState(() => _currentFileName = '添加失败: $firstError');
-    } else if (skipped > 0) {
-      setState(() => _currentFileName = '有 $skipped 个文件无法读取');
-    }
-  }
-
   Future<void> _addFiles() async {
     if (!_canEditQueue) return;
 
@@ -794,42 +670,39 @@ class _HomePageState extends State<HomePage> {
       await _requestStoragePermission();
     }
 
-    // Android users can pick from two sources:
-    //  - gallery (default): returns content:// URIs, and OPPO's MediaProvider
-    //    zeroes the EXIF GPS block on HEIC bytes it serves, so converted files
-    //    lose location.
-    //  - file manager: returns real filesystem paths (/storage/emulated/0/...),
-    //    read directly with GPS intact.
-    // Offer a choice on Android.
-    if (Platform.isAndroid && mounted) {
-      final source = await showModalBottomSheet<String>(
-        context: context,
-        builder: (context) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('从相册选择'),
-                subtitle: const Text('OPPO 相册可能丢失 GPS 信息'),
-                onTap: () => Navigator.pop(context, 'gallery'),
+    // Android users pick from the gallery, which filters to HEIC for us. The
+    // gallery returns content:// URIs; with all-files access granted,
+    // _resolvePickedFile reads the original filesystem file (GPS intact)
+    // instead of OPPO's content stream.
+    if (Platform.isAndroid) {
+      final granted = await allFilesAccessGranted();
+      if (!granted && mounted) {
+        // Ask once: grant the permission to keep GPS, or continue without it
+        // (OPPO's content stream strips GPS).
+        final want = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('保留照片位置信息？'),
+            content: const Text(
+              'OPPO 系统通过相册读取 HEIC 时会清除位置信息。\n\n'
+              '授予「所有文件访问」权限后，转换可以保留照片的 GPS 位置。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('继续（不保留位置）'),
               ),
-              ListTile(
-                leading: const Icon(Icons.folder_open),
-                title: const Text('从文件管理器选择'),
-                subtitle: const Text('保留完整 EXIF（含 GPS）'),
-                onTap: () => Navigator.pop(context, 'files'),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('去授权'),
               ),
             ],
           ),
-        ),
-      );
-      if (source == 'files') {
-        await _addFilesFromFileManager();
-        return;
+        );
+        if (want == true) {
+          await ensureAllFilesAccess();
+        }
       }
-      if (source == null) return; // dismissed
-      // else fall through to gallery picker
     }
 
     final result = await FilePicker.platform.pickFiles(
@@ -2542,6 +2415,42 @@ class _OppoCompatToggle extends StatelessWidget {
 }
 
 // ============================================================================
+// All-files access (Android) — top-level so the settings sheet and picker both
+// use the same helpers.
+// ============================================================================
+
+/// Whether "all files access" (MANAGE_EXTERNAL_STORAGE) is currently granted.
+/// Only checks the status; never prompts.
+Future<bool> allFilesAccessGranted() async {
+  if (!Platform.isAndroid) return true;
+  try {
+    final status = await Permission.manageExternalStorage.status;
+    return status.isGranted;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Request MANAGE_EXTERNAL_STORAGE ("all files access"). Returns true when
+/// granted. On Android 11+ this opens the system Settings page for the app.
+Future<bool> ensureAllFilesAccess() async {
+  if (!Platform.isAndroid) return true;
+  if (await allFilesAccessGranted()) return true;
+  try {
+    var status = await Permission.manageExternalStorage.request();
+    if (status.isGranted) return true;
+    if (status.isPermanentlyDenied) {
+      // Jump to the "All files access" settings page.
+      await openAppSettings();
+      status = await Permission.manageExternalStorage.request();
+    }
+    return status.isGranted;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ============================================================================
 // Settings Sheet
 // ============================================================================
 
@@ -2958,6 +2867,49 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         onChanged: (v) {
                           setState(() => _cfg.autoSaveToGallery = v);
                           _emit();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // All-files access (Android only): needed to read original
+                    // HEIC files by path and preserve GPS (OPPO's content
+                    // stream strips it).
+                    if (Platform.isAndroid) ...[
+                      FutureBuilder<bool>(
+                        future: allFilesAccessGranted(),
+                        builder: (context, snapshot) {
+                          final granted = snapshot.data ?? false;
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.folder_special_outlined),
+                            title: const Text('保留位置信息'),
+                            subtitle: Text(
+                              granted
+                                  ? '「所有文件访问」已授予，转换保留 GPS'
+                                  : '授予后可保留照片 GPS 位置',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                            trailing: granted
+                                ? const Icon(Icons.check_circle,
+                                    color: Colors.green, size: 20)
+                                : const Icon(Icons.open_in_new, size: 18),
+                            onTap: () async {
+                              final ok = await ensureAllFilesAccess();
+                              if (!mounted) return;
+                              setState(() {});
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    ok
+                                        ? '已授予「所有文件访问」，转换将保留 GPS'
+                                        : '未授予权限，转换将丢失 GPS 位置',
+                                  ),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            },
+                          );
                         },
                       ),
                       const SizedBox(height: 8),
