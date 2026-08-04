@@ -54,6 +54,8 @@ class XdRemuxService {
         'rawUserComment': result.rawUserComment.toDartStringOrNull(),
         'tagFlags': result.hasTagFlags ? result.tagFlags : null,
         'unknownFlags': result.unknownFlags,
+        'hdrKind': result.hdrKind.toDartStringOrNull(),
+        'family': result.family.toDartStringOrNull(),
       };
     } finally {
       XdRemuxFFI.freeClassificationResult(result);

@@ -47,6 +47,10 @@ pub struct ClassificationResult {
     pub has_tag_flags: bool,
     pub tag_flags: u64,
     pub unknown_flags: u64,
+    /// "lhdr" or "uhdr" (from the source container), or null if not a ProXDR file.
+    pub hdr_kind: *mut c_char,
+    /// "x6" or "x7" family, or null when unknown.
+    pub family: *mut c_char,
 }
 
 /// Configuration for conversion.
@@ -139,7 +143,11 @@ fn ffi_string(value: Option<&str>) -> *mut c_char {
         .unwrap_or(ptr::null_mut())
 }
 
-fn classification_result(classification: categorize::Classification) -> ClassificationResult {
+fn classification_result(
+    classification: categorize::Classification,
+    hdr_kind: Option<&str>,
+    family: Option<&str>,
+) -> ClassificationResult {
     let mode = classification.mode;
     ClassificationResult {
         mode_key: ffi_string(mode.map(|value| value.key())),
@@ -149,6 +157,8 @@ fn classification_result(classification: categorize::Classification) -> Classifi
         has_tag_flags: classification.tag_flags.is_some(),
         tag_flags: classification.tag_flags.unwrap_or(0),
         unknown_flags: classification.unknown_flags,
+        hdr_kind: ffi_string(hdr_kind),
+        family: ffi_string(family),
     }
 }
 
@@ -156,16 +166,43 @@ fn classification_result(classification: categorize::Classification) -> Classifi
 ///
 /// The result always contains a status. `mode_key` and `folder_name` are null
 /// for unreadable, missing, malformed, or unknown-only UserComment metadata.
+/// `hdr_kind` ("lhdr"/"uhdr") and `family` ("x6"/"x7") come from the source
+/// container when it is a ProXDR HEIC.
 #[no_mangle]
 pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationResult {
-    if input_path.is_null() {
-        return classification_result(categorize::classify_path(""));
-    }
-    let classification = unsafe { CStr::from_ptr(input_path) }
-        .to_str()
-        .map(categorize::classify_path)
-        .unwrap_or_else(|_| categorize::classify_path(""));
-    classification_result(classification)
+    let (path, data) = if input_path.is_null() {
+        (String::new(), None)
+    } else {
+        unsafe { CStr::from_ptr(input_path) }
+            .to_str()
+            .map(|p| (p.to_string(), std::fs::read(p).ok()))
+            .unwrap_or((String::new(), None))
+    };
+    let classification = if path.is_empty() {
+        categorize::classify_path("")
+    } else {
+        categorize::classify_path(&path)
+    };
+
+    // Parse the container for LHDR/UHDR kind and x6/x7 family when readable.
+    let (hdr_kind, family) = match data.as_deref() {
+        Some(bytes) => match container::extract_lhdr_from_bytes(bytes) {
+            Ok(extracted) => {
+                let kind = Some(extracted.mode.clone());
+                let fam = if extracted.mode == "uhdr" {
+                    Some("x7".to_string())
+                } else if extracted.meta_floats.first().map(|v| *v >= 3.0).unwrap_or(false) {
+                    Some("x7".to_string())
+                } else {
+                    Some("x6".to_string())
+                };
+                (kind, fam)
+            }
+            Err(_) => (None, None),
+        },
+        None => (None, None),
+    };
+    classification_result(classification, hdr_kind.as_deref(), family.as_deref())
 }
 
 /// Free a `ClassificationResult` previously returned by `xdremux_classify`.
@@ -176,6 +213,8 @@ pub extern "C" fn xdremux_free_classification_result(result: ClassificationResul
         result.folder_name,
         result.status,
         result.raw_user_comment,
+        result.hdr_kind,
+        result.family,
     ] {
         if !value.is_null() {
             unsafe {

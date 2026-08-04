@@ -66,6 +66,12 @@ final class ClassificationResult extends ffi.Struct {
 
   @ffi.Uint64()
   external int unknownFlags;
+
+  /// "lhdr" or "uhdr" (from the source container), or null if not ProXDR.
+  external ffi.Pointer<Utf8> hdrKind;
+
+  /// "x6" or "x7" family, or null when unknown.
+  external ffi.Pointer<Utf8> family;
 }
 
 /// Result of thumbnail extraction. Must be freed with [freeThumbnail].

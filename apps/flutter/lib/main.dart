@@ -773,6 +773,8 @@ class _HomePageState extends State<HomePage> {
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
+            hdrKind: classification['hdrKind'] as String?,
+            family: classification['family'] as String?,
           ),
         );
         existing.add(path);
@@ -1490,6 +1492,8 @@ class _HomePageState extends State<HomePage> {
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
+            hdrKind: classification['hdrKind'] as String?,
+            family: classification['family'] as String?,
           ),
         );
         existing.add(path);
@@ -3343,14 +3347,32 @@ class _MobileQueueCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 7),
-                    Text(
-                      item.captureModeLabel ?? item.classificationLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    const SizedBox(height: 5),
+                    // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
+                    // capture mode. Stacked as small pills on the second line.
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (item.hdrKind != null)
+                          _InfoChip(
+                            label: item.hdrKind!.toUpperCase(),
+                            color: item.hdrKind == 'uhdr'
+                                ? theme.colorScheme.tertiary
+                                : theme.colorScheme.primary,
+                          ),
+                        if (item.family != null)
+                          _InfoChip(
+                            label: item.family!.toUpperCase(),
+                            color: theme.colorScheme.secondary,
+                          ),
+                        if (item.captureModeLabel != null &&
+                            item.captureModeLabel!.isNotEmpty)
+                          _InfoChip(
+                            label: item.captureModeLabel!,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 5),
                     Text(
@@ -3363,21 +3385,24 @@ class _MobileQueueCard extends StatelessWidget {
                             : theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    // Per-file progress bar for the running item.
+                    // Per-file progress bar for the running item. Constrained to
+                    // the column width so it never overflows the card.
                     if (item.status == QueueItemStatus.running) ...[
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(3),
-                        child: LinearProgressIndicator(
-                          value: item.progress != null &&
-                                  item.progress!.total > 0
-                              ? item.progress!.current / item.progress!.total
-                              : null,
-                          minHeight: 4,
-                          backgroundColor:
-                              theme.colorScheme.surfaceContainerHighest,
-                          valueColor: AlwaysStoppedAnimation(
-                            theme.colorScheme.primary,
+                      const SizedBox(height: 7),
+                      LayoutBuilder(
+                        builder: (context, constraints) => ClipRRect(
+                          borderRadius: BorderRadius.circular(3),
+                          child: LinearProgressIndicator(
+                            value: item.progress != null &&
+                                    item.progress!.total > 0
+                                ? item.progress!.current / item.progress!.total
+                                : null,
+                            minHeight: 4,
+                            backgroundColor:
+                                theme.colorScheme.surfaceContainerHighest,
+                            valueColor: AlwaysStoppedAnimation(
+                              theme.colorScheme.primary,
+                            ),
                           ),
                         ),
                       ),
@@ -3448,6 +3473,34 @@ class _MobileStatusPill extends StatelessWidget {
           color: color,
           fontSize: 11,
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+/// Small non-interactive chip for the queue card metadata row
+/// (LHDR/UHDR, X6/X7, capture mode).
+class _InfoChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _InfoChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
@@ -3683,13 +3736,22 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
   /// and makes the image blink (waiting → done each rebuild).
   Future<Uint8List?>? _thumbFuture;
 
+  /// Last successfully loaded thumbnail. Used as `initialData` when the path
+  /// changes (e.g. a conversion finishes and _displayPath switches from the
+  /// input to the output), so the image stays visible instead of flashing a
+  /// placeholder while the new thumbnail loads.
+  Uint8List? _lastThumb;
+
   @override
   void didUpdateWidget(_ThumbnailWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.inputPath != widget.inputPath ||
-        oldWidget.outputPath != widget.outputPath ||
-        oldWidget.isConverted != widget.isConverted) {
+    // Only reset the cached thumbnail when the *input* photo changes. The
+    // converted output is the same photo, so switching _displayPath to it
+    // (isConverted false→true) must not force a reload — that makes the
+    // thumbnail blink for a couple of seconds after conversion completes.
+    if (oldWidget.inputPath != widget.inputPath) {
       _thumbFuture = null;
+      _lastThumb = null;
     }
   }
 
@@ -3721,6 +3783,7 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
       fit: StackFit.expand,
       children: [
         FutureBuilder<Uint8List?>(
+          initialData: _lastThumb,
           future: _thumbFuture ??= _PhotoCard._thumbCache.containsKey(path)
               ? Future.value(_PhotoCard._thumbCache[path])
               : XdRemuxService.getThumbnail(path, maxPixelSize: 256).then((t) {
@@ -3728,9 +3791,11 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
                   return t;
                 }),
           builder: (context, snapshot) {
-            if (snapshot.hasData && snapshot.data != null) {
+            final data = snapshot.data;
+            if (data != null) {
+              _lastThumb = data;
               return Image.memory(
-                snapshot.data!,
+                data,
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,

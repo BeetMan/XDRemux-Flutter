@@ -384,6 +384,10 @@ class QueueItem {
   String? captureModeKey;
   String? captureModeFolderName;
   String? classificationStatus;
+  /// "lhdr" or "uhdr" (from the source container), null when not ProXDR.
+  String? hdrKind;
+  /// "x6" or "x7" family, null when unknown.
+  String? family;
   DateTime? startedAt;
   DateTime? finishedAt;
 
@@ -420,6 +424,8 @@ class QueueItem {
     this.captureModeKey,
     this.captureModeFolderName,
     this.classificationStatus,
+    this.hdrKind,
+    this.family,
     this.startedAt,
     this.finishedAt,
     this.progress,
