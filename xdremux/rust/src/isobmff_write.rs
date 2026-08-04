@@ -559,7 +559,13 @@ pub fn assemble_prepared_tiles(
             gain_hvcc =
                 crate::hevc::extract_hvcc_config_with_chroma(stream, 1).unwrap_or_default();
         }
-        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(stream));
+        // Strip VPS/SPS/PPS (and SEI) so each tile is a pure IDR slice, matching
+        // the software path and libheif — the decoder config lives only in hvcC.
+        #[cfg(not(xdremux_ffmpeg_fallback))]
+        let idr_bs = crate::hevc::drop_parameter_nals(stream);
+        #[cfg(xdremux_ffmpeg_fallback)]
+        let idr_bs = stream.to_vec();
+        tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(&idr_bs));
         crate::progress::set_progress(4, (i + 1) as u32, tile_streams.len() as u32);
     }
 
