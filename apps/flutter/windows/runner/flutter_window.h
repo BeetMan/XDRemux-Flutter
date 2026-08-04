@@ -35,6 +35,10 @@ class FlutterWindow : public Win32Window {
   // Method channel for sending native file-drop events to Dart.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       drop_channel_;
+
+  // Method channel for rendering HEIC thumbnails natively (WIC) on demand.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      thumbnail_channel_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

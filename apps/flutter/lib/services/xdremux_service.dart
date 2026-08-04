@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
@@ -118,27 +119,36 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// macOS/iOS/Android: native decode (ImageIO / Android ImageDecoder) of the
-  /// full-resolution HEIC primary image, tone-mapped to SDR, so the photo wall
-  /// is crisp and full-colour. On Android the Rust FFI fallback would scan for
-  /// embedded JPEGs, which picks up the grayscale gain map (black-and-white
-  /// preview) or a corrupt fragment, so the system decoder is preferred.
-  /// Other platforms (Windows/Linux): Rust FFI extracts the embedded EXIF JPEG
+  /// macOS/iOS/Android/Windows: native decode (ImageIO / Android ImageDecoder /
+  /// Windows WIC) of the full-resolution HEIC primary image, tone-mapped to
+  /// SDR, so the photo wall is crisp and full-colour. On Android/macOS the
+  /// Rust FFI fallback would scan for embedded JPEGs, which picks up the
+  /// grayscale gain map (black-and-white preview) or a corrupt fragment, so
+  /// the system decoder is preferred. On Windows, WIC decodes the primary
+  /// image for files that carry no EXIF thumbnail (older OPPO X6-series),
+  /// where the FFI fallback returned a broken JPEG fragment.
+  /// Other platforms (Linux): Rust FFI extracts the embedded EXIF JPEG
   /// thumbnail.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
-    if (Platform.isMacOS || Platform.isIOS || Platform.isAndroid) {
+    if (Platform.isMacOS ||
+        Platform.isIOS ||
+        Platform.isAndroid ||
+        Platform.isWindows) {
       try {
         const channel = MethodChannel('xdremux/thumbnail');
-        return await channel.invokeMethod<Uint8List>('render', {
+        final bytes = await channel.invokeMethod<Uint8List>('render', {
           'path': inputPath,
           'maxPixelSize': maxPixelSize,
         });
+        if (bytes != null && bytes.isNotEmpty) return bytes;
       } catch (e) {
         print('generateThumbnail native error: $e');
       }
+      // Native render returned empty (e.g. no HEIF extension on Windows) or
+      // threw — fall through to the FFI embedded-thumbnail path.
     }
     try {
       return XdRemuxFFI.extractThumbnail(inputPath);
@@ -154,6 +164,48 @@ class XdRemuxService {
 
   static final Map<String, Uint8List?> _thumbnailCache = {};
 
+  /// In-flight thumbnail generations, so concurrent requests for the same file
+  /// (e.g. after dragging in many photos at once) share one decode instead of
+  /// spawning N identical WIC decodes that contend on the platform channel.
+  static final Map<String, Future<Uint8List?>> _thumbnailInFlight = {};
+
+  /// Throttle concurrent native decodes. Dragging in 20 HEICs fires 20
+  /// `getThumbnail` calls at once; running them all concurrently makes the
+  /// photo wall janky while every thumbnail decodes on the same channel.
+  static int _thumbnailActive = 0;
+  static final List<Future<void> Function()> _thumbnailQueue = [];
+  // Native decode is off the platform thread (background thread in the C++
+  // handler), so a modest cap is enough to keep HEVC decoding from saturating
+  // the CPU; it no longer needs to protect the UI thread.
+  static const int _thumbnailMaxConcurrent = 8;
+
+  static Future<Uint8List?> _scheduleThumbnail(Future<Uint8List?> Function() job) {
+    if (_thumbnailActive < _thumbnailMaxConcurrent) {
+      _thumbnailActive++;
+      return _runThumbnailJob(job);
+    }
+    final completer = Completer<Uint8List?>();
+    _thumbnailQueue.add(() async {
+      final r = await _runThumbnailJob(job);
+      completer.complete(r);
+    });
+    return completer.future;
+  }
+
+  static Future<Uint8List?> _runThumbnailJob(Future<Uint8List?> Function() job) async {
+    try {
+      return await job();
+    } finally {
+      _thumbnailActive--;
+      // Pop the next queued job, if any.
+      if (_thumbnailQueue.isNotEmpty) {
+        final next = _thumbnailQueue.removeAt(0);
+        _thumbnailActive++;
+        next();
+      }
+    }
+  }
+
   /// Cached thumbnail for a file. Generates on first call and caches the result.
   static Future<Uint8List?> getThumbnail(
     String inputPath, {
@@ -161,14 +213,25 @@ class XdRemuxService {
   }) async {
     final key = '$inputPath@$maxPixelSize';
     if (_thumbnailCache.containsKey(key)) return _thumbnailCache[key];
-    final result = await generateThumbnail(inputPath, maxPixelSize: maxPixelSize);
-    _thumbnailCache[key] = result;
-    return result;
+    final inflight = _thumbnailInFlight[key];
+    if (inflight != null) return inflight;
+
+    final future = _scheduleThumbnail(
+        () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize))
+        .then((r) {
+      _thumbnailCache[key] = r;
+      _thumbnailInFlight.remove(key);
+      return r;
+    });
+    _thumbnailInFlight[key] = future;
+    return future;
   }
 
   /// Invalidate all cached thumbnails (e.g. after clearing queue).
   static void clearThumbnailCache() {
     _thumbnailCache.clear();
+    _thumbnailInFlight.clear();
+    _thumbnailQueue.clear();
   }
 
   // -----------------------------------------------------------------------

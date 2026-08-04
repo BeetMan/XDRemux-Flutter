@@ -83,7 +83,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 | 平台 | 状态 | 备注 |
 |------|------|------|
-| Windows | ✅ 可运行 | x265 静态链接、原生拖拽、DLL 完整工作 |
+| Windows | ✅ 可运行 | x265 静态链接、原生拖拽、WIC 原生缩略图（需 HEIF/HEVC 扩展）、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载、VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、源/转换后切换 |
 | Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码 |
 | iOS | ✅ 真机验证通过 | VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、Share Extension 系统分享、保存到相册、Files 集成 |
@@ -95,6 +95,12 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 
 下载 Release 的 `XDRemuxSetup-x.y.z.exe`（Inno Setup 安装包，~12MB），双击安装，
 开始菜单/桌面快捷方式自动生成；HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg。
+
+**队列预览图需要 HEIF/HEVC 解码扩展**：Windows 通过系统 WIC（Windows Imaging
+Component）解码 HEIC 生成彩色预览，需要系统已安装「HEIF 图像扩展」和「HEVC 视频
+扩展」（Microsoft Store 免费下载，装机时如已在「照片」应用打开过 HEIC 通常已自带）。
+未安装时预览图退化为 Rust 内嵌缩略图提取，老机型照片可能显示占位符。转换功能本身
+不依赖该扩展。
 
 自行打包：
 

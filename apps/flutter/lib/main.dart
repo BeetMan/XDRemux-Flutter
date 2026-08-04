@@ -3826,7 +3826,7 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
           initialData: _lastThumb,
           future: _thumbFuture ??= _PhotoCard._thumbCache.containsKey(path)
               ? Future.value(_PhotoCard._thumbCache[path])
-              : XdRemuxService.getThumbnail(path, maxPixelSize: 256).then((t) {
+              : XdRemuxService.getThumbnail(path, maxPixelSize: 512).then((t) {
                   _PhotoCard._thumbCache[path] = t;
                   return t;
                 }),

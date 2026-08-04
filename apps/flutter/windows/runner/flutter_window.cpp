@@ -3,8 +3,10 @@
 #include <shellapi.h>
 
 #include <optional>
+#include <thread>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "heic_thumbnail_renderer.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -45,6 +47,61 @@ bool FlutterWindow::OnCreate() {
 
   // Register the window for file-drop support (WM_DROPFILES).
   DragAcceptFiles(GetHandle(), TRUE);
+
+  // Set up the thumbnail channel: Dart asks the native side to render a HEIC
+  // thumbnail with WIC (crisp full-colour primary image), returning JPEG bytes.
+  // Mirrors the macOS xdremux/thumbnail handler (ImageIO).
+  thumbnail_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "xdremux/thumbnail",
+      &flutter::StandardMethodCodec::GetInstance());
+  thumbnail_channel_->SetMethodCallHandler(
+      [](const auto& call, auto result) {
+        if (call.method_name() != "render") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+        if (!args) {
+          result->Error("bad_args", "expected a map of {path, maxPixelSize}");
+          return;
+        }
+        std::string path;
+        int max_pixel_size = 256;
+        for (const auto& [key, value] : *args) {
+          const auto* key_str = std::get_if<std::string>(&key);
+          if (!key_str) continue;
+          if (*key_str == "path") {
+            if (const auto* s = std::get_if<std::string>(&value)) {
+              path = *s;
+            }
+          } else if (*key_str == "maxPixelSize") {
+            if (const auto* i = std::get_if<int>(&value)) {
+              max_pixel_size = *i;
+            }
+          }
+        }
+        if (path.empty()) {
+          result->Error("bad_args", "missing path");
+          return;
+        }
+
+        // Decode on a background thread: WIC HEIC decoding + scaling + JPEG
+        // encode can take 100ms+ per image. Doing it inline on the platform
+        // thread blocks the UI for a second or two when many photos are
+        // dragged in at once. The engine marshals MethodResult::Success back
+        // to the platform thread, so calling it from this thread is safe.
+        // The Dart side already caps concurrent decode requests (4).
+        std::thread([path, max_pixel_size, result = std::move(result)]() mutable {
+          auto bytes =
+              HeicThumbnailRenderer::renderThumbnail(path, max_pixel_size);
+          if (bytes.empty()) {
+            result->Success(flutter::EncodableValue());  // null
+          } else {
+            result->Success(flutter::EncodableValue(
+                std::vector<uint8_t>(bytes.begin(), bytes.end())));
+          }
+        }).detach();
+      });
 
   return true;
 }
