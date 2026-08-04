@@ -6,6 +6,10 @@
         android:maxSdkVersion="32" />
     <!-- Android 13+ granular media access -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- All-files access: lets the app read the original HEIC files directly
+         from Download/DCIM by filesystem path, preserving the EXIF GPS that
+         OPPO's content stream strips. User grants this in Settings. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- Batch-conversion completion notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Battery optimization exemption for background conversion -->

@@ -163,9 +163,40 @@ class MainActivity : FlutterActivity() {
                             runOnUiThread { result.success(ok) }
                         }
                     }
+                    "probePath" -> {
+                        val args = call.arguments as Map<*, *>
+                        val path = args["path"] as? String
+                        if (path == null) {
+                            result.error("bad_args", "path is required", null)
+                            return@setMethodCallHandler
+                        }
+                        thumbnailExecutor.execute {
+                            val info = probePathInfo(path)
+                            runOnUiThread { result.success(info) }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /// Diagnose whether `path` is a readable real file and how big it is.
+    private fun probePathInfo(path: String): Map<String, Any?> {
+        return try {
+            val f = File(path)
+            if (f.isFile) {
+                mapOf(
+                    "exists" to true,
+                    "isFile" to true,
+                    "canRead" to f.canRead(),
+                    "length" to f.length(),
+                )
+            } else {
+                mapOf("exists" to false, "isFile" to false)
+            }
+        } catch (e: Exception) {
+            mapOf("exists" to false, "error" to e.message)
+        }
     }
 
     /// Import a picked file from its content:// URI. First tries to resolve the
@@ -175,44 +206,93 @@ class MainActivity : FlutterActivity() {
     /// bytes is only a fallback when no real path exists. Returns the path used.
     private fun importRawBytes(uriString: String, destPath: String): String? {
         // Try to resolve a real file path first (MediaStore _data). Reading the
-        // original DCIM file directly preserves EXIF GPS that the content
-        // stream drops on OPPO.
+        // original DCIM/Download file directly preserves EXIF GPS that the
+        // content stream drops on OPPO. The picker hands us a document URI
+        // (content://com.android.providers.media.documents/document/...), which
+        // MediaStore can't query directly — convert it to a media URI
+        // (content://media/external/file/<id>) first.
+        val mediaId = extractMediaId(uriString)
+        var displayName: String? = null
         try {
             val uri = Uri.parse(uriString)
-            val projection = arrayOf(android.provider.MediaStore.MediaColumns.DATA)
-            val cursor = contentResolver.query(
-                uri, projection, null, null, null,
-            )
-            cursor?.use { c ->
+            val nameProj = arrayOf(android.provider.OpenableColumns.DISPLAY_NAME)
+            contentResolver.query(uri, nameProj, null, null, null)?.use { c ->
                 if (c.moveToFirst()) {
-                    val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
-                    if (dataIdx >= 0) {
-                        val realPath = c.getString(dataIdx)
-                        if (realPath != null && realPath.isNotEmpty()) {
-                            val f = File(realPath)
-                            if (f.isFile && f.canRead() && f.length() > 0) {
-                                return realPath
-                            }
-                        }
-                    }
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) displayName = c.getString(idx)
                 }
             }
         } catch (_: Exception) {
-            // Fall through to byte copy.
+        }
+        if (mediaId != null) {
+            try {
+                val mediaUri = android.provider.MediaStore
+                    .Files
+                    .getContentUri("external")
+                    .buildUpon()
+                    .appendPath(mediaId)
+                    .build()
+                val projection = arrayOf(
+                    android.provider.MediaStore.MediaColumns.DATA,
+                    android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                )
+                contentResolver.query(mediaUri, projection, null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+                        if (dataIdx >= 0) {
+                            val realPath = c.getString(dataIdx)
+                            if (realPath != null && realPath.isNotEmpty()) {
+                                val f = File(realPath)
+                                if (f.isFile && f.canRead() && f.length() > 0) {
+                                    return realPath
+                                }
+                            }
+                        }
+                        val dnIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                        if (dnIdx >= 0) displayName = c.getString(dnIdx)
+                    }
+                }
+            } catch (_: Exception) {
+            }
         }
 
-        // Fallback: copy raw bytes from the content stream.
+        // Second try: search the DCIM/Download trees for a file matching the
+        // display name. MediaProvider gives us the name; if the original lives
+        // in a standard camera/download location, reading that real path
+        // preserves GPS.
+        if (displayName != null && displayName!!.endsWith(".heic", true)) {
+            val candidates = listOf(
+                "/storage/emulated/0/DCIM/Camera/$displayName",
+                "/storage/emulated/0/Pictures/$displayName",
+                "/storage/emulated/0/Download/$displayName",
+            )
+            for (p in candidates) {
+                try {
+                    val f = File(p)
+                    if (f.isFile && f.canRead() && f.length() > 0) {
+                        return p
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        // Fallback: copy raw bytes via openFileDescriptor (a direct fd to the
+        // underlying file). OPPO's MediaProvider strips the EXIF GPS ASCII
+        // fields when serving bytes through openInputStream, but the fd path
+        // may preserve them.
         return try {
             val uri = Uri.parse(uriString)
-            val input = contentResolver.openInputStream(uri) ?: return null
-            input.use { ins ->
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 File(destPath).parentFile?.mkdirs()
                 FileOutputStream(destPath).use { outs ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = ins.read(buf)
-                        if (n < 0) break
-                        outs.write(buf, 0, n)
+                    java.io.FileInputStream(pfd.fileDescriptor).use { ins ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            outs.write(buf, 0, n)
+                        }
                     }
                 }
             }
@@ -220,6 +300,20 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             null
         }
+    }
+
+    /// Extract the numeric media id from a document URI like
+    /// content://com.android.providers.media.documents/document/document%3A1000058766
+    /// (returns "1000058766"), or null if not a document URI.
+    private fun extractMediaId(uriString: String): String? {
+        val uri = Uri.parse(uriString)
+        if (uri.authority != "com.android.providers.media.documents") return null
+        val last = uri.lastPathSegment ?: return null
+        val pct = last.lastIndexOf("%3A")
+        if (pct >= 0) return last.substring(pct + 3)
+        val colon = last.lastIndexOf(':')
+        if (colon >= 0) return last.substring(colon + 1)
+        return null
     }
 
     /// Decode the image at `path` (HEIC/JPEG/PNG) downscaled to fit

@@ -626,11 +626,67 @@ class _HomePageState extends State<HomePage> {
     return cachedPath;
   }
 
+  /// Request MANAGE_EXTERNAL_STORAGE ("all files access"). Returns true when
+  /// granted. On Android 11+ this opens the system Settings page for the app.
+  Future<bool> _ensureAllFilesAccess() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      var status = await Permission.manageExternalStorage.request();
+      if (status.isGranted) return true;
+      if (status.isPermanentlyDenied) {
+        // Jump to the "All files access" settings page.
+        if (mounted) await openAppSettings();
+        status = await Permission.manageExternalStorage.request();
+      }
+      return status.isGranted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// With MANAGE_EXTERNAL_STORAGE the app can read any file under
+  /// /storage/emulated/0 by path. Try the standard camera/download locations
+  /// for a HEIC whose display name we know; reading the real file preserves
+  /// EXIF GPS that OPPO's content stream strips. Returns the real path if the
+  /// file exists and is readable, else null.
+  String? _resolveRealPathFromName(String? name) {
+    if (name == null || name.isEmpty) return null;
+    final lower = name.toLowerCase();
+    if (!lower.endsWith('.heic') && !lower.endsWith('.heif')) return null;
+    const bases = [
+      '/storage/emulated/0/DCIM/Camera',
+      '/storage/emulated/0/Pictures',
+      '/storage/emulated/0/Download',
+      '/storage/emulated/0/Pictures/XDRemux',
+    ];
+    for (final base in bases) {
+      try {
+        final f = File('$base/$name');
+        if (f.existsSync() && f.lengthSync() > 0) {
+          return f.path;
+        }
+      } catch (_) {
+        // keep trying
+      }
+    }
+    return null;
+  }
+
   /// Pick HEIC files via the system file manager (not the gallery). The file
   /// manager returns real filesystem paths, so the original bytes — including
   /// the EXIF GPS block that OPPO's gallery content stream zeroes — are read
   /// directly.
   Future<void> _addFilesFromFileManager() async {
+    // All-files access lets us read the original HEIC by filesystem path
+    // (preserving GPS) instead of the OPPO content stream that strips it.
+    final granted = await _ensureAllFilesAccess();
+    if (!granted) {
+      if (mounted) {
+        setState(() => _currentFileName = '需授予「所有文件访问」权限以保留 GPS');
+      }
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
       allowMultiple: true,
@@ -663,7 +719,10 @@ class _HomePageState extends State<HomePage> {
 
     for (var index = 0; index < files.length; index++) {
       final file = files[index];
-      final path = file.path;
+      // Prefer a real filesystem path resolved from the display name: with
+      // all-files access we can read the original Download/DCIM bytes (GPS
+      // intact). Fall back to file_picker's path otherwise.
+      final path = _resolveRealPathFromName(file.name) ?? file.path;
       if (path == null || path.isEmpty) {
         skipped++;
         continue;
