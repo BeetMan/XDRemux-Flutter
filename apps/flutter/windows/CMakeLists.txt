@@ -39,7 +39,10 @@ add_definitions(-DUNICODE -D_UNICODE)
 # of modifying this function.
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_17)
-  target_compile_options(${TARGET} PRIVATE /W4 /WX /wd"4100")
+  # /utf-8 makes MSVC parse sources as UTF-8 regardless of the system code
+  # page. Without it, UTF-8 sources (win32_window.cpp, Runner.rc) trip C4819
+  # on CJK (code page 936) systems, and /WX turns that into a hard error.
+  target_compile_options(${TARGET} PRIVATE /W4 /WX /utf-8 /wd"4100")
   target_compile_options(${TARGET} PRIVATE /EHsc)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")

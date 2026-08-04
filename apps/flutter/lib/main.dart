@@ -3507,6 +3507,34 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
+/// Small pill layered on top of the thumbnail image (dark backdrop for
+/// legibility over arbitrary photo content). Used by the desktop photo card.
+class _OverlayChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _OverlayChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(160),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 // ============================================================================
 // Desktop photo card (grid cell)
 // ============================================================================
@@ -3564,27 +3592,39 @@ class _PhotoCard extends StatelessWidget {
                     outputPath: item.outputPath,
                     isConverted: isDone,
                   ),
-                  if (item.captureModeLabel != null)
+                  // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
+                  // capture mode. Same set as the mobile queue card.
+                  if (item.hdrKind != null ||
+                      item.family != null ||
+                      (item.captureModeLabel != null &&
+                          item.captureModeLabel!.isNotEmpty))
                     Positioned(
                       top: 6,
                       right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withAlpha(160),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          item.captureModeLabel!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      child: Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        alignment: WrapAlignment.end,
+                        children: [
+                          if (item.hdrKind != null)
+                            _OverlayChip(
+                              label: item.hdrKind!.toUpperCase(),
+                              color: item.hdrKind == 'uhdr'
+                                  ? theme.colorScheme.tertiary
+                                  : theme.colorScheme.primary,
+                            ),
+                          if (item.family != null)
+                            _OverlayChip(
+                              label: item.family!.toUpperCase(),
+                              color: theme.colorScheme.secondary,
+                            ),
+                          if (item.captureModeLabel != null &&
+                              item.captureModeLabel!.isNotEmpty)
+                            _OverlayChip(
+                              label: item.captureModeLabel!,
+                              color: Colors.white,
+                            ),
+                        ],
                       ),
                     ),
                   if (isRunning)
