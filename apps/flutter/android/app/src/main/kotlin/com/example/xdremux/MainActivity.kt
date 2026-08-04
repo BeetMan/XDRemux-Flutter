@@ -3,6 +3,9 @@ package com.example.xdremux
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
+import android.graphics.BitmapFactory
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
@@ -11,6 +14,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -19,6 +26,21 @@ class MainActivity : FlutterActivity() {
     private val batteryChannel = "xdremux/battery"
     private val hevcProbeChannel = "xdremux/hevc-probe"
     private val hwEncodeChannel = "xdremux/hw-encode"
+    private val thumbnailChannel = "xdremux/thumbnail"
+    private val fileImportChannel = "xdremux/file-import"
+
+    // Single worker for thumbnail decoding. The Android software HEVC decoder
+    // (C2SoftHevcDec) crashes under concurrent HEIC decodes, and concurrent
+    // full-resolution HEIC allocations blow the heap — serialize them.
+    private val thumbnailExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "xdremux-thumbnail").apply { priority = Thread.NORM_PRIORITY }
+    }
+    private val thumbnailCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray?>()
+
+    override fun onDestroy() {
+        thumbnailExecutor.shutdownNow()
+        super.onDestroy()
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -88,6 +110,165 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Thumbnail rendering: decode the primary HEIC image with the Android
+        // system decoder and return a downscaled JPEG. The Rust FFI fallback
+        // scans for embedded JPEGs, which picks up the grayscale gain map
+        // (black-and-white preview) or a corrupt fragment, so the system
+        // decoder is preferred on Android. Decodes run on a single worker to
+        // avoid concurrent HEVC decoder crashes and heap exhaustion.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, thumbnailChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "render" -> {
+                        val args = call.arguments as Map<*, *>
+                        val path = args["path"] as? String
+                        val maxPixelSize = (args["maxPixelSize"] as? Number)?.toInt() ?: 320
+                        if (path == null) {
+                            result.error("bad_args", "path is required", null)
+                            return@setMethodCallHandler
+                        }
+                        thumbnailCache[path]?.let {
+                            if (it != null) result.success(it) else result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        thumbnailExecutor.execute {
+                            val jpeg = renderThumbnailJpeg(path, maxPixelSize)
+                            thumbnailCache[path] = jpeg
+                            runOnUiThread { result.success(jpeg) }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // Import a picked file from its content:// URI, copying the raw bytes
+        // to a cache file. file_picker's cache copy drops EXIF GPS on some
+        // OEMs (OPPO), so re-reading the original bytes via ContentResolver
+        // preserves the metadata. Runs on a background thread; never loads the
+        // whole file into Dart memory.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, fileImportChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "importFromUri" -> {
+                        val args = call.arguments as Map<*, *>
+                        val uriString = args["uri"] as? String
+                        val destPath = args["destPath"] as? String
+                        if (uriString == null || destPath == null) {
+                            result.error("bad_args", "uri and destPath are required", null)
+                            return@setMethodCallHandler
+                        }
+                        thumbnailExecutor.execute {
+                            val ok = importRawBytes(uriString, destPath)
+                            runOnUiThread { result.success(ok) }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /// Import a picked file from its content:// URI. First tries to resolve the
+    /// real filesystem path via MediaStore, so conversion reads the original
+    /// DCIM bytes (which keep the full EXIF GPS). OPPO's MediaProvider strips
+    /// the GPS block from HEIC bytes served over a content stream, so copying
+    /// bytes is only a fallback when no real path exists. Returns the path used.
+    private fun importRawBytes(uriString: String, destPath: String): String? {
+        // Try to resolve a real file path first (MediaStore _data). Reading the
+        // original DCIM file directly preserves EXIF GPS that the content
+        // stream drops on OPPO.
+        try {
+            val uri = Uri.parse(uriString)
+            val projection = arrayOf(android.provider.MediaStore.MediaColumns.DATA)
+            val cursor = contentResolver.query(
+                uri, projection, null, null, null,
+            )
+            cursor?.use { c ->
+                if (c.moveToFirst()) {
+                    val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+                    if (dataIdx >= 0) {
+                        val realPath = c.getString(dataIdx)
+                        if (realPath != null && realPath.isNotEmpty()) {
+                            val f = File(realPath)
+                            if (f.isFile && f.canRead() && f.length() > 0) {
+                                return realPath
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Fall through to byte copy.
+        }
+
+        // Fallback: copy raw bytes from the content stream.
+        return try {
+            val uri = Uri.parse(uriString)
+            val input = contentResolver.openInputStream(uri) ?: return null
+            input.use { ins ->
+                File(destPath).parentFile?.mkdirs()
+                FileOutputStream(destPath).use { outs ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        outs.write(buf, 0, n)
+                    }
+                }
+            }
+            destPath
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /// Decode the image at `path` (HEIC/JPEG/PNG) downscaled to fit
+    /// `maxPixelSize` on the long edge, then encode as JPEG bytes. Returns null
+    /// if the file cannot be decoded. Runs on a background thread.
+    private fun renderThumbnailJpeg(path: String, maxPixelSize: Int): ByteArray? {
+        val file = File(path)
+        if (!file.isFile) return null
+        return try {
+            val bitmap: Bitmap = if (Build.VERSION.SDK_INT >= 28) {
+                val source = ImageDecoder.createSource(file)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val targetSize = downscale(info.size.width, info.size.height, maxPixelSize)
+                    if (targetSize != null) {
+                        decoder.setTargetSize(targetSize.first, targetSize.second)
+                    }
+                }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(path, bounds)
+                val sampleSize = computeInSampleSize(bounds.outWidth, bounds.outHeight, maxPixelSize)
+                val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                BitmapFactory.decodeFile(path, opts) ?: return null
+            }
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            bitmap.recycle()
+            out.toByteArray()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun downscale(w: Int, h: Int, max: Int): Pair<Int, Int>? {
+        if (w <= 0 || h <= 0) return null
+        val longEdge = maxOf(w, h)
+        if (longEdge <= max) return null
+        val scale = max.toFloat() / longEdge
+        return Pair((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
+    }
+
+    private fun computeInSampleSize(w: Int, h: Int, max: Int): Int {
+        var sample = 1
+        if (w <= 0 || h <= 0) return sample
+        while (maxOf(w, h) / (sample * 2) >= max) {
+            sample *= 2
+        }
+        return sample
     }
 
     /// Returns a map describing HEVC encoder capabilities:

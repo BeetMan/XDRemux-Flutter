@@ -116,14 +116,18 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// macOS/iOS: native ImageIO decode (full-resolution HEIC, HDR tone-mapped)
-  /// so the photo wall is crisp. Other platforms: Rust FFI extracts the
-  /// embedded EXIF JPEG thumbnail.
+  /// macOS/iOS/Android: native decode (ImageIO / Android ImageDecoder) of the
+  /// full-resolution HEIC primary image, tone-mapped to SDR, so the photo wall
+  /// is crisp and full-colour. On Android the Rust FFI fallback would scan for
+  /// embedded JPEGs, which picks up the grayscale gain map (black-and-white
+  /// preview) or a corrupt fragment, so the system decoder is preferred.
+  /// Other platforms (Windows/Linux): Rust FFI extracts the embedded EXIF JPEG
+  /// thumbnail.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
-    if (Platform.isMacOS || Platform.isIOS) {
+    if (Platform.isMacOS || Platform.isIOS || Platform.isAndroid) {
       try {
         const channel = MethodChannel('xdremux/thumbnail');
         return await channel.invokeMethod<Uint8List>('render', {

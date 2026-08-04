@@ -531,6 +531,53 @@ class _HomePageState extends State<HomePage> {
   /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
   /// that case.
   Future<String?> _resolvePickedFile(PlatformFile file, int index) async {
+    // On Android, file_picker resolves content:// URIs by copying the file to
+    // its own cache directory — and on OPPO/ColorOS that copy drops the EXIF
+    // GPS block, so conversions lose location data. Re-import the original
+    // bytes from the content URI via ContentResolver when we have one.
+    if (Platform.isAndroid) {
+      final identifier = file.identifier;
+      if (identifier != null &&
+          (identifier.startsWith('content://') ||
+              identifier.startsWith('file://'))) {
+        try {
+          final tempRoot = await getTemporaryDirectory();
+          final importDir = Directory(
+            '${tempRoot.path}${Platform.pathSeparator}picked_files',
+          );
+          await importDir.create(recursive: true);
+          final safeName = file.name.replaceAll(
+            RegExp(r'[<>:"/\\|?*\x00-\x1F]'),
+            '_',
+          );
+          final name =
+              safeName.isEmpty ? 'picked_$index.heic' : safeName;
+          final cachedPath =
+              '${importDir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}_$name';
+          const channel = MethodChannel('xdremux/file-import');
+          final imported = await channel.invokeMethod<String?>('importFromUri', {
+            'uri': identifier,
+            'destPath': cachedPath,
+          });
+          if (imported != null && File(imported).existsSync()) {
+            debugPrint(
+              '[XDRemux][file_picker] re-imported ${file.name} from '
+              'content URI to $imported',
+            );
+            return imported;
+          }
+          debugPrint(
+            '[XDRemux][file_picker] content-URI re-import failed for '
+            '${file.name}, falling back to file_picker path',
+          );
+        } catch (e) {
+          debugPrint(
+            '[XDRemux][file_picker] content-URI re-import error: $e',
+          );
+        }
+      }
+    }
+
     final pickedPath = file.path;
     if (pickedPath != null && pickedPath.isNotEmpty) {
       try {
@@ -579,6 +626,107 @@ class _HomePageState extends State<HomePage> {
     return cachedPath;
   }
 
+  /// Pick HEIC files via the system file manager (not the gallery). The file
+  /// manager returns real filesystem paths, so the original bytes — including
+  /// the EXIF GPS block that OPPO's gallery content stream zeroes — are read
+  /// directly.
+  Future<void> _addFilesFromFileManager() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: true,
+      withData: false,
+    );
+    if (result == null) {
+      if (mounted) setState(() => _currentFileName = '未选择文件');
+      return;
+    }
+    final files = result.files
+        .where((f) {
+          final name = f.name.toLowerCase();
+          return name.endsWith('.heic') || name.endsWith('.heif');
+        })
+        .toList();
+    debugPrint(
+      '[XDRemux][file_manager] picked ${files.length} HEIC file(s): '
+      '${files.map((f) => '${f.name}|path=${f.path}').join('; ')}',
+    );
+    if (files.isEmpty) {
+      if (mounted) setState(() => _currentFileName = '未找到 HEIC 文件');
+      return;
+    }
+
+    final existing = _queue.map((item) => item.inputPath).toSet();
+    int added = 0;
+    int skipped = 0;
+    int skippedExisting = 0;
+    String? firstError;
+
+    for (var index = 0; index < files.length; index++) {
+      final file = files[index];
+      final path = file.path;
+      if (path == null || path.isEmpty) {
+        skipped++;
+        continue;
+      }
+      if (existing.contains(path)) continue;
+      try {
+        final classification = await XdRemuxService.classify(path);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          path,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
+        if (_config.skipExisting) {
+          final inputIsConverted = await XdRemuxService.verifyOutput(path);
+          if (inputIsConverted) {
+            skippedExisting++;
+            continue;
+          }
+        }
+        _queue.add(
+          QueueItem(
+            id: _makeId(),
+            inputPath: path,
+            outputPath: outputPath,
+            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            captureModeKey: classification['modeKey'] as String?,
+            captureModeFolderName: folderName,
+            classificationStatus: classification['status'] as String?,
+          ),
+        );
+        existing.add(path);
+        added++;
+      } catch (e) {
+        firstError ??= '$e';
+        if (mounted) {
+          setState(() => _currentFileName = '添加失败: $e');
+        }
+      }
+    }
+
+    _validateOutputPlans();
+    _updateStatusText();
+    if (!mounted) return;
+    if (added > 0) {
+      setState(() {
+        _selectedIndex = 0;
+        _currentFileName = '已添加 $added 个文件';
+      });
+      for (final item in _queue) {
+        _updateCheckpointForItem(item);
+      }
+      return;
+    }
+    if (skippedExisting > 0) {
+      setState(() => _currentFileName = '所选文件已是转换后的 HDR 照片，已跳过');
+    } else if (firstError != null) {
+      setState(() => _currentFileName = '添加失败: $firstError');
+    } else if (skipped > 0) {
+      setState(() => _currentFileName = '有 $skipped 个文件无法读取');
+    }
+  }
+
   Future<void> _addFiles() async {
     if (!_canEditQueue) return;
 
@@ -587,14 +735,54 @@ class _HomePageState extends State<HomePage> {
       await _requestStoragePermission();
     }
 
+    // Android users can pick from two sources:
+    //  - gallery (default): returns content:// URIs, and OPPO's MediaProvider
+    //    zeroes the EXIF GPS block on HEIC bytes it serves, so converted files
+    //    lose location.
+    //  - file manager: returns real filesystem paths (/storage/emulated/0/...),
+    //    read directly with GPS intact.
+    // Offer a choice on Android.
+    if (Platform.isAndroid && mounted) {
+      final source = await showModalBottomSheet<String>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('从相册选择'),
+                subtitle: const Text('OPPO 相册可能丢失 GPS 信息'),
+                onTap: () => Navigator.pop(context, 'gallery'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open),
+                title: const Text('从文件管理器选择'),
+                subtitle: const Text('保留完整 EXIF（含 GPS）'),
+                onTap: () => Navigator.pop(context, 'files'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (source == 'files') {
+        await _addFilesFromFileManager();
+        return;
+      }
+      if (source == null) return; // dismissed
+      // else fall through to gallery picker
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['heic', 'heif'],
       allowMultiple: true,
-      // Keep a byte fallback for OEM pickers that don't return a path from
-      // their content provider. The Rust core requires a local filesystem
-      // path, so _resolvePickedFile() materializes these bytes into cache.
-      withData: true,
+      // Keep withData off: withData: true makes file_picker read every picked
+      // file's full bytes into memory and marshal them back to Dart, which
+      // OOMs when selecting several multi-MB HEICs at once. The picked file
+      // path is available on Android in practice; _resolvePickedFile falls
+      // back to a byte cache only when a path is missing.
+      withData: false,
     );
 
     if (result == null) {
@@ -3478,6 +3666,22 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
   /// Only meaningful on macOS where native ImageIO applies the HDR boost.
   bool _showOutput = true;
 
+  /// The thumbnail Future is created once per (path) and held here so
+  /// rebuilds of the parent (e.g. conversion progress updates) do not hand
+  /// FutureBuilder a fresh Future every frame — that resets the async state
+  /// and makes the image blink (waiting → done each rebuild).
+  Future<Uint8List?>? _thumbFuture;
+
+  @override
+  void didUpdateWidget(_ThumbnailWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.inputPath != widget.inputPath ||
+        oldWidget.outputPath != widget.outputPath ||
+        oldWidget.isConverted != widget.isConverted) {
+      _thumbFuture = null;
+    }
+  }
+
   /// The path to render: only show the converted output when this item was
   /// actually converted this session (isConverted). Otherwise a stale output
   /// file from a previous run would mask the source thumbnail.
@@ -3506,7 +3710,7 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
       fit: StackFit.expand,
       children: [
         FutureBuilder<Uint8List?>(
-          future: _PhotoCard._thumbCache.containsKey(path)
+          future: _thumbFuture ??= _PhotoCard._thumbCache.containsKey(path)
               ? Future.value(_PhotoCard._thumbCache[path])
               : XdRemuxService.getThumbnail(path, maxPixelSize: 256).then((t) {
                   _PhotoCard._thumbCache[path] = t;
