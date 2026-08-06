@@ -41,6 +41,38 @@ import UIKit
       }
     }
 
+    // Capability probe for the embedded Swift backend. iOS must never spawn
+    // the Swift CLI; until a Swift Core framework is linked, keep this
+    // backend unavailable and let Flutter show the verified status.
+    let backendChannel = FlutterMethodChannel(
+      name: "xdremux/swift-backend",
+      binaryMessenger: controller.binaryMessenger
+    )
+    backendChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "getCapabilities":
+        result([
+          "swiftAvailable": false,
+          "swiftStandardHdr": false,
+          "swiftAppleFeatures": false,
+          "swiftUnavailableReason":
+            "Swift Core 尚未作为嵌入式 Library 链接；iOS 不启动 Swift CLI。"
+        ])
+      case "convert":
+        result(FlutterError(
+          code: "swift_backend_unavailable",
+          message: "Swift Core 尚未链接到当前 iOS 构建。",
+          details: nil
+        ))
+      case "verifyOutput":
+        result(false)
+      case "cancel":
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     // Hardware HEVC encoding for gain-map tiles (VideoToolbox).
     let hwChannel = FlutterMethodChannel(
       name: "xdremux/hw-encode",

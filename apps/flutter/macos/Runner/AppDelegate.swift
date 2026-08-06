@@ -52,6 +52,39 @@ class AppDelegate: FlutterAppDelegate {
     // Place overlay on top so it receives drag events first.
     contentView.addSubview(overlay, positioned: .above, relativeTo: flutterView)
 
+    // Capability probe for the backend abstraction. The Swift Core is not
+    // linked in P0.0, so report that explicitly instead of falling back to a
+    // Swift CLI subprocess (which is not suitable for the production bridge).
+    let backendChannel = FlutterMethodChannel(
+      name: "xdremux/swift-backend",
+      binaryMessenger: flutterVC.engine.binaryMessenger
+    )
+    backendChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "getCapabilities":
+        result([
+          "swiftAvailable": false,
+          "swiftStandardHdr": false,
+          "swiftAppleFeatures": false,
+          "swiftUnavailableReason":
+            "Swift Core 尚未作为嵌入式 Library 链接；当前版本不会启动 Swift CLI。"
+        ])
+      case "convert":
+        result(FlutterError(
+          code: "swift_backend_unavailable",
+          message: "Swift Core 尚未链接到当前 macOS 构建。",
+          details: nil
+        ))
+      case "verifyOutput":
+        result(false)
+      case "cancel":
+        // Reserved for native cancellation once Swift Core is linked.
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     // Register the hardware-encode MethodChannel (VideoToolbox HEVC).
     let hwChannel = FlutterMethodChannel(
       name: "xdremux/hw-encode",

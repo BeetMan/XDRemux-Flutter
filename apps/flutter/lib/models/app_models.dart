@@ -24,6 +24,96 @@ enum Family {
   }
 }
 
+/// Conversion implementation selected by the user.
+///
+/// Rust remains the cross-platform default. Swift is only exposed on Apple
+/// platforms, where it will eventually provide the Apple-specific library
+/// path without launching a CLI subprocess.
+enum ConversionBackend {
+  rust,
+  swift;
+
+  String get appTitle {
+    switch (this) {
+      case ConversionBackend.rust:
+        return 'Rust（默认）';
+      case ConversionBackend.swift:
+        return 'Swift';
+    }
+  }
+}
+
+/// Runtime capability snapshot for the conversion backends.
+///
+/// Visibility and availability are deliberately separate: the Swift option
+/// is visible on macOS/iOS while the library is being integrated, but remains
+/// disabled until the embedded Swift Core is actually linked and verified.
+class BackendCapabilities {
+  final bool rustAvailable;
+  final bool swiftVisible;
+  final bool swiftAvailable;
+  final bool swiftStandardHdr;
+  final bool swiftAppleFeatures;
+  final String swiftUnavailableReason;
+
+  const BackendCapabilities({
+    required this.rustAvailable,
+    required this.swiftVisible,
+    required this.swiftAvailable,
+    required this.swiftStandardHdr,
+    required this.swiftAppleFeatures,
+    required this.swiftUnavailableReason,
+  });
+
+  factory BackendCapabilities.forCurrentPlatform() {
+    final apple = Platform.isMacOS || Platform.isIOS;
+    return BackendCapabilities(
+      rustAvailable: true,
+      swiftVisible: apple,
+      swiftAvailable: false,
+      swiftStandardHdr: false,
+      swiftAppleFeatures: false,
+      swiftUnavailableReason: apple
+          ? 'Swift Core 尚未作为嵌入式 Library 链接；当前版本不会启动 Swift CLI。'
+          : 'Swift 后端仅支持 macOS/iOS。',
+    );
+  }
+
+  bool isVisible(ConversionBackend backend) {
+    return backend == ConversionBackend.rust || swiftVisible;
+  }
+
+  bool isAvailable(ConversionBackend backend) {
+    return backend == ConversionBackend.rust ? rustAvailable : swiftAvailable;
+  }
+
+  String statusFor(ConversionBackend backend) {
+    if (isAvailable(backend)) return '可用';
+    return backend == ConversionBackend.swift
+        ? swiftUnavailableReason
+        : 'Rust 核心不可用';
+  }
+
+  BackendCapabilities copyWith({
+    bool? rustAvailable,
+    bool? swiftVisible,
+    bool? swiftAvailable,
+    bool? swiftStandardHdr,
+    bool? swiftAppleFeatures,
+    String? swiftUnavailableReason,
+  }) {
+    return BackendCapabilities(
+      rustAvailable: rustAvailable ?? this.rustAvailable,
+      swiftVisible: swiftVisible ?? this.swiftVisible,
+      swiftAvailable: swiftAvailable ?? this.swiftAvailable,
+      swiftStandardHdr: swiftStandardHdr ?? this.swiftStandardHdr,
+      swiftAppleFeatures: swiftAppleFeatures ?? this.swiftAppleFeatures,
+      swiftUnavailableReason:
+          swiftUnavailableReason ?? this.swiftUnavailableReason,
+    );
+  }
+}
+
 enum OppoCompatMode {
   auto,
   on,
@@ -265,6 +355,7 @@ enum OutputPlanStatus {
 
 class ConversionConfig {
   Family family;
+  ConversionBackend backend;
   String? outputDirectory;
   OppoCompatMode oppoCompatibility;
   OppoCameraTailMode oppoCameraTail;
@@ -278,6 +369,7 @@ class ConversionConfig {
 
   ConversionConfig({
     this.family = Family.auto,
+    this.backend = ConversionBackend.rust,
     this.outputDirectory,
     this.oppoCompatibility = OppoCompatMode.on,
     this.oppoCameraTail = OppoCameraTailMode.automatic,
@@ -292,24 +384,29 @@ class ConversionConfig {
 
   /// Persist to SharedPreferences.
   Map<String, dynamic> toJson() => {
-        'family': family.name,
-        'outputDirectory': outputDirectory,
-        'oppoCompatibility': oppoCompatibility.name,
-        'oppoCameraTail': oppoCameraTail.name,
-        'strictTmap': strictTmap,
-        'skipExisting': skipExisting,
-        'maxConcurrentJobs': maxConcurrentJobs,
-        'fileNameSuffix': fileNameSuffix,
-        'categorizeOutputByMode': categorizeOutputByMode,
-        'autoSaveToGallery': autoSaveToGallery,
-        'hardwareEncode': hardwareEncode,
-      };
+    'family': family.name,
+    'backend': backend.name,
+    'outputDirectory': outputDirectory,
+    'oppoCompatibility': oppoCompatibility.name,
+    'oppoCameraTail': oppoCameraTail.name,
+    'strictTmap': strictTmap,
+    'skipExisting': skipExisting,
+    'maxConcurrentJobs': maxConcurrentJobs,
+    'fileNameSuffix': fileNameSuffix,
+    'categorizeOutputByMode': categorizeOutputByMode,
+    'autoSaveToGallery': autoSaveToGallery,
+    'hardwareEncode': hardwareEncode,
+  };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
     return ConversionConfig(
       family: Family.values.firstWhere(
         (e) => e.name == json['family'],
         orElse: () => Family.auto,
+      ),
+      backend: ConversionBackend.values.firstWhere(
+        (e) => e.name == json['backend'],
+        orElse: () => ConversionBackend.rust,
       ),
       outputDirectory: json['outputDirectory'] as String?,
       oppoCompatibility: OppoCompatMode.values.firstWhere(
@@ -324,26 +421,26 @@ class ConversionConfig {
       skipExisting: json['skipExisting'] as bool? ?? true,
       maxConcurrentJobs: json['maxConcurrentJobs'] as int? ?? 4,
       fileNameSuffix: json['fileNameSuffix'] as String? ?? '_iso',
-      categorizeOutputByMode:
-          json['categorizeOutputByMode'] as bool? ?? false,
+      categorizeOutputByMode: json['categorizeOutputByMode'] as bool? ?? false,
       autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
       hardwareEncode: json['hardwareEncode'] as bool? ?? false,
     );
   }
 
   ConversionConfig copy() => ConversionConfig(
-        family: family,
-        outputDirectory: outputDirectory,
-        oppoCompatibility: oppoCompatibility,
-        oppoCameraTail: oppoCameraTail,
-        strictTmap: strictTmap,
-        skipExisting: skipExisting,
-        maxConcurrentJobs: maxConcurrentJobs,
-        fileNameSuffix: fileNameSuffix,
-        categorizeOutputByMode: categorizeOutputByMode,
-        autoSaveToGallery: autoSaveToGallery,
-        hardwareEncode: hardwareEncode,
-      );
+    family: family,
+    backend: backend,
+    outputDirectory: outputDirectory,
+    oppoCompatibility: oppoCompatibility,
+    oppoCameraTail: oppoCameraTail,
+    strictTmap: strictTmap,
+    skipExisting: skipExisting,
+    maxConcurrentJobs: maxConcurrentJobs,
+    fileNameSuffix: fileNameSuffix,
+    categorizeOutputByMode: categorizeOutputByMode,
+    autoSaveToGallery: autoSaveToGallery,
+    hardwareEncode: hardwareEncode,
+  );
 
   /// Compute output path for a given input file.
   ///
@@ -358,14 +455,18 @@ class ConversionConfig {
     final baseDirectory = outputDirectory ?? fallbackDir ?? input.parent.path;
     // Android: capture-mode subdirectories are handled by the gallery album
     // (Pictures/<mode>), not the file system. Desktop: use subdirectories.
-    final useSubdir = categorizeOutputByMode &&
+    final useSubdir =
+        categorizeOutputByMode &&
         captureModeFolderName != null &&
         captureModeFolderName.isNotEmpty &&
         !Platform.isAndroid;
     final dir = useSubdir
         ? '$baseDirectory${Platform.pathSeparator}$captureModeFolderName'
         : baseDirectory;
-    final stem = input.uri.pathSegments.last.replaceAll(RegExp(r'\.heic$', caseSensitive: false), '');
+    final stem = input.uri.pathSegments.last.replaceAll(
+      RegExp(r'\.heic$', caseSensitive: false),
+      '',
+    );
     return '$dir${Platform.pathSeparator}$stem$fileNameSuffix.heic';
   }
 }
@@ -384,10 +485,16 @@ class QueueItem {
   String? captureModeKey;
   String? captureModeFolderName;
   String? classificationStatus;
+
   /// "lhdr" or "uhdr" (from the source container), null when not ProXDR.
   String? hdrKind;
+
   /// "x6" or "x7" family, null when unknown.
   String? family;
+
+  /// Backend captured when this item starts, so progress/cancellation remain
+  /// tied to the request even if settings change for a later batch.
+  ConversionBackend backend;
   DateTime? startedAt;
   DateTime? finishedAt;
 
@@ -426,6 +533,7 @@ class QueueItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,
     this.progress,

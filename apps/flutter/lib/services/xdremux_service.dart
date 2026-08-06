@@ -1,16 +1,95 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
+import 'conversion_backend.dart';
 
 /// Higher-level service that wraps raw FFI calls and manages settings.
 class XdRemuxService {
   XdRemuxService._();
+
+  static const MethodChannel _backendChannel = MethodChannel(
+    'xdremux/swift-backend',
+  );
+  static final Map<ConversionBackend, ConversionBackendAdapter> _backends = {
+    ConversionBackend.rust: RustConversionBackend(),
+    ConversionBackend.swift: SwiftConversionBackend(),
+  };
+  static final Set<String> _cancelledRequests = <String>{};
+
+  // -----------------------------------------------------------------------
+  // Backend capabilities and common conversion contract
+  // -----------------------------------------------------------------------
+
+  static Future<BackendCapabilities> getBackendCapabilities() async {
+    final defaults = BackendCapabilities.forCurrentPlatform();
+    if (!defaults.swiftVisible) return defaults;
+
+    try {
+      final raw = await _backendChannel.invokeMethod<Object?>(
+        'getCapabilities',
+      );
+      if (raw is! Map) return defaults;
+      final map = raw.map((key, value) => MapEntry(key.toString(), value));
+      return defaults.copyWith(
+        swiftAvailable: map['swiftAvailable'] == true,
+        swiftStandardHdr: map['swiftStandardHdr'] == true,
+        swiftAppleFeatures: map['swiftAppleFeatures'] == true,
+        swiftUnavailableReason:
+            map['swiftUnavailableReason'] as String? ??
+            defaults.swiftUnavailableReason,
+      );
+    } on MissingPluginException {
+      return defaults;
+    } on PlatformException {
+      return defaults;
+    } catch (_) {
+      return defaults;
+    }
+  }
+
+  static Future<BackendConversionResult> convertWithBackend(
+    ConversionRequest request,
+  ) async {
+    final capabilities = await getBackendCapabilities();
+    if (!capabilities.isAvailable(request.backend)) {
+      return BackendConversionResult.failure(
+        request.backend,
+        capabilities.statusFor(request.backend),
+      );
+    }
+    return _backends[request.backend]!.convert(request);
+  }
+
+  static BackendProgress readProgress(ConversionRequest request) {
+    return _backends[request.backend]!.readProgress(request);
+  }
+
+  static Future<bool> verifyOutputForBackend(
+    ConversionBackend backend,
+    String path,
+  ) {
+    return _backends[backend]!.verifyOutput(path);
+  }
+
+  /// Request cancellation for a backend request. Rust cannot interrupt an
+  /// in-flight FFI call yet, so the coordinator guarantees only that its
+  /// eventual result is not reported as converted. Swift receives the same
+  /// request id over MethodChannel for native cancellation when available.
+  static void cancel(String requestId) {
+    _cancelledRequests.add(requestId);
+    for (final backend in _backends.values) {
+      backend.cancel(requestId);
+    }
+  }
+
+  static bool takeCancellation(String requestId) {
+    return _cancelledRequests.remove(requestId);
+  }
 
   // -----------------------------------------------------------------------
   // Version
@@ -75,34 +154,18 @@ class XdRemuxService {
     bool strictTmap = false,
     int progressHandle = 0,
   }) {
-    return Isolate.run(() {
-      final result = progressHandle != 0
-          ? XdRemuxFFI.convertWithProgress(
-              inputPath,
-              outputPath,
-              progressHandle: progressHandle,
-              oppoCompat: oppoCompat,
-              oppoCameraTail: oppoCameraTail,
-              strictTmap: strictTmap,
-            )
-          : XdRemuxFFI.convert(
-              inputPath,
-              outputPath,
-              oppoCompat: oppoCompat,
-              oppoCameraTail: oppoCameraTail,
-              strictTmap: strictTmap,
-            );
-      final map = {
-        'success': result.success,
-        'mode': result.mode.toDartStringOrNull(),
-        'family': result.family.toDartStringOrNull(),
-        'edrScale': result.edrScale,
-        'gainMapMax': result.gainMapMax,
-        'errorMessage': result.errorMessage.toDartStringOrNull(),
-      };
-      XdRemuxFFI.freeResult(result);
-      return map;
-    });
+    return convertWithBackend(
+      ConversionRequest(
+        id: 'rust-${DateTime.now().microsecondsSinceEpoch}',
+        backend: ConversionBackend.rust,
+        inputPath: inputPath,
+        outputPath: outputPath,
+        oppoCompat: oppoCompat,
+        oppoCameraTail: oppoCameraTail,
+        strictTmap: strictTmap,
+        progressHandle: progressHandle,
+      ),
+    ).then((result) => result.toMap());
   }
 
   // -----------------------------------------------------------------------
@@ -110,7 +173,7 @@ class XdRemuxService {
   // -----------------------------------------------------------------------
 
   static Future<bool> verifyOutput(String path) async {
-    return XdRemuxFFI.verifyOutput(path);
+    return verifyOutputForBackend(ConversionBackend.rust, path);
   }
 
   // -----------------------------------------------------------------------
@@ -179,7 +242,9 @@ class XdRemuxService {
   // the CPU; it no longer needs to protect the UI thread.
   static const int _thumbnailMaxConcurrent = 8;
 
-  static Future<Uint8List?> _scheduleThumbnail(Future<Uint8List?> Function() job) {
+  static Future<Uint8List?> _scheduleThumbnail(
+    Future<Uint8List?> Function() job,
+  ) {
     if (_thumbnailActive < _thumbnailMaxConcurrent) {
       _thumbnailActive++;
       return _runThumbnailJob(job);
@@ -192,7 +257,9 @@ class XdRemuxService {
     return completer.future;
   }
 
-  static Future<Uint8List?> _runThumbnailJob(Future<Uint8List?> Function() job) async {
+  static Future<Uint8List?> _runThumbnailJob(
+    Future<Uint8List?> Function() job,
+  ) async {
     try {
       return await job();
     } finally {
@@ -216,13 +283,14 @@ class XdRemuxService {
     final inflight = _thumbnailInFlight[key];
     if (inflight != null) return inflight;
 
-    final future = _scheduleThumbnail(
-        () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize))
-        .then((r) {
-      _thumbnailCache[key] = r;
-      _thumbnailInFlight.remove(key);
-      return r;
-    });
+    final future =
+        _scheduleThumbnail(
+          () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
+        ).then((r) {
+          _thumbnailCache[key] = r;
+          _thumbnailInFlight.remove(key);
+          return r;
+        });
     _thumbnailInFlight[key] = future;
     return future;
   }
@@ -239,6 +307,7 @@ class XdRemuxService {
   // -----------------------------------------------------------------------
 
   static const _keyFamily = 'family';
+  static const _keyBackend = 'backend';
   static const _keyOutputDirectory = 'outputDirectory';
   static const _keyOppoCompat = 'oppoCompatibility';
   static const _keyOppoCameraTail = 'oppoCameraTail';
@@ -255,6 +324,10 @@ class XdRemuxService {
       family: Family.values.firstWhere(
         (e) => e.name == prefs.getString(_keyFamily),
         orElse: () => Family.auto,
+      ),
+      backend: ConversionBackend.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyBackend),
+        orElse: () => ConversionBackend.rust,
       ),
       outputDirectory: prefs.getString(_keyOutputDirectory),
       oppoCompatibility: OppoCompatMode.values.firstWhere(
@@ -278,6 +351,7 @@ class XdRemuxService {
   static Future<void> saveConfig(ConversionConfig config) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyFamily, config.family.name);
+    await prefs.setString(_keyBackend, config.backend.name);
     if (config.outputDirectory != null) {
       await prefs.setString(_keyOutputDirectory, config.outputDirectory!);
     } else {
@@ -290,7 +364,9 @@ class XdRemuxService {
     await prefs.setInt(_keyMaxConcurrentJobs, config.maxConcurrentJobs);
     await prefs.setString(_keyFileNameSuffix, config.fileNameSuffix);
     await prefs.setBool(
-        _keyCategorizeOutputByMode, config.categorizeOutputByMode);
+      _keyCategorizeOutputByMode,
+      config.categorizeOutputByMode,
+    );
     await prefs.setBool(_keyHardwareEncode, config.hardwareEncode);
   }
 }

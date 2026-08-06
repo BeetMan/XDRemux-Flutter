@@ -38,6 +38,7 @@ class CheckpointService {
   static String computeConfigHash(ConversionConfig config) {
     final payload = jsonEncode({
       'family': config.family.name,
+      'backend': config.backend.name,
       'oppoCompatibility': config.oppoCompatibility.name,
       'outputDirectory': config.outputDirectory,
       'fileNameSuffix': config.fileNameSuffix,

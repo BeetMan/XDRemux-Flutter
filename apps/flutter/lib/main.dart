@@ -24,6 +24,7 @@ import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
+import 'services/conversion_backend.dart';
 import 'ffi/xdremux_ffi.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
@@ -138,6 +139,8 @@ class _HomePageState extends State<HomePage> {
   final GlobalKey _rootKey = GlobalKey();
 
   String _version = '';
+  BackendCapabilities _backendCapabilities =
+      BackendCapabilities.forCurrentPlatform();
   Timer? _configSaveTimer;
   Checkpoint? _checkpoint;
 
@@ -188,6 +191,13 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initAsync() async {
     _config = await XdRemuxService.loadConfig();
+    _backendCapabilities = await XdRemuxService.getBackendCapabilities();
+    // Swift is intentionally not exposed on Windows/Android. If a shared
+    // preferences store contains an Apple-only choice on those platforms,
+    // return to the Rust default before any conversion can start.
+    if (!_backendCapabilities.isVisible(_config.backend)) {
+      _config.backend = ConversionBackend.rust;
+    }
     try {
       _version = await XdRemuxService.getVersion();
     } catch (e) {
@@ -211,9 +221,7 @@ class _HomePageState extends State<HomePage> {
     } else if (Platform.isIOS) {
       try {
         final dir = await getApplicationDocumentsDirectory();
-        final outDir = Directory(
-          '${dir.path}${Platform.pathSeparator}output',
-        );
+        final outDir = Directory('${dir.path}${Platform.pathSeparator}output');
         if (!outDir.existsSync()) outDir.createSync(recursive: true);
         _androidOutputDir = outDir.path;
       } catch (_) {}
@@ -530,7 +538,8 @@ class _HomePageState extends State<HomePage> {
   /// path. Some OEM document providers return readable bytes but no usable
   /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
   /// that case.
-  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {    // On Android, file_picker resolves content:// URIs by copying the file to
+  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {
+    // On Android, file_picker resolves content:// URIs by copying the file to
     // its own cache directory — and on OPPO/ColorOS that copy drops the EXIF
     // GPS block, so conversions lose location data. With all-files access we
     // first read the original file by its real filesystem path (GPS intact);
@@ -572,15 +581,14 @@ class _HomePageState extends State<HomePage> {
             RegExp(r'[<>:"/\\|?*\x00-\x1F]'),
             '_',
           );
-          final name =
-              safeName.isEmpty ? 'picked_$index.heic' : safeName;
+          final name = safeName.isEmpty ? 'picked_$index.heic' : safeName;
           final cachedPath =
               '${importDir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}_$name';
           const channel = MethodChannel('xdremux/file-import');
-          final imported = await channel.invokeMethod<String?>('importFromUri', {
-            'uri': identifier,
-            'destPath': cachedPath,
-          });
+          final imported = await channel.invokeMethod<String?>(
+            'importFromUri',
+            {'uri': identifier, 'destPath': cachedPath},
+          );
           if (imported != null && File(imported).existsSync()) {
             debugPrint(
               '[XDRemux][file_picker] re-imported ${file.name} from '
@@ -593,9 +601,7 @@ class _HomePageState extends State<HomePage> {
             '${file.name}, falling back to file_picker path',
           );
         } catch (e) {
-          debugPrint(
-            '[XDRemux][file_picker] content-URI re-import error: $e',
-          );
+          debugPrint('[XDRemux][file_picker] content-URI re-import error: $e');
         }
       }
     }
@@ -772,7 +778,9 @@ class _HomePageState extends State<HomePage> {
         // re-converting produces a broken nested gain map.
         if (_config.skipExisting) {
           final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint('[XDRemux][skip] input=$path verifyOutput=$inputIsConverted');
+          debugPrint(
+            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
+          );
           if (inputIsConverted) {
             skippedExisting++;
             continue;
@@ -898,6 +906,15 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startConversion() async {
     if (!_canStart) return;
 
+    if (!_backendCapabilities.isAvailable(_config.backend)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_backendCapabilities.statusFor(_config.backend)),
+        ),
+      );
+      return;
+    }
+
     // Android: check battery optimization before starting a batch.
     // ColorOS/other OEMs freeze the Dart VM in background without this.
     if (Platform.isAndroid) {
@@ -990,16 +1007,22 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    item.backend = runConfig.backend;
 
-    // Claim a Rust progress handle up front so the poll loop can read this
-    // item's real tile progress while sibling conversions run concurrently.
-    item.progressHandle = XdRemuxFFI.progressBegin();
+    // Claim a Rust progress handle only for Rust-backed work. Swift progress
+    // will use the same request id through the native backend contract.
+    item.progressHandle = runConfig.backend == ConversionBackend.rust
+        ? XdRemuxFFI.progressBegin()
+        : 0;
 
     try {
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
-          await XdRemuxService.verifyOutput(item.inputPath)) {
+          await XdRemuxService.verifyOutputForBackend(
+            runConfig.backend,
+            item.inputPath,
+          )) {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
         item.progress = null;
@@ -1017,29 +1040,48 @@ class _HomePageState extends State<HomePage> {
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
       Map<String, dynamic>? result;
-      if ((Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
+      if (runConfig.backend == ConversionBackend.rust &&
+          (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
         result = await _convertOneHardware(item, runConfig);
       }
-      result ??= await XdRemuxService.convert(
-        item.inputPath,
-        item.outputPath,
-        oppoCompat: runConfig.oppoCompatibility.rustValue,
-        oppoCameraTail: runConfig.oppoCameraTail.rustValue,
-        strictTmap: runConfig.strictTmap,
-        progressHandle: item.progressHandle,
-      );
 
-      if (result['success'] == true) {
+      result ??= (await XdRemuxService.convertWithBackend(
+        ConversionRequest(
+          id: item.id,
+          backend: runConfig.backend,
+          inputPath: item.inputPath,
+          outputPath: item.outputPath,
+          oppoCompat: runConfig.oppoCompatibility.rustValue,
+          oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+          strictTmap: runConfig.strictTmap,
+          progressHandle: item.progressHandle,
+        ),
+      )).toMap();
+
+      final cancelled =
+          item.status == QueueItemStatus.cancelled ||
+          result['cancelled'] == true ||
+          XdRemuxService.takeCancellation(item.id);
+      if (cancelled) {
+        item.status = QueueItemStatus.cancelled;
+        item.errorMessage = '已取消';
+      } else if (result['success'] == true) {
         item.status = QueueItemStatus.converted;
       } else {
         item.status = QueueItemStatus.failed;
         item.errorMessage = result['errorMessage'] ?? '未知错误';
       }
     } catch (e) {
-      item.status = QueueItemStatus.failed;
-      item.errorMessage = e.toString();
+      if (item.status == QueueItemStatus.cancelled ||
+          XdRemuxService.takeCancellation(item.id)) {
+        item.status = QueueItemStatus.cancelled;
+        item.errorMessage = '已取消';
+      } else {
+        item.status = QueueItemStatus.failed;
+        item.errorMessage = e.toString();
+      }
     }
 
     if (item.progressHandle != 0) {
@@ -1069,13 +1111,15 @@ class _HomePageState extends State<HomePage> {
       // Synchronous FFI call — do not block the UI isolate. prepareTiles is
       // short (parse + decode + tile), but keep the same isolate discipline as
       // the software path.
-      prepared = await Isolate.run(() => XdRemuxFFI.prepareTiles(
-            item.inputPath,
-            oppoCompat: runConfig.oppoCompatibility.rustValue,
-            oppoCameraTail: runConfig.oppoCameraTail.rustValue,
-            strictTmap: runConfig.strictTmap,
-            progressHandle: handle,
-          ));
+      prepared = await Isolate.run(
+        () => XdRemuxFFI.prepareTiles(
+          item.inputPath,
+          oppoCompat: runConfig.oppoCompatibility.rustValue,
+          oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+          strictTmap: runConfig.strictTmap,
+          progressHandle: handle,
+        ),
+      );
       if (prepared == null) return null;
       if (!prepared.success ||
           prepared.opaque == ffi.nullptr ||
@@ -1095,10 +1139,9 @@ class _HomePageState extends State<HomePage> {
       final tiles = <TileInput>[];
       for (var i = 0; i < prep.tileCount; i++) {
         final start = i * perTile;
-        tiles.add(TileInput(
-          Uint8List.sublistView(tileData, start, start + perTile),
-          i,
-        ));
+        tiles.add(
+          TileInput(Uint8List.sublistView(tileData, start, start + perTile), i),
+        );
       }
 
       final streams = await HardwareEncodeService.encodeTiles(tiles);
@@ -1115,12 +1158,14 @@ class _HomePageState extends State<HomePage> {
         XdRemuxFFI.progressReport(handle, i + 1, streams.length);
       }
 
-      final assembled = await Isolate.run(() => XdRemuxFFI.assembleTiles(
-            prep.opaque,
-            streams,
-            item.outputPath,
-            progressHandle: handle,
-          ));
+      final assembled = await Isolate.run(
+        () => XdRemuxFFI.assembleTiles(
+          prep.opaque,
+          streams,
+          item.outputPath,
+          progressHandle: handle,
+        ),
+      );
       try {
         if (!assembled.success) {
           // Assembly failed — fall back to the proven software path.
@@ -1169,13 +1214,22 @@ class _HomePageState extends State<HomePage> {
           final item = _queue[i];
           if (item.status == QueueItemStatus.running &&
               item.progressHandle != 0) {
-            final (stage, current, total) = XdRemuxFFI.readProgressFor(
-              item.progressHandle,
+            final progress = XdRemuxService.readProgress(
+              ConversionRequest(
+                id: item.id,
+                backend: item.backend,
+                inputPath: item.inputPath,
+                outputPath: item.outputPath,
+                oppoCompat: 0,
+                oppoCameraTail: 255,
+                strictTmap: false,
+                progressHandle: item.progressHandle,
+              ),
             );
             item.progress = (
-              stage: stage,
-              current: current,
-              total: total,
+              stage: progress.stage,
+              current: progress.current,
+              total: progress.total,
             );
           }
         }
@@ -1191,15 +1245,11 @@ class _HomePageState extends State<HomePage> {
         final runningText = running.isEmpty
             ? ''
             : ' — ${running.join(', ')}${running.length < _queue.where((i) => i.status == QueueItemStatus.running).length ? '…' : ''}';
-        ForegroundService.updateProgress(
-          '$done/$_totalFiles 完成$runningText',
-        );
+        ForegroundService.updateProgress('$done/$_totalFiles 完成$runningText');
         // Keep the Windows tray tooltip in sync so the batch stays
         // observable while the window is hidden.
         if (Platform.isWindows && TrayService.isHidden) {
-          TrayService.setToolTip(
-            'XDRemux — $done/$_totalFiles 完成',
-          );
+          TrayService.setToolTip('XDRemux — $done/$_totalFiles 完成');
         }
       } catch (_) {}
     });
@@ -1207,6 +1257,11 @@ class _HomePageState extends State<HomePage> {
 
   void _cancelConversion() {
     if (!_isProcessing) return;
+    for (final item in _queue) {
+      if (item.status == QueueItemStatus.running) {
+        XdRemuxService.cancel(item.id);
+      }
+    }
     setState(() {
       _isProcessing = false;
       _statusText = '已取消';
@@ -1333,7 +1388,9 @@ class _HomePageState extends State<HomePage> {
         if (result == null) return;
         final (saved, failed) = result;
         if (failed > 0) {
-          debugPrint('[XDRemux][gallery] auto-save: $saved saved, $failed failed');
+          debugPrint(
+            '[XDRemux][gallery] auto-save: $saved saved, $failed failed',
+          );
         }
       });
     }
@@ -1491,7 +1548,9 @@ class _HomePageState extends State<HomePage> {
         // re-converting produces a broken nested gain map.
         if (_config.skipExisting) {
           final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint('[XDRemux][skip] input=$path verifyOutput=$inputIsConverted');
+          debugPrint(
+            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
+          );
           if (inputIsConverted) {
             skippedExisting++;
             continue;
@@ -1583,12 +1642,8 @@ class _HomePageState extends State<HomePage> {
     final result = await _saveAllConvertedToGallery(showDeniedHint: true);
     if (result == null || !mounted) return;
     final (saved, failed) = result;
-    final msg = failed > 0
-        ? '已保存 $saved 个到相册，$failed 个失败'
-        : '已保存 $saved 个到相册';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(msg)));
+    final msg = failed > 0 ? '已保存 $saved 个到相册，$failed 个失败' : '已保存 $saved 个到相册';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   /// Core of the gallery batch-save. Returns (saved, failed), or null when
@@ -1771,17 +1826,6 @@ class _HomePageState extends State<HomePage> {
             onPressed: _startConversion,
           ),
         ),
-      if (_canEditQueue)
-        Padding(
-          padding: EdgeInsets.only(left: compact ? 0 : 4),
-          child: _OppoCompatToggle(
-            mode: _config.oppoCompatibility,
-            onChanged: (mode) {
-              setState(() => _config.oppoCompatibility = mode);
-              _scheduleConfigSave();
-            },
-          ),
-        ),
       if (!compact)
         IconButton(
           icon: const Icon(Icons.stop),
@@ -1795,10 +1839,9 @@ class _HomePageState extends State<HomePage> {
         IconButton(
           icon: const Icon(Icons.folder_open),
           tooltip: '打开输出目录',
-          onPressed:
-              !_isProcessing && _queue.any((item) => item.isSuccessful)
-                  ? _revealOutputs
-                  : null,
+          onPressed: !_isProcessing && _queue.any((item) => item.isSuccessful)
+              ? _revealOutputs
+              : null,
         ),
       IconButton(
         icon: const Icon(Icons.tune),
@@ -2375,64 +2418,6 @@ class _HomePageState extends State<HomePage> {
 }
 
 // ============================================================================
-// OPPO Compat Toggle (app bar)
-// ============================================================================
-
-class _OppoCompatToggle extends StatelessWidget {
-  final OppoCompatMode mode;
-  final ValueChanged<OppoCompatMode> onChanged;
-
-  const _OppoCompatToggle({required this.mode, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isOn = mode != OppoCompatMode.off;
-
-    return Tooltip(
-      message: isOn ? 'OPPO 兼容：开启' : 'OPPO 兼容：关闭',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          onChanged(isOn ? OppoCompatMode.off : OppoCompatMode.on);
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: isOn
-                ? theme.colorScheme.primaryContainer
-                : theme.colorScheme.surfaceContainerHighest,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isOn ? Icons.phone_android : Icons.phone_android,
-                size: 16,
-                color: isOn
-                    ? theme.colorScheme.onPrimaryContainer
-                    : theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'OPPO',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: isOn
-                      ? theme.colorScheme.onPrimaryContainer
-                      : theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================================================
 // All-files access (Android) — top-level so the settings sheet and picker both
 // use the same helpers.
 // ============================================================================
@@ -2485,6 +2470,8 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   late ConversionConfig _cfg;
   late final TextEditingController _suffixController;
+  BackendCapabilities _backendCapabilities =
+      BackendCapabilities.forCurrentPlatform();
 
   /// Hardware-encoding availability probe result (null = not yet known).
   /// Only probed on Android, where the MediaCodec path exists.
@@ -2495,6 +2482,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     super.initState();
     _cfg = widget.config.copy();
     _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
+    if (Platform.isMacOS || Platform.isIOS) {
+      XdRemuxService.getBackendCapabilities().then((capabilities) {
+        if (mounted) setState(() => _backendCapabilities = capabilities);
+      });
+    }
     if (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) {
       HardwareEncodeService.isAvailable().then((ok) {
         if (mounted) setState(() => _hwAvailable = ok);
@@ -2510,6 +2502,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
   void _emit() {
     widget.config.family = _cfg.family;
+    widget.config.backend = _cfg.backend;
     widget.config.outputDirectory = _cfg.outputDirectory;
     widget.config.oppoCompatibility = _cfg.oppoCompatibility;
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
@@ -2543,12 +2536,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     final config444 = result?['config444Flexible'];
 
     String colorNames(int fmt) => switch (fmt) {
-          0x13 => 'YUV420 semi-planar (0x13)',
-          0x7F420888 => 'YUV420 flexible (0x7F420888)',
-          0x7F420789 => 'YUV420 tiled (0x7F420789)',
-          0x7F420444 => 'YUV444 flexible (0x7F420444)',
-          _ => '0x${fmt.toRadixString(16)}',
-        };
+      0x13 => 'YUV420 semi-planar (0x13)',
+      0x7F420888 => 'YUV420 flexible (0x7F420888)',
+      0x7F420789 => 'YUV420 tiled (0x7F420789)',
+      0x7F420444 => 'YUV444 flexible (0x7F420444)',
+      _ => '0x${fmt.toRadixString(16)}',
+    };
 
     final content = StringBuffer()
       ..writeln('设备：${result?['manufacturer']} ${result?['model']}')
@@ -2556,7 +2549,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       ..writeln('芯片：${result?['chipset']}')
       ..writeln('')
       ..writeln('HEVC 编码器：')
-      ..writeln(encoders.isEmpty ? '  (无)' : encoders.map((e) => '  $e').join('\n'))
+      ..writeln(
+        encoders.isEmpty ? '  (无)' : encoders.map((e) => '  $e').join('\n'),
+      )
       ..writeln('')
       ..writeln('支持颜色格式：')
       ..writeln(
@@ -2580,8 +2575,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: content.toString()));
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
             },
             child: const Text('复制'),
           ),
@@ -2640,32 +2636,52 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Family
-                    Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 4),
-                    SegmentedButton<Family>(
-                      segments: Family.values
-                          .map(
-                            (f) => ButtonSegment<Family>(
-                              value: f,
-                              label: Text(f.appTitle),
+                    // Swift is visible only on Apple platforms. It remains
+                    // disabled until the embedded Swift Core capability probe
+                    // reports a linked and verified implementation.
+                    if (Platform.isMacOS || Platform.isIOS) ...[
+                      Text('转换后端', style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 4),
+                      DropdownButtonFormField<ConversionBackend>(
+                        initialValue: _cfg.backend,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: ConversionBackend.rust,
+                            child: Text('Rust（默认）'),
+                          ),
+                          DropdownMenuItem(
+                            value: ConversionBackend.swift,
+                            enabled: _backendCapabilities.swiftAvailable,
+                            child: Text(
+                              _backendCapabilities.swiftAvailable
+                                  ? 'Swift'
+                                  : 'Swift（待接入）',
                             ),
-                          )
-                          .toList(),
-                      selected: {_cfg.family},
-                      onSelectionChanged: (v) {
-                        setState(() => _cfg.family = v.first);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Auto 自动检测 X6/X7 设备族。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                        onChanged: (backend) {
+                          if (backend == null ||
+                              !_backendCapabilities.isAvailable(backend)) {
+                            return;
+                          }
+                          setState(() => _cfg.backend = backend);
+                          _emit();
+                        },
                       ),
-                    ),
-                    const SizedBox(height: 20),
+                      const SizedBox(height: 4),
+                      Text(
+                        _cfg.backend == ConversionBackend.swift
+                            ? _backendCapabilities.statusFor(_cfg.backend)
+                            : 'Rust 核心继续负责现有标准 HDR 转换。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
 
                     // Output directory — desktop only. Android scoped storage
                     // and the iOS sandbox both make an arbitrary writable
@@ -2725,75 +2741,122 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
 
-                    DropdownButtonFormField<OppoCompatMode>(
-                      initialValue: _cfg.oppoCompatibility,
-                      decoration: const InputDecoration(
-                        labelText: 'OPPO 兼容模式',
-                        border: OutlineInputBorder(),
+                    // Advanced output-format options. Defaults are correct
+                    // for OPPO/OnePlus HDR files; changing them can make the
+                    // result unreadable in OPPO's gallery, so keep them
+                    // collapsed behind a warning header.
+                    ExpansionTile(
+                      initiallyExpanded: false,
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      title: Text(
+                        '高级模式',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
                       ),
-                      items: OppoCompatMode.values
-                          .map(
-                            (mode) => DropdownMenuItem(
-                              value: mode,
-                              child: Text(mode.appTitle),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (mode) {
-                        if (mode == null) return;
-                        setState(() => _cfg.oppoCompatibility = mode);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _cfg.oppoCompatibility.appHelp,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                      subtitle: const Text('不建议更改，可能影响相册兼容性'),
+                      leading: Icon(
+                        Icons.tune,
+                        size: 20,
+                        color: theme.colorScheme.error,
                       ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    DropdownButtonFormField<OppoCameraTailMode>(
-                      initialValue: _cfg.oppoCameraTail,
-                      decoration: const InputDecoration(
-                        labelText: 'OPPO 相机尾部元数据',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: OppoCameraTailMode.values
-                          .map(
-                            (mode) => DropdownMenuItem(
-                              value: mode,
-                              child: Text(mode.appTitle),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (mode) {
-                        if (mode == null) return;
-                        setState(() => _cfg.oppoCameraTail = mode);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _cfg.oppoCameraTail.appHelp,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('使用严格 ISO tmap'),
-                      subtitle: const Text(
-                        '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
-                      ),
-                      value: _cfg.strictTmap,
-                      onChanged: (value) {
-                        setState(() => _cfg.strictTmap = value);
-                        _emit();
-                      },
+                      children: [
+                        const SizedBox(height: 8),
+                        Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
+                        const SizedBox(height: 4),
+                        SegmentedButton<Family>(
+                          segments: Family.values
+                              .map(
+                                (f) => ButtonSegment<Family>(
+                                  value: f,
+                                  label: Text(f.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          selected: {_cfg.family},
+                          onSelectionChanged: (v) {
+                            setState(() => _cfg.family = v.first);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Auto 自动检测 X6/X7 设备族。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        DropdownButtonFormField<OppoCompatMode>(
+                          initialValue: _cfg.oppoCompatibility,
+                          decoration: const InputDecoration(
+                            labelText: 'OPPO 兼容模式',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: OppoCompatMode.values
+                              .map(
+                                (mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setState(() => _cfg.oppoCompatibility = mode);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _cfg.oppoCompatibility.appHelp,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        DropdownButtonFormField<OppoCameraTailMode>(
+                          initialValue: _cfg.oppoCameraTail,
+                          decoration: const InputDecoration(
+                            labelText: 'OPPO 相机尾部元数据',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: OppoCameraTailMode.values
+                              .map(
+                                (mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setState(() => _cfg.oppoCameraTail = mode);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _cfg.oppoCameraTail.appHelp,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('使用严格 ISO tmap'),
+                          subtitle: const Text(
+                            '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
+                          ),
+                          value: _cfg.strictTmap,
+                          onChanged: (value) {
+                            setState(() => _cfg.strictTmap = value);
+                            _emit();
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
 
@@ -2909,8 +2972,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               style: theme.textTheme.bodySmall,
                             ),
                             trailing: granted
-                                ? const Icon(Icons.check_circle,
-                                    color: Colors.green, size: 20)
+                                ? const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.green,
+                                    size: 20,
+                                  )
                                 : const Icon(Icons.open_in_new, size: 18),
                             onTap: () async {
                               final ok = await ensureAllFilesAccess();
@@ -2982,7 +3048,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
                           // 需要的格式。开启时强制 OPPO 兼容模式，保证输出能
                           // 被 OPPO 图库识别。
-                          if (v && _cfg.oppoCompatibility != OppoCompatMode.on) {
+                          if (v &&
+                              _cfg.oppoCompatibility != OppoCompatMode.on) {
                             _cfg.oppoCompatibility = OppoCompatMode.on;
                           }
                           setState(() => _cfg.hardwareEncode = v);
@@ -3008,8 +3075,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             'xdremux/hevc-probe',
                           );
                           try {
-                            final result = await probeChannel.invokeMethod<
-                                Map<Object?, Object?>>('probe');
+                            final result = await probeChannel
+                                .invokeMethod<Map<Object?, Object?>>('probe');
                             if (!context.mounted) return;
                             _showProbeResultDialog(result);
                           } catch (e) {
@@ -3046,9 +3113,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           '在「文件」App 中查看已转换的照片',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
-                        onTap: () => launchUrl(
-                          Uri.parse('shareddocuments://'),
-                        ),
+                        onTap: () => launchUrl(Uri.parse('shareddocuments://')),
                       ),
                     ],
 
@@ -3140,7 +3205,11 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
         '${tempDir.path}${Platform.pathSeparator}picked_files',
       );
       if (pickedDir.existsSync()) await pickedDir.delete(recursive: true);
-      if (mounted) setState(() { _cacheSize = 0; _cleared = true; });
+      if (mounted)
+        setState(() {
+          _cacheSize = 0;
+          _cleared = true;
+        });
     } catch (_) {}
   }
 
@@ -3215,9 +3284,7 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
           leading: const Icon(Icons.output_outlined),
           title: const Text('清除输出目录'),
           subtitle: Text(
-            _outputSize > 0
-                ? '已转换文件共 ${_formatSize(_outputSize)}'
-                : '输出目录为空',
+            _outputSize > 0 ? '已转换文件共 ${_formatSize(_outputSize)}' : '输出目录为空',
             style: theme.textTheme.bodySmall,
           ),
           trailing: _outputSize > 0
@@ -3407,7 +3474,8 @@ class _MobileQueueCard extends StatelessWidget {
                         builder: (context, constraints) => ClipRRect(
                           borderRadius: BorderRadius.circular(3),
                           child: LinearProgressIndicator(
-                            value: item.progress != null &&
+                            value:
+                                item.progress != null &&
                                     item.progress!.total > 0
                                 ? item.progress!.current / item.progress!.total
                                 : null,
@@ -3663,10 +3731,11 @@ class _PhotoCard extends StatelessWidget {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(2),
                               child: LinearProgressIndicator(
-                                value: item.progress != null &&
+                                value:
+                                    item.progress != null &&
                                         item.progress!.total > 0
                                     ? item.progress!.current /
-                                        item.progress!.total
+                                          item.progress!.total
                                     : null,
                                 minHeight: 4,
                                 backgroundColor: Colors.white.withAlpha(80),
@@ -3828,7 +3897,8 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final path = _displayPath;
-    final hasOutput = widget.isConverted &&
+    final hasOutput =
+        widget.isConverted &&
         widget.outputPath != null &&
         widget.outputPath!.isNotEmpty &&
         File(widget.outputPath!).existsSync();

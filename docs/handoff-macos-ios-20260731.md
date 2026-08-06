@@ -1,5 +1,7 @@
 # XDRemux 项目交接文档（Mac：iOS + macOS 版）
 
+> 历史文档：其中的 iOS “尚未创建”结论已过时。v0.3.0 当前状态、实际工具链和验证结果见 `docs/v0.3.0-backend-validation.md`；不要直接按本文旧待办判断当前代码。
+
 > 整理日期：2026-07-31
 > 分支：`main` @ `99dcfaf`（与 `origin/main` 同步，工作区干净）
 > 最新发布：v0.2.0（正式版，Windows + Android）
