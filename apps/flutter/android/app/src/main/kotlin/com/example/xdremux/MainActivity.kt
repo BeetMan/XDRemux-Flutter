@@ -12,6 +12,7 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import java.io.ByteArrayOutputStream
@@ -207,6 +208,12 @@ class MainActivity : FlutterActivity() {
     /// DCIM bytes (which keep the full EXIF GPS). OPPO's MediaProvider strips
     /// the GPS block from HEIC bytes served over a content stream, so copying
     /// bytes is only a fallback when no real path exists. Returns the path used.
+    /// Whether the app can read arbitrary paths under /storage/emulated/0
+    /// (MANAGE_EXTERNAL_STORAGE). On API < 30 the legacy storage model grants
+    /// full access without it.
+    private fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()
+
     private fun importRawBytes(uriString: String, destPath: String): String? {
         // Try to resolve a real file path first (MediaStore _data). Reading the
         // original DCIM/Download file directly preserves EXIF GPS that the
@@ -228,54 +235,86 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
         }
         if (mediaId != null) {
-            try {
-                val mediaUri = android.provider.MediaStore
-                    .Files
-                    .getContentUri("external")
-                    .buildUpon()
-                    .appendPath(mediaId)
-                    .build()
-                val projection = arrayOf(
-                    android.provider.MediaStore.MediaColumns.DATA,
-                    android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
-                )
-                contentResolver.query(mediaUri, projection, null, null, null)?.use { c ->
-                    if (c.moveToFirst()) {
-                        val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
-                        if (dataIdx >= 0) {
-                            val realPath = c.getString(dataIdx)
-                            if (realPath != null && realPath.isNotEmpty()) {
-                                val f = File(realPath)
-                                if (f.isFile && f.canRead() && f.length() > 0) {
-                                    return realPath
+            // Only prefer the MediaStore _data real path when all-files access
+            // is granted. Without it, scoped storage reports the path as
+            // existing, but the native Rust fs::read later fails with
+            // Permission denied. The content-URI copy below is readable via the
+            // picker's URI grant and is the safe path in that case.
+            val hasAllFiles = hasAllFilesAccess()
+            if (hasAllFiles) {
+                try {
+                    val mediaUri = android.provider.MediaStore
+                        .Files
+                        .getContentUri("external")
+                        .buildUpon()
+                        .appendPath(mediaId)
+                        .build()
+                    val projection = arrayOf(
+                        android.provider.MediaStore.MediaColumns.DATA,
+                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                    )
+                    contentResolver.query(mediaUri, projection, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val dataIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+                            if (dataIdx >= 0) {
+                                val realPath = c.getString(dataIdx)
+                                if (realPath != null && realPath.isNotEmpty()) {
+                                    val f = File(realPath)
+                                    if (f.isFile && f.canRead() && f.length() > 0) {
+                                        return realPath
+                                    }
                                 }
                             }
+                            val dnIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                            if (dnIdx >= 0) displayName = c.getString(dnIdx)
                         }
-                        val dnIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
-                        if (dnIdx >= 0) displayName = c.getString(dnIdx)
                     }
+                } catch (_: Exception) {
                 }
-            } catch (_: Exception) {
+            } else {
+                // Still grab the display name for the DCIM-tree fallback below,
+                // which only checks readable paths.
+                try {
+                    val mediaUri = android.provider.MediaStore
+                        .Files
+                        .getContentUri("external")
+                        .buildUpon()
+                        .appendPath(mediaId)
+                        .build()
+                    val projection = arrayOf(
+                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                    )
+                    contentResolver.query(mediaUri, projection, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val dnIdx = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                            if (dnIdx >= 0) displayName = c.getString(dnIdx)
+                        }
+                    }
+                } catch (_: Exception) {
+                }
             }
         }
 
         // Second try: search the DCIM/Download trees for a file matching the
         // display name. MediaProvider gives us the name; if the original lives
         // in a standard camera/download location, reading that real path
-        // preserves GPS.
+        // preserves GPS. Only meaningful with all-files access — without it the
+        // native Rust fs::read on these paths fails with Permission denied.
         if (displayName != null && displayName!!.endsWith(".heic", true)) {
-            val candidates = listOf(
-                "/storage/emulated/0/DCIM/Camera/$displayName",
-                "/storage/emulated/0/Pictures/$displayName",
-                "/storage/emulated/0/Download/$displayName",
-            )
-            for (p in candidates) {
-                try {
-                    val f = File(p)
-                    if (f.isFile && f.canRead() && f.length() > 0) {
-                        return p
+            if (hasAllFilesAccess()) {
+                val candidates = listOf(
+                    "/storage/emulated/0/DCIM/Camera/$displayName",
+                    "/storage/emulated/0/Pictures/$displayName",
+                    "/storage/emulated/0/Download/$displayName",
+                )
+                for (p in candidates) {
+                    try {
+                        val f = File(p)
+                        if (f.isFile && f.canRead() && f.length() > 0) {
+                            return p
+                        }
+                    } catch (_: Exception) {
                     }
-                } catch (_: Exception) {
                 }
             }
         }

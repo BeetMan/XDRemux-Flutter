@@ -536,13 +536,27 @@ class _HomePageState extends State<HomePage> {
     // first read the original file by its real filesystem path (GPS intact);
     // only fall back to the content-URI copy when no real path resolves.
     if (Platform.isAndroid) {
-      final realPath = _resolveRealPathFromName(file.name);
-      if (realPath != null) {
+      // Reading the real filesystem path (to preserve GPS) only works with
+      // MANAGE_EXTERNAL_STORAGE granted. Without it, the scoped-storage layer
+      // lets File.exists() report true but the native Rust fs::read on that
+      // path fails with Permission denied — so only take the real-path route
+      // when all-files access is actually granted, and otherwise fall through
+      // to a content-URI copy (readable via the picker's grant).
+      final hasAllFiles = await allFilesAccessGranted();
+      if (hasAllFiles) {
+        final realPath = _resolveRealPathFromName(file.name);
+        if (realPath != null) {
+          debugPrint(
+            '[XDRemux][file_picker] resolved ${file.name} to real path '
+            '$realPath (GPS preserved)',
+          );
+          return realPath;
+        }
+      } else {
         debugPrint(
-          '[XDRemux][file_picker] resolved ${file.name} to real path '
-          '$realPath (GPS preserved)',
+          '[XDRemux][file_picker] all-files access not granted; '
+          'using content-URI copy for ${file.name}',
         );
-        return realPath;
       }
       final identifier = file.identifier;
       if (identifier != null &&
