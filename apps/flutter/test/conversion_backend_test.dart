@@ -13,11 +13,25 @@ void main() {
     expect(restored.backend, ConversionBackend.rust);
   });
 
+  test('Apple feature flags survive config round-trip', () {
+    final config = ConversionConfig(
+      backend: ConversionBackend.swift,
+      applePhotographicStyles: true,
+      applePortrait: true,
+    );
+    final restored = ConversionConfig.fromJson(config.toJson());
+    expect(restored.backend, ConversionBackend.swift);
+    expect(restored.applePhotographicStyles, isTrue);
+    expect(restored.applePortrait, isTrue);
+  });
+
   test('Swift visibility follows Apple platform gating', () {
     final capabilities = BackendCapabilities.forCurrentPlatform();
     expect(capabilities.swiftVisible, Platform.isMacOS || Platform.isIOS);
     expect(capabilities.isAvailable(ConversionBackend.rust), isTrue);
     expect(capabilities.isAvailable(ConversionBackend.swift), isFalse);
+    expect(capabilities.swiftPhotographicStyles, isFalse);
+    expect(capabilities.swiftPortrait, isFalse);
   });
 
   test('backend result exposes cancellation and validation state', () {

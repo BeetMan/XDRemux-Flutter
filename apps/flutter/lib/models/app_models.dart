@@ -46,15 +46,18 @@ enum ConversionBackend {
 /// Runtime capability snapshot for the conversion backends.
 ///
 /// Visibility and availability are deliberately separate: the Swift option
-/// is visible on macOS/iOS while the library is being integrated, but remains
-/// disabled until the embedded Swift Core is actually linked and verified.
+/// is visible on macOS/iOS while the native bridge is being integrated. Its
+/// availability is controlled by the platform capability probe.
 class BackendCapabilities {
   final bool rustAvailable;
   final bool swiftVisible;
   final bool swiftAvailable;
   final bool swiftStandardHdr;
   final bool swiftAppleFeatures;
+  final bool swiftPhotographicStyles;
+  final bool swiftPortrait;
   final String swiftUnavailableReason;
+  final String swiftAppleFeaturesUnavailableReason;
 
   const BackendCapabilities({
     required this.rustAvailable,
@@ -62,7 +65,10 @@ class BackendCapabilities {
     required this.swiftAvailable,
     required this.swiftStandardHdr,
     required this.swiftAppleFeatures,
+    this.swiftPhotographicStyles = false,
+    this.swiftPortrait = false,
     required this.swiftUnavailableReason,
+    this.swiftAppleFeaturesUnavailableReason = '',
   });
 
   factory BackendCapabilities.forCurrentPlatform() {
@@ -73,9 +79,13 @@ class BackendCapabilities {
       swiftAvailable: false,
       swiftStandardHdr: false,
       swiftAppleFeatures: false,
+      swiftPhotographicStyles: false,
+      swiftPortrait: false,
       swiftUnavailableReason: apple
-          ? 'Swift Core 尚未作为嵌入式 Library 链接；当前版本不会启动 Swift CLI。'
+          ? '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。'
           : 'Swift 后端仅支持 macOS/iOS。',
+      swiftAppleFeaturesUnavailableReason:
+          'Apple 功能仍需 macOS 原生工具链和样例验证；当前版本保持关闭。',
     );
   }
 
@@ -100,7 +110,10 @@ class BackendCapabilities {
     bool? swiftAvailable,
     bool? swiftStandardHdr,
     bool? swiftAppleFeatures,
+    bool? swiftPhotographicStyles,
+    bool? swiftPortrait,
     String? swiftUnavailableReason,
+    String? swiftAppleFeaturesUnavailableReason,
   }) {
     return BackendCapabilities(
       rustAvailable: rustAvailable ?? this.rustAvailable,
@@ -108,8 +121,14 @@ class BackendCapabilities {
       swiftAvailable: swiftAvailable ?? this.swiftAvailable,
       swiftStandardHdr: swiftStandardHdr ?? this.swiftStandardHdr,
       swiftAppleFeatures: swiftAppleFeatures ?? this.swiftAppleFeatures,
+      swiftPhotographicStyles:
+          swiftPhotographicStyles ?? this.swiftPhotographicStyles,
+      swiftPortrait: swiftPortrait ?? this.swiftPortrait,
       swiftUnavailableReason:
           swiftUnavailableReason ?? this.swiftUnavailableReason,
+      swiftAppleFeaturesUnavailableReason:
+          swiftAppleFeaturesUnavailableReason ??
+          this.swiftAppleFeaturesUnavailableReason,
     );
   }
 }
@@ -360,6 +379,8 @@ class ConversionConfig {
   OppoCompatMode oppoCompatibility;
   OppoCameraTailMode oppoCameraTail;
   bool strictTmap;
+  bool applePhotographicStyles;
+  bool applePortrait;
   bool skipExisting;
   int maxConcurrentJobs;
   String fileNameSuffix;
@@ -374,6 +395,8 @@ class ConversionConfig {
     this.oppoCompatibility = OppoCompatMode.on,
     this.oppoCameraTail = OppoCameraTailMode.automatic,
     this.strictTmap = false,
+    this.applePhotographicStyles = false,
+    this.applePortrait = false,
     this.skipExisting = true,
     this.maxConcurrentJobs = 4,
     this.fileNameSuffix = '_iso',
@@ -390,6 +413,8 @@ class ConversionConfig {
     'oppoCompatibility': oppoCompatibility.name,
     'oppoCameraTail': oppoCameraTail.name,
     'strictTmap': strictTmap,
+    'applePhotographicStyles': applePhotographicStyles,
+    'applePortrait': applePortrait,
     'skipExisting': skipExisting,
     'maxConcurrentJobs': maxConcurrentJobs,
     'fileNameSuffix': fileNameSuffix,
@@ -418,6 +443,9 @@ class ConversionConfig {
         orElse: () => OppoCameraTailMode.automatic,
       ),
       strictTmap: json['strictTmap'] as bool? ?? false,
+      applePhotographicStyles:
+          json['applePhotographicStyles'] as bool? ?? false,
+      applePortrait: json['applePortrait'] as bool? ?? false,
       skipExisting: json['skipExisting'] as bool? ?? true,
       maxConcurrentJobs: json['maxConcurrentJobs'] as int? ?? 4,
       fileNameSuffix: json['fileNameSuffix'] as String? ?? '_iso',
@@ -434,6 +462,8 @@ class ConversionConfig {
     oppoCompatibility: oppoCompatibility,
     oppoCameraTail: oppoCameraTail,
     strictTmap: strictTmap,
+    applePhotographicStyles: applePhotographicStyles,
+    applePortrait: applePortrait,
     skipExisting: skipExisting,
     maxConcurrentJobs: maxConcurrentJobs,
     fileNameSuffix: fileNameSuffix,

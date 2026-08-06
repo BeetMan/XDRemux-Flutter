@@ -1,5 +1,32 @@
 import Cocoa
 import FlutterMacOS
+import XDRemuxFlutterBackend
+
+private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHandler, @unchecked Sendable {
+  private var sink: FlutterEventSink?
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    sink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    sink = nil
+    return nil
+  }
+
+  func send(requestID: String, progress: SwiftBackendProgress) {
+    let event: [String: Any] = [
+      "requestId": requestID,
+      "stage": progress.stage,
+      "current": progress.current,
+      "total": progress.total,
+    ]
+    DispatchQueue.main.async { [weak self] in
+      self?.sink?(event)
+    }
+  }
+}
 
 /// A transparent overlay that intercepts file-drop events and forwards
 /// them to Flutter via MethodChannel.  All other events pass through to
@@ -30,6 +57,7 @@ private class DropOverlayView: NSView {
 @main
 class AppDelegate: FlutterAppDelegate {
   private var dropChannel: FlutterMethodChannel?
+  private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     guard let flutterVC = mainFlutterWindow?.contentViewController as? FlutterViewController,
@@ -52,33 +80,72 @@ class AppDelegate: FlutterAppDelegate {
     // Place overlay on top so it receives drag events first.
     contentView.addSubview(overlay, positioned: .above, relativeTo: flutterView)
 
-    // Capability probe for the backend abstraction. The Swift Core is not
-    // linked in P0.0, so report that explicitly instead of falling back to a
-    // Swift CLI subprocess (which is not suitable for the production bridge).
+    // The Swift backend is an embedded package call. It never launches the
+    // upstream CLI or parses stdout.
     let backendChannel = FlutterMethodChannel(
       name: "xdremux/swift-backend",
       binaryMessenger: flutterVC.engine.binaryMessenger
     )
-    backendChannel.setMethodCallHandler { call, result in
+    let progressChannel = FlutterEventChannel(
+      name: "xdremux/swift-backend/progress",
+      binaryMessenger: flutterVC.engine.binaryMessenger
+    )
+    progressChannel.setStreamHandler(swiftProgressStreamHandler)
+    backendChannel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "getCapabilities":
-        result([
-          "swiftAvailable": false,
-          "swiftStandardHdr": false,
-          "swiftAppleFeatures": false,
-          "swiftUnavailableReason":
-            "Swift Core 尚未作为嵌入式 Library 链接；当前版本不会启动 Swift CLI。"
-        ])
+        result(XDRemuxSwiftBackend.capabilities())
       case "convert":
-        result(FlutterError(
-          code: "swift_backend_unavailable",
-          message: "Swift Core 尚未链接到当前 macOS 构建。",
-          details: nil
-        ))
+        guard let args = call.arguments as? [String: Any],
+              let requestID = args["requestId"] as? String,
+              let inputPath = args["inputPath"] as? String,
+              let outputPath = args["outputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Swift convert args", details: nil))
+          return
+        }
+        let request = SwiftBackendRequest(
+          requestID: requestID,
+          inputPath: inputPath,
+          outputPath: outputPath,
+          oppoCompatibility: (args["oppoCompat"] as? Int) ?? 0,
+          oppoCameraTail: (args["oppoCameraTail"] as? Int) ?? 255,
+          strictTmap: (args["strictTmap"] as? Bool) ?? false,
+          applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
+          applePortrait: (args["applePortrait"] as? Bool) ?? false
+        )
+        let progressStreamHandler = self?.swiftProgressStreamHandler
+        DispatchQueue.global(qos: .userInitiated).async {
+          let response = XDRemuxSwiftBackend.convert(request) { progress in
+            progressStreamHandler?.send(requestID: requestID, progress: progress)
+          }
+          let payload: [String: Any] = [
+            "success": response.success,
+            "cancelled": response.cancelled,
+            "outputValid": response.outputValid.map { $0 as Any } ?? NSNull(),
+            "errorMessage": response.errorMessage.map { $0 as Any } ?? NSNull(),
+          ]
+          DispatchQueue.main.async {
+            result(payload)
+          }
+        }
       case "verifyOutput":
-        result(false)
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Swift verify args", details: nil))
+          return
+        }
+        result(XDRemuxSwiftBackend.verifyOutput(
+          path,
+          applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
+          applePortrait: (args["applePortrait"] as? Bool) ?? false
+        ))
       case "cancel":
-        // Reserved for native cancellation once Swift Core is linked.
+        guard let args = call.arguments as? [String: Any],
+              let requestID = args["requestId"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Swift cancel args", details: nil))
+          return
+        }
+        XDRemuxSwiftBackend.cancel(requestID: requestID)
         result(true)
       default:
         result(FlutterMethodNotImplemented)

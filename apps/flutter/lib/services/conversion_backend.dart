@@ -15,6 +15,8 @@ class ConversionRequest {
   final int oppoCompat;
   final int oppoCameraTail;
   final bool strictTmap;
+  final bool applePhotographicStyles;
+  final bool applePortrait;
   final int progressHandle;
 
   const ConversionRequest({
@@ -25,6 +27,8 @@ class ConversionRequest {
     required this.oppoCompat,
     required this.oppoCameraTail,
     required this.strictTmap,
+    this.applePhotographicStyles = false,
+    this.applePortrait = false,
     this.progressHandle = 0,
   });
 }
@@ -116,7 +120,11 @@ abstract class ConversionBackendAdapter {
 
   BackendProgress readProgress(ConversionRequest request);
 
-  Future<bool> verifyOutput(String path);
+  Future<bool> verifyOutput(
+    String path, {
+    bool applePhotographicStyles = false,
+    bool applePortrait = false,
+  });
 
   /// Cancellation is best-effort until the native backend exposes a true
   /// interruption primitive. The coordinator still prevents a cancelled
@@ -190,7 +198,11 @@ class RustConversionBackend implements ConversionBackendAdapter {
   }
 
   @override
-  Future<bool> verifyOutput(String path) async {
+  Future<bool> verifyOutput(
+    String path, {
+    bool applePhotographicStyles = false,
+    bool applePortrait = false,
+  }) async {
     return XdRemuxFFI.verifyOutput(path);
   }
 
@@ -202,17 +214,24 @@ class RustConversionBackend implements ConversionBackendAdapter {
 
 /// Adapter for the embedded Swift Library contract.
 ///
-/// The native channel intentionally has no CLI fallback. Until the Swift Core
-/// is linked, calls return a clear unavailable error and the UI keeps this
-/// backend disabled through capability detection.
+/// The native channel intentionally has no CLI fallback. Availability is
+/// reported by the native capability probe and conversion stays on the shared
+/// request/result contract.
 class SwiftConversionBackend implements ConversionBackendAdapter {
   static const MethodChannel _channel = MethodChannel('xdremux/swift-backend');
+  static const EventChannel _progressChannel = EventChannel(
+    'xdremux/swift-backend/progress',
+  );
+
+  StreamSubscription<Object?>? _progressSubscription;
+  final Map<String, BackendProgress> _progressByRequest = {};
 
   @override
   ConversionBackend get backend => ConversionBackend.swift;
 
   @override
   Future<BackendConversionResult> convert(ConversionRequest request) async {
+    _ensureProgressStream();
     try {
       final raw = await _channel.invokeMethod<Object?>('convert', {
         'requestId': request.id,
@@ -221,6 +240,8 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
         'oppoCompat': request.oppoCompat,
         'oppoCameraTail': request.oppoCameraTail,
         'strictTmap': request.strictTmap,
+        'applePhotographicStyles': request.applePhotographicStyles,
+        'applePortrait': request.applePortrait,
       });
       final result = _parseResult(raw);
       if (!result.success) return result;
@@ -228,7 +249,11 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
       // Swift output validation is deliberately a Swift-side operation. It
       // will later include Apple metadata/manifest checks rather than using
       // the Rust validator as a proxy.
-      final valid = await verifyOutput(request.outputPath);
+      final valid = await verifyOutput(
+        request.outputPath,
+        applePhotographicStyles: request.applePhotographicStyles,
+        applePortrait: request.applePortrait,
+      );
       if (!valid) {
         return result.copyWith(
           success: false,
@@ -260,26 +285,36 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
     return BackendConversionResult(
       backend: backend,
       success: map['success'] == true,
-      mode: map['mode'] as String?,
-      family: map['family'] as String?,
+      cancelled: map['cancelled'] == true,
+      outputValid: map['outputValid'] is bool
+          ? map['outputValid'] as bool
+          : null,
+      mode: map['mode'] is String ? map['mode'] as String : null,
+      family: map['family'] is String ? map['family'] as String : null,
       edrScale: (map['edrScale'] as num?)?.toDouble() ?? 0,
       gainMapMax: (map['gainMapMax'] as num?)?.toDouble() ?? 0,
-      errorMessage: map['errorMessage'] as String?,
+      errorMessage: map['errorMessage'] is String
+          ? map['errorMessage'] as String
+          : null,
     );
   }
 
   @override
   BackendProgress readProgress(ConversionRequest request) {
-    // P0.0 reserves the common surface. P0.1 will stream native progress
-    // events through this same request id.
-    return const BackendProgress();
+    return _progressByRequest[request.id] ?? const BackendProgress();
   }
 
   @override
-  Future<bool> verifyOutput(String path) async {
+  Future<bool> verifyOutput(
+    String path, {
+    bool applePhotographicStyles = false,
+    bool applePortrait = false,
+  }) async {
     try {
       return await _channel.invokeMethod<bool>('verifyOutput', {
             'path': path,
+            'applePhotographicStyles': applePhotographicStyles,
+            'applePortrait': applePortrait,
           }) ??
           false;
     } on MissingPluginException {
@@ -296,5 +331,22 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
           .invokeMethod<void>('cancel', {'requestId': requestId})
           .catchError((_) {}),
     );
+  }
+
+  void _ensureProgressStream() {
+    if (_progressSubscription != null) return;
+    _progressSubscription = _progressChannel.receiveBroadcastStream().listen((
+      event,
+    ) {
+      if (event is! Map) return;
+      final map = event.map((key, value) => MapEntry(key.toString(), value));
+      final requestId = map['requestId'] as String?;
+      if (requestId == null) return;
+      _progressByRequest[requestId] = BackendProgress(
+        stage: (map['stage'] as num?)?.toInt() ?? 0,
+        current: (map['current'] as num?)?.toInt() ?? 0,
+        total: (map['total'] as num?)?.toInt() ?? 0,
+      );
+    }, onError: (_) {});
   }
 }

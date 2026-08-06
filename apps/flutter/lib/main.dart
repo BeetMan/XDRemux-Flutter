@@ -1022,6 +1022,8 @@ class _HomePageState extends State<HomePage> {
           await XdRemuxService.verifyOutputForBackend(
             runConfig.backend,
             item.inputPath,
+            applePhotographicStyles: runConfig.applePhotographicStyles,
+            applePortrait: runConfig.applePortrait,
           )) {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
@@ -1056,6 +1058,8 @@ class _HomePageState extends State<HomePage> {
           oppoCompat: runConfig.oppoCompatibility.rustValue,
           oppoCameraTail: runConfig.oppoCameraTail.rustValue,
           strictTmap: runConfig.strictTmap,
+          applePhotographicStyles: runConfig.applePhotographicStyles,
+          applePortrait: runConfig.applePortrait,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
@@ -1071,7 +1075,8 @@ class _HomePageState extends State<HomePage> {
         item.status = QueueItemStatus.converted;
       } else {
         item.status = QueueItemStatus.failed;
-        item.errorMessage = result['errorMessage'] ?? '未知错误';
+        final message = result['errorMessage'] ?? '未知错误';
+        item.errorMessage = _backendError(runConfig.backend, message);
       }
     } catch (e) {
       if (item.status == QueueItemStatus.cancelled ||
@@ -1080,7 +1085,7 @@ class _HomePageState extends State<HomePage> {
         item.errorMessage = '已取消';
       } else {
         item.status = QueueItemStatus.failed;
-        item.errorMessage = e.toString();
+        item.errorMessage = _backendError(runConfig.backend, e.toString());
       }
     }
 
@@ -1378,6 +1383,14 @@ class _HomePageState extends State<HomePage> {
         skipped: _skippedCount,
         failed: _failedCount,
       );
+      if (mounted) {
+        final outcome = _failedCount > 0 ? '完成（有失败）' : '完成';
+        final summary =
+            '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个';
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(summary)));
+      }
     }
 
     // Mobile: optional auto-save of every converted output to the gallery.
@@ -1396,6 +1409,13 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (Platform.isWindows) TrayService.setToolTip('XDRemux');
+  }
+
+  String _backendError(ConversionBackend backend, String message) {
+    if (backend == ConversionBackend.swift && !message.startsWith('Swift 后端')) {
+      return 'Swift 后端：$message';
+    }
+    return message;
   }
 
   static int _fileSize(String path) {
@@ -2507,6 +2527,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.oppoCompatibility = _cfg.oppoCompatibility;
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
     widget.config.strictTmap = _cfg.strictTmap;
+    widget.config.applePhotographicStyles = _cfg.applePhotographicStyles;
+    widget.config.applePortrait = _cfg.applePortrait;
     widget.config.skipExisting = _cfg.skipExisting;
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
     widget.config.fileNameSuffix = _cfg.fileNameSuffix;
@@ -2667,19 +2689,76 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               !_backendCapabilities.isAvailable(backend)) {
                             return;
                           }
-                          setState(() => _cfg.backend = backend);
+                          setState(() {
+                            _cfg.backend = backend;
+                            if (backend != ConversionBackend.swift) {
+                              _cfg.applePhotographicStyles = false;
+                              _cfg.applePortrait = false;
+                            }
+                          });
                           _emit();
                         },
                       ),
                       const SizedBox(height: 4),
                       Text(
                         _cfg.backend == ConversionBackend.swift
-                            ? _backendCapabilities.statusFor(_cfg.backend)
+                            ? [
+                                _backendCapabilities.statusFor(_cfg.backend),
+                                if (!_backendCapabilities.swiftAppleFeatures)
+                                  _backendCapabilities
+                                      .swiftAppleFeaturesUnavailableReason,
+                              ].where((text) => text.isNotEmpty).join('\n')
                             : 'Rust 核心继续负责现有标准 HDR 转换。',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                      if (_cfg.backend == ConversionBackend.swift &&
+                          _backendCapabilities.swiftAppleFeatures) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          'Apple 功能（实验性）',
+                          style: theme.textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 4),
+                        if (_backendCapabilities.swiftPhotographicStyles)
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Apple Photographic Styles'),
+                            subtitle: const Text(
+                              '仅 Swift 后端；启用后自动关闭 OPPO-compatible 输出。上游仍标记为 experimental。',
+                            ),
+                            value: _cfg.applePhotographicStyles,
+                            onChanged: (value) {
+                              setState(() {
+                                _cfg.applePhotographicStyles = value;
+                                if (value) {
+                                  _cfg.oppoCompatibility = OppoCompatMode.off;
+                                }
+                              });
+                              _emit();
+                            },
+                          ),
+                        if (_backendCapabilities.swiftPortrait)
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Apple Portrait'),
+                            subtitle: const Text(
+                              '仅对包含可验证人像资源的输入开放；输出 manifest 和辅助图必须通过结构验证。',
+                            ),
+                            value: _cfg.applePortrait,
+                            onChanged: (value) {
+                              setState(() {
+                                _cfg.applePortrait = value;
+                                if (value) {
+                                  _cfg.oppoCompatibility = OppoCompatMode.off;
+                                }
+                              });
+                              _emit();
+                            },
+                          ),
+                        const Text('实验性功能：尚未宣称 Apple Photos 正式稳定兼容。'),
+                      ],
                       const SizedBox(height: 20),
                     ],
 
@@ -2804,7 +2883,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               .toList(),
                           onChanged: (mode) {
                             if (mode == null) return;
-                            setState(() => _cfg.oppoCompatibility = mode);
+                            setState(() {
+                              _cfg.oppoCompatibility = mode;
+                              if (mode != OppoCompatMode.off) {
+                                _cfg.applePhotographicStyles = false;
+                                _cfg.applePortrait = false;
+                              }
+                            });
                             _emit();
                           },
                         ),

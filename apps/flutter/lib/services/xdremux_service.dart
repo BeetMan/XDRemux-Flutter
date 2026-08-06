@@ -39,9 +39,14 @@ class XdRemuxService {
         swiftAvailable: map['swiftAvailable'] == true,
         swiftStandardHdr: map['swiftStandardHdr'] == true,
         swiftAppleFeatures: map['swiftAppleFeatures'] == true,
+        swiftPhotographicStyles: map['swiftPhotographicStyles'] == true,
+        swiftPortrait: map['swiftPortrait'] == true,
         swiftUnavailableReason:
             map['swiftUnavailableReason'] as String? ??
             defaults.swiftUnavailableReason,
+        swiftAppleFeaturesUnavailableReason:
+            map['swiftAppleFeaturesUnavailableReason'] as String? ??
+            defaults.swiftAppleFeaturesUnavailableReason,
       );
     } on MissingPluginException {
       return defaults;
@@ -56,6 +61,31 @@ class XdRemuxService {
     ConversionRequest request,
   ) async {
     final capabilities = await getBackendCapabilities();
+    if (request.applePhotographicStyles || request.applePortrait) {
+      if (request.backend != ConversionBackend.swift) {
+        return BackendConversionResult.failure(
+          request.backend,
+          'Apple 功能只能由 Swift 后端执行。',
+        );
+      }
+      if (request.applePhotographicStyles &&
+          !capabilities.swiftPhotographicStyles) {
+        return BackendConversionResult.failure(
+          request.backend,
+          capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
+              ? 'Apple Photographic Styles 当前未通过 capability 验证。'
+              : capabilities.swiftAppleFeaturesUnavailableReason,
+        );
+      }
+      if (request.applePortrait && !capabilities.swiftPortrait) {
+        return BackendConversionResult.failure(
+          request.backend,
+          capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
+              ? 'Apple Portrait 当前未通过 capability 验证。'
+              : capabilities.swiftAppleFeaturesUnavailableReason,
+        );
+      }
+    }
     if (!capabilities.isAvailable(request.backend)) {
       return BackendConversionResult.failure(
         request.backend,
@@ -71,9 +101,15 @@ class XdRemuxService {
 
   static Future<bool> verifyOutputForBackend(
     ConversionBackend backend,
-    String path,
-  ) {
-    return _backends[backend]!.verifyOutput(path);
+    String path, {
+    bool applePhotographicStyles = false,
+    bool applePortrait = false,
+  }) {
+    return _backends[backend]!.verifyOutput(
+      path,
+      applePhotographicStyles: applePhotographicStyles,
+      applePortrait: applePortrait,
+    );
   }
 
   /// Request cancellation for a backend request. Rust cannot interrupt an
