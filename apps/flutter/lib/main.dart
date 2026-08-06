@@ -1771,17 +1771,6 @@ class _HomePageState extends State<HomePage> {
             onPressed: _startConversion,
           ),
         ),
-      if (_canEditQueue)
-        Padding(
-          padding: EdgeInsets.only(left: compact ? 0 : 4),
-          child: _OppoCompatToggle(
-            mode: _config.oppoCompatibility,
-            onChanged: (mode) {
-              setState(() => _config.oppoCompatibility = mode);
-              _scheduleConfigSave();
-            },
-          ),
-        ),
       if (!compact)
         IconButton(
           icon: const Icon(Icons.stop),
@@ -2375,64 +2364,6 @@ class _HomePageState extends State<HomePage> {
 }
 
 // ============================================================================
-// OPPO Compat Toggle (app bar)
-// ============================================================================
-
-class _OppoCompatToggle extends StatelessWidget {
-  final OppoCompatMode mode;
-  final ValueChanged<OppoCompatMode> onChanged;
-
-  const _OppoCompatToggle({required this.mode, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isOn = mode != OppoCompatMode.off;
-
-    return Tooltip(
-      message: isOn ? 'OPPO 兼容：开启' : 'OPPO 兼容：关闭',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          onChanged(isOn ? OppoCompatMode.off : OppoCompatMode.on);
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: isOn
-                ? theme.colorScheme.primaryContainer
-                : theme.colorScheme.surfaceContainerHighest,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isOn ? Icons.phone_android : Icons.phone_android,
-                size: 16,
-                color: isOn
-                    ? theme.colorScheme.onPrimaryContainer
-                    : theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'OPPO',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: isOn
-                      ? theme.colorScheme.onPrimaryContainer
-                      : theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================================================
 // All-files access (Android) — top-level so the settings sheet and picker both
 // use the same helpers.
 // ============================================================================
@@ -2641,32 +2572,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Family
-                    Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 4),
-                    SegmentedButton<Family>(
-                      segments: Family.values
-                          .map(
-                            (f) => ButtonSegment<Family>(
-                              value: f,
-                              label: Text(f.appTitle),
-                            ),
-                          )
-                          .toList(),
-                      selected: {_cfg.family},
-                      onSelectionChanged: (v) {
-                        setState(() => _cfg.family = v.first);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Auto 自动检测 X6/X7 设备族。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
                     // Output directory — desktop only. Android scoped storage
                     // and the iOS sandbox both make an arbitrary writable
                     // directory impossible; output goes to the app-scoped dir
@@ -2725,75 +2630,125 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
 
-                    DropdownButtonFormField<OppoCompatMode>(
-                      initialValue: _cfg.oppoCompatibility,
-                      decoration: const InputDecoration(
-                        labelText: 'OPPO 兼容模式',
-                        border: OutlineInputBorder(),
+                    // Advanced output-format options. Defaults are correct for
+                    // OPPO/OnePlus HDR files; changing them can make the
+                    // result unreadable in OPPO's gallery (e.g. compat off +
+                    // tail off strips the QTI block the gallery needs), so
+                    // they live collapsed behind an "advanced" header.
+                    ExpansionTile(
+                      initiallyExpanded: false,
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      title: Text(
+                        '高级模式',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
                       ),
-                      items: OppoCompatMode.values
-                          .map(
-                            (mode) => DropdownMenuItem(
-                              value: mode,
-                              child: Text(mode.appTitle),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (mode) {
-                        if (mode == null) return;
-                        setState(() => _cfg.oppoCompatibility = mode);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _cfg.oppoCompatibility.appHelp,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                      subtitle: const Text('不建议更改，可能影响相册兼容性'),
+                      leading: Icon(
+                        Icons.tune,
+                        size: 20,
+                        color: theme.colorScheme.error,
                       ),
-                    ),
-                    const SizedBox(height: 20),
+                      children: [
+                        const SizedBox(height: 8),
+                        Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
+                        const SizedBox(height: 4),
+                        SegmentedButton<Family>(
+                          segments: Family.values
+                              .map(
+                                (f) => ButtonSegment<Family>(
+                                  value: f,
+                                  label: Text(f.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          selected: {_cfg.family},
+                          onSelectionChanged: (v) {
+                            setState(() => _cfg.family = v.first);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Auto 自动检测 X6/X7 设备族。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        DropdownButtonFormField<OppoCompatMode>(
+                          initialValue: _cfg.oppoCompatibility,
+                          decoration: const InputDecoration(
+                            labelText: 'OPPO 兼容模式',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: OppoCompatMode.values
+                              .map(
+                                (mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setState(() => _cfg.oppoCompatibility = mode);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _cfg.oppoCompatibility.appHelp,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
 
-                    DropdownButtonFormField<OppoCameraTailMode>(
-                      initialValue: _cfg.oppoCameraTail,
-                      decoration: const InputDecoration(
-                        labelText: 'OPPO 相机尾部元数据',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: OppoCameraTailMode.values
-                          .map(
-                            (mode) => DropdownMenuItem(
-                              value: mode,
-                              child: Text(mode.appTitle),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (mode) {
-                        if (mode == null) return;
-                        setState(() => _cfg.oppoCameraTail = mode);
-                        _emit();
-                      },
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _cfg.oppoCameraTail.appHelp,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
+                        DropdownButtonFormField<OppoCameraTailMode>(
+                          initialValue: _cfg.oppoCameraTail,
+                          decoration: const InputDecoration(
+                            labelText: 'OPPO 相机尾部元数据',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: OppoCameraTailMode.values
+                              .map(
+                                (mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.appTitle),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setState(() => _cfg.oppoCameraTail = mode);
+                            _emit();
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _cfg.oppoCameraTail.appHelp,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
 
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('使用严格 ISO tmap'),
-                      subtitle: const Text(
-                        '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
-                      ),
-                      value: _cfg.strictTmap,
-                      onChanged: (value) {
-                        setState(() => _cfg.strictTmap = value);
-                        _emit();
-                      },
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('使用严格 ISO tmap'),
+                          subtitle: const Text(
+                            '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
+                          ),
+                          value: _cfg.strictTmap,
+                          onChanged: (value) {
+                            setState(() => _cfg.strictTmap = value);
+                            _emit();
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
 

@@ -35,15 +35,12 @@ void main() {
     expect(find.text('就绪'), findsOneWidget);
   });
 
-  testWidgets('AppBar shows OPPO compat toggle', (WidgetTester tester) async {
+  testWidgets('AppBar no longer shows OPPO compat toggle', (WidgetTester tester) async {
     await tester.pumpWidget(const XdRemuxApp());
 
-    // OPPO compatibility toggle is in the AppBar actions
-    expect(find.text('OPPO'), findsOneWidget);
-
-    // Tap it — toggles from off (grey) to on (primary container).
-    await tester.tap(find.text('OPPO'));
-    await tester.pump();
+    // The OPPO compat toggle was removed from the AppBar; the options now
+    // live collapsed behind the "高级模式" (advanced) header in settings.
+    expect(find.text('OPPO'), findsNothing);
   });
 
   testWidgets('Settings button opens bottom sheet', (
@@ -57,8 +54,20 @@ void main() {
 
     // Settings sheet should show its title and the sections that now exist.
     expect(find.text('转换设置'), findsOneWidget);
-    expect(find.text('输入 HDR 类型'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
+    // Advanced OPPO options are collapsed by default behind a warning header.
+    expect(find.text('高级模式'), findsOneWidget);
+    expect(find.text('不建议更改，可能影响相册兼容性'), findsOneWidget);
+    // Auto/X6/X7 and OPPO compat live inside the collapsed advanced section,
+    // so they are not visible until expanded.
+    expect(find.text('输入 HDR 类型'), findsNothing);
+    expect(find.text('OPPO 兼容模式'), findsNothing);
+
+    // Expanding 高级模式 reveals them.
+    await tester.tap(find.text('高级模式'));
+    await tester.pumpAndSettle();
+    expect(find.text('输入 HDR 类型'), findsOneWidget);
+    expect(find.text('OPPO 兼容模式'), findsOneWidget);
   });
 
   testWidgets('Add files button is visible and enabled', (
