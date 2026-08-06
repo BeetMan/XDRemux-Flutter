@@ -76,7 +76,7 @@ pub struct ConvertConfig {
 /// Returns an owned version string. Caller must free with `xdremux_free_string`.
 #[no_mangle]
 pub extern "C" fn xdremux_version() -> *mut c_char {
-    match CString::new("0.2.7") {
+    match CString::new("0.3.0") {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
     }
