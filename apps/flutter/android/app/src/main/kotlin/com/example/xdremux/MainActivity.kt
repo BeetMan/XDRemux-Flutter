@@ -134,7 +134,10 @@ class MainActivity : FlutterActivity() {
                         }
                         thumbnailExecutor.execute {
                             val jpeg = renderThumbnailJpeg(path, maxPixelSize)
-                            thumbnailCache[path] = jpeg
+                            // ConcurrentHashMap rejects null values (putVal
+                            // throws NPE), so only cache successful decodes. A
+                            // failed decode is worth retrying next time anyway.
+                            if (jpeg != null) thumbnailCache[path] = jpeg
                             runOnUiThread { result.success(jpeg) }
                         }
                     }
