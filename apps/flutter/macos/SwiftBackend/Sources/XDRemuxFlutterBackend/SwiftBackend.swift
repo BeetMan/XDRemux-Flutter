@@ -71,30 +71,36 @@ public struct SwiftBackendResult: Sendable {
 /// macOS 15, so callers must gate this bridge on the same deployment target.
 public enum XDRemuxSwiftBackend {
     private static let state = CancellationState()
+    private static let capabilitiesLock = NSLock()
+    private static var cachedCapabilities: [String: Any]?
 
     public static func capabilities() -> [String: Any] {
+        capabilitiesLock.lock()
+        defer { capabilitiesLock.unlock() }
+        if let cachedCapabilities {
+            return cachedCapabilities
+        }
+
         let xcrunAvailable = FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun")
         let zstdAvailable = FileManager.default.isExecutableFile(atPath: "/usr/bin/zstd")
         let selfTestPassed = (try? AppleFeatureConversionEngine.portraitSelfTestReport()) != nil
-        // The package can compile and its static Portrait contract can pass
-        // while the private Photos renderer used by Photographic Styles has
-        // changed on the host OS. Keep this capability conservative: the
-        // current macOS 27/Xcode 27 environment failed the real-sample style
-        // smoke test because PLPhotoEditSource no longer exposes the selector
-        // required by upstream v1.3.1. Do not expose Apple UI until a runtime
-        // sample validation passes on the target system.
-        let appleFeaturesAvailable = false
+        let resourceCompatibility = AppleFeatureResourceCompatibility.prepare()
+        let appleFeaturesAvailable = xcrunAvailable
+            && selfTestPassed
+            && resourceCompatibility.available
         let appleUnavailableReason: String
         if !xcrunAvailable {
             appleUnavailableReason = "AppleFeatures 需要 /usr/bin/xcrun；当前不可用。"
         } else if !selfTestPassed {
             appleUnavailableReason = "AppleFeatures 静态自检失败；当前不可用。"
-        } else if !zstdAvailable {
-            appleUnavailableReason = "Apple Photographic Styles 尚未通过当前 macOS 的真实样例验证；Apple Portrait 另需要 /usr/bin/zstd。"
+        } else if !resourceCompatibility.available {
+            appleUnavailableReason = resourceCompatibility.reason
         } else {
-            appleUnavailableReason = "Apple Photographic Styles 尚未通过当前 macOS 的真实样例验证；当前版本保持实验性功能关闭。"
+            appleUnavailableReason = zstdAvailable
+                ? ""
+                : "Apple Portrait 需要 /usr/bin/zstd；Photographic Styles 仍须保留实验性警告。"
         }
-        return [
+        let result: [String: Any] = [
             "swiftAvailable": xcrunAvailable,
             "swiftStandardHdr": xcrunAvailable,
             "swiftAppleFeatures": appleFeaturesAvailable,
@@ -107,6 +113,8 @@ public enum XDRemuxSwiftBackend {
                 : "macOS Swift Core requires /usr/bin/xcrun for native tile encoding.",
             "swiftAppleFeaturesUnavailableReason": appleUnavailableReason,
         ]
+        cachedCapabilities = result
+        return result
     }
 
     public static func convert(

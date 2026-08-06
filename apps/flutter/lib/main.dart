@@ -2757,6 +2757,17 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _emit();
                             },
                           ),
+                        if (!_backendCapabilities.swiftPortrait &&
+                            _backendCapabilities
+                                .swiftAppleFeaturesUnavailableReason
+                                .isNotEmpty)
+                          Text(
+                            _backendCapabilities
+                                .swiftAppleFeaturesUnavailableReason,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                         const Text('实验性功能：尚未宣称 Apple Photos 正式稳定兼容。'),
                       ],
                       const SizedBox(height: 20),

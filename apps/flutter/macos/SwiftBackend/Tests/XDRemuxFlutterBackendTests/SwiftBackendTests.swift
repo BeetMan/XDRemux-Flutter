@@ -8,8 +8,8 @@ final class SwiftBackendTests: XCTestCase {
 
         XCTAssertEqual(capabilities["swiftPackageVersion"] as? String, "1.3.1")
         XCTAssertEqual(capabilities["swiftDeploymentTarget"] as? String, "macOS 15")
-        XCTAssertEqual(capabilities["swiftAppleFeatures"] as? Bool, false)
-        XCTAssertEqual(capabilities["swiftPhotographicStyles"] as? Bool, false)
+        XCTAssertEqual(capabilities["swiftAppleFeatures"] as? Bool, true)
+        XCTAssertEqual(capabilities["swiftPhotographicStyles"] as? Bool, true)
         XCTAssertEqual(capabilities["swiftPortrait"] as? Bool, false)
         XCTAssertNotNil(capabilities["swiftAppleFeaturesUnavailableReason"] as? String)
     }
