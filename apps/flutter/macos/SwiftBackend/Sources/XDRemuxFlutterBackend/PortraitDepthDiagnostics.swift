@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 /// Read-only macOS diagnostics for OPPO rear Portrait depth variants.
 ///
@@ -36,9 +37,17 @@ public enum PortraitDepthDiagnostics {
         }
 
         var resourceLengths: [String: Int] = ["rear.depth": compressedDepth.count]
+        let configData = try AppleWatermarkTailBridge.tailPayload(
+            named: "rear.depth.config",
+            sourceURL: inputURL
+        )
+        var sourceImageData: Data?
         for name in ["rear.depth.config", "src.image", "front.depth", "front.segment", "front.hair.mask"] {
             if let payload = try AppleWatermarkTailBridge.tailPayload(named: name, sourceURL: inputURL) {
                 resourceLengths[name] = payload.count
+                if name == "src.image" {
+                    sourceImageData = payload
+                }
             }
         }
         report["resources"] = resourceLengths
@@ -50,13 +59,22 @@ public enum PortraitDepthDiagnostics {
         }
 
         let decodedDepth = try decompressZstd(compressedDepth, executableURL: zstdURL)
-        let parsed = try parseDepth(decodedDepth)
+        let sourceImageDimensions = sourceImageData.flatMap(imageDimensions)
+        let parsed = try parseDepth(
+            decodedDepth,
+            configData: configData,
+            sourceImageDimensions: sourceImageDimensions
+        )
         report["available"] = true
         report["zstd"] = [
             "available": true,
             "executable": zstdURL.path,
         ]
         report["decodedBytes"] = decodedDepth.count
+        report["sourceImage"] = sourceImageDimensions.map {
+            ["width": $0.width, "height": $0.height]
+        } ?? NSNull()
+        report["config"] = parsed.config
         report["header"] = parsed.header
         report["planes"] = parsed.planes
         report["calibration"] = parsed.calibration
@@ -66,9 +84,34 @@ public enum PortraitDepthDiagnostics {
     }
 
     private struct ParsedDepth {
+        let config: [String: Any]?
         let header: [String: Any]
         let planes: [String: Any]
         let calibration: [String: Any]
+    }
+
+    private struct PortraitConfigSummary {
+        let version: Double
+        let canvasWidth: Int
+        let canvasHeight: Int
+        let focusX: Int
+        let focusY: Int
+        let currentFNumber: Double?
+        let objectDistance: Int?
+        let focusROIType: Int?
+
+        var dictionary: [String: Any] {
+            [
+                "version": version,
+                "canvasWidth": canvasWidth,
+                "canvasHeight": canvasHeight,
+                "focusX": focusX,
+                "focusY": focusY,
+                "currentFNumber": currentFNumber.map { $0 as Any } ?? NSNull(),
+                "objectDistance": objectDistance.map { $0 as Any } ?? NSNull(),
+                "focusROIType": focusROIType.map { $0 as Any } ?? NSNull(),
+            ]
+        }
     }
 
     private struct ByteStatistics {
@@ -89,7 +132,11 @@ public enum PortraitDepthDiagnostics {
         }
     }
 
-    private static func parseDepth(_ data: Data) throws -> ParsedDepth {
+    private static func parseDepth(
+        _ data: Data,
+        configData: Data?,
+        sourceImageDimensions: (width: Int, height: Int)?
+    ) throws -> ParsedDepth {
         let headerSize = 768
         guard data.count >= headerSize else {
             throw DiagnosticError.invalidDepth("decoded rear.depth is shorter than its 768-byte header")
@@ -152,6 +199,7 @@ public enum PortraitDepthDiagnostics {
         }
 
         let rankStats = planeStatistics(data, offset: headerSize, count: planeSize)
+        let config = parseConfig(configData)
         let exponentiation = Int(data[0x32])
         let quantizationValid = disparityMaximum > disparityMinimum
             && (1...2).contains(exponentiation)
@@ -193,7 +241,7 @@ public enum PortraitDepthDiagnostics {
             "modelOutputPresent": data[0x190] != 0,
             "sceneClass": sceneClass,
         ]
-        let calibration: [String: Any] = [
+        var calibration: [String: Any] = [
             "classification": classification,
             "status": calibrationStatus,
             "producerQuantizationValid": quantizationValid,
@@ -206,7 +254,166 @@ public enum PortraitDepthDiagnostics {
                 ? "Producer quantization is present; Apple disparity calibration is still separate."
                 : "No production disparity fallback is applied by this diagnostic.",
         ]
-        return ParsedDepth(header: header, planes: planeReports, calibration: calibration)
+        if let config,
+           let objectDistance = config.objectDistance,
+           objectDistance > 0,
+           focalLength > 0,
+           stereoBaseline > 0,
+           let candidates = estimateScaleCandidates(
+               data: data,
+               headerSize: headerSize,
+               width: width,
+               height: height,
+               sourceImageDimensions: sourceImageDimensions,
+               rankMaximum: rankStats.maximum,
+               focalLength: Double(focalLength),
+               stereoBaseline: Double(stereoBaseline),
+               config: config,
+               objectDistance: Double(objectDistance)
+           ) {
+            calibration["configDistanceScaleCandidates"] = candidates
+            calibration["calibrationMethod"] =
+                "match OPPO rear.depth.config objectDistance against a focus-window rank percentile"
+            calibration["calibrationWarning"] =
+                "Candidate scales are research evidence only; quantization and Apple disparity units remain unresolved."
+        }
+        return ParsedDepth(
+            config: config?.dictionary,
+            header: header,
+            planes: planeReports,
+            calibration: calibration
+        )
+    }
+
+    private static func parseConfig(_ data: Data?) -> PortraitConfigSummary? {
+        guard let data,
+              let versionRaw = readFloat32LE(data, at: 0),
+              versionRaw.isFinite,
+              versionRaw >= 1,
+              versionRaw <= 4,
+              let canvasWidth = readInt32LE(data, at: 4),
+              let canvasHeight = readInt32LE(data, at: 8),
+              let focusX = readInt32LE(data, at: 12),
+              let focusY = readInt32LE(data, at: 16) else {
+            return nil
+        }
+        let currentFNumber = readFloat32LE(data, at: 292).flatMap { value in
+            value.isFinite && (1...64).contains(value) ? Double(value) : nil
+        }
+        let objectDistance = readInt32LE(data, at: 296).flatMap { value in
+            value > 0 ? Int(value) : nil
+        }
+        let focusROIType = readInt32LE(data, at: 404).map(Int.init)
+        return PortraitConfigSummary(
+            version: Double(versionRaw),
+            canvasWidth: Int(canvasWidth),
+            canvasHeight: Int(canvasHeight),
+            focusX: Int(focusX),
+            focusY: Int(focusY),
+            currentFNumber: currentFNumber,
+            objectDistance: objectDistance,
+            focusROIType: focusROIType
+        )
+    }
+
+    private static func estimateScaleCandidates(
+        data: Data,
+        headerSize: Int,
+        width: Int,
+        height: Int,
+        sourceImageDimensions: (width: Int, height: Int)?,
+        rankMaximum: Int,
+        focalLength: Double,
+        stereoBaseline: Double,
+        config: PortraitConfigSummary,
+        objectDistance: Double
+    ) -> [String: Any]? {
+        guard rankMaximum > 0,
+              config.canvasWidth > 0,
+              config.canvasHeight > 0,
+              objectDistance > 0,
+              let sourceImageDimensions,
+              sourceImageDimensions.width > 0,
+              sourceImageDimensions.height > 0,
+              config.focusX >= 0,
+              config.focusY >= 0,
+              config.focusX < sourceImageDimensions.width,
+              config.focusY < sourceImageDimensions.height else {
+            return nil
+        }
+        let normalizedX = min(
+            max(Double(config.focusX) / Double(sourceImageDimensions.width), 0),
+            1
+        )
+        let normalizedY = min(
+            max(Double(config.focusY) / Double(sourceImageDimensions.height), 0),
+            1
+        )
+        let centerX = min(max(Int((normalizedX * Double(width)).rounded(.down)), 0), width - 1)
+        let centerY = min(max(Int((normalizedY * Double(height)).rounded(.down)), 0), height - 1)
+        let radiusX = max(4, width / 20)
+        let radiusY = max(4, height / 20)
+        let minX = max(0, centerX - radiusX)
+        let maxX = min(width - 1, centerX + radiusX)
+        let minY = max(0, centerY - radiusY)
+        let maxY = min(height - 1, centerY + radiusY)
+        var ranks: [Int] = []
+        ranks.reserveCapacity((maxX - minX + 1) * (maxY - minY + 1))
+        for y in minY...maxY {
+            for x in minX...maxX {
+                ranks.append(Int(data[headerSize + y * width + x]))
+            }
+        }
+        guard !ranks.isEmpty else { return nil }
+        ranks.sort()
+
+        func percentile(_ fraction: Double) -> Double {
+            let index = min(
+                ranks.count - 1,
+                max(0, Int((Double(ranks.count - 1) * fraction).rounded()))
+            )
+            return Double(ranks[index])
+        }
+        func scale(forRank rank: Double) -> Double {
+            let normalized = min(max(rank / 255.0, 0), 1)
+            let internalDisparity = 65_535.0 - normalized * Double(rankMaximum)
+            return focalLength * stereoBaseline / (internalDisparity * objectDistance)
+        }
+
+        let p20 = percentile(0.20)
+        let p50 = percentile(0.50)
+        let p80 = percentile(0.80)
+        return [
+            "focusWindow": [
+                "sourceImageWidth": sourceImageDimensions.width,
+                "sourceImageHeight": sourceImageDimensions.height,
+                "centerX": centerX,
+                "centerY": centerY,
+                "minX": minX,
+                "maxX": maxX,
+                "minY": minY,
+                "maxY": maxY,
+                "sampleCount": ranks.count,
+            ],
+            "objectDistance": objectDistance,
+            "rankPercentiles": [
+                "p20": p20,
+                "p50": p50,
+                "p80": p80,
+            ],
+            "scaleForP20": scale(forRank: p20),
+            "scaleForP50": scale(forRank: p50),
+            "scaleForP80": scale(forRank: p80),
+            "fullSpanForP50": scale(forRank: p50) * 255.0,
+        ]
+    }
+
+    private static func imageDimensions(_ data: Data) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        return (image.width, image.height)
     }
 
     private static func planeStatistics(_ data: Data, offset: Int, count: Int) -> ByteStatistics {

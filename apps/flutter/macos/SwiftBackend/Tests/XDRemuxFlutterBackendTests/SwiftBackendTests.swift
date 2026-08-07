@@ -59,6 +59,17 @@ final class SwiftBackendTests: XCTestCase {
                 "requires-scale-calibration",
                 inputURL.lastPathComponent
             )
+            let candidates = try XCTUnwrap(
+                calibration["configDistanceScaleCandidates"] as? [String: Any]
+            )
+            XCTAssertNotNil(candidates["scaleForP50"] as? Double, inputURL.lastPathComponent)
+            XCTAssertNotNil(candidates["fullSpanForP50"] as? Double, inputURL.lastPathComponent)
+            let sourceImage = try XCTUnwrap(report["sourceImage"] as? [String: Any])
+            XCTAssertEqual(sourceImage["width"] as? Int, 4096, inputURL.lastPathComponent)
+            XCTAssertEqual(sourceImage["height"] as? Int, 3072, inputURL.lastPathComponent)
+            let focusWindow = try XCTUnwrap(candidates["focusWindow"] as? [String: Any])
+            XCTAssertEqual(focusWindow["sourceImageWidth"] as? Int, 4096, inputURL.lastPathComponent)
+            XCTAssertEqual(focusWindow["sourceImageHeight"] as? Int, 3072, inputURL.lastPathComponent)
         }
     }
 
