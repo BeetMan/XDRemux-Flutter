@@ -11,6 +11,7 @@ final class SwiftBackendTests: XCTestCase {
         XCTAssertEqual(capabilities["swiftAppleFeatures"] as? Bool, true)
         XCTAssertEqual(capabilities["swiftPhotographicStyles"] as? Bool, true)
         XCTAssertEqual(capabilities["swiftPortrait"] as? Bool, false)
+        XCTAssertNotNil(capabilities["swiftPortraitResearch"] as? Bool)
         XCTAssertNotNil(capabilities["swiftPortraitDiagnostic"] as? Bool)
         XCTAssertNotNil(capabilities["swiftAppleFeaturesUnavailableReason"] as? String)
     }

@@ -225,6 +225,40 @@ class AppDelegate: FlutterAppDelegate {
             result(report)
           }
         }
+      case "researchPortrait":
+        guard let args = call.arguments as? [String: Any],
+              let inputPaths = args["inputPaths"] as? [String],
+              !inputPaths.isEmpty,
+              let outputDirectory = args["outputDirectory"] as? String else {
+          result(FlutterError(
+            code: "bad_args",
+            message: "invalid Portrait research args",
+            details: nil
+          ))
+          return
+        }
+        let variantSpecs = (args["variants"] as? [String])
+          ?? PortraitCalibrationResearch.defaultVariantSpecs
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let manifest = try PortraitCalibrationResearch.runEmbedded(
+              inputs: inputPaths.map { URL(fileURLWithPath: $0) },
+              outputDirectory: URL(fileURLWithPath: outputDirectory, isDirectory: true),
+              variantSpecs: variantSpecs
+            )
+            DispatchQueue.main.async {
+              result(manifest)
+            }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(
+                code: "portrait_research_failed",
+                message: String(describing: error),
+                details: nil
+              ))
+            }
+          }
+        }
       case "cancel":
         guard let args = call.arguments as? [String: Any],
               let requestID = args["requestId"] as? String else {

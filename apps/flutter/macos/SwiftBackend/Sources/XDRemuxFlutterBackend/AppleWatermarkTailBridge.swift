@@ -114,6 +114,38 @@ enum AppleWatermarkTailBridge {
         return try payload(for: record, in: sourceData, info: tailInfo)
     }
 
+    /// Creates an explicitly research-only scratch input with selected OPPO
+    /// tail payloads replaced. The original file is never modified. This is
+    /// used by the Portrait calibration runner to inject candidate depth
+    /// headers before calling the upstream Swift Library directly.
+    static func makeResearchInput(
+        sourceURL: URL,
+        replacing payloads: [String: Data],
+        label: String
+    ) throws -> URL? {
+        let sourceData = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+        guard let tailInfo = try parseTail(in: sourceData) else {
+            return nil
+        }
+        let names = Set(tailInfo.records.map(\.name))
+        guard !payloads.isEmpty, Set(payloads.keys).isSubset(of: names) else {
+            throw BridgeError.invalidTail("research replacement names are not present in OPPO tail")
+        }
+        let tail = try buildTail(
+            from: sourceData,
+            info: tailInfo,
+            selected: tailInfo.records,
+            overrides: payloads
+        )
+        let scratchURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            ".\(sourceURL.lastPathComponent).\(label)-\(UUID().uuidString).heic"
+        )
+        var scratchData = Data(sourceData.prefix(tailInfo.mdatEnd))
+        scratchData.append(tail)
+        try scratchData.write(to: scratchURL, options: [.atomic])
+        return scratchURL
+    }
+
     /// Removes a recognized OPPO post-mdat footer from an Apple-mode output.
     /// Apple Features may preserve the source footer while rebuilding the
     /// Photos metadata, so output-mode selection alone is not sufficient.
@@ -300,7 +332,8 @@ enum AppleWatermarkTailBridge {
     private static func buildTail(
         from sourceData: Data,
         info: TailInfo,
-        selected: [ManifestRecord]
+        selected: [ManifestRecord],
+        overrides: [String: Data] = [:]
     ) throws -> Data {
         guard !selected.isEmpty else {
             return Data()
@@ -318,22 +351,30 @@ enum AppleWatermarkTailBridge {
                 )
             }
             let payloadStart = payload.count
-            payload.append(sourceData.subdata(in: sourceStart..<sourceEnd))
+            payload.append(
+                overrides[record.name]
+                    ?? sourceData.subdata(in: sourceStart..<sourceEnd)
+            )
             packedRecords.append(PackedRecord(
-                record: record,
+                record: ManifestRecord(
+                    length: overrides[record.name]?.count ?? record.length,
+                    name: record.name,
+                    offset: record.offset,
+                    version: record.version
+                ),
                 payloadStart: payloadStart
             ))
         }
 
         let payloadLength = payload.count
-        var packedByRecord: [ManifestRecord: PackedRecord] = [:]
+        var packedByName: [String: PackedRecord] = [:]
         for packed in packedRecords {
-            packedByRecord[packed.record] = packed
+            packedByName[packed.record.name] = packed
         }
         let manifestRecords = selected.compactMap { record -> ManifestRecord? in
-            guard let packed = packedByRecord[record] else { return nil }
+            guard let packed = packedByName[record.name] else { return nil }
             return ManifestRecord(
-                length: record.length,
+                length: packed.record.length,
                 name: record.name,
                 offset: payloadLength - packed.payloadStart,
                 version: record.version

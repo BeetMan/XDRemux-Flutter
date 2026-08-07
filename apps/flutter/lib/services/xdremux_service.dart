@@ -41,6 +41,7 @@ class XdRemuxService {
         swiftAppleFeatures: map['swiftAppleFeatures'] == true,
         swiftPhotographicStyles: map['swiftPhotographicStyles'] == true,
         swiftPortrait: map['swiftPortrait'] == true,
+        swiftPortraitResearch: map['swiftPortraitResearch'] == true,
         swiftUnavailableReason:
             map['swiftUnavailableReason'] as String? ??
             defaults.swiftUnavailableReason,
@@ -96,6 +97,60 @@ class XdRemuxService {
         'available': false,
         'safeToTransform': false,
         'classification': 'native-diagnostic-error',
+        'error': error.message ?? error.code,
+      };
+    }
+  }
+
+  /// Runs the macOS-only, explicitly experimental Portrait research module.
+  /// It generates Apple Portrait candidates and never performs OPPO writeback
+  /// or output-mode conversion.
+  static Future<Map<String, dynamic>> researchPortrait({
+    required List<String> inputPaths,
+    required String outputDirectory,
+    List<String> variants = const <String>[
+      'p20',
+      'p50',
+      'p80',
+      'uniform:0.005',
+    ],
+  }) async {
+    if (!Platform.isMacOS) {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-calibration-research-v1',
+        'researchOnly': true,
+        'safeToTransform': false,
+        'error': 'Apple Portrait research is currently macOS-only.',
+      };
+    }
+    try {
+      final raw = await _backendChannel
+          .invokeMethod<Object?>('researchPortrait', <String, Object?>{
+            'inputPaths': inputPaths,
+            'outputDirectory': outputDirectory,
+            'variants': variants,
+          });
+      if (raw is! Map) {
+        return <String, dynamic>{
+          'schema': 'xdremux-portrait-calibration-research-v1',
+          'researchOnly': true,
+          'safeToTransform': false,
+          'error': 'invalid native Portrait research report',
+        };
+      }
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    } on MissingPluginException {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-calibration-research-v1',
+        'researchOnly': true,
+        'safeToTransform': false,
+        'error': 'macOS Portrait research bridge is unavailable.',
+      };
+    } on PlatformException catch (error) {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-calibration-research-v1',
+        'researchOnly': true,
+        'safeToTransform': false,
         'error': error.message ?? error.code,
       };
     }

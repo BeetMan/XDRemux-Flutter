@@ -110,6 +110,7 @@ class BackendCapabilities {
   final bool swiftAppleFeatures;
   final bool swiftPhotographicStyles;
   final bool swiftPortrait;
+  final bool swiftPortraitResearch;
   final String swiftUnavailableReason;
   final String swiftAppleFeaturesUnavailableReason;
 
@@ -121,6 +122,7 @@ class BackendCapabilities {
     required this.swiftAppleFeatures,
     this.swiftPhotographicStyles = false,
     this.swiftPortrait = false,
+    this.swiftPortraitResearch = false,
     required this.swiftUnavailableReason,
     this.swiftAppleFeaturesUnavailableReason = '',
   });
@@ -135,6 +137,7 @@ class BackendCapabilities {
       swiftAppleFeatures: false,
       swiftPhotographicStyles: false,
       swiftPortrait: false,
+      swiftPortraitResearch: false,
       swiftUnavailableReason: apple
           ? '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。'
           : 'Swift 后端仅支持 macOS/iOS。',
@@ -166,6 +169,7 @@ class BackendCapabilities {
     bool? swiftAppleFeatures,
     bool? swiftPhotographicStyles,
     bool? swiftPortrait,
+    bool? swiftPortraitResearch,
     String? swiftUnavailableReason,
     String? swiftAppleFeaturesUnavailableReason,
   }) {
@@ -178,6 +182,8 @@ class BackendCapabilities {
       swiftPhotographicStyles:
           swiftPhotographicStyles ?? this.swiftPhotographicStyles,
       swiftPortrait: swiftPortrait ?? this.swiftPortrait,
+      swiftPortraitResearch:
+          swiftPortraitResearch ?? this.swiftPortraitResearch,
       swiftUnavailableReason:
           swiftUnavailableReason ?? this.swiftUnavailableReason,
       swiftAppleFeaturesUnavailableReason:

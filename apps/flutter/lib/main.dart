@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
+import 'apple_portrait_page.dart';
 import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
@@ -1886,6 +1887,12 @@ class _HomePageState extends State<HomePage> {
           tooltip: 'OPPO ↔ Apple 工作流',
           onPressed: _openAppleOppoWorkflow,
         ),
+      if (Platform.isMacOS)
+        IconButton(
+          icon: const Icon(Icons.camera_alt_outlined),
+          tooltip: 'Apple Portrait 实验室',
+          onPressed: _openApplePortraitLab,
+        ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
       // iOS 沙盒下都不可用。
       if (!Platform.isAndroid && !Platform.isIOS)
@@ -2458,6 +2465,12 @@ class _HomePageState extends State<HomePage> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => const AppleOppoWorkflowPage()),
     );
+  }
+
+  void _openApplePortraitLab() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const ApplePortraitPage()));
   }
 }
 

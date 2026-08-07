@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "XDRemuxFlutterBackend",
             targets: ["XDRemuxFlutterBackend"]
+        ),
+        .executable(
+            name: "xdremux-portrait-research",
+            targets: ["XDRemuxPortraitResearch"]
         )
     ],
     dependencies: [
@@ -26,6 +30,10 @@ let package = Package(
                 .product(name: "XDRemuxCore", package: "xdremux"),
                 .product(name: "XDRemuxAppleFeatures", package: "xdremux")
             ]
+        ),
+        .executableTarget(
+            name: "XDRemuxPortraitResearch",
+            dependencies: ["XDRemuxFlutterBackend"]
         ),
         .testTarget(
             name: "XDRemuxFlutterBackendTests",

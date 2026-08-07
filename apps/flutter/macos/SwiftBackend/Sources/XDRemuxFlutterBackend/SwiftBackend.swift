@@ -112,6 +112,7 @@ public enum XDRemuxSwiftBackend {
             "swiftAppleFeatures": appleFeaturesAvailable,
             "swiftPhotographicStyles": appleFeaturesAvailable,
             "swiftPortrait": appleFeaturesAvailable && zstdAvailable,
+            "swiftPortraitResearch": appleFeaturesAvailable && PortraitDepthDiagnostics.isAvailable,
             "swiftPortraitDiagnostic": PortraitDepthDiagnostics.isAvailable,
             "swiftPortraitDiagnosticZstd": PortraitDepthDiagnostics.zstdExecutablePath ?? NSNull(),
             "swiftPackageVersion": "1.3.1",
