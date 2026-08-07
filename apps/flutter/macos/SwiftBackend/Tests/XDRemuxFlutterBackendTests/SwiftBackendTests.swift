@@ -11,7 +11,55 @@ final class SwiftBackendTests: XCTestCase {
         XCTAssertEqual(capabilities["swiftAppleFeatures"] as? Bool, true)
         XCTAssertEqual(capabilities["swiftPhotographicStyles"] as? Bool, true)
         XCTAssertEqual(capabilities["swiftPortrait"] as? Bool, false)
+        XCTAssertNotNil(capabilities["swiftPortraitDiagnostic"] as? Bool)
         XCTAssertNotNil(capabilities["swiftAppleFeaturesUnavailableReason"] as? String)
+    }
+
+    func testPortraitDepthDiagnosticsForConfiguredSamples() throws {
+        guard let rawInputs = ProcessInfo.processInfo.environment[
+            "XDREMUX_PORTRAIT_DIAGNOSTIC_INPUTS"
+        ] else {
+            throw XCTSkip("set XDREMUX_PORTRAIT_DIAGNOSTIC_INPUTS to run rear.depth diagnostics")
+        }
+
+        let inputs = rawInputs
+            .split(separator: ",")
+            .map { URL(fileURLWithPath: String($0)) }
+        XCTAssertFalse(inputs.isEmpty)
+        for inputURL in inputs {
+            let report = XDRemuxSwiftBackend.diagnosePortrait(inputURL.path)
+            XCTAssertEqual(
+                report["schema"] as? String,
+                "xdremux-portrait-depth-diagnostic-v1",
+                inputURL.lastPathComponent
+            )
+            XCTAssertEqual(report["available"] as? Bool, true, inputURL.lastPathComponent)
+            XCTAssertEqual(
+                report["classification"] as? String,
+                "rear-v4-zero-quantization",
+                inputURL.lastPathComponent
+            )
+            XCTAssertEqual(report["safeToTransform"] as? Bool, false, inputURL.lastPathComponent)
+
+            let header = try XCTUnwrap(report["header"] as? [String: Any])
+            XCTAssertEqual(header["width"] as? Int, 1024, inputURL.lastPathComponent)
+            XCTAssertEqual(header["height"] as? Int, 768, inputURL.lastPathComponent)
+            XCTAssertEqual(header["disparityMinimum"] as? UInt16, 0, inputURL.lastPathComponent)
+            XCTAssertEqual(header["disparityMaximum"] as? UInt16, 0, inputURL.lastPathComponent)
+            XCTAssertEqual(header["disparityExponentiation"] as? Int, 0, inputURL.lastPathComponent)
+
+            let calibration = try XCTUnwrap(report["calibration"] as? [String: Any])
+            XCTAssertEqual(
+                calibration["producerQuantizationValid"] as? Bool,
+                false,
+                inputURL.lastPathComponent
+            )
+            XCTAssertEqual(
+                calibration["status"] as? String,
+                "requires-scale-calibration",
+                inputURL.lastPathComponent
+            )
+        }
     }
 
     func testDirectConversionForExternalSamplesIfConfigured() throws {

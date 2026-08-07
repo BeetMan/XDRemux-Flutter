@@ -93,6 +93,27 @@ enum AppleWatermarkTailBridge {
         return tailInfo.records.contains(where: isWatermarkRecord)
     }
 
+    /// Returns the names in an OPPO post-mdat manifest without exposing the
+    /// private manifest model to the rest of the wrapper target.
+    static func tailEntryNames(sourceURL: URL) throws -> [String] {
+        let sourceData = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+        guard let tailInfo = try parseTail(in: sourceData) else {
+            return []
+        }
+        return tailInfo.records.map(\.name)
+    }
+
+    /// Reads one OPPO tail resource for diagnostics and calibration probes.
+    /// This is intentionally read-only; it never rewrites the source file.
+    static func tailPayload(named name: String, sourceURL: URL) throws -> Data? {
+        let sourceData = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+        guard let tailInfo = try parseTail(in: sourceData),
+              let record = tailInfo.records.first(where: { $0.name == name }) else {
+            return nil
+        }
+        return try payload(for: record, in: sourceData, info: tailInfo)
+    }
+
     /// Removes a recognized OPPO post-mdat footer from an Apple-mode output.
     /// Apple Features may preserve the source footer while rebuilding the
     /// Photos metadata, so output-mode selection alone is not sufficient.

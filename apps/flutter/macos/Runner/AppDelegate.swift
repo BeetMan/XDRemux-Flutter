@@ -213,6 +213,18 @@ class AppDelegate: FlutterAppDelegate {
           applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
           applePortrait: (args["applePortrait"] as? Bool) ?? false
         ))
+      case "diagnosePortrait":
+        guard let args = call.arguments as? [String: Any],
+              let inputPath = args["inputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Portrait diagnostic args", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let report = XDRemuxSwiftBackend.diagnosePortrait(inputPath)
+          DispatchQueue.main.async {
+            result(report)
+          }
+        }
       case "cancel":
         guard let args = call.arguments as? [String: Any],
               let requestID = args["requestId"] as? String else {

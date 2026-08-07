@@ -112,6 +112,8 @@ public enum XDRemuxSwiftBackend {
             "swiftAppleFeatures": appleFeaturesAvailable,
             "swiftPhotographicStyles": appleFeaturesAvailable,
             "swiftPortrait": appleFeaturesAvailable && zstdAvailable,
+            "swiftPortraitDiagnostic": PortraitDepthDiagnostics.isAvailable,
+            "swiftPortraitDiagnosticZstd": PortraitDepthDiagnostics.zstdExecutablePath ?? NSNull(),
             "swiftPackageVersion": "1.3.1",
             "swiftDeploymentTarget": "macOS 15",
             "swiftUnavailableReason": xcrunAvailable
@@ -121,6 +123,25 @@ public enum XDRemuxSwiftBackend {
         ]
         cachedCapabilities = result
         return result
+    }
+
+    /// Runs the read-only rear.depth variant probe. This is intentionally not
+    /// part of `convert` and does not make an input eligible for Portrait.
+    public static func diagnosePortrait(_ path: String) -> [String: Any] {
+        do {
+            return try PortraitDepthDiagnostics.report(
+                for: URL(fileURLWithPath: path).standardizedFileURL
+            )
+        } catch {
+            return [
+                "schema": PortraitDepthDiagnostics.schema,
+                "inputPath": path,
+                "available": false,
+                "safeToTransform": false,
+                "classification": "diagnostic-error",
+                "error": String(describing: error),
+            ]
+        }
     }
 
     public static func convert(

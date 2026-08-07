@@ -57,6 +57,50 @@ class XdRemuxService {
     }
   }
 
+  /// Read-only macOS probe for OPPO rear Portrait depth variants. This does
+  /// not enable Apple Portrait conversion and is intentionally unavailable on
+  /// iOS, Windows, and Android.
+  static Future<Map<String, dynamic>> diagnosePortrait(String inputPath) async {
+    if (!Platform.isMacOS) {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-depth-diagnostic-v1',
+        'available': false,
+        'safeToTransform': false,
+        'classification': 'unsupported-platform',
+      };
+    }
+    try {
+      final raw = await _backendChannel.invokeMethod<Object?>(
+        'diagnosePortrait',
+        <String, Object?>{'inputPath': inputPath},
+      );
+      if (raw is! Map) {
+        return <String, dynamic>{
+          'schema': 'xdremux-portrait-depth-diagnostic-v1',
+          'available': false,
+          'safeToTransform': false,
+          'classification': 'invalid-native-report',
+        };
+      }
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    } on MissingPluginException {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-depth-diagnostic-v1',
+        'available': false,
+        'safeToTransform': false,
+        'classification': 'native-bridge-unavailable',
+      };
+    } on PlatformException catch (error) {
+      return <String, dynamic>{
+        'schema': 'xdremux-portrait-depth-diagnostic-v1',
+        'available': false,
+        'safeToTransform': false,
+        'classification': 'native-diagnostic-error',
+        'error': error.message ?? error.code,
+      };
+    }
+  }
+
   static Future<BackendConversionResult> convertWithBackend(
     ConversionRequest request,
   ) async {
