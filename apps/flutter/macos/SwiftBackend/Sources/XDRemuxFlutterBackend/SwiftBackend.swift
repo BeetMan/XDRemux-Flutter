@@ -6,30 +6,36 @@ public struct SwiftBackendRequest: Sendable {
     public let requestID: String
     public let inputPath: String
     public let outputPath: String
+    public let outputMode: String
     public let oppoCompatibility: Int
     public let oppoCameraTail: Int
     public let strictTmap: Bool
     public let applePhotographicStyles: Bool
     public let applePortrait: Bool
+    public let appleWatermarkPolicy: String
 
     public init(
         requestID: String,
         inputPath: String,
         outputPath: String,
+        outputMode: String = "oppo",
         oppoCompatibility: Int,
         oppoCameraTail: Int,
         strictTmap: Bool,
         applePhotographicStyles: Bool = false,
-        applePortrait: Bool = false
+        applePortrait: Bool = false,
+        appleWatermarkPolicy: String = "preserve"
     ) {
         self.requestID = requestID
         self.inputPath = inputPath
         self.outputPath = outputPath
+        self.outputMode = outputMode
         self.oppoCompatibility = oppoCompatibility
         self.oppoCameraTail = oppoCameraTail
         self.strictTmap = strictTmap
         self.applePhotographicStyles = applePhotographicStyles
         self.applePortrait = applePortrait
+        self.appleWatermarkPolicy = appleWatermarkPolicy
     }
 }
 
@@ -147,11 +153,16 @@ public enum XDRemuxSwiftBackend {
 
         let inputURL = URL(fileURLWithPath: request.inputPath)
         let outputURL = URL(fileURLWithPath: request.outputPath)
-        let oppoCompatibility = mapOppoCompatibility(request.oppoCompatibility)
-        let oppoCameraTail = mapOppoCameraTail(
-            request.oppoCameraTail,
-            compatibility: oppoCompatibility
-        )
+        let appleOutput = request.outputMode == "apple"
+        let oppoCompatibility = appleOutput
+            ? OppoCompatibility.off
+            : mapOppoCompatibility(request.oppoCompatibility)
+        let oppoCameraTail = appleOutput
+            ? OppoCameraTail.off
+            : mapOppoCameraTail(
+                request.oppoCameraTail,
+                compatibility: oppoCompatibility
+            )
         let configuration = ConversionConfiguration(
             family: .auto,
             oppoCompatibility: oppoCompatibility,
@@ -167,16 +178,84 @@ public enum XDRemuxSwiftBackend {
                 }
             }
         )
-        let conversionRequest = ConversionRequest(
-            input: InputSource(url: inputURL),
-            output: OutputDestination(url: outputURL),
-            configuration: configuration
-        )
+        let watermarkIsolationEnabled = request.applePhotographicStyles
+            && !request.applePortrait
+            && (request.appleWatermarkPolicy == "isolate"
+                || ProcessInfo.processInfo.environment[
+                    "XDREMUX_APPLE_STYLES_ISOLATE_OPPO_WATERMARK"
+                ] == "1")
+        let watermarkStyleMaskEnabled = request.applePhotographicStyles
+            && !request.applePortrait
+            && ProcessInfo.processInfo.environment[
+                "XDREMUX_APPLE_STYLES_NEUTRALIZE_OPPO_WATERMARK"
+            ] == "1"
+        var preparedWatermarkInput: AppleWatermarkTailBridge.PreparedInput?
+        defer {
+            if let scratchURL = preparedWatermarkInput?.url {
+                try? FileManager.default.removeItem(at: scratchURL)
+            }
+        }
 
         progress(SwiftBackendProgress(stage: 1, current: 0, total: 1))
         do {
+            let conversionInputURL: URL
+            if watermarkIsolationEnabled {
+                preparedWatermarkInput = try AppleWatermarkTailBridge.prepare(sourceURL: inputURL)
+                conversionInputURL = preparedWatermarkInput?.url ?? inputURL
+                if let preparedWatermarkInput {
+                    print(
+                        "styles watermark isolation=input-filtered "
+                            + "entries=\(preparedWatermarkInput.entryNames.joined(separator: ","))"
+                    )
+                } else {
+                    print("styles watermark isolation=input-unchanged no-recognized-oppo-tail")
+                }
+            } else {
+                conversionInputURL = inputURL
+            }
+
+            let conversionRequest = ConversionRequest(
+                input: InputSource(url: conversionInputURL),
+                output: OutputDestination(url: outputURL),
+                configuration: configuration
+            )
             if configuration.appleFeaturesEnabled {
                 _ = try AppleFeatureConversionEngine.convert(conversionRequest)
+                if watermarkStyleMaskEnabled {
+                    if try AppleWatermarkTailBridge.containsRecognizedWatermark(
+                        sourceURL: inputURL
+                    ) {
+                        let bottomRows = Int(
+                            ProcessInfo.processInfo.environment[
+                                "XDREMUX_APPLE_STYLES_WATERMARK_BOTTOM_ROWS"
+                            ] ?? "2"
+                        ) ?? 2
+                        let report = try AppleStylesWatermarkMaskBridge
+                            .neutralizeBottomWatermarkRows(
+                                outputURL: outputURL,
+                                bottomRows: bottomRows
+                            )
+                        print(
+                            "styles watermark mask=identity "
+                                + "blocks=\(report.patchedBlocks) "
+                                + "rows=\(report.bottomRows) "
+                                + "grid=\(report.spatialColumns)x\(report.spatialRows)x\(report.subtileCount)"
+                        )
+                    } else {
+                        print("styles watermark mask=input-unchanged no-recognized-oppo-tail")
+                    }
+                }
+                if let preparedWatermarkInput {
+                    try AppleWatermarkTailBridge.appendWatermarkTail(
+                        preparedWatermarkInput.watermarkTail,
+                        to: outputURL
+                    )
+                    print("styles watermark isolation=output-watermark-tail-restored")
+                }
+                if appleOutput,
+                   try AppleWatermarkTailBridge.stripRecognizedOppoTail(from: outputURL) {
+                    print("apple output=recognized-oppo-tail-stripped")
+                }
             } else {
                 _ = try ConversionEngine.convert(conversionRequest)
             }

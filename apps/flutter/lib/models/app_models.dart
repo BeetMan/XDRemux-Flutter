@@ -43,6 +43,60 @@ enum ConversionBackend {
   }
 }
 
+/// High-level output target. This is independent from the implementation
+/// backend: Rust can still produce the default OPPO-compatible output, while
+/// Swift can produce Apple output with the experimental Apple features.
+enum OutputMode {
+  oppo,
+  apple;
+
+  String get appTitle {
+    switch (this) {
+      case OutputMode.oppo:
+        return 'OPPO';
+      case OutputMode.apple:
+        return 'Apple';
+    }
+  }
+
+  String get appHelp {
+    switch (this) {
+      case OutputMode.oppo:
+        return '保留 OPPO 兼容路由和相机尾部，便于回传 OPPO 后继续编辑。';
+      case OutputMode.apple:
+        return '输出干净的 Apple/ISO 结构，不写入 OPPO 私有兼容信息。';
+    }
+  }
+}
+
+/// Watermark handling for the Apple/OPPO round-trip workflow.
+///
+/// `isolate` currently keeps the visible raster watermark but prevents the
+/// recognized OPPO watermark metadata from entering the Apple Styles path.
+/// Full raster removal remains an experimental follow-up.
+enum AppleWatermarkPolicy {
+  preserve,
+  isolate;
+
+  String get appTitle {
+    switch (this) {
+      case AppleWatermarkPolicy.preserve:
+        return '保留水印';
+      case AppleWatermarkPolicy.isolate:
+        return '隔离水印 metadata（实验性）';
+    }
+  }
+
+  String get appHelp {
+    switch (this) {
+      case AppleWatermarkPolicy.preserve:
+        return 'Apple 编辑副本保留当前水印；回传后仍可按设置写回 baseline 水印。';
+      case AppleWatermarkPolicy.isolate:
+        return '不把 OPPO 水印私有 metadata 送入 Styles；已经烘焙进画面的水印暂不会被擦除。';
+    }
+  }
+}
+
 /// Runtime capability snapshot for the conversion backends.
 ///
 /// Visibility and availability are deliberately separate: the Swift option
@@ -375,6 +429,7 @@ enum OutputPlanStatus {
 class ConversionConfig {
   Family family;
   ConversionBackend backend;
+  OutputMode outputMode;
   String? outputDirectory;
   OppoCompatMode oppoCompatibility;
   OppoCameraTailMode oppoCameraTail;
@@ -391,6 +446,7 @@ class ConversionConfig {
   ConversionConfig({
     this.family = Family.auto,
     this.backend = ConversionBackend.rust,
+    this.outputMode = OutputMode.oppo,
     this.outputDirectory,
     this.oppoCompatibility = OppoCompatMode.on,
     this.oppoCameraTail = OppoCameraTailMode.automatic,
@@ -409,6 +465,7 @@ class ConversionConfig {
   Map<String, dynamic> toJson() => {
     'family': family.name,
     'backend': backend.name,
+    'outputMode': outputMode.name,
     'outputDirectory': outputDirectory,
     'oppoCompatibility': oppoCompatibility.name,
     'oppoCameraTail': oppoCameraTail.name,
@@ -432,6 +489,10 @@ class ConversionConfig {
       backend: ConversionBackend.values.firstWhere(
         (e) => e.name == json['backend'],
         orElse: () => ConversionBackend.rust,
+      ),
+      outputMode: OutputMode.values.firstWhere(
+        (e) => e.name == json['outputMode'],
+        orElse: () => OutputMode.oppo,
       ),
       outputDirectory: json['outputDirectory'] as String?,
       oppoCompatibility: OppoCompatMode.values.firstWhere(
@@ -458,6 +519,7 @@ class ConversionConfig {
   ConversionConfig copy() => ConversionConfig(
     family: family,
     backend: backend,
+    outputMode: outputMode,
     outputDirectory: outputDirectory,
     oppoCompatibility: oppoCompatibility,
     oppoCameraTail: oppoCameraTail,

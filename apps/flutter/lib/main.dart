@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
+import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
 import 'services/notification_service.dart';
@@ -1008,6 +1009,12 @@ class _HomePageState extends State<HomePage> {
     final item = _queue[index];
     final runConfig = _config.copy();
     item.backend = runConfig.backend;
+    final effectiveOppoCompatibility = runConfig.outputMode == OutputMode.apple
+        ? OppoCompatMode.off
+        : runConfig.oppoCompatibility;
+    final effectiveOppoCameraTail = runConfig.outputMode == OutputMode.apple
+        ? OppoCameraTailMode.off
+        : runConfig.oppoCameraTail;
 
     // Claim a Rust progress handle only for Rust-backed work. Swift progress
     // will use the same request id through the native backend contract.
@@ -1053,10 +1060,11 @@ class _HomePageState extends State<HomePage> {
         ConversionRequest(
           id: item.id,
           backend: runConfig.backend,
+          outputMode: runConfig.outputMode,
           inputPath: item.inputPath,
           outputPath: item.outputPath,
-          oppoCompat: runConfig.oppoCompatibility.rustValue,
-          oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+          oppoCompat: effectiveOppoCompatibility.rustValue,
+          oppoCameraTail: effectiveOppoCameraTail.rustValue,
           strictTmap: runConfig.strictTmap,
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
@@ -1119,8 +1127,12 @@ class _HomePageState extends State<HomePage> {
       prepared = await Isolate.run(
         () => XdRemuxFFI.prepareTiles(
           item.inputPath,
-          oppoCompat: runConfig.oppoCompatibility.rustValue,
-          oppoCameraTail: runConfig.oppoCameraTail.rustValue,
+          oppoCompat: runConfig.outputMode == OutputMode.apple
+              ? OppoCompatMode.off.rustValue
+              : runConfig.oppoCompatibility.rustValue,
+          oppoCameraTail: runConfig.outputMode == OutputMode.apple
+              ? OppoCameraTailMode.off.rustValue
+              : runConfig.oppoCameraTail.rustValue,
           strictTmap: runConfig.strictTmap,
           progressHandle: handle,
         ),
@@ -1868,6 +1880,12 @@ class _HomePageState extends State<HomePage> {
         tooltip: '设置',
         onPressed: () => _openSettings(context),
       ),
+      if (Platform.isMacOS || Platform.isIOS)
+        IconButton(
+          icon: const Icon(Icons.auto_awesome_motion_outlined),
+          tooltip: 'OPPO ↔ Apple 工作流',
+          onPressed: _openAppleOppoWorkflow,
+        ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
       // iOS 沙盒下都不可用。
       if (!Platform.isAndroid && !Platform.isIOS)
@@ -2435,6 +2453,12 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
+  void _openAppleOppoWorkflow() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const AppleOppoWorkflowPage()),
+    );
+  }
 }
 
 // ============================================================================
@@ -2497,6 +2521,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   /// Only probed on Android, where the MediaCodec path exists.
   bool? _hwAvailable;
 
+  String? _writebackDonorPath;
+  String? _writebackReturnedPath;
+  bool _writebackRunning = false;
+
   @override
   void initState() {
     super.initState();
@@ -2523,6 +2551,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   void _emit() {
     widget.config.family = _cfg.family;
     widget.config.backend = _cfg.backend;
+    widget.config.outputMode = _cfg.outputMode;
     widget.config.outputDirectory = _cfg.outputDirectory;
     widget.config.oppoCompatibility = _cfg.oppoCompatibility;
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
@@ -2539,6 +2568,26 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     setState(() {});
   }
 
+  void _setOutputMode(OutputMode mode) {
+    setState(() {
+      _cfg.outputMode = mode;
+      if (mode == OutputMode.apple) {
+        _cfg.oppoCompatibility = OppoCompatMode.off;
+        _cfg.oppoCameraTail = OppoCameraTailMode.off;
+      } else {
+        _cfg.applePhotographicStyles = false;
+        _cfg.applePortrait = false;
+        if (_cfg.oppoCompatibility == OppoCompatMode.off) {
+          _cfg.oppoCompatibility = OppoCompatMode.on;
+        }
+        if (_cfg.oppoCameraTail == OppoCameraTailMode.off) {
+          _cfg.oppoCameraTail = OppoCameraTailMode.automatic;
+        }
+      }
+    });
+    _emit();
+  }
+
   Future<void> _chooseDirectory() async {
     final dir = await FilePicker.platform.getDirectoryPath();
     if (dir != null) {
@@ -2546,6 +2595,72 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         setState(() => _cfg.outputDirectory = dir);
         _emit();
       }
+    }
+  }
+
+  Future<void> _pickWritebackPhoto({required bool donor}) async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['heic', 'heif'],
+    );
+    final path = picked == null || picked.files.isEmpty
+        ? null
+        : picked.files.single.path;
+    if (path == null || !mounted) return;
+    setState(() {
+      if (donor) {
+        _writebackDonorPath = path;
+      } else {
+        _writebackReturnedPath = path;
+      }
+    });
+  }
+
+  String _writebackOutputPath() {
+    final returned = File(_writebackReturnedPath!);
+    final baseName = returned.uri.pathSegments.last.replaceFirst(
+      RegExp(r'\.(heic|heif)$', caseSensitive: false),
+      '',
+    );
+    final directory = _cfg.outputDirectory ?? returned.parent.path;
+    final suffix = _cfg.outputMode == OutputMode.oppo ? '_oppo' : '_apple';
+    return '$directory${Platform.pathSeparator}$baseName$suffix.heic';
+  }
+
+  Future<void> _runReturnedPhotoWriteback() async {
+    final returned = _writebackReturnedPath;
+    if (returned == null ||
+        (_cfg.outputMode == OutputMode.oppo && _writebackDonorPath == null) ||
+        _writebackRunning) {
+      return;
+    }
+    setState(() => _writebackRunning = true);
+    final output = _writebackOutputPath();
+    try {
+      final result = await XdRemuxService.writebackReturnedPhoto(
+        originalPath: _writebackDonorPath,
+        returnedPath: returned,
+        outputPath: output,
+        outputMode: _cfg.outputMode,
+      );
+      if (!mounted) return;
+      final success = result['success'] == true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? '${_cfg.outputMode.appTitle} 输出已生成：${File(output).uri.pathSegments.last}'
+                : (result['errorMessage']?.toString() ?? '回传照片输出验证失败'),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('回传照片回写失败：$error')));
+    } finally {
+      if (mounted) setState(() => _writebackRunning = false);
     }
   }
 
@@ -2658,6 +2773,31 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text('输出模式', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    SegmentedButton<OutputMode>(
+                      segments: OutputMode.values
+                          .map(
+                            (mode) => ButtonSegment<OutputMode>(
+                              value: mode,
+                              label: Text(mode.appTitle),
+                            ),
+                          )
+                          .toList(),
+                      selected: {_cfg.outputMode},
+                      onSelectionChanged: (value) {
+                        _setOutputMode(value.first);
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_cfg.outputMode.appHelp} '
+                      'Apple Photographic Styles 仍只在 Swift 后端开放。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     // Swift is visible only on Apple platforms. It remains
                     // disabled until the embedded Swift Core capability probe
                     // reports a linked and verified implementation.
@@ -2733,7 +2873,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               setState(() {
                                 _cfg.applePhotographicStyles = value;
                                 if (value) {
+                                  _cfg.outputMode = OutputMode.apple;
                                   _cfg.oppoCompatibility = OppoCompatMode.off;
+                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
                                 }
                               });
                               _emit();
@@ -2751,7 +2893,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               setState(() {
                                 _cfg.applePortrait = value;
                                 if (value) {
+                                  _cfg.outputMode = OutputMode.apple;
                                   _cfg.oppoCompatibility = OppoCompatMode.off;
+                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
                                 }
                               });
                               _emit();
@@ -2771,6 +2915,101 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const Text('实验性功能：尚未宣称 Apple Photos 正式稳定兼容。'),
                       ],
                       const SizedBox(height: 20),
+                    ],
+
+                    if (Platform.isMacOS) ...[
+                      ExpansionTile(
+                        initiallyExpanded: false,
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: EdgeInsets.zero,
+                        title: const Text('Apple 回传照片回写（实验性）'),
+                        subtitle: const Text(
+                          '选择原始 OPPO donor 和 iPhone 回传照片，再选择 OPPO 或 Apple 输出。',
+                        ),
+                        children: [
+                          const SizedBox(height: 8),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.photo_library_outlined),
+                            title: const Text('原始 OPPO donor'),
+                            subtitle: Text(
+                              _writebackDonorPath ?? 'OPPO 模式必需；Apple 模式可留空',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: OutlinedButton(
+                              onPressed: _writebackRunning
+                                  ? null
+                                  : () => _pickWritebackPhoto(donor: true),
+                              child: const Text('选择'),
+                            ),
+                          ),
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.phone_iphone),
+                            title: const Text('iPhone 回传照片'),
+                            subtitle: Text(
+                              _writebackReturnedPath ?? '必需',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: OutlinedButton(
+                              onPressed: _writebackRunning
+                                  ? null
+                                  : () => _pickWritebackPhoto(donor: false),
+                              child: const Text('选择'),
+                            ),
+                          ),
+                          SegmentedButton<OutputMode>(
+                            segments: OutputMode.values
+                                .map(
+                                  (mode) => ButtonSegment<OutputMode>(
+                                    value: mode,
+                                    label: Text(mode.appTitle),
+                                  ),
+                                )
+                                .toList(),
+                            selected: {_cfg.outputMode},
+                            onSelectionChanged: _writebackRunning
+                                ? null
+                                : (value) => _setOutputMode(value.first),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _cfg.outputMode == OutputMode.oppo
+                                ? 'OPPO：需要 donor；回写水印画布并恢复 OPPO footer。'
+                                : 'Apple：不改动回传文件，保留 Apple/ISO 结果。',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: FilledButton.icon(
+                              onPressed:
+                                  _writebackReturnedPath == null ||
+                                      _writebackRunning ||
+                                      (_cfg.outputMode == OutputMode.oppo &&
+                                          _writebackDonorPath == null)
+                                  ? null
+                                  : _runReturnedPhotoWriteback,
+                              icon: _writebackRunning
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.output),
+                              label: Text(_writebackRunning ? '处理中…' : '生成输出'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
                     ],
 
                     // Output directory — desktop only. Android scoped storage
@@ -2892,17 +3131,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 ),
                               )
                               .toList(),
-                          onChanged: (mode) {
-                            if (mode == null) return;
-                            setState(() {
-                              _cfg.oppoCompatibility = mode;
-                              if (mode != OppoCompatMode.off) {
-                                _cfg.applePhotographicStyles = false;
-                                _cfg.applePortrait = false;
-                              }
-                            });
-                            _emit();
-                          },
+                          onChanged: _cfg.outputMode == OutputMode.apple
+                              ? null
+                              : (mode) {
+                                  if (mode == null) return;
+                                  setState(() {
+                                    _cfg.outputMode = OutputMode.oppo;
+                                    _cfg.oppoCompatibility = mode;
+                                    if (mode != OppoCompatMode.off) {
+                                      _cfg.applePhotographicStyles = false;
+                                      _cfg.applePortrait = false;
+                                    }
+                                  });
+                                  _emit();
+                                },
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -2926,11 +3168,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 ),
                               )
                               .toList(),
-                          onChanged: (mode) {
-                            if (mode == null) return;
-                            setState(() => _cfg.oppoCameraTail = mode);
-                            _emit();
-                          },
+                          onChanged: _cfg.outputMode == OutputMode.apple
+                              ? null
+                              : (mode) {
+                                  if (mode == null) return;
+                                  setState(() {
+                                    _cfg.outputMode = OutputMode.oppo;
+                                    _cfg.oppoCameraTail = mode;
+                                  });
+                                  _emit();
+                                },
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -3147,6 +3394,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           if (v &&
                               _cfg.oppoCompatibility != OppoCompatMode.on) {
                             _cfg.oppoCompatibility = OppoCompatMode.on;
+                          }
+                          if (v) {
+                            _cfg.outputMode = OutputMode.oppo;
+                            _cfg.applePhotographicStyles = false;
+                            _cfg.applePortrait = false;
                           }
                           setState(() => _cfg.hardwareEncode = v);
                           _emit();

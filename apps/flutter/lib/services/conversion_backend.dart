@@ -10,6 +10,7 @@ import '../models/app_models.dart';
 class ConversionRequest {
   final String id;
   final ConversionBackend backend;
+  final OutputMode outputMode;
   final String inputPath;
   final String outputPath;
   final int oppoCompat;
@@ -17,11 +18,13 @@ class ConversionRequest {
   final bool strictTmap;
   final bool applePhotographicStyles;
   final bool applePortrait;
+  final AppleWatermarkPolicy appleWatermarkPolicy;
   final int progressHandle;
 
   const ConversionRequest({
     required this.id,
     required this.backend,
+    this.outputMode = OutputMode.oppo,
     required this.inputPath,
     required this.outputPath,
     required this.oppoCompat,
@@ -29,6 +32,7 @@ class ConversionRequest {
     required this.strictTmap,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
+    this.appleWatermarkPolicy = AppleWatermarkPolicy.preserve,
     this.progressHandle = 0,
   });
 }
@@ -146,21 +150,27 @@ class RustConversionBackend implements ConversionBackendAdapter {
       return BackendConversionResult.failure(backend, '转换已取消', cancelled: true);
     }
 
+    final effectiveOppoCompat = request.outputMode == OutputMode.apple
+        ? 0
+        : request.oppoCompat;
+    final effectiveOppoCameraTail = request.outputMode == OutputMode.apple
+        ? 0
+        : request.oppoCameraTail;
     final result = await Isolate.run(() {
       final ffiResult = request.progressHandle != 0
           ? XdRemuxFFI.convertWithProgress(
               request.inputPath,
               request.outputPath,
               progressHandle: request.progressHandle,
-              oppoCompat: request.oppoCompat,
-              oppoCameraTail: request.oppoCameraTail,
+              oppoCompat: effectiveOppoCompat,
+              oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
             )
           : XdRemuxFFI.convert(
               request.inputPath,
               request.outputPath,
-              oppoCompat: request.oppoCompat,
-              oppoCameraTail: request.oppoCameraTail,
+              oppoCompat: effectiveOppoCompat,
+              oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
             );
       try {
@@ -237,11 +247,13 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
         'requestId': request.id,
         'inputPath': request.inputPath,
         'outputPath': request.outputPath,
+        'outputMode': request.outputMode.name,
         'oppoCompat': request.oppoCompat,
         'oppoCameraTail': request.oppoCameraTail,
         'strictTmap': request.strictTmap,
         'applePhotographicStyles': request.applePhotographicStyles,
         'applePortrait': request.applePortrait,
+        'appleWatermarkPolicy': request.appleWatermarkPolicy.name,
       });
       final result = _parseResult(raw);
       if (!result.success) return result;

@@ -57,6 +57,8 @@ void main() {
 
     // Settings sheet should show its title and the sections that now exist.
     expect(find.text('转换设置'), findsOneWidget);
+    expect(find.text('输出模式'), findsOneWidget);
+    expect(find.text('Apple'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
     expect(
       find.text('转换后端'),
@@ -67,6 +69,7 @@ void main() {
     expect(find.text('输入 HDR 类型'), findsNothing);
     expect(find.text('OPPO 兼容模式'), findsNothing);
 
+    await tester.ensureVisible(find.text('高级模式'));
     await tester.tap(find.text('高级模式'));
     await tester.pumpAndSettle();
     expect(find.text('输入 HDR 类型'), findsOneWidget);
@@ -83,6 +86,17 @@ void main() {
 
     // The AppBar add button
     expect(find.byIcon(Icons.add_photo_alternate), findsOneWidget);
+  });
+
+  testWidgets('Apple/OPPO workflow has a separate Apple-platform entry', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const XdRemuxApp());
+
+    expect(
+      find.byIcon(Icons.auto_awesome_motion_outlined),
+      (Platform.isMacOS || Platform.isIOS) ? findsOneWidget : findsNothing,
+    );
   });
 
   testWidgets('Mobile layout keeps primary actions in the bottom action bar', (

@@ -107,11 +107,13 @@ class AppDelegate: FlutterAppDelegate {
           requestID: requestID,
           inputPath: inputPath,
           outputPath: outputPath,
+          outputMode: (args["outputMode"] as? String) ?? "oppo",
           oppoCompatibility: (args["oppoCompat"] as? Int) ?? 0,
           oppoCameraTail: (args["oppoCameraTail"] as? Int) ?? 255,
           strictTmap: (args["strictTmap"] as? Bool) ?? false,
           applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
-          applePortrait: (args["applePortrait"] as? Bool) ?? false
+          applePortrait: (args["applePortrait"] as? Bool) ?? false,
+          appleWatermarkPolicy: (args["appleWatermarkPolicy"] as? String) ?? "preserve"
         )
         let progressStreamHandler = self?.swiftProgressStreamHandler
         DispatchQueue.global(qos: .userInitiated).async {
@@ -126,6 +128,78 @@ class AppDelegate: FlutterAppDelegate {
           ]
           DispatchQueue.main.async {
             result(payload)
+          }
+        }
+      case "writebackReturnedPhoto":
+        guard let args = call.arguments as? [String: Any],
+              let returnedPath = args["returnedPath"] as? String,
+              let outputPath = args["outputPath"] as? String,
+              let outputMode = args["outputMode"] as? String,
+              outputMode == "oppo" || outputMode == "apple" else {
+          result(FlutterError(
+            code: "bad_args",
+            message: "invalid returned-photo writeback args",
+            details: nil
+          ))
+          return
+        }
+        let originalPath = args["originalPath"] as? String
+        let restoreWatermark = (args["restoreWatermark"] as? Bool) ?? true
+        if outputMode == "oppo" && originalPath == nil {
+          result(FlutterError(
+            code: "bad_args",
+            message: "OPPO output mode requires the untouched donor photo",
+            details: nil
+          ))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let report: AppleReturnedPhotoWritebackBridge.Report
+            if outputMode == "oppo" {
+              report = try AppleReturnedPhotoWritebackBridge.restore(
+                originalURL: URL(fileURLWithPath: originalPath!),
+                returnedURL: URL(fileURLWithPath: returnedPath),
+                outputURL: URL(fileURLWithPath: outputPath),
+                restoreCompleteOppoTail: true,
+                restoreWatermarkCanvas: restoreWatermark
+              )
+            } else if restoreWatermark, let originalPath {
+              report = try AppleReturnedPhotoWritebackBridge.restore(
+                originalURL: URL(fileURLWithPath: originalPath),
+                returnedURL: URL(fileURLWithPath: returnedPath),
+                outputURL: URL(fileURLWithPath: outputPath),
+                restoreCompleteOppoTail: false,
+                restoreWatermarkCanvas: true
+              )
+            } else {
+              report = try AppleReturnedPhotoWritebackBridge.copyAppleOutput(
+                from: URL(fileURLWithPath: returnedPath),
+                to: URL(fileURLWithPath: outputPath)
+              )
+            }
+            let valid = XDRemuxSwiftBackend.verifyOutput(outputPath)
+            let payload: [String: Any] = [
+              "success": valid,
+              "outputMode": outputMode,
+              "outputValid": valid,
+              "width": report.width,
+              "height": report.height,
+              "preservedISOGainMap": report.preservedISOGainMap,
+              "restoredOppoEntries": report.restoredOppoEntries,
+              "errorMessage": valid ? NSNull() : "returned-photo output validation failed",
+            ]
+            DispatchQueue.main.async {
+              result(payload)
+            }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(
+                code: "writeback_failed",
+                message: String(describing: error),
+                details: nil
+              ))
+            }
           }
         }
       case "verifyOutput":

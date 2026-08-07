@@ -39,6 +39,7 @@ class CheckpointService {
     final payload = jsonEncode({
       'family': config.family.name,
       'backend': config.backend.name,
+      'outputMode': config.outputMode.name,
       'oppoCompatibility': config.oppoCompatibility.name,
       'outputDirectory': config.outputDirectory,
       'fileNameSuffix': config.fileNameSuffix,

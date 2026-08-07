@@ -212,6 +212,35 @@ class XdRemuxService {
     return verifyOutputForBackend(ConversionBackend.rust, path);
   }
 
+  /// Reconcile a returned Apple Photos file with its original OPPO donor.
+  /// This bridge is macOS-only for now; iOS must not load the macOS Swift
+  /// package or start a helper process.
+  static Future<Map<String, dynamic>> writebackReturnedPhoto({
+    String? originalPath,
+    required String returnedPath,
+    required String outputPath,
+    required OutputMode outputMode,
+    bool restoreWatermark = true,
+  }) async {
+    if (!Platform.isMacOS) {
+      throw UnsupportedError(
+        'returned-photo writeback is currently verified on macOS only',
+      );
+    }
+    final raw = await _backendChannel
+        .invokeMethod<Object?>('writebackReturnedPhoto', <String, dynamic>{
+          if (originalPath != null) 'originalPath': originalPath,
+          'returnedPath': returnedPath,
+          'outputPath': outputPath,
+          'outputMode': outputMode.name,
+          'restoreWatermark': restoreWatermark,
+        });
+    if (raw is! Map) {
+      throw StateError('returned-photo writeback returned an invalid result');
+    }
+    return raw.map((key, value) => MapEntry(key.toString(), value));
+  }
+
   // -----------------------------------------------------------------------
   // Thumbnails
   // -----------------------------------------------------------------------
@@ -344,6 +373,7 @@ class XdRemuxService {
 
   static const _keyFamily = 'family';
   static const _keyBackend = 'backend';
+  static const _keyOutputMode = 'outputMode';
   static const _keyOutputDirectory = 'outputDirectory';
   static const _keyOppoCompat = 'oppoCompatibility';
   static const _keyOppoCameraTail = 'oppoCameraTail';
@@ -364,6 +394,10 @@ class XdRemuxService {
       backend: ConversionBackend.values.firstWhere(
         (e) => e.name == prefs.getString(_keyBackend),
         orElse: () => ConversionBackend.rust,
+      ),
+      outputMode: OutputMode.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyOutputMode),
+        orElse: () => OutputMode.oppo,
       ),
       outputDirectory: prefs.getString(_keyOutputDirectory),
       oppoCompatibility: OppoCompatMode.values.firstWhere(
@@ -388,6 +422,7 @@ class XdRemuxService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyFamily, config.family.name);
     await prefs.setString(_keyBackend, config.backend.name);
+    await prefs.setString(_keyOutputMode, config.outputMode.name);
     if (config.outputDirectory != null) {
       await prefs.setString(_keyOutputDirectory, config.outputDirectory!);
     } else {
