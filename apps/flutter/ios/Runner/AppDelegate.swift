@@ -55,8 +55,13 @@ import UIKit
           "swiftAvailable": false,
           "swiftStandardHdr": false,
           "swiftAppleFeatures": false,
+          "swiftPhotographicStyles": false,
+          "swiftPortrait": false,
+          "swiftPortraitResearch": false,
           "swiftUnavailableReason":
-            "Swift Core 尚未作为嵌入式 Library 链接；iOS 不启动 Swift CLI。"
+            "iOS 当前未链接 Swift Core；上游 v1.3.1 Package 只声明 macOS 15，iOS 不启动 Swift CLI。",
+          "swiftAppleFeaturesUnavailableReason":
+            "iOS 暂不开放 Apple Styles/Portrait：当前上游实现包含 macOS AppKit、NeutrinoCore 私有框架、Process/xcrun 和 macOS-only 工具链；需拆分为嵌入式 Library 并完成真机验证。"
         ])
       case "convert":
         result(FlutterError(

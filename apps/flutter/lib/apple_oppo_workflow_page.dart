@@ -249,6 +249,17 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
 
   String _fileLabel(String path) => File(path).uri.pathSegments.last;
 
+  bool get _canWriteback => Platform.isMacOS;
+
+  String get _appleCapabilityMessage {
+    if (_capabilities.swiftAppleFeaturesUnavailableReason.isNotEmpty) {
+      return _capabilities.swiftAppleFeaturesUnavailableReason;
+    }
+    return Platform.isIOS
+        ? 'iOS 当前只验证 Rust baseline；Apple Styles 仍等待嵌入式 Swift Library。'
+        : '当前设备未通过 Apple Styles capability 验证。';
+  }
+
   Widget _stepCard({
     required BuildContext context,
     required int step,
@@ -301,6 +312,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final canUseApple = _capabilities.swiftPhotographicStyles;
+    final sharePath = _appleEditPath ?? _baselinePath;
+    final sharingAppleEdit = _appleEditPath != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('OPPO ↔ Apple 工作流'),
@@ -312,10 +325,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
         children: [
           Card(
             color: theme.colorScheme.secondaryContainer,
-            child: const Padding(
-              padding: EdgeInsets.all(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
               child: Text(
-                '这是独立的五阶段流程。baseline 与 iPhone 回传照片会保持配对，普通“批量转换”队列不会参与此流程。Apple 功能仍属于 experimental。',
+                Platform.isIOS
+                    ? '这是独立的五阶段流程。当前 iOS 已开放 Rust baseline 生成、文件选择和分享；Apple Styles、回传写回与最终双模式输出仍保持 capability gating，尚未宣称可用。'
+                    : '这是独立的五阶段流程。baseline 与 iPhone 回传照片会保持配对，普通“批量转换”队列不会参与此流程。Apple 功能仍属于 experimental。',
               ),
             ),
           ),
@@ -376,7 +391,9 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             context: context,
             step: 2,
             title: '生成 Apple Photographic Styles 编辑副本',
-            description: '只对 baseline 执行 Apple Styles，生成交给 iPhone 的工作文件。',
+            description: Platform.isIOS
+                ? 'iOS 当前不生成 Apple Styles 副本；上游实现尚未作为嵌入式 Swift Library 接入。'
+                : '只对 baseline 执行 Apple Styles，生成交给 iPhone 的工作文件。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -390,7 +407,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       )
                       .toList(),
                   selected: {_watermarkPolicy},
-                  onSelectionChanged: _running
+                  onSelectionChanged: _running || !canUseApple
                       ? null
                       : (value) {
                           setState(() {
@@ -415,9 +432,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 if (!canUseApple) ...[
                   const SizedBox(height: 8),
                   Text(
-                    _capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-                        ? '当前设备未通过 Apple Styles capability 验证。'
-                        : _capabilities.swiftAppleFeaturesUnavailableReason,
+                    _appleCapabilityMessage,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.error,
                     ),
@@ -437,16 +452,20 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             context: context,
             step: 3,
             title: '在 iPhone 上编辑',
-            description: '把上一步生成的文件传到 iPhone，在 Photos 中完成自己的调整并导出/回传。',
+            description: Platform.isIOS
+                ? '可以先把 Rust baseline 分享到 Photos/文件；Apple Styles 编辑副本接入后再启用完整回传链。'
+                : '把上一步生成的文件传到 iPhone，在 Photos 中完成自己的调整并导出/回传。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _appleEditPath == null || _running
+                  onPressed: sharePath == null || _running
                       ? null
-                      : () => FileActionService.shareFile(_appleEditPath!),
+                      : () => FileActionService.shareFile(sharePath),
                   icon: const Icon(Icons.ios_share),
-                  label: const Text('分享 Apple 编辑副本'),
+                  label: Text(
+                    sharingAppleEdit ? '分享 Apple 编辑副本' : '分享 Rust baseline',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -465,15 +484,20 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 4,
-            title: '写回正常水印',
-            description:
-                '使用 baseline donor 处理回传照片；目前 macOS 已验证，iOS 保持 capability gating。',
+            title: Platform.isIOS ? '回传照片写回（待接入）' : '写回正常水印',
+            description: Platform.isIOS
+                ? 'iOS 当前不执行写回；避免在未验证的设备路径上伪造 OPPO 水印或 footer。'
+                : '使用 baseline donor 处理回传照片；目前 macOS 已验证。',
             child: SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('按 baseline 写回正常水印'),
-              subtitle: const Text('关闭后保留 iPhone 回传画面，但 OPPO 模式仍会恢复兼容 footer。'),
+              subtitle: Text(
+                Platform.isIOS
+                    ? 'iOS 先完成 Swift/回写 Library 的真机验证后再开放。'
+                    : '关闭后保留 iPhone 回传画面，但 OPPO 模式仍会恢复兼容 footer。',
+              ),
               value: _restoreWatermark,
-              onChanged: _running
+              onChanged: _running || !_canWriteback
                   ? null
                   : (value) => setState(() => _restoreWatermark = value),
             ),
@@ -498,7 +522,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       )
                       .toList(),
                   selected: {_outputMode},
-                  onSelectionChanged: _running
+                  onSelectionChanged: _running || !_canWriteback
                       ? null
                       : (value) => setState(() {
                           _outputMode = value.first;
@@ -509,7 +533,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 Text(_outputMode.appHelp, style: theme.textTheme.bodySmall),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: _returnedPath == null || _running
+                  onPressed: _returnedPath == null || _running || !_canWriteback
                       ? null
                       : _writeback,
                   icon: _running
@@ -521,6 +545,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       : const Icon(Icons.output),
                   label: Text(_running ? '处理中…' : '生成最终输出'),
                 ),
+                if (!_canWriteback) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'iOS 当前仅验证 Rust baseline 与文件传递；回传写回和 OPPO/Apple 最终输出暂只在 macOS 开放。',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                ],
                 if (_finalPath != null) ...[
                   const SizedBox(height: 12),
                   Text('最终文件', style: theme.textTheme.labelLarge),
