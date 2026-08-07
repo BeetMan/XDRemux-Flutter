@@ -145,6 +145,27 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
 
   String _fileName(String path) => File(path).uri.pathSegments.last;
 
+  Future<void> _openPath(String path, {bool reveal = false}) async {
+    if (!Platform.isMacOS) return;
+    final result = await Process.run('open', reveal ? ['-R', path] : [path]);
+    if (result.exitCode != 0 && mounted) {
+      _showError('无法打开路径：$path');
+    }
+  }
+
+  String _manifestSummary() {
+    final manifest = _manifest;
+    if (manifest == null) return '';
+    final samples = _asMapList(manifest['samples']);
+    final outputs = _outputs();
+    final passed = outputs.where((output) => output['valid'] == true).length;
+    return [
+      'schema：${manifest['schema'] ?? 'unknown'}',
+      '样本：${samples.where((sample) => sample['success'] == true).length}/${samples.length}',
+      'validator：$passed/${outputs.length} 通过',
+    ].join('\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -274,11 +295,30 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('研究输出', style: theme.textTheme.titleMedium),
+                    Row(
+                      children: [
+                        Text('研究输出', style: theme.textTheme.titleMedium),
+                        const Spacer(),
+                        if (_outputDirectory != null)
+                          IconButton(
+                            tooltip: '打开输出目录',
+                            icon: const Icon(Icons.folder_open_outlined),
+                            onPressed: () =>
+                                _openPath(_outputDirectory!, reveal: false),
+                          ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     Text(
                       '输出已通过 native Apple Portrait validator；这不等同于正式稳定能力。',
                       style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _manifestSummary(),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     for (final output in outputs) _outputTile(output),
@@ -309,10 +349,20 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
       ),
       trailing: path == null || !success
           ? null
-          : IconButton(
-              tooltip: '分享',
-              icon: const Icon(Icons.ios_share),
-              onPressed: () => FileActionService.shareFile(path),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: '在默认应用中打开',
+                  icon: const Icon(Icons.open_in_new),
+                  onPressed: () => _openPath(path),
+                ),
+                IconButton(
+                  tooltip: '分享',
+                  icon: const Icon(Icons.ios_share),
+                  onPressed: () => FileActionService.shareFile(path),
+                ),
+              ],
             ),
     );
   }

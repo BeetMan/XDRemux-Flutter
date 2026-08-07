@@ -84,7 +84,7 @@ public enum PortraitCalibrationResearch {
             }
         }
 
-        let manifest: [String: Any] = [
+        var manifest: [String: Any] = [
             "schema": schema,
             "researchOnly": true,
             "safeToTransform": false,
@@ -93,6 +93,7 @@ public enum PortraitCalibrationResearch {
             "samples": samples,
         ]
         let manifestURL = outputDirectory.appendingPathComponent("manifest.json")
+        manifest["manifestPath"] = manifestURL.path
         let manifestData = try JSONSerialization.data(
             withJSONObject: manifest,
             options: [.prettyPrinted, .sortedKeys]

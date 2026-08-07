@@ -99,6 +99,17 @@ void main() {
     );
   });
 
+  testWidgets('Apple Portrait lab has a separate macOS-only entry', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const XdRemuxApp());
+
+    expect(
+      find.byIcon(Icons.camera_alt_outlined),
+      Platform.isMacOS ? findsOneWidget : findsNothing,
+    );
+  });
+
   testWidgets('Mobile layout keeps primary actions in the bottom action bar', (
     WidgetTester tester,
   ) async {

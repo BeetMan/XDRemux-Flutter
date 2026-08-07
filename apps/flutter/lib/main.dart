@@ -39,6 +39,42 @@ void main() {
   runApp(const XdRemuxApp());
 }
 
+/// Remove persisted Apple feature flags when the current native capability
+/// probe cannot support them. OutputMode.apple remains independent: it is a
+/// clean output target, while Photographic Styles and Portrait are Swift
+/// feature capabilities.
+bool _sanitizeConfigForCapabilities(
+  ConversionConfig config,
+  BackendCapabilities capabilities,
+) {
+  var changed = false;
+  if (!capabilities.isAvailable(config.backend)) {
+    config.backend = ConversionBackend.rust;
+    changed = true;
+  }
+  if (config.backend != ConversionBackend.swift) {
+    if (config.applePhotographicStyles) {
+      config.applePhotographicStyles = false;
+      changed = true;
+    }
+    if (config.applePortrait) {
+      config.applePortrait = false;
+      changed = true;
+    }
+  } else {
+    if (config.applePhotographicStyles &&
+        !capabilities.swiftPhotographicStyles) {
+      config.applePhotographicStyles = false;
+      changed = true;
+    }
+    if (config.applePortrait && !capabilities.swiftPortrait) {
+      config.applePortrait = false;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 class XdRemuxApp extends StatelessWidget {
   const XdRemuxApp({super.key});
 
@@ -195,10 +231,10 @@ class _HomePageState extends State<HomePage> {
     _config = await XdRemuxService.loadConfig();
     _backendCapabilities = await XdRemuxService.getBackendCapabilities();
     // Swift is intentionally not exposed on Windows/Android. If a shared
-    // preferences store contains an Apple-only choice on those platforms,
-    // return to the Rust default before any conversion can start.
-    if (!_backendCapabilities.isVisible(_config.backend)) {
-      _config.backend = ConversionBackend.rust;
+    // preferences store contains an unavailable backend or Apple-only choice,
+    // normalize it before any conversion can start.
+    if (_sanitizeConfigForCapabilities(_config, _backendCapabilities)) {
+      _scheduleConfigSave();
     }
     try {
       _version = await XdRemuxService.getVersion();
@@ -913,6 +949,22 @@ class _HomePageState extends State<HomePage> {
         SnackBar(
           content: Text(_backendCapabilities.statusFor(_config.backend)),
         ),
+      );
+      return;
+    }
+
+    if (_config.applePhotographicStyles &&
+        !_backendCapabilities.swiftPhotographicStyles) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Apple Photographic Styles 当前 capability 不可用。'),
+        ),
+      );
+      return;
+    }
+    if (_config.applePortrait && !_backendCapabilities.swiftPortrait) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Apple Portrait 当前 capability 不可用。')),
       );
       return;
     }
@@ -2545,7 +2597,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
     if (Platform.isMacOS || Platform.isIOS) {
       XdRemuxService.getBackendCapabilities().then((capabilities) {
-        if (mounted) setState(() => _backendCapabilities = capabilities);
+        if (!mounted) return;
+        final changed = _sanitizeConfigForCapabilities(_cfg, capabilities);
+        setState(() => _backendCapabilities = capabilities);
+        if (changed) _emit();
       });
     }
     if (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) {
