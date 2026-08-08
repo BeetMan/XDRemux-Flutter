@@ -99,6 +99,42 @@ class AppleOppoWorkflowService {
     );
   }
 
+  /// Preserve a returned Apple/Photos file without attempting OPPO writeback.
+  ///
+  /// This is intentionally a file-level pass-through for iOS. It does not
+  /// generate Apple Photographic Styles metadata, invoke Swift, or claim that
+  /// the returned file is an Apple Styles candidate. The native thumbnail
+  /// bridge is used as a lightweight readability check before the result is
+  /// exposed to the user.
+  static Future<Map<String, dynamic>> preserveAppleReturnedPhoto({
+    required String returnedPath,
+    required String outputPath,
+    void Function(String message)? onStatus,
+  }) async {
+    if (!Platform.isIOS) {
+      throw const AppleOppoWorkflowException('Apple 直通输出目前只在 iOS 工作流中使用。');
+    }
+    final returned = File(returnedPath);
+    if (!await returned.exists() || await returned.length() == 0) {
+      throw const AppleOppoWorkflowException('回传文件不存在或为空。');
+    }
+    onStatus?.call('正在保留 Apple 回传文件…');
+    await returned.copy(outputPath);
+    final thumbnail = await XdRemuxService.generateThumbnail(outputPath);
+    if (thumbnail == null || thumbnail.isEmpty) {
+      try {
+        await File(outputPath).delete();
+      } catch (_) {}
+      throw const AppleOppoWorkflowException('Apple 回传文件无法由 iOS ImageIO 读取。');
+    }
+    return <String, dynamic>{
+      'outputPath': outputPath,
+      'outputMode': OutputMode.apple.name,
+      'outputValid': true,
+      'passthrough': true,
+    };
+  }
+
   static Future<bool> _isReusableBaseline(String path) async {
     final file = File(path);
     if (!await file.exists()) return false;

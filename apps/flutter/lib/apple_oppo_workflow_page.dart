@@ -29,7 +29,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   bool _sourceIsBaseline = false;
   BackendCapabilities _capabilities = BackendCapabilities.forCurrentPlatform();
   AppleWatermarkPolicy _watermarkPolicy = AppleWatermarkPolicy.preserve;
-  OutputMode _outputMode = OutputMode.oppo;
+  OutputMode _outputMode = Platform.isIOS ? OutputMode.apple : OutputMode.oppo;
   bool _restoreWatermark = true;
   bool _running = false;
   String _status = '请先选择原始 OPPO 照片或已有 baseline。';
@@ -199,11 +199,14 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       _showError('OPPO 输出必须保留 baseline donor。');
       return;
     }
-    if (_restoreWatermark && baseline == null) {
+    if (_restoreWatermark &&
+        baseline == null &&
+        !(Platform.isIOS && _outputMode == OutputMode.apple)) {
       _showError('需要写回正常水印时必须保留 baseline donor。');
       return;
     }
-    if (!Platform.isMacOS) {
+    if (!Platform.isMacOS &&
+        !(Platform.isIOS && _outputMode == OutputMode.apple)) {
       _showError('回传照片写回目前只在 macOS 上验证。');
       return;
     }
@@ -215,21 +218,33 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       final directory = await _workflowDirectory(returned);
       final output =
           '$directory${Platform.pathSeparator}${_stem(returned)}.${_outputMode.name}-final.heic';
-      await AppleOppoWorkflowService.writebackReturnedPhoto(
-        baselinePath: baseline,
-        returnedPath: returned,
-        outputPath: output,
-        outputMode: _outputMode,
-        restoreWatermark: _restoreWatermark,
-        onStatus: _setStatus,
-      );
+      if (Platform.isIOS && _outputMode == OutputMode.apple) {
+        await AppleOppoWorkflowService.preserveAppleReturnedPhoto(
+          returnedPath: returned,
+          outputPath: output,
+          onStatus: _setStatus,
+        );
+      } else {
+        await AppleOppoWorkflowService.writebackReturnedPhoto(
+          baselinePath: baseline,
+          returnedPath: returned,
+          outputPath: output,
+          outputMode: _outputMode,
+          restoreWatermark: _restoreWatermark,
+          onStatus: _setStatus,
+        );
+      }
       if (!mounted) return;
       setState(() {
         _finalPath = output;
         _status = '最终输出已生成：${_fileLabel(output)}';
       });
     } catch (error) {
-      _showError('写回失败：$error');
+      _showError(
+        Platform.isIOS && _outputMode == OutputMode.apple
+            ? '处理失败：$error'
+            : '写回失败：$error',
+      );
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -250,6 +265,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   String _fileLabel(String path) => File(path).uri.pathSegments.last;
 
   bool get _canWriteback => Platform.isMacOS;
+
+  bool get _canFinalizeApple => Platform.isMacOS || Platform.isIOS;
+
+  String get _outputModeHelp {
+    if (Platform.isIOS && _outputMode == OutputMode.apple) {
+      return '原样保留 iPhone/Photos 回传文件，不写入 OPPO 私有兼容信息。';
+    }
+    return _outputMode.appHelp;
+  }
 
   String get _appleCapabilityMessage {
     if (_capabilities.swiftAppleFeaturesUnavailableReason.isNotEmpty) {
@@ -507,8 +531,9 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             context: context,
             step: 5,
             title: '选择最终输出模式',
-            description:
-                'OPPO 模式恢复 OPPO 兼容结构；Apple 模式保留 Apple 结果且不写入 OPPO 私有 footer。',
+            description: Platform.isIOS
+                ? 'iOS 的 Apple 模式只保留回传文件并做 ImageIO 可读性检查；OPPO 模式仍需要 macOS 写回。'
+                : 'OPPO 模式恢复 OPPO 兼容结构；Apple 模式保留 Apple 结果且不写入 OPPO 私有 footer。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -518,11 +543,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                         (mode) => ButtonSegment<OutputMode>(
                           value: mode,
                           label: Text(mode.appTitle),
+                          enabled: Platform.isMacOS || mode == OutputMode.apple,
                         ),
                       )
                       .toList(),
                   selected: {_outputMode},
-                  onSelectionChanged: _running || !_canWriteback
+                  onSelectionChanged: _running || !_canFinalizeApple
                       ? null
                       : (value) => setState(() {
                           _outputMode = value.first;
@@ -530,10 +556,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                         }),
                 ),
                 const SizedBox(height: 8),
-                Text(_outputMode.appHelp, style: theme.textTheme.bodySmall),
+                Text(_outputModeHelp, style: theme.textTheme.bodySmall),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed: _returnedPath == null || _running || !_canWriteback
+                  onPressed:
+                      _returnedPath == null ||
+                          _running ||
+                          (!_canWriteback &&
+                              !(_canFinalizeApple &&
+                                  _outputMode == OutputMode.apple))
                       ? null
                       : _writeback,
                   icon: _running
@@ -548,7 +579,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 if (!_canWriteback) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'iOS 当前仅验证 Rust baseline 与文件传递；回传写回和 OPPO/Apple 最终输出暂只在 macOS 开放。',
+                    'iOS 当前可保留 Apple 回传文件并分享；OPPO 水印写回和 OPPO 最终输出暂只在 macOS 开放。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.error,
                     ),
