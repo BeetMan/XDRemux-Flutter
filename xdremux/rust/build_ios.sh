@@ -8,9 +8,9 @@
 #
 # Prereqs: rustup target add aarch64-apple-ios
 set -euo pipefail
-cd "$(dirname "$0")/.."   # -> xdremux/rust
+cd "$(dirname "$0")"   # -> xdremux/rust
 
-DEST="../flutter/ios/Runner/Frameworks"
+DEST="../../apps/flutter/ios/Runner/Frameworks"
 mkdir -p "$DEST"
 
 echo "==> x265 (iOS arm64, no assembly)"
@@ -26,11 +26,15 @@ if [ ! -f vendor/x265/build_ios/libx265.a ]; then
 fi
 cmake --build vendor/x265/build_ios --target x265-static -j8
 
+# Workspace root may redirect the target dir (repo root Cargo.toml workspace),
+# so resolve it via cargo metadata instead of assuming ./target.
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')"
+
 echo "==> Rust staticlib (aarch64-apple-ios)"
 cargo build --target aarch64-apple-ios --release --lib
 
-HELPER="$(find target/aarch64-apple-ios/release/build -name libx265_helper.a | head -1)"
-cp target/aarch64-apple-ios/release/libxdremux_core.a "$DEST/"
+HELPER="$(find "$TARGET_DIR/aarch64-apple-ios/release/build" -name libx265_helper.a | head -1)"
+cp "$TARGET_DIR/aarch64-apple-ios/release/libxdremux_core.a" "$DEST/"
 cp vendor/x265/build_ios/libx265.a "$DEST/"
 cp "$HELPER" "$DEST/"
 
