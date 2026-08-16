@@ -26,17 +26,16 @@ enum AppleProbeRunner {
         arguments: [String]
     ) -> AppleNativeToolchain.Result {
         let argvStrings = [name] + arguments
-        let storage: [[CChar]] = argvStrings.map { Array($0.utf8CString) }
-        let pointers: [UnsafePointer<CChar>] = storage.map { buffer in
-            buffer.withUnsafeBufferPointer { $0.baseAddress! }
+        // strdup the argv storage: array-element temporaries in a .map
+        // closure may be released immediately under -O, which made argv
+        // point at freed memory in release builds (the debug layout kept
+        // it alive by luck).
+        var cStrings: [UnsafeMutablePointer<CChar>?] = argvStrings.map { strdup($0) }
+        defer {
+            for ptr in cStrings { free(ptr) }
         }
-        var mutablePointers: [UnsafePointer<CChar>] = pointers
-        let outcome = mutablePointers.withUnsafeMutableBufferPointer { ptr in
-            probe(
-                Int32(pointers.count),
-                UnsafeMutableRawPointer(ptr.baseAddress!)!
-                    .assumingMemoryBound(to: UnsafePointer<CChar>.self))
-        }
+        var argv: [UnsafePointer<CChar>] = cStrings.map { UnsafePointer($0!) }
+        let outcome = probe(Int32(argv.count), &argv)
         return AppleNativeToolchain.Result(
             status: outcome.status,
             stdout: outcome.stdoutData,
