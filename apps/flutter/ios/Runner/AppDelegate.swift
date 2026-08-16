@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import XDremuxAppleProviders
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -21,6 +22,13 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+    // iOS Swift backend (Phase 2): install the in-process providers for the
+    // upstream helper executables the pipeline otherwise compiles+runs on
+    // macOS. Installing the runner only makes the helpers callable; the
+    // Flutter-side capability gates stay closed until each feature is
+    // verified on-device, so release behavior is unchanged.
+    AppleHelperRunner.install()
 
     // Scene-based lifecycle (FlutterSceneDelegate): the window/root view
     // controller does not exist yet when the implicit engine is initialized,

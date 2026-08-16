@@ -29,6 +29,7 @@
 		D5EA00000000000000000018 /* receive-sharing-intent in Frameworks */ = {isa = PBXBuildFile; productRef = D5EA00000000000000000017 /* receive-sharing-intent */; };
 		D6EA00000000000000000024 /* XDRemuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000022 /* XDRemuxCore */; };
 		D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000023 /* XDremuxAppleFeatures */; };
+		D6EA00000000000000000027 /* XDremuxAppleProviders in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000026 /* XDremuxAppleProviders */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +121,7 @@
 				7F617BB7E2F2B55C8C8ECB5F /* Pods_Runner.framework in Frameworks */,
 				D6EA00000000000000000024 /* XDRemuxCore in Frameworks */,
 				D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */,
+				D6EA00000000000000000027 /* XDremuxAppleProviders in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -287,6 +289,7 @@
 				78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */,
 				D6EA00000000000000000022 /* XDRemuxCore */,
 				D6EA00000000000000000023 /* XDremuxAppleFeatures */,
+				D6EA00000000000000000026 /* XDremuxAppleProviders */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -1021,6 +1024,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
 			productName = XDRemuxCore;
+		};
+		D6EA00000000000000000026 /* XDremuxAppleProviders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
+			productName = XDremuxAppleProviders;
 		};
 		D6EA00000000000000000023 /* XDremuxAppleFeatures */ = {
 			isa = XCSwiftPackageProductDependency;

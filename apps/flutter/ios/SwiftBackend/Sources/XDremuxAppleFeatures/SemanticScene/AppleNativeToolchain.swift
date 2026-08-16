@@ -3,42 +3,58 @@ import Darwin
 import XDRemuxCore
 
 package enum AppleNativeToolchain {
-    struct Result {
-        let status: Int32
-        let stdout: Data
-        let stderr: Data
-        let timedOut: Bool
+    package struct Result {
+        package let status: Int32
+        package let stdout: Data
+        package let stderr: Data
+        package let timedOut: Bool
+
+        package init(
+            status: Int32,
+            stdout: Data,
+            stderr: Data,
+            timedOut: Bool
+        ) {
+            self.status = status
+            self.stdout = stdout
+            self.stderr = stderr
+            self.timedOut = timedOut
+        }
     }
 
     #if canImport(UIKit)
     // iOS: Process does not exist, so the macOS pattern (compile helper
     // sources with swiftc/clang at runtime, then run them) is impossible.
-    // The pipeline call sites keep their signatures; every helper entry
-    // point throws until the corresponding in-process provider is
-    // installed (Phase 2 of the iOS port).
+    // Instead, each *Executable() entry point returns a sentinel URL naming
+    // the in-process implementation, and run() dispatches to a runner hook
+    // installed by the host app (see XDremuxAppleProviders). The runner
+    // receives the helper name and the same argv the macOS build passes,
+    // and returns the helper's stdout/stderr/exit status - so every
+    // pipeline call site works unchanged.
+    private static let inProcessHelperRoot = URL(
+        fileURLWithPath: "/usr/local/libexec/xdremux-in-process")
+
+    package static var inProcessRunner:
+        ((_ helper: String, _ arguments: [String], _ timeout: TimeInterval?) throws -> Result)?
+
     static func semanticExecutable() throws -> URL {
-        throw CLIError.invalidContainer(
-            "iOS: apple-vision-semantic-mattes requires the in-process Vision provider (not installed)")
+        inProcessHelperRoot.appendingPathComponent("apple-vision-semantic-mattes")
     }
 
     static func learnExecutable() throws -> URL {
-        throw CLIError.invalidContainer(
-            "iOS: learnnode-coefficient-probe requires the in-process provider (not installed)")
+        inProcessHelperRoot.appendingPathComponent("learnnode-coefficient-probe")
     }
 
     static func styleScenePayloadExecutable() throws -> URL {
-        throw CLIError.invalidContainer(
-            "iOS: apple-style-scene-payload-producer requires the in-process provider (not installed)")
+        inProcessHelperRoot.appendingPathComponent("apple-style-scene-payload-producer")
     }
 
     static func hevcEncoderExecutable() throws -> URL {
-        throw CLIError.invalidContainer(
-            "iOS: apple-vt-hevc-encoder runs via DirectTiledHEVCGainMapEncoder.inProcessEncoder (not installed)")
+        inProcessHelperRoot.appendingPathComponent("apple-vt-hevc-encoder")
     }
 
     static func stylePropertiesProbeExecutable() throws -> URL {
-        throw CLIError.invalidContainer(
-            "iOS: apple-semantic-style-properties-probe requires the in-process provider (not installed)")
+        inProcessHelperRoot.appendingPathComponent("apple-semantic-style-properties-probe")
     }
 
     static func run(
@@ -46,8 +62,12 @@ package enum AppleNativeToolchain {
         arguments: [String],
         timeout: TimeInterval? = nil
     ) throws -> Result {
-        throw CLIError.invalidContainer(
-            "iOS cannot launch helper processes; in-process providers are required")
+        guard let runner = inProcessRunner else {
+            throw CLIError.invalidContainer(
+                "iOS: no in-process helper runner installed "
+                    + "(XDremuxAppleProviders.AppleHelperRunner.install() was not called)")
+        }
+        return try runner(executableURL.lastPathComponent, arguments, timeout)
     }
     #else
     private static let compileLock = NSLock()

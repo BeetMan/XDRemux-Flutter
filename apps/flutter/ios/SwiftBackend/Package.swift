@@ -29,6 +29,8 @@ let package = Package(
     products: [
         .library(name: "XDRemuxCore", targets: ["XDRemuxCore"]),
         .library(name: "XDremuxAppleFeatures", targets: ["XDremuxAppleFeatures"]),
+        .library(name: "XDremuxAppleProviders", targets: ["XDremuxAppleProviders"]),
+        .library(name: "XDremuxObjCSupport", targets: ["XDremuxObjCSupport"]),
     ],
     targets: [
         .target(
@@ -44,6 +46,16 @@ let package = Package(
             resources: [
                 .copy("Resources/ApplePlatform"),
             ]
+        ),
+        .target(
+            name: "XDremuxAppleProviders",
+            dependencies: ["XDremuxAppleFeatures", "XDremuxObjCSupport"],
+            path: "Sources/XDremuxAppleProviders"
+        ),
+        .target(
+            name: "XDremuxObjCSupport",
+            path: "Sources/XDremuxObjCSupport",
+            publicHeadersPath: "include"
         ),
         .testTarget(
             name: "XDRemuxFlutterBackendIOSTests",
