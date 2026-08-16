@@ -27,6 +27,8 @@
 		D5EA0000000000000000000D /* MainInterface.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D5EA0000000000000000000B /* MainInterface.storyboard */; };
 		D5EA00000000000000000012 /* Share Extension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D5EA00000000000000000006 /* Share Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D5EA00000000000000000018 /* receive-sharing-intent in Frameworks */ = {isa = PBXBuildFile; productRef = D5EA00000000000000000017 /* receive-sharing-intent */; };
+		D6EA00000000000000000024 /* XDRemuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000022 /* XDRemuxCore */; };
+		D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000023 /* XDremuxAppleFeatures */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -116,6 +118,8 @@
 			files = (
 				78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */,
 				7F617BB7E2F2B55C8C8ECB5F /* Pods_Runner.framework in Frameworks */,
+				D6EA00000000000000000024 /* XDRemuxCore in Frameworks */,
+				D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -281,6 +285,8 @@
 			name = Runner;
 			packageProductDependencies = (
 				78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */,
+				D6EA00000000000000000022 /* XDRemuxCore */,
+				D6EA00000000000000000023 /* XDremuxAppleFeatures */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -341,7 +347,8 @@
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
 				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
-				D5EA00000000000000000016 /* XCLocalSwiftPackageReference "receive_sharing_intent-1.9.0" */,
+		D5EA00000000000000000016 /* XCLocalSwiftPackageReference "receive_sharing_intent-1.9.0" */,
+				D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -995,6 +1002,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "Flutter/ephemeral/Packages/.packages/receive_sharing_intent-1.9.0";
 		};
+		D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = SwiftBackend;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1005,6 +1016,16 @@
 		D5EA00000000000000000017 /* receive-sharing-intent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = "receive-sharing-intent";
+		};
+		D6EA00000000000000000022 /* XDRemuxCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
+			productName = XDRemuxCore;
+		};
+		D6EA00000000000000000023 /* XDremuxAppleFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
+			productName = XDremuxAppleFeatures;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
