@@ -1098,7 +1098,7 @@ package enum PortraitConversionPipeline {
     #if canImport(UIKit)
     /// iOS: embedded zstd decoder installed by the host app (the macOS
     /// build shells out to the `zstd` CLI, which does not exist on iOS).
-    static var zstdDecoder: ((Data) throws -> Data)?
+    static package var zstdDecoder: ((Data) throws -> Data)?
     #endif
 
     private static func registerMetadataNamespace(

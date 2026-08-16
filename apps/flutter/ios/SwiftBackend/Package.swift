@@ -31,6 +31,8 @@ let package = Package(
         .library(name: "XDremuxAppleFeatures", targets: ["XDremuxAppleFeatures"]),
         .library(name: "XDremuxAppleProviders", targets: ["XDremuxAppleProviders"]),
         .library(name: "XDremuxObjCSupport", targets: ["XDremuxObjCSupport"]),
+        .library(name: "CZstdDecompress", targets: ["CZstdDecompress"]),
+        .library(name: "XDremuxAppleProbes", targets: ["XDremuxAppleProbes"]),
     ],
     targets: [
         .target(
@@ -49,13 +51,30 @@ let package = Package(
         ),
         .target(
             name: "XDremuxAppleProviders",
-            dependencies: ["XDremuxAppleFeatures", "XDremuxObjCSupport"],
+            dependencies: ["XDremuxAppleFeatures", "XDremuxObjCSupport", "CZstdDecompress", "XDremuxAppleProbes"],
             path: "Sources/XDremuxAppleProviders"
         ),
         .target(
             name: "XDremuxObjCSupport",
             path: "Sources/XDremuxObjCSupport",
             publicHeadersPath: "include"
+        ),
+        .target(
+            name: "XDremuxAppleProbes",
+            path: "Sources/XDremuxAppleProbes",
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("OBJC_OLD_DISPATCH_PROTOTYPES", to: "1"),
+            ]
+        ),
+        .target(
+            name: "CZstdDecompress",
+            path: "Sources/CZstdDecompress",
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("src"),
+            ]
         ),
         .testTarget(
             name: "XDRemuxFlutterBackendIOSTests",

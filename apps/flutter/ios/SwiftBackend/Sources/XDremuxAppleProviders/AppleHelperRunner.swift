@@ -44,6 +44,12 @@ public enum AppleHelperRunner {
         helpers["apple-semantic-style-properties-probe"] =
             AppleSemanticStylePropertiesValidator.run
         helpers["apple-vt-hevc-encoder"] = AppleVTHevcEncoderInProcess.run
+        helpers["learnnode-coefficient-probe"] = AppleProbeRunner.runLearnNode
+        helpers["apple-style-scene-payload-producer"] = AppleProbeRunner.runStyleScenePayload
+
+        // Portrait pipeline: embedded zstd decoder (the macOS build shells
+        // out to the zstd CLI).
+        PortraitConversionPipeline.zstdDecoder = EmbeddedZstdDecoder.decode
 
         // The gain-map encoder hook in XDremuxCore takes the in-memory
         // raster bridge instead of file paths. Adapt it to the file-based
