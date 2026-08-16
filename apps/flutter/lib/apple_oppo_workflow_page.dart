@@ -205,9 +205,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       _showError('需要写回正常水印时必须保留 baseline donor。');
       return;
     }
-    if (!Platform.isMacOS &&
-        !(Platform.isIOS && _outputMode == OutputMode.apple)) {
-      _showError('回传照片写回目前只在 macOS 上验证。');
+    if (!Platform.isMacOS && !Platform.isIOS) {
+      _showError('回传照片写回只支持 Apple 平台。');
       return;
     }
     setState(() {
@@ -264,13 +263,16 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
 
   String _fileLabel(String path) => File(path).uri.pathSegments.last;
 
-  bool get _canWriteback => Platform.isMacOS;
+  bool get _canWriteback => Platform.isMacOS || Platform.isIOS;
 
   bool get _canFinalizeApple => Platform.isMacOS || Platform.isIOS;
 
   String get _outputModeHelp {
     if (Platform.isIOS && _outputMode == OutputMode.apple) {
       return '原样保留 iPhone/Photos 回传文件，不写入 OPPO 私有兼容信息。';
+    }
+    if (Platform.isIOS && _outputMode == OutputMode.oppo) {
+      return '用 baseline donor 恢复 OPPO 水印画布与完整 OPPO footer；iOS 路径尚未完成真机验证，属于实验性能力。';
     }
     return _outputMode.appHelp;
   }
@@ -353,7 +355,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 Platform.isIOS
-                    ? '这是独立的五阶段流程。当前 iOS 已开放 Rust baseline 生成、文件选择和分享；Apple Styles、回传写回与最终双模式输出仍保持 capability gating，尚未宣称可用。'
+                    ? '这是独立的五阶段流程。当前 iOS 已开放 Rust baseline 生成、文件选择和分享，并提供 Apple 直通与 OPPO 写回两种最终输出；Apple Styles 生成仍等待嵌入式 Swift Library，OPPO 写回属于实验性能力。'
                     : '这是独立的五阶段流程。baseline 与 iPhone 回传照片会保持配对，普通“批量转换”队列不会参与此流程。Apple 功能仍属于 experimental。',
               ),
             ),
@@ -508,16 +510,16 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 4,
-            title: Platform.isIOS ? '回传照片写回（待接入）' : '写回正常水印',
+            title: '写回正常水印',
             description: Platform.isIOS
-                ? 'iOS 当前不执行写回；避免在未验证的设备路径上伪造 OPPO 水印或 footer。'
+                ? '使用 baseline donor 处理回传照片；iOS 路径与 macOS 共用同一套 ImageIO 实现，尚未完成真机验证。'
                 : '使用 baseline donor 处理回传照片；目前 macOS 已验证。',
             child: SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text('按 baseline 写回正常水印'),
               subtitle: Text(
                 Platform.isIOS
-                    ? 'iOS 先完成 Swift/回写 Library 的真机验证后再开放。'
+                    ? '关闭后保留 iPhone 回传画面，但 OPPO 模式仍会恢复兼容 footer。'
                     : '关闭后保留 iPhone 回传画面，但 OPPO 模式仍会恢复兼容 footer。',
               ),
               value: _restoreWatermark,
@@ -532,7 +534,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             step: 5,
             title: '选择最终输出模式',
             description: Platform.isIOS
-                ? 'iOS 的 Apple 模式只保留回传文件并做 ImageIO 可读性检查；OPPO 模式仍需要 macOS 写回。'
+                ? 'Apple 模式原样保留回传文件并做 ImageIO 可读性检查；OPPO 模式恢复 OPPO 兼容结构（实验性，待真机验证）。'
                 : 'OPPO 模式恢复 OPPO 兼容结构；Apple 模式保留 Apple 结果且不写入 OPPO 私有 footer。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -543,7 +545,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                         (mode) => ButtonSegment<OutputMode>(
                           value: mode,
                           label: Text(mode.appTitle),
-                          enabled: Platform.isMacOS || mode == OutputMode.apple,
                         ),
                       )
                       .toList(),
@@ -576,10 +577,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       : const Icon(Icons.output),
                   label: Text(_running ? '处理中…' : '生成最终输出'),
                 ),
-                if (!_canWriteback) ...[
+                if (Platform.isIOS) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'iOS 当前可保留 Apple 回传文件并分享；OPPO 水印写回和 OPPO 最终输出暂只在 macOS 开放。',
+                    'iOS 的 OPPO 写回与 macOS 共用同一套 ImageIO/ISOBMFF 实现；尚未在实体 iPhone 上完成端到端验证，输出请先在 OPPO 设备上确认。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.error,
                     ),

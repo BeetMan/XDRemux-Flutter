@@ -312,8 +312,9 @@ class XdRemuxService {
   }
 
   /// Reconcile a returned Apple Photos file with its original OPPO donor.
-  /// This bridge is macOS-only for now; iOS must not load the macOS Swift
-  /// package or start a helper process.
+  /// The native bridge runs on macOS (SwiftBackend package) and iOS
+  /// (Runner-local ImageIO implementation). Both use ImageIO readback as the
+  /// output validation and never start a helper process.
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
     String? originalPath,
     required String returnedPath,
@@ -321,9 +322,9 @@ class XdRemuxService {
     required OutputMode outputMode,
     bool restoreWatermark = true,
   }) async {
-    if (!Platform.isMacOS) {
+    if (!Platform.isMacOS && !Platform.isIOS) {
       throw UnsupportedError(
-        'returned-photo writeback is currently verified on macOS only',
+        'returned-photo writeback is only available on Apple platforms',
       );
     }
     final raw = await _backendChannel

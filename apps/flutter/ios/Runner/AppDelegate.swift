@@ -73,6 +73,81 @@ import UIKit
         result(false)
       case "cancel":
         result(true)
+      case "writebackReturnedPhoto":
+        guard let args = call.arguments as? [String: Any],
+              let returnedPath = args["returnedPath"] as? String,
+              let outputPath = args["outputPath"] as? String,
+              let outputMode = args["outputMode"] as? String,
+              outputMode == "oppo" || outputMode == "apple" else {
+          result(FlutterError(
+            code: "bad_args",
+            message: "invalid returned-photo writeback args",
+            details: nil
+          ))
+          return
+        }
+        let originalPath = args["originalPath"] as? String
+        let restoreWatermark = (args["restoreWatermark"] as? Bool) ?? true
+        if outputMode == "oppo" && originalPath == nil {
+          result(FlutterError(
+            code: "bad_args",
+            message: "OPPO output mode requires the untouched donor photo",
+            details: nil
+          ))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let report: AppleReturnedPhotoWritebackBridge.Report
+            if outputMode == "oppo" {
+              report = try AppleReturnedPhotoWritebackBridge.restore(
+                originalURL: URL(fileURLWithPath: originalPath!),
+                returnedURL: URL(fileURLWithPath: returnedPath),
+                outputURL: URL(fileURLWithPath: outputPath),
+                restoreCompleteOppoTail: true,
+                restoreWatermarkCanvas: restoreWatermark
+              )
+            } else if restoreWatermark, let originalPath {
+              report = try AppleReturnedPhotoWritebackBridge.restore(
+                originalURL: URL(fileURLWithPath: originalPath),
+                returnedURL: URL(fileURLWithPath: returnedPath),
+                outputURL: URL(fileURLWithPath: outputPath),
+                restoreCompleteOppoTail: false,
+                restoreWatermarkCanvas: true
+              )
+            } else {
+              report = try AppleReturnedPhotoWritebackBridge.copyAppleOutput(
+                from: URL(fileURLWithPath: returnedPath),
+                to: URL(fileURLWithPath: outputPath)
+              )
+            }
+            // The bridge itself validates the output via ImageIO readback
+            // (dimensions + ISO gain-map preservation); it throws instead of
+            // returning an invalid file. There is no linked Swift Core
+            // validator on iOS, so the readback report is the validation.
+            let payload: [String: Any] = [
+              "success": true,
+              "outputMode": outputMode,
+              "outputValid": true,
+              "width": report.width,
+              "height": report.height,
+              "preservedISOGainMap": report.preservedISOGainMap,
+              "restoredOppoEntries": report.restoredOppoEntries,
+              "errorMessage": NSNull(),
+            ]
+            DispatchQueue.main.async {
+              result(payload)
+            }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(
+                code: "writeback_failed",
+                message: String(describing: error),
+                details: nil
+              ))
+            }
+          }
+        }
       default:
         result(FlutterMethodNotImplemented)
       }
