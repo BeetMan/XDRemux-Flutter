@@ -7,6 +7,15 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Research probe (Phase 0): runs once per install, prints results to
+    // stdout (flutter run console). Remove once the iOS provider design is
+    // settled.
+    if !UserDefaults.standard.bool(forKey: "xdremux.abiProbe.done") {
+      UserDefaults.standard.set(true, forKey: "xdremux.abiProbe.done")
+      DispatchQueue.global(qos: .utility).async {
+        ApplePrivateAbiProbe.run()
+      }
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

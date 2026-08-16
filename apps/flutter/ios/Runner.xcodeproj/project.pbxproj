@@ -22,6 +22,7 @@
 		C1D2E3F4051627384A5B6C7D /* HeicThumbnailRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F4051627384A5B6C7E /* HeicThumbnailRenderer.swift */; };
 		D001B97A5C62A1F0406A1775 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 996E22F8B3B618EF07C36447 /* Pods_RunnerTests.framework */; };
 		D1E2F3041526374859A6B7C8 /* VideoToolboxHevcEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */; };
+		D1E2F3041526374870AABB01 /* ApplePrivateAbiProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */; };
 		D5EA00000000000000000008 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5EA00000000000000000007 /* ShareViewController.swift */; };
 		D5EA0000000000000000000D /* MainInterface.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = D5EA0000000000000000000B /* MainInterface.storyboard */; };
 		D5EA00000000000000000012 /* Share Extension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = D5EA00000000000000000006 /* Share Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -97,6 +98,7 @@
 		BB235B5143A503CF5BB93DC6 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		C1D2E3F4051627384A5B6C7E /* HeicThumbnailRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeicThumbnailRenderer.swift; sourceTree = "<group>"; };
 		D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoToolboxHevcEncoder.swift; sourceTree = "<group>"; };
+		D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePrivateAbiProbe.swift; sourceTree = "<group>"; };
 		D42421B1E6C1FBBC66849622 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
 		D5EA00000000000000000006 /* Share Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Share Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D5EA00000000000000000007 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */,
+				D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */,
 				C1D2E3F4051627384A5B6C7E /* HeicThumbnailRenderer.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
@@ -490,6 +493,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				D1E2F3041526374859A6B7C8 /* VideoToolboxHevcEncoder.swift in Sources */,
+				D1E2F3041526374870AABB01 /* ApplePrivateAbiProbe.swift in Sources */,
 				C1D2E3F4051627384A5B6C7D /* HeicThumbnailRenderer.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
