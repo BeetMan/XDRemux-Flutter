@@ -29,6 +29,12 @@
 			</array>
 		</dict>
 	</array>
+	<!-- flutter_foreground_task iOS 侧会在注册时尝试调度 BGAppRefreshTask；
+	     声明其 identifier 以消除 Unrecognized Identifier 报错（iOS 上未使用该服务）。 -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.pravera.flutter_foreground_task.refresh</string>
+	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>保存转换后的 HDR 照片到相册</string>
 	<key>NSPhotoLibraryUsageDescription</key>

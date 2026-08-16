@@ -13,14 +13,18 @@ import UIKit
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
-    guard let controller = window?.rootViewController as? FlutterViewController else {
-      return
-    }
+    // Scene-based lifecycle (FlutterSceneDelegate): the window/root view
+    // controller does not exist yet when the implicit engine is initialized,
+    // so `window?.rootViewController` is nil here and any channel guarded on
+    // it would never register (MissingPluginException from Dart). Use the
+    // engine-level messenger instead - channels registered on it work in
+    // every scene state.
+    let messenger = engineBridge.applicationRegistrar.messenger()
 
     // Native HEIC thumbnail rendering (ImageIO) for the photo wall.
     let thumbChannel = FlutterMethodChannel(
       name: "xdremux/thumbnail",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: messenger
     )
     thumbChannel.setMethodCallHandler { call, result in
       switch call.method {
@@ -46,7 +50,7 @@ import UIKit
     // backend unavailable and let Flutter show the verified status.
     let backendChannel = FlutterMethodChannel(
       name: "xdremux/swift-backend",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: messenger
     )
     backendChannel.setMethodCallHandler { call, result in
       switch call.method {
@@ -156,7 +160,7 @@ import UIKit
     // Hardware HEVC encoding for gain-map tiles (VideoToolbox).
     let hwChannel = FlutterMethodChannel(
       name: "xdremux/hw-encode",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: messenger
     )
     hwChannel.setMethodCallHandler { call, result in
       switch call.method {
