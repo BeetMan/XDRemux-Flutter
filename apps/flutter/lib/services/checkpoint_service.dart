@@ -53,13 +53,35 @@ class CheckpointService {
   // ---------------------------------------------------------------------------
 
   /// Save checkpoint to disk (atomic write via temp file + rename).
-  static Future<void> save(Checkpoint checkpoint) async {
+  ///
+  /// Saves are serialized: parallel conversions complete in bursts, and two
+  /// concurrent saves sharing one tmp path made the loser fail the rename
+  /// (unhandled PathNotFoundException). Chaining keeps writes atomic and
+  /// races impossible.
+  static Future<void> _saveChain = Future.value();
+
+  static Future<void> save(Checkpoint checkpoint) {
+    final task = _saveChain.then((_) => _saveNow(checkpoint));
+    // Keep the chain alive even if one save fails.
+    _saveChain = task.catchError((_) {});
+    return task;
+  }
+
+  static Future<void> _saveNow(Checkpoint checkpoint) async {
     final file = await _getFile();
     await file.parent.create(recursive: true);
     final tmpPath = '${file.path}.tmp';
     final tmpFile = File(tmpPath);
     await tmpFile.writeAsString(checkpoint.toJsonl(), flush: true);
-    await tmpFile.rename(file.path);
+    try {
+      await tmpFile.rename(file.path);
+    } on FileSystemException {
+      // Extremely defensive: if the rename target vanished mid-flight the
+      // checkpoint is simply skipped (the next save rewrites it).
+      if (await tmpFile.exists()) {
+        await tmpFile.delete();
+      }
+    }
   }
 
   /// Incremental save: update a single item's status and persist.

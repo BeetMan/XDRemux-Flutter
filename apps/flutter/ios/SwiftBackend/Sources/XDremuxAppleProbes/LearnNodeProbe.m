@@ -1910,11 +1910,29 @@ static NSDictionary *RunNeutrinoStyleRender(
         rendererClass, NSSelectorFromString(@"configureNeutrinoCacheDirectoryIfNeeded")
     );
     Class sourceClass = NSClassFromString(@"PLPhotoEditSource");
-    id sourceObject = ((id (*)(id, SEL, id, id, id, BOOL))objc_msgSend)(
-        [sourceClass alloc],
-        NSSelectorFromString(@"initWithURL:type:image:useEmbeddedPreview:"),
-        photoURL, @"public.heic", nil, NO
-    );
+    // The PhotoLibraryServices init signature differs between OS builds:
+    // upstream targets the 4-argument form, while current OS builds (this
+    // iPhone's iOS 27 among them) expose the 3-argument form. The macOS
+    // build handles this with a resource-text rewrite at compatibility
+    // check time; here (statically linked) we select at runtime.
+    id sourceObject;
+    if ([sourceClass instancesRespondToSelector:
+            NSSelectorFromString(@"initWithURL:type:image:useEmbeddedPreview:")]) {
+        sourceObject = ((id (*)(id, SEL, id, id, id, BOOL))objc_msgSend)(
+            [sourceClass alloc],
+            NSSelectorFromString(@"initWithURL:type:image:useEmbeddedPreview:"),
+            photoURL, @"public.heic", nil, NO
+        );
+    } else if ([sourceClass instancesRespondToSelector:
+            NSSelectorFromString(@"initWithURL:type:useEmbeddedPreview:")]) {
+        sourceObject = ((id (*)(id, SEL, id, id, BOOL))objc_msgSend)(
+            [sourceClass alloc],
+            NSSelectorFromString(@"initWithURL:type:useEmbeddedPreview:"),
+            photoURL, @"public.heic", NO
+        );
+    } else {
+        sourceObject = nil;
+    }
     id renderer = ((id (*)(id, SEL, id))objc_msgSend)(
         [rendererClass alloc], NSSelectorFromString(@"initWithEditSource:"), sourceObject
     );

@@ -33,6 +33,7 @@ let package = Package(
         .library(name: "XDremuxObjCSupport", targets: ["XDremuxObjCSupport"]),
         .library(name: "CZstdDecompress", targets: ["CZstdDecompress"]),
         .library(name: "XDremuxAppleProbes", targets: ["XDremuxAppleProbes"]),
+        .library(name: "XDremuxFlutterBackendIOS", targets: ["XDremuxFlutterBackendIOS"]),
     ],
     targets: [
         .target(
@@ -66,6 +67,11 @@ let package = Package(
             cSettings: [
                 .define("OBJC_OLD_DISPATCH_PROTOTYPES", to: "1"),
             ]
+        ),
+        .target(
+            name: "XDremuxFlutterBackendIOS",
+            dependencies: ["XDRemuxCore", "XDremuxAppleFeatures", "XDremuxAppleProviders"],
+            path: "Sources/XDremuxFlutterBackendIOS"
         ),
         .target(
             name: "CZstdDecompress",

@@ -30,6 +30,7 @@
 		D6EA00000000000000000024 /* XDRemuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000022 /* XDRemuxCore */; };
 		D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000023 /* XDremuxAppleFeatures */; };
 		D6EA00000000000000000027 /* XDremuxAppleProviders in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000026 /* XDremuxAppleProviders */; };
+		D6EA00000000000000000029 /* XDremuxFlutterBackendIOS in Frameworks */ = {isa = PBXBuildFile; productRef = D6EA00000000000000000028 /* XDremuxFlutterBackendIOS */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -122,6 +123,7 @@
 				D6EA00000000000000000024 /* XDRemuxCore in Frameworks */,
 				D6EA00000000000000000025 /* XDremuxAppleFeatures in Frameworks */,
 				D6EA00000000000000000027 /* XDremuxAppleProviders in Frameworks */,
+				D6EA00000000000000000029 /* XDremuxFlutterBackendIOS in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,6 +292,7 @@
 				D6EA00000000000000000022 /* XDRemuxCore */,
 				D6EA00000000000000000023 /* XDremuxAppleFeatures */,
 				D6EA00000000000000000026 /* XDremuxAppleProviders */,
+				D6EA00000000000000000028 /* XDremuxFlutterBackendIOS */,
 			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
@@ -1029,6 +1032,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
 			productName = XDremuxAppleProviders;
+		};
+		D6EA00000000000000000028 /* XDremuxFlutterBackendIOS */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D6EA00000000000000000021 /* XCLocalSwiftPackageReference "SwiftBackend" */;
+			productName = XDremuxFlutterBackendIOS;
 		};
 		D6EA00000000000000000023 /* XDremuxAppleFeatures */ = {
 			isa = XCSwiftPackageProductDependency;

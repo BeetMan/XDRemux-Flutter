@@ -12,6 +12,19 @@ int XDRemuxStyleScenePayloadProbeMain(int argc, const char *argv[]);
 
 typedef int (*XDRemuxProbeMain)(int argc, const char *argv[]);
 
+/// The capture is fd-level (process-wide), and the upstream pipeline fans
+/// render chunks out with DispatchQueue.concurrentPerform. Running two
+/// probes concurrently would make each one capture/restore the other's
+/// redirected fds, leaking JSON to the real console and starving one
+/// caller's Result. Serialize probe invocations instead (the macOS build
+/// parallelizes across processes; in-process must be serial).
+static NSLock *XDRemuxProbeLock(void) {
+    static NSLock *lock;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ lock = [NSLock new]; });
+    return lock;
+}
+
 /// Runs a probe main in-process while capturing everything it writes to
 /// stdout/stderr (both FILE* and fd-level writes) into temp files. ObjC
 /// exceptions raised by private-framework calls inside the probe are
@@ -30,6 +43,7 @@ static XDRemuxProbeOutcome *XDRemuxRunProbe(XDRemuxProbeMain probeMain,
     NSString *errPath = [scratch URLByAppendingPathComponent:@"stderr.txt"].path;
 
     fflush(NULL);
+    [XDRemuxProbeLock() lock];
     int savedStdout = dup(STDOUT_FILENO);
     int savedStderr = dup(STDERR_FILENO);
     int outFd = open(outPath.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0600);
@@ -51,6 +65,7 @@ static XDRemuxProbeOutcome *XDRemuxRunProbe(XDRemuxProbeMain probeMain,
     if (savedStderr >= 0) { dup2(savedStderr, STDERR_FILENO); close(savedStderr); }
     if (outFd >= 0) { close(outFd); }
     if (errFd >= 0) { close(errFd); }
+    [XDRemuxProbeLock() unlock];
 
     NSData *outData = [NSData dataWithContentsOfFile:outPath] ?: [NSData new];
     NSMutableData *errData = [NSMutableData dataWithData:

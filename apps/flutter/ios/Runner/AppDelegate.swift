@@ -1,6 +1,36 @@
 import Flutter
 import UIKit
 import XDremuxAppleProviders
+import XDremuxFlutterBackendIOS
+
+/// Mirrors the macOS SwiftBackendProgressStreamHandler: forwards Swift
+/// backend progress events to Dart via the shared event channel contract
+/// (xdremux/swift-backend/progress).
+private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHandler, @unchecked Sendable {
+  private var sink: FlutterEventSink?
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    sink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    sink = nil
+    return nil
+  }
+
+  func send(requestID: String, progress: SwiftBackendProgress) {
+    let event: [String: Any] = [
+      "requestId": requestID,
+      "stage": progress.stage,
+      "current": progress.current,
+      "total": progress.total,
+    ]
+    DispatchQueue.main.async { [weak self] in
+      self?.sink?(event)
+    }
+  }
+}
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -19,6 +49,8 @@ import XDremuxAppleProviders
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
+
+  private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
@@ -62,37 +94,77 @@ import XDremuxAppleProviders
       }
     }
 
-    // Capability probe for the embedded Swift backend. iOS must never spawn
-    // the Swift CLI; until a Swift Core framework is linked, keep this
-    // backend unavailable and let Flutter show the verified status.
+    // Capability probe for the embedded Swift backend (vendored upstream
+    // v1.3.1 with in-process iOS providers). Photographic Styles is gated
+    // on iOS 18+, provider availability, the NeutrinoCore style engine and
+    // the private Vision SPI classes; Portrait stays closed on iOS.
     let backendChannel = FlutterMethodChannel(
       name: "xdremux/swift-backend",
       binaryMessenger: messenger
     )
-    backendChannel.setMethodCallHandler { call, result in
+    let progressChannel = FlutterEventChannel(
+      name: "xdremux/swift-backend/progress",
+      binaryMessenger: messenger
+    )
+    progressChannel.setStreamHandler(swiftProgressStreamHandler)
+    backendChannel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "getCapabilities":
-        result([
-          "swiftAvailable": false,
-          "swiftStandardHdr": false,
-          "swiftAppleFeatures": false,
-          "swiftPhotographicStyles": false,
-          "swiftPortrait": false,
-          "swiftPortraitResearch": false,
-          "swiftUnavailableReason":
-            "iOS 当前未链接 Swift Core；上游 v1.3.1 Package 只声明 macOS 15，iOS 不启动 Swift CLI。",
-          "swiftAppleFeaturesUnavailableReason":
-            "iOS 暂不开放 Apple Styles/Portrait：当前上游实现包含 macOS AppKit、NeutrinoCore 私有框架、Process/xcrun 和 macOS-only 工具链；需拆分为嵌入式 Library 并完成真机验证。"
-        ])
+        result(XDremuxSwiftBackendIOS.capabilities())
       case "convert":
-        result(FlutterError(
-          code: "swift_backend_unavailable",
-          message: "Swift Core 尚未链接到当前 iOS 构建。",
-          details: nil
-        ))
+        guard let args = call.arguments as? [String: Any],
+              let requestID = args["requestId"] as? String,
+              let inputPath = args["inputPath"] as? String,
+              let outputPath = args["outputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Swift convert args", details: nil))
+          return
+        }
+        let request = SwiftBackendRequest(
+          requestID: requestID,
+          inputPath: inputPath,
+          outputPath: outputPath,
+          outputMode: (args["outputMode"] as? String) ?? "oppo",
+          oppoCompatibility: (args["oppoCompat"] as? Int) ?? 0,
+          oppoCameraTail: (args["oppoCameraTail"] as? Int) ?? 255,
+          strictTmap: (args["strictTmap"] as? Bool) ?? false,
+          applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
+          applePortrait: (args["applePortrait"] as? Bool) ?? false,
+          appleWatermarkPolicy: (args["appleWatermarkPolicy"] as? String) ?? "preserve"
+        )
+        let progressStreamHandler = self?.swiftProgressStreamHandler
+        DispatchQueue.global(qos: .userInitiated).async {
+          let response = XDremuxSwiftBackendIOS.convert(request) { progress in
+            progressStreamHandler?.send(requestID: requestID, progress: progress)
+          }
+          print("[XDRemux][swift] convert success=\(response.success) "
+            + "outputValid=\(response.outputValid.map { "\($0)" } ?? "nil") "
+            + "error=\(response.errorMessage ?? "nil")")
+          let payload: [String: Any] = [
+            "success": response.success,
+            "cancelled": response.cancelled,
+            "outputValid": response.outputValid.map { $0 as Any } ?? NSNull(),
+            "errorMessage": response.errorMessage.map { $0 as Any } ?? NSNull(),
+          ]
+          DispatchQueue.main.async {
+            result(payload)
+          }
+        }
       case "verifyOutput":
-        result(false)
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid verifyOutput args", details: nil))
+          return
+        }
+        result(XDremuxSwiftBackendIOS.verifyOutput(
+          path,
+          applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
+          applePortrait: (args["applePortrait"] as? Bool) ?? false
+        ))
       case "cancel":
+        if let args = call.arguments as? [String: Any],
+           let requestID = args["requestId"] as? String {
+          XDremuxSwiftBackendIOS.cancel(requestID: requestID)
+        }
         result(true)
       case "writebackReturnedPhoto":
         guard let args = call.arguments as? [String: Any],
