@@ -220,20 +220,26 @@ public enum XDRemuxSwiftBackend {
 
         progress(SwiftBackendProgress(stage: 1, current: 0, total: 1))
         do {
-            let conversionInputURL: URL
+            var conversionInputURL = inputURL
             if watermarkIsolationEnabled {
-                preparedWatermarkInput = try AppleWatermarkTailBridge.prepare(sourceURL: inputURL)
-                conversionInputURL = preparedWatermarkInput?.url ?? inputURL
-                if let preparedWatermarkInput {
-                    print(
-                        "styles watermark isolation=input-filtered "
-                            + "entries=\(preparedWatermarkInput.entryNames.joined(separator: ","))"
-                    )
-                } else {
-                    print("styles watermark isolation=input-unchanged no-recognized-oppo-tail")
+                do {
+                    preparedWatermarkInput = try AppleWatermarkTailBridge.prepare(sourceURL: inputURL)
+                    conversionInputURL = preparedWatermarkInput?.url ?? inputURL
+                    if let preparedWatermarkInput {
+                        print(
+                            "styles watermark isolation=input-filtered "
+                                + "entries=\(preparedWatermarkInput.entryNames.joined(separator: ","))"
+                        )
+                    } else {
+                        print("styles watermark isolation=input-unchanged no-recognized-oppo-tail")
+                    }
+                } catch {
+                    // A malformed OPPO tail variant must not block the
+                    // conversion; fall back to converting without isolation.
+                    print("styles watermark isolation=input-prepare-failed, "
+                        + "converting without isolation: \(error)")
+                    preparedWatermarkInput = nil
                 }
-            } else {
-                conversionInputURL = inputURL
             }
 
             let conversionRequest = ConversionRequest(
@@ -268,15 +274,29 @@ public enum XDRemuxSwiftBackend {
                     }
                 }
                 if let preparedWatermarkInput {
+                  // Post-conversion watermark restore is best-effort: the
+                  // output file is already complete and valid, so a tail
+                  // parse/write failure must not fail the conversion
+                  // (empirically: some OPPO tail variants throw invalidTail
+                  // here and the app reported failure on a valid output).
+                  do {
                     try AppleWatermarkTailBridge.appendWatermarkTail(
                         preparedWatermarkInput.watermarkTail,
                         to: outputURL
                     )
                     print("styles watermark isolation=output-watermark-tail-restored")
+                  } catch {
+                    print("styles watermark isolation=restore-skipped error=\(error)")
+                  }
                 }
-                if appleOutput,
-                   try AppleWatermarkTailBridge.stripRecognizedOppoTail(from: outputURL) {
-                    print("apple output=recognized-oppo-tail-stripped")
+                if appleOutput {
+                  do {
+                    if try AppleWatermarkTailBridge.stripRecognizedOppoTail(from: outputURL) {
+                      print("apple output=recognized-oppo-tail-stripped")
+                    }
+                  } catch {
+                    print("apple output=tail-strip-skipped error=\(error)")
+                  }
                 }
             } else {
                 _ = try ConversionEngine.convert(conversionRequest)

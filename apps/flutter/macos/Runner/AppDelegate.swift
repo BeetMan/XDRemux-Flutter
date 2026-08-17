@@ -120,6 +120,10 @@ class AppDelegate: FlutterAppDelegate {
           let response = XDRemuxSwiftBackend.convert(request) { progress in
             progressStreamHandler?.send(requestID: requestID, progress: progress)
           }
+          NSLog("[XDRemux][swift] convert success=%{public}@ outputValid=%{public}@ error=%{public}@",
+                "\(response.success)",
+                response.outputValid.map { "\($0)" } ?? "nil",
+                response.errorMessage ?? "nil")
           let payload: [String: Any] = [
             "success": response.success,
             "cancelled": response.cancelled,
@@ -208,11 +212,16 @@ class AppDelegate: FlutterAppDelegate {
           result(FlutterError(code: "bad_args", message: "invalid Swift verify args", details: nil))
           return
         }
-        result(XDRemuxSwiftBackend.verifyOutput(
+        let valid = XDRemuxSwiftBackend.verifyOutput(
           path,
           applePhotographicStyles: (args["applePhotographicStyles"] as? Bool) ?? false,
           applePortrait: (args["applePortrait"] as? Bool) ?? false
-        ))
+        )
+        NSLog("[XDRemux][swift] verifyOutput path=%{public}@ styles=%{public}@ -> %{public}@",
+              (path as NSString).lastPathComponent,
+              "\((args["applePhotographicStyles"] as? Bool) ?? false)",
+              "\(valid)")
+        result(valid)
       case "diagnosePortrait":
         guard let args = call.arguments as? [String: Any],
               let inputPath = args["inputPath"] as? String else {
