@@ -4,9 +4,11 @@
 
 Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
 
+macOS/iOS 上另有 **Swift 后端**（vendored 上游 v1.3.1 + 进程内 providers），除标准 HDR 外还支持实验性的 **Apple Photographic Styles 生成**（输出可在 Apple Photos 中调节摄影风格）与 **Apple Portrait 实验室**（人像景深研究模块）。
+
 > 已适配验证 OPPO/OnePlus/realme 设备的 ProXDR HEIC（LHDR + UHDR 两种容器），覆盖 Ace 3、Find X6 Pro、Find X7 Ultra、Find X8 Ultra 等多机型样本。如有其他机型或拍摄模式的转换异常，欢迎提交 [Issue](https://github.com/BeetMan/XDRemux-Flutter/issues) 反馈（附上原图与机型/模式信息）。
 
-**[下载 v0.2.3（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**
+**[下载最新版（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**（iOS 需自签侧载，见下文「iOS 部署」）
 
 ## 截图
 
@@ -27,6 +29,8 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ 拍摄模式分类（15 种 OPPO 拍摄模式：普通拍照 / 大师模式 / 人像 / 夜景 / 全景 / 延时 / 超清 / 证件照 / 贴纸 / 超级文本 / 合影 / 双重曝光 / 美颜 / 专业模式 / RICOH GR）
 - ✅ `xdremux_verify_output` — 验证输出文件是否包含有效 ISO gain map
 - ✅ Bit-exact SDR base image（源文件直达，不重新编码）
+- ✅ Apple Photographic Styles 生成（macOS/iOS Swift 后端，实验性）：Vision 语义分割 → styleData 求解 → Styles HEIF 图写入 → NeutrinoCore 校验；iPhone 真机验证 Apple Photos 编辑/保存/退出/重开全流程
+- 🧪 Apple Portrait（研究模块，macOS/iOS）：OPPO rear.depth 诊断 + 候选 scale 标定输出（researchOnly，生产 capability 未开放）
 
 ### Flutter App
 
@@ -180,9 +184,15 @@ xcrun devicectl device install app --device <设备UDID> build/ios/iphoneos/Runn
 - 最多同时装 3 个自签名 app
 - App Groups（Share Extension 依赖）免费账号可用
 
-**功能说明**：相册/文件里「分享 → XDRemux」可直接导入 HEIC（Share Extension
-经 app group 传文件并自动跳转）；输出在「文件 → 我的 iPhone → XDRemux」可见；
-转换结果可一键存回相册（按拍摄模式分相册）。
+**功能说明**：相册/文件里「分享 → XDRemux」可直接导入 **HEIC 原片**（Share
+Extension 优先请求 `public.heic` 表示，不受分享面板「自动」格式转 JPEG 影响）；
+输出在「文件 → 我的 iPhone → XDRemux」可见；转换结果可一键存回相册（按拍摄
+模式分相册）；断点续传（杀 App 重启恢复队列）已支持。
+
+**Swift 后端（iOS）**：设置页可选 Swift 后端；Apple Photographic Styles 与
+Apple Portrait 实验室依赖 iOS 18+ 与设备上的私有框架探测，capability 探测
+失败时自动隐藏/降级。这些功能使用 Apple 私有框架（NeutrinoCore/PhotoImaging
+等）做渲染与校验，**仅限侧载研究用途**。
 
 ### 从源码构建
 
