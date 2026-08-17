@@ -625,7 +625,7 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         let item_id: u32 = if v >= 2 {
             if p + 8 <= data.len() {
                 let type_at_u16 = std::str::from_utf8(&data[p + 4..p + 8]).unwrap_or("");
-                if ["hvc1", "grid", "Exif", "mime", "tmap", "jpeg"].contains(&type_at_u16) {
+                if ["hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "uri "].contains(&type_at_u16) {
                     p += 2;
                     read_u16be(data, p - 2) as u32
                 } else {

@@ -20,6 +20,7 @@ mod convert;
 mod dump;
 mod inspect;
 mod json;
+mod styles_graft;
 
 const USAGE: &str = "\
 Usage:
@@ -28,6 +29,7 @@ Usage:
   xdremux-conformance dump <output.heic> <output.json>
   xdremux-conformance compare-dump <a.json> <b.json>
   xdremux-conformance convert <input.heic> <output.heic> [--oppo-compat <0|1|2|3>]
+  xdremux-conformance graft-styles <standard.heic> <styles-golden.heic> <out.heic>
 
 Options:
   --tolerance <f32>   Numeric tolerance for compare (default 1e-6)
@@ -52,6 +54,8 @@ fn main() -> ExitCode {
         "dump" => cmd_dump(&args[2..]),
         "compare-dump" => cmd_compare_dump(&args[2..]),
         "convert" => cmd_convert(&args[2..]),
+        "graft-styles" => cmd_graft_styles(&args[2..]),
+        "rewrite-meta" => cmd_rewrite_meta(&args[2..]),
         other => {
             eprintln!("unknown subcommand: {other}");
             eprint!("{USAGE}");
@@ -210,5 +214,61 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     println!("wrote {}", output.display());
+    ExitCode::SUCCESS
+}
+
+fn cmd_graft_styles(args: &[String]) -> ExitCode {
+    if args.len() != 3 {
+        eprintln!("graft-styles: expected <standard.heic> <styles-golden.heic> <out.heic>");
+        return ExitCode::from(2);
+    }
+    let standard = match std::fs::read(&args[0]) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("graft-styles: read {}: {e}", args[0]);
+            return ExitCode::from(1);
+        }
+    };
+    let golden = match std::fs::read(&args[1]) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("graft-styles: read {}: {e}", args[1]);
+            return ExitCode::from(1);
+        }
+    };
+    match styles_graft::graft_styles(&standard, &golden) {
+        Ok((output, summary)) => {
+            if let Err(e) = std::fs::write(&args[2], &output) {
+                eprintln!("graft-styles: write {}: {e}", args[2]);
+                return ExitCode::from(1);
+            }
+            println!(
+                "grafted: delta grid={} ({} tiles), linear={}, styleMetadata={}, +{} property assocs, {} bytes",
+                summary.delta_grid_id,
+                summary.delta_tile_ids.len(),
+                summary.linear_thumbnail_id,
+                summary.style_metadata_id,
+                summary.appended_properties,
+                summary.output_bytes
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("graft-styles: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_rewrite_meta(args: &[String]) -> ExitCode {
+    // Bisect helper: rebuild the meta box without adding anything.
+    if args.len() != 2 {
+        eprintln!("rewrite-meta: expected <in.heic> <out.heic>");
+        return ExitCode::from(2);
+    }
+    let data = std::fs::read(&args[0]).unwrap();
+    let out = styles_graft::rewrite_meta_passthrough(&data).unwrap();
+    std::fs::write(&args[1], &out).unwrap();
+    println!("rewrote {} bytes", out.len());
     ExitCode::SUCCESS
 }
