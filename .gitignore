@@ -88,8 +88,10 @@ test-samples/
 tmp-samples/
 tmp/
 tools/*
-# Packaging scripts under tools/ are source, not artifacts — keep them tracked.
+# Packaging scripts under tools/ are source, not artifacts - keep them tracked.
 !tools/installer/
+# Research corpus generator (Apple-features Rust port reference outputs).
+!tools/golden_corpus.sh
 
 # Recreatable
 final-output/
