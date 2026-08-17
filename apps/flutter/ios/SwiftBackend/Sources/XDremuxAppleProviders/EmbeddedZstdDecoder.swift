@@ -10,13 +10,13 @@ import CZstdDecompress
 /// decompression; iOS cannot spawn processes, so this in-process decoder
 /// is installed as `PortraitConversionPipeline.zstdDecoder`. Implemented
 /// as a streaming decode so frames without a declared content size work.
-enum EmbeddedZstdDecoder {
-    enum DecodeError: Error, LocalizedError {
+public enum EmbeddedZstdDecoder {
+    public enum DecodeError: Error, LocalizedError {
         case emptyInput
         case outputTooLarge
         case zstdFailed(String)
 
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
             case .emptyInput:
                 return "embedded zstd decoder received an empty frame"
@@ -34,7 +34,7 @@ enum EmbeddedZstdDecoder {
 
     private static let chunkSize = 1 << 20  // 1 MiB
 
-    static func decode(_ data: Data) throws -> Data {
+    public static func decode(_ data: Data) throws -> Data {
         guard !data.isEmpty else { throw DecodeError.emptyInput }
 
         let dctx = ZSTD_createDCtx()
@@ -77,6 +77,30 @@ enum EmbeddedZstdDecoder {
             }
             return output
         }
+    }
+
+    /// Compresses `data` into a single zstd frame (level 19, matching the
+    /// fidelity the upstream CLI default used by the macOS research path
+    /// effectively relies on: content size declared, single-pass).
+    public static func encode(_ data: Data) throws -> Data {
+        let bound = ZSTD_compressBound(data.count)
+        var output = Data(count: bound)
+        let written = data.withUnsafeBytes { (rawInput: UnsafeRawBufferPointer) -> Int in
+            output.withUnsafeMutableBytes { (rawOutput: UnsafeMutableRawBufferPointer) -> Int in
+                ZSTD_compress(
+                    rawOutput.baseAddress,
+                    bound,
+                    rawInput.baseAddress,
+                    rawInput.count,
+                    19)
+            }
+        }
+        if ZSTD_isError(written) != 0 {
+            throw DecodeError.zstdFailed(
+                String(cString: ZSTD_getErrorName(written)))
+        }
+        output.count = written
+        return output
     }
 }
 #endif

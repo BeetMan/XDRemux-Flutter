@@ -133,7 +133,10 @@ public enum XDremuxSwiftBackendIOS {
             // macOS); the embedded zstd decoder is in place but the
             // transform itself is unproven.
             "swiftPortrait": false,
-            "swiftPortraitResearch": false,
+            // The research lab (diagnostics + candidate-scale calibration
+            // outputs) runs fully in-process on iOS: embedded zstd +
+            // in-process providers + vendored pipeline.
+            "swiftPortraitResearch": stylesAvailable,
             "swiftPackageVersion": "1.3.1-ios",
             "swiftDeploymentTarget": "iOS 15 (styles require iOS 18)",
             "swiftUnavailableReason": standardReason,

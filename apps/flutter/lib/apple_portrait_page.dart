@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'models/app_models.dart';
 import 'services/file_action_service.dart';
@@ -27,12 +28,18 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   String? _outputDirectory;
   Map<String, dynamic>? _manifest;
   bool _running = false;
+  String _documentsDir = '';
   String _status = '选择一张或多张 OPPO 后置人像照片。';
 
   @override
   void initState() {
     super.initState();
     _loadCapabilities();
+    if (Platform.isIOS) {
+      getApplicationDocumentsDirectory().then((directory) {
+        if (mounted) setState(() => _documentsDir = directory.path);
+      });
+    }
   }
 
   Future<void> _loadCapabilities() async {
@@ -75,6 +82,11 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   }
 
   String _defaultOutputDirectory() {
+    if (Platform.isIOS) {
+      // 输入在选择器 tmp 缓存里，写完即失；研究输出放进 app Documents，
+      // Files App「我的 iPhone -> XDRemux」可见，方便存相册做 Photos 验收。
+      return '$_documentsDir/xdremux-portrait-research';
+    }
     final parent = File(_inputPaths.first).parent.path;
     return '$parent${Platform.pathSeparator}xdremux-portrait-research';
   }
@@ -146,6 +158,12 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   String _fileName(String path) => File(path).uri.pathSegments.last;
 
   Future<void> _openPath(String path, {bool reveal = false}) async {
+    if (Platform.isIOS) {
+      // iOS 没有 Finder；用系统分享面板，用户可存储到「照片」做
+      // Apple Photos 导入/编辑/保存/退出/重开验收。
+      await FileActionService.shareFile(path);
+      return;
+    }
     if (!Platform.isMacOS) return;
     final result = await Process.run('open', reveal ? ['-R', path] : [path]);
     if (result.exitCode != 0 && mounted) {
@@ -169,7 +187,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final supported = Platform.isMacOS;
+    final supported = Platform.isMacOS || Platform.isIOS;
     final outputs = _outputs();
     return Scaffold(
       appBar: AppBar(title: const Text('Apple Portrait 实验室')),
@@ -201,9 +219,9 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                   Text(
                     supported
                         ? (_capabilities.swiftPortraitResearch
-                              ? 'macOS research capability：可用'
-                              : 'macOS research capability：不可用')
-                        : 'Apple Portrait research 当前只支持 macOS。',
+                              ? '${Platform.isIOS ? 'iOS' : 'macOS'} research capability：可用'
+                              : '${Platform.isIOS ? 'iOS' : 'macOS'} research capability：不可用')
+                        : 'Apple Portrait research 当前只支持 macOS/iOS。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -247,17 +265,20 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                   Text(
                     _outputDirectory ??
                         (_inputPaths.isEmpty
-                            ? '未选择（运行时使用输入目录下的 xdremux-portrait-research）'
+                            ? Platform.isIOS
+                            ? '未选择（运行时使用 App 文档目录下的 xdremux-portrait-research）'
+                            : '未选择（运行时使用输入目录下的 xdremux-portrait-research）'
                             : _defaultOutputDirectory()),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _running ? null : _pickOutputDirectory,
-                    icon: const Icon(Icons.folder_open_outlined),
-                    label: const Text('选择输出目录'),
-                  ),
+                  if (!Platform.isIOS)
+                    OutlinedButton.icon(
+                      onPressed: _running ? null : _pickOutputDirectory,
+                      icon: const Icon(Icons.folder_open_outlined),
+                      label: const Text('选择输出目录'),
+                    ),
                   const SizedBox(height: 20),
                   Text('3. 研究候选', style: theme.textTheme.titleMedium),
                   const SizedBox(height: 8),

@@ -1939,7 +1939,9 @@ class _HomePageState extends State<HomePage> {
           tooltip: 'OPPO ↔ Apple 工作流',
           onPressed: _openAppleOppoWorkflow,
         ),
-      if (Platform.isMacOS)
+      // Portrait 实验室是研究模块：macOS 与 iOS 均可进入（iOS 依赖
+      // vendored 嵌入式 zstd + in-process providers，研究性质不变）。
+      if (Platform.isMacOS || Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.camera_alt_outlined),
           tooltip: 'Apple Portrait 实验室',

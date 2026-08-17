@@ -58,11 +58,12 @@ class XdRemuxService {
     }
   }
 
-  /// Read-only macOS probe for OPPO rear Portrait depth variants. This does
-  /// not enable Apple Portrait conversion and is intentionally unavailable on
-  /// iOS, Windows, and Android.
+  /// Read-only probe for OPPO rear Portrait depth variants (macOS + iOS;
+  /// iOS uses the embedded zstd decoder). This does not enable Apple
+  /// Portrait conversion and is intentionally unavailable on Windows and
+  /// Android.
   static Future<Map<String, dynamic>> diagnosePortrait(String inputPath) async {
-    if (!Platform.isMacOS) {
+    if (!Platform.isMacOS && !Platform.isIOS) {
       return <String, dynamic>{
         'schema': 'xdremux-portrait-depth-diagnostic-v1',
         'available': false,
@@ -115,12 +116,12 @@ class XdRemuxService {
       'uniform:0.005',
     ],
   }) async {
-    if (!Platform.isMacOS) {
+    if (!Platform.isMacOS && !Platform.isIOS) {
       return <String, dynamic>{
         'schema': 'xdremux-portrait-calibration-research-v1',
         'researchOnly': true,
         'safeToTransform': false,
-        'error': 'Apple Portrait research is currently macOS-only.',
+        'error': 'Apple Portrait research is only available on macOS/iOS.',
       };
     }
     try {

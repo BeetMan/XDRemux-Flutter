@@ -166,6 +166,65 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
           XDremuxSwiftBackendIOS.cancel(requestID: requestID)
         }
         result(true)
+      case "diagnosePortrait":
+        guard let args = call.arguments as? [String: Any],
+              let inputPath = args["inputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid Portrait diagnostic args", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let report: [String: Any]
+          do {
+            report = try PortraitDepthDiagnostics.report(
+              for: URL(fileURLWithPath: inputPath).standardizedFileURL)
+          } catch {
+            report = [
+              "schema": PortraitDepthDiagnostics.schema,
+              "inputPath": inputPath,
+              "available": false,
+              "safeToTransform": false,
+              "classification": "diagnostic-error",
+              "error": String(describing: error),
+            ]
+          }
+          DispatchQueue.main.async {
+            result(report)
+          }
+        }
+      case "researchPortrait":
+        guard let args = call.arguments as? [String: Any],
+              let inputPaths = args["inputPaths"] as? [String],
+              !inputPaths.isEmpty,
+              let outputDirectory = args["outputDirectory"] as? String else {
+          result(FlutterError(
+            code: "bad_args",
+            message: "invalid Portrait research args",
+            details: nil
+          ))
+          return
+        }
+        let variantSpecs = (args["variants"] as? [String])
+          ?? PortraitCalibrationResearch.defaultVariantSpecs
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let manifest = try PortraitCalibrationResearch.runEmbedded(
+              inputs: inputPaths.map { URL(fileURLWithPath: $0) },
+              outputDirectory: URL(fileURLWithPath: outputDirectory, isDirectory: true),
+              variantSpecs: variantSpecs
+            )
+            DispatchQueue.main.async {
+              result(manifest)
+            }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(
+                code: "portrait_research_failed",
+                message: String(describing: error),
+                details: nil
+              ))
+            }
+          }
+        }
       case "writebackReturnedPhoto":
         guard let args = call.arguments as? [String: Any],
               let returnedPath = args["returnedPath"] as? String,
