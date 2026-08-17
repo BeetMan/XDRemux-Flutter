@@ -38,15 +38,17 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Research probe (Phase 0): runs once per install, prints results to
-    // stdout (flutter run console). Remove once the iOS provider design is
-    // settled.
+    // Research probe (Phase 0, 2026-08-16): Apple private ABI availability
+    // survey - results are settled (18/18 classes present on iOS 27, see
+    // docs/validation/ios-device-20260816.md). DEBUG builds only.
+    #if DEBUG
     if !UserDefaults.standard.bool(forKey: "xdremux.abiProbe.done") {
       UserDefaults.standard.set(true, forKey: "xdremux.abiProbe.done")
       DispatchQueue.global(qos: .utility).async {
         ApplePrivateAbiProbe.run()
       }
     }
+    #endif
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

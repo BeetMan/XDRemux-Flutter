@@ -53,6 +53,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 - ✅ Android 电池优化引导（首次转换时引导设置白名单，含 OPPO 耗电行为控制直达入口）
 - ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
 - ✅ Android GPU 硬件编码（实验，默认开启，自动探测）：MediaCodec 硬件编码 gain map，单 tile ~40ms，比软件 x265 快一个数量级；开启后 gain map 降至 4:2:0，已在骁龙 8 Elite / 8 Gen 3 上验证通过，设备不支持时自动回退软件编码
+- ✅ iOS Swift 后端（vendored 上游 v1.3.1 + 进程内 providers）：标准 HDR 与 Apple Photographic Styles 全链路真机验证通过；私有 ABI 探测、NeutrinoCore 校验、Vision 语义分割、VT tile 编码、嵌入式 zstd 全部进程内实现（实验性，仅侧载）
 - ✅ macOS GPU 硬件编码（VideoToolbox，实验）：复用 macOS 硬件编码器编码 gain map（4:2:0 全范围 NV12），开启强制 OPPO 兼容模式，失败自动回退软件编码
 - ✅ macOS 原生 HEIC/HDR 缩略图：ImageIO 从完整 HEIC 解码（替代低质 EXIF 缩略图），应用 HDR 增益映射，转换后照片在照片墙可见明显提亮
 - ✅ 源/转换后缩略图切换（macOS only）：转换完成的卡片可切换 HDR 渲染与原始 SDR 对比
@@ -86,7 +87,7 @@ Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDR
 | Windows | ✅ 可运行 | x265 静态链接、原生拖拽、WIC 原生缩略图（需 HEIF/HEVC 扩展）、DLL 完整工作 |
 | macOS | ✅ 可运行 | FFI dylib 加载、VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、源/转换后切换 |
 | Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码 |
-| iOS | ✅ 真机验证通过 | VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、Share Extension 系统分享、保存到相册、Files 集成 |
+| iOS | ✅ 真机验证通过 | Rust 默认路径 + **Apple Photographic Styles（Swift 后端，实验性）**：VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、Share Extension（HEIC 原片直传）、保存到相册、Files 集成、Apple Portrait 实验室（研究模块） |
 | Linux | ❌ 未创建 | `flutter create` 待执行 |
 
 ## 快速开始
