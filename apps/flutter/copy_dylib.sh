@@ -7,8 +7,13 @@ set -euo pipefail
 DYLIB="$(dirname "$0")/macos/Frameworks/libxdremux_core.dylib"
 [ -f "$DYLIB" ] || DYLIB="$(dirname "$0")/Frameworks/libxdremux_core.dylib"
 
-# Find the most recently built app
-APP=$(find "$(dirname "$0")/build/macos/Build/Products" -name "xdremux.app" -type d 2>/dev/null | head -1)
+# Find the most recently built app (product name is XDRemux.app, capitalized;
+# -name is case-sensitive so use -iname to tolerate either spelling).
+APP=$(find "$(dirname "$0")/build/macos/Build/Products" -iname "xdremux.app" -type d 2>/dev/null | head -1)
+
+if [ -z "$APP" ]; then
+    echo "warning: no built XDRemux.app found; dylib not copied" >&2
+fi
 
 if [ -n "$APP" ] && [ -f "$DYLIB" ]; then
     mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/MacOS"
