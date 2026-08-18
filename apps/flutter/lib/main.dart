@@ -3220,7 +3220,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // disabled until the embedded Swift Core capability probe
                     // reports a linked and verified implementation.
                     if (Platform.isMacOS || Platform.isIOS) ...[
-                      Text('转换引擎（怎么生成文件）', style: theme.textTheme.titleSmall),
+                      Text(
+                        _t('转换引擎', 'Conversion engine'),
+                        style: theme.textTheme.titleSmall,
+                      ),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<ConversionBackend>(
                         initialValue: _cfg.backend,
@@ -3230,16 +3233,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         items: [
                           const DropdownMenuItem(
                             value: ConversionBackend.rust,
-                            child: Text('Rust（推荐）'),
+                            child: Text(_t('Rust（推荐）', 'Rust (Recommended)')),
                           ),
                           DropdownMenuItem(
                             value: ConversionBackend.swift,
                             enabled: _backendCapabilities.swiftAvailable,
-                            child: Text(
-                              _backendCapabilities.swiftAvailable
-                                  ? 'Swift（Apple 原生）'
-                                  : 'Swift（暂不可用）',
-                            ),
+                            child: Text('Swift'),
                           ),
                         ],
                         onChanged: (backend) {
@@ -3256,20 +3255,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           });
                           _emit();
                         },
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _cfg.backend == ConversionBackend.swift
-                            ? [
-                                _backendCapabilities.statusFor(_cfg.backend),
-                                if (!_backendCapabilities.swiftAppleFeatures)
-                                  _backendCapabilities
-                                      .swiftAppleFeaturesUnavailableReason,
-                              ].where((text) => text.isNotEmpty).join('\n')
-                            : 'Rust（推荐）：负责普通 HDR，也负责下面的 Apple 相册可调风格。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
                       ),
                       if (_cfg.backend == ConversionBackend.swift &&
                           _backendCapabilities.swiftAppleFeatures) ...[

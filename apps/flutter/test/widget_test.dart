@@ -61,7 +61,7 @@ void main() {
     expect(find.text('Apple 标准'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
     expect(
-      find.text('转换引擎（怎么生成文件）'),
+      find.text('转换引擎'),
       (Platform.isMacOS || Platform.isIOS) ? findsOneWidget : findsNothing,
     );
     expect(find.text('兼容性高级设置'), findsOneWidget);
