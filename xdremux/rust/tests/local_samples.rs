@@ -113,6 +113,7 @@ fn converts_local_samples_to_valid_iso_gain_maps() {
         oppo_compat: 0,
         oppo_camera_tail: xdremux_core::container::OppoCameraTail::AUTOMATIC,
         strict_tmap: 0,
+        apple_photographic_styles: 0,
     };
 
     for (index, input) in samples.iter().enumerate() {

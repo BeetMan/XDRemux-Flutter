@@ -223,6 +223,7 @@ fn main() {
             oppo_compat: 0,
             oppo_camera_tail: 255, // compatibility-dependent default
             strict_tmap: 0,
+            apple_photographic_styles: 0,
         };
         let res = xdremux_core::xdremux_convert(cin.as_ptr(), cout.as_ptr(), &config);
         let dt = t.elapsed();

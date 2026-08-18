@@ -40,6 +40,25 @@ void main() {
   });
 
   test(
+    'Rust Photographic Styles request is available independently of Swift',
+    () {
+      const request = ConversionRequest(
+        id: 'rust-styles-test',
+        backend: ConversionBackend.rust,
+        outputMode: OutputMode.apple,
+        inputPath: 'input.heic',
+        outputPath: 'output.heic',
+        oppoCompat: 0,
+        oppoCameraTail: 0,
+        strictTmap: false,
+        applePhotographicStyles: true,
+      );
+      expect(request.applePhotographicStyles, isTrue);
+      expect(request.applePortrait, isFalse);
+    },
+  );
+
+  test(
     'workflow watermark policy defaults to preserve and exposes isolate',
     () {
       const request = ConversionRequest(

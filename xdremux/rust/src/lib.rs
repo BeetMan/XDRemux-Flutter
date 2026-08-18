@@ -14,6 +14,14 @@ pub mod isobmff_write;
 pub mod jpeg_decode;
 pub mod progress;
 
+// Apple Photographic Styles writer (R3c). This is intentionally kept as a
+// separate native Rust path until the Photos conformance surface is stable.
+mod styles_bplist;
+mod styles_consts;
+mod styles_graft;
+mod styles_native;
+mod styles_scaffold;
+
 #[cfg(not(xdremux_ffmpeg_fallback))]
 pub mod x265_ffi;
 
@@ -62,11 +70,13 @@ pub struct ClassificationResult {
 ///   255 selects the compatibility-dependent default.
 /// - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
 ///   ISO 21496-1 65/145-byte payload.
+/// - `apple_photographic_styles`: 1 generates the native Rust Styles graph.
 #[repr(C)]
 pub struct ConvertConfig {
     pub oppo_compat: u8,
     pub oppo_camera_tail: u8,
     pub strict_tmap: u8,
+    pub apple_photographic_styles: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -370,11 +380,12 @@ fn xdremux_convert_impl(
     output_path: *const c_char,
     config: *const ConvertConfig,
 ) -> ConversionResult {
-    let (oppo_compat, oppo_camera_tail, strict_tmap) = if config.is_null() {
+    let (oppo_compat, oppo_camera_tail, strict_tmap, apple_photographic_styles) = if config.is_null() {
         let oppo_compat = OppoCompat::Off;
         (
             oppo_compat,
             OppoCameraTail::default_for_compat(oppo_compat),
+            false,
             false,
         )
     } else {
@@ -384,6 +395,7 @@ fn xdremux_convert_impl(
             oppo_compat,
             OppoCameraTail::resolve(tail_value, oppo_compat),
             unsafe { (*config).strict_tmap != 0 },
+            unsafe { (*config).apple_photographic_styles != 0 },
         )
     };
 
@@ -489,12 +501,19 @@ fn xdremux_convert_impl(
         "x6"
     };
 
-    // 3. Route to UHDR or LHDR path
+    // 3. Route to UHDR or LHDR path. Styles is a post-processor over the
+    // normal Rust ISO output, so render the base into a private sibling file
+    // first and publish the styled graph only after it succeeds.
+    let standard_output = if apple_photographic_styles {
+        format!("{output}.styles-base-{}.heic", std::process::id())
+    } else {
+        output.to_string()
+    };
     let result = if extracted.mode == "uhdr" {
         convert_uhdr(
             &extracted,
             &source,
-            output,
+            &standard_output,
             oppo_compat,
             oppo_camera_tail,
             strict_tmap,
@@ -503,7 +522,7 @@ fn xdremux_convert_impl(
         convert_lhdr(
             &extracted,
             &source,
-            output,
+            &standard_output,
             oppo_compat,
             oppo_camera_tail,
             strict_tmap,
@@ -511,23 +530,55 @@ fn xdremux_convert_impl(
     };
 
     match result {
-        Ok((edr, gm_max)) => ConversionResult {
-            success: true,
-            mode: CString::new(extracted.mode.as_str()).unwrap().into_raw(),
-            family: CString::new(family).unwrap().into_raw(),
-            edr_scale: edr as f64,
-            gain_map_max: gm_max as f64,
-            error_message: ptr::null_mut(),
-        },
-        Err(e) => ConversionResult {
-            success: false,
-            mode: ptr::null_mut(),
-            family: ptr::null_mut(),
-            edr_scale: 0.0,
-            gain_map_max: 0.0,
-            error_message: CString::new(e).unwrap().into_raw(),
-        },
+        Ok((edr, gm_max)) => {
+            if apple_photographic_styles {
+                if let Err(error) = finalize_native_styles(&standard_output, output) {
+                    let _ = std::fs::remove_file(&standard_output);
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(error).unwrap().into_raw(),
+                    };
+                }
+            }
+            ConversionResult {
+                success: true,
+                mode: CString::new(extracted.mode.as_str()).unwrap().into_raw(),
+                family: CString::new(family).unwrap().into_raw(),
+                edr_scale: edr as f64,
+                gain_map_max: gm_max as f64,
+                error_message: ptr::null_mut(),
+            }
+        }
+        Err(e) => {
+            if apple_photographic_styles {
+                let _ = std::fs::remove_file(&standard_output);
+            }
+            ConversionResult {
+                success: false,
+                mode: ptr::null_mut(),
+                family: ptr::null_mut(),
+                edr_scale: 0.0,
+                gain_map_max: 0.0,
+                error_message: CString::new(e).unwrap().into_raw(),
+            }
+        }
     }
+}
+
+fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), String> {
+    let base = std::fs::read(base_path)
+        .map_err(|e| format!("read Rust Styles base output: {e}"))?;
+    let styled = styles_native::styles_native(&base)
+        .map_err(|e| format!("Rust Photographic Styles: {e}"))?;
+    std::fs::write(output_path, styled)
+        .map_err(|e| format!("write Rust Photographic Styles output: {e}"))?;
+    std::fs::remove_file(base_path)
+        .map_err(|e| format!("remove Styles base output: {e}"))?;
+    Ok(())
 }
 
 fn reject_lossy_gainmap_promotion(source: &[u8], oppo_compat: OppoCompat) -> Result<(), String> {

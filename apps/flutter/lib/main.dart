@@ -41,8 +41,8 @@ void main() {
 
 /// Remove persisted Apple feature flags when the current native capability
 /// probe cannot support them. OutputMode.apple remains independent: it is a
-/// clean output target, while Photographic Styles and Portrait are Swift
-/// feature capabilities.
+/// clean output target. Rust Photographic Styles is implemented in the Rust
+/// core; Portrait remains a Swift capability for now.
 bool _sanitizeConfigForCapabilities(
   ConversionConfig config,
   BackendCapabilities capabilities,
@@ -53,10 +53,6 @@ bool _sanitizeConfigForCapabilities(
     changed = true;
   }
   if (config.backend != ConversionBackend.swift) {
-    if (config.applePhotographicStyles) {
-      config.applePhotographicStyles = false;
-      changed = true;
-    }
     if (config.applePortrait) {
       config.applePortrait = false;
       changed = true;
@@ -1066,6 +1062,7 @@ class _HomePageState extends State<HomePage> {
       );
     }
     if (_config.applePhotographicStyles &&
+        _config.backend == ConversionBackend.swift &&
         !_backendCapabilities.swiftPhotographicStyles) {
       issues.add(
         const _PreflightIssue(
@@ -3165,7 +3162,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     const SizedBox(height: 4),
                     Text(
                       '${_cfg.outputMode.appHelp} '
-                      'Apple Photographic Styles 仍只在 Swift 后端开放。',
+                      'Rust Photographic Styles 已接入；Portrait 仍只在 Swift 后端开放。',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -3297,6 +3294,27 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 20),
                     ],
 
+                    if (_cfg.backend == ConversionBackend.rust)
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Apple Photographic Styles（Rust）'),
+                        subtitle: const Text(
+                          '使用 Rust 生成可在 Apple Photos 中继续调节的 Styles 输出；实验性功能。',
+                        ),
+                        value: _cfg.applePhotographicStyles,
+                        onChanged: (value) {
+                          setState(() {
+                            _cfg.applePhotographicStyles = value;
+                            if (value) {
+                              _cfg.outputMode = OutputMode.apple;
+                              _cfg.oppoCompatibility = OppoCompatMode.off;
+                              _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                            }
+                          });
+                          _emit();
+                        },
+                      ),
+                    const SizedBox(height: 8),
                     if (Platform.isMacOS) ...[
                       ExpansionTile(
                         initiallyExpanded: false,

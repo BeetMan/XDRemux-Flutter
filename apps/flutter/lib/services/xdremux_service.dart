@@ -162,13 +162,14 @@ class XdRemuxService {
   ) async {
     final capabilities = await getBackendCapabilities();
     if (request.applePhotographicStyles || request.applePortrait) {
-      if (request.backend != ConversionBackend.swift) {
+      if (request.applePortrait && request.backend != ConversionBackend.swift) {
         return BackendConversionResult.failure(
           request.backend,
-          'Apple 功能只能由 Swift 后端执行。',
+          'Apple Portrait 目前只能由 Swift 后端执行。',
         );
       }
       if (request.applePhotographicStyles &&
+          request.backend == ConversionBackend.swift &&
           !capabilities.swiftPhotographicStyles) {
         return BackendConversionResult.failure(
           request.backend,

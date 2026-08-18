@@ -165,6 +165,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
+              applePhotographicStyles: request.applePhotographicStyles,
             )
           : XdRemuxFFI.convert(
               request.inputPath,
@@ -172,6 +173,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
+              applePhotographicStyles: request.applePhotographicStyles,
             );
       try {
         return BackendConversionResult(
