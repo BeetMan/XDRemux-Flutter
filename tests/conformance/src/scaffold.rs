@@ -776,7 +776,7 @@ fn find_exif_ascii_tag(tiff: &[u8], bo: Bo, ifd0: u32, tag: u16) -> Option<Strin
 
 /// Insert the Apple MakerNote (tag 0x927c) into the ExifIFD of an Exif item
 /// payload, fixing every offset that points past the insertion point.
-fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
     let prefix_len = 4 + u32::from_be_bytes([exif[0], exif[1], exif[2], exif[3]]) as usize;
     if exif.len() < prefix_len + 8 {
         return Err("Exif item too short".into());

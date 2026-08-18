@@ -21,7 +21,7 @@
 
 use xdremux_core::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
 
-use crate::portrait_consts::REND_TEMPLATE;
+use crate::portrait_consts::{PORTRAIT_MAKER_NOTE, REND_TEMPLATE};
 use crate::portrait_depth as pd;
 use crate::styles_graft::{self, find_top, idat_payload, top_level_boxes};
 
@@ -746,6 +746,19 @@ fn attach_portrait_graph(
     let hdrgm_item = find_primary_xmp_item(&meta, primary)?;
     let hdrgm_payload = read_item_payload(base, &meta, hdrgm_item)
         .ok_or("hdrgm-xmp item payload unreadable")?;
+
+    // Portrait marker metadata: CustomRendered = 9 + the Apple portrait
+    // MakerNote (Photos' portrait detection reads these; the golden pipeline
+    // sets both via ImageIO properties on the blank carrier).
+    let exif_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .ok_or("no Exif item in base")?
+        .item_id;
+    let exif_payload = read_item_payload(base, &meta, exif_item)
+        .ok_or("Exif payload unreadable")?;
+    let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
     let merged_main_xmp = merge_focus_into_xmp(
         &hdrgm_payload,
         cfg.map(|c| c.focus_x as f64).unwrap_or(depth.src_dims.0 as f64 / 2.0),
@@ -772,6 +785,9 @@ fn attach_portrait_graph(
     let hdrgm_rel = appended_mdat.len() as u64;
     appended_mdat.extend_from_slice(&merged_main_xmp);
     let hdrgm_len = merged_main_xmp.len() as u64;
+    let exif_rel = appended_mdat.len() as u64;
+    appended_mdat.extend_from_slice(&patched_exif);
+    let exif_len = patched_exif.len() as u64;
     push_mdat(portrait_matte_xmp_id, &portrait_matte_xmp(), &mut appended_mdat);
     for xmp_id in [skin_xmp_id, hair_xmp_id, teeth_xmp_id, glasses_xmp_id] {
         push_mdat(xmp_id, &semantic_xmp, &mut appended_mdat);
@@ -842,6 +858,18 @@ fn attach_portrait_graph(
         .iloc_entries
         .iter()
         .map(|entry| {
+            if entry.item_id == exif_item {
+                // Repoint Exif to the portrait-marked rewrite (mdat-appended).
+                return IlocEntry {
+                    item_id: entry.item_id,
+                    construction_method: 0,
+                    data_reference_index: 0,
+                    extents: vec![(
+                        (new_mdat_data_start + std_mdat_payload.len()) as u64 + exif_rel,
+                        exif_len,
+                    )],
+                };
+            }
             if entry.item_id == hdrgm_item {
                 // Repoint to the merged payload appended to mdat.
                 return IlocEntry {
@@ -986,6 +1014,73 @@ fn merge_focus_into_xmp(
     out.push_str(&block);
     out.push_str(&text[pos..]);
     Ok(out.into_bytes())
+}
+
+
+/// Set CustomRendered (0xA404) = 9 (portrait-rendered marker, golden layout:
+/// type 5 / count 1) and inject the Apple portrait MakerNote into the Exif
+/// item payload (Exif items carry a 4-byte big-endian TIFF offset prefix).
+fn patch_exif_portrait_markers(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
+    // CustomRendered first (in-place value patch inside the TIFF body).
+    let prefix_len = 4 + u32::from_be_bytes([exif[0], exif[1], exif[2], exif[3]]) as usize;
+    let mut tiff = exif[prefix_len..].to_vec();
+    let le = tiff.starts_with(b"II");
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
+    let rd32 = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let wr16 = |b: &mut [u8], v: u16| {
+        if le {
+            b.copy_from_slice(&v.to_le_bytes());
+        } else {
+            b.copy_from_slice(&v.to_be_bytes());
+        }
+    };
+    let wr32 = |b: &mut [u8], v: u32| {
+        if le {
+            b.copy_from_slice(&v.to_le_bytes());
+        } else {
+            b.copy_from_slice(&v.to_be_bytes());
+        }
+    };
+    let ifd0_off = rd32(&tiff[4..8]) as usize;
+    let ifd0_count = rd16(&tiff[ifd0_off..ifd0_off + 2]);
+    let mut exif_ifd_off = 0usize;
+    for k in 0..ifd0_count as usize {
+        let e = ifd0_off + 2 + k * 12;
+        if rd16(&tiff[e..e + 2]) == 0x8769 {
+            exif_ifd_off = rd32(&tiff[e + 8..e + 12]) as usize;
+        }
+    }
+    if exif_ifd_off == 0 {
+        return Err("Exif item has no ExifIFD pointer".into());
+    }
+    let exif_count = rd16(&tiff[exif_ifd_off..exif_ifd_off + 2]);
+    for k in 0..exif_count as usize {
+        let e = exif_ifd_off + 2 + k * 12;
+        if rd16(&tiff[e..e + 2]) == 0xA404 {
+            // golden layout: type 5 (LONG), count 1, value 9 (portrait render)
+            wr16(&mut tiff[e + 2..e + 4], 5);
+            wr32(&mut tiff[e + 4..e + 8], 1);
+            wr32(&mut tiff[e + 8..e + 12], 9);
+            break;
+        }
+    }
+    // Reassemble with the original prefix, then run the scaffold MakerNote
+    // injector (handles both the replace-in-place and insert+fixup paths).
+    let mut with_prefix = exif[..prefix_len].to_vec();
+    with_prefix.extend_from_slice(&tiff);
+    crate::scaffold::inject_maker_note(&with_prefix, maker_note)
 }
 
 fn make_auxc(urn: &[u8]) -> Vec<u8> {
