@@ -3203,7 +3203,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 : 'Choose this for Apple Photos. Editable Photographic Styles can be enabled below.')
                           : (_cfg.outputMode == OutputMode.oppo
                                 ? '选择它来兼容 OPPO/一加相册，并保留后续编辑所需的兼容信息。'
-                                : '选择它来用于 Apple Photos；下方可以开启可调摄影风格。'),
+                                : '选择它来用于 Apple 相册；下方可以开启可调摄影风格。'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -3266,7 +3266,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   _backendCapabilities
                                       .swiftAppleFeaturesUnavailableReason,
                               ].where((text) => text.isNotEmpty).join('\n')
-                            : 'Rust（推荐）：负责普通 HDR，也负责下面的 Apple Photos 可调风格。',
+                            : 'Rust（推荐）：负责普通 HDR，也负责下面的 Apple 相册可调风格。',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -3275,16 +3275,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           _backendCapabilities.swiftAppleFeatures) ...[
                         const SizedBox(height: 12),
                         Text(
-                          'Apple Photos 功能（实验性）',
+                          'Apple 相册功能（实验性）',
                           style: theme.textTheme.titleSmall,
                         ),
                         const SizedBox(height: 4),
                         if (_backendCapabilities.swiftPhotographicStyles)
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple Photos 可调风格（Swift）'),
+                            title: const Text('Apple 相册可调风格（Swift）'),
                             subtitle: const Text(
-                              '导入 Apple Photos 后可继续调节；只在 Swift 原生引擎可用时显示。',
+                              '导入 Apple 相册后可继续调节；只在 Swift 原生引擎可用时显示。',
                             ),
                             value: _cfg.applePhotographicStyles,
                             onChanged: (value) {
@@ -3304,7 +3304,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             contentPadding: EdgeInsets.zero,
                             title: const Text('人像景深（Swift）'),
                             subtitle: const Text(
-                              '保留 Apple Photos 的景深滑杆；仅对包含可验证人像资源的照片开放。',
+                              '保留 Apple 相册的景深滑杆；仅对包含可验证人像资源的照片开放。',
                             ),
                             value: _cfg.applePortrait,
                             onChanged: (value) {
@@ -3330,14 +3330,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
-                        const Text('实验性功能：尚未宣称 Apple Photos 正式稳定兼容。'),
+                        const Text('实验性功能：尚未宣称 Apple 相册正式稳定兼容。'),
                       ],
                       const SizedBox(height: 20),
                     ],
 
                     if (_cfg.backend == ConversionBackend.rust) ...[
                       Text(
-                        'Apple Photos 功能（实验性）',
+                        'Apple 相册功能（实验性）',
                         style: theme.textTheme.titleSmall,
                       ),
                       const SizedBox(height: 4),
@@ -3345,9 +3345,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 4),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Apple Photos 可调风格（Rust）'),
+                        title: const Text('Apple 相册可调风格（Rust）'),
                         subtitle: const Text(
-                          '开启后自动使用 Apple Photos 输出；导入 Photos 后拖动“摄影风格”强度。会关闭 GPU 硬件编码。',
+                          '开启后自动使用 Apple 相册输出；导入相册后拖动“摄影风格”强度。会关闭 GPU 硬件编码。',
                         ),
                         value: _cfg.applePhotographicStyles,
                         onChanged: (value) {
@@ -3830,7 +3830,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         title: const Text('GPU 硬件编码（仅普通 HDR）'),
                         subtitle: Text(
                           _cfg.applePhotographicStyles || _cfg.applePortrait
-                              ? 'Apple Photos 可调功能需要软件编码，当前已自动关闭。'
+                              ? 'Apple 相册可调功能需要软件编码，当前已自动关闭。'
                               : '用系统硬件编码器（Android MediaCodec / Apple VideoToolbox）'
                                     '编码 gain map，速度大幅提升；设备不支持时自动回退软件编码。'
                                     '开启后 gain map 为 4:2:0（与 OPPO 图库要求一致），'

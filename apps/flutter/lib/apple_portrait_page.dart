@@ -210,7 +210,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          '实验性独立模块：只生成 Apple Portrait 文件，不做 OPPO 回传、水印写回或 OPPO/Apple 双模式转换。请使用 Apple Photos 验证景深编辑行为。',
+                          '实验性独立模块：只生成 Apple Portrait 文件，不做 OPPO 回传、水印写回或 OPPO/Apple 双模式转换。请使用 Apple 相册验证景深编辑行为。',
                         ),
                       ),
                     ],
@@ -266,8 +266,8 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                     _outputDirectory ??
                         (_inputPaths.isEmpty
                             ? Platform.isIOS
-                            ? '未选择（运行时使用 App 文档目录下的 xdremux-portrait-research）'
-                            : '未选择（运行时使用输入目录下的 xdremux-portrait-research）'
+                                  ? '未选择（运行时使用 App 文档目录下的 xdremux-portrait-research）'
+                                  : '未选择（运行时使用输入目录下的 xdremux-portrait-research）'
                             : _defaultOutputDirectory()),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,

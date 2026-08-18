@@ -71,7 +71,7 @@ enum OutputMode {
       case OutputMode.oppo:
         return '给 OPPO/一加相册使用：保留兼容信息和相机尾部，便于继续编辑。';
       case OutputMode.apple:
-        return '给 Apple Photos 使用：移除 OPPO 私有兼容信息；可额外写入可调风格。';
+        return '给 Apple 相册使用：移除 OPPO 私有兼容信息；可额外写入可调风格。';
     }
   }
 }
@@ -243,7 +243,7 @@ enum OppoCompatMode {
       case OppoCompatMode.isoGraph:
         return '清除路由标记，但保留原始元数据关系图。';
       case OppoCompatMode.off:
-        return '不修改路由标记；适合 Apple Photos/纯 ISO 输出。';
+        return '不修改路由标记；适合 Apple 相册/纯 ISO 输出。';
     }
   }
 
