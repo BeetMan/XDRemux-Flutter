@@ -75,23 +75,50 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // ---- encode payloads ------------------------------------------------
     // Sky matte (styles stage): same embedded ImageIO-compatible zero matte
     // as the scaffold stage (x265 mono is rejected by ImageIO's aux path).
+    // Diagnostic: XSTYLES_SKY_STREAM / XSTYLES_SKY_HVCC swap in another
+    // (e.g. golden real Vision) matte for Photos-behaviour bisection.
     let (matte_w, matte_h) = (2016u32, 1728u32);
-    let sky_stream = crate::styles_consts::ZERO_MATTE_STREAM.to_vec();
-    let sky_hvcc = crate::styles_consts::ZERO_MATTE_HVCC.to_vec();
+    let sky_stream = std::env::var("XSTYLES_SKY_STREAM")
+        .ok()
+        .map(|p| std::fs::read(p).expect("sky stream file"))
+        .unwrap_or_else(|| crate::styles_consts::ZERO_MATTE_STREAM.to_vec());
+    let sky_hvcc = std::env::var("XSTYLES_SKY_HVCC")
+        .ok()
+        .map(|p| std::fs::read(p).expect("sky hvcc file"))
+        .unwrap_or_else(|| crate::styles_consts::ZERO_MATTE_HVCC.to_vec());
 
     // Linear thumbnail placeholder: black RGB at quarter resolution.
+    // Diagnostic: XSTYLES_LINEAR_STREAM / XSTYLES_LINEAR_HVCC swap in a real
+    // (e.g. golden) thumbnail for Photos-behaviour bisection.
     let lt_w = pw / 4;
     let lt_h = ph / 4;
-    let black = vec![0u8; (lt_w * lt_h * 3) as usize];
-    let black_refs: Vec<&[u8]> = vec![&black];
-    let linear_stream =
-        xdremux_core::hevc::x265_encode_tiles(&black_refs, lt_w, lt_h, 3, false)
+    let env_lt_stream = std::env::var("XSTYLES_LINEAR_STREAM").ok()
+        .map(|p| std::fs::read(p).expect("linear stream file"));
+    let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC").ok()
+        .map(|p| std::fs::read(p).expect("linear hvcc file"));
+    let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
+        let black = vec![0u8; (lt_w * lt_h * 3) as usize];
+        let black_refs: Vec<&[u8]> = vec![&black];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&black_refs, lt_w, lt_h, 3, false)
             .map_err(|e| format!("linear thumb encode: {e}"))?
             .into_iter()
             .next()
             .ok_or("linear thumb encode produced no stream")?;
-    let linear_hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&linear_stream, 3)
-        .ok_or("linear hvcC extraction failed")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 3)
+            .ok_or("linear hvcC extraction failed")?;
+        (env_lt_stream.unwrap_or(stream), env_lt_hvcc.unwrap_or(hvcc))
+    } else {
+        let black = vec![0u8; (lt_w * lt_h * 3) as usize];
+        let black_refs: Vec<&[u8]> = vec![&black];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&black_refs, lt_w, lt_h, 3, false)
+            .map_err(|e| format!("linear thumb encode: {e}"))?
+            .into_iter()
+            .next()
+            .ok_or("linear thumb encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 3)
+            .ok_or("linear hvcC extraction failed")?;
+        (stream, hvcc)
+    };
 
     // ---- style metadata bplist ------------------------------------------
     let bplist = build_style_metadata();
