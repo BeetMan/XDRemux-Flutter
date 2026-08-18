@@ -2816,10 +2816,62 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _showItemFailure(QueueItem item) {
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  color: Theme.of(ctx).colorScheme.error,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '转换失败',
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            Text(item.fileName, maxLines: 2, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 12),
+            SelectableText(item.errorMessage ?? '未提供错误信息'),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新尝试'),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  final index = _queue.indexOf(item);
+                  if (index >= 0) _retryItem(index);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Tap behavior per item status:
   /// - Completed → output actions (save/share/open)
-  /// - Failed/cancelled → retry
-  /// - Everything else → no-op
+  /// - Failed/cancelled → error details; retry is explicit
+  /// - Pending/running → select only
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
       if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
@@ -2829,8 +2881,7 @@ class _HomePageState extends State<HomePage> {
       }
     } else if (item.status == QueueItemStatus.failed ||
         item.status == QueueItemStatus.cancelled) {
-      final index = _queue.indexOf(item);
-      if (index >= 0) _retryItem(index);
+      _showItemFailure(item);
     }
   }
 
@@ -4439,8 +4490,10 @@ class _MobileQueueCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // Only show menu when there's something to do.
-              if (canRetry || item.status != QueueItemStatus.running)
+              // Queue management is separate from completed-output actions.
+              // Completed items use the card tap for save/share/open and are
+              // removed by the global "清除已完成" action instead.
+              if (!item.isSuccessful && item.status != QueueItemStatus.running)
                 PopupMenuButton<_MobileQueueAction>(
                   tooltip: '项目操作',
                   icon: const Icon(Icons.more_vert),
