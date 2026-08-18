@@ -49,7 +49,14 @@ class FileActionService {
   static Future<void> shareFile(String filePath) async {
     try {
       if (!File(filePath).existsSync()) return;
-      final xFile = XFile(filePath);
+      final lower = filePath.toLowerCase();
+      final isHeic = lower.endsWith('.heic') || lower.endsWith('.heif');
+      final xFile = XFile(
+        filePath,
+        mimeType: isHeic
+            ? (lower.endsWith('.heif') ? 'image/heif' : 'image/heic')
+            : null,
+      );
       await Share.shareXFiles([xFile]);
     } catch (e) {
       print('shareFile error: $e');
@@ -67,9 +74,16 @@ class FileActionService {
       if (!File(filePath).existsSync()) return false;
       final lower = filePath.toLowerCase();
       final isHeic = lower.endsWith('.heic') || lower.endsWith('.heif');
+      final isIOS = Platform.isIOS;
       final result = await OpenFilex.open(
         filePath,
-        type: isHeic ? 'image/*' : null,
+        // Android needs a MIME type; iOS needs the UTI so
+        // UIDocumentInteractionController presents the HEIC preview with
+        // the correct document type and can return to Flutter cleanly.
+        type: isHeic && !isIOS ? 'image/*' : null,
+        uti: isIOS && isHeic
+            ? (lower.endsWith('.heif') ? 'public.heif' : 'public.heic')
+            : null,
       );
       if (result.type != ResultType.done) {
         print('openFile failed: ${result.type} ${result.message}');
@@ -84,7 +98,10 @@ class FileActionService {
   /// Copy output file to the source directory (same dir as input).
   ///
   /// Returns the new file path, or null on failure.
-  static Future<String?> copyToSourceDir(String outputPath, String inputPath) async {
+  static Future<String?> copyToSourceDir(
+    String outputPath,
+    String inputPath,
+  ) async {
     try {
       final inputFile = File(inputPath);
       final outputFile = File(outputPath);

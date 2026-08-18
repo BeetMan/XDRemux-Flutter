@@ -2161,18 +2161,28 @@ class _HomePageState extends State<HomePage> {
               ListTile(
                 leading: const Icon(Icons.share),
                 title: const Text('分享'),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(ctx);
-                  FileActionService.shareFile(item.outputPath);
+                  // Let the action sheet finish dismissing before UIKit
+                  // presents the share controller. Presenting in the same
+                  // frame is rejected on iOS and makes the share sheet look
+                  // like it did nothing.
+                  await Future<void>.delayed(const Duration(milliseconds: 250));
+                  if (mounted)
+                    await FileActionService.shareFile(item.outputPath);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.open_in_new),
                 title: const Text('打开'),
                 subtitle: const Text('用系统图库打开'),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(ctx);
-                  FileActionService.openFile(item.outputPath);
+                  // UIDocumentInteractionController must be presented after
+                  // the Flutter bottom sheet has completed its dismissal.
+                  await Future<void>.delayed(const Duration(milliseconds: 250));
+                  if (mounted)
+                    await FileActionService.openFile(item.outputPath);
                 },
               ),
             ],
