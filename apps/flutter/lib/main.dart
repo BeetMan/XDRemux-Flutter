@@ -829,6 +829,8 @@ class _HomePageState extends State<HomePage> {
     int added = 0;
     int skipped = 0;
     int skippedExisting = 0;
+    int skippedUnsupportedPortrait = 0;
+    final unsupportedPortraitFiles = <String>[];
     String? firstError;
 
     for (var index = 0; index < result.files.length; index++) {
@@ -846,6 +848,21 @@ class _HomePageState extends State<HomePage> {
         resolvedPath,
       );
       if (existing.contains(path)) continue;
+
+      // Apple Portrait requires the OPPO rear-camera depth graph. Detect this
+      // while importing so front-camera files (which only contain front.depth)
+      // do not enter the queue and fail later in the conversion worker.
+      if (_config.applePortrait) {
+        final portraitReason = await _portraitImportRejection(path);
+        if (portraitReason != null) {
+          skippedUnsupportedPortrait++;
+          unsupportedPortraitFiles.add(file.name);
+          debugPrint(
+            '[XDRemux][portrait] rejected ${file.name}: $portraitReason',
+          );
+          continue;
+        }
+      }
 
       try {
         final classification = await XdRemuxService.classify(path);
@@ -901,10 +918,16 @@ class _HomePageState extends State<HomePage> {
       final parts = <String>[];
       if (added > 0) parts.add('已添加 $added 个文件');
       if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+      if (skippedUnsupportedPortrait > 0) {
+        parts.add('跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件');
+      }
       if (skipped > 0) parts.add('$skipped 个无法读取');
       if (firstError != null) parts.add(firstError);
       _currentFileName = parts.isEmpty ? '未添加新文件' : parts.join('，');
     });
+    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
+      await _showPortraitImportRejection(unsupportedPortraitFiles);
+    }
     if (skippedExisting > 0 && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -912,6 +935,41 @@ class _HomePageState extends State<HomePage> {
           SnackBar(content: Text('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过')),
         );
     }
+  }
+
+  Future<String?> _portraitImportRejection(String inputPath) async {
+    // The native diagnostic bridge is currently available on Apple platforms.
+    // Other platforms keep the existing conversion behavior until a portable
+    // Rust diagnostic FFI is exposed.
+    if (!Platform.isMacOS && !Platform.isIOS) return null;
+
+    final report = await XdRemuxService.diagnosePortrait(inputPath);
+    if (report['classification'] == 'missing-rear-depth') {
+      return '缺少 rear.depth（仅包含前置深度数据）';
+    }
+    return null;
+  }
+
+  Future<void> _showPortraitImportRejection(List<String> fileNames) async {
+    if (!mounted) return;
+    final shown = fileNames.take(8).join('\n');
+    final more = fileNames.length > 8 ? '\n还有 ${fileNames.length - 8} 个文件' : '';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('部分照片不支持 Apple 人像模式'),
+        content: Text(
+          '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n'
+          '$shown$more',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   OutputPlanStatus _computeOutputPlan(String inputPath, String outputPath) {
