@@ -20,7 +20,10 @@ mod convert;
 mod dump;
 mod inspect;
 mod json;
+mod bplist;
 mod scaffold;
+mod styles_consts;
+mod styles_native;
 mod styles_graft;
 
 const USAGE: &str = "\
@@ -32,6 +35,7 @@ Usage:
   xdremux-conformance convert <input.heic> <output.heic> [--oppo-compat <0|1|2|3>]
   xdremux-conformance graft-styles <standard.heic> <styles-golden.heic> <out.heic>
   xdremux-conformance scaffold <standard.heic> <out.heic>
+  xdremux-conformance styles <standard.heic> <out.heic>
 
 Options:
   --tolerance <f32>   Numeric tolerance for compare (default 1e-6)
@@ -58,6 +62,7 @@ fn main() -> ExitCode {
         "convert" => cmd_convert(&args[2..]),
         "graft-styles" => cmd_graft_styles(&args[2..]),
         "scaffold" => cmd_scaffold(&args[2..]),
+        "styles" => cmd_styles_native(&args[2..]),
         "rewrite-meta" => cmd_rewrite_meta(&args[2..]),
         other => {
             eprintln!("unknown subcommand: {other}");
@@ -299,6 +304,34 @@ fn cmd_scaffold(args: &[String]) -> ExitCode {
         }
         Err(e) => {
             eprintln!("scaffold: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_styles_native(args: &[String]) -> ExitCode {
+    if args.len() != 2 {
+        eprintln!("styles: expected <standard.heic> <out.heic>");
+        return ExitCode::from(2);
+    }
+    let standard = match std::fs::read(&args[0]) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("styles: read {}: {e}", args[0]);
+            return ExitCode::from(1);
+        }
+    };
+    match styles_native::styles_native(&standard) {
+        Ok(output) => {
+            if let Err(e) = std::fs::write(&args[1], &output) {
+                eprintln!("styles: write {}: {e}", args[1]);
+                return ExitCode::from(1);
+            }
+            println!("styles-native: {} -> {} bytes", standard.len(), output.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("styles: {e}");
             ExitCode::from(1)
         }
     }

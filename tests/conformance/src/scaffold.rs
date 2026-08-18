@@ -91,23 +91,29 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let (pw, ph) = primary_ispe(&std_meta, primary)?;
 
     // ---- 2. Sky matte (zero content) ----------------------------------
-    let matte_w = (pw / 2) & !1;
-    let matte_h = (ph / 2) & !1;
-    let matte_pixels = vec![0u8; (matte_w * matte_h) as usize];
-    let matte_refs: Vec<&[u8]> = vec![&matte_pixels];
-    let matte_stream = xdremux_core::hevc::x265_encode_tiles(
-        &matte_refs,
-        matte_w,
-        matte_h,
-        1,
-        false,
-    )
-    .map_err(|e| format!("matte HEVC encode: {e}"))?
-    .into_iter()
-    .next()
-    .ok_or("matte encode produced no stream")?;
-    let matte_hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&matte_stream, 0)
-        .ok_or("matte hvcC extraction failed")?;
+    // The embedded ImageIO-compatible zero matte is fixed at 2016x1728
+    // (half of the 4096x3512 reference photo). For other primary sizes we
+    // still declare the embedded stream's dims (content is all-zero; the
+    // size mismatch only matters for real segmentation, which is R4).
+    let (matte_w, matte_h) = (2016u32, 1728u32);
+    // Default: the embedded VT-encoded zero matte (ImageIO-compatible).
+    // x265's mono stream is NOT accepted by ImageIO's aux-data path; keep it
+    // only as a diagnostic fallback (XSCAFFOLD_X265_MATTE=1).
+    let (matte_stream, matte_hvcc) = if std::env::var("XSCAFFOLD_X265_MATTE").is_ok() {
+        let matte_pixels = vec![0u8; (matte_w * matte_h) as usize];
+        let matte_refs: Vec<&[u8]> = vec![&matte_pixels];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&matte_refs, matte_w, matte_h, 1, false)
+            .map_err(|e| format!("matte HEVC encode: {e}"))?
+            .into_iter().next().ok_or("matte encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+            .ok_or("matte hvcC extraction failed")?;
+        (stream, hvcc)
+    } else {
+        (
+            crate::styles_consts::ZERO_MATTE_STREAM.to_vec(),
+            crate::styles_consts::ZERO_MATTE_HVCC.to_vec(),
+        )
+    };
 
     // ---- 3. XMP payloads -----------------------------------------------
     let exif_payload = item_payload(standard, &std_meta, exif_item.item_id)
@@ -477,10 +483,8 @@ fn make_xmp_infe(item_id: u32) -> Vec<u8> {
     payload.extend_from_slice(&(item_id as u16).to_be_bytes());
     payload.extend_from_slice(&[0, 0]); // protection index
     payload.extend_from_slice(b"mime");
-    payload.push(0); // empty name
-    payload.push(0);
+    payload.push(0); // empty item name (matches golden scaffold)
     payload.extend_from_slice(b"application/rdf+xml\0");
-    payload.push(0);
     isobmff::make_box(b"infe", &payload)
 }
 
@@ -851,6 +855,16 @@ fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> 
     let mut result = exif[..prefix_len].to_vec();
     result.extend_from_slice(&out);
     Ok(result)
+}
+
+/// pub(crate) accessor for styles_native.
+pub(crate) fn max_group_id_pub(data: &[u8], meta: &isobmff::BoxHeader) -> Option<u32> {
+    max_group_id(data, meta)
+}
+
+/// pub(crate) accessor for styles_native (styles-stage matte XMP sidecar).
+pub(crate) fn matte_xmp_pub() -> Vec<u8> {
+    build_matte_xmp()
 }
 
 /// Highest grpl/altr group_id in the file (to keep new item ids clear).
