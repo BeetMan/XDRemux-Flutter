@@ -73,19 +73,37 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let sky_mime_id = sky_id + 1;
 
     // ---- encode payloads ------------------------------------------------
-    // Sky matte (styles stage): same embedded ImageIO-compatible zero matte
-    // as the scaffold stage (x265 mono is rejected by ImageIO's aux path).
-    // Diagnostic: XSTYLES_SKY_STREAM / XSTYLES_SKY_HVCC swap in another
-    // (e.g. golden real Vision) matte for Photos-behaviour bisection.
-    let (matte_w, matte_h) = (2016u32, 1728u32);
-    let sky_stream = std::env::var("XSTYLES_SKY_STREAM")
-        .ok()
-        .map(|p| std::fs::read(p).expect("sky stream file"))
-        .unwrap_or_else(|| crate::styles_consts::ZERO_MATTE_STREAM.to_vec());
-    let sky_hvcc = std::env::var("XSTYLES_SKY_HVCC")
-        .ok()
-        .map(|p| std::fs::read(p).expect("sky hvcc file"))
-        .unwrap_or_else(|| crate::styles_consts::ZERO_MATTE_HVCC.to_vec());
+    // Sky matte (styles stage): x265 mono, same as the scaffold stage
+    // (ImageIO accepts length-prefixed pure-IDR x265 mono). Diagnostic:
+    // XSTYLES_SKY_STREAM / XSTYLES_SKY_HVCC swap in another (e.g. golden
+    // real Vision) matte for Photos-behaviour bisection.
+    let (matte_w, matte_h) = ((pw / 2) & !1, (ph / 2) & !1);
+    let env_sky_stream = std::env::var("XSTYLES_SKY_STREAM").ok()
+        .map(|p| std::fs::read(p).expect("sky stream file"));
+    let env_sky_hvcc = std::env::var("XSTYLES_SKY_HVCC").ok()
+        .map(|p| std::fs::read(p).expect("sky hvcc file"));
+    let (sky_stream, sky_hvcc) = if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
+        let pixels = vec![0u8; (matte_w * matte_h) as usize];
+        let refs: Vec<&[u8]> = vec![&pixels];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
+            .map_err(|e| format!("sky matte encode: {e}"))?
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+            .ok_or("sky hvcC extraction failed")?;
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        let stream = xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr);
+        (env_sky_stream.unwrap_or(stream), env_sky_hvcc.unwrap_or(hvcc))
+    } else {
+        let pixels = vec![0u8; (matte_w * matte_h) as usize];
+        let refs: Vec<&[u8]> = vec![&pixels];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
+            .map_err(|e| format!("sky matte encode: {e}"))?
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+            .ok_or("sky hvcC extraction failed")?;
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+    };
 
     // Linear thumbnail placeholder: black RGB at quarter resolution.
     // Diagnostic: XSTYLES_LINEAR_STREAM / XSTYLES_LINEAR_HVCC swap in a real
@@ -106,6 +124,8 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             .ok_or("linear thumb encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 3)
             .ok_or("linear hvcC extraction failed")?;
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        let stream = xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr);
         (env_lt_stream.unwrap_or(stream), env_lt_hvcc.unwrap_or(hvcc))
     } else {
         let black = vec![0u8; (lt_w * lt_h * 3) as usize];
@@ -117,7 +137,8 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             .ok_or("linear thumb encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 3)
             .ok_or("linear hvcC extraction failed")?;
-        (stream, hvcc)
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
     };
 
     // ---- style metadata bplist ------------------------------------------
