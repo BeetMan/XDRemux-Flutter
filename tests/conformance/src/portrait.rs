@@ -381,9 +381,11 @@ fn portrait_matte_xmp() -> Vec<u8> {
 
 
 /// Content rectangle from the OPPO watermark tail entry
-/// (`watermark.master.params`: a float array containing (x, y, w, h) with
-/// x+w = primary width and y+h = primary height). Returns None when the
-/// photo has no watermark frame (content = full primary).
+/// (`watermark.master.params`: a float array containing CORNER quads
+/// (x0, y0, x1, y1) with x1 = primary width - right pad and y1 = primary
+/// height - bottom pad; the photo itself is the untouched sensor frame
+/// centered by a symmetric border). Returns (x0, y0, w, h) or None when
+/// the photo has no watermark frame (content = full primary).
 fn watermark_content_rect(
     input: &[u8],
     primary_w: u32,
@@ -420,7 +422,11 @@ fn watermark_content_rect(
             && w > primary_w as i64 / 2
             && h > primary_h as i64 / 2
         {
-            return Some((x as u32, y as u32, w as u32, h as u32));
+            // corner quad (x0, y0, x1, y1) -> (x0, y0, w, h)
+            let (cw, ch) = (w - x, h - y);
+            if cw > 0 && ch > 0 {
+                return Some((x as u32, y as u32, cw as u32, ch as u32));
+            }
         }
     }
     None
