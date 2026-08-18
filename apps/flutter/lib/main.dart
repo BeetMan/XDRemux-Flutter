@@ -3231,7 +3231,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           border: OutlineInputBorder(),
                         ),
                         items: [
-                          const DropdownMenuItem(
+                          DropdownMenuItem(
                             value: ConversionBackend.rust,
                             child: Text(_t('Rust（推荐）', 'Rust (Recommended)')),
                           ),
