@@ -154,6 +154,27 @@ enum _QueueMenuAction {
   clearQueue,
 }
 
+enum _PreflightSeverity { warning, blocking }
+
+class _PreflightIssue {
+  final _PreflightSeverity severity;
+  final String title;
+  final String? fileName;
+  final String detail;
+
+  const _PreflightIssue({
+    required this.severity,
+    required this.title,
+    required this.detail,
+    this.fileName,
+  });
+
+  bool get isBlocking => severity == _PreflightSeverity.blocking;
+
+  String get displayText =>
+      fileName == null ? '$title：$detail' : '$fileName：$title（$detail）';
+}
+
 // ============================================================================
 // HomePage
 // ============================================================================
@@ -172,6 +193,7 @@ class _HomePageState extends State<HomePage> {
   String _currentFileName = '';
   int _currentConcurrency = 0;
   bool _isProcessing = false;
+  final List<_PreflightIssue> _preflightIssues = <_PreflightIssue>[];
   int? _selectedIndex;
   Timer? _progressTimer;
   final GlobalKey _rootKey = GlobalKey();
@@ -493,13 +515,12 @@ class _HomePageState extends State<HomePage> {
 
   bool get _canEditQueue => !_isProcessing;
 
+  // Keep the start action enabled when there are pending items with
+  // blockers, so the user can see the preflight explanation instead of a
+  // mysteriously disabled button.
   bool get _canStart =>
       !_isProcessing &&
-      _queue.any(
-        (item) =>
-            item.status == QueueItemStatus.pending &&
-            !item.outputPlanStatus.blocksConversion,
-      );
+      _queue.any((item) => item.status == QueueItemStatus.pending);
 
   int get _totalFiles => _queue.length;
 
@@ -875,6 +896,7 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
+    _preflightIssues.clear();
     _validateOutputPlans();
     _updateStatusText();
     if (!mounted) return;
@@ -944,6 +966,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _refreshOutputPaths() {
+    _preflightIssues.clear();
     for (int i = 0; i < _queue.length; i++) {
       final item = _queue[i];
       if (item.status == QueueItemStatus.pending ||
@@ -965,42 +988,206 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ---------------------------------------------------------------------------
-  // Conversion
+  // Conversion preflight and execution
   // ---------------------------------------------------------------------------
+
+  List<_PreflightIssue> _collectPreflightIssues() {
+    final issues = <_PreflightIssue>[];
+    final runnable = _queue.where(
+      (item) =>
+          item.status == QueueItemStatus.pending ||
+          item.status == QueueItemStatus.failed ||
+          item.status == QueueItemStatus.cancelled,
+    );
+
+    if (runnable.isEmpty) {
+      issues.add(
+        const _PreflightIssue(
+          severity: _PreflightSeverity.blocking,
+          title: '没有待处理文件',
+          detail: '请先添加照片，或重试失败项目。',
+        ),
+      );
+      return issues;
+    }
+
+    for (final item in runnable) {
+      final file = File(item.inputPath);
+      if (!file.existsSync()) {
+        issues.add(
+          _PreflightIssue(
+            severity: _PreflightSeverity.blocking,
+            title: '输入文件不可用',
+            fileName: item.fileName,
+            detail: '文件不存在或临时源已失效。请重新添加该文件。',
+          ),
+        );
+        continue;
+      }
+      if (!isSupportedInputPath(item.inputPath)) {
+        issues.add(
+          _PreflightIssue(
+            severity: _PreflightSeverity.blocking,
+            title: '输入格式不支持',
+            fileName: item.fileName,
+            detail: '仅支持 HEIC / HEIF 文件。',
+          ),
+        );
+      }
+      if (item.outputPlanStatus.blocksConversion) {
+        issues.add(
+          _PreflightIssue(
+            severity: _PreflightSeverity.blocking,
+            title: '输出计划不可用',
+            fileName: item.fileName,
+            detail: item.outputPlanStatus.displayName,
+          ),
+        );
+      } else if (item.outputPlanStatus ==
+          OutputPlanStatus.willOverwriteExisting) {
+        issues.add(
+          _PreflightIssue(
+            severity: _PreflightSeverity.warning,
+            title: '将覆盖已有输出',
+            fileName: item.fileName,
+            detail: '输出文件已存在，继续后会覆盖它。',
+          ),
+        );
+      }
+    }
+
+    if (!_backendCapabilities.isAvailable(_config.backend)) {
+      issues.add(
+        _PreflightIssue(
+          severity: _PreflightSeverity.blocking,
+          title: '转换后端不可用',
+          detail: _backendCapabilities.statusFor(_config.backend),
+        ),
+      );
+    }
+    if (_config.applePhotographicStyles &&
+        !_backendCapabilities.swiftPhotographicStyles) {
+      issues.add(
+        const _PreflightIssue(
+          severity: _PreflightSeverity.blocking,
+          title: 'Apple Photographic Styles 不可用',
+          detail: '当前平台 capability 未就绪。',
+        ),
+      );
+    }
+    if (_config.applePortrait && !_backendCapabilities.swiftPortrait) {
+      issues.add(
+        const _PreflightIssue(
+          severity: _PreflightSeverity.blocking,
+          title: 'Apple Portrait 不可用',
+          detail: '当前平台 capability 未就绪。',
+        ),
+      );
+    }
+    return issues;
+  }
+
+  Future<bool> _runPreflight() async {
+    final issues = _collectPreflightIssues();
+    if (!mounted) return false;
+    setState(() {
+      _preflightIssues
+        ..clear()
+        ..addAll(issues);
+      if (issues.any((issue) => issue.isBlocking)) {
+        _statusText = '需要修复转换前检查问题';
+      } else if (issues.isNotEmpty) {
+        _statusText = '转换前检查发现警告';
+      } else {
+        _statusText = '检查通过，准备转换';
+      }
+    });
+
+    final blocking = issues.where((issue) => issue.isBlocking).toList();
+    if (blocking.isNotEmpty) {
+      await _showPreflightDialog(
+        title: '无法开始转换',
+        issues: blocking,
+        confirmLabel: '返回队列',
+      );
+      return false;
+    }
+    if (issues.isEmpty) return true;
+
+    return _showPreflightDialog(
+      title: '开始前检查',
+      issues: issues,
+      confirmLabel: '继续转换',
+    );
+  }
+
+  Future<bool> _showPreflightDialog({
+    required String title,
+    required List<_PreflightIssue> issues,
+    required String confirmLabel,
+  }) async {
+    final canContinue = issues.every((issue) => !issue.isBlocking);
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(canContinue ? '以下项目需要你确认：' : '请先处理以下问题后再开始：'),
+                const SizedBox(height: 12),
+                ...issues
+                    .take(12)
+                    .map(
+                      (issue) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              issue.isBlocking
+                                  ? Icons.error_outline
+                                  : Icons.warning_amber_outlined,
+                              size: 20,
+                              color: issue.isBlocking
+                                  ? Theme.of(ctx).colorScheme.error
+                                  : Theme.of(ctx).colorScheme.tertiary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(issue.displayText)),
+                          ],
+                        ),
+                      ),
+                    ),
+                if (issues.length > 12)
+                  Text('还有 ${issues.length - 12} 项，请在队列中查看。'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          if (canContinue)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, canContinue),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return result == true && canContinue;
+  }
 
   Future<void> _startConversion() async {
     if (!_canStart) return;
-
-    if (!_backendCapabilities.isAvailable(_config.backend)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_backendCapabilities.statusFor(_config.backend)),
-        ),
-      );
-      return;
-    }
-
-    if (_config.applePhotographicStyles &&
-        !_backendCapabilities.swiftPhotographicStyles) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Apple Photographic Styles 当前 capability 不可用。'),
-        ),
-      );
-      return;
-    }
-    if (_config.applePortrait && !_backendCapabilities.swiftPortrait) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Apple Portrait 当前 capability 不可用。')),
-      );
-      return;
-    }
-
-    // Android: check battery optimization before starting a batch.
-    // ColorOS/other OEMs freeze the Dart VM in background without this.
-    if (Platform.isAndroid) {
-      await _checkBatteryOptimization();
-    }
 
     // Retry failed, reset cancelled
     for (int i = 0; i < _queue.length; i++) {
@@ -1014,18 +1201,18 @@ class _HomePageState extends State<HomePage> {
     }
     _refreshOutputPaths();
 
-    // Mark output-plan blockers as failed
-    for (int i = 0; i < _queue.length; i++) {
-      if (_queue[i].status == QueueItemStatus.pending &&
-          _queue[i].outputPlanStatus.blocksConversion) {
-        _queue[i].status = QueueItemStatus.failed;
-        _queue[i].errorMessage =
-            '输出计划不可用: ${_queue[i].outputPlanStatus.displayName}';
-        _queue[i].finishedAt = DateTime.now();
-      }
+    if (!await _runPreflight()) return;
+    if (!mounted) return;
+
+    // Android: check battery optimization before starting a batch.
+    // ColorOS/other OEMs freeze the Dart VM in background without this.
+    if (Platform.isAndroid) {
+      await _checkBatteryOptimization();
+      if (!mounted) return;
     }
 
     setState(() {
+      _preflightIssues.clear();
       _isProcessing = true;
       _statusText = '准备转换...';
     });
@@ -1115,7 +1302,12 @@ class _HomePageState extends State<HomePage> {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
         item.progress = null;
+        if (item.progressHandle != 0) {
+          XdRemuxFFI.progressEnd(item.progressHandle);
+          item.progressHandle = 0;
+        }
         if (mounted) setState(() {});
+        _updateCheckpointForItem(item);
         return;
       }
 
@@ -1473,6 +1665,13 @@ class _HomePageState extends State<HomePage> {
 
     // System notification so background batches are observable.
     final done = _convertedCount + _skippedCount + _failedCount;
+    if (mounted && done > 0) {
+      setState(() {
+        _statusText = _failedCount > 0
+            ? '完成：成功 $_convertedCount，跳过 $_skippedCount，失败 $_failedCount'
+            : '全部完成：$_convertedCount 个文件';
+      });
+    }
     if (done > 0) {
       NotificationService.notifyBatchComplete(
         converted: _convertedCount,
@@ -1702,6 +1901,7 @@ class _HomePageState extends State<HomePage> {
       }
     }
     if (added > 0) {
+      _preflightIssues.clear();
       _validateOutputPlans();
       _updateStatusText();
     }
@@ -1921,6 +2121,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _buildProgressBar(theme),
                 const Divider(height: 1),
+                if (_queue.isNotEmpty) _buildQueueSummary(theme),
                 Expanded(
                   child: _queue.isEmpty
                       ? _buildEmptyState(theme)
@@ -1948,7 +2149,7 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.only(right: 4),
           child: FilledButton.icon(
             icon: const Icon(Icons.play_arrow),
-            label: const Text('开始'),
+            label: const Text('开始转换'),
             onPressed: _startConversion,
           ),
         ),
@@ -2357,6 +2558,60 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildQueueSummary(ThemeData theme) {
+    final blocking = _preflightIssues.where((issue) => issue.isBlocking).length;
+    final warnings = _preflightIssues.length - blocking;
+    final done = _processedCount == _totalFiles && _totalFiles > 0;
+    final summary = done
+        ? (_failedCount > 0 ? '已完成：失败 $_failedCount 项' : '已完成，可导出结果')
+        : blocking > 0
+        ? '需要修复 $blocking 项问题'
+        : warnings > 0
+        ? '$warnings 项警告待确认'
+        : '可以开始转换';
+    final color = done && _failedCount == 0
+        ? Colors.green.shade700
+        : blocking > 0
+        ? theme.colorScheme.error
+        : warnings > 0
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.onSurfaceVariant;
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              done && _failedCount > 0
+                  ? Icons.error_outline
+                  : blocking > 0
+                  ? Icons.error_outline
+                  : warnings > 0
+                  ? Icons.warning_amber_outlined
+                  : Icons.check_circle_outline,
+              size: 20,
+              color: color,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${_queue.length} 个文件 · 输出：${_config.outputMode.appTitle} · $summary',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: color),
+              ),
+            ),
+            if (!_isProcessing && blocking > 0)
+              TextButton(onPressed: _runPreflight, child: const Text('检查')),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildQueueView(ThemeData theme, bool compact) {
     return compact ? _buildMobileQueue(theme) : _buildPhotoGrid(theme);
   }
@@ -2373,7 +2628,7 @@ class _HomePageState extends State<HomePage> {
             child: Row(
               children: [
                 Text(
-                  '转换队列',
+                  '待转换队列',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -2884,6 +3139,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(
+                      '常用设置',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Text('输出模式', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 4),
                     SegmentedButton<OutputMode>(
@@ -2909,6 +3171,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                     ),
                     const SizedBox(height: 20),
+                    Text(
+                      '高级设置',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     // Swift is visible only on Apple platforms. It remains
                     // disabled until the embedded Swift Core capability probe
                     // reports a linked and verified implementation.
@@ -3127,6 +3396,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // and the iOS sandbox both make an arbitrary writable
                     // directory impossible; output goes to the app-scoped dir
                     // and is exported via 保存到图库 / 分享.
+                    Text(
+                      '输出与性能',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     if (!Platform.isAndroid && !Platform.isIOS) ...[
                       Row(
                         children: [

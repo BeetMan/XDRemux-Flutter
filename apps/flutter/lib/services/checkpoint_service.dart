@@ -62,8 +62,13 @@ class CheckpointService {
         '_',
       );
       final key = _stableInputKey(inputPath, stat.size, stat.modified);
+      // Keep the original basename visible in the queue; use a deterministic
+      // private subdirectory for collision avoidance instead of prefixing the
+      // user-facing filename with an internal hash.
+      final bucket = Directory('${dir.path}${Platform.pathSeparator}$key');
+      await bucket.create(recursive: true);
       final destination = File(
-        '${dir.path}${Platform.pathSeparator}$key-${safeName.isEmpty ? 'input.heic' : safeName}',
+        '${bucket.path}${Platform.pathSeparator}${safeName.isEmpty ? 'input.heic' : safeName}',
       );
 
       if (!destination.existsSync() ||
@@ -120,7 +125,14 @@ class CheckpointService {
       } catch (_) {}
     }
     try {
-      if (dir.existsSync() && dir.listSync().isEmpty) await dir.delete();
+      if (dir.existsSync()) {
+        for (final entity in dir.listSync()) {
+          if (entity is Directory && entity.listSync().isEmpty) {
+            await entity.delete();
+          }
+        }
+        if (dir.listSync().isEmpty) await dir.delete();
+      }
     } catch (_) {}
   }
 
