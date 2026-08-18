@@ -7,6 +7,13 @@ import 'dart:io';
 // Enums (mirror Swift Family / OppoCompatibility / InputProcessingBranch)
 // ---------------------------------------------------------------------------
 
+enum AppLanguage {
+  chinese,
+  english;
+
+  String get appTitle => this == AppLanguage.chinese ? '中文' : 'English';
+}
+
 enum Family {
   auto,
   x6,
@@ -433,6 +440,7 @@ enum OutputPlanStatus {
 // ---------------------------------------------------------------------------
 
 class ConversionConfig {
+  AppLanguage language;
   Family family;
   ConversionBackend backend;
   OutputMode outputMode;
@@ -450,6 +458,7 @@ class ConversionConfig {
   bool hardwareEncode;
 
   ConversionConfig({
+    this.language = AppLanguage.chinese,
     this.family = Family.auto,
     this.backend = ConversionBackend.rust,
     this.outputMode = OutputMode.oppo,
@@ -469,6 +478,7 @@ class ConversionConfig {
 
   /// Persist to SharedPreferences.
   Map<String, dynamic> toJson() => {
+    'language': language.name,
     'family': family.name,
     'backend': backend.name,
     'outputMode': outputMode.name,
@@ -488,6 +498,10 @@ class ConversionConfig {
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
     return ConversionConfig(
+      language: AppLanguage.values.firstWhere(
+        (e) => e.name == json['language'],
+        orElse: () => AppLanguage.chinese,
+      ),
       family: Family.values.firstWhere(
         (e) => e.name == json['family'],
         orElse: () => Family.auto,
@@ -523,6 +537,7 @@ class ConversionConfig {
   }
 
   ConversionConfig copy() => ConversionConfig(
+    language: language,
     family: family,
     backend: backend,
     outputMode: outputMode,

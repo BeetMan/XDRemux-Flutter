@@ -473,6 +473,7 @@ class XdRemuxService {
   // Settings persistence
   // -----------------------------------------------------------------------
 
+  static const _keyLanguage = 'language';
   static const _keyFamily = 'family';
   static const _keyBackend = 'backend';
   static const _keyOutputMode = 'outputMode';
@@ -489,6 +490,10 @@ class XdRemuxService {
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
     return ConversionConfig(
+      language: AppLanguage.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyLanguage),
+        orElse: () => AppLanguage.chinese,
+      ),
       family: Family.values.firstWhere(
         (e) => e.name == prefs.getString(_keyFamily),
         orElse: () => Family.auto,
@@ -522,6 +527,7 @@ class XdRemuxService {
 
   static Future<void> saveConfig(ConversionConfig config) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyLanguage, config.language.name);
     await prefs.setString(_keyFamily, config.family.name);
     await prefs.setString(_keyBackend, config.backend.name);
     await prefs.setString(_keyOutputMode, config.outputMode.name);

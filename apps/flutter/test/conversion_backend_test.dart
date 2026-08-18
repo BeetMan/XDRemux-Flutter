@@ -5,6 +5,12 @@ import 'package:xdremux/models/app_models.dart';
 import 'package:xdremux/services/conversion_backend.dart';
 
 void main() {
+  test('language selection survives config round-trip', () {
+    final config = ConversionConfig(language: AppLanguage.english);
+    final restored = ConversionConfig.fromJson(config.toJson());
+    expect(restored.language, AppLanguage.english);
+  });
+
   test('Rust is the default backend and survives config round-trip', () {
     final config = ConversionConfig();
     expect(config.backend, ConversionBackend.rust);

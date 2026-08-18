@@ -2912,7 +2912,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     super.dispose();
   }
 
+  String _t(String chinese, String english) =>
+      _cfg.language == AppLanguage.english ? english : chinese;
+
+  String _outputTitle(OutputMode mode) {
+    if (_cfg.language == AppLanguage.english) {
+      return mode == OutputMode.oppo ? 'OPPO Compatible' : 'Apple Photos';
+    }
+    return mode.appTitle;
+  }
+
   void _emit() {
+    widget.config.language = _cfg.language;
     widget.config.family = _cfg.family;
     widget.config.backend = _cfg.backend;
     widget.config.outputMode = _cfg.outputMode;
@@ -3123,7 +3134,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               ),
             Row(
               children: [
-                Text('转换设置', style: theme.textTheme.titleLarge),
+                Text(_t('转换设置', 'Settings'), style: theme.textTheme.titleLarge),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
@@ -3138,20 +3149,44 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '常用设置',
+                      _t('常用设置', 'General'),
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text('输出模式', style: theme.textTheme.titleSmall),
+                    DropdownButtonFormField<AppLanguage>(
+                      initialValue: _cfg.language,
+                      decoration: InputDecoration(
+                        labelText: _t('界面语言', 'Language'),
+                        border: const OutlineInputBorder(),
+                      ),
+                      items: AppLanguage.values
+                          .map(
+                            (language) => DropdownMenuItem(
+                              value: language,
+                              child: Text(language.appTitle),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (language) {
+                        if (language == null) return;
+                        setState(() => _cfg.language = language);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _t('输出模式', 'Output'),
+                      style: theme.textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 4),
                     SegmentedButton<OutputMode>(
                       segments: OutputMode.values
                           .map(
                             (mode) => ButtonSegment<OutputMode>(
                               value: mode,
-                              label: Text(mode.appTitle),
+                              label: Text(_outputTitle(mode)),
                             ),
                           )
                           .toList(),
@@ -3162,16 +3197,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _cfg.outputMode == OutputMode.oppo
-                          ? '输出给 OPPO/一加相册；需要 Apple Photos 可调风格时请选择 Apple Photos。'
-                          : '输出给 Apple Photos；下方可开启可调风格。Portrait 目前仍需 Swift。',
+                      _cfg.language == AppLanguage.english
+                          ? (_cfg.outputMode == OutputMode.oppo
+                                ? 'For OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
+                                : 'For Apple Photos. You can enable editable Photographic Styles below.')
+                          : (_cfg.outputMode == OutputMode.oppo
+                                ? '输出给 OPPO/一加相册；需要 Apple Photos 可调风格时请选择 Apple Photos。'
+                                : '输出给 Apple Photos；下方可开启可调风格。Portrait 目前仍需 Swift.'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(height: 20),
                     Text(
-                      '高级设置',
+                      _t('高级设置', 'Advanced'),
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
