@@ -275,7 +275,9 @@ class _HomePageState extends State<HomePage> {
     final checkpoint = await CheckpointService.load();
     if (checkpoint == null) return;
     if (checkpoint.allSuccess) {
-      // Previous run completed successfully, clean up stale checkpoint
+      // Previous run completed successfully; remove stale state and any
+      // persistent picker copies left by an interrupted cleanup.
+      await CheckpointService.cleanupMaterializedInputs(checkpoint);
       await CheckpointService.delete();
       return;
     }
@@ -291,7 +293,9 @@ class _HomePageState extends State<HomePage> {
     if (shouldResume == true && mounted) {
       _restoreFromCheckpoint(checkpoint);
     } else {
-      // User declined or dismissed — discard old checkpoint
+      // User declined or dismissed — discard old checkpoint and its private
+      // picker copies as well.
+      await CheckpointService.cleanupMaterializedInputs(checkpoint);
       await CheckpointService.delete();
     }
   }
@@ -299,9 +303,15 @@ class _HomePageState extends State<HomePage> {
   /// Restore queue state from a checkpoint.
   void _restoreFromCheckpoint(Checkpoint checkpoint) {
     final existing = _queue.map((item) => item.inputPath).toSet();
+    var restored = 0;
+    var unavailable = 0;
 
     for (final cpItem in checkpoint.items) {
       if (existing.contains(cpItem.inputPath)) continue;
+      if (!CheckpointService.isSourceUnchanged(cpItem)) {
+        unavailable++;
+        continue;
+      }
 
       final QueueItemStatus status;
       switch (cpItem.status) {
@@ -330,14 +340,22 @@ class _HomePageState extends State<HomePage> {
         ),
       );
       existing.add(cpItem.inputPath);
+      restored++;
     }
 
     _checkpoint = checkpoint;
     _validateOutputPlans();
     _updateStatusText();
     setState(() {
-      _currentFileName =
-          '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度';
+      final message = StringBuffer(
+        '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度',
+      );
+      if (restored == 0 && unavailable > 0) {
+        message.write('；临时源文件已失效，请重新选择');
+      } else if (unavailable > 0) {
+        message.write('；$unavailable 个源文件不可用，已跳过');
+      }
+      _currentFileName = message.toString();
     });
   }
 
@@ -797,18 +815,27 @@ class _HomePageState extends State<HomePage> {
 
     for (var index = 0; index < result.files.length; index++) {
       final file = result.files[index];
-      final path = await _resolvePickedFile(file, index);
-      if (path == null) {
+      final resolvedPath = await _resolvePickedFile(file, index);
+      if (resolvedPath == null) {
         skipped++;
         continue;
       }
+      // file_picker may return an OS-cache path (especially for iOS and
+      // Android content:// imports). Persist that input before it enters the
+      // queue; otherwise a killed app leaves the checkpoint pointing at a
+      // path that the OS has already deleted.
+      final path = await CheckpointService.materializeTemporaryInput(
+        resolvedPath,
+      );
       if (existing.contains(path)) continue;
 
       try {
         final classification = await XdRemuxService.classify(path);
         final folderName = classification['folderName'] as String?;
+        // Keep output naming based on the user-selected source path, not the
+        // private checkpoint copy (whose filename contains an internal key).
         final outputPath = _config.outputPathFor(
-          path,
+          resolvedPath,
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
@@ -1432,8 +1459,12 @@ class _HomePageState extends State<HomePage> {
     if (_checkpoint == null) return;
 
     if (_failedCount == 0) {
-      // All success — remove checkpoint
-      CheckpointService.delete();
+      // All success — remove checkpoint and release private picker copies.
+      final completedCheckpoint = _checkpoint!;
+      unawaited(
+        CheckpointService.cleanupMaterializedInputs(completedCheckpoint),
+      );
+      unawaited(CheckpointService.delete());
       _checkpoint = null;
     } else {
       // Has failures — keep checkpoint for potential resume
@@ -1503,15 +1534,19 @@ class _HomePageState extends State<HomePage> {
 
   void _clearQueue() {
     if (!_canEditQueue) return;
+    final oldCheckpoint = _checkpoint;
     setState(() {
       _queue.clear();
       _selectedIndex = null;
       _statusText = '就绪';
       _currentFileName = '';
     });
-    // M6: Clear checkpoint when queue is manually cleared
+    // M6: Clear checkpoint when queue is manually cleared.
     _checkpoint = null;
-    CheckpointService.delete();
+    if (oldCheckpoint != null) {
+      unawaited(CheckpointService.cleanupMaterializedInputs(oldCheckpoint));
+    }
+    unawaited(CheckpointService.delete());
   }
 
   void _clearCompleted() {
@@ -1615,17 +1650,23 @@ class _HomePageState extends State<HomePage> {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
-    for (final path in paths) {
-      if (!isSupportedInputPath(path)) {
+    for (final resolvedPath in paths) {
+      if (!isSupportedInputPath(resolvedPath)) {
         ignored++;
         continue;
       }
+      // Shared-media intake and some picker implementations hand us a cache
+      // path. Use the same persistent materialization path as file picking so
+      // share/drop and picker have identical resume semantics.
+      final path = await CheckpointService.materializeTemporaryInput(
+        resolvedPath,
+      );
       if (existing.contains(path)) continue;
       try {
         final classification = await XdRemuxService.classify(path);
         final folderName = classification['folderName'] as String?;
         final outputPath = _config.outputPathFor(
-          path,
+          resolvedPath,
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );

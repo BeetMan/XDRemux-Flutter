@@ -16,6 +16,7 @@ class CheckpointService {
   CheckpointService._();
 
   static const _fileName = 'xdremux_checkpoint.jsonl';
+  static const _materializedInputDirName = 'xdremux_checkpoint_inputs';
   static File? _checkpointFile;
 
   // ---------------------------------------------------------------------------
@@ -27,6 +28,100 @@ class CheckpointService {
     final dir = await getApplicationSupportDirectory();
     _checkpointFile = File('${dir.path}${Platform.pathSeparator}$_fileName');
     return _checkpointFile!;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Input materialization
+  // ---------------------------------------------------------------------------
+
+  /// Keep picker/cache-backed inputs alive for checkpoint resume.
+  ///
+  /// File pickers on iOS and Android commonly return a path under the OS
+  /// temporary directory. That path can disappear when the app is killed,
+  /// leaving a checkpoint that points at an unreadable source. Only temporary
+  /// inputs are copied; real user paths stay in place so EXIF/GPS and output
+  /// directory behavior remain unchanged.
+  static Future<String> materializeTemporaryInput(String inputPath) async {
+    final source = File(inputPath);
+    if (!source.existsSync()) return inputPath;
+
+    final tempDir = await getTemporaryDirectory();
+    if (!_isWithin(inputPath, tempDir.path)) return inputPath;
+
+    try {
+      final stat = await source.stat();
+      final supportDir = await getApplicationSupportDirectory();
+      final dir = Directory(
+        '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
+      );
+      await dir.create(recursive: true);
+
+      final originalName = inputPath.split(RegExp(r'[/\\]')).last;
+      final safeName = originalName.replaceAll(
+        RegExp(r'[<>:"/\\|?*\x00-\x1F]'),
+        '_',
+      );
+      final key = _stableInputKey(inputPath, stat.size, stat.modified);
+      final destination = File(
+        '${dir.path}${Platform.pathSeparator}$key-${safeName.isEmpty ? 'input.heic' : safeName}',
+      );
+
+      if (!destination.existsSync() ||
+          await destination.length() != stat.size) {
+        await source.copy(destination.path);
+      }
+      return destination.path;
+    } catch (_) {
+      // The picker path remains usable for the current run even if the
+      // persistent copy cannot be made. The caller will surface a missing
+      // source on a later resume rather than failing file selection now.
+      return inputPath;
+    }
+  }
+
+  static bool _isWithin(String child, String parent) {
+    String normalize(String value) {
+      var result = value.replaceAll('\\', '/');
+      while (result.length > 1 && result.endsWith('/')) {
+        result = result.substring(0, result.length - 1);
+      }
+      return result.toLowerCase();
+    }
+
+    final c = normalize(child);
+    final p = normalize(parent);
+    return c == p || c.startsWith('$p/');
+  }
+
+  static String _stableInputKey(String path, int size, DateTime modified) {
+    // FNV-1a keeps the materialized filename deterministic across app
+    // launches without adding a crypto dependency.
+    var hash = 0xcbf29ce484222325;
+    final text = '$path|$size|${modified.millisecondsSinceEpoch}';
+    for (final codeUnit in text.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  /// Remove persistent picker copies after a completely successful batch.
+  /// Failed/cancelled checkpoints retain them for resume.
+  static Future<void> cleanupMaterializedInputs(Checkpoint checkpoint) async {
+    final supportDir = await getApplicationSupportDirectory();
+    final dir = Directory(
+      '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
+    );
+    for (final item in checkpoint.items) {
+      if (!_isWithin(item.inputPath, dir.path)) continue;
+      try {
+        final file = File(item.inputPath);
+        if (file.existsSync()) await file.delete();
+      } catch (_) {}
+    }
+    try {
+      if (dir.existsSync() && dir.listSync().isEmpty) await dir.delete();
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
