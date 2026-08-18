@@ -21,6 +21,8 @@ mod dump;
 mod inspect;
 mod json;
 mod bplist;
+mod portrait;
+mod portrait_consts;
 mod portrait_depth;
 mod scaffold;
 mod seg;
@@ -64,6 +66,13 @@ fn main() -> ExitCode {
         "convert" => cmd_convert(&args[2..]),
         "graft-styles" => cmd_graft_styles(&args[2..]),
         "scaffold" => cmd_scaffold(&args[2..]),
+        "portrait" => match crate::portrait::cmd_portrait(&args[2..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("portrait: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "portrait-depth" => match crate::portrait_depth::cmd_portrait_depth(&args[2..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

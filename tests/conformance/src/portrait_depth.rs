@@ -13,10 +13,10 @@
 
 use serde_json::{json, Map, Value};
 
-const HEADER_SIZE: usize = 768;
+pub(crate) const HEADER_SIZE: usize = 768;
 
 /// Parse pixel dimensions from a JPEG (SOF0/1/2) or PNG (IHDR) payload.
-fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     // PNG: 8-byte signature + IHDR
     if data.starts_with(b"\x89PNG\r\n\x1a\n") && data.len() > 24 {
         let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
@@ -54,18 +54,18 @@ fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
-fn read_u32le(d: &[u8], off: usize) -> Option<u32> {
+pub(crate) fn read_u32le(d: &[u8], off: usize) -> Option<u32> {
     d.get(off..off + 4)
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
-fn read_u16le(d: &[u8], off: usize) -> Option<u16> {
+pub(crate) fn read_u16le(d: &[u8], off: usize) -> Option<u16> {
     d.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]))
 }
-fn read_i32le(d: &[u8], off: usize) -> Option<i32> {
+pub(crate) fn read_i32le(d: &[u8], off: usize) -> Option<i32> {
     d.get(off..off + 4)
         .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
-fn read_f32le(d: &[u8], off: usize) -> Option<f32> {
+pub(crate) fn read_f32le(d: &[u8], off: usize) -> Option<f32> {
     read_u32le(d, off).map(f32::from_bits)
 }
 
@@ -110,18 +110,18 @@ impl PlaneStats {
     }
 }
 
-struct ConfigSummary {
-    version: f32,
-    canvas_width: i32,
-    canvas_height: i32,
-    focus_x: i32,
-    focus_y: i32,
-    current_f_number: Option<f32>,
-    object_distance: Option<i32>,
-    focus_roi_type: Option<i32>,
+pub(crate) struct ConfigSummary {
+    pub(crate) version: f32,
+    pub(crate) canvas_width: i32,
+    pub(crate) canvas_height: i32,
+    pub(crate) focus_x: i32,
+    pub(crate) focus_y: i32,
+    pub(crate) current_f_number: Option<f32>,
+    pub(crate) object_distance: Option<i32>,
+    pub(crate) focus_roi_type: Option<i32>,
 }
 
-fn parse_config(data: Option<&[u8]>) -> Option<ConfigSummary> {
+pub(crate) fn parse_config(data: Option<&[u8]>) -> Option<ConfigSummary> {
     let data = data?;
     let version = read_f32le(data, 0)?;
     if !version.is_finite() || !(1.0..=4.0).contains(&version) {
@@ -163,7 +163,7 @@ impl ConfigSummary {
 }
 
 /// The calibration decision (R5 stage 3 closure).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum ScaleDecision {
     /// Producer quantization is present: pass the embedded scale through
     /// (upstream behaviour).
@@ -176,6 +176,14 @@ pub(crate) enum ScaleDecision {
 }
 
 impl ScaleDecision {
+    /// The chosen scale value, when available.
+    pub(crate) fn scale(&self) -> Option<f64> {
+        match self {
+            Self::Passthrough(v) | Self::CalibratedP50(v) => Some(*v),
+            Self::Unavailable(_) => None,
+        }
+    }
+
     fn json(&self) -> Value {
         match self {
             Self::Passthrough(s) => json!({
@@ -199,7 +207,7 @@ impl ScaleDecision {
 /// Physical scale formula shared by the diagnostic candidates and the p50
 /// fallback: map a focus-window rank through the rank normalization into an
 /// internal disparity, then `focal * baseline / (disparity * distance)`.
-fn scale_for_rank(
+pub(crate) fn scale_for_rank(
     rank: f64,
     rank_maximum: u32,
     focal_length: f64,
@@ -213,7 +221,7 @@ fn scale_for_rank(
 
 /// Focus-window rank percentiles (p20/p50/p80) of the rank plane around the
 /// config focus point, mapped into the source-image coordinate space.
-fn focus_window_ranks(
+pub(crate) fn focus_window_ranks(
     data: &[u8],
     width: usize,
     height: usize,
@@ -254,7 +262,7 @@ fn focus_window_ranks(
     Some(ranks)
 }
 
-fn percentile(sorted: &[u8], fraction: f64) -> f64 {
+pub(crate) fn percentile(sorted: &[u8], fraction: f64) -> f64 {
     let idx = ((sorted.len() - 1) as f64 * fraction).round() as usize;
     sorted[idx.min(sorted.len() - 1)] as f64
 }
