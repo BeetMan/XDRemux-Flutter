@@ -91,11 +91,9 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let (pw, ph) = primary_ispe(&std_meta, primary)?;
 
     // ---- 2. Sky matte (zero content) ----------------------------------
-    // The embedded ImageIO-compatible zero matte is fixed at 2016x1728
-    // (half of the 4096x3512 reference photo). For other primary sizes we
-    // still declare the embedded stream's dims (content is all-zero; the
-    // size mismatch only matters for real segmentation, which is R4).
-    let (matte_w, matte_h) = (2016u32, 1728u32);
+    // Half-resolution like the golden Vision matte.
+    let matte_w = (pw / 2) & !1;
+    let matte_h = (ph / 2) & !1;
     // Default: x265 mono zero matte, converted to in-container form (pure
     // IDR, length-prefixed). ImageIO's aux path accepts this — the earlier
     // "x265 rejected" finding was actually an annex-B-in-mdat bug. Envs:
@@ -112,7 +110,24 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
         Ok((xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc))
     };
-    let (matte_stream, matte_hvcc) = if std::env::var("XSCAFFOLD_X265_MATTE_420").is_ok() {
+    let (matte_stream, matte_hvcc) = if let Ok(raw_path) = std::env::var("XSCAFFOLD_MATTE_RAW") {
+        // Real matte bitmap (raw gray8, matte_w x matte_h), e.g. from the
+        // `sky-matte` subcommand's SegFormer output.
+        let raw = std::fs::read(&raw_path).map_err(|e| format!("matte raw: {e}"))?;
+        if raw.len() != (matte_w * matte_h) as usize {
+            return Err(format!(
+                "matte raw size {} != {}x{}", raw.len(), matte_w, matte_h
+            ));
+        }
+        let refs: Vec<&[u8]> = vec![&raw];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
+            .map_err(|e| format!("matte HEVC encode: {e}"))?
+            .into_iter().next().ok_or("matte encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+            .ok_or("matte hvcC extraction failed")?;
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+    } else if std::env::var("XSCAFFOLD_X265_MATTE_420").is_ok() {
         x265_matte(matte_w, matte_h, true, 1)?
     } else if std::env::var("XSCAFFOLD_VT_MATTE").is_ok() {
         (

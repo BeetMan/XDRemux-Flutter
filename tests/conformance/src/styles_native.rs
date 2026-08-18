@@ -82,7 +82,23 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         .map(|p| std::fs::read(p).expect("sky stream file"));
     let env_sky_hvcc = std::env::var("XSTYLES_SKY_HVCC").ok()
         .map(|p| std::fs::read(p).expect("sky hvcc file"));
-    let (sky_stream, sky_hvcc) = if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
+    let (sky_stream, sky_hvcc) = if let Ok(raw_path) = std::env::var("XSTYLES_SKY_RAW") {
+        // Real matte bitmap (raw gray8, matte_w x matte_h), e.g. SegFormer.
+        let raw = std::fs::read(&raw_path).map_err(|e| format!("sky raw: {e}"))?;
+        if raw.len() != (matte_w * matte_h) as usize {
+            return Err(format!(
+                "sky raw size {} != {}x{}", raw.len(), matte_w, matte_h
+            ));
+        }
+        let refs: Vec<&[u8]> = vec![&raw];
+        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
+            .map_err(|e| format!("sky matte encode: {e}"))?
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+            .ok_or("sky hvcC extraction failed")?;
+        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+    } else if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
         let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)

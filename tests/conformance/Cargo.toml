@@ -7,6 +7,13 @@ edition = "2021"
 xdremux-core = { path = "../../xdremux/rust" }
 serde_json = "1.0"
 
+# R4: portable sky-matte segmentation. ort with load-dynamic links the
+# system ONNX Runtime (brew onnxruntime) at runtime - tract 0.21/0.22 both
+# choke on SegFormer (quantized: bias-add analyse failure; f32: run SEGV).
+# image = PNG decode/resize for the matte input path.
+ort = { version = "2.0.0-rc.10", features = ["load-dynamic"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [[bin]]
 name = "xdremux-conformance"
 path = "src/main.rs"

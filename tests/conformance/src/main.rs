@@ -22,6 +22,7 @@ mod inspect;
 mod json;
 mod bplist;
 mod scaffold;
+mod seg;
 mod styles_consts;
 mod styles_native;
 mod styles_graft;
@@ -62,6 +63,13 @@ fn main() -> ExitCode {
         "convert" => cmd_convert(&args[2..]),
         "graft-styles" => cmd_graft_styles(&args[2..]),
         "scaffold" => cmd_scaffold(&args[2..]),
+        "sky-matte" => match crate::seg::cmd_sky_matte(&args[2..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("sky-matte: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "styles" => cmd_styles_native(&args[2..]),
         "rewrite-meta" => cmd_rewrite_meta(&args[2..]),
         other => {
