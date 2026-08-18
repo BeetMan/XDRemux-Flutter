@@ -1319,6 +1319,7 @@ class _HomePageState extends State<HomePage> {
       // software path so conversion never silently breaks.
       Map<String, dynamic>? result;
       if (runConfig.backend == ConversionBackend.rust &&
+          !runConfig.applePhotographicStyles &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
