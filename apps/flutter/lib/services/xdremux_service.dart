@@ -121,7 +121,7 @@ class XdRemuxService {
         'schema': 'xdremux-portrait-calibration-research-v1',
         'researchOnly': true,
         'safeToTransform': false,
-        'error': 'Apple Portrait research is only available on macOS/iOS.',
+        'error': 'Apple 人像模式研究仅支持 macOS/iOS。',
       };
     }
     try {
@@ -136,7 +136,7 @@ class XdRemuxService {
           'schema': 'xdremux-portrait-calibration-research-v1',
           'researchOnly': true,
           'safeToTransform': false,
-          'error': 'invalid native Portrait research report',
+          'error': 'Apple 人像模式研究报告无效',
         };
       }
       return raw.map((key, value) => MapEntry(key.toString(), value));
@@ -145,7 +145,7 @@ class XdRemuxService {
         'schema': 'xdremux-portrait-calibration-research-v1',
         'researchOnly': true,
         'safeToTransform': false,
-        'error': 'macOS Portrait research bridge is unavailable.',
+        'error': 'macOS Apple 人像模式研究桥接不可用。',
       };
     } on PlatformException catch (error) {
       return <String, dynamic>{
@@ -165,7 +165,7 @@ class XdRemuxService {
       if (request.applePortrait && request.backend != ConversionBackend.swift) {
         return BackendConversionResult.failure(
           request.backend,
-          'Apple Portrait 目前只能由 Swift 后端执行。',
+          'Apple 人像模式目前只能由 Swift 后端执行。',
         );
       }
       if (request.applePhotographicStyles &&
@@ -174,7 +174,7 @@ class XdRemuxService {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-              ? 'Apple Photographic Styles 当前未通过 capability 验证。'
+              ? 'Apple 相册摄影风格当前未通过能力验证。'
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }
@@ -182,7 +182,7 @@ class XdRemuxService {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-              ? 'Apple Portrait 当前未通过 capability 验证。'
+              ? 'Apple 人像模式当前未通过能力验证。'
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }

@@ -1076,7 +1076,7 @@ class _HomePageState extends State<HomePage> {
       issues.add(
         const _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple 人像景深不可用',
+          title: 'Apple 人像模式不可用',
           detail: '当前平台 capability 未就绪。',
         ),
       );
@@ -2184,7 +2184,7 @@ class _HomePageState extends State<HomePage> {
       if (Platform.isMacOS || Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.camera_alt_outlined),
-          tooltip: 'Apple Portrait 实验室',
+          tooltip: 'Apple 人像模式实验室',
           onPressed: _openApplePortraitLab,
         ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
@@ -3305,10 +3305,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         if (_backendCapabilities.swiftPortrait)
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('人像景深（Swift）'),
-                            subtitle: const Text(
-                              '保留 Apple 相册的景深滑杆；仅对包含可验证人像资源的照片开放。',
-                            ),
+                            title: const Text('Apple 人像模式（Swift）'),
                             value: _cfg.applePortrait,
                             onChanged: (value) {
                               setState(() {

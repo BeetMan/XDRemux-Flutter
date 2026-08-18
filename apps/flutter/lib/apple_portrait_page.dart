@@ -96,7 +96,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
     if (!_capabilities.swiftPortraitResearch) {
       _showError(
         _capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-            ? '当前 macOS 未通过 Portrait research capability 验证。'
+            ? '当前 macOS 未通过 Apple 人像模式研究能力验证。'
             : _capabilities.swiftAppleFeaturesUnavailableReason,
       );
       return;
@@ -104,7 +104,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
     final outputDirectory = _outputDirectory ?? _defaultOutputDirectory();
     setState(() {
       _running = true;
-      _status = '正在生成 Apple Portrait 研究输出…';
+      _status = '正在生成 Apple 人像模式研究输出…';
       _manifest = null;
     });
     try {
@@ -125,7 +125,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
         _status = '研究输出完成：$completed/${samples.length} 张样本。';
       });
     } catch (error) {
-      _showError('Portrait research 失败：$error');
+      _showError('Apple 人像模式研究失败：$error');
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -190,7 +190,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
     final supported = Platform.isMacOS || Platform.isIOS;
     final outputs = _outputs();
     return Scaffold(
-      appBar: AppBar(title: const Text('Apple Portrait 实验室')),
+      appBar: AppBar(title: const Text('Apple 人像模式实验室')),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
@@ -210,7 +210,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          '实验性独立模块：只生成 Apple Portrait 文件，不做 OPPO 回传、水印写回或 OPPO/Apple 双模式转换。请使用 Apple 相册验证景深编辑行为。',
+                          '实验性独立模块：只生成 Apple 人像模式文件，不做 OPPO 回传、水印写回或 OPPO/Apple 双模式转换。请使用 Apple 相册验证人像编辑行为。',
                         ),
                       ),
                     ],
@@ -221,7 +221,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                         ? (_capabilities.swiftPortraitResearch
                               ? '${Platform.isIOS ? 'iOS' : 'macOS'} research capability：可用'
                               : '${Platform.isIOS ? 'iOS' : 'macOS'} research capability：不可用')
-                        : 'Apple Portrait research 当前只支持 macOS/iOS。',
+                        : 'Apple 人像模式研究当前只支持 macOS/iOS。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -295,7 +295,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.auto_awesome),
-                    label: Text(_running ? '处理中…' : '生成 Apple Portrait 输出'),
+                    label: Text(_running ? '处理中…' : '生成 Apple 人像模式输出'),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -331,7 +331,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '输出已通过 native Apple Portrait validator；这不等同于正式稳定能力。',
+                      '输出已通过 Apple 人像模式验证；这不等同于正式稳定能力。',
                       style: theme.textTheme.bodySmall,
                     ),
                     const SizedBox(height: 8),
