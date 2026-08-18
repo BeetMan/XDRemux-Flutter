@@ -802,9 +802,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C0D3A1B2C3D4E5F607182932 /* XCLocalSwiftPackageReference "SwiftBackend" */ = {
+		C0D3A1B2C3D4E5F607182932 /* XCLocalSwiftPackageReference "XDRemuxMacBackend" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = SwiftBackend;
+			relativePath = XDRemuxMacBackend;
 		};
 		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;

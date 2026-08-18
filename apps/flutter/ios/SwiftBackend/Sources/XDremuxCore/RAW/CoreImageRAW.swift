@@ -1043,7 +1043,7 @@ public enum CoreImageRAW {
         output.withUnsafeMutableBytes { raw in
             guard let destination = raw.bindMemory(to: UInt16.self).baseAddress else { return }
             for index in pixels.indices {
-                destination[index] = Float16(pixels[index]).bitPattern.littleEndian
+                destination[index] = XDRemuxHalf.encode(pixels[index]).littleEndian
             }
         }
         return output
@@ -1177,7 +1177,7 @@ public enum CoreImageRAW {
         )
         let rawStatistics = statistics(rawPixels)
         guard rawStatistics.finite,
-              rawPixels.allSatisfy({ $0.isFinite && Float16($0).isFinite }) else {
+              rawPixels.allSatisfy(\.isFinite) else {
             throw DecodeError.nonFiniteOutput
         }
         // Keep both rasters in DNG/JPEG storage coordinates.  Their Orientation

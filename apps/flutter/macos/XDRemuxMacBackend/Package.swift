@@ -18,17 +18,16 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/21Z121Z1/XDRemux.git",
-            exact: "1.3.1"
-        )
+        // Use the vendored package shared with the iOS backend so macOS and
+        // iOS compile the same patched XDRemuxCore sources.
+        .package(path: "../../ios/SwiftBackend")
     ],
     targets: [
         .target(
             name: "XDRemuxFlutterBackend",
             dependencies: [
-                .product(name: "XDRemuxCore", package: "xdremux"),
-                .product(name: "XDRemuxAppleFeatures", package: "xdremux")
+                .product(name: "XDRemuxCore", package: "SwiftBackend"),
+                .product(name: "XDremuxAppleFeatures", package: "SwiftBackend")
             ]
         ),
         .executableTarget(

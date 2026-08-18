@@ -2142,7 +2142,7 @@ package enum PortraitConversionPipeline {
         for rank in ranks {
             let normalizedRank = pow(Float(rank) / 255.0, Float(disparityExponentiation))
             let value = near - normalizedRank * span
-            var bits = Float16(value).bitPattern.littleEndian
+            var bits = XDRemuxHalf.encode(value).littleEndian
             withUnsafeBytes(of: &bits) { disparity.append(contentsOf: $0) }
         }
         description[kCGImagePropertyWidth as String] = width

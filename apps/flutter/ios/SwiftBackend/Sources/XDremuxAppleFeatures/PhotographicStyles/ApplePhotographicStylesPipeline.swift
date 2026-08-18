@@ -570,7 +570,7 @@ package enum ApplePhotographicStylesPipeline {
     }
 
     private static func halfRounded(_ value: Float) -> Float {
-        Float(Float16(value))
+        XDRemuxHalf.decode(XDRemuxHalf.encode(value))
     }
 
     // appleEncodeLinear quantizes its input to Float16 first, so the result is
@@ -580,32 +580,32 @@ package enum ApplePhotographicStylesPipeline {
         var table = [Float](repeating: 0, count: 65_536)
         for pattern in 0..<65_536 {
             table[pattern] = appleEncodeLinear(
-                Float(Float16(bitPattern: UInt16(pattern)))
+                XDRemuxHalf.decode(UInt16(pattern))
             )
         }
         return table
     }()
 
     private static func appleEncodeLinearTabulated(_ input: Float) -> Float {
-        appleEncodeLinearTable[Int(Float16(input).bitPattern)]
+        appleEncodeLinearTable[Int(XDRemuxHalf.encode(input))]
     }
 
     private static func appleEncodeLinear(_ input: Float) -> Float {
         let x = halfRounded(input)
-        let highThreshold = Float(Float16(bitPattern: 0x211f))
-        let lowThreshold = Float(Float16(bitPattern: 0xab38))
+        let highThreshold = XDRemuxHalf.decode(0x211f)
+        let lowThreshold = XDRemuxHalf.decode(0xab38)
         if x >= highThreshold {
-            let logInput = halfRounded(x + Float(Float16(bitPattern: 0x20f0)))
+            let logInput = halfRounded(x + XDRemuxHalf.decode(0x20f0))
             let logged = halfRounded(log2f(logInput))
             return halfRounded(
-                halfRounded(logged * Float(Float16(bitPattern: 0x2d79)))
-                    + Float(Float16(bitPattern: 0x398c))
+                halfRounded(logged * XDRemuxHalf.decode(0x2d79))
+                    + XDRemuxHalf.decode(0x398c)
             )
         }
         if x > lowThreshold {
-            let toe = halfRounded(x + Float(Float16(bitPattern: 0x2b38)))
+            let toe = halfRounded(x + XDRemuxHalf.decode(0x2b38))
             return halfRounded(
-                halfRounded(toe * toe) * Float(Float16(bitPattern: 0x51e9))
+                halfRounded(toe * toe) * XDRemuxHalf.decode(0x51e9)
             )
         }
         return 0
@@ -952,11 +952,11 @@ package enum ApplePhotographicStylesPipeline {
                     let target = (targetY * targetWidth + targetX) * 4
                     for component in 0..<3 {
                         let value = sums[component] / count
-                        destination[target + component] = Float16(
+                        destination[target + component] = XDRemuxHalf.encode(
                             value.isFinite ? value : 0
-                        ).bitPattern.littleEndian
+                        ).littleEndian
                     }
-                    destination[target + 3] = Float16(1).bitPattern.littleEndian
+                    destination[target + 3] = XDRemuxHalf.encode(1).littleEndian
                 }
             }
         }
@@ -1256,14 +1256,14 @@ package enum ApplePhotographicStylesPipeline {
                             encodedDestination[pixel * 3 + component] = UInt8(
                                 min(255, max(0, Int((encodedValue * 255).rounded())))
                             )
-                            tone[pixel * 4 + component] = Float16(baseValue).bitPattern.littleEndian
+                            tone[pixel * 4 + component] = XDRemuxHalf.encode(baseValue).littleEndian
                             linear[pixel * 4 + component] = UInt16(
                                 min(65_535, max(0, Int((serializedRendererLinear * 65_535).rounded())))
                             ).littleEndian
                             rendererLinearMinimum = min(rendererLinearMinimum, rendererLinear)
                             rendererLinearMaximum = max(rendererLinearMaximum, rendererLinear)
                         }
-                        tone[pixel * 4 + 3] = Float16(1).bitPattern.littleEndian
+                        tone[pixel * 4 + 3] = XDRemuxHalf.encode(1).littleEndian
                         linear[pixel * 4 + 3] = UInt16.max.littleEndian
                     }
                 }
@@ -1800,7 +1800,7 @@ package enum ApplePhotographicStylesPipeline {
                     max(average * valueScale + valueOffset, outputMinimum),
                     outputMaximum
                 )
-                var bits = Float16(scaled).bitPattern.littleEndian
+                var bits = XDRemuxHalf.encode(scaled).littleEndian
                 withUnsafeBytes(of: &bits) { presentationOrder.append(contentsOf: $0) }
             }
         }
@@ -1873,7 +1873,7 @@ package enum ApplePhotographicStylesPipeline {
                 for pixel in 0..<(width * height) {
                     for component in 0..<3 {
                         let bits = UInt16(littleEndian: source[pixel * 4 + component])
-                        let value = Float(Float16(bitPattern: bits))
+                        let value = XDRemuxHalf.decode(bits)
                         guard value.isFinite else {
                             finite = false
                             continue

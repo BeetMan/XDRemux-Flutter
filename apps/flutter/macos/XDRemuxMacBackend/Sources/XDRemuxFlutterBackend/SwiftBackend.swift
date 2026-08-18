@@ -1,6 +1,6 @@
 import Foundation
 import XDRemuxCore
-import XDRemuxAppleFeatures
+import XDremuxAppleFeatures
 
 public struct SwiftBackendRequest: Sendable {
     public let requestID: String

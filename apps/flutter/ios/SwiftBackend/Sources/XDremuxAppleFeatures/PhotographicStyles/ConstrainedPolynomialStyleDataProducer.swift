@@ -1913,7 +1913,7 @@ package struct ConstrainedPolynomialStyleDataProducer {
         result.reserveCapacity(AppleStyleDataLayout.byteCount)
         for _ in 0..<AppleStyleDataLayout.tileCount {
             for value in block {
-                var bits = Float16(value).bitPattern.littleEndian
+                var bits = XDRemuxHalf.encode(value).littleEndian
                 withUnsafeBytes(of: &bits) { result.append(contentsOf: $0) }
             }
         }

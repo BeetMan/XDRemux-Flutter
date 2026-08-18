@@ -1,5 +1,5 @@
 import Foundation
-import XDRemuxAppleFeatures
+import XDremuxAppleFeatures
 import XDRemuxCore
 
 /// Explicitly gated, macOS-only Portrait calibration runner.

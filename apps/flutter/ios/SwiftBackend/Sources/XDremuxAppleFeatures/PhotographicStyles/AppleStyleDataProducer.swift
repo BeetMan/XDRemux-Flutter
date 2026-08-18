@@ -98,8 +98,7 @@ package enum AppleStyleDataLayout {
         var block = Data()
         block.reserveCapacity(blockValueCount * 2)
         for index in 0..<blockValueCount {
-            var bits = Float16(identityIndices.contains(index) ? 1 : 0)
-                .bitPattern
+            var bits = XDRemuxHalf.encode(identityIndices.contains(index) ? 1 : 0)
                 .littleEndian
             withUnsafeBytes(of: &bits) { block.append(contentsOf: $0) }
         }
@@ -134,7 +133,7 @@ package enum AppleStyleDataLayout {
         for valueIndex in 0..<(data.count / 2) {
             let offset = valueIndex * 2
             let bits = UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
-            let value = Float(Float16(bitPattern: bits))
+            let value = XDRemuxHalf.decode(bits)
             if !value.isFinite {
                 nonfiniteCount += 1
                 continue
@@ -385,7 +384,7 @@ package struct AppleLearnNodeStyleDataProducer: AppleStyleDataProducing {
             for channelOffset in stride(from: 0, through: 4, by: 2) {
                 let offset = pixelOffset + channelOffset
                 let bits = UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
-                let value = Float(Float16(bitPattern: bits))
+                let value = XDRemuxHalf.decode(bits)
                 guard value.isFinite else {
                     throw CLIError.invalidContainer(
                         "Apple LearnNode RGBA16F capture contains NaN or Inf"
