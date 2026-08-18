@@ -469,6 +469,76 @@ fn resample_plane(plane: &[u8], w: usize, h: usize, tw: usize, th: usize) -> Vec
     out
 }
 
+/// Read the EXIF orientation from the embedded `src.image` JPEG.
+fn jpeg_orientation(data: &[u8]) -> u16 {
+    if !data.starts_with(&[0xff, 0xd8]) {
+        return 1;
+    }
+    let mut pos = 2usize;
+    while pos + 4 <= data.len() {
+        if data[pos] != 0xff {
+            pos += 1;
+            continue;
+        }
+        let marker = data[pos + 1];
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if len < 2 || pos + 2 + len > data.len() {
+            break;
+        }
+        if marker == 0xe1 && len >= 8 && &data[pos + 4..pos + 10] == b"Exif\0\0" {
+            let tiff = pos + 10;
+            let little = data.get(tiff..tiff + 2) == Some(b"II");
+            let read_u16 = |at: usize| -> Option<u16> {
+                let b = data.get(at..at + 2)?;
+                Some(if little {
+                    u16::from_le_bytes([b[0], b[1]])
+                } else {
+                    u16::from_be_bytes([b[0], b[1]])
+                })
+            };
+            let read_u32 = |at: usize| -> Option<u32> {
+                let b = data.get(at..at + 4)?;
+                Some(if little {
+                    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                } else {
+                    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+                })
+            };
+            let Some(ifd_offset) = read_u32(tiff + 4) else {
+                continue;
+            };
+            let Some(ifd) = tiff.checked_add(ifd_offset as usize) else {
+                continue;
+            };
+            let Some(count) = read_u16(ifd).map(|value| value as usize) else {
+                continue;
+            };
+            for i in 0..count {
+                let entry = ifd + 2 + i * 12;
+                if read_u16(entry) == Some(0x0112) {
+                    return read_u16(entry + 8).unwrap_or(1);
+                }
+            }
+        }
+        pos += 2 + len;
+    }
+    1
+}
+
+/// Rotate a WxH plane 180 degrees (EXIF orientation-3 mapping).
+fn rotate_180(plane: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let mut out = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            out[y * w + x] = plane[(h - 1 - y) * w + (w - 1 - x)];
+        }
+    }
+    out
+}
+
 /// Rotate a WxH plane 90 degrees clockwise (orientation-6 display mapping).
 fn rotate_cw90(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
     let (nw, nh) = (h, w);
@@ -638,6 +708,11 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let m0 = isobmff::parse_source_meta(base).map_err(|e| format!("meta parse: {e}"))?;
     let (pw_frame, ph_frame) = base_primary_dims(&m0)?;
     let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
+    let source_orientation = crate::container::extract_tail_entry(input, "src.image")
+        .as_deref()
+        .map(jpeg_orientation)
+        .unwrap_or(1);
+    let rotate180 = source_orientation == 3;
     // Use the actual watermark content frame when present. Some OPPO files
     // have a portrait outer canvas but a landscape 4:3 photo centered inside;
     // rotating the aux maps based on the outer canvas flips those files.
@@ -693,10 +768,14 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
         }
     } else {
         let cfg2 = depth.config.as_ref();
-        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
+        let mut nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
             / depth.src_dims.0.max(1) as f64;
-        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
+        let mut ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
             / depth.src_dims.1.max(1) as f64;
+        if rotate180 {
+            nx = 1.0 - nx;
+            ny = 1.0 - ny;
+        }
         match content_rect {
             Some((cx, cy, cw2, ch2)) => {
                 focus_x_norm =
@@ -767,6 +846,9 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let (disp_final, disp_fw, disp_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
         place(&r, w2, h2, 0.5) // disparity at half the primary frame
+    } else if rotate180 {
+        let r = rotate_180(&disparity_u8, depth.width, depth.height);
+        place(&r, depth.width, depth.height, 0.5)
     } else if content_rect.is_some() {
         place(&disparity_u8, depth.width, depth.height, 0.5)
     } else {
@@ -775,22 +857,29 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let (matte_final, matte_fw, matte_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
         place(&r, w2, h2, 0.5)
+    } else if rotate180 {
+        let r = rotate_180(&person_up, mu_w as usize, mu_h as usize);
+        place(&r, mu_w as usize, mu_h as usize, 0.5)
     } else if content_rect.is_some() {
         place(&person_up, mu_w as usize, mu_h as usize, 0.5)
     } else {
         (person_up.clone(), mu_w, mu_h)
     };
-    let hair_final = match (&hair_up, rotate) {
-        (Some(h), true) => {
+    let hair_final = match (&hair_up, rotate, rotate180) {
+        (Some(h), true, _) => {
             let (r, w2, h2) = rotate_cw90(h, mu_w as usize, mu_h as usize);
             let (m, _, _) = place(&r, w2, h2, 0.5);
             Some(m)
         }
-        (Some(h), false) if content_rect.is_some() => {
+        (Some(h), false, true) => {
+            let r = rotate_180(h, mu_w as usize, mu_h as usize);
+            Some(place(&r, mu_w as usize, mu_h as usize, 0.5).0)
+        }
+        (Some(h), false, false) if content_rect.is_some() => {
             Some(place(h, mu_w as usize, mu_h as usize, 0.5).0)
         }
-        (Some(h), false) => Some(h.clone()),
-        (None, _) => None,
+        (Some(h), false, false) => Some(h.clone()),
+        (None, _, _) => None,
     };
     let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
     let (person_stream, person_hvcc) = encode_mono(&matte_final, matte_fw, matte_fh)?;
