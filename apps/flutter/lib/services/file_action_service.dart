@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
@@ -7,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 /// File actions: save to gallery, share, open with system app.
 class FileActionService {
   FileActionService._();
+
+  static const _nativeShareChannel = MethodChannel('xdremux/native-share');
 
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
@@ -49,6 +52,12 @@ class FileActionService {
   static Future<void> shareFile(String filePath) async {
     try {
       if (!File(filePath).existsSync()) return;
+      if (Platform.isIOS) {
+        await _nativeShareChannel.invokeMethod<void>('shareFile', {
+          'path': filePath,
+        });
+        return;
+      }
       final lower = filePath.toLowerCase();
       final isHeic = lower.endsWith('.heic') || lower.endsWith('.heif');
       final xFile = XFile(

@@ -54,6 +54,37 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
 
   private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
 
+  private static func activePresenter() -> UIViewController? {
+    let scenes = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .filter { $0.activationState == .foregroundActive }
+    let window = scenes
+      .flatMap(\.windows)
+      .first(where: { $0.isKeyWindow })
+      ?? scenes.flatMap(\.windows).first(where: { !$0.isHidden && $0.alpha > 0 })
+    guard let root = window?.rootViewController else { return nil }
+    return topViewController(from: root)
+  }
+
+  private static func topViewController(from viewController: UIViewController) -> UIViewController {
+    if let presented = viewController.presentedViewController {
+      return topViewController(from: presented)
+    }
+    if let navigation = viewController as? UINavigationController,
+       let visible = navigation.visibleViewController {
+      return topViewController(from: visible)
+    }
+    if let tab = viewController as? UITabBarController,
+       let selected = tab.selectedViewController {
+      return topViewController(from: selected)
+    }
+    if let split = viewController as? UISplitViewController,
+       let last = split.viewControllers.last {
+      return topViewController(from: last)
+    }
+    return viewController
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
@@ -100,6 +131,50 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     // v1.3.1 with in-process iOS providers). Photographic Styles is gated
     // on iOS 18+, provider availability, the NeutrinoCore style engine and
     // the private Vision SPI classes; Portrait stays closed on iOS.
+    // Present iOS sharing from the active scene rather than relying on the
+    // share_plus window lookup. On iOS 27 the key window can briefly be nil
+    // while Flutter routes are being dismissed, which makes the system share
+    // sheet silently fail to appear.
+    let nativeShareChannel = FlutterMethodChannel(
+      name: "xdremux/native-share",
+      binaryMessenger: messenger
+    )
+    nativeShareChannel.setMethodCallHandler { call, result in
+      guard call.method == "shareFile",
+            let args = call.arguments as? [String: Any],
+            let path = args["path"] as? String else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      DispatchQueue.main.async {
+        guard FileManager.default.fileExists(atPath: path),
+              let presenter = Self.activePresenter() else {
+          result(FlutterError(
+            code: "share_unavailable",
+            message: "No active iOS presentation controller is available",
+            details: nil
+          ))
+          return
+        }
+        let controller = UIActivityViewController(
+          activityItems: [URL(fileURLWithPath: path)],
+          applicationActivities: nil
+        )
+        if let popover = controller.popoverPresentationController {
+          popover.sourceView = presenter.view
+          popover.sourceRect = CGRect(
+            x: presenter.view.bounds.midX,
+            y: presenter.view.bounds.midY,
+            width: 1,
+            height: 1
+          )
+        }
+        presenter.present(controller, animated: true) {
+          result(true)
+        }
+      }
+    }
+
     let backendChannel = FlutterMethodChannel(
       name: "xdremux/swift-backend",
       binaryMessenger: messenger
