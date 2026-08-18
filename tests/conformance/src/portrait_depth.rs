@@ -15,6 +15,45 @@ use serde_json::{json, Map, Value};
 
 const HEADER_SIZE: usize = 768;
 
+/// Parse pixel dimensions from a JPEG (SOF0/1/2) or PNG (IHDR) payload.
+fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    // PNG: 8-byte signature + IHDR
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") && data.len() > 24 {
+        let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some((w, h));
+    }
+    // JPEG: scan markers for SOF0/1/2
+    if data.starts_with(b"\xff\xd8") {
+        let mut pos = 2usize;
+        while pos + 4 <= data.len() {
+            if data[pos] != 0xff {
+                pos += 1;
+                continue;
+            }
+            let marker = data[pos + 1];
+            if marker == 0xc0 || marker == 0xc1 || marker == 0xc2 {
+                if pos + 9 <= data.len() {
+                    let h = u16::from_be_bytes([data[pos + 5], data[pos + 6]]) as u32;
+                    let w = u16::from_be_bytes([data[pos + 7], data[pos + 8]]) as u32;
+                    return Some((w, h));
+                }
+                return None;
+            }
+            if marker == 0xd8 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+                pos += 2;
+                continue;
+            }
+            let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+            if len < 2 {
+                return None;
+            }
+            pos += 2 + len;
+        }
+    }
+    None
+}
+
 fn read_u32le(d: &[u8], off: usize) -> Option<u32> {
     d.get(off..off + 4)
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
@@ -306,12 +345,17 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     };
 
     let config = parse_config(config_data.as_deref());
-    // The focus window is mapped through the source image dims; without the
-    // src.image entry we approximate with the canvas (they match on OPPO
-    // portrait shots in practice).
-    let source_dims = config
-        .as_ref()
-        .map(|c| (c.canvas_width.max(0) as u32, c.canvas_height.max(0) as u32))
+    // The focus point lives in full-res source-image coordinates; the config
+    // canvas is a small preview space, so read the real dims from src.image
+    // (falling back to the canvas when src.image is absent).
+    let src_dims = xdremux_core::container::extract_tail_entry(data, "src.image")
+        .and_then(|b| image_dimensions(&b));
+    let source_dims = src_dims
+        .or_else(|| {
+            config
+                .as_ref()
+                .map(|c| (c.canvas_width.max(0) as u32, c.canvas_height.max(0) as u32))
+        })
         .unwrap_or((0, 0));
 
     let decision: ScaleDecision = if quantization_valid
@@ -385,6 +429,9 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     }
 
     report.insert("available".into(), json!(true));
+    report.insert("sourceImage".into(), src_dims
+        .map(|(w, h)| json!({"width": w, "height": h}))
+        .unwrap_or(Value::Null));
     report.insert("safeToTransform".into(), json!(quantization_valid));
     report.insert("classification".into(), json!(classification));
     report.insert(
