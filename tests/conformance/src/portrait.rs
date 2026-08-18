@@ -379,6 +379,53 @@ fn portrait_matte_xmp() -> Vec<u8> {
 }
 
 
+
+/// Content rectangle from the OPPO watermark tail entry
+/// (`watermark.master.params`: a float array containing (x, y, w, h) with
+/// x+w = primary width and y+h = primary height). Returns None when the
+/// photo has no watermark frame (content = full primary).
+fn watermark_content_rect(
+    input: &[u8],
+    primary_w: u32,
+    primary_h: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let tail = {
+        // extract the manifest region without the full LHDR machinery
+        let json_start = input.windows(2).rposition(|w| w == b"[{")?;
+        let json_end = input[json_start..].iter().position(|&b| b == b']')? + json_start;
+        let entries =
+            crate::scaffold::parse_manifest_entries(input, json_start, json_end)?;
+        let e = entries.into_iter().find(|e| e.name == "watermark.master.params")?;
+        let start = (json_start as i64 - e.offset as i64) as usize;
+        input.get(start..start + e.length as usize)?
+    };
+    let n = tail.len() / 4;
+    let mut f = vec![0f32; n];
+    for (k, chunk) in tail.chunks_exact(4).enumerate() {
+        f[k] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    for k in 0..n.saturating_sub(4) {
+        let quad = [f[k], f[k + 1], f[k + 2], f[k + 3]];
+        if !quad.iter().all(|v| *v > 1.0 && (v - v.round()).abs() < 0.01) {
+            continue;
+        }
+        let (x, y, w, h) = (
+            quad[0].round() as i64,
+            quad[1].round() as i64,
+            quad[2].round() as i64,
+            quad[3].round() as i64,
+        );
+        if (x + w - primary_w as i64).abs() <= 3
+            && (y + h - primary_h as i64).abs() <= 3
+            && w > primary_w as i64 / 2
+            && h > primary_h as i64 / 2
+        {
+            return Some((x as u32, y as u32, w as u32, h as u32));
+        }
+    }
+    None
+}
+
 /// Bilinear-resample a gray plane to arbitrary target dims.
 fn resample_plane(plane: &[u8], w: usize, h: usize, tw: usize, th: usize) -> Vec<u8> {
     if w == tw && h == th {
@@ -584,6 +631,10 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         "portrait: primary frame {pw_frame}x{ph_frame}, depth {}x{}, rotate90={rotate}",
         depth.width, depth.height
     );
+    let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
+    eprintln!(
+        "portrait: watermark content rect: {content_rect:?}"
+    );
     let mut focus_x_norm: Option<f64> = None;
     let mut focus_y_norm: Option<f64> = None;
     if rotate {
@@ -592,45 +643,71 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
             / depth.src_dims.0.max(1) as f64;
         let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
             / depth.src_dims.1.max(1) as f64;
-        // landscape (nx, ny) -> portrait (1 - ny, nx)
-        focus_x_norm = Some(1.0 - ny);
-        focus_y_norm = Some(nx);
+        // landscape (nx, ny) -> portrait content (1 - ny, nx), then into
+        // the padded primary frame.
+        match content_rect {
+            Some((cx, cy, cw2, ch2)) => {
+                focus_x_norm = Some((cx as f64 + (1.0 - ny) * cw2 as f64) / pw_frame as f64);
+                focus_y_norm = Some((cy as f64 + nx * ch2 as f64) / ph_frame as f64);
+            }
+            None => {
+                focus_x_norm = Some(1.0 - ny);
+                focus_y_norm = Some(nx);
+            }
+        }
     }
 
-    // Target aux aspect = the primary's frame (Photos linearly stretches
-    // aux maps to the primary size, so emitting them already at the primary
-    // aspect makes the content mapping consistent; for 4:3 primaries this is
-    // a no-op, for hi-res/watermark crops it fixes the misalignment).
-    let disp_target = if rotate {
-        let base = (depth.height, depth.width); // rotated sensor frame
-        let tw = base.0 & !1;
-        let th = ((base.0 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
-        (tw.max(64), th.max(64))
-    } else {
-        (depth.width, depth.height)
+    // Aux geometry: Photos linearly stretches aux maps to the primary size,
+    // so the aux canvas uses the primary aspect. Watermark photos carry a
+    // padded frame (content rect from the watermark tail entry): content is
+    // resampled into the content rect and the frame border gets the far
+    // plane (disparity 0 = fully blurred, mattes 0).
+    let canvas_dims = |scale: f64| -> (usize, usize) {
+        let w = ((pw_frame as f64 * scale).round() as usize).max(64) & !1;
+        let h = ((ph_frame as f64 * scale).round() as usize).max(64) & !1;
+        (w, h)
+    };
+    // Compose: rotate -> resample into the content-rect proportions ->
+    // place onto the canvas (pad-aware). Without a watermark frame the
+    // content rect covers the whole canvas (plain resample).
+    let place = |rotated: &[u8], rw: usize, rh: usize, target_scale: f64| -> (Vec<u8>, u32, u32) {
+        let (cw, chh) = canvas_dims(target_scale);
+        let (cx, cy, ccw, cch) = match content_rect {
+            Some((x, y, w, h)) => (
+                ((x as f64 * target_scale).round() as usize).min(cw),
+                ((y as f64 * target_scale).round() as usize).min(chh),
+                ((w as f64 * target_scale).round() as usize).max(64),
+                ((h as f64 * target_scale).round() as usize).max(64),
+            ),
+            None => (0, 0, cw, chh),
+        };
+        let ccw = ccw.min(cw.saturating_sub(cx));
+        let cch = cch.min(chh.saturating_sub(cy));
+        let content = resample_plane(rotated, rw, rh, ccw, cch);
+        let mut canvas = vec![0u8; cw * chh];
+        for y in 0..cch {
+            let dst = (cy + y) * cw + cx;
+            canvas[dst..dst + ccw].copy_from_slice(&content[y * ccw..(y + 1) * ccw]);
+        }
+        (canvas, cw as u32, chh as u32)
     };
     let (disp_final, disp_fw, disp_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
-        let r2 = resample_plane(&r, w2, h2, disp_target.0, disp_target.1);
-        (r2, disp_target.0 as u32, disp_target.1 as u32)
+        place(&r, w2, h2, 0.5) // disparity at half the primary frame
     } else {
         (disparity_u8.clone(), depth.width as u32, depth.height as u32)
     };
     let (matte_final, matte_fw, matte_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
-        let tw = w2 & !1;
-        let th = ((w2 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
-        let r2 = resample_plane(&r, w2, h2, tw.max(64), th.max(64));
-        (r2, tw.max(64) as u32, th.max(64) as u32)
+        place(&r, w2, h2, 0.5)
     } else {
         (person_up.clone(), mu_w, mu_h)
     };
     let hair_final = match (&hair_up, rotate) {
         (Some(h), true) => {
             let (r, w2, h2) = rotate_cw90(h, mu_w as usize, mu_h as usize);
-            let tw = w2 & !1;
-            let th = ((w2 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
-            Some(resample_plane(&r, w2, h2, tw.max(64), th.max(64)))
+            let (m, _, _) = place(&r, w2, h2, 0.5);
+            Some(m)
         }
         (Some(h), false) => Some(h.clone()),
         (None, _) => None,

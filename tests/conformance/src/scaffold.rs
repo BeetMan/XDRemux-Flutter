@@ -889,6 +889,44 @@ pub(crate) fn max_group_id_pub(data: &[u8], meta: &isobmff::BoxHeader) -> Option
     max_group_id(data, meta)
 }
 
+
+/// Minimal manifest-entry parse for callers that only need (name, offset,
+/// length) from the tail JSON array.
+pub(crate) struct TailEntrySpec {
+    pub(crate) name: String,
+    pub(crate) offset: u64,
+    pub(crate) length: u64,
+}
+pub(crate) fn parse_manifest_entries(
+    _data: &[u8],
+    json_start: usize,
+    json_end: usize,
+) -> Option<Vec<TailEntrySpec>> {
+    let text = std::str::from_utf8(&_data[json_start..=json_end]).ok()?;
+    let mut out = Vec::new();
+    for obj in text.split("{").skip(1) {
+        let end = obj.find('}')?;
+        let body = &obj[..end];
+        let mut name = None;
+        let mut offset = None;
+        let mut length = None;
+        for kv in body.split(',') {
+            let kv = kv.trim();
+            if let Some(v) = kv.strip_prefix("\"name\":") {
+                name = Some(v.trim_matches('"').to_string());
+            } else if let Some(v) = kv.strip_prefix("\"offset\":") {
+                offset = v.parse().ok();
+            } else if let Some(v) = kv.strip_prefix("\"length\":") {
+                length = v.parse().ok();
+            }
+        }
+        if let (Some(n), Some(o), Some(l)) = (name, offset, length) {
+            out.push(TailEntrySpec { name: n, offset: o, length: l });
+        }
+    }
+    Some(out)
+}
+
 /// pub(crate) accessor for styles_native (styles-stage matte XMP sidecar).
 pub(crate) fn matte_xmp_pub() -> Vec<u8> {
     build_matte_xmp()
