@@ -481,3 +481,16 @@ pub(crate) fn cmd_portrait_depth(args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::portrait_depth_report;
+
+    #[test]
+    fn missing_rear_depth_is_reported_without_transforming() {
+        let report = portrait_depth_report(b"not-an-heic").expect("diagnostic report");
+        assert_eq!(report["classification"], "missing-rear-depth");
+        assert_eq!(report["safeToTransform"], false);
+        assert_eq!(report["available"], false);
+    }
+}

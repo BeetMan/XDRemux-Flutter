@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
@@ -196,6 +197,10 @@ class XdRemuxFFI {
       ffi.Void Function(ffi.Pointer<Utf8>),
       void Function(ffi.Pointer<Utf8>)>('xdremux_free_string');
 
+  static final _diagnosePortrait = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_diagnose_portrait');
+
   static final _inspect = _lib.lookupFunction<
       ConversionResult Function(ffi.Pointer<Utf8>),
       ConversionResult Function(ffi.Pointer<Utf8>)>('xdremux_inspect');
@@ -276,6 +281,36 @@ class XdRemuxFFI {
     } finally {
       _freeString(ptr);
     }
+  }
+
+  /// Read the portable Rust Apple Portrait depth diagnostic.
+  static Map<String, dynamic> diagnosePortrait(String inputPath) {
+    final input = inputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _diagnosePortrait(input);
+      if (ptr == ffi.nullptr) {
+        return <String, dynamic>{
+          'schema': 'xdremux-portrait-depth-diagnostic-v1',
+          'available': false,
+          'safeToTransform': false,
+          'classification': 'diagnostic-error',
+        };
+      }
+      final decoded = jsonDecode(ptr.toDartString());
+      if (decoded is Map) {
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
+      }
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(input);
+    }
+    return <String, dynamic>{
+      'schema': 'xdremux-portrait-depth-diagnostic-v1',
+      'available': false,
+      'safeToTransform': false,
+      'classification': 'invalid-diagnostic-report',
+    };
   }
 
   /// Inspect a ProXDR HEIC file. Returns the parsed mode/family/edr metadata.

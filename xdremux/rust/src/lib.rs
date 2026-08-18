@@ -112,6 +112,47 @@ pub extern "C" fn xdremux_free_string(s: *mut c_char) {
     }
 }
 
+/// Return a portable JSON diagnostic for Apple Portrait input eligibility.
+/// The report is intentionally read-only: it only inspects the private tail
+/// and never transforms or rewrites the source file.
+#[no_mangle]
+pub extern "C" fn xdremux_diagnose_portrait(input_path: *const c_char) -> *mut c_char {
+    let report = if input_path.is_null() {
+        serde_json::json!({
+            "schema": "xdremux-portrait-depth-diagnostic-v1",
+            "available": false,
+            "safeToTransform": false,
+            "classification": "invalid-input-path",
+        })
+    } else {
+        let path = unsafe { CStr::from_ptr(input_path) }.to_string_lossy();
+        match std::fs::read(path.as_ref()) {
+            Ok(data) => match portrait_depth::portrait_depth_report(&data) {
+                Ok(report) => report,
+                Err(error) => serde_json::json!({
+                    "schema": "xdremux-portrait-depth-diagnostic-v1",
+                    "available": false,
+                    "safeToTransform": false,
+                    "classification": "diagnostic-error",
+                    "error": error,
+                }),
+            },
+            Err(error) => serde_json::json!({
+                "schema": "xdremux-portrait-depth-diagnostic-v1",
+                "available": false,
+                "safeToTransform": false,
+                "classification": "input-read-error",
+                "error": error.to_string(),
+            }),
+        }
+    };
+    serde_json::to_string(&report)
+        .ok()
+        .and_then(|json| CString::new(json).ok())
+        .map(CString::into_raw)
+        .unwrap_or(ptr::null_mut())
+}
+
 /// Read the current conversion progress tuple.
 ///
 /// `buf` must point to 3 × u32 (12 bytes).  Returns (stage, current, total).

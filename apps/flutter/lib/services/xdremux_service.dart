@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -58,47 +59,49 @@ class XdRemuxService {
     }
   }
 
-  /// Read-only probe for OPPO rear Portrait depth variants (macOS + iOS;
-  /// iOS uses the embedded zstd decoder). This does not enable Apple
-  /// Portrait conversion and is intentionally unavailable on Windows and
-  /// Android.
+  /// Read-only probe for OPPO rear Portrait depth variants on every platform.
+  /// The Rust core owns the parser so picker, drag/drop, and share intake all
+  /// receive the same `rear.depth` eligibility result.
   static Future<Map<String, dynamic>> diagnosePortrait(String inputPath) async {
-    if (!Platform.isMacOS && !Platform.isIOS) {
-      return <String, dynamic>{
-        'schema': 'xdremux-portrait-depth-diagnostic-v1',
-        'available': false,
-        'safeToTransform': false,
-        'classification': 'unsupported-platform',
-      };
-    }
     try {
-      final raw = await _backendChannel.invokeMethod<Object?>(
-        'diagnosePortrait',
-        <String, Object?>{'inputPath': inputPath},
-      );
-      if (raw is! Map) {
+      return await Isolate.run(() => XdRemuxFFI.diagnosePortrait(inputPath));
+    } catch (error) {
+      // Keep a native fallback for older Apple bundles while the new Rust FFI
+      // symbol is rolling out. New builds always use the portable Rust path.
+      if (!Platform.isMacOS && !Platform.isIOS) {
         return <String, dynamic>{
           'schema': 'xdremux-portrait-depth-diagnostic-v1',
           'available': false,
           'safeToTransform': false,
-          'classification': 'invalid-native-report',
+          'classification': 'diagnostic-error',
+          'error': error.toString(),
         };
       }
-      return raw.map((key, value) => MapEntry(key.toString(), value));
-    } on MissingPluginException {
+      try {
+        final raw = await _backendChannel.invokeMethod<Object?>(
+          'diagnosePortrait',
+          <String, Object?>{'inputPath': inputPath},
+        );
+        if (raw is Map) {
+          return raw.map((key, value) => MapEntry(key.toString(), value));
+        }
+      } on MissingPluginException {
+        // Fall through to a structured error below.
+      } on PlatformException catch (nativeError) {
+        return <String, dynamic>{
+          'schema': 'xdremux-portrait-depth-diagnostic-v1',
+          'available': false,
+          'safeToTransform': false,
+          'classification': 'native-diagnostic-error',
+          'error': nativeError.message ?? nativeError.code,
+        };
+      }
       return <String, dynamic>{
         'schema': 'xdremux-portrait-depth-diagnostic-v1',
         'available': false,
         'safeToTransform': false,
         'classification': 'native-bridge-unavailable',
-      };
-    } on PlatformException catch (error) {
-      return <String, dynamic>{
-        'schema': 'xdremux-portrait-depth-diagnostic-v1',
-        'available': false,
-        'safeToTransform': false,
-        'classification': 'native-diagnostic-error',
-        'error': error.message ?? error.code,
+        'error': error.toString(),
       };
     }
   }
