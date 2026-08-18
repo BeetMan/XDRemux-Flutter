@@ -378,6 +378,40 @@ fn portrait_matte_xmp() -> Vec<u8> {
         .to_vec()
 }
 
+/// Rotate a WxH plane 90 degrees clockwise (orientation-6 display mapping).
+fn rotate_cw90(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
+    let (nw, nh) = (h, w);
+    let mut out = vec![0u8; nw * nh];
+    for y in 0..nh {
+        for x in 0..nw {
+            // CW: new(x, y) = old(y, h - 1 - x)
+            out[y * nw + x] = plane[(h - 1 - x) * w + y];
+        }
+    }
+    (out, nw, nh)
+}
+
+/// The base primary's ispe dims (frame the aux maps must align with).
+fn base_primary_dims(meta: &ParsedMeta) -> Result<(u32, u32), String> {
+    let entry = meta
+        .ipma_entries
+        .iter()
+        .find(|e| e.item_id == meta.primary_id)
+        .ok_or("primary has no ipma entry")?;
+    for (idx, _) in &entry.associations {
+        if let Some(p) = meta.props.iter().find(|p| p.index == *idx) {
+            if p.ptype == "ispe" && p.raw.len() >= 20 {
+                let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
+                let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
+                if w > 512 && h > 512 {
+                    return Ok((w, h));
+                }
+            }
+        }
+    }
+    Err("primary ispe not found".into())
+}
+
 /// Encode a mono plane as an in-container HEVC item payload + hvcC.
 fn encode_mono(pixels: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
@@ -504,11 +538,53 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         .as_ref()
         .map(|h| upscale2x(h, depth.width, depth.height).0);
 
-    let (disparity_stream, disparity_hvcc) =
-        encode_mono(&disparity_u8, depth.width as u32, depth.height as u32)?;
-    let (person_stream, person_hvcc) = encode_mono(&person_up, mu_w, mu_h)?;
-    let (hair_stream, hair_hvcc) = match &hair_up {
-        Some(h) => encode_mono(h, mu_w, mu_h)?,
+    // Frame alignment: the OPPO primary is baked portrait while the depth
+    // planes live in the landscape sensor frame (the golden pipeline swapped
+    // the base to the landscape src.image + orientation 6; we keep the OPPO
+    // primary and rotate the aux data - orientation-6 semantics). Residual
+    // aspect stretch (sensor 4:3 vs the hi-res primary crop) is a documented
+    // v1 approximation.
+    let m0 = isobmff::parse_source_meta(base).map_err(|e| format!("meta parse: {e}"))?;
+    let (pw_frame, ph_frame) = base_primary_dims(&m0)?;
+    let rotate = ph_frame > pw_frame && depth.width > depth.height;
+    eprintln!(
+        "portrait: primary frame {pw_frame}x{ph_frame}, depth {}x{}, rotate90={rotate}",
+        depth.width, depth.height
+    );
+    let mut focus_x_norm: Option<f64> = None;
+    let mut focus_y_norm: Option<f64> = None;
+    if rotate {
+        let cfg2 = depth.config.as_ref();
+        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
+            / depth.src_dims.0.max(1) as f64;
+        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
+            / depth.src_dims.1.max(1) as f64;
+        // landscape (nx, ny) -> portrait (1 - ny, nx)
+        focus_x_norm = Some(1.0 - ny);
+        focus_y_norm = Some(nx);
+    }
+
+    let (disp_final, disp_fw, disp_fh) = if rotate {
+        let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
+        (r, w2 as u32, h2 as u32)
+    } else {
+        (disparity_u8.clone(), depth.width as u32, depth.height as u32)
+    };
+    let (matte_final, matte_fw, matte_fh) = if rotate {
+        let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
+        (r, w2 as u32, h2 as u32)
+    } else {
+        (person_up.clone(), mu_w, mu_h)
+    };
+    let hair_final = match (&hair_up, rotate) {
+        (Some(h), true) => Some(rotate_cw90(h, mu_w as usize, mu_h as usize).0),
+        (Some(h), false) => Some(h.clone()),
+        (None, _) => None,
+    };
+    let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
+    let (person_stream, person_hvcc) = encode_mono(&matte_final, matte_fw, matte_fh)?;
+    let (hair_stream, hair_hvcc) = match &hair_final {
+        Some(h) => encode_mono(h, matte_fw, matte_fh)?,
         None => (person_stream.clone(), person_hvcc.clone()),
     };
 
@@ -518,15 +594,18 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         disparity_stream,
         disparity_hvcc,
         disparity_xmp,
-        depth.width as u32,
-        depth.height as u32,
+        disp_fw,
+        disp_fh,
         person_stream,
         person_hvcc,
         hair_stream,
         hair_hvcc,
-        mu_w,
-        mu_h,
+        matte_fw,
+        matte_fh,
         &depth,
+        focus_x_norm,
+        focus_y_norm,
+        (pw_frame, ph_frame),
     )
 }
 
@@ -561,6 +640,9 @@ fn attach_portrait_graph(
     matte_w: u32,
     matte_h: u32,
     depth: &DepthData,
+    focus_x_norm: Option<f64>,
+    focus_y_norm: Option<f64>,
+    primary_frame: (u32, u32),
 ) -> Result<Vec<u8>, String> {
     let top = top_level_boxes(base)?;
     let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
@@ -759,12 +841,21 @@ fn attach_portrait_graph(
     let exif_payload = read_item_payload(base, &meta, exif_item)
         .ok_or("Exif payload unreadable")?;
     let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
+    let (fx, fy, ap_w, ap_h) = match (focus_x_norm, focus_y_norm) {
+        (Some(nx), Some(ny)) => (nx, ny, primary_frame.0, primary_frame.1),
+        _ => (
+            cfg.map(|c| c.focus_x as f64).unwrap_or(depth.src_dims.0 as f64 / 2.0),
+            cfg.map(|c| c.focus_y as f64).unwrap_or(depth.src_dims.1 as f64 / 2.0),
+            depth.src_dims.0,
+            depth.src_dims.1,
+        ),
+    };
     let merged_main_xmp = merge_focus_into_xmp(
         &hdrgm_payload,
-        cfg.map(|c| c.focus_x as f64).unwrap_or(depth.src_dims.0 as f64 / 2.0),
-        cfg.map(|c| c.focus_y as f64).unwrap_or(depth.src_dims.1 as f64 / 2.0),
-        depth.src_dims.0,
-        depth.src_dims.1,
+        fx,
+        fy,
+        ap_w,
+        ap_h,
         &datetime,
     )?;
 
