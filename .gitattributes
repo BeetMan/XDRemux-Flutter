@@ -1,0 +1,2 @@
+# Third-party Zstandard C implementation used for Apple rear.depth decoding.
+apps/flutter/ios/SwiftBackend/Sources/CZstdDecompress/** linguist-vendored
