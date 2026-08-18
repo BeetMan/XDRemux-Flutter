@@ -1,106 +1,29 @@
 import Foundation
 
 #if canImport(UIKit)
-import CZstdDecompress
 
-/// Zstandard frame decompression backed by the vendored zstd 1.5.7
-/// decompression sources (`Sources/CZstdDecompress`).
+/// Compatibility surface for the legacy Swift research bridge.
 ///
-/// The macOS build shells out to the `zstd` CLI for OPPO portrait payload
-/// decompression; iOS cannot spawn processes, so this in-process decoder
-/// is installed as `PortraitConversionPipeline.zstdDecoder`. Implemented
-/// as a streaming decode so frames without a declared content size work.
+/// Rust now embeds the zstd decoder used by the product Apple Portrait path.
+/// Keeping this Swift surface as an explicit unavailable implementation avoids
+/// linking a second copy of zstd into the iOS app (which conflicts with the
+/// Rust static library). Swift Apple feature conversion remains capability-
+/// gated on iOS and does not use this research-only bridge.
 public enum EmbeddedZstdDecoder {
     public enum DecodeError: Error, LocalizedError {
-        case emptyInput
-        case outputTooLarge
-        case zstdFailed(String)
+        case unavailable
 
         public var errorDescription: String? {
-            switch self {
-            case .emptyInput:
-                return "embedded zstd decoder received an empty frame"
-            case .outputTooLarge:
-                return "embedded zstd decoder: decoded size exceeds the safety limit"
-            case .zstdFailed(let name):
-                return "embedded zstd decoder failed: \(name)"
-            }
+            "embedded Swift zstd bridge is unavailable; use the Rust Portrait path"
         }
     }
-
-    /// Portrait payloads are a handful of megabytes compressed; cap the
-    /// decoded size so a hostile/corrupt frame cannot exhaust memory.
-    private static let maxOutputSize = 256 * 1024 * 1024
-
-    private static let chunkSize = 1 << 20  // 1 MiB
 
     public static func decode(_ data: Data) throws -> Data {
-        guard !data.isEmpty else { throw DecodeError.emptyInput }
-
-        let dctx = ZSTD_createDCtx()
-        defer { ZSTD_freeDCtx(dctx) }
-
-        var output = Data()
-        let inputChunkSize = ZSTD_DStreamInSize()
-        let outputChunkSize = ZSTD_DStreamOutSize()
-
-        return try data.withUnsafeBytes { (rawInput: UnsafeRawBufferPointer) throws -> Data in
-            var input = ZSTD_inBuffer(
-                src: rawInput.baseAddress,
-                size: rawInput.count,
-                pos: 0)
-            let outputBuffer = UnsafeMutableRawPointer.allocate(
-                byteCount: max(Int(outputChunkSize), 1), alignment: 8)
-            defer { outputBuffer.deallocate() }
-
-            while input.pos < input.size {
-                var out = ZSTD_outBuffer(
-                    dst: outputBuffer,
-                    size: max(Int(outputChunkSize), 1),
-                    pos: 0)
-                let remaining = ZSTD_decompressStream(dctx, &out, &input)
-                if ZSTD_isError(remaining) != 0 {
-                    throw DecodeError.zstdFailed(
-                        String(cString: ZSTD_getErrorName(remaining)))
-                }
-                if out.pos > 0 {
-                    guard output.count + out.pos <= maxOutputSize else {
-                        throw DecodeError.outputTooLarge
-                    }
-                    output.append(
-                        outputBuffer.assumingMemoryBound(to: UInt8.self), count: out.pos)
-                }
-                // remaining == 0 means the frame is fully decoded; anything
-                // left in the input is trailing garbage or another frame -
-                // the portrait payload is a single frame, so stop there.
-                if remaining == 0 { break }
-            }
-            return output
-        }
+        throw DecodeError.unavailable
     }
 
-    /// Compresses `data` into a single zstd frame (level 19, matching the
-    /// fidelity the upstream CLI default used by the macOS research path
-    /// effectively relies on: content size declared, single-pass).
     public static func encode(_ data: Data) throws -> Data {
-        let bound = ZSTD_compressBound(data.count)
-        var output = Data(count: bound)
-        let written = data.withUnsafeBytes { (rawInput: UnsafeRawBufferPointer) -> Int in
-            output.withUnsafeMutableBytes { (rawOutput: UnsafeMutableRawBufferPointer) -> Int in
-                ZSTD_compress(
-                    rawOutput.baseAddress,
-                    bound,
-                    rawInput.baseAddress,
-                    rawInput.count,
-                    19)
-            }
-        }
-        if ZSTD_isError(written) != 0 {
-            throw DecodeError.zstdFailed(
-                String(cString: ZSTD_getErrorName(written)))
-        }
-        output.count = written
-        return output
+        throw DecodeError.unavailable
     }
 }
 #endif
