@@ -3260,16 +3260,34 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           _backendCapabilities.swiftAppleFeatures) ...[
                         const SizedBox(height: 12),
                         Text(
-                          'Apple 相册功能（实验性）',
+                          _t(
+                            'Apple 相册功能（实验性）',
+                            'Apple Photos features (Experimental)',
+                          ),
                           style: theme.textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _t(
+                            '这里写入的是可继续调节的数据，不会把风格直接烘焙进照片。',
+                            'These options write editable data; the look is not baked into the photo.',
+                          ),
                         ),
                         const SizedBox(height: 4),
                         if (_backendCapabilities.swiftPhotographicStyles)
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple 相册可调风格（Swift）'),
-                            subtitle: const Text(
-                              '导入 Apple 相册后可继续调节；只在 Swift 原生引擎可用时显示。',
+                            title: Text(
+                              _t(
+                                'Apple 相册摄影风格（Swift）',
+                                'Apple Photos Photographic Styles (Swift)',
+                              ),
+                            ),
+                            subtitle: Text(
+                              _t(
+                                '使用 Swift 生成可在 Apple 相册中继续调节的摄影风格数据；仅 Apple 原生能力可用时显示。',
+                                'Uses Swift to generate Photographic Styles data editable in Apple Photos; available only with Apple-native capabilities.',
+                              ),
                             ),
                             value: _cfg.applePhotographicStyles,
                             onChanged: (value) {
@@ -3315,24 +3333,45 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
-                        const Text('实验性功能：尚未宣称 Apple 相册正式稳定兼容。'),
+                        Text(
+                          _t(
+                            '实验性功能：尚未宣称 Apple 相册正式稳定兼容。',
+                            'Experimental: Apple Photos compatibility is not guaranteed yet.',
+                          ),
+                        ),
                       ],
                       const SizedBox(height: 20),
                     ],
 
                     if (_cfg.backend == ConversionBackend.rust) ...[
                       Text(
-                        'Apple 相册功能（实验性）',
+                        _t(
+                          'Apple 相册功能（实验性）',
+                          'Apple Photos features (Experimental)',
+                        ),
                         style: theme.textTheme.titleSmall,
                       ),
                       const SizedBox(height: 4),
-                      const Text('这些功能不会把效果直接烘焙进照片，而是写入 Photos 可继续调节的数据。'),
+                      Text(
+                        _t(
+                          '这里写入的是可继续调节的数据，不会把风格直接烘焙进照片。',
+                          'These options write editable data; the look is not baked into the photo.',
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Apple 相册可调风格（Rust）'),
-                        subtitle: const Text(
-                          '开启后自动使用 Apple 相册输出；导入相册后拖动“摄影风格”强度。会关闭 GPU 硬件编码。',
+                        title: Text(
+                          _t(
+                            'Apple 相册摄影风格（Rust）',
+                            'Apple Photos Photographic Styles (Rust)',
+                          ),
+                        ),
+                        subtitle: Text(
+                          _t(
+                            '使用 Rust 生成可在 Apple 相册中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                          ),
                         ),
                         value: _cfg.applePhotographicStyles,
                         onChanged: (value) {
