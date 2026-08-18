@@ -647,8 +647,28 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         // the padded primary frame.
         match content_rect {
             Some((cx, cy, cw2, ch2)) => {
-                focus_x_norm = Some((cx as f64 + (1.0 - ny) * cw2 as f64) / pw_frame as f64);
-                focus_y_norm = Some((cy as f64 + nx * ch2 as f64) / ph_frame as f64);
+                // normalized sensor point -> rotated point, then into the
+                // cover-cropped content window (center crop), then offset by
+                // the frame padding.
+                let (rx, ry) = (1.0 - ny, nx); // rotated normalized
+                let s_aspect = (depth.height as f64 / depth.width as f64)
+                    / (cw2 as f64 / ch2 as f64); // rotated-frame / content aspect
+                let content_x;
+                let content_y;
+                if s_aspect > 1.0 {
+                    // content is narrower: horizontal center crop
+                    let used = 1.0 / s_aspect;
+                    content_x = (rx - 0.5) * used + 0.5;
+                    content_y = ry;
+                } else {
+                    let used = s_aspect;
+                    content_x = rx;
+                    content_y = (ry - 0.5) * used + 0.5;
+                }
+                focus_x_norm =
+                    Some((cx as f64 + content_x.clamp(0.0, 1.0) * cw2 as f64) / pw_frame as f64);
+                focus_y_norm =
+                    Some((cy as f64 + content_y.clamp(0.0, 1.0) * ch2 as f64) / ph_frame as f64);
             }
             None => {
                 focus_x_norm = Some(1.0 - ny);
@@ -670,6 +690,18 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
     // Compose: rotate -> resample into the content-rect proportions ->
     // place onto the canvas (pad-aware). Without a watermark frame the
     // content rect covers the whole canvas (plain resample).
+    // Cover mapping: the content rect (e.g. a full-screen-ratio crop inside
+    // the watermark frame) relates to the sensor frame by uniform scale +
+    // center crop, NOT a stretch. Resample the center-cropped sensor window
+    // to the content rect, then pad the canvas with the far plane.
+    let cover_crop = |rw: usize, rh: usize, tw: usize, th: usize| -> (usize, usize, usize, usize) {
+        let scale = (tw as f64 / rw as f64).max(th as f64 / rh as f64);
+        let sw = ((tw as f64 / scale).round() as usize).clamp(1, rw);
+        let sh = ((th as f64 / scale).round() as usize).clamp(1, rh);
+        let sx = (rw - sw) / 2;
+        let sy = (rh - sh) / 2;
+        (sx, sy, sw, sh)
+    };
     let place = |rotated: &[u8], rw: usize, rh: usize, target_scale: f64| -> (Vec<u8>, u32, u32) {
         let (cw, chh) = canvas_dims(target_scale);
         let (cx, cy, ccw, cch) = match content_rect {
@@ -683,7 +715,14 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         };
         let ccw = ccw.min(cw.saturating_sub(cx));
         let cch = cch.min(chh.saturating_sub(cy));
-        let content = resample_plane(rotated, rw, rh, ccw, cch);
+        // center-crop the source to the content aspect, then resample
+        let (sx, sy, sw, sh) = cover_crop(rw, rh, ccw, cch);
+        let mut cropped = vec![0u8; sw * sh];
+        for y in 0..sh {
+            let src = (sy + y) * rw + sx;
+            cropped[y * sw..(y + 1) * sw].copy_from_slice(&rotated[src..src + sw]);
+        }
+        let content = resample_plane(&cropped, sw, sh, ccw, cch);
         let mut canvas = vec![0u8; cw * chh];
         for y in 0..cch {
             let dst = (cy + y) * cw + cx;
