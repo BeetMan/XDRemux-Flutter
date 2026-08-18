@@ -62,7 +62,7 @@ enum OutputMode {
       case OutputMode.oppo:
         return 'OPPO 兼容';
       case OutputMode.apple:
-        return 'Apple Photos';
+        return 'Apple 标准';
     }
   }
 

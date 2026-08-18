@@ -2917,7 +2917,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
   String _outputTitle(OutputMode mode) {
     if (_cfg.language == AppLanguage.english) {
-      return mode == OutputMode.oppo ? 'OPPO Compatible' : 'Apple Photos';
+      return mode == OutputMode.oppo ? 'OPPO Compatible' : 'Apple Standard';
     }
     return mode.appTitle;
   }
@@ -3177,7 +3177,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _t('输出目标', 'Output target'),
+                      _t('输出模式', 'Output mode'),
                       style: theme.textTheme.titleSmall,
                     ),
                     const SizedBox(height: 4),
