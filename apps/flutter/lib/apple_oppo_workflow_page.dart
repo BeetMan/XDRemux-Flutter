@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'models/app_models.dart';
 import 'services/apple_oppo_workflow_service.dart';
 import 'services/file_action_service.dart';
+import 'services/drop_file_service.dart';
 import 'services/xdremux_service.dart';
 
 /// Dedicated five-stage Apple/OPPO round-trip workflow.
@@ -33,12 +35,37 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   OutputMode _outputMode = Platform.isIOS ? OutputMode.apple : OutputMode.oppo;
   bool _restoreWatermark = true;
   bool _running = false;
+  StreamSubscription<List<String>>? _dropSubscription;
   String _status = '请先选择 OPPO 手机原图或已有 OPPO 兼容文件。';
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isMacOS) {
+      DropFileService.workflowActive = true;
+      _dropSubscription = DropFileService.files.listen(_handleDroppedFiles);
+    }
     _loadCapabilities();
+  }
+
+  @override
+  void dispose() {
+    DropFileService.workflowActive = false;
+    _dropSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleDroppedFiles(List<String> paths) {
+    final candidates = paths.where((path) {
+      final lower = path.toLowerCase();
+      return lower.endsWith('.heic') || lower.endsWith('.heif');
+    }).toList();
+    if (candidates.isEmpty || !mounted) return;
+    setState(() {
+      _returnedPath = candidates.first;
+      _finalPath = null;
+      _status = '已拖入 iPhone 回传照片：${_fileLabel(candidates.first)}';
+    });
   }
 
   Future<void> _loadCapabilities() async {
@@ -529,6 +556,19 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '支持 HEIC / HEIF 照片；macOS 可直接从 Apple 相册拖到此窗口。',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+                const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: _running ? null : _selectReturnedPhoto,
                   icon: const Icon(Icons.file_download_outlined),

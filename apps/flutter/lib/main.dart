@@ -27,6 +27,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/conversion_backend.dart';
+import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
@@ -383,7 +384,10 @@ class _HomePageState extends State<HomePage> {
     _dropChannel.setMethodCallHandler((call) async {
       if (call.method == 'onFilesDropped') {
         final paths = List<String>.from(call.arguments as List);
-        await _handleDrop(paths);
+        DropFileService.publish(paths);
+        if (!DropFileService.workflowActive) {
+          await _handleDrop(paths);
+        }
       }
     });
   }
