@@ -408,7 +408,12 @@ fn watermark_content_rect(
     }
     for k in 0..n.saturating_sub(4) {
         let quad = [f[k], f[k + 1], f[k + 2], f[k + 3]];
-        if !quad.iter().all(|v| *v > 1.0 && (v - v.round()).abs() < 0.01) {
+        if !quad.iter().all(|v| {
+            v.is_finite()
+                && v.abs() <= 1_000_000.0
+                && *v > 1.0
+                && (v - v.round()).abs() < 0.01
+        }) {
             continue;
         }
         let (x, y, w, h) = (
