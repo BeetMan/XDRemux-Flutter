@@ -2038,37 +2038,39 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: const Text('保存到相册'),
-                subtitle: Text(_galleryAlbumSubtitle(item)),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final hasAccess =
-                      await FileActionService.hasGalleryPermission();
-                  if (!hasAccess) {
-                    final granted =
-                        await FileActionService.requestGalleryPermission();
-                    if (!granted) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('未获得存储权限')),
-                        );
+              if (Platform.isAndroid || Platform.isIOS) ...[
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('保存到相册'),
+                  subtitle: Text(_galleryAlbumSubtitle(item)),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final hasAccess =
+                        await FileActionService.hasGalleryPermission();
+                    if (!hasAccess) {
+                      final granted =
+                          await FileActionService.requestGalleryPermission();
+                      if (!granted) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('未获得存储权限')),
+                          );
+                        }
+                        return;
                       }
-                      return;
                     }
-                  }
-                  final ok = await FileActionService.saveToGallery(
-                    item.outputPath,
-                    album: _galleryAlbum(item),
-                  );
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')),
+                    final ok = await FileActionService.saveToGallery(
+                      item.outputPath,
+                      album: _galleryAlbum(item),
                     );
-                  }
-                },
-              ),
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')),
+                      );
+                    }
+                  },
+                ),
+              ],
               ListTile(
                 leading: const Icon(Icons.share),
                 title: const Text('分享'),
@@ -2702,7 +2704,7 @@ class _HomePageState extends State<HomePage> {
               },
               onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
               onRevealOutput: () {
-                if (Platform.isAndroid || Platform.isIOS) {
+                if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
                   _showOutputActions(_queue[index]);
                 } else {
                   _revealInExplorer(_queue[index].outputPath);
@@ -2723,7 +2725,7 @@ class _HomePageState extends State<HomePage> {
   /// - Everything else → no-op
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
         _showOutputActions(item);
       } else {
         _revealInExplorer(item.outputPath);
