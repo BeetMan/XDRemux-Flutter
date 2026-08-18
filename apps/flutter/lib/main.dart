@@ -1908,6 +1908,8 @@ class _HomePageState extends State<HomePage> {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
+    int skippedUnsupportedPortrait = 0;
+    final unsupportedPortraitFiles = <String>[];
     for (final resolvedPath in paths) {
       if (!isSupportedInputPath(resolvedPath)) {
         ignored++;
@@ -1920,6 +1922,19 @@ class _HomePageState extends State<HomePage> {
         resolvedPath,
       );
       if (existing.contains(path)) continue;
+      if (_config.applePortrait) {
+        final portraitReason = await _portraitImportRejection(path);
+        if (portraitReason != null) {
+          skippedUnsupportedPortrait++;
+          unsupportedPortraitFiles.add(
+            resolvedPath.split(RegExp(r'[/\\]')).last,
+          );
+          debugPrint(
+            '[XDRemux][portrait] rejected ${resolvedPath}: $portraitReason',
+          );
+          continue;
+        }
+      }
       try {
         final classification = await XdRemuxService.classify(path);
         final folderName = classification['folderName'] as String?;
@@ -1964,15 +1979,29 @@ class _HomePageState extends State<HomePage> {
       _validateOutputPlans();
       _updateStatusText();
     }
-    if (added == 0 && ignored == 0 && skippedExisting == 0) return;
+    if (added == 0 &&
+        ignored == 0 &&
+        skippedExisting == 0 &&
+        skippedUnsupportedPortrait == 0) {
+      return;
+    }
 
     final parts = <String>[];
     if (added > 0) parts.add('已$verb $added 个文件');
     if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+    if (skippedUnsupportedPortrait > 0) {
+      parts.add('跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件');
+    }
     if (ignored > 0) parts.add('忽略 $ignored 个非 HEIC');
     final summary = parts.isEmpty ? '未添加新文件' : parts.join('，');
     setState(() => _currentFileName = summary);
-    if (ignored > 0 || skippedExisting > 0 || verb == '接收') {
+    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
+      await _showPortraitImportRejection(unsupportedPortraitFiles);
+    }
+    if (ignored > 0 ||
+        skippedExisting > 0 ||
+        skippedUnsupportedPortrait > 0 ||
+        verb == '接收') {
       if (!mounted) return;
       final snackText = skippedExisting > 0
           ? '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过'
