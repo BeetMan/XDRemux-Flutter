@@ -2116,80 +2116,75 @@ class _HomePageState extends State<HomePage> {
     return 'Pictures/$album';
   }
 
-  /// Android: show bottom sheet with output file actions.
-  void _showOutputActions(QueueItem item) {
-    showModalBottomSheet(
+  /// Presents output actions and only starts the native action after the
+  /// bottom-sheet route has fully returned. Presenting UIKit while this route
+  /// is still dismissing is rejected on iOS.
+  Future<void> _showOutputActions(QueueItem item) async {
+    final action = await showModalBottomSheet<_OutputAction>(
       context: context,
+      useSafeArea: true,
       builder: (ctx) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (Platform.isAndroid || Platform.isIOS) ...[
+              if (Platform.isAndroid || Platform.isIOS)
                 ListTile(
                   leading: const Icon(Icons.photo_library),
                   title: const Text('保存到相册'),
                   subtitle: Text(_galleryAlbumSubtitle(item)),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    final hasAccess =
-                        await FileActionService.hasGalleryPermission();
-                    if (!hasAccess) {
-                      final granted =
-                          await FileActionService.requestGalleryPermission();
-                      if (!granted) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('未获得存储权限')),
-                          );
-                        }
-                        return;
-                      }
-                    }
-                    final ok = await FileActionService.saveToGallery(
-                      item.outputPath,
-                      album: _galleryAlbum(item),
-                    );
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')),
-                      );
-                    }
-                  },
+                  onTap: () => Navigator.pop(ctx, _OutputAction.save),
                 ),
-              ],
               ListTile(
                 leading: const Icon(Icons.share),
                 title: const Text('分享'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  // Let the action sheet finish dismissing before UIKit
-                  // presents the share controller. Presenting in the same
-                  // frame is rejected on iOS and makes the share sheet look
-                  // like it did nothing.
-                  await Future<void>.delayed(const Duration(milliseconds: 250));
-                  if (mounted)
-                    await FileActionService.shareFile(item.outputPath);
-                },
+                onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
               ListTile(
                 leading: const Icon(Icons.open_in_new),
                 title: const Text('打开'),
                 subtitle: const Text('用系统图库打开'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  // UIDocumentInteractionController must be presented after
-                  // the Flutter bottom sheet has completed its dismissal.
-                  await Future<void>.delayed(const Duration(milliseconds: 250));
-                  if (mounted)
-                    await FileActionService.openFile(item.outputPath);
-                },
+                onTap: () => Navigator.pop(ctx, _OutputAction.open),
               ),
             ],
           ),
         );
       },
     );
+    if (!mounted || action == null) return;
+
+    // Give UIKit one frame after the Flutter route has disappeared.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+
+    switch (action) {
+      case _OutputAction.save:
+        final hasAccess = await FileActionService.hasGalleryPermission();
+        if (!hasAccess) {
+          final granted = await FileActionService.requestGalleryPermission();
+          if (!granted) {
+            if (mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('未获得存储权限')));
+            }
+            return;
+          }
+        }
+        final ok = await FileActionService.saveToGallery(
+          item.outputPath,
+          album: _galleryAlbum(item),
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')));
+        }
+      case _OutputAction.share:
+        await FileActionService.shareFile(item.outputPath);
+      case _OutputAction.open:
+        await FileActionService.openFile(item.outputPath);
+    }
   }
 
   static String _makeId() {
@@ -4386,7 +4381,7 @@ class _MobileQueueCard extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
+          padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
           child: Row(
             children: [
               SizedBox(
@@ -4404,90 +4399,94 @@ class _MobileQueueCard extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.fileName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item.fileName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _MobileStatusPill(
+                            label: item.status.displayName,
+                            color: statusColor,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
+                      // capture mode. Stacked as small pills on the second line.
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (item.hdrKind != null)
+                            _InfoChip(
+                              label: item.hdrKind!.toUpperCase(),
+                              color: item.hdrKind == 'uhdr'
+                                  ? theme.colorScheme.tertiary
+                                  : theme.colorScheme.primary,
+                            ),
+                          if (item.family != null)
+                            _InfoChip(
+                              label: item.family!.toUpperCase(),
+                              color: theme.colorScheme.secondary,
+                            ),
+                          if (item.captureModeLabel != null &&
+                              item.captureModeLabel!.isNotEmpty)
+                            _InfoChip(
+                              label: item.captureModeLabel!,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        _supportingText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: item.status == QueueItemStatus.failed
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      // Per-file progress bar for the running item. Constrained to
+                      // the column width so it never overflows the card.
+                      if (item.status == QueueItemStatus.running) ...[
+                        const SizedBox(height: 7),
+                        LayoutBuilder(
+                          builder: (context, constraints) => ClipRRect(
+                            borderRadius: BorderRadius.circular(3),
+                            child: LinearProgressIndicator(
+                              value:
+                                  item.progress != null &&
+                                      item.progress!.total > 0
+                                  ? item.progress!.current /
+                                        item.progress!.total
+                                  : null,
+                              minHeight: 4,
+                              backgroundColor:
+                                  theme.colorScheme.surfaceContainerHighest,
+                              valueColor: AlwaysStoppedAnimation(
+                                theme.colorScheme.primary,
+                              ),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        _MobileStatusPill(
-                          label: item.status.displayName,
-                          color: statusColor,
-                        ),
                       ],
-                    ),
-                    const SizedBox(height: 5),
-                    // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
-                    // capture mode. Stacked as small pills on the second line.
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        if (item.hdrKind != null)
-                          _InfoChip(
-                            label: item.hdrKind!.toUpperCase(),
-                            color: item.hdrKind == 'uhdr'
-                                ? theme.colorScheme.tertiary
-                                : theme.colorScheme.primary,
-                          ),
-                        if (item.family != null)
-                          _InfoChip(
-                            label: item.family!.toUpperCase(),
-                            color: theme.colorScheme.secondary,
-                          ),
-                        if (item.captureModeLabel != null &&
-                            item.captureModeLabel!.isNotEmpty)
-                          _InfoChip(
-                            label: item.captureModeLabel!,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      _supportingText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: item.status == QueueItemStatus.failed
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    // Per-file progress bar for the running item. Constrained to
-                    // the column width so it never overflows the card.
-                    if (item.status == QueueItemStatus.running) ...[
-                      const SizedBox(height: 7),
-                      LayoutBuilder(
-                        builder: (context, constraints) => ClipRRect(
-                          borderRadius: BorderRadius.circular(3),
-                          child: LinearProgressIndicator(
-                            value:
-                                item.progress != null &&
-                                    item.progress!.total > 0
-                                ? item.progress!.current / item.progress!.total
-                                : null,
-                            minHeight: 4,
-                            backgroundColor:
-                                theme.colorScheme.surfaceContainerHighest,
-                            valueColor: AlwaysStoppedAnimation(
-                              theme.colorScheme.primary,
-                            ),
-                          ),
-                        ),
-                      ),
                     ],
-                  ],
+                  ),
                 ),
               ),
               // Queue management is separate from completed-output actions.
@@ -4532,6 +4531,8 @@ class _MobileQueueCard extends StatelessWidget {
     );
   }
 }
+
+enum _OutputAction { save, share, open }
 
 enum _MobileQueueAction { retry, remove }
 
