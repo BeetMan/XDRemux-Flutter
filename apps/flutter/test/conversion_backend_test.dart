@@ -45,24 +45,22 @@ void main() {
     expect(restored.applePortrait, isTrue);
   });
 
-  test(
-    'Rust Photographic Styles request is available independently of Swift',
-    () {
-      const request = ConversionRequest(
-        id: 'rust-styles-test',
-        backend: ConversionBackend.rust,
-        outputMode: OutputMode.apple,
-        inputPath: 'input.heic',
-        outputPath: 'output.heic',
-        oppoCompat: 0,
-        oppoCameraTail: 0,
-        strictTmap: false,
-        applePhotographicStyles: true,
-      );
-      expect(request.applePhotographicStyles, isTrue);
-      expect(request.applePortrait, isFalse);
-    },
-  );
+  test('Rust Apple feature requests are available independently of Swift', () {
+    const request = ConversionRequest(
+      id: 'rust-apple-features-test',
+      backend: ConversionBackend.rust,
+      outputMode: OutputMode.apple,
+      inputPath: 'input.heic',
+      outputPath: 'output.heic',
+      oppoCompat: 0,
+      oppoCameraTail: 0,
+      strictTmap: false,
+      applePhotographicStyles: true,
+      applePortrait: true,
+    );
+    expect(request.applePhotographicStyles, isTrue);
+    expect(request.applePortrait, isTrue);
+  });
 
   test(
     'workflow watermark policy defaults to preserve and exposes isolate',

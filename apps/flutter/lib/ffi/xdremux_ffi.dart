@@ -19,6 +19,7 @@ extension ToDartStringOrNull on ffi.Pointer<Utf8> {
 /// - `strictTmap`: false=ImageIO-compatible 62/142-byte payload;
 ///   true=strict ISO 65/145-byte payload
 /// - `applePhotographicStyles`: generate the native Rust Styles graph
+/// - `applePortrait`: generate the native Rust Apple Portrait graph
 final class ConvertConfig extends ffi.Struct {
   @ffi.Uint8()
   external int oppoCompat;
@@ -31,6 +32,9 @@ final class ConvertConfig extends ffi.Struct {
 
   @ffi.Uint8()
   external int applePhotographicStyles;
+
+  @ffi.Uint8()
+  external int applePortrait;
 }
 
 /// Opaque C struct returned by Rust. Must be freed with [freeResult].
@@ -305,6 +309,7 @@ class XdRemuxFFI {
     int oppoCameraTail = 255,
     bool strictTmap = false,
     bool applePhotographicStyles = false,
+    bool applePortrait = false,
   }) {
     final input = inputPath.toNativeUtf8();
     final output = outputPath.toNativeUtf8();
@@ -313,6 +318,7 @@ class XdRemuxFFI {
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
+    cfg.ref.applePortrait = applePortrait ? 1 : 0;
     try {
       return _convert(input, output, cfg);
     } finally {
@@ -334,6 +340,7 @@ class XdRemuxFFI {
     int oppoCameraTail = 255,
     bool strictTmap = false,
     bool applePhotographicStyles = false,
+    bool applePortrait = false,
   }) {
     final input = inputPath.toNativeUtf8();
     final output = outputPath.toNativeUtf8();
@@ -342,6 +349,7 @@ class XdRemuxFFI {
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
+    cfg.ref.applePortrait = applePortrait ? 1 : 0;
     try {
       return _convertWithProgress(input, output, cfg, progressHandle);
     } finally {

@@ -860,6 +860,8 @@ version = "0.3.0"
 dependencies = [
  "cc",
  "jpeg-decoder",
+ "serde_json",
+ "zstd",
 ]
 
 [[package]]

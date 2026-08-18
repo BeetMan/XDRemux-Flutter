@@ -166,6 +166,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
               applePhotographicStyles: request.applePhotographicStyles,
+              applePortrait: request.applePortrait,
             )
           : XdRemuxFFI.convert(
               request.inputPath,
@@ -174,6 +175,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
               applePhotographicStyles: request.applePhotographicStyles,
+              applePortrait: request.applePortrait,
             );
       try {
         return BackendConversionResult(
@@ -210,6 +212,8 @@ class RustConversionBackend implements ConversionBackendAdapter {
         outputValid: false,
         errorMessage: request.applePhotographicStyles
             ? 'Rust 输出缺少 Apple 相册可调风格数据'
+            : request.applePortrait
+            ? 'Rust 输出缺少 Apple 人像模式数据'
             : 'Rust 输出验证失败',
       );
     }

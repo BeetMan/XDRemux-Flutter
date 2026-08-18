@@ -162,12 +162,6 @@ class XdRemuxService {
   ) async {
     final capabilities = await getBackendCapabilities();
     if (request.applePhotographicStyles || request.applePortrait) {
-      if (request.applePortrait && request.backend != ConversionBackend.swift) {
-        return BackendConversionResult.failure(
-          request.backend,
-          'Apple 人像模式目前只能由 Swift 后端执行。',
-        );
-      }
       if (request.applePhotographicStyles &&
           request.backend == ConversionBackend.swift &&
           !capabilities.swiftPhotographicStyles) {
@@ -178,7 +172,9 @@ class XdRemuxService {
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }
-      if (request.applePortrait && !capabilities.swiftPortrait) {
+      if (request.applePortrait &&
+          request.backend == ConversionBackend.swift &&
+          !capabilities.swiftPortrait) {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty

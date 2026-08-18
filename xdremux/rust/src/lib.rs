@@ -22,6 +22,14 @@ mod styles_graft;
 mod styles_native;
 mod styles_scaffold;
 
+// R5 native Rust Portrait graph writer, ported from the conformance research
+// implementation. It produces an Apple-editable depth graph from OPPO rear.depth.
+mod portrait;
+mod portrait_consts;
+mod portrait_depth;
+mod portrait_graft;
+mod portrait_scaffold;
+
 #[cfg(not(xdremux_ffmpeg_fallback))]
 pub mod x265_ffi;
 
@@ -77,6 +85,8 @@ pub struct ConvertConfig {
     pub oppo_camera_tail: u8,
     pub strict_tmap: u8,
     pub apple_photographic_styles: u8,
+    /// 1 generates the native Rust Apple Portrait graph.
+    pub apple_portrait: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -380,11 +390,18 @@ fn xdremux_convert_impl(
     output_path: *const c_char,
     config: *const ConvertConfig,
 ) -> ConversionResult {
-    let (oppo_compat, oppo_camera_tail, strict_tmap, apple_photographic_styles) = if config.is_null() {
+    let (
+        oppo_compat,
+        oppo_camera_tail,
+        strict_tmap,
+        apple_photographic_styles,
+        apple_portrait,
+    ) = if config.is_null() {
         let oppo_compat = OppoCompat::Off;
         (
             oppo_compat,
             OppoCameraTail::default_for_compat(oppo_compat),
+            false,
             false,
             false,
         )
@@ -396,6 +413,7 @@ fn xdremux_convert_impl(
             OppoCameraTail::resolve(tail_value, oppo_compat),
             unsafe { (*config).strict_tmap != 0 },
             unsafe { (*config).apple_photographic_styles != 0 },
+            unsafe { (*config).apple_portrait != 0 },
         )
     };
 
@@ -504,8 +522,8 @@ fn xdremux_convert_impl(
     // 3. Route to UHDR or LHDR path. Styles is a post-processor over the
     // normal Rust ISO output, so render the base into a private sibling file
     // first and publish the styled graph only after it succeeds.
-    let standard_output = if apple_photographic_styles {
-        format!("{output}.styles-base-{}.heic", std::process::id())
+    let standard_output = if apple_photographic_styles || apple_portrait {
+        format!("{output}.apple-features-base-{}.heic", std::process::id())
     } else {
         output.to_string()
     };
@@ -531,6 +549,48 @@ fn xdremux_convert_impl(
 
     match result {
         Ok((edr, gm_max)) => {
+            if apple_portrait {
+                let base = match std::fs::read(&standard_output) {
+                    Ok(data) => data,
+                    Err(error) => {
+                        let _ = std::fs::remove_file(&standard_output);
+                        return ConversionResult {
+                            success: false,
+                            mode: ptr::null_mut(),
+                            family: ptr::null_mut(),
+                            edr_scale: 0.0,
+                            gain_map_max: 0.0,
+                            error_message: CString::new(format!("read Rust Portrait base output: {error}")).unwrap().into_raw(),
+                        };
+                    }
+                };
+                match portrait::run_portrait(&source, &base) {
+                    Ok(portraited) => {
+                        if let Err(error) = std::fs::write(&standard_output, portraited) {
+                            let _ = std::fs::remove_file(&standard_output);
+                            return ConversionResult {
+                                success: false,
+                                mode: ptr::null_mut(),
+                                family: ptr::null_mut(),
+                                edr_scale: 0.0,
+                                gain_map_max: 0.0,
+                                error_message: CString::new(format!("write Rust Portrait output: {error}")).unwrap().into_raw(),
+                            };
+                        }
+                    }
+                    Err(error) => {
+                        let _ = std::fs::remove_file(&standard_output);
+                        return ConversionResult {
+                            success: false,
+                            mode: ptr::null_mut(),
+                            family: ptr::null_mut(),
+                            edr_scale: 0.0,
+                            gain_map_max: 0.0,
+                            error_message: CString::new(format!("Rust Apple Portrait: {error}")).unwrap().into_raw(),
+                        };
+                    }
+                }
+            }
             if apple_photographic_styles {
                 if let Err(error) = finalize_native_styles(&standard_output, output) {
                     let _ = std::fs::remove_file(&standard_output);
@@ -541,6 +601,18 @@ fn xdremux_convert_impl(
                         edr_scale: 0.0,
                         gain_map_max: 0.0,
                         error_message: CString::new(error).unwrap().into_raw(),
+                    };
+                }
+            } else if apple_portrait {
+                if let Err(error) = std::fs::rename(&standard_output, output) {
+                    let _ = std::fs::remove_file(&standard_output);
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(format!("publish Rust Portrait output: {error}")).unwrap().into_raw(),
                     };
                 }
             }
@@ -554,7 +626,7 @@ fn xdremux_convert_impl(
             }
         }
         Err(e) => {
-            if apple_photographic_styles {
+            if apple_photographic_styles || apple_portrait {
                 let _ = std::fs::remove_file(&standard_output);
             }
             ConversionResult {

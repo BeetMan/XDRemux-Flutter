@@ -42,8 +42,8 @@ void main() {
 
 /// Remove persisted Apple feature flags when the current native capability
 /// probe cannot support them. OutputMode.apple remains independent: it is a
-/// clean output target. Rust Photographic Styles is implemented in the Rust
-/// core; Portrait remains a Swift capability for now.
+/// clean output target. Rust Photographic Styles and the R5 Portrait graph are
+/// implemented in the Rust core; Swift remains available for Apple-native paths.
 bool _sanitizeConfigForCapabilities(
   ConversionConfig config,
   BackendCapabilities capabilities,
@@ -54,10 +54,7 @@ bool _sanitizeConfigForCapabilities(
     changed = true;
   }
   if (config.backend != ConversionBackend.swift) {
-    if (config.applePortrait) {
-      config.applePortrait = false;
-      changed = true;
-    }
+    // Rust now includes the R5 native Portrait graph writer.
   } else {
     if (config.applePhotographicStyles &&
         !capabilities.swiftPhotographicStyles) {
@@ -3361,6 +3358,25 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         onChanged: (value) {
                           setState(() {
                             _cfg.applePhotographicStyles = value;
+                            if (value) {
+                              _cfg.outputMode = OutputMode.apple;
+                              _cfg.oppoCompatibility = OppoCompatMode.off;
+                              _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                              _cfg.hardwareEncode = false;
+                            }
+                          });
+                          _emit();
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          _t('Apple 人像模式（Rust）', 'Apple Portrait Mode (Rust)'),
+                        ),
+                        value: _cfg.applePortrait,
+                        onChanged: (value) {
+                          setState(() {
+                            _cfg.applePortrait = value;
                             if (value) {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
