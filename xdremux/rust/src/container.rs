@@ -215,6 +215,32 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
     })
 }
 
+/// Extract a named entry payload from the OPPO/FileExtendedContainer tail
+/// manifest (e.g. "rear.depth", "rear.depth.config"). Payload offsets in the
+/// manifest are relative to the manifest JSON start, counting backwards.
+pub fn extract_tail_entry(data: &[u8], name: &str) -> Option<Vec<u8>> {
+    let (_ext_start, ext) = find_extension_region(data).ok()?;
+    let (entries, json_start, _json_end) = parse_manifest(ext)?;
+    let entry = entries.iter().find(|e| e.name == name)?;
+    let start = (json_start as i64 - entry.offset as i64) as usize;
+    let end = start.checked_add(entry.length as usize)?;
+    if end > ext.len() {
+        return None;
+    }
+    Some(ext[start..end].to_vec())
+}
+
+/// List the tail entry names present in the manifest (diagnostics).
+pub fn tail_entry_names(data: &[u8]) -> Vec<String> {
+    let Ok((_ext_start, ext)) = find_extension_region(data) else {
+        return Vec::new();
+    };
+    match parse_manifest(ext) {
+        Some((entries, _, _)) => entries.into_iter().map(|e| e.name).collect(),
+        None => Vec::new(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Extension region discovery
 // ---------------------------------------------------------------------------

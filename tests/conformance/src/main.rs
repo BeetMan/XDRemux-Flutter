@@ -21,6 +21,7 @@ mod dump;
 mod inspect;
 mod json;
 mod bplist;
+mod portrait_depth;
 mod scaffold;
 mod seg;
 mod styles_consts;
@@ -63,6 +64,13 @@ fn main() -> ExitCode {
         "convert" => cmd_convert(&args[2..]),
         "graft-styles" => cmd_graft_styles(&args[2..]),
         "scaffold" => cmd_scaffold(&args[2..]),
+        "portrait-depth" => match crate::portrait_depth::cmd_portrait_depth(&args[2..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("portrait-depth: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "sky-matte" => match crate::seg::cmd_sky_matte(&args[2..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
