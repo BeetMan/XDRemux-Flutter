@@ -52,14 +52,15 @@ class AppleOppoWorkflowService {
   static Future<String> createAppleStylesCopy({
     required String baselinePath,
     required String outputPath,
+    ConversionBackend backend = ConversionBackend.rust,
     AppleWatermarkPolicy watermarkPolicy = AppleWatermarkPolicy.preserve,
     void Function(String message)? onStatus,
   }) async {
-    onStatus?.call('正在生成 Apple Photographic Styles 编辑副本…');
+    onStatus?.call('正在生成 Apple 相册摄影风格编辑副本…');
     final result = await XdRemuxService.convertWithBackend(
       ConversionRequest(
         id: _requestID('styles'),
-        backend: ConversionBackend.swift,
+        backend: backend,
         outputMode: OutputMode.apple,
         inputPath: baselinePath,
         outputPath: outputPath,
@@ -72,7 +73,7 @@ class AppleOppoWorkflowService {
     );
     if (!result.success || result.outputValid == false) {
       throw AppleOppoWorkflowException(
-        'Apple Styles 编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
+        'Apple 相册摄影风格编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
       );
     }
     return outputPath;
