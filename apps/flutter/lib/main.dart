@@ -3200,10 +3200,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       _cfg.language == AppLanguage.english
                           ? (_cfg.outputMode == OutputMode.oppo
                                 ? 'Choose this for OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
-                                : 'Choose this for Apple Photos. Editable Photographic Styles can be enabled below.')
+                                : 'Apple Photos-compatible standard file format. Supports next-generation Photographic Styles.')
                           : (_cfg.outputMode == OutputMode.oppo
                                 ? '选择它来兼容 OPPO/一加相册，并保留后续编辑所需的兼容信息。'
-                                : '选择它来用于 Apple 相册；下方可以开启可调摄影风格。'),
+                                : '兼容 Apple 相册的标准文件格式，支持开启新一代摄影风格'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
