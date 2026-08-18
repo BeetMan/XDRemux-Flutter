@@ -17,6 +17,97 @@ pub struct BplistWriter {
     objects: Vec<Obj>,
 }
 
+/// Validate the binary plist shape used by Apple Styles and locate its
+/// `styleData` payload. The metadata contains several dictionaries and one
+/// large Data object; requiring exactly 51,840 bytes catches truncated or
+/// incorrectly grafted Styles outputs without depending on Apple's private
+/// frameworks.
+pub fn contains_data_object(payload: &[u8], expected_len: usize) -> bool {
+    if payload.len() < 40 || &payload[..8] != b"bplist00" {
+        return false;
+    }
+    let trailer = payload.len() - 32;
+    let offset_size = payload[trailer + 6] as usize;
+    let object_ref_size = payload[trailer + 7] as usize;
+    let object_count = read_u64_be(&payload[trailer + 8..trailer + 16]);
+    let offset_table = read_u64_be(&payload[trailer + 24..trailer + 32]) as usize;
+    if offset_size == 0
+        || offset_size > 8
+        || object_ref_size == 0
+        || object_ref_size > 8
+        || object_count == 0
+        || object_count > usize::MAX as u64
+        || offset_table >= trailer
+    {
+        return false;
+    }
+    let object_count = object_count as usize;
+    let table_len = match object_count.checked_mul(offset_size) {
+        Some(v) => v,
+        None => return false,
+    };
+    if offset_table.checked_add(table_len).unwrap_or(usize::MAX) > trailer {
+        return false;
+    }
+
+    for index in 0..object_count {
+        let at = offset_table + index * offset_size;
+        let object_offset = read_sized_be(&payload[at..at + offset_size]);
+        if object_offset >= offset_table || object_offset >= trailer {
+            continue;
+        }
+        let marker = payload[object_offset];
+        if marker >> 4 != 0x4 {
+            continue;
+        }
+        let (length, header_len) = match plist_length(payload, object_offset) {
+            Some(v) => v,
+            None => continue,
+        };
+        if length == expected_len
+            && object_offset
+                .checked_add(header_len)
+                .and_then(|start| start.checked_add(length))
+                .map(|end| end <= offset_table)
+                .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn read_sized_be(bytes: &[u8]) -> usize {
+    bytes.iter().fold(0usize, |value, byte| {
+        value.saturating_mul(256).saturating_add(*byte as usize)
+    })
+}
+
+fn read_u64_be(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0u64, |value, byte| {
+        value.saturating_mul(256).saturating_add(*byte as u64)
+    })
+}
+
+fn plist_length(payload: &[u8], object_offset: usize) -> Option<(usize, usize)> {
+    let marker = payload[object_offset];
+    let inline = (marker & 0x0f) as usize;
+    if inline < 15 {
+        return Some((inline, 1));
+    }
+    let int_marker = *payload.get(object_offset + 1)?;
+    if int_marker >> 4 != 0x1 {
+        return None;
+    }
+    let byte_count = 1usize.checked_shl((int_marker & 0x0f) as u32)?;
+    let start = object_offset.checked_add(2)?;
+    let end = start.checked_add(byte_count)?;
+    if end > payload.len() {
+        return None;
+    }
+    Some((read_sized_be(&payload[start..end]), 2 + byte_count))
+}
+
 impl BplistWriter {
     pub fn new() -> Self {
         Self {

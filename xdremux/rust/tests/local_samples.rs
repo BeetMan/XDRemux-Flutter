@@ -10,9 +10,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use xdremux_core::{xdremux_convert, xdremux_free_result, xdremux_verify_output, ConvertConfig};
+use xdremux_core::{
+    xdremux_convert, xdremux_free_result, xdremux_verify_output,
+    xdremux_verify_styles_output, ConvertConfig,
+};
 
 const SAMPLE_DIR_ENV: &str = "XDREMUX_SAMPLE_DIR";
+const STYLES_SAMPLE_ENV: &str = "XDREMUX_STYLES_SAMPLE";
 
 struct TempOutputDir {
     path: PathBuf,
@@ -155,4 +159,52 @@ fn converts_local_samples_to_valid_iso_gain_maps() {
             input.display()
         );
     }
+}
+
+#[test]
+#[ignore = "requires one private real HEIC sample; set XDREMUX_STYLES_SAMPLE and pass --ignored"]
+fn converts_real_sample_to_photos_editable_styles() {
+    let input = PathBuf::from(env::var(STYLES_SAMPLE_ENV).unwrap_or_else(|_| {
+        panic!("set {STYLES_SAMPLE_ENV} to a source HEIC file")
+    }));
+    assert!(input.is_file(), "sample is not a file: {}", input.display());
+    let output_dir = TempOutputDir::new().expect("could not create temporary output directory");
+    let output = output_dir.path.join("styles-output.heic");
+    let input_c = c_path(&input);
+    let output_c = c_path(&output);
+    let config = ConvertConfig {
+        oppo_compat: 0,
+        oppo_camera_tail: 0,
+        strict_tmap: 0,
+        apple_photographic_styles: 1,
+    };
+
+    let result = xdremux_convert(input_c.as_ptr(), output_c.as_ptr(), &config);
+    let error = if result.error_message.is_null() {
+        None
+    } else {
+        Some(
+            unsafe { std::ffi::CStr::from_ptr(result.error_message) }
+                .to_string_lossy()
+                .into_owned(),
+        )
+    };
+    let success = result.success;
+    xdremux_free_result(result);
+
+    assert!(
+        success,
+        "Styles conversion failed for {}: {}",
+        input.display(),
+        error.unwrap_or_else(|| "unknown error".into())
+    );
+    assert!(output.is_file(), "Styles conversion created no output");
+    assert!(
+        xdremux_verify_output(output_c.as_ptr()),
+        "Styles output does not contain a valid ISO gain map"
+    );
+    assert!(
+        xdremux_verify_styles_output(output_c.as_ptr()),
+        "Styles output is missing a valid 51,840-byte styleData payload"
+    );
 }

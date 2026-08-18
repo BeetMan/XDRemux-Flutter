@@ -3162,8 +3162,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${_cfg.outputMode.appHelp} '
-                      'Rust Photographic Styles 已接入；Portrait 仍只在 Swift 后端开放。',
+                      _cfg.outputMode == OutputMode.oppo
+                          ? '输出给 OPPO/一加相册；需要 Apple Photos 可调风格时请选择 Apple Photos。'
+                          : '输出给 Apple Photos；下方可开启可调风格。Portrait 目前仍需 Swift。',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -3180,7 +3181,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // disabled until the embedded Swift Core capability probe
                     // reports a linked and verified implementation.
                     if (Platform.isMacOS || Platform.isIOS) ...[
-                      Text('转换后端', style: theme.textTheme.titleSmall),
+                      Text('转换引擎（怎么生成文件）', style: theme.textTheme.titleSmall),
                       const SizedBox(height: 4),
                       DropdownButtonFormField<ConversionBackend>(
                         initialValue: _cfg.backend,
@@ -3190,15 +3191,15 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         items: [
                           const DropdownMenuItem(
                             value: ConversionBackend.rust,
-                            child: Text('Rust（默认）'),
+                            child: Text('Rust（推荐）'),
                           ),
                           DropdownMenuItem(
                             value: ConversionBackend.swift,
                             enabled: _backendCapabilities.swiftAvailable,
                             child: Text(
                               _backendCapabilities.swiftAvailable
-                                  ? 'Swift'
-                                  : 'Swift（待接入）',
+                                  ? 'Swift（Apple 原生）'
+                                  : 'Swift（暂不可用）',
                             ),
                           ),
                         ],
@@ -3226,7 +3227,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   _backendCapabilities
                                       .swiftAppleFeaturesUnavailableReason,
                               ].where((text) => text.isNotEmpty).join('\n')
-                            : 'Rust 核心继续负责现有标准 HDR 转换。',
+                            : 'Rust（推荐）：负责普通 HDR，也负责下面的 Apple Photos 可调风格。',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -3235,16 +3236,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           _backendCapabilities.swiftAppleFeatures) ...[
                         const SizedBox(height: 12),
                         Text(
-                          'Apple 功能（实验性）',
+                          'Apple Photos 功能（实验性）',
                           style: theme.textTheme.titleSmall,
                         ),
                         const SizedBox(height: 4),
                         if (_backendCapabilities.swiftPhotographicStyles)
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple Photographic Styles'),
+                            title: const Text('Apple Photos 可调风格（Swift）'),
                             subtitle: const Text(
-                              '仅 Swift 后端；启用后自动关闭 OPPO-compatible 输出。上游仍标记为 experimental。',
+                              '导入 Apple Photos 后可继续调节；只在 Swift 原生引擎可用时显示。',
                             ),
                             value: _cfg.applePhotographicStyles,
                             onChanged: (value) {
@@ -3262,9 +3263,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         if (_backendCapabilities.swiftPortrait)
                           SwitchListTile(
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple Portrait'),
+                            title: const Text('人像景深（Swift）'),
                             subtitle: const Text(
-                              '仅对包含可验证人像资源的输入开放；输出 manifest 和辅助图必须通过结构验证。',
+                              '保留 Apple Photos 的景深滑杆；仅对包含可验证人像资源的照片开放。',
                             ),
                             value: _cfg.applePortrait,
                             onChanged: (value) {
@@ -3295,12 +3296,19 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 20),
                     ],
 
-                    if (_cfg.backend == ConversionBackend.rust)
+                    if (_cfg.backend == ConversionBackend.rust) ...[
+                      Text(
+                        'Apple Photos 功能（实验性）',
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      const Text('这些功能不会把效果直接烘焙进照片，而是写入 Photos 可继续调节的数据。'),
+                      const SizedBox(height: 4),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Apple Photographic Styles（Rust）'),
+                        title: const Text('Apple Photos 可调风格（Rust）'),
                         subtitle: const Text(
-                          '使用 Rust 生成可在 Apple Photos 中继续调节的 Styles 输出；实验性功能。',
+                          '开启后自动使用 Apple Photos 输出；导入 Photos 后拖动“摄影风格”强度。会关闭 GPU 硬件编码。',
                         ),
                         value: _cfg.applePhotographicStyles,
                         onChanged: (value) {
@@ -3310,11 +3318,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
                               _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                              _cfg.hardwareEncode = false;
                             }
                           });
                           _emit();
                         },
                       ),
+                    ],
                     const SizedBox(height: 8),
                     if (Platform.isMacOS) ...[
                       ExpansionTile(
@@ -3485,12 +3495,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       tilePadding: EdgeInsets.zero,
                       childrenPadding: EdgeInsets.zero,
                       title: Text(
-                        '高级模式',
+                        '兼容性高级设置',
                         style: theme.textTheme.titleSmall?.copyWith(
                           color: theme.colorScheme.error,
                         ),
                       ),
-                      subtitle: const Text('不建议更改，可能影响相册兼容性'),
+                      subtitle: const Text('一般保持默认；只在排查相册兼容性时修改'),
                       leading: Icon(
                         Icons.tune,
                         size: 20,
@@ -3498,7 +3508,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                       children: [
                         const SizedBox(height: 8),
-                        Text('输入 HDR 类型', style: theme.textTheme.titleSmall),
+                        Text('输入照片类型', style: theme.textTheme.titleSmall),
                         const SizedBox(height: 4),
                         SegmentedButton<Family>(
                           segments: Family.values
@@ -3517,7 +3527,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Auto 自动检测 X6/X7 设备族。',
+                          '自动检测 X6/X7；不确定时保持“自动”。',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -3563,7 +3573,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         DropdownButtonFormField<OppoCameraTailMode>(
                           initialValue: _cfg.oppoCameraTail,
                           decoration: const InputDecoration(
-                            labelText: 'OPPO 相机尾部元数据',
+                            labelText: '保留 OPPO 相机附加信息',
                             border: OutlineInputBorder(),
                           ),
                           items: OppoCameraTailMode.values
@@ -3595,9 +3605,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 20),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: const Text('使用严格 ISO tmap'),
+                          title: const Text('严格 ISO 兼容（高级）'),
                           subtitle: const Text(
-                            '在 tmap 头后加入 3 个 ISO 21496-1 保留字节（65 / 145 字节）。',
+                            '仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。',
                           ),
                           value: _cfg.strictTmap,
                           onChanged: (value) {
@@ -3778,37 +3788,43 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('GPU 硬件编码'),
+                        title: const Text('GPU 硬件编码（仅普通 HDR）'),
                         subtitle: Text(
-                          '用系统硬件编码器（Android MediaCodec / Apple VideoToolbox）'
-                          '编码 gain map，速度大幅提升；设备不支持时自动回退软件编码。'
-                          '开启后 gain map 为 4:2:0（与 OPPO 图库要求一致），'
-                          '并自动开启 OPPO 兼容模式。'
-                          '${switch (_hwAvailable) {
-                            null => '正在检测本机编码器…',
-                            true => '本机硬件编码：可用',
-                            false => '本机硬件编码：不可用（将使用软件编码）',
-                          }}',
+                          _cfg.applePhotographicStyles || _cfg.applePortrait
+                              ? 'Apple Photos 可调功能需要软件编码，当前已自动关闭。'
+                              : '用系统硬件编码器（Android MediaCodec / Apple VideoToolbox）'
+                                    '编码 gain map，速度大幅提升；设备不支持时自动回退软件编码。'
+                                    '开启后 gain map 为 4:2:0（与 OPPO 图库要求一致），'
+                                    '并自动开启 OPPO 兼容模式。'
+                                    '${switch (_hwAvailable) {
+                                      null => '正在检测本机编码器…',
+                                      true => '本机硬件编码：可用',
+                                      false => '本机硬件编码：不可用（将使用软件编码）',
+                                    }}',
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.hardwareEncode,
                         dense: true,
-                        onChanged: (v) {
-                          // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
-                          // 需要的格式。开启时强制 OPPO 兼容模式，保证输出能
-                          // 被 OPPO 图库识别。
-                          if (v &&
-                              _cfg.oppoCompatibility != OppoCompatMode.on) {
-                            _cfg.oppoCompatibility = OppoCompatMode.on;
-                          }
-                          if (v) {
-                            _cfg.outputMode = OutputMode.oppo;
-                            _cfg.applePhotographicStyles = false;
-                            _cfg.applePortrait = false;
-                          }
-                          setState(() => _cfg.hardwareEncode = v);
-                          _emit();
-                        },
+                        onChanged:
+                            _cfg.applePhotographicStyles || _cfg.applePortrait
+                            ? null
+                            : (v) {
+                                // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
+                                // 需要的格式。开启时强制 OPPO 兼容模式，保证输出能
+                                // 被 OPPO 图库识别。
+                                if (v &&
+                                    _cfg.oppoCompatibility !=
+                                        OppoCompatMode.on) {
+                                  _cfg.oppoCompatibility = OppoCompatMode.on;
+                                }
+                                if (v) {
+                                  _cfg.outputMode = OutputMode.oppo;
+                                  _cfg.applePhotographicStyles = false;
+                                  _cfg.applePortrait = false;
+                                }
+                                setState(() => _cfg.hardwareEncode = v);
+                                _emit();
+                              },
                       ),
                       const SizedBox(height: 8),
                     ],

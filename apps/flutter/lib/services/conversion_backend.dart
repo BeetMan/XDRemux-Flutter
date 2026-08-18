@@ -197,7 +197,23 @@ class RustConversionBackend implements ConversionBackendAdapter {
         errorMessage: '转换已取消',
       );
     }
-    return result;
+    if (!result.success) return result;
+
+    final outputValid = await verifyOutput(
+      request.outputPath,
+      applePhotographicStyles: request.applePhotographicStyles,
+      applePortrait: request.applePortrait,
+    );
+    if (!outputValid) {
+      return result.copyWith(
+        success: false,
+        outputValid: false,
+        errorMessage: request.applePhotographicStyles
+            ? 'Rust 输出缺少 Apple Photos 可调风格数据'
+            : 'Rust 输出验证失败',
+      );
+    }
+    return result.copyWith(outputValid: true);
   }
 
   @override
@@ -215,6 +231,9 @@ class RustConversionBackend implements ConversionBackendAdapter {
     bool applePhotographicStyles = false,
     bool applePortrait = false,
   }) async {
+    if (applePhotographicStyles) {
+      return XdRemuxFFI.verifyStylesOutput(path);
+    }
     return XdRemuxFFI.verifyOutput(path);
   }
 

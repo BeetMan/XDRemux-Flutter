@@ -949,6 +949,72 @@ pub extern "C" fn xdremux_verify_output(path: *const c_char) -> bool {
     verify_iso_gain_map(&data)
 }
 
+/// Verifies a Rust Photographic Styles output in addition to the ordinary
+/// ISO gain-map structure. This remains a structural validator; Photos is the
+/// final authority for edit behaviour.
+#[no_mangle]
+pub extern "C" fn xdremux_verify_styles_output(path: *const c_char) -> bool {
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let data = match std::fs::read(path_str) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    verify_iso_gain_map(&data) && verify_photographic_styles(&data)
+}
+
+fn verify_photographic_styles(data: &[u8]) -> bool {
+    let meta = match isobmff::parse_source_meta(data) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    let style_item = match meta
+        .items
+        .iter()
+        .find(|item| item.itype.contains("styleMetadata"))
+    {
+        Some(item) => item,
+        None => return false,
+    };
+    let location = match meta
+        .iloc_entries
+        .iter()
+        .find(|entry| entry.item_id == style_item.item_id)
+    {
+        Some(entry) if entry.construction_method == 1 && entry.extents.len() == 1 => {
+            entry.extents[0]
+        }
+        _ => return false,
+    };
+    let top = isobmff::parse_boxes(data, 0, data.len());
+    let meta_box = match top.iter().find(|box_| &box_.btype == b"meta") {
+        Some(box_) => box_,
+        None => return false,
+    };
+    let meta_kids = isobmff::parse_boxes(data, meta_box.data_start + 4, meta_box.data_end);
+    let idat = match meta_kids.iter().find(|box_| &box_.btype == b"idat") {
+        Some(box_) => box_,
+        None => return false,
+    };
+    let start = match idat
+        .data_start
+        .checked_add(location.0 as usize)
+    {
+        Some(start) => start,
+        None => return false,
+    };
+    let end = match start.checked_add(location.1 as usize) {
+        Some(end) => end,
+        None => return false,
+    };
+    if end > idat.data_end || end > data.len() {
+        return false;
+    }
+    styles_bplist::contains_data_object(&data[start..end], 51_840)
+}
+
 fn verify_iso_gain_map(data: &[u8]) -> bool {
     let top = isobmff::parse_boxes(data, 0, data.len());
 

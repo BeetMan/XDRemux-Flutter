@@ -15,7 +15,7 @@ enum Family {
   String get appTitle {
     switch (this) {
       case Family.auto:
-        return 'Auto';
+        return '自动';
       case Family.x6:
         return 'X6';
       case Family.x7:
@@ -53,18 +53,18 @@ enum OutputMode {
   String get appTitle {
     switch (this) {
       case OutputMode.oppo:
-        return 'OPPO';
+        return 'OPPO 兼容';
       case OutputMode.apple:
-        return 'Apple';
+        return 'Apple Photos';
     }
   }
 
   String get appHelp {
     switch (this) {
       case OutputMode.oppo:
-        return '保留 OPPO 兼容路由和相机尾部，便于回传 OPPO 后继续编辑。';
+        return '给 OPPO/一加相册使用：保留兼容信息和相机尾部，便于继续编辑。';
       case OutputMode.apple:
-        return '输出干净的 Apple/ISO 结构，不写入 OPPO 私有兼容信息。';
+        return '给 Apple Photos 使用：移除 OPPO 私有兼容信息；可额外写入可调风格。';
     }
   }
 }
@@ -205,38 +205,38 @@ enum OppoCompatMode {
   String get appTitle {
     switch (this) {
       case OppoCompatMode.auto:
-        return 'Auto';
+        return '自动';
       case OppoCompatMode.on:
-        return 'On';
+        return 'OPPO 兼容';
       case OppoCompatMode.tail:
-        return 'Tail';
+        return 'OPPO 兼容 + 完整尾部';
       case OppoCompatMode.iso:
-        return 'ISO';
+        return '标准 ISO';
       case OppoCompatMode.isoNoLocal:
-        return 'ISO no local';
+        return '标准 ISO（无本地标记）';
       case OppoCompatMode.isoGraph:
-        return 'ISO graph';
+        return '标准 ISO（保留元数据图）';
       case OppoCompatMode.off:
-        return 'Off';
+        return '关闭';
     }
   }
 
   String get appHelp {
     switch (this) {
       case OppoCompatMode.auto:
-        return 'Preserve source routing flags with OPPO-compatible gain-map output.';
+        return '根据原图标记自动选择；适合大多数照片。';
       case OppoCompatMode.on:
-        return 'Set OPPO UHDR routing flag for Gallery recognition.';
+        return '写入 OPPO 兼容标记，优先保证 OPPO 相册识别。';
       case OppoCompatMode.tail:
-        return 'Set OPPO routing and retain the complete camera metadata tail.';
+        return '写入 OPPO 兼容标记，并完整保留相机尾部信息。';
       case OppoCompatMode.iso:
-        return 'Clear the OPPO routing flag and set the ISO UHDR routing flag.';
+        return '移除 OPPO 标记，写入标准 ISO HDR 标记。';
       case OppoCompatMode.isoNoLocal:
-        return 'ISO routing with the local HDR routing flag removed.';
+        return '标准 ISO HDR，并移除本地 HDR 标记。';
       case OppoCompatMode.isoGraph:
-        return 'Clear OPPO and ISO routing flags while retaining the metadata graph.';
+        return '清除路由标记，但保留原始元数据关系图。';
       case OppoCompatMode.off:
-        return 'No UserComment patch. Clean Apple/ISO output.';
+        return '不修改路由标记；适合 Apple Photos/纯 ISO 输出。';
     }
   }
 

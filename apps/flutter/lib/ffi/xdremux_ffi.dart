@@ -224,6 +224,10 @@ class XdRemuxFFI {
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_output');
 
+  static final _verifyStylesOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_styles_output');
+
   static final _freeResult = _lib.lookupFunction<
       ffi.Void Function(ConversionResult),
       void Function(ConversionResult)>('xdremux_free_result');
@@ -359,6 +363,15 @@ class XdRemuxFFI {
     final ptr = path.toNativeUtf8();
     try {
       return _verifyOutput(ptr);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  static bool verifyStylesOutput(String path) {
+    final ptr = path.toNativeUtf8();
+    try {
+      return _verifyStylesOutput(ptr);
     } finally {
       calloc.free(ptr);
     }

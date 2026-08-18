@@ -58,21 +58,21 @@ void main() {
     // Settings sheet should show its title and the sections that now exist.
     expect(find.text('转换设置'), findsOneWidget);
     expect(find.text('输出模式'), findsOneWidget);
-    expect(find.text('Apple'), findsOneWidget);
+    expect(find.text('Apple Photos'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
     expect(
-      find.text('转换后端'),
+      find.text('转换引擎（怎么生成文件）'),
       (Platform.isMacOS || Platform.isIOS) ? findsOneWidget : findsNothing,
     );
-    expect(find.text('高级模式'), findsOneWidget);
-    expect(find.text('不建议更改，可能影响相册兼容性'), findsOneWidget);
-    expect(find.text('输入 HDR 类型'), findsNothing);
+    expect(find.text('兼容性高级设置'), findsOneWidget);
+    expect(find.text('一般保持默认；只在排查相册兼容性时修改'), findsOneWidget);
+    expect(find.text('输入照片类型'), findsNothing);
     expect(find.text('OPPO 兼容模式'), findsNothing);
 
-    await tester.ensureVisible(find.text('高级模式'));
-    await tester.tap(find.text('高级模式'));
+    await tester.ensureVisible(find.text('兼容性高级设置'));
+    await tester.tap(find.text('兼容性高级设置'));
     await tester.pumpAndSettle();
-    expect(find.text('输入 HDR 类型'), findsOneWidget);
+    expect(find.text('输入照片类型'), findsOneWidget);
     expect(find.text('OPPO 兼容模式'), findsOneWidget);
   });
 
