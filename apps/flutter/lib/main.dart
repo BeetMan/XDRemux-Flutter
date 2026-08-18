@@ -3177,7 +3177,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      _t('输出模式', 'Output'),
+                      _t('输出目标', 'Output target'),
                       style: theme.textTheme.titleSmall,
                     ),
                     const SizedBox(height: 4),
@@ -3199,11 +3199,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     Text(
                       _cfg.language == AppLanguage.english
                           ? (_cfg.outputMode == OutputMode.oppo
-                                ? 'For OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
-                                : 'For Apple Photos. You can enable editable Photographic Styles below.')
+                                ? 'Choose this for OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
+                                : 'Choose this for Apple Photos. Editable Photographic Styles can be enabled below.')
                           : (_cfg.outputMode == OutputMode.oppo
-                                ? '输出给 OPPO/一加相册；需要 Apple Photos 可调风格时请选择 Apple Photos。'
-                                : '输出给 Apple Photos；下方可开启可调风格。Portrait 目前仍需 Swift.'),
+                                ? '选择它来兼容 OPPO/一加相册，并保留后续编辑所需的兼容信息。'
+                                : '选择它来用于 Apple Photos；下方可以开启可调摄影风格。'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

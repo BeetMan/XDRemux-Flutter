@@ -57,7 +57,7 @@ void main() {
 
     // Settings sheet should show its title and the sections that now exist.
     expect(find.text('转换设置'), findsOneWidget);
-    expect(find.text('输出模式'), findsOneWidget);
+    expect(find.text('输出目标'), findsOneWidget);
     expect(find.text('Apple Photos'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
     expect(
