@@ -43,7 +43,7 @@ enum ConversionBackend {
   String get appTitle {
     switch (this) {
       case ConversionBackend.rust:
-        return 'Rust（默认）';
+        return 'Rust（推荐）';
       case ConversionBackend.swift:
         return 'Swift';
     }
@@ -69,9 +69,9 @@ enum OutputMode {
   String get appHelp {
     switch (this) {
       case OutputMode.oppo:
-        return '给 OPPO/一加相册使用：保留兼容信息和相机尾部，便于继续编辑。';
+        return '兼容 OPPO/一加相册的标准文件格式，保留兼容信息和相机附加信息，便于继续编辑。';
       case OutputMode.apple:
-        return '给 Apple 相册使用：移除 OPPO 私有兼容信息；可额外写入可调风格。';
+        return '兼容 Apple 相册的标准文件格式，支持开启新一代摄影风格。';
     }
   }
 }
@@ -97,9 +97,9 @@ enum AppleWatermarkPolicy {
   String get appHelp {
     switch (this) {
       case AppleWatermarkPolicy.preserve:
-        return 'Apple 编辑副本保留当前水印；回传后仍可按设置写回 baseline 水印。';
+        return 'Apple 相册编辑副本保留当前水印；回传后仍可按设置写回 OPPO 手机原图中的水印。';
       case AppleWatermarkPolicy.isolate:
-        return '不把 OPPO 水印私有 metadata 送入 Styles；已经烘焙进画面的水印暂不会被擦除。';
+        return '不把 OPPO 水印私有 metadata 写入 Apple 相册摄影风格；已经烘焙进画面的水印暂不会被擦除。';
     }
   }
 }
@@ -216,7 +216,7 @@ enum OppoCompatMode {
       case OppoCompatMode.on:
         return 'OPPO 兼容';
       case OppoCompatMode.tail:
-        return 'OPPO 兼容 + 完整尾部';
+        return 'OPPO 兼容 + 完整附加信息';
       case OppoCompatMode.iso:
         return '标准 ISO';
       case OppoCompatMode.isoNoLocal:
@@ -235,7 +235,7 @@ enum OppoCompatMode {
       case OppoCompatMode.on:
         return '写入 OPPO 兼容标记，优先保证 OPPO 相册识别。';
       case OppoCompatMode.tail:
-        return '写入 OPPO 兼容标记，并完整保留相机尾部信息。';
+        return '写入 OPPO 兼容标记，并完整保留相机附加信息。';
       case OppoCompatMode.iso:
         return '移除 OPPO 标记，写入标准 ISO HDR 标记。';
       case OppoCompatMode.isoNoLocal:

@@ -1067,7 +1067,7 @@ class _HomePageState extends State<HomePage> {
       issues.add(
         const _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple Photographic Styles 不可用',
+          title: 'Apple 相册摄影风格不可用',
           detail: '当前平台 capability 未就绪。',
         ),
       );
@@ -1076,7 +1076,7 @@ class _HomePageState extends State<HomePage> {
       issues.add(
         const _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple Portrait 不可用',
+          title: 'Apple 人像景深不可用',
           detail: '当前平台 capability 未就绪。',
         ),
       );
@@ -2176,7 +2176,7 @@ class _HomePageState extends State<HomePage> {
       if (Platform.isMacOS || Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
-          tooltip: 'OPPO ↔ Apple 工作流',
+          tooltip: '一张照片，动用两台手机',
           onPressed: _openAppleOppoWorkflow,
         ),
       // Portrait 实验室是研究模块：macOS 与 iOS 均可进入（iOS 依赖
@@ -3202,7 +3202,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 ? 'Choose this for OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
                                 : 'Apple Photos-compatible standard file format. Supports next-generation Photographic Styles.')
                           : (_cfg.outputMode == OutputMode.oppo
-                                ? '选择它来兼容 OPPO/一加相册，并保留后续编辑所需的兼容信息。'
+                                ? '兼容 OPPO/一加相册的标准文件格式，支持后续编辑'
                                 : '兼容 Apple 相册的标准文件格式，支持开启新一代摄影风格'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
