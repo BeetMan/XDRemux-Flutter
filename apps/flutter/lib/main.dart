@@ -3864,18 +3864,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('GPU 硬件编码（仅普通 HDR）'),
+                        title: Text(_t('GPU 硬件编码', 'GPU hardware encoding')),
                         subtitle: Text(
                           _cfg.applePhotographicStyles || _cfg.applePortrait
-                              ? 'Apple 相册可调功能需要软件编码，当前已自动关闭。'
-                              : '用系统硬件编码器（Android MediaCodec / Apple VideoToolbox）'
-                                    '编码 gain map，速度大幅提升；设备不支持时自动回退软件编码。'
-                                    '开启后 gain map 为 4:2:0（与 OPPO 图库要求一致），'
-                                    '并自动开启 OPPO 兼容模式。'
+                              ? _t(
+                                  'Apple 相册可调功能需要软件编码，已自动关闭。',
+                                  'Apple Photos editable features require software encoding and disable this option.',
+                                )
+                              : '${_t('使用设备硬件加速普通 HDR 转换。', 'Use hardware acceleration for standard HDR conversion.')} '
                                     '${switch (_hwAvailable) {
-                                      null => '正在检测本机编码器…',
-                                      true => '本机硬件编码：可用',
-                                      false => '本机硬件编码：不可用（将使用软件编码）',
+                                      null => _t('正在检测硬件编码器…', 'Detecting hardware encoder…'),
+                                      true => _t('硬件编码器：可用', 'Hardware encoder: available'),
+                                      false => _t('硬件编码器：不可用', 'Hardware encoder: unavailable'),
                                     }}',
                           style: theme.textTheme.bodySmall,
                         ),
