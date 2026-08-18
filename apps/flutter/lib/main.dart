@@ -3394,9 +3394,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         initiallyExpanded: false,
                         tilePadding: EdgeInsets.zero,
                         childrenPadding: EdgeInsets.zero,
-                        title: const Text('Apple 回传照片回写（实验性）'),
-                        subtitle: const Text(
-                          '选择原始 OPPO donor 和 iPhone 回传照片，再选择 OPPO 或 Apple 输出。',
+                        title: Text(_t('一张照片，动用两台手机', 'One Photo, Two Phones')),
+                        subtitle: Text(
+                          _t(
+                            '用 OPPO 手机原图提供兼容信息，再用 iPhone/Apple 相册完成编辑和回传。',
+                            'Use the OPPO original for compatibility metadata, then edit and return it through iPhone/Apple Photos.',
+                          ),
                         ),
                         children: [
                           const SizedBox(height: 8),
