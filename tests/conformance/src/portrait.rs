@@ -378,6 +378,39 @@ fn portrait_matte_xmp() -> Vec<u8> {
         .to_vec()
 }
 
+
+/// Bilinear-resample a gray plane to arbitrary target dims.
+fn resample_plane(plane: &[u8], w: usize, h: usize, tw: usize, th: usize) -> Vec<u8> {
+    if w == tw && h == th {
+        return plane.to_vec();
+    }
+    let mut out = vec![0u8; tw * th];
+    for y in 0..th {
+        let sy = (y as f64 + 0.5) * h as f64 / th as f64 - 0.5;
+        let sy = sy.clamp(0.0, (h - 1) as f64);
+        let y0 = sy.floor() as usize;
+        let y1 = (y0 + 1).min(h - 1);
+        let fy = sy - y0 as f64;
+        for x in 0..tw {
+            let sx = (x as f64 + 0.5) * w as f64 / tw as f64 - 0.5;
+            let sx = sx.clamp(0.0, (w - 1) as f64);
+            let x0 = sx.floor() as usize;
+            let x1 = (x0 + 1).min(w - 1);
+            let fx = sx - x0 as f64;
+            let p00 = plane[y0 * w + x0] as f64;
+            let p01 = plane[y0 * w + x1] as f64;
+            let p10 = plane[y1 * w + x0] as f64;
+            let p11 = plane[y1 * w + x1] as f64;
+            let v = p00 * (1.0 - fx) * (1.0 - fy)
+                + p01 * fx * (1.0 - fy)
+                + p10 * (1.0 - fx) * fy
+                + p11 * fx * fy;
+            out[y * tw + x] = v.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
+}
+
 /// Rotate a WxH plane 90 degrees clockwise (orientation-6 display mapping).
 fn rotate_cw90(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
     let (nw, nh) = (h, w);
@@ -564,20 +597,41 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         focus_y_norm = Some(nx);
     }
 
+    // Target aux aspect = the primary's frame (Photos linearly stretches
+    // aux maps to the primary size, so emitting them already at the primary
+    // aspect makes the content mapping consistent; for 4:3 primaries this is
+    // a no-op, for hi-res/watermark crops it fixes the misalignment).
+    let disp_target = if rotate {
+        let base = (depth.height, depth.width); // rotated sensor frame
+        let tw = base.0 & !1;
+        let th = ((base.0 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
+        (tw.max(64), th.max(64))
+    } else {
+        (depth.width, depth.height)
+    };
     let (disp_final, disp_fw, disp_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
-        (r, w2 as u32, h2 as u32)
+        let r2 = resample_plane(&r, w2, h2, disp_target.0, disp_target.1);
+        (r2, disp_target.0 as u32, disp_target.1 as u32)
     } else {
         (disparity_u8.clone(), depth.width as u32, depth.height as u32)
     };
     let (matte_final, matte_fw, matte_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
-        (r, w2 as u32, h2 as u32)
+        let tw = w2 & !1;
+        let th = ((w2 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
+        let r2 = resample_plane(&r, w2, h2, tw.max(64), th.max(64));
+        (r2, tw.max(64) as u32, th.max(64) as u32)
     } else {
         (person_up.clone(), mu_w, mu_h)
     };
     let hair_final = match (&hair_up, rotate) {
-        (Some(h), true) => Some(rotate_cw90(h, mu_w as usize, mu_h as usize).0),
+        (Some(h), true) => {
+            let (r, w2, h2) = rotate_cw90(h, mu_w as usize, mu_h as usize);
+            let tw = w2 & !1;
+            let th = ((w2 as f64 * ph_frame as f64 / pw_frame as f64).round() as usize) & !1;
+            Some(resample_plane(&r, w2, h2, tw.max(64), th.max(64)))
+        }
         (Some(h), false) => Some(h.clone()),
         (None, _) => None,
     };
