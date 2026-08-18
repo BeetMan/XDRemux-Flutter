@@ -3406,9 +3406,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.photo_library_outlined),
-                            title: const Text('原始 OPPO donor'),
+                            title: Text(_t('OPPO 手机原图', 'OPPO original photo')),
                             subtitle: Text(
-                              _writebackDonorPath ?? 'OPPO 模式必需；Apple 模式可留空',
+                              _writebackDonorPath ??
+                                  _t(
+                                    'OPPO 标准输出必需；Apple 标准输出可留空',
+                                    'Required for OPPO Standard output; optional for Apple Standard output',
+                                  ),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3416,15 +3420,17 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               onPressed: _writebackRunning
                                   ? null
                                   : () => _pickWritebackPhoto(donor: true),
-                              child: const Text('选择'),
+                              child: Text(_t('选择', 'Choose')),
                             ),
                           ),
                           ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.phone_iphone),
-                            title: const Text('iPhone 回传照片'),
+                            title: Text(
+                              _t('iPhone 回传照片', 'iPhone returned photo'),
+                            ),
                             subtitle: Text(
-                              _writebackReturnedPath ?? '必需',
+                              _writebackReturnedPath ?? _t('必需', 'Required'),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3432,7 +3438,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               onPressed: _writebackRunning
                                   ? null
                                   : () => _pickWritebackPhoto(donor: false),
-                              child: const Text('选择'),
+                              child: Text(_t('选择', 'Choose')),
                             ),
                           ),
                           SegmentedButton<OutputMode>(
@@ -3440,7 +3446,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 .map(
                                   (mode) => ButtonSegment<OutputMode>(
                                     value: mode,
-                                    label: Text(mode.appTitle),
+                                    label: Text(_outputTitle(mode)),
                                   ),
                                 )
                                 .toList(),
@@ -3451,9 +3457,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _cfg.outputMode == OutputMode.oppo
-                                ? 'OPPO：需要 donor；回写水印画布并恢复 OPPO footer。'
-                                : 'Apple：不改动回传文件，保留 Apple/ISO 结果。',
+                            _cfg.language == AppLanguage.english
+                                ? (_cfg.outputMode == OutputMode.oppo
+                                      ? 'OPPO Standard: requires the OPPO original; restores OPPO watermark and metadata.'
+                                      : 'Apple Standard: keeps the iPhone/Apple Photos result without writing OPPO metadata.')
+                                : (_cfg.outputMode == OutputMode.oppo
+                                      ? 'OPPO 标准：需要 OPPO 手机原图；回写水印和 OPPO 附加信息。'
+                                      : 'Apple 标准：保留 iPhone/Apple 相册结果，不写回 OPPO 信息。'),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
