@@ -665,7 +665,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
 // helpers
 // ---------------------------------------------------------------------------
 
-fn top_level_boxes(data: &[u8]) -> Result<Vec<BoxHeader>, String> {
+pub(crate) fn top_level_boxes(data: &[u8]) -> Result<Vec<BoxHeader>, String> {
     let boxes = isobmff::parse_boxes(data, 0, data.len());
     if boxes.is_empty() {
         return Err("no top-level boxes".into());
@@ -673,7 +673,7 @@ fn top_level_boxes(data: &[u8]) -> Result<Vec<BoxHeader>, String> {
     Ok(boxes)
 }
 
-fn find_top(boxes: &[BoxHeader], btype: &[u8; 4]) -> Option<BoxHeader> {
+pub(crate) fn find_top(boxes: &[BoxHeader], btype: &[u8; 4]) -> Option<BoxHeader> {
     boxes.iter().find(|b| &b.btype == btype).cloned()
 }
 
@@ -687,7 +687,7 @@ fn find_child(data: &[u8], parent: &BoxHeader, btype: &[u8; 4]) -> Option<BoxHea
         .find(|b| &b.btype == btype)
 }
 
-fn idat_payload(data: &[u8], meta: &BoxHeader) -> Option<Vec<u8>> {
+pub(crate) fn idat_payload(data: &[u8], meta: &BoxHeader) -> Option<Vec<u8>> {
     find_child(data, meta, b"idat")
         .map(|h| data[h.data_start..h.data_end].to_vec())
 }
@@ -724,6 +724,42 @@ fn patch_infe_id(raw: &[u8], new_id: u32) -> Result<Vec<u8>, String> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// pub(crate) wrapper so scaffold.rs can reuse the assembly logic.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_output_pub(
+    drop_auxc_for: Option<u32>,
+    standard: &[u8],
+    std_top: &[BoxHeader],
+    std_meta_hdr: &BoxHeader,
+    std_mdat_hdr: &BoxHeader,
+    std_meta: &ParsedMeta,
+    new_infes: &[Vec<u8>],
+    iloc_entries: &[IlocEntry],
+    new_ipco: &[u8],
+    new_ipma_entries: &[IpmaEntry],
+    new_refs: &[IrefEntry],
+    new_idat: &[u8],
+    std_mdat_payload: &[u8],
+    appended_mdat: &[u8],
+) -> Vec<u8> {
+    build_output(
+        drop_auxc_for,
+        standard,
+        std_top,
+        std_meta_hdr,
+        std_mdat_hdr,
+        std_meta,
+        new_infes,
+        iloc_entries,
+        new_ipco,
+        new_ipma_entries,
+        new_refs,
+        new_idat,
+        std_mdat_payload,
+        appended_mdat,
+    )
+}
+
 fn build_output(
     drop_auxc_for: Option<u32>,
     standard: &[u8],
