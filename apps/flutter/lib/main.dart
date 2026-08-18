@@ -1073,7 +1073,9 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-    if (_config.applePortrait && !_backendCapabilities.swiftPortrait) {
+    if (_config.applePortrait &&
+        _config.backend == ConversionBackend.swift &&
+        !_backendCapabilities.swiftPortrait) {
       issues.add(
         const _PreflightIssue(
           severity: _PreflightSeverity.blocking,
