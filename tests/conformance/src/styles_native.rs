@@ -160,7 +160,9 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let hvcc_delta_idx = add_prop(DELTA_HVCC_BOX.to_vec());
 
     // ---- ipma ------------------------------------------------------------
-    let mut ipma_entries: Vec<IpmaEntry> = meta.ipma_entries.clone();
+    // Extra entries ONLY (build_output chains them onto the source entries;
+    // passing a cloned full list here previously doubled every entry).
+    let mut ipma_entries: Vec<IpmaEntry> = Vec::new();
     for id in &delta_tile_ids {
         ipma_entries.push(IpmaEntry {
             item_id: *id,
@@ -280,6 +282,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // ---- two-pass assembly --------------------------------------------------
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         crate::styles_graft::build_output_pub(
+            None,
             None,
             base,
             &top,

@@ -480,6 +480,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         build_output(
             if golden_style_gainmap { gainmap_grid_s } else { None },
+            None,
             standard,
             &std_top,
             &std_meta_hdr,
@@ -726,8 +727,13 @@ fn patch_infe_id(raw: &[u8], new_id: u32) -> Result<Vec<u8>, String> {
 #[allow(clippy::too_many_arguments)]
 /// pub(crate) wrapper so scaffold.rs can reuse the assembly logic.
 #[allow(clippy::too_many_arguments)]
+/// `ipma_base_override`: when Some, replaces the source ipma entries as the
+/// base (for callers that modify existing associations); `new_ipma_entries`
+/// must then contain ONLY genuinely new items. When None, the source entries
+/// are used as-is and `new_ipma_entries` is appended.
 pub(crate) fn build_output_pub(
     drop_auxc_for: Option<u32>,
+    ipma_base_override: Option<&[IpmaEntry]>,
     standard: &[u8],
     std_top: &[BoxHeader],
     std_meta_hdr: &BoxHeader,
@@ -744,6 +750,7 @@ pub(crate) fn build_output_pub(
 ) -> Vec<u8> {
     build_output(
         drop_auxc_for,
+        ipma_base_override,
         standard,
         std_top,
         std_meta_hdr,
@@ -762,6 +769,7 @@ pub(crate) fn build_output_pub(
 
 fn build_output(
     drop_auxc_for: Option<u32>,
+    ipma_base_override: Option<&[IpmaEntry]>,
     standard: &[u8],
     std_top: &[BoxHeader],
     std_meta_hdr: &BoxHeader,
@@ -779,7 +787,12 @@ fn build_output(
     let iinf_box = isobmff::make_iinf_box(std_meta.iinf_version, new_infes);
     let iloc_box = isobmff::make_iloc_box(iloc_entries);
     let ipco_box = isobmff::make_box(b"ipco", new_ipco);
-    let ipma_payload = build_ipma_filtered(std_meta, new_ipma_entries, drop_auxc_for);
+    let ipma_payload = build_ipma_filtered(
+        std_meta,
+        new_ipma_entries,
+        drop_auxc_for,
+        ipma_base_override,
+    );
     let ipma_box = isobmff::make_box(b"ipma", &ipma_payload);
     let mut iprp = Vec::new();
     iprp.extend_from_slice(&ipco_box);
@@ -844,8 +857,11 @@ fn build_ipma_filtered(
     std_meta: &ParsedMeta,
     extra: &[IpmaEntry],
     drop_auxc_for: Option<u32>,
+    base_override: Option<&[IpmaEntry]>,
 ) -> Vec<u8> {
-    let mut owned: Vec<IpmaEntry> = std_meta.ipma_entries.clone();
+    let mut owned: Vec<IpmaEntry> = base_override
+        .map(|b| b.to_vec())
+        .unwrap_or_else(|| std_meta.ipma_entries.clone());
     if let Some(item) = drop_auxc_for {
         if let Some(entry) = owned.iter_mut().find(|e| e.item_id == item) {
             entry.associations.retain(|(idx, _)| {
@@ -916,7 +932,7 @@ pub fn rewrite_meta_passthrough(data: &[u8]) -> Result<Vec<u8>, String> {
     // two-pass like graft: meta may grow/shrink from reserialization
     let build = |iloc: &[IlocEntry]| {
         build_output(
-            None, data, &top, &meta_hdr, &mdat_hdr, &meta, &infes, iloc,
+            None, None, data, &top, &meta_hdr, &mdat_hdr, &meta, &infes, iloc,
             &ipco_raw, &[], &refs, &idat, &mdat_payload, &[],
         )
     };

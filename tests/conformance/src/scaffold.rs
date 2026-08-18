@@ -244,8 +244,11 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         .map(|(idx, _)| *idx);
 
     // ---- 8. ipma ---------------------------------------------------------
-    let mut ipma_entries: Vec<IpmaEntry> = std_meta.ipma_entries.clone();
-    for entry in ipma_entries.iter_mut() {
+    // Modified source entries are passed as the base override; only genuinely
+    // new items go into `extra` (build_output would otherwise duplicate the
+    // source entries — the doubling bug found via ipma count 151 vs 78).
+    let mut ipma_base: Vec<IpmaEntry> = std_meta.ipma_entries.clone();
+    for entry in ipma_base.iter_mut() {
         if entry.item_id == primary {
             // Primary grid: + pixi [8,8,8] (non-essential).
             if !entry.associations.iter().any(|(i, _)| *i == pixi_rgb8_idx) {
@@ -280,10 +283,10 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     if let Some(ir) = irot_idx {
         matte_assocs.push((ir, true));
     }
-    ipma_entries.push(IpmaEntry {
+    let matte_ipma_entry = IpmaEntry {
         item_id: matte_id,
         associations: matte_assocs,
-    });
+    };
 
     // ---- 9. iref additions ----------------------------------------------
     let mut new_refs = std_meta.refs.clone();
@@ -334,6 +337,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         crate::styles_graft::build_output_pub(
             None,
+            Some(&ipma_base),
             standard,
             &std_top,
             &std_meta_hdr,
@@ -342,7 +346,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
             &new_infes,
             iloc_entries,
             &new_ipco,
-            &ipma_entries,
+            std::slice::from_ref(&matte_ipma_entry),
             &new_refs,
             &new_idat,
             &std_mdat_payload,
