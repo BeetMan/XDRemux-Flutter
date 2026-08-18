@@ -637,15 +637,20 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     // v1 approximation.
     let m0 = isobmff::parse_source_meta(base).map_err(|e| format!("meta parse: {e}"))?;
     let (pw_frame, ph_frame) = base_primary_dims(&m0)?;
-    let rotate = ph_frame > pw_frame && depth.width > depth.height;
+    let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
+    // Use the actual watermark content frame when present. Some OPPO files
+    // have a portrait outer canvas but a landscape 4:3 photo centered inside;
+    // rotating the aux maps based on the outer canvas flips those files.
+    let rotate = match content_rect {
+        Some((_, _, content_w, content_h)) =>
+            content_h > content_w && depth.width > depth.height,
+        None => ph_frame > pw_frame && depth.width > depth.height,
+    };
     eprintln!(
         "portrait: primary frame {pw_frame}x{ph_frame}, depth {}x{}, rotate90={rotate}",
         depth.width, depth.height
     );
-    let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
-    eprintln!(
-        "portrait: watermark content rect: {content_rect:?}"
-    );
+    eprintln!("portrait: watermark content rect: {content_rect:?}");
     let mut focus_x_norm: Option<f64> = None;
     let mut focus_y_norm: Option<f64> = None;
     if rotate {
@@ -684,6 +689,24 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
             None => {
                 focus_x_norm = Some(1.0 - ny);
                 focus_y_norm = Some(nx);
+            }
+        }
+    } else {
+        let cfg2 = depth.config.as_ref();
+        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
+            / depth.src_dims.0.max(1) as f64;
+        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
+            / depth.src_dims.1.max(1) as f64;
+        match content_rect {
+            Some((cx, cy, cw2, ch2)) => {
+                focus_x_norm =
+                    Some((cx as f64 + nx.clamp(0.0, 1.0) * cw2 as f64) / pw_frame as f64);
+                focus_y_norm =
+                    Some((cy as f64 + ny.clamp(0.0, 1.0) * ch2 as f64) / ph_frame as f64);
+            }
+            None => {
+                focus_x_norm = Some(nx);
+                focus_y_norm = Some(ny);
             }
         }
     }
@@ -744,12 +767,16 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let (disp_final, disp_fw, disp_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
         place(&r, w2, h2, 0.5) // disparity at half the primary frame
+    } else if content_rect.is_some() {
+        place(&disparity_u8, depth.width, depth.height, 0.5)
     } else {
         (disparity_u8.clone(), depth.width as u32, depth.height as u32)
     };
     let (matte_final, matte_fw, matte_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
         place(&r, w2, h2, 0.5)
+    } else if content_rect.is_some() {
+        place(&person_up, mu_w as usize, mu_h as usize, 0.5)
     } else {
         (person_up.clone(), mu_w, mu_h)
     };
@@ -758,6 +785,9 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
             let (r, w2, h2) = rotate_cw90(h, mu_w as usize, mu_h as usize);
             let (m, _, _) = place(&r, w2, h2, 0.5);
             Some(m)
+        }
+        (Some(h), false) if content_rect.is_some() => {
+            Some(place(h, mu_w as usize, mu_h as usize, 0.5).0)
         }
         (Some(h), false) => Some(h.clone()),
         (None, _) => None,
