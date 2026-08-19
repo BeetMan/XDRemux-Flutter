@@ -584,30 +584,6 @@ class _HomePageState extends State<HomePage> {
   // File selection
   // ---------------------------------------------------------------------------
 
-  /// Request storage/photo read permission on Android.
-  /// permission_handler internally maps to the correct permission per API level:
-  /// - Android 13+ (API 33): READ_MEDIA_IMAGES
-  /// - Older: READ_EXTERNAL_STORAGE
-  Future<void> _requestStoragePermission() async {
-    try {
-      // Try photos first (Android 13+); fall back to storage for older devices.
-      var status = await Permission.photos.request();
-      if (status.isPermanentlyDenied) {
-        status = await Permission.storage.request();
-      }
-      if (!status.isGranted && !status.isLimited && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('未获得存储权限，可能无法读取文件'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (_) {
-      // Permission request failed; file_picker may still work via SAF.
-    }
-  }
-
   /// Resolve a file returned by Android's document picker to a real local
   /// path. Some OEM document providers return readable bytes but no usable
   /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
@@ -822,45 +798,11 @@ class _HomePageState extends State<HomePage> {
   Future<void> _addFilesFromFiles() async {
     if (!_canEditQueue) return;
 
-    // Android: request storage/photo permission before picking files
-    if (Platform.isAndroid) {
-      await _requestStoragePermission();
-    }
-
-    // Android users pick from the gallery, which filters to HEIC for us. The
-    // gallery returns content:// URIs; with all-files access granted,
-    // _resolvePickedFile reads the original filesystem file (GPS intact)
-    // instead of OPPO's content stream.
-    if (Platform.isAndroid) {
-      final granted = await allFilesAccessGranted();
-      if (!granted && mounted) {
-        // Ask once: grant the permission to keep GPS, or continue without it
-        // (OPPO's content stream strips GPS).
-        final want = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('保留照片位置信息？'),
-            content: const Text(
-              'OPPO 系统通过相册读取 HEIC 时会清除位置信息。\n\n'
-              '授予「所有文件访问」权限后，转换可以保留照片的 GPS 位置。',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('继续（不保留位置）'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('去授权'),
-              ),
-            ],
-          ),
-        );
-        if (want == true) {
-          await ensureAllFilesAccess();
-        }
-      }
-    }
+    // Android uses the system document picker (SAF), which grants temporary
+    // access to the selected content URI. Do not request READ_MEDIA_IMAGES or
+    // MANAGE_EXTERNAL_STORAGE here: both are optional for importing. Users
+    // who need OPPO GPS preservation can enable "保留位置信息" in Settings;
+    // gallery-save permission is requested only when saving an output.
 
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
