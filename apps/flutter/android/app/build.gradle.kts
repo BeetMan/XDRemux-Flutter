@@ -32,7 +32,9 @@ if (System.getenv("XDREMUX_REQUIRE_RELEASE_SIGNING") == "true" && !releaseSignin
 
 android {
     namespace = "com.example.xdremux"
-    compileSdk = flutter.compileSdkVersion
+    // receive_sharing_intent currently requires API 37; compileSdk is
+    // backward-compatible with the minSdk and avoids a Gradle warning.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
