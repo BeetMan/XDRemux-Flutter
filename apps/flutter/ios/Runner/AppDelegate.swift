@@ -45,9 +45,15 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     // docs/validation/ios-device-20260816.md). DEBUG builds only.
     #if DEBUG
     if !UserDefaults.standard.bool(forKey: "xdremux.abiProbe.done") {
-      UserDefaults.standard.set(true, forKey: "xdremux.abiProbe.done")
-      DispatchQueue.global(qos: .utility).async {
-        ApplePrivateAbiProbe.run()
+      // This is a research-only probe. Do not compete with Flutter engine
+      // startup on a Debug launch; the old eager probe made the first screen
+      // look blank while native work was still being scheduled.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        guard UIApplication.shared.applicationState == .active else { return }
+        UserDefaults.standard.set(true, forKey: "xdremux.abiProbe.done")
+        DispatchQueue.global(qos: .utility).async {
+          ApplePrivateAbiProbe.run()
+        }
       }
     }
     #endif
