@@ -118,6 +118,7 @@ fn converts_local_samples_to_valid_iso_gain_maps() {
         oppo_camera_tail: xdremux_core::container::OppoCameraTail::AUTOMATIC,
         strict_tmap: 0,
         apple_photographic_styles: 0,
+        apple_portrait: 0,
     };
 
     for (index, input) in samples.iter().enumerate() {
@@ -177,6 +178,7 @@ fn converts_real_sample_to_photos_editable_styles() {
         oppo_camera_tail: 0,
         strict_tmap: 0,
         apple_photographic_styles: 1,
+        apple_portrait: 0,
     };
 
     let result = xdremux_convert(input_c.as_ptr(), output_c.as_ptr(), &config);
