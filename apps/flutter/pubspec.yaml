@@ -39,7 +39,7 @@ dependencies:
   flutter_local_notifications: ^20.1.0
 
   # Android foreground service for background conversion
-  flutter_foreground_task: ^10.0.0
+  flutter_foreground_task: ^11.0.0
 
   # Open files with system default app
   open_filex: ^4.5.0
