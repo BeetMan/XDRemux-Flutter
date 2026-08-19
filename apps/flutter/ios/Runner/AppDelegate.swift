@@ -1,4 +1,6 @@
 import Flutter
+import PhotosUI
+import UniformTypeIdentifiers
 import UIKit
 import XDremuxAppleProviders
 import XDremuxFlutterBackendIOS
@@ -33,7 +35,7 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
 }
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -53,6 +55,7 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
   }
 
   private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
+  private var pendingPhotoPickerResult: FlutterResult?
 
   private static func activePresenter() -> UIViewController? {
     let scenes = UIApplication.shared.connectedScenes
@@ -64,6 +67,89 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       ?? scenes.flatMap(\.windows).first(where: { !$0.isHidden && $0.alpha > 0 })
     guard let root = window?.rootViewController else { return nil }
     return topViewController(from: root)
+  }
+
+  private func presentPhotoPicker(result: @escaping FlutterResult) {
+    guard pendingPhotoPickerResult == nil else {
+      result(FlutterError(
+        code: "picker_busy",
+        message: "The photo picker is already open",
+        details: nil
+      ))
+      return
+    }
+    guard let presenter = Self.activePresenter() else {
+      result(FlutterError(
+        code: "picker_unavailable",
+        message: "No active iOS presentation controller is available",
+        details: nil
+      ))
+      return
+    }
+
+    var configuration = PHPickerConfiguration(photoLibrary: PHPhotoLibrary.shared())
+    configuration.filter = .images
+    configuration.selectionLimit = 0
+    configuration.preferredAssetRepresentationMode = .current
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = self
+    pendingPhotoPickerResult = result
+    presenter.present(picker, animated: true)
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    let completion = pendingPhotoPickerResult
+    pendingPhotoPickerResult = nil
+    picker.dismiss(animated: true)
+
+    guard let completion else { return }
+    guard !results.isEmpty else {
+      completion([])
+      return
+    }
+
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var paths: [String] = []
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("XDRemuxPhotoImports", isDirectory: true)
+    try? FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+
+    for result in results {
+      let provider = result.itemProvider
+      guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
+        guard let type = UTType($0) else { return false }
+        return type.conforms(to: .heic) || type.conforms(to: .heif)
+      }) else {
+        continue
+      }
+
+      group.enter()
+      provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { sourceURL, _ in
+        defer { group.leave() }
+        guard let sourceURL else { return }
+        let type = UTType(typeIdentifier)
+        let extensionName = type?.preferredFilenameExtension ?? "heic"
+        let destination = directory
+          .appendingPathComponent(UUID().uuidString)
+          .appendingPathExtension(extensionName)
+        do {
+          try FileManager.default.copyItem(at: sourceURL, to: destination)
+          lock.lock()
+          paths.append(destination.path)
+          lock.unlock()
+        } catch {
+          // A single unavailable asset should not discard the other picks.
+        }
+      }
+    }
+
+    group.notify(queue: .main) {
+      completion(paths)
+    }
   }
 
   private static func topViewController(from viewController: UIViewController) -> UIViewController {
@@ -172,6 +258,20 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         presenter.present(controller, animated: true) {
           result(true)
         }
+      }
+    }
+
+    let photoPickerChannel = FlutterMethodChannel(
+      name: "xdremux/photo-picker",
+      binaryMessenger: messenger
+    )
+    photoPickerChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "pickPhotos" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      DispatchQueue.main.async {
+        self?.presentPhotoPicker(result: result)
       }
     }
 

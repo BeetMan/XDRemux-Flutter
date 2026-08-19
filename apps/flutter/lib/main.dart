@@ -756,7 +756,70 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
+  static const _photoPickerChannel = MethodChannel('xdremux/photo-picker');
+
   Future<void> _addFiles() async {
+    if (!_canEditQueue) return;
+    if (Platform.isIOS) {
+      final source = await showModalBottomSheet<_ImportSource>(
+        context: context,
+        useSafeArea: true,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('从相册选择'),
+                subtitle: const Text('保留原始 HEIC、HDR 和深度数据'),
+                onTap: () => Navigator.pop(ctx, _ImportSource.photos),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('从文件选择'),
+                subtitle: const Text('打开“文件”App 或 iCloud Drive'),
+                onTap: () => Navigator.pop(ctx, _ImportSource.files),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (source == null) return;
+      if (source == _ImportSource.photos) {
+        await _addFromPhotos();
+        return;
+      }
+    }
+    await _addFilesFromFiles();
+  }
+
+  Future<void> _addFromPhotos() async {
+    try {
+      final rawPaths = await _photoPickerChannel.invokeMethod<List<dynamic>>(
+        'pickPhotos',
+      );
+      final paths = (rawPaths ?? []).whereType<String>().toList();
+      if (paths.isEmpty) return;
+      final files = paths
+          .map(
+            (path) => PlatformFile(
+              name: path.split('/').last,
+              size: File(path).lengthSync(),
+              path: path,
+            ),
+          )
+          .toList();
+      await _ingestPickedFiles(files, source: 'photo_picker');
+    } on PlatformException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法打开相册：${e.message ?? e.code}')),
+        );
+      }
+    }
+  }
+
+  Future<void> _addFilesFromFiles() async {
     if (!_canEditQueue) return;
 
     // Android: request storage/photo permission before picking files
@@ -824,6 +887,21 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() => _currentFileName = '文件选择器未返回文件');
       return;
     }
+    await _ingestPickedFiles(result.files, source: 'file_picker');
+  }
+
+  Future<void> _ingestPickedFiles(
+    List<PlatformFile> files, {
+    required String source,
+  }) async {
+    if (files.isEmpty) {
+      if (mounted) setState(() => _currentFileName = '文件选择器未返回文件');
+      return;
+    }
+    debugPrint(
+      '[XDRemux][$source] returned ${files.length} file(s): '
+      '${files.map((file) => '${file.name}|path=${file.path}|bytes=${file.bytes?.length}|id=${file.identifier}').join('; ')}',
+    );
 
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
@@ -833,25 +911,20 @@ class _HomePageState extends State<HomePage> {
     final unsupportedPortraitFiles = <String>[];
     String? firstError;
 
-    for (var index = 0; index < result.files.length; index++) {
-      final file = result.files[index];
+    for (var index = 0; index < files.length; index++) {
+      final file = files[index];
       final resolvedPath = await _resolvePickedFile(file, index);
       if (resolvedPath == null) {
         skipped++;
         continue;
       }
-      // file_picker may return an OS-cache path (especially for iOS and
-      // Android content:// imports). Persist that input before it enters the
-      // queue; otherwise a killed app leaves the checkpoint pointing at a
-      // path that the OS has already deleted.
+      // file_picker and PHPicker both hand us an OS-cache path. Persist that
+      // input before it enters the queue so it survives app restarts.
       final path = await CheckpointService.materializeTemporaryInput(
         resolvedPath,
       );
       if (existing.contains(path)) continue;
 
-      // Apple Portrait requires the OPPO rear-camera depth graph. Detect this
-      // while importing so front-camera files (which only contain front.depth)
-      // do not enter the queue and fail later in the conversion worker.
       if (_config.applePortrait) {
         final portraitReason = await _portraitImportRejection(path);
         if (portraitReason != null) {
@@ -867,15 +940,11 @@ class _HomePageState extends State<HomePage> {
       try {
         final classification = await XdRemuxService.classify(path);
         final folderName = classification['folderName'] as String?;
-        // Keep output naming based on the user-selected source path, not the
-        // private checkpoint copy (whose filename contains an internal key).
         final outputPath = _config.outputPathFor(
           resolvedPath,
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
-        // Skip files that are already converted ISO HDR outputs —
-        // re-converting produces a broken nested gain map.
         if (_config.skipExisting) {
           final inputIsConverted = await XdRemuxService.verifyOutput(path);
           debugPrint(
@@ -903,7 +972,7 @@ class _HomePageState extends State<HomePage> {
         added++;
       } catch (e) {
         firstError ??= '$e';
-        debugPrint('[XDRemux][file_picker] classify failed for $path: $e');
+        debugPrint('[XDRemux][$source] classify failed for $path: $e');
         if (mounted) {
           setState(() => _currentFileName = '添加失败: $e');
         }
@@ -2622,11 +2691,32 @@ class _HomePageState extends State<HomePage> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 20),
-                  FilledButton.icon(
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    label: const Text('添加文件'),
-                    onPressed: _addFiles,
-                  ),
+                  if (Platform.isIOS)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            icon: const Icon(Icons.photo_library_outlined),
+                            label: const Text('从相册选择'),
+                            onPressed: _addFromPhotos,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.folder_open_outlined),
+                            label: const Text('从文件选择'),
+                            onPressed: _addFilesFromFiles,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    FilledButton.icon(
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: const Text('添加文件'),
+                      onPressed: _addFiles,
+                    ),
                   const SizedBox(height: 16),
                   Wrap(
                     alignment: WrapAlignment.center,
@@ -4531,6 +4621,8 @@ class _MobileQueueCard extends StatelessWidget {
     );
   }
 }
+
+enum _ImportSource { photos, files }
 
 enum _OutputAction { save, share, open }
 
