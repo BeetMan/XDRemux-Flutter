@@ -75,7 +75,7 @@ post_install do |installer|
     content = File.read(f)
     content = content.sub(
       /^OTHER_LDFLAGS = .*$/,
-      "OTHER_LDFLAGS = $(inherited) -ObjC -framework \"flutter_foreground_task\" -framework \"open_filex\" -framework \"Security\" #{force}"
+      "OTHER_LDFLAGS = $(inherited) -ObjC -framework \"open_filex\" -framework \"Security\" #{force}"
     )
     File.write(f, content)
   end

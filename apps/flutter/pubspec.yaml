@@ -33,7 +33,7 @@ dependencies:
   share_plus: ^10.0.0
 
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
-  receive_sharing_intent: 1.8.1
+  receive_sharing_intent: 1.9.0
 
   # System notifications on batch conversion completion (Windows + Android)
   flutter_local_notifications: ^20.1.0
