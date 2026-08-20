@@ -29,9 +29,13 @@ Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、And
 
 ## 截图
 
-| Windows | Android |
+| Windows | macOS |
 |---|---|
-| ![Windows 主界面](screenshots/windows_main.png) | ![Android 主界面](screenshots/android_main.png) |
+| ![Windows 主界面](screenshots/windows.png) | ![macOS 主界面](screenshots/macos.png) |
+
+| Android | iOS |
+|---|---|
+| ![Android 主界面](screenshots/android.jpg) | ![iOS 主界面](screenshots/ios.jpg) |
 
 ---
 
