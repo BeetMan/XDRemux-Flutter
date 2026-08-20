@@ -1,206 +1,201 @@
-# XDRemux-Flutter
+# XDRemux
 
-将 OPPO / OnePlus / realme 设备拍摄的 ProXDR HEIC 照片转换为标准 ISO 21496-1 HDR HEIC。
+将 OPPO / OnePlus / realme 拍摄的 ProXDR HEIC，转换为 ISO 21496-1 HDR HEIC，并面向 **OPPO 图库**或 **Apple 照片**生成对应格式。
 
-Rust 重写核心转换逻辑（原版 [XDRemux](https://github.com/21Z121Z1/XDRemux) 为 Swift + Python），搭配 Flutter 构建跨平台桌面/移动端 UI。转换后的照片可在 macOS、iOS、Android、Windows 等支持 HDR 显示的系统上查看。
+**一帧影像，动用两台手机。**
 
-macOS/iOS 上另有 **Swift 后端**（vendored 上游 v1.3.1 + 进程内 providers），除标准 HDR 外还支持实验性的 **Apple Photographic Styles 生成**（输出可在 Apple Photos 中调节摄影风格）与 **Apple Portrait 实验室**（人像景深研究模块）。
+Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、Android 和 iOS。
+转换目标不是只得到一个“能亮起来的 HDR”，而是根据照片后续在哪里管理，分别保留 ColorOS 可编辑性，或接入 Apple 照片的摄影风格与人像模式流程。
 
-> 已适配验证 OPPO/OnePlus/realme 设备的 ProXDR HEIC（LHDR + UHDR 两种容器），覆盖 Ace 3、Find X6 Pro、Find X7 Ultra、Find X8 Ultra 等多机型样本。如有其他机型或拍摄模式的转换异常，欢迎提交 [Issue](https://github.com/BeetMan/XDRemux-Flutter/issues) 反馈（附上原图与机型/模式信息）。
+[下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) ·
+[问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues)
 
-**[下载最新版（Windows 安装包 / macOS DMG / Android APK）](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)**（iOS 需自签侧载，见下文「iOS 部署」）
+> 已适配验证 OPPO / OnePlus / realme 的 ProXDR HEIC（LHDR + UHDR 两种容器），覆盖 Ace 3、Find X6 Pro、Find X7 Ultra、Find X8 Ultra 等样例。
+> 如有其他机型或拍摄模式异常，欢迎提交 Issue，并附上机型、拍摄模式和原始 HEIC。
+
+---
+
+## 下载
+
+| 平台 | 最新文件 | 状态 | 说明 |
+|---|---|---|---|
+| Windows | `XDRemux-Windows-*-Setup.exe` | ✅ 推荐 | 安装包，无需安装 ffmpeg |
+| macOS | `XDRemux-macOS-*.dmg` | ✅ 推荐 | 拖拽到 Applications；首次可能需右键打开 |
+| Android | `XDRemux-Android-*.apk` | ✅ 推荐 | SAF 文件导入、保存图库、分享和后台转换 |
+| iOS | `XDRemux-iOS-*-unsigned.ipa` | ⚠️ 侧载 | 未签名 IPA，需要自行签名安装 |
+| Linux | — | 未提供 | Flutter Linux 目标尚未创建 |
+
+---
 
 ## 截图
 
 | Windows | Android |
-|---------|---------|
+|---|---|
 | ![Windows 主界面](screenshots/windows_main.png) | ![Android 主界面](screenshots/android_main.png) |
 
-## 已实现功能
+---
 
-### 转换
+## 核心能力
 
-- ✅ LHDR（X6 系列）→ ISO 21496-1 HDR HEIC（gray gain map）
-- ✅ UHDR（X7 系列）→ ISO 21496-1 HDR HEIC（RGB gain map）
-- ✅ OPPO 相册兼容模式（RGB gain map + 142B tmap + BT.2020 PQ colr）
-- ✅ EXIF 方向感知（gain map transpose + canonical tmap ispe + irot quarter-turns）
-- ✅ ISO HDR 元数据：XMP hdrgm:*、tmap box、auxC URN、tone map LUTs
-- ✅ EXIF UserComment patch（`tail` 标记 OPPO 路由）
-- ✅ 拍摄模式分类（15 种 OPPO 拍摄模式：普通拍照 / 大师模式 / 人像 / 夜景 / 全景 / 延时 / 超清 / 证件照 / 贴纸 / 超级文本 / 合影 / 双重曝光 / 美颜 / 专业模式 / RICOH GR）
-- ✅ `xdremux_verify_output` — 验证输出文件是否包含有效 ISO gain map
-- ✅ Bit-exact SDR base image（源文件直达，不重新编码）
-- ✅ Apple Photographic Styles 生成（macOS/iOS Swift 后端，实验性）：Vision 语义分割 → styleData 求解 → Styles HEIF 图写入 → NeutrinoCore 校验；iPhone 真机验证 Apple Photos 编辑/保存/退出/重开全流程
-- 🧪 Apple Portrait（研究模块，macOS/iOS）：OPPO rear.depth 诊断 + 候选 scale 标定输出（researchOnly，生产 capability 未开放）
+### 两种输出模式
 
-### Flutter App
+#### OPPO 兼容
 
-- ✅ Windows 桌面应用（x265 静态链接，无需 ffmpeg）
-- ✅ Android 移动端应用（x265 静态链接 + 纯 Rust JPEG 解码，无需 ffmpeg）
-- ✅ 拖拽 HEIC 文件到窗口（Windows 原生 `WM_DROPFILES`）
-- ✅ 文件选择器（`file_picker`）兼容所有平台
-- ✅ 多文件队列，并行转换（可配置 1–4 线程）
-- ✅ 实时进度条（HEVC tile 级进度：编码第 N/总数 个瓦片）
-- ✅ 深色/浅色主题（跟随系统）
-- ✅ 中文界面
-- ✅ OPPO 兼容模式开关（7 档：Off / Auto / On / Tail / ISO / ISO-NoLocal / ISO-Graph）
-- ✅ OPPO 相机尾部元数据策略（11 档：自动 / 不保留 / 仅水印 / 紧凑 / 完整保留 / 多种过滤组合）
-- ✅ 严格 ISO tmap 选项（65/145 字节 vs ImageIO 62/142 字节）
-- ✅ 跳过已有有效输出文件（入队时自动检测已转换的 ISO HDR 照片）
-- ✅ 可配置输出目录或文件名后缀
-- ✅ 按拍摄模式分目录输出（普通拍照 / 大师模式 / 人像 …；Android 保存到图库时按模式分相册）
-- ✅ 缩略图预览（全平台 Rust FFI 提取 EXIF 内嵌 JPEG 缩略图）
-- ✅ Android 保存到图库（MediaStore；按拍摄模式分相册 Pictures/大师模式 等，否则 Pictures/XDRemux）
-- ✅ Android 一键保存全部到图库
-- ✅ Android 分享（ACTION_SEND）
-- ✅ Android 系统图库打开（ACTION_VIEW）
-- ✅ Android 后台转换（前台服务保持进程存活，通知栏实时进度，完成时弹通知）
-- ✅ Android 电池优化引导（首次转换时引导设置白名单，含 OPPO 耗电行为控制直达入口）
-- ✅ Android 分享接收（相册/文件管理器 → 分享 → XDRemux，ACTION_SEND/SEND_MULTIPLE）
-- ✅ Android GPU 硬件编码（实验，默认开启，自动探测）：MediaCodec 硬件编码 gain map，单 tile ~40ms，比软件 x265 快一个数量级；开启后 gain map 降至 4:2:0，已在骁龙 8 Elite / 8 Gen 3 上验证通过，设备不支持时自动回退软件编码
-- ✅ iOS Swift 后端（vendored 上游 v1.3.1 + 进程内 providers）：标准 HDR 与 Apple Photographic Styles 全链路真机验证通过；私有 ABI 探测、NeutrinoCore 校验、Vision 语义分割、VT tile 编码、嵌入式 zstd 全部进程内实现（实验性，仅侧载）
-- ✅ macOS GPU 硬件编码（VideoToolbox，实验）：复用 macOS 硬件编码器编码 gain map（4:2:0 全范围 NV12），开启强制 OPPO 兼容模式，失败自动回退软件编码
-- ✅ macOS 原生 HEIC/HDR 缩略图：ImageIO 从完整 HEIC 解码（替代低质 EXIF 缩略图），应用 HDR 增益映射，转换后照片在照片墙可见明显提亮
-- ✅ 源/转换后缩略图切换（macOS only）：转换完成的卡片可切换 HDR 渲染与原始 SDR 对比
-- ✅ 断点续传（批量转换中断后可恢复，支持跨会话恢复）
-- ✅ 响应式 UI（手机 2 列 / 平板桌面 3 列；<600 宽切紧凑模式、<480 切极简模式）
-- ✅ 窗口最小尺寸限制（macOS/Windows 480×800，手机竖屏比例）
-- ✅ 队列卡片操作（完成 → 保存/分享/打开；失败 → 重试）
-- ✅ 独立"按拍摄模式整理"页（扫描 → 预览 → 复制分类）
-- ✅ 自动更新检查（启动时静默查询 GitHub Releases，新版本 SnackBar + 跳转下载页）
-- ✅ 转换完成系统通知（Windows toast / Android notification，批量完成时弹出摘要）
-- ✅ 缓存与输出目录管理（设置页显示大小，一键清除）
-- ✅ Windows MSIX 安装包（`dart run msix:create`）
+面向 ColorOS 图库和 OPPO 生态：
 
-### 一致性验证
+- 保留 ColorOS 图库兼容性和继续编辑能力；
+- 保留 OPPO 相机元数据和私有尾部数据；
+- 支持恢复可见原机水印；
+- 适合照片仍主要在 OPPO / 一加 / realme 设备上管理。
 
-- ✅ 120 个 Rust 单元测试全部通过
-- ✅ Tier 1–4 跨实现一致性（vs 原版 Python）通过
-- ✅ Apple ImageIO 验证通过
+#### Apple 标准
 
-### v0.2.1 关键修复
+面向 Apple 照片和标准 HDR 生态：
 
-- **修复 gain map 绿块/花屏（macOS）**：x265 批量编码时每个 gain tile 内嵌了 VPS/SPS/PPS 且切分有 bug（部分 tile 缺 IDR），ImageIO 无法识别为 ISO gain map。改为单帧循环编码——tile 0 保留参数集供 hvcC 提取，后续 tile 纯 IDR。
-- **修复 4:2:0/4:4:4 选择逻辑**：之前默认 4:4:4 导致 OPPO 图库识别失败。现在跟随 OPPO 兼容模式——开启时 4:2:0（OPPO 图库要求），关闭时 4:4:4（色度精度最佳）。
-- **修复 hvcC profile 解析**：`sps_ptl`/`vps_ptl` 的 NAL 头偏移从 1 字节改为 2 字节，hvcC 正确记录 Main Still Picture profile（此前误标为 Main）。
-- **ftyp 加 miaf brand**：macOS ImageIO 识别 ISO gain map 所需。
+- 生成标准 ISO 21496-1 HDR HEIC；
+- 配合 Apple 摄影风格、人像模式等能力；
+- 不追加 OPPO 私有尾部数据；
+- 适合由 iPhone、Apple 照片或其他标准 HDR 应用继续处理。
 
-### 多平台
+旧版高级兼容策略仍然保留在设置中，普通使用只需要在“OPPO 兼容”和“Apple 标准”之间选择。
 
-| 平台 | 状态 | 备注 |
-|------|------|------|
-| Windows | ✅ 可运行 | x265 静态链接、原生拖拽、WIC 原生缩略图（需 HEIF/HEVC 扩展）、DLL 完整工作 |
-| macOS | ✅ 可运行 | FFI dylib 加载、VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、源/转换后切换 |
-| Android | ✅ 可运行 | x265 静态链接、纯 Rust JPEG 解码、后台转换、MediaStore 保存、MediaCodec GPU 硬件编码 |
-| iOS | ✅ 真机验证通过 | Rust 默认路径 + **Apple Photographic Styles（Swift 后端，实验性）**：VideoToolbox GPU 编码、ImageIO 原生 HDR 缩略图、Share Extension（HEIC 原片直传）、保存到相册、Files 集成、Apple Portrait 实验室（研究模块） |
-| Linux | ❌ 未创建 | `flutter create` 待执行 |
+---
 
-## 快速开始
+## 一帧影像，动用两台手机
 
-### Windows 预构建包
+这是 0.3.0 的核心工作流：
 
-下载 Release 的 `XDRemuxSetup-x.y.z.exe`（Inno Setup 安装包，~12MB），双击安装，
-开始菜单/桌面快捷方式自动生成；HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg。
+1. 选择 OPPO 原始照片，生成或复用 OPPO 兼容文件；
+2. 生成 Apple 照片摄影风格编辑副本，发送到 iPhone；
+3. 在 Apple 照片中继续调整摄影风格或人像相关效果；
+4. 将回传照片交给 XDRemux；
+5. 根据 OPPO 原始照片恢复可见原机水印、OPPO 元数据和私有尾部数据；
+6. 最终选择输出 **OPPO 兼容** 或 **Apple 标准**。
 
-**队列预览图需要 HEIF/HEVC 解码扩展**：Windows 通过系统 WIC（Windows Imaging
-Component）解码 HEIC 生成彩色预览，需要系统已安装「HEIF 图像扩展」和「HEVC 视频
-扩展」（Microsoft Store 免费下载，装机时如已在「照片」应用打开过 HEIC 通常已自带）。
-未安装时预览图退化为 Rust 内嵌缩略图提取，老机型照片可能显示占位符。转换功能本身
-不依赖该扩展。
+![一帧影像，动用两台手机](https://github.com/user-attachments/assets/bc4cda3d-16b7-4776-a848-c6e1081429c6)
 
-自行打包：
+Windows 和 Android 使用 Rust 跨平台 HEIF 编解码器完成解码、水印合成和重新编码；macOS / iOS 继续保留 Apple ImageIO 原生路径。
+
+---
+
+## Apple 摄影风格与人像模式
+
+> 两项功能仍属于实验性能力。目标是输出可以在 Apple 照片中继续编辑的文件，不承诺与 Apple 原生结果逐像素等价。
+
+### Apple 摄影风格
+
+- Rust 全平台实现为默认路径；
+- 输出可以在 Apple 照片中继续调节摄影风格；
+- macOS / iOS 可切换到原版 Swift 后端；
+- 自动生成结果后会进行结构与可编辑性检查。
+
+### Apple 人像模式
+
+- 支持部分带有后置深度数据的 OPPO 人像照片；
+- 缺少 `rear.depth` 的照片会自动跳过；
+- 不自动 fallback，也不会伪造深度信息；
+- 独立人像实验室入口暂时关闭，设置中的人像模式开关保留。
+
+---
+
+## 平台支持
+
+| 平台 | Rust 转换 | OPPO 兼容 | Apple 标准 | 原机水印恢复 | 备注 |
+|---|---:|---:|---:|---:|---|
+| Windows | ✅ | ✅ | ✅ | ✅ | x265 静态链接；WIC 预览依赖系统 HEIF/HEVC 扩展 |
+| Android | ✅ | ✅ | ✅ | ✅ | SAF、分享导入、MediaStore、后台转换 |
+| macOS | ✅ | ✅ | ✅ | ✅ | ImageIO 原生路径；可选 Swift 后端 |
+| iOS | ✅ | ✅ 实验 | ✅ 实验 | ✅ 实验 | unsigned IPA，自签侧载；部分能力需真机验证 |
+
+---
+
+## 使用说明
+
+### Windows
+
+1. 下载并安装 `XDRemux-Windows-*-Setup.exe`；
+2. 拖入 HEIC 文件，或点击选择文件；
+3. 选择 **OPPO 兼容** 或 **Apple 标准**；
+4. 开始转换。
+
+Windows 队列预览通过系统 WIC 解码 HEIC。若预览不可用，请安装 Microsoft Store 中的“HEIF 图像扩展”和“HEVC 视频扩展”；转换本身不依赖这两个扩展。
+
+### macOS
+
+1. 下载 `XDRemux-macOS-*.dmg`；
+2. 将 `XDRemux.app` 拖入 Applications；
+3. 首次打开如被 Gatekeeper 拦截，右键选择“打开”；
+4. 选择照片或使用“一帧影像，动用两台手机”流程。
+
+### Android
+
+1. 下载并安装 `XDRemux-Android-*.apk`；
+2. 使用系统文件选择器导入，或从相册/文件管理器分享到 XDRemux；
+3. 转换后可保存到系统图库、分享或重新打开；
+4. 后台转换使用前台服务保持任务存活。
+
+Android 使用 SAF，不默认索取完整存储权限。
+
+### iOS
+
+Release 提供 unsigned IPA，需要自行签名安装：
+
+- Xcode + 免费 Apple ID 可侧载；
+- AltStore / SideStore / Sideloadly 等签名工具也可使用；
+- 免费签名通常 7 天过期；
+- 首次安装需在设置中信任开发者证书。
+
+iOS 支持从相册、文件和分享扩展导入 HEIC；Apple 摄影风格、人像模式和 OPPO 写回仍以真机验证结果为准。
+
+---
+
+## 高级功能
+
+<details>
+<summary>展开查看高级能力与设置</summary>
+
+### 转换与容器
+
+- LHDR / UHDR 容器识别；
+- ISO 21496-1 gain map 与 tmap 元数据写入；
+- EXIF 方向感知；
+- OPPO 拍摄模式分类；
+- 源 SDR 画面位级保留，不重新编码；
+- 输出结构验证；
+- 可选严格 ISO tmap；
+- 可选 GPU gain map 编码（Android MediaCodec / macOS VideoToolbox）。
+
+### App 功能
+
+- 多文件队列与并行转换；
+- 转换进度和失败重试；
+- 按拍摄模式分目录或分相册输出；
+- 自动更新检查；
+- 批量完成通知；
+- 断点续传；
+- Windows 原生拖拽；
+- Android 分享接收与后台转换；
+- iOS 相册 / 文件 / 分享扩展导入。
+
+### Rust CLI
 
 ```bash
-flutter build windows --release
-iscc tools\installer\xdremux.iss   # 需 Inno Setup 6
-# 产物：apps/flutter/build/installer/XDRemuxSetup-<version>.exe
+cargo build --workspace --release
+./target/release/xdremux-conformance convert input.heic output.heic
 ```
 
-也支持 MSIX（`dart run msix:create`），适合未来上架 Microsoft Store。
+</details>
 
-### macOS 预构建包
+---
 
-下载 Release 的 `XDRemux-x.y.z-macos.dmg`（~25MB），打开后拖拽 `xdremux.app` 到
-Applications 文件夹安装。首次打开可能需右键 → 打开（绕过 Gatekeeper 警告）。
-HEVC 编码由内置 x265 静态库完成，无需安装 ffmpeg。
+## 从源码构建
 
-自行打包：
+### 准备 x265 静态库
 
-```bash
-flutter build macos --release
-# 产物：apps/flutter/build/macos/Build/Products/Release/XDRemux.app
-# 打成 dmg（含 Applications 快捷方式）：
-mkdir -p /tmp/dmg && cp -R apps/flutter/build/macos/Build/Products/Release/XDRemux.app /tmp/dmg/
-ln -s /Applications /tmp/dmg/Applications
-hdiutil create -volname "XDRemux x.y.z" -srcfolder /tmp/dmg -ov -format UDZO \
-  XDRemux-x.y.z-macos.dmg
-```
-
-### iOS 部署（真机）
-
-iOS 不走 Release 分发（无付费开发者账号时无法 TestFlight/App Store），用免费
-Apple ID 签名侧载即可，全流程如下。
-
-**前提**
-
-- Xcode（或 Xcode-beta，需支持设备 iOS 版本），命令行工具已选
-  定：`sudo xcode-select -s /Applications/Xcode[-beta].app`
-- CocoaPods（`sudo gem install cocoapods` 或 brew）
-- iPhone 开启**开发者模式**：设置 → 隐私与安全性 → 开发者模式（需重启）
-- iPhone 数据线连接并**信任此电脑**
-
-**一次性准备**
-
-1. Xcode → Settings → Accounts → `+` 登录 Apple ID（免费账号即可），
-   选中账号 → Manage Certificates → `+` → **Apple Development**
-2. 交叉编译 Rust + x265 静态库（约几分钟，之后不用重复）：
-
-   ```bash
-   rustup target add aarch64-apple-ios
-   cd xdremux/rust && ./build_ios.sh   # 产物 stage 到 ~/xdremux_ios_libs
-   ```
-
-**构建并安装**
+HEVC 编码默认使用 vendored x265，Windows / macOS / Android 同一路径，无需安装 ffmpeg。
 
 ```bash
-cd apps/flutter
-flutter build ios --release            # 自动 pod install + 签名（工程已内置 Team ID）
-xcrun devicectl device install app --device <设备UDID> build/ios/iphoneos/Runner.app
-# 或者用 flutter run --release -d <设备UDID> 一步构建+安装+启动
-```
-
-设备 UDID 用 `flutter devices` 查看。首次构建若报 "No Account for Team"，
-说明 Xcode Accounts 里账号会话失效，重新登录即可；工程里的
-`DEVELOPMENT_TEAM` 取自证书 OU 字段（`security find-certificate -c
-"Apple Development" -p | openssl x509 -noout -subject`），换账号时需同步改
-`ios/Runner.xcodeproj/project.pbxproj`。
-
-**手机上最后一步**
-
-设置 → 通用 → VPN与设备管理 → 开发者APP 下的你的邮箱 → **信任**，然后即可打开。
-
-**免费签名限制**
-
-- app **7 天过期**，到期需重新安装（数据保留）
-- 最多同时装 3 个自签名 app
-- App Groups（Share Extension 依赖）免费账号可用
-
-**功能说明**：相册/文件里「分享 → XDRemux」可直接导入 **HEIC 原片**（Share
-Extension 优先请求 `public.heic` 表示，不受分享面板「自动」格式转 JPEG 影响）；
-输出在「文件 → 我的 iPhone → XDRemux」可见；转换结果可一键存回相册（按拍摄
-模式分相册）；断点续传（杀 App 重启恢复队列）已支持。
-
-**Swift 后端（iOS）**：设置页可选 Swift 后端；Apple Photographic Styles 与
-Apple Portrait 实验室依赖 iOS 18+ 与设备上的私有框架探测，capability 探测
-失败时自动隐藏/降级。这些功能使用 Apple 私有框架（NeutrinoCore/PhotoImaging
-等）做渲染与校验，**仅限侧载研究用途**。
-
-### 从源码构建
-
-HEVC 编码由静态链接的 x265 完成（Windows/macOS/Android 同一路径），需先从
-`xdremux/rust/vendor/x265/` 构建静态库（vendored 源码，约 2 分钟）：
-
-```bash
-# Windows（MSVC，一次即可；需 NASM 以启用 x265 SIMD 汇编加速，否则自动退回纯 C 构建）
+# Windows（MSVC）
 cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_windows \
   -G "Visual Studio 17 2022" -A x64 -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \
   -DXDREMUX_SKIP_RC=ON
@@ -212,118 +207,92 @@ cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_deskt
 cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j
 ```
 
-如需回退到 ffmpeg 子进程编码（调试用），构建 Rust 时设 `XDREMUX_USE_FFMPEG=1`。
+如需回退到 ffmpeg 子进程编码，构建 Rust 时设置：
 
 ```bash
-# Rust 核心
+XDREMUX_USE_FFMPEG=1
+```
+
+### Rust 核心
+
+```bash
 cargo build -p xdremux-core --release
+```
 
-# Windows
+### Flutter App
+
+```bash
 cd apps/flutter
-flutter build windows --debug
 
-# Android（需 cargo-ndk + NDK）
+flutter build windows --release
+flutter build macos --release
+flutter build apk --release
+```
+
+Android 原生库需要先交叉编译：
+
+```bash
 cd xdremux/rust
 cargo ndk -t arm64-v8a -o "../../apps/flutter/android/app/src/main/jniLibs" build --release
-cd ../../apps/flutter
-flutter build apk --debug
-
-# iOS（需 rustup target add aarch64-apple-ios，部署细节见上文「iOS 部署（真机）」）
-cd xdremux/rust
-./build_ios.sh   # 交叉编译 x265 + Rust staticlib，stage 到 ~/xdremux_ios_libs
-cd ../../apps/flutter
-flutter build ios --no-codesign   # 需 CocoaPods；pod install 由 flutter build 触发
 ```
 
-**iOS 链接注意**：FFI 符号通过 `DynamicLibrary.process()` 运行时查找，编译期无引用，
-链接器 `-dead_strip` 会移除 Rust 静态库的符号。Podfile 的 post_install 已给全部
-`_xdremux_*` 符号加 `-u` 阻止 strip（见 `apps/flutter/ios/Podfile`）。
-
-### Rust CLI
+iOS 需要：
 
 ```bash
-cargo build --workspace --release
-./target/release/xdremux-conformance convert input.heic output.heic
+rustup target add aarch64-apple-ios
+cd xdremux/rust
+./build_ios.sh
+cd ../../apps/flutter
+flutter build ios --release
 ```
 
-## FFI 接口
+更完整的 iOS 部署、签名和 Swift 后端说明见 `apps/flutter/ios/` 相关配置。
 
-| 函数 | 用途 |
-|------|------|
-| `xdremux_version()` | 返回版本号 |
-| `xdremux_inspect(path)` | 解析 HEIC，返回 mode / family / edr_scale / gainMapMax |
-| `xdremux_convert(in, out, config)` | 转换 ProXDR → ISO HDR |
-| `xdremux_read_progress(buf)` | 读取转换进度（阶段 + 当前/总数） |
-| `xdremux_verify_output(path)` | 验证输出是否包含 ISO gain map |
-| `xdremux_extract_thumbnail(path)` | 提取 HEIC 内嵌 EXIF JPEG 缩略图 |
-| `xdremux_classify(path)` | 解析拍摄模式，返回 modeKey / folderName / status |
-| `xdremux_free_result(r)` | 释放 inspect/convert 返回的结果 |
-| `xdremux_free_classification_result(r)` | 释放 classify 返回的结果 |
-| `xdremux_free_thumbnail(r)` | 释放缩略图结果 |
+---
 
-## 输出模式
+## 工程验证
 
-| 模式 | oppo_compat | Gain map | colr | URN | 目标 |
-|------|-------------|----------|------|-----|------|
-| 标准 ISO | 0 (off) | 1ch gray HEVC | sRGB | Apple URN | iOS / macOS 相册 |
-| OPPO 相册兼容 | 1-3 (auto/on/tail) | 3ch RGB HEVC 4:2:0 | BT.2020 PQ | ImageIO native URN | OPPO 相册 |
-| ISO 路由 | 4-6 (iso/iso-no-local/iso-graph) | 1ch gray 或 3ch RGB | sRGB | Apple URN | 通用 ISO HDR |
-
-`oppo_compat` 完整取值：0=off, 1=auto, 2=on, 3=tail, 4=iso, 5=iso-no-local, 6=iso-graph。
-
-## 仓库结构
-
-| 路径 | 用途 |
-|------|------|
-| `xdremux/rust/` | Rust 核心库（含 `categorize.rs` 拍摄模式分类） |
-| `apps/flutter/` | Flutter 跨平台 App（Windows / macOS / Android） |
-| `tests/conformance/` | 跨实现一致性验证 |
-| `fixtures/` | 测试样本说明 |
-| `screenshots/` | 应用截图 |
-
-原版 Swift/Python 参考实现在上游仓库 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux)，本地不再保留副本，需要时 `git clone` 拉取。
-
-## 未完成 / 未来计划
-
-### UI 与体验
-
-- [ ] 转换结果预览（源 ↔ 输出对比）
-- [ ] 拖入非 HEIC 文件时给出友好提示（当前静默丢弃）
-- [ ] 批量输出到自定义目录时保留子目录结构
-- [x] Windows 安装程序（MSIX，`dart run msix:create`）
-- [x] 自动更新检查（启动时查询 GitHub Releases，新版本 SnackBar 提示）
-
-### 核心功能
-
-- [ ] 转换后回退到 OPPO 相册编辑再保存时，HDR Gain Map 不丢失
-- [ ] 增量转换——仅重新编码变化的瓦片
-- [ ] 桌面 GPU 加速 HEVC 编码（h265_amf / hevc_nvenc 替代 libx265 软件编码；Android 端已通过 MediaCodec 实现，见"已实现功能"）
-
-### 多平台
-
-- [ ] macOS App Store 签名与公证
-- [ ] Linux 测试与打包（AppImage / Flatpak）
-- [ ] iOS 正式分发（TestFlight / App Store，需付费开发者账号）
-
-### 工程
-
-- [x] CI/CD（GitHub Actions 编译测试 + 发布）——Windows/Android 已自动发布
-- [x] macOS 原生拖拽支持（NSView 覆层 MethodChannel）
-- [ ] macOS 加入 release CI（当前手动构建 dmg）
-- [x] iOS 完善（Share Extension、真机验证均已落地；后台转换受 iOS 限制未做）
-- [ ] Linux 版（`flutter create` 待执行）
-
-## 已知限制
-
-- 转换前请备份原始文件。
-- 转换后回到 OPPO 相册编辑再保存，HDR Gain Map 可能丢失。
-- 转换输入接受 `.heic` / `.heif` 文件（不区分大小写）；拖入其他格式时会明确提示忽略数量。
-- Android 缩略图依赖 EXIF 内嵌 JPEG（部分文件可能无缩略图）；macOS/iOS 用原生 ImageIO 解码完整 HEIC。
-
-## 运行验证
+- Rust 单元测试；
+- Conformance 一致性验证；
+- GitHub Actions CI / Release；
+- Windows 与 Android 自动发布；
+- macOS DMG 与 iOS unsigned IPA 资产；
+- OPPO / Apple 真实设备兼容性仍需按机型验证。
 
 ```bash
 python3 tests/conformance/driver.py \
   --sample-dir <sample-dir> \
   --out-report conformance_report.md
 ```
+
+---
+
+## 已知限制
+
+- 转换前请保留原始文件；
+- Apple 摄影风格和人像模式为实验性能力，不承诺与 Apple 原生逐像素等价；
+- 人像模式要求照片包含后置深度数据；
+- OPPO 图库对 OPPO 兼容文件进一步编辑后，HDR gain map 可能丢失；
+- iOS 未走 App Store 或 TestFlight，需要自行签名；
+- Linux 桌面目标尚未创建。
+
+---
+
+## 仓库结构
+
+| 路径 | 用途 |
+|---|---|
+| `xdremux/rust/` | Rust 核心、容器解析、水印编解码与 FFI |
+| `apps/flutter/` | Flutter App 与 Windows / Android / macOS / iOS 平台集成 |
+| `tests/conformance/` | 一致性与结构验证 |
+| `docs/` | 转换逻辑、平台行为矩阵和验证记录 |
+| `tools/installer/` | Windows 安装包与发布说明 |
+
+原版 Swift / Python 参考实现在上游仓库 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux)。
+
+---
+
+## 许可证与边界
+
+本项目用于照片格式转换、容器研究和个人设备间工作流。
+Apple 私有框架相关内容仅用于 macOS / iOS 侧载研究，不用于 App Store 分发。
