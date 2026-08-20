@@ -2282,7 +2282,10 @@ class _HomePageState extends State<HomePage> {
         tooltip: '设置',
         onPressed: () => _openSettings(context),
       ),
-      if (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
+      if (Platform.isMacOS ||
+          Platform.isIOS ||
+          Platform.isWindows ||
+          Platform.isAndroid)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
           tooltip: '一帧影像，动用两台手机',

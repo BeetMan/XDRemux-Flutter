@@ -238,11 +238,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       _showError('需要写回正常水印时必须保留 OPPO 手机原图。');
       return;
     }
-    if (Platform.isWindows && _outputMode == OutputMode.oppo) {
-      _showError('Windows 当前只能保留 Apple 标准回传文件，OPPO 写回请在 macOS/iOS 完成。');
-      return;
-    }
-    if (!Platform.isMacOS && !Platform.isIOS && !Platform.isWindows) {
+    if (!Platform.isMacOS &&
+        !Platform.isIOS &&
+        !Platform.isWindows &&
+        !Platform.isAndroid) {
       _showError('当前平台不支持回传照片处理。');
       return;
     }
@@ -254,7 +253,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       final directory = await _workflowDirectory(returned);
       final output =
           '$directory${Platform.pathSeparator}${_stem(returned)}.${_outputMode.name}-final.heic';
-      if ((Platform.isIOS || Platform.isWindows) &&
+      if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
           _outputMode == OutputMode.apple) {
         await AppleOppoWorkflowService.preserveAppleReturnedPhoto(
           returnedPath: returned,
@@ -278,7 +277,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       });
     } catch (error) {
       _showError(
-        (Platform.isIOS || Platform.isWindows) &&
+        (Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
                 _outputMode == OutputMode.apple
             ? '处理失败：$error'
             : '写回失败：$error',
@@ -302,13 +301,20 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
 
   String _fileLabel(String path) => File(path).uri.pathSegments.last;
 
-  bool get _canWriteback => Platform.isMacOS || Platform.isIOS;
+  bool get _canWriteback =>
+      Platform.isMacOS ||
+      Platform.isIOS ||
+      Platform.isWindows ||
+      Platform.isAndroid;
 
   bool get _canFinalizeApple =>
-      Platform.isMacOS || Platform.isIOS || Platform.isWindows;
+      Platform.isMacOS ||
+      Platform.isIOS ||
+      Platform.isWindows ||
+      Platform.isAndroid;
 
   String get _outputModeHelp {
-    if ((Platform.isIOS || Platform.isWindows) &&
+    if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
         _outputMode == OutputMode.apple) {
       return '原样保留 Apple Photos 回传文件，不写入 OPPO 私有兼容信息。';
     }
@@ -398,7 +404,9 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 Platform.isWindows
-                    ? '这是独立的文件往返流程。Windows 负责生成 Rust Apple 编辑副本、交换和验证 Apple 回传文件；OPPO 私有结构写回仍需在 macOS/iOS 完成。普通“批量转换”队列不会参与此流程。'
+                    ? '这是独立的文件往返流程。Windows 负责生成 Rust Apple 编辑副本、交换和验证 Apple 回传文件；Rust 可恢复 OPPO 水印 metadata，视觉水印画布将在统一 HEIF 编解码器接入后恢复。普通“批量转换”队列不会参与此流程。'
+                    : Platform.isAndroid
+                    ? '这是独立的文件往返流程。Android 使用 SAF 选择文件，Rust 负责 OPPO 兼容文件和水印 metadata 写回；视觉水印画布将在统一 HEIF 编解码器接入后恢复。'
                     : Platform.isIOS
                     ? '这是独立的五阶段流程。当前 iOS 已开放 Rust OPPO 兼容文件生成、文件选择和分享，并提供 Apple 标准与 OPPO 兼容两种最终输出；Apple 相册摄影风格生成仍等待嵌入式 Swift Library，OPPO 写回属于实验性能力。'
                     : '这是独立的五阶段流程。OPPO 手机原图与 iPhone 回传照片会保持配对，普通“批量转换”队列不会参与此流程。Apple 相册功能仍属于实验性能力。',
@@ -597,8 +605,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             context: context,
             step: 4,
             title: '写回正常水印',
-            description: Platform.isWindows
-                ? 'Windows 暂不写回 OPPO 私有结构；请切换 Apple 标准输出以保留回传文件。'
+            description: Platform.isWindows || Platform.isAndroid
+                ? 'Rust 跨平台恢复 OPPO 水印 metadata；可见水印画布恢复将在统一 HEIF 编解码器接入后启用。'
                 : Platform.isIOS
                 ? '使用 OPPO 手机原图处理回传照片；iOS 路径与 macOS 共用同一套 ImageIO 实现，尚未完成真机验证。'
                 : '使用 OPPO 手机原图处理回传照片；目前 macOS 已验证。',
@@ -606,8 +614,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('按 OPPO 手机原图写回正常水印'),
               subtitle: Text(
-                Platform.isWindows
-                    ? 'Windows 不修改回传文件；OPPO 写回请在 macOS/iOS 完成。'
+                Platform.isWindows || Platform.isAndroid
+                    ? 'Rust 会保留回传画面并恢复 OPPO 水印 metadata；当前不重新编码可见水印画布。'
                     : '关闭后保留 iPhone 回传画面，但 OPPO 兼容模式仍会恢复附加信息。',
               ),
               value: _restoreWatermark,
@@ -623,6 +631,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             title: '选择最终输出模式',
             description: Platform.isIOS
                 ? 'Apple 标准原样保留回传文件并做 ImageIO 可读性检查；OPPO 兼容模式恢复 OPPO 兼容结构（实验性，待真机验证）。'
+                : Platform.isWindows || Platform.isAndroid
+                ? 'Rust 恢复 OPPO 兼容 footer 与水印 metadata；Apple 标准保留 Apple 结果且不写入 OPPO 私有附加信息。'
                 : 'OPPO 兼容模式恢复 OPPO 兼容结构；Apple 标准保留 Apple 结果且不写入 OPPO 私有附加信息。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -665,12 +675,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       : const Icon(Icons.output),
                   label: Text(_running ? '处理中…' : '生成最终输出'),
                 ),
-                if (Platform.isWindows) ...[
+                if (Platform.isWindows || Platform.isAndroid) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'Windows 当前只能生成 Apple 标准回传副本；OPPO 写回请把文件带回 macOS/iOS。',
+                    '当前平台由 Rust 恢复 OPPO footer 和水印 metadata；可见水印画布暂不重新编码。',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
+                      color: theme.colorScheme.tertiary,
                     ),
                   ),
                 ],

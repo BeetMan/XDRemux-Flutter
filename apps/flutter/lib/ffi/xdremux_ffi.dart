@@ -241,6 +241,12 @@ class XdRemuxFFI {
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_portrait_output');
 
+  static final _writebackReturnedPhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>, ffi.Uint8, ffi.Uint8),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>, int, int)>('xdremux_writeback_returned_photo');
+
   static final _freeResult = _lib.lookupFunction<
       ffi.Void Function(ConversionResult),
       void Function(ConversionResult)>('xdremux_free_result');
@@ -435,6 +441,50 @@ class XdRemuxFFI {
     } catch (_) {
       // Older platform bundles may not have the new structural verifier yet.
       return verifyOutput(path);
+    }
+  }
+
+  /// Run the portable Rust returned-photo writeback path.
+  static Map<String, dynamic> writebackReturnedPhoto({
+    String? originalPath,
+    required String returnedPath,
+    required String outputPath,
+    required String outputMode,
+    required bool restoreWatermark,
+  }) {
+    final original = originalPath?.toNativeUtf8() ?? ffi.nullptr;
+    final returned = returnedPath.toNativeUtf8();
+    final output = outputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _writebackReturnedPhoto(
+        original,
+        returned,
+        output,
+        outputMode == 'oppo' ? 1 : 0,
+        restoreWatermark ? 1 : 0,
+      );
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'outputValid': false,
+          'errorMessage': 'Rust writeback returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
+      }
+      return <String, dynamic>{
+        'success': false,
+        'outputValid': false,
+        'errorMessage': 'Rust writeback returned an invalid report',
+      };
+    } finally {
+      if (report != ffi.nullptr) _freeString(report);
+      if (original != ffi.nullptr) calloc.free(original);
+      calloc.free(returned);
+      calloc.free(output);
     }
   }
 

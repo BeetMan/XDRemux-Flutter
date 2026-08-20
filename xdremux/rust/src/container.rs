@@ -256,6 +256,23 @@ pub fn get_oppo_tail(data: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
     apply_oppo_tail_policy(raw_tail, policy)
 }
 
+/// Remove an existing OPPO/FileExtendedContainer footer from a returned
+/// photo. The returned Apple file may already contain a stale footer, so a
+/// writeback must never append a second competing manifest.
+pub fn strip_oppo_tail(data: &[u8]) -> Vec<u8> {
+    find_qti_box_start(data)
+        .map(|start| data[..start].to_vec())
+        .unwrap_or_else(|| data.to_vec())
+}
+
+/// Return whether the file contains the manifest entries used by OPPO's
+/// visible watermark and its layout metadata.
+pub fn has_watermark_entries(data: &[u8]) -> bool {
+    tail_entry_names(data)
+        .iter()
+        .any(|name| name == "watermark" || name.starts_with("watermark."))
+}
+
 /// Find the start of the QTI box in the data. Returns the absolute offset
 /// of the 4-byte size header preceding the QTI marker.
 fn find_qti_box_start(data: &[u8]) -> Option<usize> {

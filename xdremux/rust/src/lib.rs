@@ -153,6 +153,96 @@ pub extern "C" fn xdremux_diagnose_portrait(input_path: *const c_char) -> *mut c
         .unwrap_or(ptr::null_mut())
 }
 
+/// Portable returned-photo writeback for platforms without ImageIO.
+/// Mode 0 preserves the returned Apple file; mode 1 appends the donor's
+/// complete OPPO footer. Visible raster restoration remains a codec task.
+#[no_mangle]
+pub extern "C" fn xdremux_writeback_returned_photo(
+    original_path: *const c_char,
+    returned_path: *const c_char,
+    output_path: *const c_char,
+    output_mode: u8,
+    restore_watermark: u8,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if returned_path.is_null() || output_path.is_null() {
+            return Err("returned/output path is missing".into());
+        }
+        let returned_path = unsafe { CStr::from_ptr(returned_path) }
+            .to_str()
+            .map_err(|_| "returned path is not valid UTF-8".to_string())?;
+        let output_path = unsafe { CStr::from_ptr(output_path) }
+            .to_str()
+            .map_err(|_| "output path is not valid UTF-8".to_string())?;
+        let returned = std::fs::read(returned_path)
+            .map_err(|e| format!("cannot read returned photo: {e}"))?;
+        if !is_heif_container(&returned) {
+            return Err("returned photo is not a readable HEIF/HEIC container".into());
+        }
+
+        let (output, watermark_metadata, entries) = match output_mode {
+            0 => (container::strip_oppo_tail(&returned), false, Vec::new()),
+            1 => {
+                if original_path.is_null() {
+                    return Err("OPPO output requires the untouched donor photo".into());
+                }
+                let donor_path = unsafe { CStr::from_ptr(original_path) }
+                    .to_str()
+                    .map_err(|_| "original path is not valid UTF-8".to_string())?;
+                let donor = std::fs::read(donor_path)
+                    .map_err(|e| format!("cannot read donor photo: {e}"))?;
+                let tail = container::get_oppo_tail(&donor, OppoCameraTail::Preserve)
+                    .ok_or("donor photo has no OPPO camera footer")?;
+                let names = container::tail_entry_names(&donor);
+                let has_watermark = container::has_watermark_entries(&donor);
+                let mut base = container::strip_oppo_tail(&returned);
+                base.extend_from_slice(&tail);
+                (base, has_watermark, names)
+            }
+            _ => return Err("unknown returned-photo output mode".into()),
+        };
+        if !is_heif_container(&output) {
+            return Err("writeback output is not a readable HEIF container".into());
+        }
+        if let Some(parent) = std::path::Path::new(output_path).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create writeback directory: {e}"))?;
+        }
+        std::fs::write(output_path, &output)
+            .map_err(|e| format!("write writeback output: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputMode": if output_mode == 1 { "oppo" } else { "apple" },
+            "outputValid": true,
+            "rasterWatermarkRestored": false,
+            "watermarkMetadataPreserved": watermark_metadata,
+            "requestedRasterWatermark": restore_watermark != 0,
+            "restoredOppoEntries": entries,
+            "errorMessage": serde_json::Value::Null,
+        }))
+    })();
+    let report = result.unwrap_or_else(|error| serde_json::json!({
+        "success": false,
+        "outputValid": false,
+        "rasterWatermarkRestored": false,
+        "watermarkMetadataPreserved": false,
+        "errorMessage": error,
+    }));
+    serde_json::to_string(&report)
+        .ok()
+        .and_then(|json| CString::new(json).ok())
+        .map(CString::into_raw)
+        .unwrap_or(ptr::null_mut())
+}
+
+fn is_heif_container(data: &[u8]) -> bool {
+    let boxes = isobmff::parse_boxes(data, 0, data.len());
+    boxes.iter().any(|b| &b.btype == b"ftyp")
+        && boxes.iter().any(|b| &b.btype == b"meta")
+        && boxes.iter().any(|b| &b.btype == b"mdat")
+        && isobmff::parse_source_meta(data).is_ok()
+}
+
 /// Read the current conversion progress tuple.
 ///
 /// `buf` must point to 3 × u32 (12 bytes).  Returns (stage, current, total).

@@ -313,9 +313,10 @@ class XdRemuxService {
   }
 
   /// Reconcile a returned Apple Photos file with its original OPPO donor.
-  /// The native bridge runs on macOS (SwiftBackend package) and iOS
-  /// (Runner-local ImageIO implementation). Both use ImageIO readback as the
-  /// output validation and never start a helper process.
+  /// Apple keeps the ImageIO bridge for visual raster restoration. Windows
+  /// and Android use the portable Rust footer path, which preserves the
+  /// returned raster and restores OPPO watermark metadata without pretending
+  /// that a platform HEIF decoder/encoder is available.
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
     String? originalPath,
     required String returnedPath,
@@ -323,23 +324,36 @@ class XdRemuxService {
     required OutputMode outputMode,
     bool restoreWatermark = true,
   }) async {
-    if (!Platform.isMacOS && !Platform.isIOS) {
-      throw UnsupportedError(
-        'returned-photo writeback is only available on Apple platforms',
+    if (Platform.isMacOS || Platform.isIOS) {
+      final raw = await _backendChannel
+          .invokeMethod<Object?>('writebackReturnedPhoto', <String, dynamic>{
+            if (originalPath != null) 'originalPath': originalPath,
+            'returnedPath': returnedPath,
+            'outputPath': outputPath,
+            'outputMode': outputMode.name,
+            'restoreWatermark': restoreWatermark,
+          });
+      if (raw is! Map) {
+        throw StateError('returned-photo writeback returned an invalid result');
+      }
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+
+    final report = await Isolate.run(
+      () => XdRemuxFFI.writebackReturnedPhoto(
+        originalPath: originalPath,
+        returnedPath: returnedPath,
+        outputPath: outputPath,
+        outputMode: outputMode.name,
+        restoreWatermark: restoreWatermark,
+      ),
+    );
+    if (report['success'] != true || report['outputValid'] == false) {
+      throw StateError(
+        report['errorMessage']?.toString() ?? 'Rust writeback failed',
       );
     }
-    final raw = await _backendChannel
-        .invokeMethod<Object?>('writebackReturnedPhoto', <String, dynamic>{
-          if (originalPath != null) 'originalPath': originalPath,
-          'returnedPath': returnedPath,
-          'outputPath': outputPath,
-          'outputMode': outputMode.name,
-          'restoreWatermark': restoreWatermark,
-        });
-    if (raw is! Map) {
-      throw StateError('returned-photo writeback returned an invalid result');
-    }
-    return raw.map((key, value) => MapEntry(key.toString(), value));
+    return report;
   }
 
   // -----------------------------------------------------------------------

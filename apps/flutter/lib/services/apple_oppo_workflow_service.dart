@@ -112,9 +112,9 @@ class AppleOppoWorkflowService {
     required String outputPath,
     void Function(String message)? onStatus,
   }) async {
-    if (!Platform.isIOS && !Platform.isWindows) {
+    if (!Platform.isIOS && !Platform.isWindows && !Platform.isAndroid) {
       throw const AppleOppoWorkflowException(
-        'Apple 直通输出目前只在 Windows/iOS 文件工作流中使用。',
+        'Apple 直通输出目前只在 Windows/Android/iOS 文件工作流中使用。',
       );
     }
     final returned = File(returnedPath);

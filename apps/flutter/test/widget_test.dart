@@ -95,7 +95,10 @@ void main() {
 
     expect(
       find.byIcon(Icons.auto_awesome_motion_outlined),
-      (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
+      (Platform.isMacOS ||
+              Platform.isIOS ||
+              Platform.isWindows ||
+              Platform.isAndroid)
           ? findsOneWidget
           : findsNothing,
     );
