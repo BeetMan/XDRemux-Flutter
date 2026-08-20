@@ -61,12 +61,15 @@ post_install do |installer|
   # as needed with -u so the symbols survive linking.
   ffisyms = %w[
     _xdremux_assemble_tiles _xdremux_classify _xdremux_convert
-    _xdremux_convert_with_progress _xdremux_extract_thumbnail
-    _xdremux_free_classification_result _xdremux_free_prepared
-    _xdremux_free_result _xdremux_free_string _xdremux_free_thumbnail
-    _xdremux_inspect _xdremux_prepare_tiles _xdremux_progress_begin
-    _xdremux_progress_end _xdremux_progress_report _xdremux_read_progress
-    _xdremux_read_progress_for _xdremux_verify_output _xdremux_version
+    _xdremux_convert_with_progress _xdremux_diagnose_portrait
+    _xdremux_extract_thumbnail _xdremux_free_classification_result
+    _xdremux_free_prepared _xdremux_free_result _xdremux_free_string
+    _xdremux_free_thumbnail _xdremux_inspect _xdremux_prepare_tiles
+    _xdremux_progress_begin _xdremux_progress_end _xdremux_progress_report
+    _xdremux_read_progress _xdremux_read_progress_for
+    _xdremux_verify_output _xdremux_verify_styles_output
+    _xdremux_verify_portrait_output _xdremux_version
+    _xdremux_writeback_returned_photo
     _xdremux_param_set_basic _xdremux_pic_set_planes _xdremux_pic_set_pts
   ]
   keep = ffisyms.map { |s| "-u #{s}" }.join(' ')
