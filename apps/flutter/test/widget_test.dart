@@ -104,17 +104,12 @@ void main() {
     );
   });
 
-  testWidgets('Portrait lab has a Rust or Apple entry', (
+  testWidgets('Portrait lab is disabled on every platform', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const XdRemuxApp());
 
-    expect(
-      find.byIcon(Icons.camera_alt_outlined),
-      (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
-          ? findsOneWidget
-          : findsNothing,
-    );
+    expect(find.byIcon(Icons.camera_alt_outlined), findsNothing);
   });
 
   testWidgets('Mobile layout keeps primary actions in the bottom action bar', (
