@@ -102,7 +102,7 @@ class AppleOppoWorkflowService {
 
   /// Preserve a returned Apple/Photos file without attempting OPPO writeback.
   ///
-  /// This is intentionally a file-level pass-through for iOS. It does not
+  /// This is a file-level pass-through for iOS and Windows. It does not
   /// generate Apple Photographic Styles metadata, invoke Swift, or claim that
   /// the returned file is an Apple Styles candidate. The native thumbnail
   /// bridge is used as a lightweight readability check before the result is
@@ -112,8 +112,10 @@ class AppleOppoWorkflowService {
     required String outputPath,
     void Function(String message)? onStatus,
   }) async {
-    if (!Platform.isIOS) {
-      throw const AppleOppoWorkflowException('Apple 直通输出目前只在 iOS 工作流中使用。');
+    if (!Platform.isIOS && !Platform.isWindows) {
+      throw const AppleOppoWorkflowException(
+        'Apple 直通输出目前只在 Windows/iOS 文件工作流中使用。',
+      );
     }
     final returned = File(returnedPath);
     if (!await returned.exists() || await returned.length() == 0) {

@@ -237,6 +237,10 @@ class XdRemuxFFI {
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_styles_output');
 
+  static final _verifyPortraitOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_portrait_output');
+
   static final _freeResult = _lib.lookupFunction<
       ffi.Void Function(ConversionResult),
       void Function(ConversionResult)>('xdremux_free_result');
@@ -417,6 +421,20 @@ class XdRemuxFFI {
       return _verifyStylesOutput(ptr);
     } finally {
       calloc.free(ptr);
+    }
+  }
+
+  static bool verifyPortraitOutput(String path) {
+    try {
+      final ptr = path.toNativeUtf8();
+      try {
+        return _verifyPortraitOutput(ptr);
+      } finally {
+        calloc.free(ptr);
+      }
+    } catch (_) {
+      // Older platform bundles may not have the new structural verifier yet.
+      return verifyOutput(path);
     }
   }
 

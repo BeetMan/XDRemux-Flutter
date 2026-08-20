@@ -1078,6 +1078,39 @@ pub extern "C" fn xdremux_verify_styles_output(path: *const c_char) -> bool {
     verify_iso_gain_map(&data) && verify_photographic_styles(&data)
 }
 
+/// Verifies a Rust Apple Portrait output structurally. Photos remains the
+/// final authority for rendering the editable depth effect.
+#[no_mangle]
+pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let data = match std::fs::read(path_str) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    verify_iso_gain_map(&data) && verify_portrait_graph(&data)
+}
+
+fn verify_portrait_graph(data: &[u8]) -> bool {
+    let meta = match isobmff::parse_source_meta(data) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    let has_matte_items = meta.items.iter().any(|item| item.itype == "mime")
+        && meta.items.iter().any(|item| item.itype == "mimehdrgm-xmp");
+    has_matte_items
+        && contains_ascii(data, b"portraiteffectsmatte")
+        && contains_ascii(data, b"semanticskinmatte")
+        && contains_ascii(data, b"semantichairmatte")
+        && contains_ascii(data, b"portraitLightingEffect")
+}
+
+fn contains_ascii(data: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && data.windows(needle.len()).any(|window| window == needle)
+}
+
 fn verify_photographic_styles(data: &[u8]) -> bool {
     let meta = match isobmff::parse_source_meta(data) {
         Ok(meta) => meta,

@@ -235,10 +235,14 @@ class RustConversionBackend implements ConversionBackendAdapter {
     bool applePhotographicStyles = false,
     bool applePortrait = false,
   }) async {
+    var valid = XdRemuxFFI.verifyOutput(path);
     if (applePhotographicStyles) {
-      return XdRemuxFFI.verifyStylesOutput(path);
+      valid = valid && XdRemuxFFI.verifyStylesOutput(path);
     }
-    return XdRemuxFFI.verifyOutput(path);
+    if (applePortrait) {
+      valid = valid && XdRemuxFFI.verifyPortraitOutput(path);
+    }
+    return valid;
   }
 
   @override

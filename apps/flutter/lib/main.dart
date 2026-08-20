@@ -16,6 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
 import 'apple_portrait_page.dart';
+import 'rust_portrait_page.dart';
 import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
@@ -2281,18 +2282,18 @@ class _HomePageState extends State<HomePage> {
         tooltip: '设置',
         onPressed: () => _openSettings(context),
       ),
-      if (Platform.isMacOS || Platform.isIOS)
+      if (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
-          tooltip: '一张照片，动用两台手机',
+          tooltip: '一帧影像，动用两台手机',
           onPressed: _openAppleOppoWorkflow,
         ),
-      // Portrait 实验室是研究模块：macOS 与 iOS 均可进入（iOS 依赖
-      // vendored 嵌入式 zstd + in-process providers，研究性质不变）。
-      if (Platform.isMacOS || Platform.isIOS)
+      // Apple 原生研究实验室只在 Apple 平台开放；Windows/Android 使用
+      // Rust 人像输出实验室，验证可编辑图结构而不伪装成 Apple 原生能力。
+      if (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
         IconButton(
           icon: const Icon(Icons.camera_alt_outlined),
-          tooltip: 'Apple 人像模式实验室',
+          tooltip: Platform.isWindows ? 'Rust 人像模式实验室' : 'Apple 人像模式实验室',
           onPressed: _openApplePortraitLab,
         ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
@@ -2996,9 +2997,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openApplePortraitLab() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const ApplePortraitPage()));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Platform.isWindows
+            ? const RustPortraitPage()
+            : const ApplePortraitPage(),
+      ),
+    );
   }
 }
 
@@ -3573,7 +3578,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         initiallyExpanded: false,
                         tilePadding: EdgeInsets.zero,
                         childrenPadding: EdgeInsets.zero,
-                        title: Text(_t('一张照片，动用两台手机', 'One Photo, Two Phones')),
+                        title: Text(_t('一帧影像，动用两台手机', 'One Frame, Two Phones')),
                         subtitle: Text(
                           _t(
                             '用 OPPO 手机原图提供兼容信息，再用 iPhone/Apple 相册完成编辑和回传。',

@@ -88,25 +88,29 @@ void main() {
     expect(find.byIcon(Icons.add_photo_alternate), findsOneWidget);
   });
 
-  testWidgets('Apple/OPPO workflow has a separate Apple-platform entry', (
+  testWidgets('Apple/OPPO workflow has a desktop/Apple entry', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const XdRemuxApp());
 
     expect(
       find.byIcon(Icons.auto_awesome_motion_outlined),
-      (Platform.isMacOS || Platform.isIOS) ? findsOneWidget : findsNothing,
+      (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
+          ? findsOneWidget
+          : findsNothing,
     );
   });
 
-  testWidgets('Apple Portrait lab has a separate macOS-only entry', (
+  testWidgets('Portrait lab has a Rust or Apple entry', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const XdRemuxApp());
 
     expect(
       find.byIcon(Icons.camera_alt_outlined),
-      Platform.isMacOS ? findsOneWidget : findsNothing,
+      (Platform.isMacOS || Platform.isIOS || Platform.isWindows)
+          ? findsOneWidget
+          : findsNothing,
     );
   });
 
