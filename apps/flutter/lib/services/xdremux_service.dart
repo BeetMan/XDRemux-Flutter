@@ -480,6 +480,8 @@ class XdRemuxService {
   static const _keyOppoCompat = 'oppoCompatibility';
   static const _keyOppoCameraTail = 'oppoCameraTail';
   static const _keyStrictTmap = 'strictTmap';
+  static const _keyApplePhotographicStyles = 'applePhotographicStyles';
+  static const _keyApplePortrait = 'applePortrait';
   static const _keySkipExisting = 'skipExisting';
   static const _keyMaxConcurrentJobs = 'maxConcurrentJobs';
   static const _keyFileNameSuffix = 'fileNameSuffix';
@@ -515,6 +517,9 @@ class XdRemuxService {
         orElse: () => OppoCameraTailMode.automatic,
       ),
       strictTmap: prefs.getBool(_keyStrictTmap) ?? false,
+      applePhotographicStyles:
+          prefs.getBool(_keyApplePhotographicStyles) ?? false,
+      applePortrait: prefs.getBool(_keyApplePortrait) ?? false,
       skipExisting: prefs.getBool(_keySkipExisting) ?? true,
       maxConcurrentJobs: prefs.getInt(_keyMaxConcurrentJobs) ?? 4,
       fileNameSuffix: prefs.getString(_keyFileNameSuffix) ?? '_iso',
@@ -538,6 +543,11 @@ class XdRemuxService {
     await prefs.setString(_keyOppoCompat, config.oppoCompatibility.name);
     await prefs.setString(_keyOppoCameraTail, config.oppoCameraTail.name);
     await prefs.setBool(_keyStrictTmap, config.strictTmap);
+    await prefs.setBool(
+      _keyApplePhotographicStyles,
+      config.applePhotographicStyles,
+    );
+    await prefs.setBool(_keyApplePortrait, config.applePortrait);
     await prefs.setBool(_keySkipExisting, config.skipExisting);
     await prefs.setInt(_keyMaxConcurrentJobs, config.maxConcurrentJobs);
     await prefs.setString(_keyFileNameSuffix, config.fileNameSuffix);
