@@ -71,7 +71,7 @@ enum OutputMode {
       case OutputMode.oppo:
         return '兼容 OPPO/一加相册的标准文件格式，保留兼容信息和相机附加信息，便于继续编辑。';
       case OutputMode.apple:
-        return '兼容 Apple 相册的标准文件格式，支持开启新一代摄影风格。';
+        return '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格。';
     }
   }
 }
@@ -90,16 +90,16 @@ enum AppleWatermarkPolicy {
       case AppleWatermarkPolicy.preserve:
         return '保留水印';
       case AppleWatermarkPolicy.isolate:
-        return '隔离水印 metadata（实验性）';
+        return '隔离水印元数据（实验性）';
     }
   }
 
   String get appHelp {
     switch (this) {
       case AppleWatermarkPolicy.preserve:
-        return 'Apple 相册编辑副本保留当前水印；回传后仍可按设置写回 OPPO 手机原图中的水印。';
+        return 'Apple 照片编辑副本保留当前水印；回传后仍可按设置恢复 OPPO 原始照片中的原机水印。';
       case AppleWatermarkPolicy.isolate:
-        return '不把 OPPO 水印私有 metadata 写入 Apple 相册摄影风格；已经烘焙进画面的水印暂不会被擦除。';
+        return '不把 OPPO 水印私有元数据写入 Apple 照片摄影风格；已经烘焙进画面的水印暂不会被擦除。';
     }
   }
 }
@@ -243,7 +243,7 @@ enum OppoCompatMode {
       case OppoCompatMode.isoGraph:
         return '清除路由标记，但保留原始元数据关系图。';
       case OppoCompatMode.off:
-        return '不修改路由标记；适合 Apple 相册/纯 ISO 输出。';
+        return '不修改路由标记；适合 Apple 照片/纯 ISO 输出。';
     }
   }
 

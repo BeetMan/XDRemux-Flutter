@@ -211,7 +211,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
         success: false,
         outputValid: false,
         errorMessage: request.applePhotographicStyles
-            ? 'Rust 输出缺少 Apple 相册可调风格数据'
+            ? 'Rust 输出缺少 Apple 照片可调摄影风格数据'
             : request.applePortrait
             ? 'Rust 输出缺少 Apple 人像模式数据'
             : 'Rust 输出验证失败',

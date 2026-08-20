@@ -56,7 +56,7 @@ class AppleOppoWorkflowService {
     AppleWatermarkPolicy watermarkPolicy = AppleWatermarkPolicy.preserve,
     void Function(String message)? onStatus,
   }) async {
-    onStatus?.call('正在生成 Apple 相册摄影风格编辑副本…');
+    onStatus?.call('正在生成 Apple 照片摄影风格编辑副本…');
     final result = await XdRemuxService.convertWithBackend(
       ConversionRequest(
         id: _requestID('styles'),
@@ -73,7 +73,7 @@ class AppleOppoWorkflowService {
     );
     if (!result.success || result.outputValid == false) {
       throw AppleOppoWorkflowException(
-        'Apple 相册摄影风格编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
+        'Apple 照片摄影风格编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
       );
     }
     return outputPath;
@@ -100,9 +100,9 @@ class AppleOppoWorkflowService {
     );
   }
 
-  /// Preserve a returned Apple/Photos file without attempting OPPO writeback.
+  /// Preserve an Apple Photos return file without attempting OPPO writeback.
   ///
-  /// This is a file-level pass-through for iOS and Windows. It does not
+  /// This iOS-only path performs a file-level pass-through. It does not
   /// generate Apple Photographic Styles metadata, invoke Swift, or claim that
   /// the returned file is an Apple Styles candidate. The native thumbnail
   /// bridge is used as a lightweight readability check before the result is
@@ -112,10 +112,8 @@ class AppleOppoWorkflowService {
     required String outputPath,
     void Function(String message)? onStatus,
   }) async {
-    if (!Platform.isIOS && !Platform.isWindows && !Platform.isAndroid) {
-      throw const AppleOppoWorkflowException(
-        'Apple 直通输出目前只在 Windows/Android/iOS 文件工作流中使用。',
-      );
+    if (!Platform.isIOS) {
+      throw const AppleOppoWorkflowException('Apple 直通输出目前只在 iOS 文件工作流中使用。');
     }
     final returned = File(returnedPath);
     if (!await returned.exists() || await returned.length() == 0) {
@@ -128,7 +126,7 @@ class AppleOppoWorkflowService {
       try {
         await File(outputPath).delete();
       } catch (_) {}
-      throw const AppleOppoWorkflowException('Apple 回传文件无法由 iOS ImageIO 读取。');
+      throw const AppleOppoWorkflowException('Apple 照片回传文件无法由 iOS ImageIO 读取。');
     }
     return <String, dynamic>{
       'outputPath': outputPath,

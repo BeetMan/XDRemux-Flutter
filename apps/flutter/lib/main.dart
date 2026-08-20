@@ -1138,7 +1138,7 @@ class _HomePageState extends State<HomePage> {
       issues.add(
         const _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple 相册摄影风格不可用',
+          title: 'Apple 照片摄影风格不可用',
           detail: '当前平台 capability 未就绪。',
         ),
       );
@@ -3391,7 +3391,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 : 'Apple Photos-compatible standard file format. Supports next-generation Photographic Styles.')
                           : (_cfg.outputMode == OutputMode.oppo
                                 ? '兼容 OPPO/一加相册的标准文件格式，支持后续编辑'
-                                : '兼容 Apple 相册的标准文件格式，支持开启新一代摄影风格'),
+                                : '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格'),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -3449,7 +3449,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 12),
                         Text(
                           _t(
-                            'Apple 相册功能（实验性）',
+                            'Apple 照片功能（实验性）',
                             'Apple Photos features (Experimental)',
                           ),
                           style: theme.textTheme.titleSmall,
@@ -3467,13 +3467,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             contentPadding: EdgeInsets.zero,
                             title: Text(
                               _t(
-                                'Apple 相册摄影风格（Swift）',
+                                'Apple 照片摄影风格（Swift）',
                                 'Apple Photos Photographic Styles (Swift)',
                               ),
                             ),
                             subtitle: Text(
                               _t(
-                                '使用 Swift 生成可在 Apple 相册中继续调节的摄影风格数据；仅 Apple 原生能力可用时显示。',
+                                '使用 Swift 生成可在 Apple 照片中继续调节的摄影风格数据；仅 Apple 原生能力可用时显示。',
                                 'Uses Swift to generate Photographic Styles data editable in Apple Photos; available only with Apple-native capabilities.',
                               ),
                             ),
@@ -3514,7 +3514,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     if (_cfg.backend == ConversionBackend.rust) ...[
                       Text(
                         _t(
-                          'Apple 相册功能（实验性）',
+                          'Apple 照片功能（实验性）',
                           'Apple Photos features (Experimental)',
                         ),
                         style: theme.textTheme.titleSmall,
@@ -3531,13 +3531,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            'Apple 相册摄影风格（Rust）',
+                            'Apple 照片摄影风格（Rust）',
                             'Apple Photos Photographic Styles (Rust)',
                           ),
                         ),
                         subtitle: Text(
                           _t(
-                            '使用 Rust 生成可在 Apple 相册中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            '使用 Rust 生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
                             'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
                           ),
                         ),
@@ -3584,7 +3584,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         title: Text(_t('一帧影像，动用两台手机', 'One Frame, Two Phones')),
                         subtitle: Text(
                           _t(
-                            '用 OPPO 手机原图提供兼容信息，再用 iPhone/Apple 相册完成编辑和回传。',
+                            '用 OPPO 原始照片提供兼容信息，再用 iPhone/Apple 照片完成编辑和回传。',
                             'Use the OPPO original for compatibility metadata, then edit and return it through iPhone/Apple Photos.',
                           ),
                         ),
@@ -3593,11 +3593,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.photo_library_outlined),
-                            title: Text(_t('OPPO 手机原图', 'OPPO original photo')),
+                            title: Text(_t('OPPO 原始照片', 'OPPO original photo')),
                             subtitle: Text(
                               _writebackDonorPath ??
                                   _t(
-                                    'OPPO 标准输出必需；Apple 标准输出可留空',
+                                    'OPPO 兼容输出必需；Apple 标准输出可留空',
                                     'Required for OPPO Standard output; optional for Apple Standard output',
                                   ),
                               maxLines: 2,
@@ -3646,11 +3646,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           Text(
                             _cfg.language == AppLanguage.english
                                 ? (_cfg.outputMode == OutputMode.oppo
-                                      ? 'OPPO Standard: requires the OPPO original; restores OPPO watermark and metadata.'
-                                      : 'Apple Standard: keeps the iPhone/Apple Photos result without writing OPPO metadata.')
+                                      ? 'OPPO Compatible: requires the OPPO original; restores the original watermark, metadata, and tail data.'
+                                      : 'Apple Standard: keeps the iPhone/Apple Photos result without writing OPPO metadata or tail data.')
                                 : (_cfg.outputMode == OutputMode.oppo
-                                      ? 'OPPO 标准：需要 OPPO 手机原图；回写水印和 OPPO 附加信息。'
-                                      : 'Apple 标准：保留 iPhone/Apple 相册结果，不写回 OPPO 信息。'),
+                                      ? 'OPPO 兼容：需要 OPPO 原始照片；恢复原机水印、元数据和尾部数据。'
+                                      : 'Apple 标准：保留 iPhone/Apple 照片结果，不写回 OPPO 信息。'),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -4055,7 +4055,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         subtitle: Text(
                           _cfg.applePhotographicStyles || _cfg.applePortrait
                               ? _t(
-                                  'Apple 相册可调功能需要软件编码，已自动关闭。',
+                                  'Apple 照片可调功能需要软件编码，已自动关闭。',
                                   'Apple Photos editable features require software encoding and disable this option.',
                                 )
                               : '${_t('使用设备硬件加速普通 HDR 转换。', 'Use hardware acceleration for standard HDR conversion.')} '

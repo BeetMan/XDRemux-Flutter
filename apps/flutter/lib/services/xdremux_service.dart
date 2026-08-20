@@ -171,7 +171,7 @@ class XdRemuxService {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-              ? 'Apple 相册摄影风格当前未通过能力验证。'
+              ? 'Apple 照片摄影风格当前未通过能力验证。'
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }
@@ -312,11 +312,10 @@ class XdRemuxService {
     return verifyOutputForBackend(ConversionBackend.rust, path);
   }
 
-  /// Reconcile a returned Apple Photos file with its original OPPO donor.
-  /// Apple keeps the ImageIO bridge for visual raster restoration. Windows
-  /// and Android use the portable Rust footer path, which preserves the
-  /// returned raster with the donor watermark and restores OPPO metadata
-  /// through the portable Rust HEIF codec.
+  /// Reconcile an iPhone return file with its original OPPO donor.
+  /// macOS/iOS use the Apple ImageIO path. Windows/Android use the portable
+  /// Rust HEIF codec to restore the donor's visible watermark and OPPO
+  /// metadata/footer when requested.
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
     String? originalPath,
     required String returnedPath,
