@@ -18,6 +18,9 @@ use std::thread;
 #[cfg(all(windows, xdremux_ffmpeg_fallback))]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[cfg(all(windows, xdremux_ffmpeg_fallback))]
+use std::os::windows::process::CommandExt;
+
 /// ffmpeg-fallback batch encoder: loops the single-tile subprocess path.
 /// Only used by the `XDREMUX_USE_FFMPEG=1` desktop smoke build, so per-tile
 /// parameter sets (which the production x265 loop deliberately avoids) are
@@ -596,7 +599,6 @@ pub fn x265_encode_tiles(
 /// the IDR slice. Used so gain-map tiles are pure IDR slices — libheif (the
 /// Python reference) writes every gain-map tile as a single IDR with no
 /// parameter sets; the decoder config lives only in hvcC.
-#[cfg(not(xdremux_ffmpeg_fallback))]
 pub fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
     let nal_3b: &[u8] = &[0, 0, 1];
     let nal_4b: &[u8] = &[0, 0, 0, 1];

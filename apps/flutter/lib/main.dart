@@ -15,8 +15,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
-import 'apple_portrait_page.dart';
-import 'rust_portrait_page.dart';
 import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
