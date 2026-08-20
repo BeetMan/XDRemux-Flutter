@@ -19,10 +19,17 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
-// These older plugins declare Java 11 but inherit a newer Kotlin default from
-// the application build. Align only their Kotlin tasks for reproducible builds.
+// These older plugins use different Java targets. Match Kotlin to each
+// plugin's Java task so Gradle accepts release builds on all runners.
 subprojects {
-    if (name == "receive_sharing_intent" || name == "flutter_foreground_task") {
+    if (name == "receive_sharing_intent") {
+        afterEvaluate {
+            tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+                compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            }
+        }
+    }
+    if (name == "flutter_foreground_task") {
         afterEvaluate {
             tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
                 compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
