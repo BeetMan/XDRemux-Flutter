@@ -29,6 +29,7 @@ mod portrait_consts;
 mod portrait_depth;
 mod portrait_graft;
 mod portrait_scaffold;
+mod watermark_codec;
 
 #[cfg(not(xdremux_ffmpeg_fallback))]
 pub mod x265_ffi;
@@ -154,8 +155,8 @@ pub extern "C" fn xdremux_diagnose_portrait(input_path: *const c_char) -> *mut c
 }
 
 /// Portable returned-photo writeback for platforms without ImageIO.
-/// Mode 0 preserves the returned Apple file; mode 1 appends the donor's
-/// complete OPPO footer. Visible raster restoration remains a codec task.
+/// Mode 0 preserves the returned Apple file; mode 1 restores the donor's
+/// visible watermark canvas and appends its complete OPPO footer.
 #[no_mangle]
 pub extern "C" fn xdremux_writeback_returned_photo(
     original_path: *const c_char,
@@ -180,8 +181,27 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             return Err("returned photo is not a readable HEIF/HEIC container".into());
         }
 
-        let (output, watermark_metadata, entries) = match output_mode {
-            0 => (container::strip_oppo_tail(&returned), false, Vec::new()),
+        let (output, watermark_metadata, entries, raster_restored) = match output_mode {
+            0 => {
+                if restore_watermark != 0 && !original_path.is_null() {
+                    let donor_path = unsafe { CStr::from_ptr(original_path) }
+                        .to_str()
+                        .map_err(|_| "original path is not valid UTF-8".to_string())?;
+                    let donor = std::fs::read(donor_path)
+                        .map_err(|e| format!("cannot read donor photo: {e}"))?;
+                    if container::has_watermark_entries(&donor) {
+                        let output = watermark_codec::restore_visible_watermark(
+                            &donor,
+                            &container::strip_oppo_tail(&returned),
+                        )?;
+                        (output, false, Vec::new(), true)
+                    } else {
+                        (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                    }
+                } else {
+                    (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                }
+            }
             1 => {
                 if original_path.is_null() {
                     return Err("OPPO output requires the untouched donor photo".into());
@@ -195,9 +215,16 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor);
                 let has_watermark = container::has_watermark_entries(&donor);
-                let mut base = container::strip_oppo_tail(&returned);
+                let mut base = if restore_watermark != 0 && has_watermark {
+                    watermark_codec::restore_visible_watermark(
+                        &donor,
+                        &container::strip_oppo_tail(&returned),
+                    )?
+                } else {
+                    container::strip_oppo_tail(&returned)
+                };
                 base.extend_from_slice(&tail);
-                (base, has_watermark, names)
+                (base, has_watermark, names, restore_watermark != 0 && has_watermark)
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
@@ -214,7 +241,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             "success": true,
             "outputMode": if output_mode == 1 { "oppo" } else { "apple" },
             "outputValid": true,
-            "rasterWatermarkRestored": false,
+            "rasterWatermarkRestored": raster_restored,
             "watermarkMetadataPreserved": watermark_metadata,
             "requestedRasterWatermark": restore_watermark != 0,
             "restoredOppoEntries": entries,

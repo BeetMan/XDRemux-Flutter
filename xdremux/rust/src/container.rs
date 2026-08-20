@@ -273,6 +273,43 @@ pub fn has_watermark_entries(data: &[u8]) -> bool {
         .any(|name| name == "watermark" || name.starts_with("watermark."))
 }
 
+/// Calculate the complete bottom canvas reserved for OPPO's visible watermark.
+/// The config stores the watermark image size and its horizontal/vertical
+/// insets as little-endian u32 values at offsets 4, 8, 12 and 16.
+pub fn watermark_canvas_rect(
+    data: &[u8],
+    image_width: u32,
+    image_height: u32,
+) -> Result<(u32, u32, u32, u32), String> {
+    let watermark = extract_tail_entry(data, "watermark")
+        .ok_or("OPPO watermark payload is missing")?;
+    let config = extract_tail_entry(data, "watermark.config")
+        .ok_or("OPPO watermark config is missing")?;
+    if config.len() < 20 || watermark.len() < 24 {
+        return Err("OPPO watermark payload or config is truncated".into());
+    }
+    if watermark[..8] != [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+        || &watermark[12..16] != b"IHDR"
+    {
+        return Err("OPPO watermark is not a PNG payload".into());
+    }
+    let png_width = read_u32_be(&watermark, 16);
+    let png_height = read_u32_be(&watermark, 20);
+    let configured_width = read_u32_le(&config, 4);
+    let configured_height = read_u32_le(&config, 8);
+    let side_inset = read_u32_le(&config, 12);
+    let vertical_inset = read_u32_le(&config, 16);
+    if png_width != configured_width
+        || png_height != configured_height
+        || configured_width.saturating_add(side_inset.saturating_mul(2)) != image_width
+        || configured_height.saturating_add(vertical_inset.saturating_mul(2)) > image_height
+    {
+        return Err("OPPO watermark geometry does not match image dimensions".into());
+    }
+    let canvas_height = configured_height + vertical_inset * 2;
+    Ok((0, image_height - canvas_height, image_width, canvas_height))
+}
+
 /// Find the start of the QTI box in the data. Returns the absolute offset
 /// of the 4-byte size header preceding the QTI marker.
 fn find_qti_box_start(data: &[u8]) -> Option<usize> {
@@ -770,6 +807,15 @@ fn find_jpeg_in_data(data: &[u8], target_length: Option<usize>) -> Option<Vec<u8
 /// Read a big-endian u32 at `offset`.
 fn read_u32_be(data: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
+}
+
+fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
         data[offset],
         data[offset + 1],
         data[offset + 2],

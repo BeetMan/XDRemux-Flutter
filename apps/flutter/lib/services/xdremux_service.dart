@@ -315,8 +315,8 @@ class XdRemuxService {
   /// Reconcile a returned Apple Photos file with its original OPPO donor.
   /// Apple keeps the ImageIO bridge for visual raster restoration. Windows
   /// and Android use the portable Rust footer path, which preserves the
-  /// returned raster and restores OPPO watermark metadata without pretending
-  /// that a platform HEIF decoder/encoder is available.
+  /// returned raster with the donor watermark and restores OPPO metadata
+  /// through the portable Rust HEIF codec.
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
     String? originalPath,
     required String returnedPath,

@@ -253,8 +253,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       final directory = await _workflowDirectory(returned);
       final output =
           '$directory${Platform.pathSeparator}${_stem(returned)}.${_outputMode.name}-final.heic';
-      if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
-          _outputMode == OutputMode.apple) {
+      if (Platform.isIOS && _outputMode == OutputMode.apple) {
         await AppleOppoWorkflowService.preserveAppleReturnedPhoto(
           returnedPath: returned,
           outputPath: output,
@@ -277,8 +276,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       });
     } catch (error) {
       _showError(
-        (Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
-                _outputMode == OutputMode.apple
+        Platform.isIOS && _outputMode == OutputMode.apple
             ? '处理失败：$error'
             : '写回失败：$error',
       );
@@ -316,6 +314,11 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   String get _outputModeHelp {
     if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&
         _outputMode == OutputMode.apple) {
+      if ((Platform.isWindows || Platform.isAndroid) &&
+          _restoreWatermark &&
+          _baselinePath != null) {
+        return 'Rust 恢复可见 OPPO 水印画布后输出 Apple 文件，不写入 OPPO 私有 footer。';
+      }
       return '原样保留 Apple Photos 回传文件，不写入 OPPO 私有兼容信息。';
     }
     if (Platform.isIOS && _outputMode == OutputMode.oppo) {
@@ -404,9 +407,9 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 Platform.isWindows
-                    ? '这是独立的文件往返流程。Windows 负责生成 Rust Apple 编辑副本、交换和验证 Apple 回传文件；Rust 可恢复 OPPO 水印 metadata，视觉水印画布将在统一 HEIF 编解码器接入后恢复。普通“批量转换”队列不会参与此流程。'
+                    ? '这是独立的文件往返流程。Windows 负责生成 Rust Apple 编辑副本、交换和验证 Apple 回传文件；Rust 使用统一 HEIF 编解码器恢复可见 OPPO 水印画布和 metadata。普通“批量转换”队列不会参与此流程。'
                     : Platform.isAndroid
-                    ? '这是独立的文件往返流程。Android 使用 SAF 选择文件，Rust 负责 OPPO 兼容文件和水印 metadata 写回；视觉水印画布将在统一 HEIF 编解码器接入后恢复。'
+                    ? '这是独立的文件往返流程。Android 使用 SAF 选择文件，Rust 使用统一 HEIF 编解码器恢复可见水印画布和 OPPO metadata。'
                     : Platform.isIOS
                     ? '这是独立的五阶段流程。当前 iOS 已开放 Rust OPPO 兼容文件生成、文件选择和分享，并提供 Apple 标准与 OPPO 兼容两种最终输出；Apple 相册摄影风格生成仍等待嵌入式 Swift Library，OPPO 写回属于实验性能力。'
                     : '这是独立的五阶段流程。OPPO 手机原图与 iPhone 回传照片会保持配对，普通“批量转换”队列不会参与此流程。Apple 相册功能仍属于实验性能力。',
@@ -606,7 +609,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             step: 4,
             title: '写回正常水印',
             description: Platform.isWindows || Platform.isAndroid
-                ? 'Rust 跨平台恢复 OPPO 水印 metadata；可见水印画布恢复将在统一 HEIF 编解码器接入后启用。'
+                ? 'Rust 跨平台恢复可见 OPPO 水印画布与 metadata。'
                 : Platform.isIOS
                 ? '使用 OPPO 手机原图处理回传照片；iOS 路径与 macOS 共用同一套 ImageIO 实现，尚未完成真机验证。'
                 : '使用 OPPO 手机原图处理回传照片；目前 macOS 已验证。',
@@ -615,7 +618,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               title: const Text('按 OPPO 手机原图写回正常水印'),
               subtitle: Text(
                 Platform.isWindows || Platform.isAndroid
-                    ? 'Rust 会保留回传画面并恢复 OPPO 水印 metadata；当前不重新编码可见水印画布。'
+                    ? 'Rust 会解码、恢复水印画布并重新编码回传 HEIF，同时保留 OPPO metadata。'
                     : '关闭后保留 iPhone 回传画面，但 OPPO 兼容模式仍会恢复附加信息。',
               ),
               value: _restoreWatermark,
@@ -632,7 +635,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             description: Platform.isIOS
                 ? 'Apple 标准原样保留回传文件并做 ImageIO 可读性检查；OPPO 兼容模式恢复 OPPO 兼容结构（实验性，待真机验证）。'
                 : Platform.isWindows || Platform.isAndroid
-                ? 'Rust 恢复 OPPO 兼容 footer 与水印 metadata；Apple 标准保留 Apple 结果且不写入 OPPO 私有附加信息。'
+                ? 'Rust 恢复 OPPO 兼容 footer、可见水印画布与 metadata；Apple 标准保留 Apple 结果且不写入 OPPO 私有附加信息。'
                 : 'OPPO 兼容模式恢复 OPPO 兼容结构；Apple 标准保留 Apple 结果且不写入 OPPO 私有附加信息。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -678,7 +681,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 if (Platform.isWindows || Platform.isAndroid) ...[
                   const SizedBox(height: 8),
                   Text(
-                    '当前平台由 Rust 恢复 OPPO footer 和水印 metadata；可见水印画布暂不重新编码。',
+                    '当前平台由 Rust 完成水印画布、OPPO footer 和 metadata 写回；输出仍需在 Apple/OPPO 设备上做最终兼容性确认。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.tertiary,
                     ),
