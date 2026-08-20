@@ -1,2 +1,6 @@
+# Original upstream Apple Swift backend retained for compatibility and research.
+# Keep it in the repository, but exclude it from GitHub's language statistics.
+apps/flutter/ios/SwiftBackend/** linguist-vendored
+
 # Third-party Zstandard C implementation used for Apple rear.depth decoding.
 apps/flutter/ios/SwiftBackend/Sources/CZstdDecompress/** linguist-vendored
