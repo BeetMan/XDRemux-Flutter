@@ -15,6 +15,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
 import 'models/checkpoint_model.dart';
+import 'apple_portrait_page.dart';
+import 'rust_portrait_page.dart';
 import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
 import 'services/foreground_service.dart';
@@ -41,8 +43,8 @@ void main() {
 
 /// Remove persisted Apple feature flags when the current native capability
 /// probe cannot support them. OutputMode.apple remains independent: it is a
-/// clean output target. Rust Photographic Styles remains available in the
-/// normal conversion path; Portrait remains disabled in the product UI.
+/// clean output target. Rust Photographic Styles and the R5 Portrait graph are
+/// implemented in the Rust core; Swift remains available for Apple-native paths.
 bool _sanitizeConfigForCapabilities(
   ConversionConfig config,
   BackendCapabilities capabilities,
@@ -52,12 +54,9 @@ bool _sanitizeConfigForCapabilities(
     config.backend = ConversionBackend.rust;
     changed = true;
   }
-  if (config.applePortrait) {
-    // Portrait is disabled on every platform until its output is revalidated.
-    config.applePortrait = false;
-    changed = true;
-  }
-  if (config.backend == ConversionBackend.swift) {
+  if (config.backend != ConversionBackend.swift) {
+    // Rust now includes the R5 native Portrait graph writer.
+  } else {
     if (config.applePhotographicStyles &&
         !capabilities.swiftPhotographicStyles) {
       config.applePhotographicStyles = false;
@@ -3103,9 +3102,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
     widget.config.strictTmap = _cfg.strictTmap;
     widget.config.applePhotographicStyles = _cfg.applePhotographicStyles;
-    // Portrait remains disabled on every platform until revalidation is complete.
-    _cfg.applePortrait = false;
-    widget.config.applePortrait = false;
+    widget.config.applePortrait = _cfg.applePortrait;
     widget.config.skipExisting = _cfg.skipExisting;
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
     widget.config.fileNameSuffix = _cfg.fileNameSuffix;
@@ -3475,6 +3472,23 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _emit();
                             },
                           ),
+                        if (_backendCapabilities.swiftPortrait)
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Apple 人像模式（Swift）'),
+                            value: _cfg.applePortrait,
+                            onChanged: (value) {
+                              setState(() {
+                                _cfg.applePortrait = value;
+                                if (value) {
+                                  _cfg.outputMode = OutputMode.apple;
+                                  _cfg.oppoCompatibility = OppoCompatMode.off;
+                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                                }
+                              });
+                              _emit();
+                            },
+                          ),
                       ],
                       const SizedBox(height: 20),
                     ],
@@ -3513,6 +3527,25 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         onChanged: (value) {
                           setState(() {
                             _cfg.applePhotographicStyles = value;
+                            if (value) {
+                              _cfg.outputMode = OutputMode.apple;
+                              _cfg.oppoCompatibility = OppoCompatMode.off;
+                              _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                              _cfg.hardwareEncode = false;
+                            }
+                          });
+                          _emit();
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          _t('Apple 人像模式（Rust）', 'Apple Portrait Mode (Rust)'),
+                        ),
+                        value: _cfg.applePortrait,
+                        onChanged: (value) {
+                          setState(() {
+                            _cfg.applePortrait = value;
                             if (value) {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
@@ -4002,7 +4035,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(_t('GPU 硬件编码', 'GPU hardware encoding')),
                         subtitle: Text(
-                          _cfg.applePhotographicStyles
+                          _cfg.applePhotographicStyles || _cfg.applePortrait
                               ? _t(
                                   'Apple 照片可调功能需要软件编码，已自动关闭。',
                                   'Apple Photos editable features require software encoding and disable this option.',
@@ -4017,7 +4050,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                         value: _cfg.hardwareEncode,
                         dense: true,
-                        onChanged: _cfg.applePhotographicStyles
+                        onChanged:
+                            _cfg.applePhotographicStyles || _cfg.applePortrait
                             ? null
                             : (v) {
                                 // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
