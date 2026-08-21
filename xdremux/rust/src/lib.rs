@@ -211,19 +211,16 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .map_err(|_| "original path is not valid UTF-8".to_string())?;
                 let donor = std::fs::read(donor_path)
                     .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                // The returned primary already contains the rendered Apple
-                // look. Keep the vendor wrappers and watermark entries, but
-                // neutralize basictone/filter/HDR recipe names so Photos does
-                // not run a display-time adjustment over the restored pixels.
-                let tail = container::get_oppo_tail_without_display_adjustments(&donor)
+                // OPPO Photos needs the untouched donor graph and complete
+                // vendor tail to render its clean watermark overlay. Using
+                // the returned Apple graph here leaves the watermark baked
+                // into the filtered primary image.
+                let tail = container::get_oppo_tail(&donor, OppoCameraTail::Preserve)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor);
                 let has_watermark = container::has_watermark_entries(&donor);
                 let mut base = if restore_watermark != 0 && has_watermark {
-                    watermark_codec::restore_visible_watermark(
-                        &donor,
-                        &container::strip_oppo_tail(&returned),
-                    )?
+                    watermark_codec::restore_on_donor_graph(&donor, &returned)?
                 } else {
                     container::strip_oppo_tail(&returned)
                 };
@@ -232,10 +229,10 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
-        // OPPO mode appends the donor footer after raster restoration. Run the
-        // metadata neutralization once more over the complete output so the
-        // appended filter.info entry cannot re-enable Photos' filter pass.
-        if raster_restored {
+        // Apple mode has no OPPO overlay tail, so disable returned display
+        // recipes after raster restoration. OPPO mode intentionally keeps the
+        // donor's exact tail for its private watermark renderer.
+        if raster_restored && output_mode == 0 {
             container::disable_apple_filter_recipe(&mut output);
         }
         if !is_heif_container(&output) {

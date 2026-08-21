@@ -64,6 +64,170 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
     Ok(output)
 }
 
+/// Rebuild the returned raster on the donor's HEIF graph.
+///
+/// OPPO Photos uses the donor graph together with its private watermark tail
+/// to render the clean watermark overlay. Rebuilding on the returned Apple
+/// graph loses that relationship, even when the tail bytes are copied back.
+pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, String> {
+    let donor_image =
+        heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
+    let returned_image = heif_oxide::decode_bytes(returned)
+        .map_err(|error| format!("decode returned HEIF: {error:?}"))?;
+    if donor_image.width != returned_image.width || donor_image.height != returned_image.height {
+        return Err(format!(
+            "donor/returned dimensions differ: {}x{} vs {}x{}",
+            donor_image.width, donor_image.height, returned_image.width, returned_image.height
+        ));
+    }
+    let rgba = returned_image.to_rgba8();
+    let rgb: Vec<u8> = rgba
+        .chunks_exact(4)
+        .flat_map(|pixel| pixel[..3].iter().copied())
+        .collect();
+    rewrite_primary_grid_in_place(
+        &container::strip_oppo_tail(donor),
+        &rgb,
+        returned_image.width,
+        returned_image.height,
+    )
+}
+
+/// Replace the existing donor primary tiles without changing the primary ID
+/// or the donor's iref/iinf graph. Photos' thumbnail renderer uses those
+/// relationships to discover the private OPPO watermark overlay.
+fn rewrite_primary_grid_in_place(
+    source: &[u8],
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, String> {
+    let top = isobmff::parse_boxes(source, 0, source.len());
+    let ftyp = find(&top, b"ftyp")?;
+    let meta = find(&top, b"meta")?;
+    let mdat = find(&top, b"mdat")?;
+    let parsed = isobmff::parse_source_meta(source)?;
+    let (tile_payloads, hvcc) = encode_tiles(rgb, width, height)?;
+    let primary = parsed.primary_id;
+    let tile_ids = parsed
+        .refs
+        .iter()
+        .find(|reference| reference.rtype == "dimg" && reference.from == primary)
+        .map(|reference| reference.to.clone())
+        .ok_or("donor HEIF primary is not an image grid")?;
+    if tile_ids.len() != tile_payloads.len() {
+        return Err(format!(
+            "donor grid tile count differs: {} vs {}",
+            tile_ids.len(),
+            tile_payloads.len()
+        ));
+    }
+    let tile_template = parsed
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == tile_ids[0])
+        .map(|entry| entry.associations.clone())
+        .ok_or("donor HEIF grid tile associations are missing")?;
+    let hvcc_index = tile_template
+        .iter()
+        .find(|(index, _)| {
+            parsed
+                .props
+                .get(index.saturating_sub(1) as usize)
+                .map(|property| property.ptype == "hvcC")
+                .unwrap_or(false)
+        })
+        .map(|(index, _)| *index)
+        .ok_or("donor HEIF grid hvcC association is missing")?;
+    let mut properties: Vec<Vec<u8>> = parsed
+        .props
+        .iter()
+        .map(|property| property.raw.clone())
+        .collect();
+    properties[hvcc_index.saturating_sub(1) as usize] = isobmff::make_box(b"hvcC", &hvcc);
+    let ipma = make_ipma_box(source, &meta, &parsed.ipma_entries, parsed.ipma_flags)?;
+    let iprp = make_iprp_box(&properties, &ipma);
+    let iinf_box = find_meta_child(source, &meta, b"iinf")?;
+    let iinf = source[iinf_box.box_start..iinf_box.data_end].to_vec();
+    let iref_version = find_meta_child(source, &meta, b"iref")
+        .map(|box_| source[box_.data_start])
+        .unwrap_or(0);
+    let iref = isobmff::make_iref_full_box(iref_version, &parsed.refs);
+    let idat_box = find_meta_child(source, &meta, b"idat")?;
+    let idat = source[idat_box.box_start..idat_box.data_end].to_vec();
+
+    let mut iloc_entries = parsed.iloc_entries.clone();
+    for entry in &mut iloc_entries {
+        if tile_ids.contains(&entry.item_id) {
+            entry.extents = vec![(0, 0)];
+        }
+    }
+    let placeholder = build_meta(
+        source,
+        &meta,
+        &iinf,
+        &iloc_entries,
+        &iprp,
+        &iref,
+        &idat,
+        primary,
+    )?;
+    let mdat_data_start = ftyp.size
+        + top
+            .iter()
+            .filter(|box_| {
+                box_.box_start > ftyp.box_start
+                    && box_.box_start < mdat.box_start
+                    && &box_.btype != b"meta"
+            })
+            .map(|box_| box_.size)
+            .sum::<usize>()
+        + placeholder.len()
+        + 8;
+    let offset_delta = mdat_data_start as i64 - mdat.data_start as i64;
+    for entry in &mut iloc_entries {
+        if !tile_ids.contains(&entry.item_id) && entry.construction_method == 0 {
+            for (offset, _) in &mut entry.extents {
+                *offset = (*offset as i64 + offset_delta) as u64;
+            }
+        }
+    }
+    let mut mdat_payload = source[mdat.data_start..mdat.data_end].to_vec();
+    let mut tile_offset = mdat_data_start + mdat_payload.len();
+    for (tile_id, payload) in tile_ids.iter().zip(&tile_payloads) {
+        let offset = tile_offset as u64;
+        iloc_entries
+            .iter_mut()
+            .find(|entry| entry.item_id == *tile_id)
+            .ok_or("donor grid tile iloc is missing")?
+            .extents = vec![(offset, payload.len() as u64)];
+        mdat_payload.extend_from_slice(payload);
+        tile_offset += payload.len();
+    }
+    let mdat_box = isobmff::make_box(b"mdat", &mdat_payload);
+    let final_meta = build_meta(
+        source,
+        &meta,
+        &iinf,
+        &iloc_entries,
+        &iprp,
+        &iref,
+        &idat,
+        primary,
+    )?;
+    let mut output = Vec::with_capacity(source.len() + mdat_box.len());
+    for box_ in &top {
+        if box_.box_start == meta.box_start {
+            output.extend_from_slice(&final_meta);
+        } else if box_.box_start == mdat.box_start {
+            output.extend_from_slice(&mdat_box);
+        } else {
+            output.extend_from_slice(&source[box_.box_start..box_.data_end]);
+        }
+    }
+    Ok(output)
+}
+
 /// Detects uniform frame bands at the top and bottom of a donor raster.
 ///
 /// Frame-style watermarks fill the bands with one solid colour (corner
