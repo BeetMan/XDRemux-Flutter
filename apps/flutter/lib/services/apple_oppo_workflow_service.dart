@@ -1,56 +1,25 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import '../models/app_models.dart';
 import 'conversion_backend.dart';
 import 'xdremux_service.dart';
 
-/// The five-stage Apple/OPPO round-trip is intentionally separate from the
-/// ordinary queue conversion path. The ordinary path remains one input to one
-/// output; this service owns the baseline and returned-photo relationship.
+/// The Apple/OPPO round-trip is intentionally separate from the ordinary
+/// queue conversion path. The selected OPPO photo is both the conversion
+/// input and the donor for the later writeback: its camera tail carries the
+/// watermark and metadata in their most complete form, so no intermediate
+/// OPPO-baseline file is produced.
 class AppleOppoWorkflowService {
   AppleOppoWorkflowService._();
 
-  static Future<String> ensureBaseline({
-    required String sourcePath,
-    required String baselinePath,
-    bool sourceIsBaseline = false,
-    void Function(String message)? onStatus,
-  }) async {
-    if (sourceIsBaseline && await _isValidOutput(sourcePath)) {
-      onStatus?.call('已选择有效 OPPO baseline');
-      return sourcePath;
-    }
-    if (baselinePath != sourcePath && await _isReusableBaseline(baselinePath)) {
-      onStatus?.call('复用已有 OPPO baseline');
-      return baselinePath;
-    }
-
-    onStatus?.call('正在生成 OPPO baseline…');
-    final result = await XdRemuxService.convertWithBackend(
-      ConversionRequest(
-        id: _requestID('baseline'),
-        backend: ConversionBackend.rust,
-        outputMode: OutputMode.oppo,
-        inputPath: sourcePath,
-        outputPath: baselinePath,
-        // The baseline is the donor for later writeback, so retain the full
-        // OPPO-compatible route and camera tail.
-        oppoCompat: OppoCompatMode.on.rustValue,
-        oppoCameraTail: OppoCameraTailMode.preserve.rustValue,
-        strictTmap: false,
-      ),
-    );
-    if (!result.success || result.outputValid == false) {
-      throw AppleOppoWorkflowException(
-        'OPPO baseline 生成失败：${result.errorMessage ?? '输出校验失败'}',
-      );
-    }
-    return baselinePath;
-  }
-
+  /// Single-pass conversion from the selected OPPO photo to an Apple
+  /// Photographic Styles editing copy (Apple 标准 + styleData).
+  ///
+  /// Converting the original photo directly is deliberate: an intermediate
+  /// OPPO-compatible file already carries a gain map and tmap, and running
+  /// the styles pipeline on it produced a duplicate gain map graph.
   static Future<String> createAppleStylesCopy({
-    required String baselinePath,
+    required String sourcePath,
     required String outputPath,
     ConversionBackend backend = ConversionBackend.rust,
     AppleWatermarkPolicy watermarkPolicy = AppleWatermarkPolicy.preserve,
@@ -62,7 +31,7 @@ class AppleOppoWorkflowService {
         id: _requestID('styles'),
         backend: backend,
         outputMode: OutputMode.apple,
-        inputPath: baselinePath,
+        inputPath: sourcePath,
         outputPath: outputPath,
         oppoCompat: OppoCompatMode.off.rustValue,
         oppoCameraTail: OppoCameraTailMode.off.rustValue,
@@ -80,19 +49,19 @@ class AppleOppoWorkflowService {
   }
 
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
-    required String? baselinePath,
+    required String? donorPath,
     required String returnedPath,
     required String outputPath,
     required OutputMode outputMode,
     required bool restoreWatermark,
     void Function(String message)? onStatus,
   }) async {
-    if (outputMode == OutputMode.oppo && baselinePath == null) {
-      throw const AppleOppoWorkflowException('OPPO 输出需要 baseline donor。');
+    if (outputMode == OutputMode.oppo && donorPath == null) {
+      throw const AppleOppoWorkflowException('OPPO 输出需要 OPPO 原始照片作为写回来源。');
     }
     onStatus?.call('正在写回回传照片…');
     return XdRemuxService.writebackReturnedPhoto(
-      originalPath: baselinePath,
+      originalPath: donorPath,
       returnedPath: returnedPath,
       outputPath: outputPath,
       outputMode: outputMode,
@@ -134,45 +103,6 @@ class AppleOppoWorkflowService {
       'outputValid': true,
       'passthrough': true,
     };
-  }
-
-  static Future<bool> _isReusableBaseline(String path) async {
-    final file = File(path);
-    if (!await file.exists()) return false;
-    try {
-      if (!await _isValidOutput(path)) return false;
-      final bytes = await file.readAsBytes();
-      return _containsAnyMarker(bytes, const [
-        'watermark.',
-        'local.',
-        'master.mode.preset.info',
-        'hdr.transform.data',
-      ]);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  static Future<bool> _isValidOutput(String path) {
-    return XdRemuxService.verifyOutputForBackend(ConversionBackend.rust, path);
-  }
-
-  static bool _containsAnyMarker(Uint8List bytes, List<String> markers) {
-    return markers.any((marker) {
-      final needle = Uint8List.fromList(marker.codeUnits);
-      if (needle.length > bytes.length) return false;
-      for (var start = 0; start <= bytes.length - needle.length; start++) {
-        var matches = true;
-        for (var index = 0; index < needle.length; index++) {
-          if (bytes[start + index] != needle[index]) {
-            matches = false;
-            break;
-          }
-        }
-        if (matches) return true;
-      }
-      return false;
-    });
   }
 
   static String _requestID(String stage) =>
