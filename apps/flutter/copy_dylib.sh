@@ -3,9 +3,10 @@
 # Called automatically by flutter build via the Podfile post_install.
 set -euo pipefail
 
-# Prefer macos/Frameworks (the current source); fall back to Frameworks.
-DYLIB="$(dirname "$0")/macos/Frameworks/libxdremux_core.dylib"
-[ -f "$DYLIB" ] || DYLIB="$(dirname "$0")/Frameworks/libxdremux_core.dylib"
+# Prefer the repository-root dylib (updated by cargo build --release);
+# fall back to the macOS staging directory.
+DYLIB="$(dirname "$0")/libxdremux_core.dylib"
+[ -f "$DYLIB" ] || DYLIB="$(dirname "$0")/macos/Frameworks/libxdremux_core.dylib"
 
 # Find the most recently built app (product name is XDRemux.app, capitalized;
 # -name is case-sensitive so use -iname to tolerate either spelling).

@@ -30,9 +30,10 @@ else
   PRODUCT_DIR="Debug"
 fi
 APP="build/macos/Build/Products/${PRODUCT_DIR}/XDRemux.app"
-# dylib 源：优先 macos/Frameworks（与 copy_dylib.sh 一致），退回仓库根副本。
-DYLIB_SRC="macos/Frameworks/libxdremux_core.dylib"
-[ -f "$DYLIB_SRC" ] || DYLIB_SRC="libxdremux_core.dylib"
+# dylib 源：优先仓库根副本（由 cargo build --release 更新），
+# 退回 macos/Frameworks 中的历史/手工 staged 副本。
+DYLIB_SRC="libxdremux_core.dylib"
+[ -f "$DYLIB_SRC" ] || DYLIB_SRC="macos/Frameworks/libxdremux_core.dylib"
 if [ -f "$DYLIB_SRC" ] && [ -d "$APP" ]; then
   mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/MacOS"
   cp -f "$DYLIB_SRC" "$APP/Contents/Frameworks/"
