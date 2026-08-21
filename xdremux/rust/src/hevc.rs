@@ -50,6 +50,19 @@ pub fn x265_encode_tiles(
         .collect()
 }
 
+/// ffmpeg-fallback counterpart of the OPPO-convention encoder; the smoke
+/// build has no range control, so it delegates to the plain batch path.
+#[cfg(xdremux_ffmpeg_fallback)]
+pub fn x265_encode_tiles_oppo_sdr(
+    tiles: &[&[u8]],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    use_420: bool,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    x265_encode_tiles(tiles, width, height, pixel_bytes, use_420)
+}
+
 /// Feature flag: encode single-tile gain maps as 4:2:0 instead of 4:4:4.
 ///
 /// The batch/production path (`x265_encode_tiles`) decides 4:2:0 vs 4:4:4 from
@@ -73,6 +86,54 @@ fn gain_map_420_enabled() -> bool {
 /// Returns (y, u, v).
 pub fn rgb_to_yuv420(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let (y_plane, u_plane, v_plane) = rgb_to_yuv444(pixels, width, height);
+    yuv444_to_420(y_plane, u_plane, v_plane, width, height)
+}
+
+/// Convert full-resolution RGB24 to planar YUV420 (BT.601, limited range).
+pub fn rgb_to_yuv420_limited601(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (y_plane, u_plane, v_plane) = rgb_to_yuv444_limited601(pixels, width, height);
+    yuv444_to_420(y_plane, u_plane, v_plane, width, height)
+}
+
+/// Convert full-resolution RGB24 to planar YUV444 using BT.601 coefficients
+/// in limited (studio) range. OPPO camera HEVC tiles store limited-range data
+/// while flagging the stream full-range, so decoders render them with lifted
+/// shadows and compressed highlights; matching that data layout makes
+/// re-encoded output render identically to the original in every viewer.
+pub fn rgb_to_yuv444_limited601(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let plane_size = (width * height) as usize;
+    let mut y_plane = vec![0u8; plane_size];
+    let mut u_plane = vec![0u8; plane_size];
+    let mut v_plane = vec![0u8; plane_size];
+    for i in 0..plane_size {
+        let r = pixels[i * 3] as f32;
+        let g = pixels[i * 3 + 1] as f32;
+        let b = pixels[i * 3 + 2] as f32;
+        let yy = 16.0 + (65.481 * r + 128.553 * g + 24.966 * b) / 255.0;
+        let uu = 128.0 + (-37.797 * r - 74.203 * g + 112.0 * b) / 255.0;
+        let vv = 128.0 + (112.0 * r - 93.786 * g - 18.214 * b) / 255.0;
+        y_plane[i] = yy.round().clamp(0.0, 255.0) as u8;
+        u_plane[i] = uu.round().clamp(0.0, 255.0) as u8;
+        v_plane[i] = vv.round().clamp(0.0, 255.0) as u8;
+    }
+    (y_plane, u_plane, v_plane)
+}
+
+fn yuv444_to_420(
+    y_plane: Vec<u8>,
+    u_plane: Vec<u8>,
+    v_plane: Vec<u8>,
+    width: u32,
+    height: u32,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let chroma_w = ((width + 1) / 2) as usize;
     let chroma_h = ((height + 1) / 2) as usize;
     let mut u_small = Vec::with_capacity(chroma_w * chroma_h);
@@ -378,6 +439,7 @@ unsafe fn setup_pic_planes(
     height: u32,
     pixel_bytes: usize,
     use_420: bool,
+    oppo_sdr: bool,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>, i32) {
     use crate::x265_ffi::*;
     use std::os::raw::c_void;
@@ -387,10 +449,11 @@ unsafe fn setup_pic_planes(
     // used to diverge from the encoder config (i420 param + 4:4:4 planes),
     // which scrambled chroma and produced per-tile colour shifts.
     let (y_plane, u_plane, v_plane, chroma_stride) = if pixel_bytes == 3 {
-        let (y, u, v) = if use_420 {
-            rgb_to_yuv420(pixels, width, height)
-        } else {
-            rgb_to_yuv444(pixels, width, height)
+        let (y, u, v) = match (use_420, oppo_sdr) {
+            (true, true) => rgb_to_yuv420_limited601(pixels, width, height),
+            (true, false) => rgb_to_yuv420(pixels, width, height),
+            (false, true) => rgb_to_yuv444_limited601(pixels, width, height),
+            (false, false) => rgb_to_yuv444(pixels, width, height),
         };
         let stride = if use_420 { ((width + 1) / 2) as i32 } else { width as i32 };
         (y, u, v, stride)
@@ -429,6 +492,7 @@ unsafe fn open_encoder(
     height: u32,
     pixel_bytes: usize,
     use_420: bool,
+    oppo_sdr: bool,
 ) -> std::io::Result<(*mut crate::x265_ffi::x265_param, *mut crate::x265_ffi::x265_encoder)> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
@@ -490,9 +554,17 @@ unsafe fn open_encoder(
     set_param(param, "rc-lookahead", "0");
     set_param(param, "no-open-gop", "0"); // every IDR standalone
     if is_rgb {
-        set_param(param, "colormatrix", "bt709");
-        set_param(param, "colorprim", "bt709");
-        set_param(param, "transfer", "bt709");
+        if oppo_sdr {
+            // Mimic the OPPO camera's signalling: limited-range BT.601 data
+            // (converted above) with a full-range flag and sRGB transfer.
+            set_param(param, "colormatrix", "smpte170m");
+            set_param(param, "colorprim", "bt470bg");
+            set_param(param, "transfer", "iec61966-2-1");
+        } else {
+            set_param(param, "colormatrix", "bt709");
+            set_param(param, "colorprim", "bt709");
+            set_param(param, "transfer", "bt709");
+        }
         set_param(param, "psy-rd", "0");
         set_param(param, "aq-mode", "1");
     }
@@ -521,6 +593,34 @@ pub fn x265_encode_tiles(
     pixel_bytes: usize,
     use_420: bool,
 ) -> std::io::Result<Vec<Vec<u8>>> {
+    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, false)
+}
+
+/// Batch-encode RGB tiles the way OPPO camera HEVC stores them: BT.601
+/// limited-range data flagged as full-range, sRGB transfer. The watermark
+/// writeback path uses this so the re-encoded base renders exactly like the
+/// donor original in every viewer (matching shadow lift / highlight
+/// compression instead of a visibly darker, harsher frame).
+#[cfg(not(xdremux_ffmpeg_fallback))]
+pub fn x265_encode_tiles_oppo_sdr(
+    tiles: &[&[u8]],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    use_420: bool,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, true)
+}
+
+#[cfg(not(xdremux_ffmpeg_fallback))]
+fn x265_encode_tiles_inner(
+    tiles: &[&[u8]],
+    width: u32,
+    height: u32,
+    pixel_bytes: usize,
+    use_420: bool,
+    oppo_sdr: bool,
+) -> std::io::Result<Vec<Vec<u8>>> {
     use crate::x265_ffi::*;
 
     if tiles.is_empty() {
@@ -542,10 +642,10 @@ pub fn x265_encode_tiles(
         // config from hvcC, not from each tile).
         let mut results: Vec<Vec<u8>> = Vec::with_capacity(tiles.len());
         for (idx, tile) in tiles.iter().enumerate() {
-            let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420)?;
+            let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr)?;
             let pic = x265_picture_alloc();
             let (y, u, v, _stride) =
-                setup_pic_planes(pic, param, tile, width, height, pixel_bytes, use_420);
+                setup_pic_planes(pic, param, tile, width, height, pixel_bytes, use_420, oppo_sdr);
             let pic_out = x265_picture_alloc();
             let mut nals: *mut x265_nal = std::ptr::null_mut();
             let mut nal_count: u32 = 0;

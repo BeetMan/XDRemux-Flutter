@@ -163,7 +163,7 @@ fn encode_tiles(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<Vec<u8>>, Ve
         }
     }
     let refs: Vec<&[u8]> = padded.iter().map(Vec::as_slice).collect();
-    let streams = hevc::x265_encode_tiles(&refs, TILE_SIZE, TILE_SIZE, 3, true)
+    let streams = hevc::x265_encode_tiles_oppo_sdr(&refs, TILE_SIZE, TILE_SIZE, 3, true)
         .map_err(|error| format!("encode watermark HEVC tiles: {error}"))?;
     let hvcc = streams
         .first()
