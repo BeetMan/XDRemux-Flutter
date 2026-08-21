@@ -338,6 +338,90 @@ fn decode_watermark_png(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     Ok((rgba, info.width, info.height))
 }
 
+/// Restore donor watermark pixels into a separate Apple Styles/HDR template
+/// while taking all non-watermark pixels from the actual returned edit.
+pub fn restore_watermark_into_template(
+    donor: &[u8],
+    returned: &[u8],
+    template: &[u8],
+) -> Result<Vec<u8>, String> {
+    let donor_image =
+        heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
+    let returned_image = heif_oxide::decode_bytes(returned)
+        .map_err(|error| format!("decode returned HEIF: {error:?}"))?;
+    let template_image = heif_oxide::decode_bytes(template)
+        .map_err(|error| format!("decode Apple template HEIF: {error:?}"))?;
+    if donor_image.width != returned_image.width
+        || donor_image.height != returned_image.height
+        || template_image.width != returned_image.width
+        || template_image.height != returned_image.height
+    {
+        return Err("donor, returned, and Apple template dimensions differ".into());
+    }
+    let donor_rgba = donor_image.to_rgba8();
+    let mut returned_rgba = returned_image.to_rgba8();
+    restore_watermark_pixels(
+        donor,
+        &donor_rgba,
+        &mut returned_rgba,
+        returned_image.width,
+        returned_image.height,
+    )?;
+    let rgb: Vec<u8> = returned_rgba
+        .chunks_exact(4)
+        .flat_map(|pixel| pixel[..3].iter().copied())
+        .collect();
+    rewrite_primary_grid_in_place(
+        template,
+        &rgb,
+        template_image.width,
+        template_image.height,
+        false,
+    )
+}
+
+/// Variant used for OPPO-style full-canvas watermarks. It replaces the
+/// reserved canvas rather than alpha-compositing a local mask.
+pub fn restore_watermark_canvas_into_template(
+    donor: &[u8],
+    returned: &[u8],
+    template: &[u8],
+) -> Result<Vec<u8>, String> {
+    let donor_image =
+        heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
+    let returned_image = heif_oxide::decode_bytes(returned)
+        .map_err(|error| format!("decode returned HEIF: {error:?}"))?;
+    let template_image = heif_oxide::decode_bytes(template)
+        .map_err(|error| format!("decode Apple template HEIF: {error:?}"))?;
+    if donor_image.width != returned_image.width
+        || donor_image.height != returned_image.height
+        || template_image.width != returned_image.width
+        || template_image.height != returned_image.height
+    {
+        return Err("donor, returned, and Apple template dimensions differ".into());
+    }
+    let donor_rgba = donor_image.to_rgba8();
+    let mut returned_rgba = returned_image.to_rgba8();
+    restore_watermark_canvas(
+        donor,
+        &donor_rgba,
+        &mut returned_rgba,
+        returned_image.width,
+        returned_image.height,
+    )?;
+    let rgb: Vec<u8> = returned_rgba
+        .chunks_exact(4)
+        .flat_map(|pixel| pixel[..3].iter().copied())
+        .collect();
+    rewrite_primary_grid_in_place(
+        template,
+        &rgb,
+        template_image.width,
+        template_image.height,
+        false,
+    )
+}
+
 pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, String> {
     let donor_image =
         heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
@@ -1177,7 +1261,9 @@ fn build_meta(
                 saw_idat = true;
                 idat
             }
-            b"grpl" => continue,
+            // The in-place primary rewrite keeps the existing item IDs;
+            // dropping this group makes Photos expose the gain map separately.
+            b"grpl" => &source[kid.box_start..kid.data_end],
             _ => &source[kid.box_start..kid.data_end],
         };
         payload.extend_from_slice(replacement);

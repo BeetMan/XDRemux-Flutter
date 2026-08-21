@@ -183,42 +183,46 @@ pub extern "C" fn xdremux_writeback_returned_photo(
 
         let (output, watermark_metadata, entries, raster_restored) = match output_mode {
             0 => {
-                // Keep the returned edit as the base and restore only the
-                // donor's watermark pixels. The Rust mask helper leaves all
-                // non-watermark pixels and edit metadata untouched.
+                // Apple standard writeback deliberately creates a new Styles
+                // recipe instead of trying to preserve the flattened Photos
+                // return recipe. When an untouched donor is available, first
+                // rebuild the returned primary in the donor's ISO/UHDR graph,
+                // restore the donor's complete watermark canvas, and then
+                // append a fresh Rust-generated Apple Styles graph.
                 if restore_watermark != 0 && !original_path.is_null() {
                     let donor_path = unsafe { CStr::from_ptr(original_path) }
                         .to_str()
                         .map_err(|_| "original path is not valid UTF-8".to_string())?;
                     let donor = std::fs::read(donor_path)
                         .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                    // A Photos-rendered return without styleMetadata is an
-                    // already-flattened export. Do not decode/re-encode it:
-                    // that would change the rendered style while pretending
-                    // to preserve an edit recipe that is not present.
-                    if !verify_photographic_styles(&returned) {
-                        let mut output = if container::has_watermark_entries(&donor) {
-                            watermark_codec::restore_visible_watermark(
-                                &donor,
-                                &container::strip_oppo_tail(&returned),
-                            )?
-                        } else {
-                            container::strip_oppo_tail(&returned)
-                        };
-                        // This branch is already flattened, so there is no
-                        // Apple edit recipe to preserve. Prevent Photos from
-                        // applying the old filter to the restored watermark.
-                        container::disable_apple_filter_recipe(&mut output);
-                        (output, false, Vec::new(), container::has_watermark_entries(&donor))
-                    } else if container::has_watermark_entries(&donor) {
-                        let output = watermark_codec::restore_visible_watermark(
-                            &donor,
-                            &container::strip_oppo_tail(&returned),
-                        )?;
-                        (output, false, Vec::new(), true)
-                    } else {
-                        (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                    let extracted = container::extract_lhdr_from_bytes(&donor)?;
+                    let gainmap = extracted
+                        .gainmap_data
+                        .as_deref()
+                        .ok_or("donor photo has no UHDR gain-map payload")?;
+                    let mut source = container::strip_oppo_tail(&returned);
+                    let has_watermark = container::has_watermark_entries(&donor);
+                    if has_watermark {
+                        source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
                     }
+                    container::disable_apple_filter_recipe(&mut source);
+                    let source = watermark_codec::strip_existing_gain_map_graph(&source)?;
+                    let iso_path = format!("{output_path}.apple-iso-{}", std::process::id());
+                    isobmff_write::write_uhdr_iso_output(
+                        &source,
+                        gainmap,
+                        &extracted.meta_floats,
+                        OppoCompat::Iso,
+                        OppoCameraTail::Off,
+                        false,
+                        &iso_path,
+                    )?;
+                    let base = std::fs::read(&iso_path)
+                        .map_err(|e| format!("read Apple ISO intermediate: {e}"))?;
+                    let _ = std::fs::remove_file(&iso_path);
+                    let styled = styles_native::styles_native(&base)
+                        .map_err(|e| format!("Rust Apple Styles writeback: {e}"))?;
+                    (styled, false, Vec::new(), has_watermark)
                 } else {
                     (container::strip_oppo_tail(&returned), false, Vec::new(), false)
                 }
@@ -273,9 +277,8 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
-        // Apple mode must preserve the returned edit recipe: Photographic
-        // Styles and other Photos adjustments are display-time metadata.
-        // OPPO mode intentionally keeps the donor's exact tail instead.
+        // Apple mode writes a fresh Rust Styles recipe. OPPO mode intentionally
+        // keeps the donor's exact camera tail instead.
         if !is_heif_container(&output) {
             return Err("writeback output is not a readable HEIF container".into());
         }

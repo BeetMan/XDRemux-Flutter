@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
@@ -69,6 +70,38 @@ class FileActionService {
       await Share.shareXFiles([xFile]);
     } catch (e) {
       print('shareFile error: $e');
+    }
+  }
+
+  /// Save to a user-selected location on desktop, or to the system photo
+  /// library on mobile. Returns the destination path when available.
+  static Future<String?> saveFile(
+    String filePath, {
+    String? suggestedName,
+  }) async {
+    try {
+      if (!File(filePath).existsSync()) return null;
+      if (Platform.isAndroid || Platform.isIOS) {
+        final saved = await saveToGallery(filePath);
+        return saved ? filePath : null;
+      }
+      final destination = await FilePicker.platform.saveFile(
+        dialogTitle: '保存 XDRemux 输出',
+        fileName: suggestedName ?? filePath.split(Platform.pathSeparator).last,
+        type: FileType.custom,
+        allowedExtensions: const <String>['heic', 'heif'],
+      );
+      if (destination == null || destination.isEmpty) return null;
+      final normalized =
+          destination.toLowerCase().endsWith('.heic') ||
+              destination.toLowerCase().endsWith('.heif')
+          ? destination
+          : '$destination.heic';
+      await File(filePath).copy(normalized);
+      return normalized;
+    } catch (e) {
+      print('saveFile error: $e');
+      return null;
     }
   }
 

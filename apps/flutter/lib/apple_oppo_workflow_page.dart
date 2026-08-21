@@ -250,6 +250,49 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     }
   }
 
+  Future<void> _saveFile(String path) async {
+    if (_running) return;
+    final destination = await FileActionService.saveFile(
+      path,
+      suggestedName: _fileLabel(path),
+    );
+    if (!mounted) return;
+    setState(() {
+      _status = destination == null
+          ? '保存已取消或失败'
+          : (Platform.isAndroid || Platform.isIOS)
+          ? '已保存到照片图库'
+          : '已保存：${_fileLabel(destination)}';
+    });
+  }
+
+  Widget _fileActions(String path) {
+    final mobile = Platform.isAndroid || Platform.isIOS;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          onPressed: () => _saveFile(path),
+          icon: Icon(
+            mobile ? Icons.photo_library_outlined : Icons.save_alt_outlined,
+          ),
+          label: Text(mobile ? '保存到照片' : '另存为…'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => FileActionService.openFile(path),
+          icon: const Icon(Icons.open_in_new),
+          label: const Text('打开文件'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => FileActionService.shareFile(path),
+          icon: const Icon(Icons.share_outlined),
+          label: const Text('分享'),
+        ),
+      ],
+    );
+  }
+
   void _setStatus(String value) {
     if (mounted) setState(() => _status = value);
   }
@@ -355,7 +398,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     final canUseSelectedStylesBackend =
         _stylesBackend == ConversionBackend.rust ||
         _capabilities.swiftPhotographicStyles;
-    final sharePath = _appleEditPath;
     return Scaffold(
       appBar: AppBar(
         title: const Text('一帧影像，动用两台手机'),
@@ -404,8 +446,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             context: context,
             step: 2,
             title: '生成 Apple 照片摄影风格编辑副本',
-            description:
-                '对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。',
+            description: '对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -484,6 +525,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                   Text('Apple 照片编辑副本', style: theme.textTheme.labelLarge),
                   const SizedBox(height: 4),
                   _pathText(_appleEditPath),
+                  const SizedBox(height: 8),
+                  _fileActions(_appleEditPath!),
                 ],
               ],
             ),
@@ -499,13 +542,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                OutlinedButton.icon(
-                  onPressed: sharePath == null || _running
-                      ? null
-                      : () => FileActionService.shareFile(sharePath),
-                  icon: const Icon(Icons.ios_share),
-                  label: const Text('分享 Apple 照片编辑副本'),
-                ),
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
@@ -621,11 +657,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                   const SizedBox(height: 4),
                   _pathText(_finalPath),
                   const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => FileActionService.shareFile(_finalPath!),
-                    icon: const Icon(Icons.share_outlined),
-                    label: const Text('分享最终文件'),
-                  ),
+                  _fileActions(_finalPath!),
                 ],
               ],
             ),
