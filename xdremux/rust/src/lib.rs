@@ -211,7 +211,11 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .map_err(|_| "original path is not valid UTF-8".to_string())?;
                 let donor = std::fs::read(donor_path)
                     .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                let tail = container::get_oppo_tail(&donor, OppoCameraTail::Preserve)
+                // The returned primary already contains the rendered Apple
+                // look. Keep the vendor wrappers and watermark entries, but
+                // neutralize basictone/filter/HDR recipe names so Photos does
+                // not run a display-time adjustment over the restored pixels.
+                let tail = container::get_oppo_tail_without_display_adjustments(&donor)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor);
                 let has_watermark = container::has_watermark_entries(&donor);

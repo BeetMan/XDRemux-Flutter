@@ -256,6 +256,27 @@ pub fn get_oppo_tail(data: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
     apply_oppo_tail_policy(raw_tail, policy)
 }
 
+/// Preserve the OPPO container wrappers while disabling display-time recipes.
+/// Rebuilding a filtered tail would drop the vendor's outer FileExtendedContainer
+/// boxes, so this path neutralizes only their manifest names in place.
+pub fn get_oppo_tail_without_display_adjustments(data: &[u8]) -> Option<Vec<u8>> {
+    let tail_start = find_qti_box_start(data)?;
+    let raw_tail = &data[tail_start..];
+    let mut tail = raw_tail.to_vec();
+    let names = [
+        "filter.info",
+        "filtEr.info",
+        "basictone.info",
+        "basictone.vig.table",
+        "master.mode.preset.info",
+        "hdr.transform.data",
+        "local.uhdr.gainmap.data",
+        "local.uhdr.gainmap.info",
+    ];
+    neutralize_named_tail_entries(&mut tail, &names)?;
+    Some(tail)
+}
+
 /// Remove an existing OPPO/FileExtendedContainer footer from a returned
 /// photo. The returned Apple file may already contain a stale footer, so a
 /// writeback must never append a second competing manifest.
@@ -438,20 +459,29 @@ fn apply_oppo_tail_policy(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>
 }
 
 fn neutralize_oppo_tail_entries(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>> {
-    let (entries, json_start, json_end) = parse_manifest(tail)?;
+    let names: Vec<String> = parse_manifest(tail)?
+        .0
+        .into_iter()
+        .filter(|entry| should_neutralize_oppo_tail_entry(&entry.name, policy))
+        .map(|entry| entry.name)
+        .collect();
     let mut result = tail.to_vec();
-    for entry in entries {
-        if !should_neutralize_oppo_tail_entry(&entry.name, policy) {
-            continue;
-        }
-        let name_bytes = entry.name.as_bytes();
-        let name_offset = result[json_start..json_end]
-            .windows(name_bytes.len())
-            .position(|window| window == name_bytes)?
-            + json_start;
-        result[name_offset] = b'x';
-    }
+    neutralize_named_tail_entries(&mut result, &names)?;
     Some(result)
+}
+
+fn neutralize_named_tail_entries<S: AsRef<str>>(tail: &mut [u8], names: &[S]) -> Option<()> {
+    let (_, json_start, json_end) = parse_manifest(tail)?;
+    for name in names {
+        let name_bytes = name.as_ref().as_bytes();
+        if let Some(relative) = tail[json_start..json_end]
+            .windows(name_bytes.len())
+            .position(|window| window == name_bytes)
+        {
+            tail[json_start + relative] = b'x';
+        }
+    }
+    Some(())
 }
 
 /// Mirror of upstream `shouldPreserveOppoCameraTailEntry`.
@@ -1131,5 +1161,23 @@ mod tests {
         assert!(payload
             .windows(b"\"filter\"".len())
             .any(|window| window == b"\"filter\""));
+    }
+
+    #[test]
+    fn display_adjustment_tail_names_are_neutralized_in_place() {
+        let mut tail = make_manifest_tail(&[
+            ("filter.info", b"filter"),
+            ("basictone.info", b"tone"),
+            ("watermark.params", b"watermark"),
+        ]);
+        neutralize_named_tail_entries(
+            &mut tail,
+            &["filter.info", "basictone.info", "master.mode.preset.info"],
+        )
+        .expect("manifest should be readable");
+        let names = manifest_names(&tail);
+        assert!(names.iter().any(|name| name == "xilter.info"));
+        assert!(names.iter().any(|name| name == "xasictone.info"));
+        assert!(names.iter().any(|name| name == "watermark.params"));
     }
 }
