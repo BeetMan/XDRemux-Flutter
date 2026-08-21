@@ -313,9 +313,10 @@ class XdRemuxService {
   }
 
   /// Reconcile an iPhone return file with its original OPPO donor.
-  /// macOS/iOS use the Apple ImageIO path. Windows/Android use the portable
-  /// Rust HEIF codec to restore the donor's visible watermark and OPPO
-  /// metadata/footer when requested.
+  /// All platforms use the portable Rust HEIF codec to restore the donor's
+  /// visible watermark and OPPO metadata/footer when requested, so the
+  /// output is byte-behavior identical across macOS/iOS/Android/Windows.
+  /// (The Rust core ships with x265 on every platform, including iOS.)
   static Future<Map<String, dynamic>> writebackReturnedPhoto({
     String? originalPath,
     required String returnedPath,
@@ -323,21 +324,6 @@ class XdRemuxService {
     required OutputMode outputMode,
     bool restoreWatermark = true,
   }) async {
-    if (Platform.isMacOS || Platform.isIOS) {
-      final raw = await _backendChannel
-          .invokeMethod<Object?>('writebackReturnedPhoto', <String, dynamic>{
-            if (originalPath != null) 'originalPath': originalPath,
-            'returnedPath': returnedPath,
-            'outputPath': outputPath,
-            'outputMode': outputMode.name,
-            'restoreWatermark': restoreWatermark,
-          });
-      if (raw is! Map) {
-        throw StateError('returned-photo writeback returned an invalid result');
-      }
-      return raw.map((key, value) => MapEntry(key.toString(), value));
-    }
-
     final report = await Isolate.run(
       () => XdRemuxFFI.writebackReturnedPhoto(
         originalPath: originalPath,

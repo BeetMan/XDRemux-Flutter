@@ -59,12 +59,13 @@
 - **Apple 标准**：表示不追加 OPPO 私有信息的输出模式，不宣称 Apple 官方逐像素或私有协议等价。
 - **OPPO 兼容**：表示恢复 OPPO 兼容结构、元数据和尾部数据的输出模式。
 
-各平台写回实现不同，但对用户的能力描述保持一致：
+各平台写回统一使用 Rust HEIF 编解码器（x265 全平台内建），行为一致：
 
 | 平台 | Apple 标准输出 | OPPO 兼容输出 |
 |---|---|---|
-| Windows / Android | Rust HEIF 编解码器；可按 OPPO 原始照片恢复可见原机水印，不追加 OPPO 私有信息 | Rust HEIF 编解码器恢复可见原机水印、元数据和 OPPO 私有尾部数据 |
-| macOS / iOS | Apple ImageIO 路径保留并检查 Apple 照片回传文件 | Apple ImageIO / ISOBMFF 路径恢复可见原机水印和 OPPO 兼容结构；仍需实体设备验证 |
+| Windows / Android / macOS / iOS | Rust HEIF 编解码器；可按 OPPO 原始照片恢复可见原机水印，不追加 OPPO 私有信息 | Rust HEIF 编解码器恢复可见原机水印、元数据和 OPPO 私有尾部数据 |
+
+macOS / iOS 仍保留 Swift/ImageIO 写回实现作为研究路径，但默认不再调用。
 
 未勾选“恢复原机水印”时，保留 iPhone 回传画面；OPPO 兼容模式仍会写回 OPPO 元数据和尾部数据。
 
