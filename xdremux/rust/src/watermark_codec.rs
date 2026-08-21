@@ -80,8 +80,38 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
             donor_image.width, donor_image.height, returned_image.width, returned_image.height
         ));
     }
-    let rgba = returned_image.to_rgba8();
-    let rgb: Vec<u8> = rgba
+    // The returned Apple raster already contains the watermark, but it is
+    // filtered. Restore the donor's reserved watermark canvas before writing
+    // the pixels onto the donor graph; preserving the graph alone is not
+    // enough because the watermark is also baked into the returned raster.
+    let donor_rgba = donor_image.to_rgba8();
+    let mut returned_rgba = returned_image.to_rgba8();
+    let stride = returned_image.width as usize * 4;
+    match container::watermark_canvas_rect(donor, donor_image.width, donor_image.height) {
+        Ok((x, y, width, height)) => {
+            for row in y..y + height {
+                let start = row as usize * stride + x as usize * 4;
+                let end = start + width as usize * 4;
+                returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+            }
+        }
+        Err(payload_error) => {
+            let bands = detect_frame_bands(
+                &donor_rgba,
+                donor_image.width,
+                donor_image.height,
+            )
+            .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
+            for (y0, y1) in bands {
+                for row in y0..y1 {
+                    let start = row as usize * stride;
+                    let end = start + stride;
+                    returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+                }
+            }
+        }
+    }
+    let rgb: Vec<u8> = returned_rgba
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
