@@ -232,23 +232,42 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .map_err(|_| "original path is not valid UTF-8".to_string())?;
                 let donor = std::fs::read(donor_path)
                     .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                // Keep the returned primary bitstreams and HDR/tmap graph
-                // untouched. Any raster rewrite changes the HEVC base stream
-                // and breaks Photos HDR; watermark restoration is deferred
-                // until it can be done without re-encoding this graph.
-                let tail = container::get_oppo_tail_without_display_filter(&donor)
+                // Rebuild the returned primary inside the same ISO/UHDR
+                // graph family as a direct OPPO-compatible conversion. The
+                // returned Apple file already contains a 62-byte tmap graph;
+                // retaining it and merely appending the camera footer leaves
+                // OPPO Gallery on the wrong routing path.
+                let extracted = container::extract_lhdr_from_bytes(&donor)?;
+                let gainmap = extracted
+                    .gainmap_data
+                    .as_deref()
+                    .ok_or("donor photo has no UHDR gain-map payload")?;
+                let mut source = container::strip_oppo_tail(&returned);
+                if container::has_watermark_entries(&donor) {
+                    // Restore the donor canvas before rebuilding the ISO graph.
+                    // The canvas helper handles both rectangular and frame-style
+                    // watermark layouts, including non-standard shapes.
+                    source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
+                }
+                container::disable_apple_filter_recipe(&mut source);
+                let source = watermark_codec::strip_existing_gain_map_graph(&source)?;
+                let iso_path = format!("{output_path}.oppo-iso-{}", std::process::id());
+                isobmff_write::write_uhdr_iso_output(
+                    &source,
+                    gainmap,
+                    &extracted.meta_floats,
+                    OppoCompat::Iso,
+                    OppoCameraTail::Off,
+                    false,
+                    &iso_path,
+                )?;
+                let mut base = std::fs::read(&iso_path)
+                    .map_err(|e| format!("read OPPO ISO intermediate: {e}"))?;
+                let _ = std::fs::remove_file(&iso_path);
+                let tail = container::get_oppo_tail_without_display_filter_keep_local(&donor)
                     .ok_or("donor photo has no OPPO camera footer")?;
-                let names = container::tail_entry_names(&donor)
-                    .into_iter()
-                    .filter(|name| name != "local.uhdr.gainmap.data"
-                        && name != "local.uhdr.gainmap.info")
-                    .collect::<Vec<_>>();
+                let names = container::tail_entry_names(&donor);
                 let has_watermark = container::has_watermark_entries(&donor);
-                let mut base = container::strip_oppo_tail(&returned);
-                // The OPPO path is a flattened compatibility output. Its
-                // returned Apple filter must not be applied a second time;
-                // the primary raster itself remains byte-for-byte untouched.
-                container::disable_apple_filter_recipe(&mut base);
                 base.extend_from_slice(&tail);
                 (base, has_watermark, names, false)
             }

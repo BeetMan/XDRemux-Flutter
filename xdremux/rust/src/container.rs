@@ -277,6 +277,23 @@ pub fn get_oppo_tail_without_display_adjustments(data: &[u8]) -> Option<Vec<u8>>
     Some(tail)
 }
 
+/// Keep the donor watermark/container and local HDR payload, but disable
+/// only display recipes that would recolor an already-rendered returned raster.
+pub fn get_oppo_tail_without_display_filter_keep_local(data: &[u8]) -> Option<Vec<u8>> {
+    let tail_start = find_qti_box_start(data)?;
+    let raw_tail = &data[tail_start..];
+    let mut tail = raw_tail.to_vec();
+    let names = [
+        "filter.info",
+        "filtEr.info",
+        "basictone.info",
+        "basictone.vig.table",
+        "master.mode.preset.info",
+    ];
+    neutralize_named_tail_entries(&mut tail, &names)?;
+    Some(tail)
+}
+
 /// Keep the donor watermark/container and HDR transform, but disable only
 /// display recipes that would recolor an already-rendered returned raster.
 pub fn get_oppo_tail_without_display_filter(data: &[u8]) -> Option<Vec<u8>> {

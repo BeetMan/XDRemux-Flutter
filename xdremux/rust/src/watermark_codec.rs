@@ -10,6 +10,132 @@ use crate::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry};
 
 const TILE_SIZE: u32 = 512;
 
+/// Remove the returned file's existing ISO gain-map rendition while keeping
+/// its primary edited image and metadata. The OPPO-compatible writer then
+/// builds the 142-byte tmap rendition from the untouched donor metadata.
+pub fn strip_existing_gain_map_graph(source: &[u8]) -> Result<Vec<u8>, String> {
+    let parsed = isobmff::parse_source_meta(source)?;
+    let top = isobmff::parse_boxes(source, 0, source.len());
+    let meta = find(&top, b"meta")?;
+    let primary = parsed.primary_id;
+    let mut dropped = std::collections::HashSet::new();
+    for item in &parsed.items {
+        if item.itype == "tmap" {
+            dropped.insert(item.item_id);
+        }
+    }
+    let tmap_ids: std::collections::HashSet<u32> = parsed
+        .items
+        .iter()
+        .filter(|item| item.itype == "tmap")
+        .map(|item| item.item_id)
+        .collect();
+    for reference in &parsed.refs {
+        if reference.rtype == "dimg"
+            && reference.from != primary
+            && !tmap_ids.contains(&reference.from)
+        {
+            dropped.insert(reference.from);
+            dropped.extend(reference.to.iter().copied());
+        }
+    }
+    if dropped.is_empty() {
+        return Ok(source.to_vec());
+    }
+    let keep_item = |id: u32| !dropped.contains(&id);
+    let items: Vec<Vec<u8>> = parsed
+        .items
+        .iter()
+        .filter(|item| keep_item(item.item_id))
+        .map(|item| item.raw_infe.clone())
+        .collect();
+    let iinf_box = find_meta_child(source, &meta, b"iinf")?;
+    let iinf = isobmff::make_iinf_box(source[iinf_box.data_start], &items);
+    let iloc_entries: Vec<IlocEntry> = parsed
+        .iloc_entries
+        .iter()
+        .filter(|entry| keep_item(entry.item_id))
+        .cloned()
+        .collect();
+    let iloc = isobmff::make_iloc_box(&iloc_entries);
+    let ipma_entries: Vec<IpmaEntry> = parsed
+        .ipma_entries
+        .iter()
+        .filter(|entry| keep_item(entry.item_id))
+        .cloned()
+        .collect();
+    let ipma = make_ipma_box(source, &meta, &ipma_entries, parsed.ipma_flags)?;
+    let properties: Vec<Vec<u8>> = parsed
+        .props
+        .iter()
+        .map(|property| property.raw.clone())
+        .collect();
+    let iprp = make_iprp_box(&properties, &ipma);
+    let refs: Vec<IrefEntry> = parsed
+        .refs
+        .iter()
+        .filter_map(|reference| {
+            if dropped.contains(&reference.from) {
+                return None;
+            }
+            let to: Vec<u32> = reference
+                .to
+                .iter()
+                .copied()
+                .filter(|id| keep_item(*id))
+                .collect();
+            if reference.rtype == "dimg" && to.is_empty() {
+                None
+            } else {
+                Some(IrefEntry {
+                    rtype: reference.rtype.clone(),
+                    from: reference.from,
+                    to,
+                })
+            }
+        })
+        .collect();
+    let iref = find_meta_child(source, &meta, b"iref")
+        .map(|box_| isobmff::make_iref_full_box(source[box_.data_start], &refs))
+        .ok();
+    let children = isobmff::parse_boxes(source, meta.data_start + 4, meta.data_end);
+    let mut payload = source[meta.data_start..meta.data_start + 4].to_vec();
+    for child in children {
+        let replacement: Option<&[u8]> = match &child.btype {
+            b"iinf" => Some(&iinf),
+            b"iloc" => Some(&iloc),
+            b"iprp" => Some(&iprp),
+            b"iref" => iref.as_deref(),
+            b"grpl" => None,
+            _ => Some(&source[child.box_start..child.data_end]),
+        };
+        if let Some(bytes) = replacement {
+            payload.extend_from_slice(bytes);
+        }
+    }
+    let new_size = 8 + payload.len();
+    if new_size > meta.size {
+        return Err("cannot strip gain-map graph without growing meta".into());
+    }
+    let spare = meta.size - new_size;
+    if spare >= 8 {
+        payload.extend_from_slice(&isobmff::make_box(b"free", &vec![0; spare - 8]));
+    } else if spare != 0 {
+        return Err("meta padding is too small after stripping gain-map graph".into());
+    }
+    let new_meta = isobmff::make_box(b"meta", &payload);
+    let meta_start = meta.box_start;
+    let mut output = Vec::with_capacity(source.len());
+    for box_ in top {
+        if box_.box_start == meta_start {
+            output.extend_from_slice(&new_meta);
+        } else {
+            output.extend_from_slice(&source[box_.box_start..box_.data_end]);
+        }
+    }
+    Ok(output)
+}
+
 /// Restore the complete donor watermark canvas for the OPPO graph path.
 /// OPPO's private renderer depends on the whole reserved canvas, not only the
 /// glyph pixels, so this is intentionally different from the Apple-output
