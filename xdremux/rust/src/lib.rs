@@ -181,14 +181,29 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             return Err("returned photo is not a readable HEIF/HEIC container".into());
         }
 
-        let (mut output, watermark_metadata, entries, raster_restored) = match output_mode {
+        let (output, watermark_metadata, entries, raster_restored) = match output_mode {
             0 => {
-                // Apple output is the returned Photos edit. Its raster already
-                // contains the user's photographic-style adjustment and its
-                // watermark. Do not replace any pixels with the donor raster;
-                // doing so destroys the edit effect. Only remove a stale OPPO
-                // footer if Photos happened to return one.
-                (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                // Keep the returned edit as the base and restore only the
+                // donor's watermark pixels. The Rust mask helper leaves all
+                // non-watermark pixels and edit metadata untouched.
+                if restore_watermark != 0 && !original_path.is_null() {
+                    let donor_path = unsafe { CStr::from_ptr(original_path) }
+                        .to_str()
+                        .map_err(|_| "original path is not valid UTF-8".to_string())?;
+                    let donor = std::fs::read(donor_path)
+                        .map_err(|e| format!("cannot read donor photo: {e}"))?;
+                    if container::has_watermark_entries(&donor) {
+                        let output = watermark_codec::restore_visible_watermark(
+                            &donor,
+                            &container::strip_oppo_tail(&returned),
+                        )?;
+                        (output, false, Vec::new(), true)
+                    } else {
+                        (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                    }
+                } else {
+                    (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                }
             }
             1 => {
                 if original_path.is_null() {

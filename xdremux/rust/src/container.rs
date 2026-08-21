@@ -375,6 +375,43 @@ pub fn watermark_canvas_rect(
     Ok((0, image_height - canvas_height, image_width, canvas_height))
 }
 
+/// Return the actual PNG overlay rectangle inside the reserved watermark
+/// canvas: `(x, y, width, height)`. Unlike `watermark_canvas_rect`, this
+/// excludes the transparent/configured insets and is suitable for a pixel
+/// mask, so callers do not overwrite the edited background around the text.
+pub fn watermark_overlay_rect(
+    data: &[u8],
+    image_width: u32,
+    image_height: u32,
+) -> Result<(u32, u32, u32, u32), String> {
+    let watermark = extract_tail_entry(data, "watermark")
+        .ok_or("OPPO watermark payload is missing")?;
+    let config = extract_tail_entry(data, "watermark.config")
+        .ok_or("OPPO watermark config is missing")?;
+    if config.len() < 20 || watermark.len() < 24 {
+        return Err("OPPO watermark payload or config is truncated".into());
+    }
+    let png_width = read_u32_be(&watermark, 16);
+    let png_height = read_u32_be(&watermark, 20);
+    let configured_width = read_u32_le(&config, 4);
+    let configured_height = read_u32_le(&config, 8);
+    let side_inset = read_u32_le(&config, 12);
+    let vertical_inset = read_u32_le(&config, 16);
+    if png_width != configured_width
+        || png_height != configured_height
+        || configured_width.saturating_add(side_inset.saturating_mul(2)) != image_width
+        || configured_height.saturating_add(vertical_inset.saturating_mul(2)) > image_height
+    {
+        return Err("OPPO watermark geometry does not match image dimensions".into());
+    }
+    Ok((
+        side_inset,
+        image_height - configured_height - vertical_inset * 2 + vertical_inset,
+        png_width,
+        png_height,
+    ))
+}
+
 /// Find the start of the QTI box in the data. Returns the absolute offset
 /// of the 4-byte size header preceding the QTI marker.
 fn find_qti_box_start(data: &[u8]) -> Option<usize> {

@@ -10,6 +10,174 @@ use crate::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry};
 
 const TILE_SIZE: u32 = 512;
 
+/// Restore only the visible watermark pixels from the untouched donor.
+///
+/// The returned raster remains the source of truth everywhere else, including
+/// any Apple/Photos photographic-style adjustment. The donor PNG alpha is used
+/// as a mask and the donor's already-composited raster is used for the color;
+/// this avoids copying the whole reserved bottom canvas.
+fn restore_watermark_pixels(
+    donor: &[u8],
+    donor_rgba: &[u8],
+    returned_rgba: &mut [u8],
+    image_width: u32,
+    image_height: u32,
+) -> Result<(), String> {
+    let stride = image_width as usize * 4;
+    let watermark = container::extract_tail_entry(donor, "watermark");
+    let mask_result = watermark
+        .as_deref()
+        .map(decode_watermark_png)
+        .unwrap_or_else(|| Err("OPPO watermark PNG payload is missing".into()));
+    let geometry = container::watermark_overlay_rect(donor, image_width, image_height);
+    match (mask_result, geometry) {
+        (Ok((mask, mask_width, mask_height)), Ok((x, y, width, height))) => {
+            if mask_width != width || mask_height != height {
+                return Err("OPPO watermark PNG and config dimensions differ".into());
+            }
+            let expected = mask_width as usize * mask_height as usize * 4;
+            if mask.len() != expected {
+                return Err("OPPO watermark PNG mask has an invalid size".into());
+            }
+            for mask_y in 0..mask_height as usize {
+                let image_y = y as usize + mask_y;
+                let mask_row = mask_y * mask_width as usize * 4;
+                let image_row = image_y * stride + x as usize * 4;
+                for mask_x in 0..mask_width as usize {
+                    let mask_index = mask_row + mask_x * 4;
+                    let alpha = mask[mask_index + 3] as u32;
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let image_index = image_row + mask_x * 4;
+                    for channel in 0..3 {
+                        let clean = donor_rgba[image_index + channel] as u32;
+                        let edited = returned_rgba[image_index + channel] as u32;
+                        returned_rgba[image_index + channel] =
+                            ((clean * alpha + edited * (255 - alpha) + 127) / 255) as u8;
+                    }
+                }
+            }
+            Ok(())
+        }
+        (mask_result, geometry_result) => {
+            // Frame-style watermarks may not have a usable alpha PNG. Keep a
+            // conservative fallback for those files, limited to uniform frame
+            // bands rather than replacing the whole photograph.
+            let payload_error = mask_result
+                .err()
+                .or_else(|| geometry_result.err())
+                .unwrap_or_else(|| "watermark mask unavailable".into());
+            let bands = detect_frame_bands(donor_rgba, image_width, image_height)
+                .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
+            restore_frame_watermark_pixels(
+                donor_rgba,
+                returned_rgba,
+                image_width,
+                &bands,
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Frame-style OPPO watermarks have no separate PNG entry. Estimate the
+/// uniform frame color and copy only pixels that differ from that background
+/// (the Hasselblad text and camera-setting glyphs), leaving the edited frame
+/// background untouched.
+fn restore_frame_watermark_pixels(
+    donor_rgba: &[u8],
+    returned_rgba: &mut [u8],
+    image_width: u32,
+    bands: &[(u32, u32)],
+) {
+    let width = image_width as usize;
+    let mut bins: std::collections::HashMap<(u8, u8, u8), (u64, u64, u64, u64)> =
+        std::collections::HashMap::new();
+    for &(y0, y1) in bands {
+        for y in (y0 as usize..y1 as usize).step_by(8) {
+            for x in (0..width).step_by(8) {
+                let index = (y * width + x) * 4;
+                let key = (
+                    donor_rgba[index] / 4,
+                    donor_rgba[index + 1] / 4,
+                    donor_rgba[index + 2] / 4,
+                );
+                let bin = bins.entry(key).or_insert((0, 0, 0, 0));
+                bin.0 += 1;
+                bin.1 += donor_rgba[index] as u64;
+                bin.2 += donor_rgba[index + 1] as u64;
+                bin.3 += donor_rgba[index + 2] as u64;
+            }
+        }
+    }
+    let Some((_, (count, red, green, blue))) = bins.into_iter().max_by_key(|(_, bin)| bin.0)
+    else {
+        return;
+    };
+    let background = [
+        (red / count.max(1)) as i32,
+        (green / count.max(1)) as i32,
+        (blue / count.max(1)) as i32,
+    ];
+    for &(y0, y1) in bands {
+        for y in y0 as usize..y1 as usize {
+            for x in 0..width {
+                let index = (y * width + x) * 4;
+                let distance = (0..3)
+                    .map(|channel| {
+                        (donor_rgba[index + channel] as i32 - background[channel]).abs()
+                    })
+                    .max()
+                    .unwrap_or(0);
+                if distance <= 4 {
+                    continue;
+                }
+                let alpha = ((distance - 4) * 255 / 24).clamp(0, 255) as u32;
+                for channel in 0..3 {
+                    let clean = donor_rgba[index + channel] as u32;
+                    let edited = returned_rgba[index + channel] as u32;
+                    returned_rgba[index + channel] =
+                        ((clean * alpha + edited * (255 - alpha) + 127) / 255) as u8;
+                }
+            }
+        }
+    }
+}
+
+fn decode_watermark_png(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode OPPO watermark PNG: {error}"))?;
+    let mut buffer = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("read OPPO watermark PNG: {error}"))?;
+    let bytes = &buffer[..info.buffer_size()];
+    let mut rgba = Vec::with_capacity(info.width as usize * info.height as usize * 4);
+    match info.color_type {
+        png::ColorType::Rgba => rgba.extend_from_slice(bytes),
+        png::ColorType::Rgb => {
+            for pixel in bytes.chunks_exact(3) {
+                rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for pixel in bytes.chunks_exact(2) {
+                rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
+            }
+        }
+        png::ColorType::Grayscale => {
+            for &value in bytes {
+                rgba.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        other => return Err(format!("unsupported OPPO watermark PNG color type: {other:?}")),
+    }
+    Ok((rgba, info.width, info.height))
+}
+
 pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, String> {
     let donor_image =
         heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
@@ -23,44 +191,20 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
     }
     let donor_rgba = donor_image.to_rgba8();
     let mut returned_rgba = returned_image.to_rgba8();
-    let stride = returned_image.width as usize * 4;
-    match container::watermark_canvas_rect(donor, donor_image.width, donor_image.height) {
-        Ok((x, y, width, height)) => {
-            for row in y..y + height {
-                let start = row as usize * stride + x as usize * 4;
-                let end = start + width as usize * 4;
-                returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
-            }
-        }
-        Err(payload_error) => {
-            // Frame-style watermarks (e.g. Hasselblad master-mode borders)
-            // carry no separate PNG payload: the frame is baked into the
-            // donor raster. Detect the uniform frame bands and copy them.
-            let bands = detect_frame_bands(
-                &donor_rgba,
-                donor_image.width,
-                donor_image.height,
-            )
-            .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
-            for (y0, y1) in bands {
-                for row in y0..y1 {
-                    let start = row as usize * stride;
-                    let end = start + stride;
-                    returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
-                }
-            }
-        }
-    }
+    restore_watermark_pixels(
+        donor,
+        &donor_rgba,
+        &mut returned_rgba,
+        returned_image.width,
+        returned_image.height,
+    )?;
     let rgb: Vec<u8> = returned_rgba
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
-    // Keep the returned Apple graph in place. Photographic Styles metadata
-    // contains references to the original primary item; appending a new
-    // primary grid makes Photos lose the editable Styles relationship.
-    // Keep the returned Apple edit recipe intact. In particular, Apple
-    // Photographic Styles are represented by this display-time recipe and
-    // must not be renamed after the raster writeback.
+    // Keep the returned container graph in place. Auxiliary edit metadata can
+    // reference the original primary item; appending a new primary grid would
+    // detach those edits. Never rewrite the returned edit recipe here.
     let output = rewrite_primary_grid_in_place(
         returned,
         &rgb,
@@ -86,37 +230,18 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
             donor_image.width, donor_image.height, returned_image.width, returned_image.height
         ));
     }
-    // The returned Apple raster already contains the watermark, but it is
-    // filtered. Restore the donor's reserved watermark canvas before writing
-    // the pixels onto the donor graph; preserving the graph alone is not
-    // enough because the watermark is also baked into the returned raster.
+    // The returned raster already contains the watermark, but it is filtered.
+    // Restore only donor watermark pixels before writing onto the donor graph;
+    // preserving the graph alone is not enough when the watermark is baked in.
     let donor_rgba = donor_image.to_rgba8();
     let mut returned_rgba = returned_image.to_rgba8();
-    let stride = returned_image.width as usize * 4;
-    match container::watermark_canvas_rect(donor, donor_image.width, donor_image.height) {
-        Ok((x, y, width, height)) => {
-            for row in y..y + height {
-                let start = row as usize * stride + x as usize * 4;
-                let end = start + width as usize * 4;
-                returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
-            }
-        }
-        Err(payload_error) => {
-            let bands = detect_frame_bands(
-                &donor_rgba,
-                donor_image.width,
-                donor_image.height,
-            )
-            .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
-            for (y0, y1) in bands {
-                for row in y0..y1 {
-                    let start = row as usize * stride;
-                    let end = start + stride;
-                    returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
-                }
-            }
-        }
-    }
+    restore_watermark_pixels(
+        donor,
+        &donor_rgba,
+        &mut returned_rgba,
+        returned_image.width,
+        returned_image.height,
+    )?;
     let rgb: Vec<u8> = returned_rgba
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
