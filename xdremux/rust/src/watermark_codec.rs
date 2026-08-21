@@ -55,7 +55,13 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
-    rewrite_primary_grid(returned, &rgb, returned_image.width, returned_image.height)
+    let mut output =
+        rewrite_primary_grid(returned, &rgb, returned_image.width, returned_image.height)?;
+    // The returned Apple file can retain a display-time filter recipe in its
+    // Exif/XMP payload. Disable it after restoring the watermark so Photos
+    // does not apply the filter a second time to the newly written pixels.
+    container::disable_apple_filter_recipe(&mut output);
+    Ok(output)
 }
 
 /// Detects uniform frame bands at the top and bottom of a donor raster.

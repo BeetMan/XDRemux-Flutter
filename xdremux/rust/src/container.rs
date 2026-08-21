@@ -273,6 +273,50 @@ pub fn has_watermark_entries(data: &[u8]) -> bool {
         .any(|name| name == "watermark" || name.starts_with("watermark."))
 }
 
+/// Disable Apple's display-time filter recipe after raster watermark restore.
+///
+/// Photos may keep the returned edit recipe in an Exif/XMP JSON payload even
+/// after its rendered primary image has been replaced. If that recipe remains
+/// named `filter`, Photos applies it again to the newly restored watermark.
+/// Rename the JSON key and OPPO manifest entry in place so the already-rendered
+/// pixels are preserved without changing ISOBMFF item offsets or lengths. This
+/// is intentionally limited to the exact metadata forms and leaves ordinary
+/// text values untouched.
+pub fn disable_apple_filter_recipe(data: &mut [u8]) -> usize {
+    const FILTER_KEY: &[u8] = b"\"filter\"";
+    const DISABLED_KEY: &[u8] = b"\"filtEr\"";
+    const FILTER_ENTRY: &[u8] = b"\"name\":\"filter.info\"";
+    const DISABLED_ENTRY: &[u8] = b"\"name\":\"filtEr.info\"";
+    let mut replacements = 0;
+    let mut offset = 0;
+    while let Some(relative) = data[offset..]
+        .windows(FILTER_KEY.len())
+        .position(|window| window == FILTER_KEY)
+    {
+        let start = offset + relative;
+        let mut cursor = start + FILTER_KEY.len();
+        while data.get(cursor).is_some_and(|byte| byte.is_ascii_whitespace()) {
+            cursor += 1;
+        }
+        if data.get(cursor) == Some(&b':') {
+            data[start..start + FILTER_KEY.len()].copy_from_slice(DISABLED_KEY);
+            replacements += 1;
+        }
+        offset = start + FILTER_KEY.len();
+    }
+    offset = 0;
+    while let Some(relative) = data[offset..]
+        .windows(FILTER_ENTRY.len())
+        .position(|window| window == FILTER_ENTRY)
+    {
+        let start = offset + relative;
+        data[start..start + FILTER_ENTRY.len()].copy_from_slice(DISABLED_ENTRY);
+        replacements += 1;
+        offset = start + FILTER_ENTRY.len();
+    }
+    replacements
+}
+
 /// Calculate the complete bottom canvas reserved for OPPO's visible watermark.
 /// The config stores the watermark image size and its horizontal/vertical
 /// insets as little-endian u32 values at offsets 4, 8, 12 and 16.
@@ -1068,5 +1112,24 @@ mod tests {
         assert!(!names.iter().any(|name| name == "local.uhdr.gainmap.data"));
         assert!(!names.iter().any(|name| name == "hdr.transform.data"));
         assert!(names.iter().any(|name| name == "camera.params"));
+    }
+
+    #[test]
+    fn apple_filter_recipe_key_is_disabled_without_changing_payload_length() {
+        let mut payload =
+            br#"{"filter":"gourmet.cube.rgb.bin:-1","note":"filter","name":"filter.info"}"#
+                .to_vec();
+        let length = payload.len();
+        assert_eq!(disable_apple_filter_recipe(&mut payload), 2);
+        assert_eq!(payload.len(), length);
+        assert!(payload
+            .windows(b"\"filtEr\"".len())
+            .any(|window| window == b"\"filtEr\""));
+        assert!(payload
+            .windows(b"\"name\":\"filtEr.info\"".len())
+            .any(|window| window == b"\"name\":\"filtEr.info\""));
+        assert!(payload
+            .windows(b"\"filter\"".len())
+            .any(|window| window == b"\"filter\""));
     }
 }

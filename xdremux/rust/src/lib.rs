@@ -181,7 +181,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             return Err("returned photo is not a readable HEIF/HEIC container".into());
         }
 
-        let (output, watermark_metadata, entries, raster_restored) = match output_mode {
+        let (mut output, watermark_metadata, entries, raster_restored) = match output_mode {
             0 => {
                 if restore_watermark != 0 && !original_path.is_null() {
                     let donor_path = unsafe { CStr::from_ptr(original_path) }
@@ -228,6 +228,12 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
+        // OPPO mode appends the donor footer after raster restoration. Run the
+        // metadata neutralization once more over the complete output so the
+        // appended filter.info entry cannot re-enable Photos' filter pass.
+        if raster_restored {
+            container::disable_apple_filter_recipe(&mut output);
+        }
         if !is_heif_container(&output) {
             return Err("writeback output is not a readable HEIF container".into());
         }
