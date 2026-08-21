@@ -10,12 +10,46 @@ use crate::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry};
 
 const TILE_SIZE: u32 = 512;
 
+/// Restore the complete donor watermark canvas for the OPPO graph path.
+/// OPPO's private renderer depends on the whole reserved canvas, not only the
+/// glyph pixels, so this is intentionally different from the Apple-output
+/// local mask below.
+fn restore_watermark_canvas(
+    donor: &[u8],
+    donor_rgba: &[u8],
+    returned_rgba: &mut [u8],
+    image_width: u32,
+    image_height: u32,
+) -> Result<(), String> {
+    let stride = image_width as usize * 4;
+    match container::watermark_canvas_rect(donor, image_width, image_height) {
+        Ok((x, y, width, height)) => {
+            for row in y..y + height {
+                let start = row as usize * stride + x as usize * 4;
+                let end = start + width as usize * 4;
+                returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+            }
+        }
+        Err(payload_error) => {
+            let bands = detect_frame_bands(donor_rgba, image_width, image_height)
+                .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
+            for (y0, y1) in bands {
+                for row in y0..y1 {
+                    let start = row as usize * stride;
+                    let end = start + stride;
+                    returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Restore only the visible watermark pixels from the untouched donor.
 ///
 /// The returned raster remains the source of truth everywhere else, including
-/// any Apple/Photos photographic-style adjustment. The donor PNG alpha is used
-/// as a mask and the donor's already-composited raster is used for the color;
-/// this avoids copying the whole reserved bottom canvas.
+/// any photographic-style adjustment. The donor PNG alpha is used as a mask
+/// and the donor's already-composited raster is used for the color.
 fn restore_watermark_pixels(
     donor: &[u8],
     donor_rgba: &[u8],
@@ -235,7 +269,7 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
     // preserving the graph alone is not enough when the watermark is baked in.
     let donor_rgba = donor_image.to_rgba8();
     let mut returned_rgba = returned_image.to_rgba8();
-    restore_watermark_pixels(
+    restore_watermark_canvas(
         donor,
         &donor_rgba,
         &mut returned_rgba,
