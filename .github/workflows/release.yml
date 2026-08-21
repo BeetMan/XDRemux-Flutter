@@ -137,7 +137,10 @@ jobs:
           if-no-files-found: error
 
   windows-arm64:
-    name: Windows ARM64 installer
+    name: Windows ARM64 installer (experimental)
+    # Flutter 3.44.5 currently emits an x64 Windows runner even on the
+    # windows-11-arm host, so do not block the public release on this job.
+    continue-on-error: true
     runs-on: windows-11-arm
     steps:
       - name: Check out repository
@@ -428,7 +431,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [windows, windows-arm64, android]
+    needs: [windows, android]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
