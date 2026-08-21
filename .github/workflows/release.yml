@@ -87,6 +87,9 @@ jobs:
             throw "Release tag $version does not match pubspec version $pubspecName"
           }
           "APP_VERSION=$baseVersion" >> $env:GITHUB_ENV
+          # Full tag version (with -pre.N suffix) is used for asset naming,
+          # e.g. XDRemux-Windows-0.3.0-pre.1-Setup.exe.
+          "TAG_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
@@ -111,11 +114,18 @@ jobs:
           }
           & $iscc "/DAppVersion=$env:APP_VERSION" tools/installer/xdremux.iss
 
+      - name: Rename installer for release
+        shell: pwsh
+        run: |
+          $src = "apps/flutter/build/installer/XDRemuxSetup-$env:APP_VERSION.exe"
+          $dst = "apps/flutter/build/installer/XDRemux-Windows-$env:TAG_VERSION-Setup.exe"
+          Copy-Item $src $dst
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: apps/flutter/build/installer/XDRemuxSetup-${{ env.APP_VERSION }}.exe
+          path: apps/flutter/build/installer/XDRemux-Windows-${{ env.TAG_VERSION }}-Setup.exe
           if-no-files-found: error
 
   android:
@@ -232,6 +242,9 @@ jobs:
           fi
           echo "APP_VERSION=$base_version" >> "$GITHUB_ENV"
           echo "APP_BUILD_NUMBER=$pubspec_code" >> "$GITHUB_ENV"
+          # Full tag version (with -pre.N suffix) is used for asset naming,
+          # e.g. XDRemux-Android-0.3.0-pre.1.apk.
+          echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Build Rust Android library
         working-directory: xdremux/rust
@@ -275,11 +288,17 @@ jobs:
         working-directory: apps/flutter
         run: flutter build apk --release --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
 
+      - name: Rename APK for release
+        shell: bash
+        run: |
+          cp apps/flutter/build/app/outputs/flutter-apk/app-release.apk \
+            "apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-$TAG_VERSION.apk"
+
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: apps/flutter/build/app/outputs/flutter-apk/app-release.apk
+          path: apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-${{ env.TAG_VERSION }}.apk
           if-no-files-found: error
 
   publish:
@@ -304,5 +323,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           body_path: tools/installer/RELEASE_NOTES_${{ github.ref_name }}.md
           files: |
-            dist/windows-installer/XDRemuxSetup-*.exe
-            dist/android-apk/app-release.apk
+            dist/windows-installer/XDRemux-Windows-*-Setup.exe
+            dist/android-apk/XDRemux-Android-*.apk
