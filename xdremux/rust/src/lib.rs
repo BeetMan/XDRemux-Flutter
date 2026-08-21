@@ -232,10 +232,10 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .map_err(|_| "original path is not valid UTF-8".to_string())?;
                 let donor = std::fs::read(donor_path)
                     .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                // Keep the returned graph so its HDR/tmap auxiliary items
-                // survive. Restore donor watermark pixels separately and
-                // attach the donor vendor tail with its competing private
-                // UHDR gain-map entries neutralized.
+                // Keep the returned primary bitstreams and HDR/tmap graph
+                // untouched. Any raster rewrite changes the HEVC base stream
+                // and breaks Photos HDR; watermark restoration is deferred
+                // until it can be done without re-encoding this graph.
                 let tail = container::get_oppo_tail_without_display_filter(&donor)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor)
@@ -244,17 +244,13 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                         && name != "local.uhdr.gainmap.info")
                     .collect::<Vec<_>>();
                 let has_watermark = container::has_watermark_entries(&donor);
-                let mut base = if restore_watermark != 0 && has_watermark {
-                    watermark_codec::restore_on_donor_graph(&donor, &returned)?
-                } else {
-                    container::strip_oppo_tail(&returned)
-                };
+                let mut base = container::strip_oppo_tail(&returned);
                 // The OPPO path is a flattened compatibility output. Its
-                // returned Apple filter must not be applied a second time to
-                // the donor-colored watermark pixels.
+                // returned Apple filter must not be applied a second time;
+                // the primary raster itself remains byte-for-byte untouched.
                 container::disable_apple_filter_recipe(&mut base);
                 base.extend_from_slice(&tail);
-                (base, has_watermark, names, restore_watermark != 0 && has_watermark)
+                (base, has_watermark, names, false)
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
