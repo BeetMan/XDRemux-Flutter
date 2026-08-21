@@ -18,4 +18,26 @@
 
 - Apple Photographic Styles 的旧 Photos 编辑状态不写回；Apple 标准输出生成新的 Styles recipe。
 - Apple/OPPO 输出仍需在真实 Photos 和 OPPO Gallery 设备上验证。
-- macOS 分发仍为本地 unsigned 构建，未纳入 GitHub Actions 签名发布。
+- macOS / iOS 分发为 unsigned 构建，未纳入 GitHub Actions 签名发布。
+
+## macOS 首次打开（unsigned 版必读）
+
+本 DMG 未签名，首次打开会提示「已损坏，无法打开」或「无法验证开发者」。文件本身没有损坏，这是 Gatekeeper 对未签名 app 的隔离机制。请先将 `XDRemux.app` 拖入「应用程序」文件夹，然后任选一种方式：
+
+**方式一：终端命令（推荐）**
+
+```bash
+xattr -cr /Applications/XDRemux.app
+```
+
+执行后再双击打开即可。
+
+**方式二：系统设置放行**
+
+1. 双击 app，出现提示后点「完成」。
+2. 打开 **系统设置 → 隐私与安全性**，在页面底部找到「已阻止使用 XDRemux」，点击 **仍要打开**。
+3. 弹窗中再点「打开」。
+
+## Android 安装说明
+
+安装包使用正式 release 签名。如果手机上装过本地 debug 构建的旧版本，覆盖安装会因签名不一致被拒，请先卸载旧版再安装（会丢失应用内数据）。
