@@ -9,6 +9,7 @@ import 'models/app_models.dart';
 import 'services/apple_oppo_workflow_service.dart';
 import 'services/file_action_service.dart';
 import 'services/drop_file_service.dart';
+import 'services/picked_file_resolver.dart';
 import 'services/xdremux_service.dart';
 
 /// Dedicated Apple/OPPO round-trip workflow.
@@ -82,22 +83,17 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     );
     if (result == null || result.files.isEmpty) return null;
     final file = result.files.single;
-    if (file.path != null && file.path!.isNotEmpty) {
-      final candidate = File(file.path!);
-      if (await candidate.exists() && await candidate.length() > 0) {
-        return candidate.path;
-      }
-    }
-    final bytes = file.bytes;
-    if (bytes == null || bytes.isEmpty) return null;
-    final temp = await getTemporaryDirectory();
-    final dir = Directory('${temp.path}${Platform.pathSeparator}workflow');
-    await dir.create(recursive: true);
-    final safeName = file.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    final path =
-        '${dir.path}${Platform.pathSeparator}${DateTime.now().microsecondsSinceEpoch}_$safeName';
-    await File(path).writeAsBytes(bytes, flush: true);
-    return path;
+    // Resolve via the shared picker resolver so Android prefers the original
+    // file on disk (EXIF GPS intact) instead of file_picker's cache copy,
+    // which OEM content providers strip of location data.
+    return PickedFileResolver.resolve(
+      PickedFileInput(
+        name: file.name,
+        path: file.path,
+        bytes: file.bytes,
+        identifier: file.identifier,
+      ),
+    );
   }
 
   Future<void> _selectSource() async {
