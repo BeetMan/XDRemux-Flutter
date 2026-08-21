@@ -214,10 +214,9 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .map_err(|_| "original path is not valid UTF-8".to_string())?;
                 let donor = std::fs::read(donor_path)
                     .map_err(|e| format!("cannot read donor photo: {e}"))?;
-                // OPPO Photos needs the untouched donor graph and complete
-                // vendor tail to render its clean watermark overlay. Using
-                // the returned Apple graph here leaves the watermark baked
-                // into the filtered primary image.
+                // Keep the returned graph so its HDR/tmap auxiliary items
+                // survive. Restore the donor watermark pixels separately and
+                // attach the complete donor vendor tail.
                 let tail = container::get_oppo_tail(&donor, OppoCameraTail::Preserve)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor);

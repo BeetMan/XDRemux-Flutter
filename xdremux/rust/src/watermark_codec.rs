@@ -248,11 +248,9 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
     Ok(output)
 }
 
-/// Rebuild the returned raster on the donor's HEIF graph.
-///
-/// OPPO Photos uses the donor graph together with its private watermark tail
-/// to render the clean watermark overlay. Rebuilding on the returned Apple
-/// graph loses that relationship, even when the tail bytes are copied back.
+/// Rebuild the returned raster while preserving its HDR auxiliary graph.
+/// The donor tail is attached by the caller; the returned primary ID and tmap
+/// graph must remain intact so HDR compatibility is not lost.
 pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, String> {
     let donor_image =
         heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
@@ -280,12 +278,131 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
-    rewrite_primary_grid_in_place(
-        &container::strip_oppo_tail(donor),
+    let returned_base = container::strip_oppo_tail(returned);
+    let rewritten = rewrite_primary_grid_in_place(
+        &returned_base,
         &rgb,
         returned_image.width,
         returned_image.height,
-    )
+    )?;
+    // Keep the returned primary ID: the returned tmap/gain-map graph is tied
+    // to it. OPPO tail compatibility is supplied separately by the donor tail.
+    Ok(rewritten)
+}
+
+/// Keep the returned graph (including its HDR/tmap auxiliary items) while
+/// changing only the primary item's identity to the donor primary ID required
+/// by the OPPO watermark renderer.
+fn relabel_primary_id(data: &[u8], old_id: u32, new_id: u32) -> Result<Vec<u8>, String> {
+    if old_id == new_id {
+        return Ok(data.to_vec());
+    }
+    let top = isobmff::parse_boxes(data, 0, data.len());
+    let meta = find(&top, b"meta")?;
+    let parsed = isobmff::parse_source_meta(data)?;
+    let iinf_box = find_meta_child(data, &meta, b"iinf")?;
+    let infes: Vec<Vec<u8>> = parsed
+        .items
+        .iter()
+        .map(|item| {
+            if item.item_id == old_id {
+                patch_infe_id(&item.raw_infe, new_id)
+            } else {
+                Ok(item.raw_infe.clone())
+            }
+        })
+        .collect::<Result<_, _>>()?;
+    let iinf = isobmff::make_iinf_box(data[iinf_box.data_start], &infes);
+    let ipma_entries = parsed
+        .ipma_entries
+        .iter()
+        .map(|entry| IpmaEntry {
+            item_id: if entry.item_id == old_id {
+                new_id
+            } else {
+                entry.item_id
+            },
+            associations: entry.associations.clone(),
+        })
+        .collect::<Vec<_>>();
+    let ipma = make_ipma_box(data, &meta, &ipma_entries, parsed.ipma_flags)?;
+    let properties: Vec<Vec<u8>> = parsed
+        .props
+        .iter()
+        .map(|property| property.raw.clone())
+        .collect();
+    let iprp = make_iprp_box(&properties, &ipma);
+    let iloc_entries = parsed
+        .iloc_entries
+        .iter()
+        .map(|entry| IlocEntry {
+            item_id: if entry.item_id == old_id {
+                new_id
+            } else {
+                entry.item_id
+            },
+            construction_method: entry.construction_method,
+            data_reference_index: entry.data_reference_index,
+            extents: entry.extents.clone(),
+        })
+        .collect::<Vec<_>>();
+    let refs = parsed
+        .refs
+        .iter()
+        .map(|reference| IrefEntry {
+            rtype: reference.rtype.clone(),
+            from: if reference.from == old_id {
+                new_id
+            } else {
+                reference.from
+            },
+            to: reference
+                .to
+                .iter()
+                .map(|id| if *id == old_id { new_id } else { *id })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let iref_version = find_meta_child(data, &meta, b"iref")
+        .map(|box_| data[box_.data_start])
+        .unwrap_or(0);
+    let iref = isobmff::make_iref_full_box(iref_version, &refs);
+    let idat_box = find_meta_child(data, &meta, b"idat")?;
+    let idat = data[idat_box.box_start..idat_box.data_end].to_vec();
+    let final_meta = build_meta(
+        data,
+        &meta,
+        &iinf,
+        &iloc_entries,
+        &iprp,
+        &iref,
+        &idat,
+        new_id,
+    )?;
+    let mut output = Vec::with_capacity(data.len() + final_meta.len() - meta.size);
+    for box_ in &top {
+        if box_.box_start == meta.box_start {
+            output.extend_from_slice(&final_meta);
+        } else {
+            output.extend_from_slice(&data[box_.box_start..box_.data_end]);
+        }
+    }
+    Ok(output)
+}
+
+fn patch_infe_id(raw: &[u8], item_id: u32) -> Result<Vec<u8>, String> {
+    if raw.len() < 16 {
+        return Err("infe box is truncated".into());
+    }
+    let mut patched = raw.to_vec();
+    if raw[8] >= 3 {
+        patched[12..16].copy_from_slice(&item_id.to_be_bytes());
+    } else if item_id > u16::MAX as u32 {
+        return Err("infe item ID does not fit version 2".into());
+    } else {
+        patched[12..14].copy_from_slice(&(item_id as u16).to_be_bytes());
+    }
+    Ok(patched)
 }
 
 /// Replace the existing donor primary tiles without changing the primary ID
