@@ -98,6 +98,14 @@ jobs:
         working-directory: apps/flutter
         run: flutter pub get
 
+      # path_provider_android brings the jni FFI package into Flutter's
+      # generated Windows plugin list, but Windows does not ship a JVM.
+      - name: Exclude Android JNI plugin from Windows build
+        shell: pwsh
+        run: |
+          $plugins = 'apps/flutter/windows/flutter/generated_plugins.cmake'
+          (Get-Content $plugins) | Where-Object { $_ -notmatch '^\s+jni\s*$' } | Set-Content $plugins
+
       - name: Build Windows app
         working-directory: apps/flutter
         run: flutter build windows --release --build-name="$env:APP_VERSION"
@@ -205,6 +213,14 @@ jobs:
       - name: Install Dart dependencies
         working-directory: apps/flutter
         run: flutter pub get
+
+      # path_provider_android brings the jni FFI package into Flutter's
+      # generated Windows plugin list, but Windows does not ship a JVM.
+      - name: Exclude Android JNI plugin from Windows build
+        shell: pwsh
+        run: |
+          $plugins = 'apps/flutter/windows/flutter/generated_plugins.cmake'
+          (Get-Content $plugins) | Where-Object { $_ -notmatch '^\s+jni\s*$' } | Set-Content $plugins
 
       - name: Build Windows app
         working-directory: apps/flutter
