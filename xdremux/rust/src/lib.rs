@@ -229,12 +229,9 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
-        // Apple mode has no OPPO overlay tail, so disable returned display
-        // recipes after raster restoration. OPPO mode intentionally keeps the
-        // donor's exact tail for its private watermark renderer.
-        if raster_restored && output_mode == 0 {
-            container::disable_apple_filter_recipe(&mut output);
-        }
+        // Apple mode must preserve the returned edit recipe: Photographic
+        // Styles and other Photos adjustments are display-time metadata.
+        // OPPO mode intentionally keeps the donor's exact tail instead.
         if !is_heif_container(&output) {
             return Err("writeback output is not a readable HEIF container".into());
         }
