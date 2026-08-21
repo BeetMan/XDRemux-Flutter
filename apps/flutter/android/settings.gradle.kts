@@ -11,14 +11,14 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        // Prefer the mirrors: a TLS handshake failure against Maven Central
-        // otherwise prevents Gradle from trying the fallback repository.
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        // Use the official repositories first; the mirror may return 502 and
+        // Gradle disables a repository after that failure.
         google()
         mavenCentral()
         gradlePluginPortal()
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
     }
 }
 

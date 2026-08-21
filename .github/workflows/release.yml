@@ -108,7 +108,7 @@ jobs:
 
       - name: Build Windows app
         working-directory: apps/flutter
-        run: flutter build windows --release --build-name="$env:APP_VERSION"
+        run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
       - name: Build Inno Setup installer
         shell: pwsh
@@ -224,7 +224,7 @@ jobs:
 
       - name: Build Windows app
         working-directory: apps/flutter
-        run: flutter build windows --release --build-name="$env:APP_VERSION"
+        run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
       - name: Build Inno Setup installer
         shell: pwsh

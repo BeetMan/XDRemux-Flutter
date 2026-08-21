@@ -1,11 +1,11 @@
 allprojects {
     repositories {
-        // Prefer the mirrors: a TLS handshake failure against Maven Central
-        // otherwise prevents Gradle from trying the fallback repository.
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        // Use official repositories first; a mirror 502 can make Gradle
+        // disable that repository for the remainder of the build.
         google()
         mavenCentral()
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
     }
 }
 
