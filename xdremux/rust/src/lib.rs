@@ -29,7 +29,7 @@ mod portrait_consts;
 mod portrait_depth;
 mod portrait_graft;
 mod portrait_scaffold;
-mod watermark_codec;
+pub mod watermark_codec;
 
 #[cfg(not(xdremux_ffmpeg_fallback))]
 pub mod x265_ffi;

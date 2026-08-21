@@ -377,11 +377,15 @@ unsafe fn setup_pic_planes(
     width: u32,
     height: u32,
     pixel_bytes: usize,
+    use_420: bool,
 ) -> (Vec<u8>, Vec<u8>, Vec<u8>, i32) {
     use crate::x265_ffi::*;
     use std::os::raw::c_void;
 
-    let use_420 = gain_map_420_enabled();
+    // Must match the encoder's configured input-csp: the batch caller passes
+    // the same flag it gave open_encoder. Reading gain_map_420_enabled() here
+    // used to diverge from the encoder config (i420 param + 4:4:4 planes),
+    // which scrambled chroma and produced per-tile colour shifts.
     let (y_plane, u_plane, v_plane, chroma_stride) = if pixel_bytes == 3 {
         let (y, u, v) = if use_420 {
             rgb_to_yuv420(pixels, width, height)
@@ -540,7 +544,8 @@ pub fn x265_encode_tiles(
         for (idx, tile) in tiles.iter().enumerate() {
             let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420)?;
             let pic = x265_picture_alloc();
-            let (y, u, v, _stride) = setup_pic_planes(pic, param, tile, width, height, pixel_bytes);
+            let (y, u, v, _stride) =
+                setup_pic_planes(pic, param, tile, width, height, pixel_bytes, use_420);
             let pic_out = x265_picture_alloc();
             let mut nals: *mut x265_nal = std::ptr::null_mut();
             let mut nal_count: u32 = 0;

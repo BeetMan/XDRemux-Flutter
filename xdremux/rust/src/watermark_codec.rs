@@ -21,21 +21,122 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
             donor_image.width, donor_image.height, returned_image.width, returned_image.height
         ));
     }
-    let (x, y, width, height) =
-        container::watermark_canvas_rect(donor, donor_image.width, donor_image.height)?;
     let donor_rgba = donor_image.to_rgba8();
     let mut returned_rgba = returned_image.to_rgba8();
     let stride = returned_image.width as usize * 4;
-    for row in y..y + height {
-        let start = row as usize * stride + x as usize * 4;
-        let end = start + width as usize * 4;
-        returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+    match container::watermark_canvas_rect(donor, donor_image.width, donor_image.height) {
+        Ok((x, y, width, height)) => {
+            for row in y..y + height {
+                let start = row as usize * stride + x as usize * 4;
+                let end = start + width as usize * 4;
+                returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+            }
+        }
+        Err(payload_error) => {
+            // Frame-style watermarks (e.g. Hasselblad master-mode borders)
+            // carry no separate PNG payload: the frame is baked into the
+            // donor raster. Detect the uniform frame bands and copy them.
+            let bands = detect_frame_bands(
+                &donor_rgba,
+                donor_image.width,
+                donor_image.height,
+            )
+            .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
+            for (y0, y1) in bands {
+                for row in y0..y1 {
+                    let start = row as usize * stride;
+                    let end = start + stride;
+                    returned_rgba[start..end].copy_from_slice(&donor_rgba[start..end]);
+                }
+            }
+        }
     }
     let rgb: Vec<u8> = returned_rgba
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
     rewrite_primary_grid(returned, &rgb, returned_image.width, returned_image.height)
+}
+
+/// Detects uniform frame bands at the top and bottom of a donor raster.
+///
+/// Frame-style watermarks fill the bands with one solid colour (corner
+/// sampled) plus sparse text; a row counts as frame when at least 85% of
+/// sampled pixels stay within +/-6 of the frame colour. Returns the
+/// `(y0, y1)` row ranges to copy from the donor.
+pub fn detect_frame_bands(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<(u32, u32)>, String> {
+    let stride = width as usize * 4;
+    if rgba.len() < stride * height as usize || width < 64 || height < 64 {
+        return Err("donor raster too small for frame detection".into());
+    }
+    // Sample corners slightly inside: extreme edge pixels can carry HEVC
+    // reconstruction artifacts (observed greenish values on OPPO frames).
+    let inset = 8u32;
+    let corner = |x: u32, y: u32| -> [u8; 3] {
+        let base = y as usize * stride + x as usize * 4;
+        [rgba[base], rgba[base + 1], rgba[base + 2]]
+    };
+    let frame = corner(inset, inset);
+    for (x, y) in [
+        (width - 1 - inset, inset),
+        (inset, height - 1 - inset),
+        (width - 1 - inset, height - 1 - inset),
+    ] {
+        let other = corner(x, y);
+        if (0..3).any(|c| other[c].abs_diff(frame[c]) > 6) {
+            return Err("donor corners disagree; not a frame watermark".into());
+        }
+    }
+    let row_is_frame = |y: u32| -> bool {
+        let row = &rgba[y as usize * stride..(y as usize + 1) * stride];
+        let mut sampled = 0u32;
+        let mut uniform = 0u32;
+        let mut x = 0usize;
+        while x + 2 < row.len() {
+            sampled += 1;
+            if (0..3).all(|c| row[x + c].abs_diff(frame[c]) <= 6) {
+                uniform += 1;
+            }
+            x += 16 * 4;
+        }
+        // Band text rows still measure >=0.8 uniform (sparse glyphs on a
+        // solid frame); photo content stays below ~0.35. 60% separates both.
+        sampled > 0 && uniform * 100 >= sampled * 60
+    };
+    // Tolerate a few decoder-artifact rows at the extreme edges: the last
+    // rows of HEVC-decoded frames can be garbage (observed greenish rows on
+    // OPPO frames), which would otherwise stop the band scan immediately.
+    let mut top_edge = 0u32;
+    while top_edge < 8 && !row_is_frame(top_edge) {
+        top_edge += 1;
+    }
+    let mut top = top_edge;
+    while top < height / 4 && row_is_frame(top) {
+        top += 1;
+    }
+    let mut bottom_edge = height;
+    while bottom_edge > height - 8 && !row_is_frame(bottom_edge - 1) {
+        bottom_edge -= 1;
+    }
+    let mut bottom = bottom_edge;
+    while bottom > height * 3 / 4 && row_is_frame(bottom - 1) {
+        bottom -= 1;
+    }
+    let mut bands = Vec::new();
+    if top - top_edge >= 16 {
+        bands.push((0, top));
+    }
+    if bottom_edge - bottom >= 16 {
+        bands.push((bottom, height));
+    }
+    if bands.is_empty() {
+        return Err("no frame watermark bands detected in donor".into());
+    }
+    Ok(bands)
 }
 
 fn encode_tiles(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<Vec<u8>>, Vec<u8>), String> {
