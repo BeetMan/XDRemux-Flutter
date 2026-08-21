@@ -55,8 +55,15 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
         .collect();
-    let mut output =
-        rewrite_primary_grid(returned, &rgb, returned_image.width, returned_image.height)?;
+    // Keep the returned Apple graph in place. Photographic Styles metadata
+    // contains references to the original primary item; appending a new
+    // primary grid makes Photos lose the editable Styles relationship.
+    let mut output = rewrite_primary_grid_in_place(
+        returned,
+        &rgb,
+        returned_image.width,
+        returned_image.height,
+    )?;
     // The returned Apple file can retain a display-time filter recipe in its
     // Exif/XMP payload. Disable it after restoring the watermark so Photos
     // does not apply the filter a second time to the newly written pixels.
