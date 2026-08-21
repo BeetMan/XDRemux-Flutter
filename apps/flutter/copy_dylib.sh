@@ -6,6 +6,12 @@ set -euo pipefail
 # Prefer the repository-root dylib (updated by cargo build --release);
 # fall back to the macOS staging directory.
 DYLIB="$(dirname "$0")/libxdremux_core.dylib"
+BUILT_DYLIB="$(dirname "$0")/../../target/release/libxdremux_core.dylib"
+# Prefer a newer host build so a Flutter rebuild cannot silently package an
+# older FFI implementation.
+if [ -f "$BUILT_DYLIB" ] && { [ ! -f "$DYLIB" ] || [ "$BUILT_DYLIB" -nt "$DYLIB" ]; }; then
+    cp -f "$BUILT_DYLIB" "$DYLIB"
+fi
 [ -f "$DYLIB" ] || DYLIB="$(dirname "$0")/macos/Frameworks/libxdremux_core.dylib"
 
 # Find the most recently built app (product name is XDRemux.app, capitalized;

@@ -33,6 +33,11 @@ APP="build/macos/Build/Products/${PRODUCT_DIR}/XDRemux.app"
 # dylib 源：优先仓库根副本（由 cargo build --release 更新），
 # 退回 macos/Frameworks 中的历史/手工 staged 副本。
 DYLIB_SRC="libxdremux_core.dylib"
+BUILT_DYLIB="../../target/release/libxdremux_core.dylib"
+# Never package a stale root copy when cargo has produced a newer host dylib.
+if [ -f "$BUILT_DYLIB" ] && { [ ! -f "$DYLIB_SRC" ] || [ "$BUILT_DYLIB" -nt "$DYLIB_SRC" ]; }; then
+  cp -f "$BUILT_DYLIB" "$DYLIB_SRC"
+fi
 [ -f "$DYLIB_SRC" ] || DYLIB_SRC="macos/Frameworks/libxdremux_core.dylib"
 if [ -f "$DYLIB_SRC" ] && [ -d "$APP" ]; then
   mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/MacOS"
