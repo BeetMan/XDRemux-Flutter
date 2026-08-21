@@ -197,7 +197,19 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     // that would change the rendered style while pretending
                     // to preserve an edit recipe that is not present.
                     if !verify_photographic_styles(&returned) {
-                        (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                        let mut output = if container::has_watermark_entries(&donor) {
+                            watermark_codec::restore_visible_watermark(
+                                &donor,
+                                &container::strip_oppo_tail(&returned),
+                            )?
+                        } else {
+                            container::strip_oppo_tail(&returned)
+                        };
+                        // This branch is already flattened, so there is no
+                        // Apple edit recipe to preserve. Prevent Photos from
+                        // applying the old filter to the restored watermark.
+                        container::disable_apple_filter_recipe(&mut output);
+                        (output, false, Vec::new(), container::has_watermark_entries(&donor))
                     } else if container::has_watermark_entries(&donor) {
                         let output = watermark_codec::restore_visible_watermark(
                             &donor,
@@ -224,7 +236,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                 // survive. Restore donor watermark pixels separately and
                 // attach the donor vendor tail with its competing private
                 // UHDR gain-map entries neutralized.
-                let tail = container::get_oppo_tail(&donor, OppoCameraTail::PreserveNoUhdr)
+                let tail = container::get_oppo_tail_without_display_filter(&donor)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor)
                     .into_iter()
@@ -237,6 +249,10 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                 } else {
                     container::strip_oppo_tail(&returned)
                 };
+                // The OPPO path is a flattened compatibility output. Its
+                // returned Apple filter must not be applied a second time to
+                // the donor-colored watermark pixels.
+                container::disable_apple_filter_recipe(&mut base);
                 base.extend_from_slice(&tail);
                 (base, has_watermark, names, restore_watermark != 0 && has_watermark)
             }

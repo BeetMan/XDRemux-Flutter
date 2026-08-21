@@ -244,6 +244,7 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
         &rgb,
         returned_image.width,
         returned_image.height,
+        false,
     )?;
     Ok(output)
 }
@@ -284,6 +285,7 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
         &rgb,
         returned_image.width,
         returned_image.height,
+        true,
     )?;
     // Keep the returned primary ID: the returned tmap/gain-map graph is tied
     // to it. OPPO tail compatibility is supplied separately by the donor tail.
@@ -405,6 +407,58 @@ fn patch_infe_id(raw: &[u8], item_id: u32) -> Result<Vec<u8>, String> {
     Ok(patched)
 }
 
+/// Convert the returned Apple 62-byte tmap to the 142-byte ImageIO-native
+/// form used by OPPO Gallery. The numeric HDR parameters are kept identical;
+/// only the container encoding changes.
+fn make_oppo_native_tmap(
+    source: &[u8],
+    parsed: &isobmff::ParsedMeta,
+    idat_box: &BoxHeader,
+) -> Result<Option<Vec<u8>>, String> {
+    let Some(tmap) = parsed.items.iter().find(|item| item.itype == "tmap") else {
+        return Ok(None);
+    };
+    let Some(entry) = parsed.iloc_entries.iter().find(|entry| entry.item_id == tmap.item_id)
+    else {
+        return Err("OPPO tmap iloc entry is missing".into());
+    };
+    if entry.construction_method != 1 || entry.extents.len() != 1 {
+        return Err("OPPO tmap must use one idat extent".into());
+    }
+    let (offset, length) = entry.extents[0];
+    if length != 62 {
+        return Ok(None);
+    }
+    let start = idat_box
+        .data_start
+        .checked_add(offset as usize)
+        .ok_or("OPPO tmap offset overflow")?;
+    let end = start
+        .checked_add(length as usize)
+        .ok_or("OPPO tmap extent overflow")?;
+    if end > source.len() {
+        return Err("OPPO tmap extent exceeds source".into());
+    }
+    let payload = &source[start..end];
+    let value = |index: usize| -> f32 {
+        let at = 6 + index * 4;
+        i32::from_be_bytes(payload[at..at + 4].try_into().unwrap()) as f32 / 100_000.0
+    };
+    let meta = crate::iso21496::IsoMeta {
+        gain_map_min: vec![value(4); 3],
+        gain_map_max: vec![value(6); 3],
+        gamma: vec![value(8); 3],
+        offset_sdr: vec![value(10); 3],
+        offset_hdr: vec![value(12); 3],
+        hdr_capacity_min: value(0),
+        hdr_capacity_max: value(2),
+        base_rendition_is_hdr: false,
+        scale: value(2).max(1.0),
+        channel_count: 3,
+    };
+    Ok(Some(crate::iso21496::make_imageio_native_tmap_payload(&meta)))
+}
+
 /// Replace the existing donor primary tiles without changing the primary ID
 /// or the donor's iref/iinf graph. Photos' thumbnail renderer uses those
 /// relationships to discover the private OPPO watermark overlay.
@@ -413,6 +467,7 @@ fn rewrite_primary_grid_in_place(
     rgb: &[u8],
     width: u32,
     height: u32,
+    oppo_native_tmap: bool,
 ) -> Result<Vec<u8>, String> {
     let top = isobmff::parse_boxes(source, 0, source.len());
     let ftyp = find(&top, b"ftyp")?;
@@ -466,9 +521,44 @@ fn rewrite_primary_grid_in_place(
         .unwrap_or(0);
     let iref = isobmff::make_iref_full_box(iref_version, &parsed.refs);
     let idat_box = find_meta_child(source, &meta, b"idat")?;
-    let idat = source[idat_box.box_start..idat_box.data_end].to_vec();
+    let mut idat = source[idat_box.box_start..idat_box.data_end].to_vec();
 
     let mut iloc_entries = parsed.iloc_entries.clone();
+    if oppo_native_tmap {
+        if let Some(native_tmap) = make_oppo_native_tmap(source, &parsed, &idat_box)? {
+            let tmap_entry = iloc_entries
+                .iter_mut()
+                .find(|entry| {
+                    parsed
+                        .items
+                        .iter()
+                        .any(|item| item.item_id == entry.item_id && item.itype == "tmap")
+                })
+                .ok_or("OPPO output tmap item is missing")?;
+            if tmap_entry.construction_method != 1 || tmap_entry.extents.len() != 1 {
+                return Err("OPPO output tmap is not stored in idat".into());
+            }
+            let (offset, length) = tmap_entry.extents[0];
+            if length != 62 {
+                return Err(format!("OPPO output expects a 62-byte Apple tmap, got {length}"));
+            }
+            let start = 8usize
+                .checked_add(offset as usize)
+                .ok_or("OPPO tmap offset overflow")?;
+            let end = start
+                .checked_add(length as usize)
+                .ok_or("OPPO tmap extent overflow")?;
+            if end > idat.len() {
+                return Err("OPPO tmap extent exceeds idat".into());
+            }
+            let mut idat_payload = idat[8..].to_vec();
+            let payload_start = offset as usize;
+            let payload_end = payload_start + length as usize;
+            idat_payload.splice(payload_start..payload_end, native_tmap.iter().copied());
+            idat = isobmff::make_box(b"idat", &idat_payload);
+            tmap_entry.extents = vec![(offset, native_tmap.len() as u64)];
+        }
+    }
     for entry in &mut iloc_entries {
         if tile_ids.contains(&entry.item_id) {
             entry.extents = vec![(0, 0)];
