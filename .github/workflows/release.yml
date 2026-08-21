@@ -128,6 +128,115 @@ jobs:
           path: apps/flutter/build/installer/XDRemux-Windows-${{ env.TAG_VERSION }}-Setup.exe
           if-no-files-found: error
 
+  windows-arm64:
+    name: Windows ARM64 installer
+    runs-on: windows-11-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-windows-arm64-${{ env.X265_TAG }}
+          # See the x64 job: tag runs cannot hit ref-scoped main-branch
+          # caches, so restore-keys falls back to the latest main build.
+          restore-keys: |
+            x265-windows-arm64-${{ env.X265_TAG }}
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:X265_TAG `
+            https://bitbucket.org/multicoreware/x265_git.git `
+            xdremux/rust/vendor/x265
+          New-Item -ItemType Directory -Force `
+            xdremux/rust/vendor/x265/include | Out-Null
+          Copy-Item xdremux/rust/vendor/x265/source/x265.h `
+            xdremux/rust/vendor/x265/include/x265.h
+          # x265's assembly only covers x86 (NASM) and aarch64-with-GNU-as;
+          # MSVC ARM64 gets the portable C path.
+          cmake -S xdremux/rust/vendor/x265/source `
+            -B xdremux/rust/vendor/x265/build_windows `
+            -G 'Visual Studio 17 2022' -A ARM64 `
+            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
+            -DENABLE_ASSEMBLY=OFF `
+            -DXDREMUX_SKIP_RC=ON
+          cmake --build xdremux/rust/vendor/x265/build_windows `
+            --config Release --target x265-static
+          Copy-Item xdremux/rust/vendor/x265/build_windows/x265_config.h `
+            xdremux/rust/vendor/x265/include/x265_config.h
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+          # The Windows Flutter SDK is x64-only and runs emulated on this
+          # runner, but `flutter build windows` produces a native ARM64 app.
+          architecture: x64
+          cache: true
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^[vV]', ''
+          $baseVersion = ($version -replace '-.*$', '')
+          if ($baseVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag must look like v0.1.1 or v0.1.1-pre.1, got ${{ github.ref_name }}"
+          }
+          $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+          $pubspecName = $pubspecVersion.Split('+')[0]
+          if ($pubspecName -ne $baseVersion) {
+            throw "Release tag $version does not match pubspec version $pubspecName"
+          }
+          "APP_VERSION=$baseVersion" >> $env:GITHUB_ENV
+          "TAG_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build Rust core
+        run: cargo build -p xdremux-core --release
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      - name: Build Windows app
+        working-directory: apps/flutter
+        run: flutter build windows --release --build-name="$env:APP_VERSION"
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          }
+          if (-not (Test-Path $iscc)) {
+            throw 'Inno Setup compiler was not found on the runner'
+          }
+          & $iscc "/DAppVersion=$env:APP_VERSION" "/DBuildArch=arm64" tools/installer/xdremux.iss
+
+      - name: Rename installer for release
+        shell: pwsh
+        run: |
+          $src = "apps/flutter/build/installer/XDRemuxSetup-arm64-$env:APP_VERSION.exe"
+          $dst = "apps/flutter/build/installer/XDRemux-Windows-arm64-$env:TAG_VERSION-Setup.exe"
+          Copy-Item $src $dst
+
+      - name: Upload Windows ARM64 installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-installer
+          path: apps/flutter/build/installer/XDRemux-Windows-arm64-${{ env.TAG_VERSION }}-Setup.exe
+          if-no-files-found: error
+
   android:
     name: Android APK
     runs-on: ubuntu-latest
@@ -303,7 +412,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [windows, android]
+    needs: [windows, windows-arm64, android]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -324,4 +433,5 @@ jobs:
           body_path: tools/installer/RELEASE_NOTES_${{ github.ref_name }}.md
           files: |
             dist/windows-installer/XDRemux-Windows-*-Setup.exe
+            dist/windows-arm64-installer/XDRemux-Windows-arm64-*-Setup.exe
             dist/android-apk/XDRemux-Android-*.apk

@@ -9,11 +9,22 @@
 #ifndef AppVersion
 #define AppVersion "0.3.0"
 #endif
+#ifndef BuildArch
+#define BuildArch "x64"
+#endif
 #define AppPublisher "BeetMan"
 #define AppURL "https://github.com/BeetMan/XDRemux-Flutter"
 #define AppExeName "xdremux.exe"
-#define BuildDir "..\..\apps\flutter\build\windows\x64\runner\Release"
 #define OutDir "..\..\apps\flutter\build\installer"
+#if BuildArch == "arm64"
+#define BuildDir "..\..\apps\flutter\build\windows\arm64\runner\Release"
+#define ArchMode "arm64"
+#define OutName "XDRemuxSetup-arm64-" + AppVersion
+#else
+#define BuildDir "..\..\apps\flutter\build\windows\x64\runner\Release"
+#define ArchMode "x64compatible"
+#define OutName "XDRemuxSetup-" + AppVersion
+#endif
 
 [Setup]
 AppId={{7E9F2A41-3B6D-4E8A-9C2F-1D5B8A0E6F3C}
@@ -27,13 +38,13 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir={#OutDir}
-OutputBaseFilename=XDRemuxSetup-{#AppVersion}
+OutputBaseFilename={#OutName}
 SetupIconFile=..\..\apps\flutter\windows\runner\resources\app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#ArchMode}
+ArchitecturesInstallIn64BitMode={#ArchMode}
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#AppExeName}

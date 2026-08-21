@@ -19,7 +19,8 @@ Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、And
 
 | 平台 | 最新文件 | 状态 | 说明 |
 |---|---|---|---|
-| Windows | `XDRemux-Windows-*-Setup.exe` | ✅ 推荐 | 安装包，无需安装 ffmpeg |
+| Windows x64 | `XDRemux-Windows-*-Setup.exe` | ✅ 推荐 | 安装包，无需安装 ffmpeg |
+| Windows ARM64 | `XDRemux-Windows-arm64-*-Setup.exe` | ✅ CI 自动发布 | Surface Pro X、骁龙本等 ARM64 设备 |
 | macOS | `XDRemux-macOS-*.dmg` | ✅ 推荐 | 拖拽到 Applications；首次可能需右键打开 |
 | Android | `XDRemux-Android-*.apk` | ✅ 推荐 | SAF 文件导入、保存图库、分享和后台转换 |
 | iOS | `XDRemux-iOS-*-unsigned.ipa` | ⚠️ 侧载 | 未签名 IPA，需要自行签名安装 |
