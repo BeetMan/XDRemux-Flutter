@@ -57,12 +57,11 @@
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 三 workflow 剖析、runner 矩阵 |
 
-## 历史文档（未归档，参考价值）
+## 历史文档
 
-- `docs/standards/`：ISO 21496-1 / 23008-12 中译（formats/ 页面的标准依据）
-- `docs/plans/`、`docs/phase*-plan.md`：历史阶段计划
-- `docs/v0.3.0-backend-validation.md`、`docs/validation/`：真机验证记录
-- `docs/handoff-macos-ios-*.md`：交接备忘
+- `docs/standards/`：ISO 21496-1 / 23008-12 中译（formats/ 页面的标准依据，仍在引用）
+- `docs/validation/`：平台行为矩阵（**在维护**，排障时对照）
+- `docs/archive/`：历史阶段计划、交接备忘、一次性验证报告（v0.3.0 前）。仅作考古参考，内容可能与现状不符
 
 ## 维护纪律
 
