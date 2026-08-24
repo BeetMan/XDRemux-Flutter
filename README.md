@@ -283,6 +283,19 @@ python3 tests/conformance/driver.py \
 
 ---
 
+## 技术文档
+
+面向贡献者与逆向研究者的完整文档在 [`docs/README.md`](docs/README.md)，按读者划分了阅读路径：
+
+- **架构**：系统总览、转换/写回数据流、平台后端矩阵、FFI 契约
+- **格式逆向**（本项目核心资产）：OPPO ProXDR 容器与私有尾部、水印布局与边框带检测、Apple 摄影风格图结构、ISO 21496-1 增益映射、HEVC 色彩约定实测
+- **模块**：容器手术模板、x265 编码路径、风格/人像/水印恢复管线
+- **运维**：四平台构建、发版清单、CI 剖析
+
+另附 ISO 标准中译（`docs/standards/`）与平台行为矩阵（`docs/validation/`）。
+
+---
+
 ## 仓库结构
 
 | 路径 | 用途 |
@@ -290,7 +303,7 @@ python3 tests/conformance/driver.py \
 | `xdremux/rust/` | Rust 核心、容器解析、水印编解码与 FFI |
 | `apps/flutter/` | Flutter App 与 Windows / Android / macOS / iOS 平台集成 |
 | `tests/conformance/` | 一致性与结构验证 |
-| `docs/` | 转换逻辑、平台行为矩阵和验证记录 |
+| `docs/` | [技术文档](docs/README.md)（架构、格式逆向、模块、运维）与标准中译 |
 | `tools/installer/` | Windows 安装包与发布说明 |
 
 原版 Swift / Python 参考实现在上游仓库 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux)。
