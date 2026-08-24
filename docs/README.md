@@ -57,6 +57,10 @@
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 三 workflow 剖析、runner 矩阵 |
 
+## 路线图
+
+- [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 → Phase 2 ReverseKey1 评估 → Phase 3 动态照片 → Phase 4 性能与分发）
+
 ## 历史文档
 
 - `docs/standards/`：ISO 21496-1 / 23008-12 中译（formats/ 页面的标准依据，仍在引用）
