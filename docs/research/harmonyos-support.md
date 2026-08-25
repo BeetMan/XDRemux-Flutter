@@ -1,6 +1,33 @@
 # 鸿蒙（HarmonyOS）支持研究
 
-> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**初步摸底完成，待真机/DevEco 环境验证**。
+> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**Rust 核心 OHOS 构建已跑通（spike 完成）**，待 Flutter 引擎接入与真机验证。
+
+## 0.5 Spike 结果：Rust 核心 OHOS 构建（2026-08-25 完成，Windows + DevEco Studio）
+
+**`libxdremux_core.so`（aarch64-unknown-linux-ohos）构建成功**：ELF 64-bit aarch64 动态库，3.73MB，23 个 `xdremux_*` FFI 导出齐全，依赖仅 `libc++_shared.so` + `libc.so`。宿主平台回归 123 测试全过。
+
+新增资产：
+
+- `xdremux/rust/build_ohos.sh`：一键构建脚本（x265 交叉 + Rust cdylib），默认使用 DevEco 安装的 NDK
+- `build.rs`：OHOS 平台分支（见下述坑 1/3）
+- `vendor/x265/build_ohos/libx265.a`：2.87MB（不入 git，脚本自动重建）
+
+### Spike 中踩掉的四个坑（复现者必读）
+
+1. **Rust OHOS 目标是 `os=linux, env=ohos`**：`CARGO_CFG_TARGET_OS` 拿不到 "ohos"，必须看 `CARGO_CFG_TARGET_ENV`。build.rs 平台分支因此用 env 判定
+2. **DevEco 路径含空格**（`Program Files`/`DevEco Studio`）会炸 cc-rs 的 CFLAGS 拆分：默认用 8.3 短路径（`C:/PROGRA~1/Huawei/DEVECO~1/...`），可用 `OHOS_NATIVE` 覆盖
+3. **cargo 的 `CARGO_TARGET_*` 环境变量名必须全大写**（`CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER`），小写会被静默忽略；cc-rs 的 `CC_<target>` 则是小写下划线
+4. **zstd 必须用 C 驱动编译（clang.exe）**：C++ 驱动在 Linux 目标上自动定义 `_GNU_SOURCE`，选中 zstd 的 glibc qsort_r 分支，而 OHOS musl 没有 qsort_r。C 驱动走 portable fallback（与 Android NDK 构建行为一致）
+
+链接配置：musl 体系链 `c++_shared` + `m`（无 numa/pthread——musl 合入 libc，NDK 无 libnuma）；`-Wl,-Bsymbolic` 同 Android。产物需随包附带 NDK 的 `libc++_shared.so`（同 Android jniLibs 惯例）。
+
+### 下一步 spike（Flutter 接入）
+
+- [ ] CPF-Flutter `oh-3.44.9-dev` 或 `oh-3.41.9-release` 环境搭建（DevEco + 该 fork 的 Flutter 工具）
+- [ ] hello-world `flutter build hap` -> hdc 真机安装
+- [ ] 引擎产物分发方式核对（flutter_engine release 停在 3.27.0，高版本引擎二进制从哪来）
+- [ ] .so 进 hap 的打包路径 + Dart FFI `DynamicLibrary.open('libxdremux_core.so')` 在 OHOS 的加载语义（对照 Android jniLibs 惯例）
+- [ ] 我们 app 的 pubspec 对接社区插件 fork（见 §1.3 表格）
 
 ## 0. 先厘清"支持鸿蒙"的三种含义
 
@@ -20,12 +47,12 @@
 
 - `aarch64-unknown-linux-ohos` / `armv7-unknown-linux-ohos` / `x86_64-unknown-linux-ohos` 是 Rust 官方目标（rustup 可直接安装 std，已验证下载成功）
 - `cargo check --target aarch64-unknown-linux-ohos` 实测卡点：build.rs 里 `cc` 找不到交叉编译器（本机无 OHOS NDK）——**这不是代码问题，是工具链问题**
-- 需要的工作：
-  1. 安装 DevEco Studio（含 OHOS NDK，提供 musl-based clang 交叉工具链）
-  2. `build.rs` 增加 `"ohos"` 平台分支（`CARGO_CFG_TARGET_OS == "ohos"`，x265 链接路径 `vendor/x265/build_ohos`）
-  3. x265 用 OHOS NDK 的 CMake 工具链交叉编译（`-DOHOS_ARCH=arm64-v8a -DOHOS_PLATFORM=OHOS` 之类，参照 Android 交叉配置改写）
-  4. `cargo ndk` 有 OHOS 对应物：`cargo-ndk` 或 `ohrs`（社区 OpenHarmony Rust 工具链）——spike 时确认
-- 风险判断：**低**。x265 是纯 C++/汇编库（OHOS 下汇编关掉即可），Rust 核心无平台特定 syscall
+- ~~需要的工作~~（已完成，详见 §0.5）：
+  1. ~~安装 DevEco Studio（含 OHOS NDK，musl-based clang 交叉工具链）~~ ✅
+  2. ~~`build.rs` 增加 OHOS 平台分支~~ ✅（注意：`CARGO_CFG_TARGET_OS=linux`，须用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定）
+  3. ~~x265 用 OHOS NDK 的 CMake 工具链交叉编译~~ ✅（`ohos.toolchain.cmake` + `-DENABLE_ASSEMBLY=OFF`）
+  4. ~~cargo 目标构建~~ ✅（`aarch64-unknown-linux-ohos`，cdylib 直出 .so）
+- 风险判断：**低**（实测证实）。x265 是纯 C++/汇编库（OHOS 下汇编关掉即可），Rust 核心无平台特定 syscall
 
 ### 1.2 Flutter 引擎（两个维护方，结论完全不同）
 

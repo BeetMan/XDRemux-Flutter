@@ -15,6 +15,10 @@
 
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    // OHOS Rust targets report os=linux + env=ohos (like Android's os=linux
+    // + env=... distinction); detect via env so the x265 path picks build_ohos.
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let is_ohos = target_env == "ohos";
 
     let use_x265 = target_os == "android" || std::env::var_os("XDREMUX_USE_FFMPEG").is_none();
     if !use_x265 {
@@ -44,6 +48,7 @@ fn main() {
         "android" => (format!("{x265_root}/build_android"), "x265".to_string()),
         "ios" => (format!("{x265_root}/build_ios"), "x265".to_string()),
         "windows" => (format!("{x265_root}/build_windows/Release"), "x265-static".to_string()),
+        _ if is_ohos => (format!("{x265_root}/build_ohos"), "x265".to_string()),
         _ => (format!("{x265_root}/build_desktop"), "x265".to_string()),
     };
 
@@ -95,6 +100,14 @@ fn main() {
             // linker's dead-strip / ordering.
             println!("cargo:rustc-link-lib=c++");
             println!("cargo:rustc-link-arg=-Wl,-force_load,{link_search}/libx265.a");
+        }
+        _ if is_ohos => {
+            // OHOS is musl-based with LLVM libc++; like Android, ship
+            // libc++_shared.so next to the Rust cdylib. No numa/pthread:
+            // musl folds them into libc and the NDK has no libnuma.
+            println!("cargo:rustc-link-arg=-Wl,-Bsymbolic");
+            println!("cargo:rustc-link-lib=c++_shared");
+            println!("cargo:rustc-link-lib=m");
         }
         _ => {
             println!("cargo:rustc-link-lib=stdc++");
