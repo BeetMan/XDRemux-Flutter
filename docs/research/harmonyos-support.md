@@ -23,11 +23,45 @@
 
 ### 下一步 spike（Flutter 接入）
 
-- [ ] CPF-Flutter `oh-3.44.9-dev` 或 `oh-3.41.9-release` 环境搭建（DevEco + 该 fork 的 Flutter 工具）
-- [ ] hello-world `flutter build hap` -> hdc 真机安装
-- [ ] 引擎产物分发方式核对（flutter_engine release 停在 3.27.0，高版本引擎二进制从哪来）
-- [ ] .so 进 hap 的打包路径 + Dart FFI `DynamicLibrary.open('libxdremux_core.so')` 在 OHOS 的加载语义（对照 Android jniLibs 惯例）
-- [ ] 我们 app 的 pubspec 对接社区插件 fork（见 §1.3 表格）
+- [x] CPF-Flutter 引擎环境搭建与 hello-world hap 构建（见 §0.6）
+- [ ] 引擎二进制分发方式核对（flutter_engine release 停在 3.27.0，高版本引擎随 flutter_flutter 仓 OBS 分发，已实测自动下载）
+- [ ] 我们 app 的 pubspec 对接社区插件 fork（见 §1.3 表格；flutter_foreground_task 需降级 ^10 或换 fluttertpc 版本）
+- [ ] .so 进 hap 的打包路径 + Dart FFI `DynamicLibrary.open('libxdremux_core.so')` 在 OHOS 的加载语义
+- [ ] 签名收尾：DevEco 自动签名（华为账号）或修好手动 hap-sign-tool 证书链
+- [ ] 真机/模拟器安装运行
+
+## 0.6 Flutter OHOS 接入 spike（2026-08-25，Windows + DevEco Studio 6.1.1，无设备）
+
+**结果：hello-world 的 unsigned debug hap 构建成功**（96MB，Flutter 3.41.10-ohos 引擎产物自动下载）。`flutter build hap` 全流程跑到签名步。
+
+### 可行配置（实测）
+
+```
+Flutter fork: atomgit.com/CPF-Flutter/flutter_flutter @ oh-3.41.9-release
+  （不要用 oh-3.44.9-dev：其嵌入层引用 autoFillManager.requestAutoFill 等
+   API 26 新接口，而 DevEco 6.1.1 的 SDK 是 API 24，15 个 ArkTS 编译错误）
+DEVECO_SDK_HOME=C:\Program Files\Huawei\DevEco Studio\sdk
+flutter config --ohos-sdk "C:\Program Files\Huawei\DevEco Studio\sdk"
+PATH 追加：
+  C:\flutter-ohos\bin                    （fork 的 flutter）
+  C:\tools\ohos-shim                     （ohpm.exe shim，源码 tools/ohos/ohpm-shim.c）
+  DevEco Studio\tools\hvigor\bin          （hvigorw）
+  DevEco Studio\jbr\bin                   （java，PackageHap 需要）
+```
+
+### 踩坑记录
+
+1. **浅克隆拿不到版本号**：`--depth 1` 无 tag，Flutter 版本变成 0.0.0-unknown，pub 约束全炸。必须 `git fetch --deepen=2000 --tags` 让 `git describe` 能解析
+2. **ohpm 裸调用**：fork 的 tool 在 Windows 裸调 `ohpm`（CreateProcess 不解析 .bat）。解法是 `tools/ohos/ohpm-shim.c` 编译成 ohpm.exe 放 PATH（直接转发到 `node pm-cli.js`，绕过 cmd 引号地狱）
+3. **batch 递归炸弹**：在 Git Bash 里跑 `flutter build hap` 会触发 cmd "BATCH RECURSION exceeds STACK limits"（嵌套 bat 236 层）。**用 PowerShell/cmd 跑**，不要用 Git Bash
+4. **签名**：hvigor 的 signingConfigs 拒绝明文密码（要 DevEco 加密形态 ≥32 字符）。无签名构建走通；hap-sign-tool 手动签名走通了 profile 签发（sign-profile），sign-app 的证书链校验（"cert chain file"）尚未通过——正式路线应该是 DevEco Studio 登录华为账号后自动签名（首次一次性配置）
+5. 模板 compatibleSdkVersion 是 5.1.0(18)，DevEco 6.1.1 SDK 为 API 24——release 线引擎与其兼容
+
+### 遗留
+
+- 引擎与框架的对应版本管理（flutter_flutter 仓内含 engine/ 源码，构建时从 OBS 拉预编译产物）
+- app 侧 pubspec 适配 + ohos 目录生成已验证可行（`flutter create --platforms ohos .`）
+- 真机安装与 FFI 加载验证（等设备）
 
 ## 0. 先厘清"支持鸿蒙"的三种含义
 
