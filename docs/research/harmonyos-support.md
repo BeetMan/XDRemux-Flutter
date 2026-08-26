@@ -17,10 +17,16 @@
 
 ### 下一步（接入我们的 app）
 
-- [ ] pubspec 依赖适配：flutter_foreground_task 降 ^10 或换 fluttertpc 版本；其余按 §1.3 表格换 fork
-- [ ] `flutter create --platforms ohos .` 生成 ohos 目录后按 hello-world 同样的签名配置
-- [ ] Rust .so 进 hap + FFI 加载验证
-- [ ] 完整工作流真机回归
+- [x] `flutter create --platforms ohos .` 生成 ohos 目录（包名 `io.github.beetman.xdremux`，签名配置复制自 hello-world 项目）
+- [x] pubspec 依赖适配：vendored 到 `apps/flutter/third_party/ohos/`（`tools/ohos/fetch_plugins.sh` 重建；**AtomGit 的 git 服务器不允许按 SHA fetch，pub 的 git ref 解析会错乱，只能用 path 依赖**）
+- [x] notification_service 适配 flutter_local_notifications v19 位置参数 API
+- [x] FFI 加 OHOS 分支（`Platform.operatingSystem == 'ohos'` 时按名加载 .so）；.so 放 `ohos/entry/libs/arm64-v8a/`（已 gitignore，`build_ohos.sh` 重建后手动复制）
+- [x] **app 签名 hap 已在真机安装运行，首页 UI 正常**（PLR-AL50，HarmonyOS 7.0.0.102）
+- [ ] 文件选择交互未验证（uinput 点击未拉起 picker，待真机手测）
+- [ ] gal / share_plus / package_info_plus 无 OHOS fork（当前在鸿蒙上运行时缺失，不阻塞构建）
+- [ ] flutter_foreground_task vendored 为 9.2.2（主线用 11）——**vendored path 依赖对所有平台生效，合入主线前必须评估版本回退影响**
+- [ ] Rust FFI 端到端验证（完整转换流程）
+- [ ] 真机回归完整工作流（水印恢复链路）
 
 ## 0.5 Spike 结果：Rust 核心 OHOS 构建（2026-08-25 完成，Windows + DevEco Studio）
 
