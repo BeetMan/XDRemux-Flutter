@@ -26,8 +26,23 @@
 - [x] 保存图库打通（gallery_saver 走 PhotoAccessHelper，支持 .heic）——两个坑：插件必须在 `dependencies` 直接声明才进插件注册表（overrides-only 会编译过但 channel 未注册）；vendored 副本需删 `module:` 老标记 + 放宽 sdk 约束
 - [ ] gal / share_plus / package_info_plus 无 OHOS fork（当前在鸿蒙上运行时缺失，不阻塞构建）
 - [ ] flutter_foreground_task vendored 为 9.2.2（主线用 11）——**vendored path 依赖对所有平台生效，合入主线前必须评估版本回退影响**
-- [ ] Rust FFI 端到端验证（完整转换流程）
-- [ ] 真机回归完整工作流（水印恢复链路）
+- [x] Rust FFI 端到端验证（完整转换流程）
+- [x] 真机写回回归（OPPO 兼容 + 恢复原机水印，速度已优化，见下）
+
+### 性能：写回路径提速（全平台受益）
+
+计时埋点（写回报告新增 `timingsMs` 字段）定位：一次 4K 写回 ~22s，其中 x265 全图重编码占 ~15s。两个动作：
+
+1. **tile 批编码并行化**：原本串行（每 tile 独立单帧会话），改为最多 4 工作线程（`std::thread::scope`，结果按序回填，tile 0 参数集语义不变）。本机实测编码 3.6s→1.6s
+2. **写回光栅用 fast preset**：单帧静态图的编码成本在 intra 搜索，medium/fast 差异可忽略（实测提速不明显，但保留），质量与原图逐像素一致
+
+注意：tile 编码并行化在 `hevc.rs::x265_encode_tiles_inner`，对所有平台（含增益映射 tile）生效。
+
+### 鸿蒙平台差异备忘
+
+- 深色模式启动背景：`resources/dark/element/color.json` 覆盖 `start_window_background`（#121212），否则启动页白闪
+- 分享接收：图库分享 HEIC 必转 JPEG（发送方策略）；**文件管理器分享是原图**（字节级验证一致）
+- 应用内"添加文件"不受影响（本来就不转码）
 
 ## 0.5 Spike 结果：Rust 核心 OHOS 构建（2026-08-25 完成，Windows + DevEco Studio）
 
