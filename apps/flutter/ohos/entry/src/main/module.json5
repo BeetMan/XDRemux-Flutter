@@ -33,6 +33,11 @@
             "uris": [
               {
                 "scheme": "file",
+                "utd": "general.heic",
+                "maxFileSupported": 15
+              },
+              {
+                "scheme": "file",
                 "utd": "general.image",
                 "maxFileSupported": 15
               }
