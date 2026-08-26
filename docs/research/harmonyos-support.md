@@ -1,6 +1,26 @@
 # 鸿蒙（HarmonyOS）支持研究
 
-> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**Rust 核心 OHOS 构建已跑通（spike 完成）**，待 Flutter 引擎接入与真机验证。
+> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**Rust 核心 OHOS 构建已跑通；Flutter 引擎已在鸿蒙真机渲染（hello-world）**；待接入我们自己的 app。
+
+## 0.7 真机里程碑（2026-08-26，PLR-AL50 / HarmonyOS 7.0.0.102 / API 26）
+
+**Flutter hello-world 已在鸿蒙真机上运行**：签名 hap（正式包名 `io.github.beetman.xdremux`）安装成功，`aa start` 启动，Flutter Demo UI 完整渲染。
+
+关键事实：
+
+- flutter tool 能识别鸿蒙设备（`5BE0225520010754 • ohos-arm64 • API 26`），hdc 位于 `sdk/default/openharmony/toolchains/hdc.exe`
+- 商用 HarmonyOS 设备**强制签名校验**（unsigned hap 报 `code:9568320 no signature file`）；DevEco 自动签名（华为账号）是唯一现实路径，生成的 debug profile 会注册设备 UDID
+- 签名材料与包名绑定：改 bundleName 后必须在 DevEco 重新自动生成签名
+- 商用机 HarmonyOS 7 的 API 是 26（比 DevEco 6.1.1 自带 SDK 的 API 24 还新）；oh-3.44.9-dev 的嵌入层目标 API 26，与真机代际吻合——后续可以重新评估 3.44 线
+- 远程操控：`hdc shell power-shell wakeup` 唤醒；`aa start -b <bundle> -a EntryAbility` 启动；`snapshot_display -f ...jpeg` 截屏（注意只接受 .jpeg 后缀；Git Bash 要 `MSYS_NO_PATHCONV=1`）
+- 锁屏时 aa start 报 10106102，需解锁
+
+### 下一步（接入我们的 app）
+
+- [ ] pubspec 依赖适配：flutter_foreground_task 降 ^10 或换 fluttertpc 版本；其余按 §1.3 表格换 fork
+- [ ] `flutter create --platforms ohos .` 生成 ohos 目录后按 hello-world 同样的签名配置
+- [ ] Rust .so 进 hap + FFI 加载验证
+- [ ] 完整工作流真机回归
 
 ## 0.5 Spike 结果：Rust 核心 OHOS 构建（2026-08-25 完成，Windows + DevEco Studio）
 
