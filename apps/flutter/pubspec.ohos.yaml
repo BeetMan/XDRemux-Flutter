@@ -46,7 +46,7 @@ dependencies:
     path: third_party/ohos/receive_sharing_intent
 
   # System notifications on batch conversion completion (Windows + Android)
-  flutter_local_notifications: any  # OHOS fork (br_v19.5.0_ohos) reports 17.1.0; stock resolves latest elsewhere
+  flutter_local_notifications: ^19.0.0  # keep one positional-API across hosted and the OHOS fork
 
   # Android foreground service for background conversion
   # OHOS: CPF-Flutter ohos fork master (upstream ^11 requires Flutter 3.47).

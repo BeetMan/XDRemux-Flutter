@@ -461,6 +461,18 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// The CPF-Flutter receive_sharing_intent fork exposes `uri` on
+  /// SharedMediaFile; the hosted package does not. Access it dynamically so
+  /// one codebase compiles against both.
+  static String? ohosSharedUriOf(SharedMediaFile file) {
+    try {
+      final v = (file as dynamic).uri;
+      return v is String ? v : null;
+    } on NoSuchMethodError {
+      return null;
+    }
+  }
+
   /// OHOS share intake: the SharedRecord's file:// URI is not readable by
   /// dart:io; the EntryAbility bridge copies it into the app cache.
   static const _ohosShareChannel = MethodChannel('xdremux/share');
@@ -485,7 +497,7 @@ class _HomePageState extends State<HomePage> {
       // OHOS: the plugin puts the systemShare file:// URI in `uri` (path is
       // empty); copy it into the app cache via the native bridge first.
       final filePath = PlatformX.isOhos
-          ? await _resolveOhosSharedUri(file.uri ?? '')
+          ? await _resolveOhosSharedUri(ohosSharedUriOf(file) ?? '')
           : file.path;
       if (filePath == null) {
         unreadable++;

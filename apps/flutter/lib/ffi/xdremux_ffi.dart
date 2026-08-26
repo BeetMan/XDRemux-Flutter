@@ -123,12 +123,27 @@ class XdRemuxFFI {
   static ffi.DynamicLibrary get _lib {
     if (Platform.isAndroid) {
       return ffi.DynamicLibrary.open('libxdremux_core.so');
+    } else if (_isOhos) {
+      // OHOS (CPF-Flutter fork): the .so is packaged in entry/libs/arm64-v8a
+      // and loaded by name like Android's jniLibs.
+      return ffi.DynamicLibrary.open('libxdremux_core.so');
     } else if (Platform.isIOS) {
       return ffi.DynamicLibrary.process();
     } else if (Platform.isWindows) {
       return _openWindows();
     } else {
       return _openMacOS();
+    }
+  }
+
+  /// True on the CPF-Flutter OpenHarmony fork (dart:io reports "ohos").
+  /// Platform.isOhos only exists in that fork's patched dart:io; on stock
+  /// Flutter this getter does not exist, so probe via operatingSystem.
+  static bool get _isOhos {
+    try {
+      return Platform.operatingSystem == 'ohos';
+    } catch (_) {
+      return false;
     }
   }
 

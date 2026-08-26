@@ -36,7 +36,7 @@ dependencies:
   receive_sharing_intent: 1.9.0
 
   # System notifications on batch conversion completion (Windows + Android)
-  flutter_local_notifications: ^20.1.0
+  flutter_local_notifications: ^19.0.0  # v20 switched to named-only params; stay on v19 (positional) so the OHOS fork (19.5.0) and hosted builds share one API
 
   # Android foreground service for background conversion
   flutter_foreground_task: ^11.0.0

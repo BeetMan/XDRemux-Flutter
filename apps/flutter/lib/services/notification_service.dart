@@ -32,7 +32,7 @@ class NotificationService {
         ),
       );
       final ok = await _plugin.initialize(
-        settings: settings,
+        settings,
         // Tapping the notification brings the app forward (Android) or
         // focuses/launches it (Windows toast activation). No deep link needed.
         onDidReceiveNotificationResponse: (_) {},
@@ -62,10 +62,10 @@ class NotificationService {
     if (failed > 0) body.write('，失败 $failed 个');
     try {
       await _plugin.show(
-        id: 0,
-        title: 'XDRemux 转换完成',
-        body: body.toString(),
-        notificationDetails: const NotificationDetails(
+        0,
+        'XDRemux 转换完成',
+        body.toString(),
+        const NotificationDetails(
           android: AndroidNotificationDetails(
             'conversion',
             '转换完成',
