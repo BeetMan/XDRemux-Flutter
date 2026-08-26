@@ -11,6 +11,7 @@ import 'services/file_action_service.dart';
 import 'services/drop_file_service.dart';
 import 'services/picked_file_resolver.dart';
 import 'services/xdremux_service.dart';
+import 'platform_x.dart';
 
 /// Dedicated Apple/OPPO round-trip workflow.
 ///
@@ -256,14 +257,14 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     setState(() {
       _status = destination == null
           ? '保存已取消或失败'
-          : (Platform.isAndroid || Platform.isIOS)
+          : PlatformX.isMobile
           ? '已保存到照片图库'
           : '已保存：${_fileLabel(destination)}';
     });
   }
 
   Widget _fileActions(String path) {
-    final mobile = Platform.isAndroid || Platform.isIOS;
+    final mobile = PlatformX.isMobile;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -307,13 +308,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       Platform.isMacOS ||
       Platform.isIOS ||
       Platform.isWindows ||
-      Platform.isAndroid;
+      Platform.isAndroid ||
+      PlatformX.isOhos;
 
   bool get _canFinalizeApple =>
       Platform.isMacOS ||
       Platform.isIOS ||
       Platform.isWindows ||
-      Platform.isAndroid;
+      Platform.isAndroid ||
+      PlatformX.isOhos;
 
   String get _outputModeHelp {
     if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&

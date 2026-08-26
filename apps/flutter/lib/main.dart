@@ -26,6 +26,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/conversion_backend.dart';
+import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
@@ -2283,15 +2284,16 @@ class _HomePageState extends State<HomePage> {
       if (Platform.isMacOS ||
           Platform.isIOS ||
           Platform.isWindows ||
-          Platform.isAndroid)
+          Platform.isAndroid ||
+          PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
           tooltip: '一帧影像，动用两台手机',
           onPressed: _openAppleOppoWorkflow,
         ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
-      // iOS 沙盒下都不可用。
-      if (!Platform.isAndroid && !Platform.isIOS)
+      // iOS/OHOS 沙盒下都不可用。
+      if (!Platform.isAndroid && !Platform.isIOS && !PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.folder_copy_outlined),
           tooltip: '按拍摄模式整理',

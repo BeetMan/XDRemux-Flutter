@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
-import 'package:gallery_saver/gallery_saver.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -16,6 +15,12 @@ class FileActionService {
 
   static const _nativeShareChannel = MethodChannel('xdremux/native-share');
 
+  // OHOS-only channels registered by the vendored gallery_saver/share_extend
+  // forks (invoked by name so stock platforms never import those packages).
+  static const _ohosGalleryChannel = MethodChannel('gallery_saver');
+  static const _ohosShareChannel =
+      MethodChannel('com.zt.shareextend/share_extend');
+
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
   /// On Android this inserts the file into MediaStore (DCIM or Pictures).
@@ -27,11 +32,13 @@ class FileActionService {
     try {
       if (!File(filePath).existsSync()) return false;
       if (_isOhos) {
-        // OHOS: PhotoAccessHelper via gallery_saver (handles .heic).
-        final ok = await GallerySaver.saveImage(
-          filePath,
-          albumName: album ?? 'XDRemux',
-        );
+        // OHOS: PhotoAccessHelper via the gallery_saver fork's channel
+        // (handles .heic).
+        final ok = await _ohosGalleryChannel.invokeMethod<bool>('saveImage', {
+          'path': filePath,
+          'albumName': album ?? 'XDRemux',
+          'toDcim': false,
+        });
         return ok ?? false;
       }
       // gal handles Android MediaStore insertion and iOS PHPhotoLibrary.
@@ -82,6 +89,15 @@ class FileActionService {
             ? (lower.endsWith('.heif') ? 'image/heif' : 'image/heic')
             : null,
       );
+      if (_isOhos) {
+        // share_plus has no OHOS implementation; the share_extend fork
+        // registers this channel (system share sheet with file paths).
+        await _ohosShareChannel.invokeMethod<void>('share', {
+          'list': [filePath],
+          'type': isHeic ? 'image' : 'file',
+        });
+        return;
+      }
       await Share.shareXFiles([xFile]);
     } catch (e) {
       print('shareFile error: $e');
@@ -96,7 +112,7 @@ class FileActionService {
   }) async {
     try {
       if (!File(filePath).existsSync()) return null;
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (Platform.isAndroid || Platform.isIOS || _isOhos) {
         final saved = await saveToGallery(filePath);
         return saved ? filePath : null;
       }
