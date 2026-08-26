@@ -21,7 +21,7 @@ dependencies:
   path_provider: ^2.1.0
 
   # Permissions on Android/iOS
-  permission_handler: ^11.0.0
+  permission_handler: any  # OHOS fork reports 12.0.1
 
   # Persistent user settings
   shared_preferences: ^2.2.0
@@ -33,13 +33,17 @@ dependencies:
   share_plus: ^10.0.0
 
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
-  receive_sharing_intent: 1.9.0
+  # OHOS: pinned to the CPF-Flutter ohos fork (br_v1.8.1_ohos).
+  receive_sharing_intent:
+    path: third_party/ohos/receive_sharing_intent
 
   # System notifications on batch conversion completion (Windows + Android)
-  flutter_local_notifications: ^20.1.0
+  flutter_local_notifications: any  # OHOS fork (br_v19.5.0_ohos) reports 17.1.0; stock resolves latest elsewhere
 
   # Android foreground service for background conversion
-  flutter_foreground_task: ^11.0.0
+  # OHOS: CPF-Flutter ohos fork master (upstream ^11 requires Flutter 3.47).
+  flutter_foreground_task:
+    path: third_party/ohos/flutter_foreground_task
 
   # Open files with system default app
   open_filex: ^4.5.0
@@ -54,13 +58,38 @@ dependencies:
   package_info_plus: ^9.0.1
 
   # Open release page in browser
-  url_launcher: ^6.3.2
+  url_launcher: any  # OHOS fork reports 6.1.12
 
   # Windows system tray (minimize to tray during long batches)
   tray_manager: ^0.5.3
 
   # Win32 ShowWindow/FindWindow for tray hide/restore (Windows)
   win32: ^5.15.0
+
+# OHOS (OpenHarmony NEXT): CPF-Flutter community forks add the ohos platform
+# implementation. Stock versions of these plugins either lack ohos support or
+# require a newer Flutter SDK than the ohos fork provides.
+dependency_overrides:
+  path_provider:
+    path: third_party/ohos/path_provider
+  shared_preferences:
+    path: third_party/ohos/shared_preferences
+  url_launcher:
+    path: third_party/ohos/url_launcher
+  file_picker:
+    path: third_party/ohos/file_picker
+  flutter_local_notifications:
+    path: third_party/ohos/flutter_local_notifications
+  open_filex:
+    path: third_party/ohos/open_filex
+  permission_handler:
+    path: third_party/ohos/permission_handler/permission_handler
+  path_provider_ohos:
+    path: third_party/ohos/path_provider_ohos
+  shared_preferences_ohos:
+    path: third_party/ohos/shared_preferences_ohos
+  url_launcher_ohos:
+    path: third_party/ohos/url_launcher_ohos
 
 dev_dependencies:
   flutter_test:

@@ -111,3 +111,8 @@ apps/flutter/ios/Flutter/ephemeral/
 # SwiftPM build artifacts (iOS SwiftBackend vendored package)
 apps/flutter/ios/SwiftBackend/.swiftpm/
 apps/flutter/ios/SwiftBackend/.build/
+
+# OHOS research branch: vendored plugin forks (regenerate via tools/ohos/fetch_plugins.sh)
+apps/flutter/third_party/ohos/
+# Rust cdylib built for OHOS (regenerate via xdremux/rust/build_ohos.sh)
+apps/flutter/ohos/entry/libs/
