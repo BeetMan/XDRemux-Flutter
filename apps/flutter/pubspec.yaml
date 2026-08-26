@@ -84,6 +84,8 @@ dependency_overrides:
     path: third_party/ohos/open_filex
   permission_handler:
     path: third_party/ohos/permission_handler/permission_handler
+  gallery_saver:
+    path: third_party/ohos/gallery_saver
   path_provider_ohos:
     path: third_party/ohos/path_provider_ohos
   shared_preferences_ohos:

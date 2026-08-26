@@ -231,6 +231,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.3.3"
+  gallery_saver:
+    dependency: "direct overridden"
+    description:
+      path: "third_party/ohos/gallery_saver"
+      relative: true
+    source: path
+    version: "2.3.2"
   get_it:
     dependency: transitive
     description:

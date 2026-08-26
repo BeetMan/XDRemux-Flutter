@@ -3,12 +3,16 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
+import 'package:gallery_saver/gallery_saver.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 /// File actions: save to gallery, share, open with system app.
 class FileActionService {
   FileActionService._();
+
+  /// True on the CPF-Flutter OpenHarmony fork (dart:io reports "ohos").
+  static bool get _isOhos => Platform.operatingSystem == 'ohos';
 
   static const _nativeShareChannel = MethodChannel('xdremux/native-share');
 
@@ -22,6 +26,14 @@ class FileActionService {
   static Future<bool> saveToGallery(String filePath, {String? album}) async {
     try {
       if (!File(filePath).existsSync()) return false;
+      if (_isOhos) {
+        // OHOS: PhotoAccessHelper via gallery_saver (handles .heic).
+        final ok = await GallerySaver.saveImage(
+          filePath,
+          albumName: album ?? 'XDRemux',
+        );
+        return ok ?? false;
+      }
       // gal handles Android MediaStore insertion and iOS PHPhotoLibrary.
       await Gal.putImage(filePath, album: album ?? 'XDRemux');
       return true;
@@ -33,6 +45,8 @@ class FileActionService {
 
   /// Check if we have permission to save to gallery.
   static Future<bool> hasGalleryPermission() async {
+    // OHOS gallery_saver drives the system save flow; no app permission.
+    if (_isOhos) return true;
     try {
       return await Gal.hasAccess(toAlbum: true);
     } catch (_) {
@@ -42,6 +56,7 @@ class FileActionService {
 
   /// Request permission to save to gallery.
   static Future<bool> requestGalleryPermission() async {
+    if (_isOhos) return true;
     try {
       return await Gal.requestAccess(toAlbum: true);
     } catch (_) {

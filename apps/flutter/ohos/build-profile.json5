@@ -1,7 +1,7 @@
 
 {
   "app": {
-    "signingConfigs": [],  # fill via DevEco: Project Structure -> Signing Configs -> Automatically generate signature
+    "signingConfigs": [],
     "products": [
       {
         "name": "default",
