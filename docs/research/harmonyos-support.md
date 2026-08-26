@@ -22,7 +22,8 @@
 - [x] notification_service 适配 flutter_local_notifications v19 位置参数 API
 - [x] FFI 加 OHOS 分支（`Platform.operatingSystem == 'ohos'` 时按名加载 .so）；.so 放 `ohos/entry/libs/arm64-v8a/`（已 gitignore，`build_ohos.sh` 重建后手动复制）
 - [x] **app 签名 hap 已在真机安装运行，首页 UI 正常**（PLR-AL50，HarmonyOS 7.0.0.102）
-- [ ] 文件选择交互未验证（uinput 点击未拉起 picker，待真机手测）
+- [x] 文件选择交互验证通过（fluttertpc_file_picker 鸿蒙实现可用）
+- [x] 保存图库打通（gallery_saver 走 PhotoAccessHelper，支持 .heic）——两个坑：插件必须在 `dependencies` 直接声明才进插件注册表（overrides-only 会编译过但 channel 未注册）；vendored 副本需删 `module:` 老标记 + 放宽 sdk 约束
 - [ ] gal / share_plus / package_info_plus 无 OHOS fork（当前在鸿蒙上运行时缺失，不阻塞构建）
 - [ ] flutter_foreground_task vendored 为 9.2.2（主线用 11）——**vendored path 依赖对所有平台生效，合入主线前必须评估版本回退影响**
 - [ ] Rust FFI 端到端验证（完整转换流程）
