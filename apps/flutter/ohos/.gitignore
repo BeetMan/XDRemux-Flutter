@@ -1,0 +1,12 @@
+# OHOS build artifacts
+**/build/
+**/.hvigor/
+**/.cxx/
+**/oh_modules/
+**/.test/
+local.properties
+.obfuscate/
+oh-package-lock.json5
+**/.arkui-x/
+node_modules/
+libs/

@@ -26,6 +26,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/conversion_backend.dart';
+import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
@@ -446,7 +447,7 @@ class _HomePageState extends State<HomePage> {
   /// container. Either way incoming paths are plain local files the Rust
   /// FFI layer can read.
   void _initShareIntake() {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (!Platform.isAndroid && !Platform.isIOS && !PlatformX.isOhos) return;
     _shareSubscription = ReceiveSharingIntent.instance.getMediaStream().listen(
       (files) => _handleSharedMedia(files),
       onError: (Object e) =>
@@ -460,30 +461,66 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// The CPF-Flutter receive_sharing_intent fork exposes `uri` on
+  /// SharedMediaFile; the hosted package does not. Access it dynamically so
+  /// one codebase compiles against both.
+  static String? ohosSharedUriOf(SharedMediaFile file) {
+    try {
+      final v = (file as dynamic).uri;
+      return v is String ? v : null;
+    } on NoSuchMethodError {
+      return null;
+    }
+  }
+
+  /// OHOS share intake: the SharedRecord's file:// URI is not readable by
+  /// dart:io; the EntryAbility bridge copies it into the app cache.
+  static const _ohosShareChannel = MethodChannel('xdremux/share');
+
+  Future<String?> _resolveOhosSharedUri(String uri) async {
+    if (uri.isEmpty) return null;
+    try {
+      return await _ohosShareChannel
+          .invokeMethod<String>('readSharedFile', {'uri': uri});
+    } catch (e) {
+      debugPrint('[XDRemux][share] ohos uri resolve failed: $e ($uri)');
+      return null;
+    }
+  }
+
   Future<void> _handleSharedMedia(List<SharedMediaFile> files) async {
     if (files.isEmpty || !mounted) return;
     final paths = <String>[];
     int ignored = 0;
     int unreadable = 0;
     for (final file in files) {
-      if (!isSupportedInputPath(file.path)) {
+      // OHOS: the plugin puts the systemShare file:// URI in `uri` (path is
+      // empty); copy it into the app cache via the native bridge first.
+      final filePath = PlatformX.isOhos
+          ? await _resolveOhosSharedUri(ohosSharedUriOf(file) ?? '')
+          : file.path;
+      if (filePath == null) {
+        unreadable++;
+        continue;
+      }
+      if (!isSupportedInputPath(filePath)) {
         ignored++;
         continue;
       }
       try {
-        final entity = await File(file.path).stat();
+        final entity = await File(filePath).stat();
         if (entity.type == FileSystemEntityType.file && entity.size > 0) {
-          paths.add(file.path);
+          paths.add(filePath);
         } else {
           unreadable++;
           debugPrint(
-            '[XDRemux][share] not a readable file: ${file.path} '
+            '[XDRemux][share] not a readable file: $filePath '
             '(type=${entity.type}, size=${entity.size})',
           );
         }
       } catch (e) {
         unreadable++;
-        debugPrint('[XDRemux][share] cannot read ${file.path}: $e');
+        debugPrint('[XDRemux][share] cannot read $filePath: $e');
       }
     }
     await _enqueuePaths(paths, verb: '接收', ignored: ignored + unreadable);
@@ -2283,15 +2320,16 @@ class _HomePageState extends State<HomePage> {
       if (Platform.isMacOS ||
           Platform.isIOS ||
           Platform.isWindows ||
-          Platform.isAndroid)
+          Platform.isAndroid ||
+          PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
           tooltip: '一帧影像，动用两台手机',
           onPressed: _openAppleOppoWorkflow,
         ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
-      // iOS 沙盒下都不可用。
-      if (!Platform.isAndroid && !Platform.isIOS)
+      // iOS/OHOS 沙盒下都不可用。
+      if (!Platform.isAndroid && !Platform.isIOS && !PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.folder_copy_outlined),
           tooltip: '按拍摄模式整理',

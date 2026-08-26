@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "XDRemux 主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "ProXDR HEIC 转换工具"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "XDRemux"
+    }
+  ]
+}

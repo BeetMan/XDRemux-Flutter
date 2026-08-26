@@ -175,6 +175,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
         let output_path = unsafe { CStr::from_ptr(output_path) }
             .to_str()
             .map_err(|_| "output path is not valid UTF-8".to_string())?;
+        let t0 = std::time::Instant::now();
         let returned = std::fs::read(returned_path)
             .map_err(|e| format!("cannot read returned photo: {e}"))?;
         if !is_heif_container(&returned) {
@@ -203,11 +204,14 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     let mut source = container::strip_oppo_tail(&returned);
                     let has_watermark = container::has_watermark_entries(&donor);
                     if restore_watermark != 0 && has_watermark {
+                        let t = std::time::Instant::now();
                         source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
+                        watermark_codec::record_phase("restore_canvas", t);
                     }
                     container::disable_apple_filter_recipe(&mut source);
                     let source = watermark_codec::strip_existing_gain_map_graph(&source)?;
                     let iso_path = format!("{output_path}.apple-iso-{}", std::process::id());
+                    let t = std::time::Instant::now();
                     isobmff_write::write_uhdr_iso_output(
                         &source,
                         gainmap,
@@ -220,8 +224,11 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     let base = std::fs::read(&iso_path)
                         .map_err(|e| format!("read Apple ISO intermediate: {e}"))?;
                     let _ = std::fs::remove_file(&iso_path);
+                    watermark_codec::record_phase("iso_write", t);
+                    let t = std::time::Instant::now();
                     let mut styled = styles_native::styles_native(&base)
                         .map_err(|e| format!("Rust Apple Styles writeback: {e}"))?;
+                    watermark_codec::record_phase("styles", t);
                     // Apple Photos return files drop the Exif item; graft the
                     // donor's Exif (incl. GPS) back onto the final output.
                     let exif_grafted = isobmff_write::graft_exif_item(&mut styled, &donor)
@@ -255,11 +262,14 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     // Restore the donor canvas before rebuilding the ISO graph.
                     // The canvas helper handles both rectangular and frame-style
                     // watermark layouts, including non-standard shapes.
+                    let t = std::time::Instant::now();
                     source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
+                    watermark_codec::record_phase("restore_canvas", t);
                 }
                 container::disable_apple_filter_recipe(&mut source);
                 let source = watermark_codec::strip_existing_gain_map_graph(&source)?;
                 let iso_path = format!("{output_path}.oppo-iso-{}", std::process::id());
+                let t = std::time::Instant::now();
                 isobmff_write::write_uhdr_iso_output(
                     &source,
                     gainmap,
@@ -269,6 +279,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     false,
                     &iso_path,
                 )?;
+                watermark_codec::record_phase("iso_write", t);
                 let mut base = std::fs::read(&iso_path)
                     .map_err(|e| format!("read OPPO ISO intermediate: {e}"))?;
                 let _ = std::fs::remove_file(&iso_path);
@@ -288,6 +299,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
         };
         // Apple mode writes a fresh Rust Styles recipe. OPPO mode intentionally
         // keeps the donor's exact camera tail instead.
+        let timings = crate::watermark_codec::take_phase_timings();
         if !is_heif_container(&output) {
             return Err("writeback output is not a readable HEIF container".into());
         }
@@ -306,6 +318,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             "watermarkMetadataPreserved": watermark_metadata,
             "requestedRasterWatermark": restore_watermark != 0,
             "restoredOppoEntries": entries,
+            "timingsMs": timings,
             "errorMessage": serde_json::Value::Null,
         }))
     })();

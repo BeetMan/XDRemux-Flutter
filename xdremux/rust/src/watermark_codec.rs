@@ -10,6 +10,33 @@ use crate::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry};
 
 const TILE_SIZE: u32 = 512;
 
+// ---------------------------------------------------------------------------
+// Phase timing (diagnostics)
+// ---------------------------------------------------------------------------
+
+use std::cell::RefCell;
+thread_local! {
+    static PHASE_TIMINGS: RefCell<Vec<(&'static str, u128)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Record a phase duration since `start`. Called from hot paths in this
+/// module and from the FFI layer for outer phases.
+pub fn record_phase(name: &'static str, start: std::time::Instant) {
+    PHASE_TIMINGS.with(|t| t.borrow_mut().push((name, start.elapsed().as_millis())));
+}
+
+/// Drain the recorded phases into a JSON object {name: ms}. The FFI report
+/// embeds this under `timingsMs`.
+pub fn take_phase_timings() -> serde_json::Value {
+    PHASE_TIMINGS.with(|t| {
+        let mut map = serde_json::Map::new();
+        for (k, v) in t.borrow_mut().drain(..) {
+            map.insert(k.into(), serde_json::Value::from(v as u64));
+        }
+        serde_json::Value::Object(map)
+    })
+}
+
 /// Remove the returned file's existing ISO gain-map rendition while keeping
 /// its primary edited image and metadata. The OPPO-compatible writer then
 /// builds the 142-byte tmap rendition from the untouched donor metadata.
@@ -463,10 +490,14 @@ pub fn restore_visible_watermark(donor: &[u8], returned: &[u8]) -> Result<Vec<u8
 /// The donor tail is attached by the caller; the returned primary ID and tmap
 /// graph must remain intact so HDR compatibility is not lost.
 pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, String> {
+    let t = std::time::Instant::now();
     let donor_image =
         heif_oxide::decode_bytes(donor).map_err(|error| format!("decode donor HEIF: {error:?}"))?;
+    record_phase("decode_donor", t);
+    let t = std::time::Instant::now();
     let returned_image = heif_oxide::decode_bytes(returned)
         .map_err(|error| format!("decode returned HEIF: {error:?}"))?;
+    record_phase("decode_returned", t);
     if donor_image.width != returned_image.width || donor_image.height != returned_image.height {
         return Err(format!(
             "donor/returned dimensions differ: {}x{} vs {}x{}",
@@ -478,6 +509,7 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
     // preserving the graph alone is not enough when the watermark is baked in.
     let donor_rgba = donor_image.to_rgba8();
     let mut returned_rgba = returned_image.to_rgba8();
+    let t = std::time::Instant::now();
     restore_watermark_canvas(
         donor,
         &donor_rgba,
@@ -485,6 +517,7 @@ pub fn restore_on_donor_graph(donor: &[u8], returned: &[u8]) -> Result<Vec<u8>, 
         returned_image.width,
         returned_image.height,
     )?;
+    record_phase("composite", t);
     let rgb: Vec<u8> = returned_rgba
         .chunks_exact(4)
         .flat_map(|pixel| pixel[..3].iter().copied())
@@ -945,8 +978,10 @@ fn encode_tiles(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<Vec<u8>>, Ve
         }
     }
     let refs: Vec<&[u8]> = padded.iter().map(Vec::as_slice).collect();
+    let t = std::time::Instant::now();
     let streams = hevc::x265_encode_tiles_oppo_sdr(&refs, TILE_SIZE, TILE_SIZE, 3, true)
         .map_err(|error| format!("encode watermark HEVC tiles: {error}"))?;
+    record_phase("x265_encode", t);
     let hvcc = streams
         .first()
         .and_then(|stream| hevc::extract_hvcc_config_with_chroma(stream, 1))

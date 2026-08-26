@@ -11,6 +11,7 @@ import 'services/file_action_service.dart';
 import 'services/drop_file_service.dart';
 import 'services/picked_file_resolver.dart';
 import 'services/xdremux_service.dart';
+import 'platform_x.dart';
 
 /// Dedicated Apple/OPPO round-trip workflow.
 ///
@@ -202,7 +203,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     if (!Platform.isMacOS &&
         !Platform.isIOS &&
         !Platform.isWindows &&
-        !Platform.isAndroid) {
+        !Platform.isAndroid &&
+        !PlatformX.isOhos) {
       _showError('当前平台不支持回传照片处理。');
       return;
     }
@@ -221,7 +223,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           onStatus: _setStatus,
         );
       } else {
-        await AppleOppoWorkflowService.writebackReturnedPhoto(
+        final report = await AppleOppoWorkflowService.writebackReturnedPhoto(
           donorPath: donor,
           returnedPath: returned,
           outputPath: output,
@@ -229,6 +231,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           restoreWatermark: _restoreWatermark,
           onStatus: _setStatus,
         );
+        // Phase timing from the Rust core (decode/composite/x265/iso/styles).
+        debugPrint('[XDRemux][writeback] timings: ${report['timingsMs']}');
       }
       if (!mounted) return;
       setState(() {
@@ -256,30 +260,34 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     setState(() {
       _status = destination == null
           ? '保存已取消或失败'
-          : (Platform.isAndroid || Platform.isIOS)
+          : PlatformX.isMobile
           ? '已保存到照片图库'
           : '已保存：${_fileLabel(destination)}';
     });
   }
 
   Widget _fileActions(String path) {
-    final mobile = Platform.isAndroid || Platform.isIOS;
+    final mobile = PlatformX.isMobile;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
-        FilledButton.icon(
-          onPressed: () => _saveFile(path),
-          icon: Icon(
-            mobile ? Icons.photo_library_outlined : Icons.save_alt_outlined,
+        // OHOS: only share is wired (system share sheet); gallery save and
+        // open-with are intentionally hidden until verified on that platform.
+        if (!PlatformX.isOhos) ...[
+          FilledButton.icon(
+            onPressed: () => _saveFile(path),
+            icon: Icon(
+              mobile ? Icons.photo_library_outlined : Icons.save_alt_outlined,
+            ),
+            label: Text(mobile ? '保存到照片' : '另存为…'),
           ),
-          label: Text(mobile ? '保存到照片' : '另存为…'),
-        ),
-        OutlinedButton.icon(
-          onPressed: () => FileActionService.openFile(path),
-          icon: const Icon(Icons.open_in_new),
-          label: const Text('打开文件'),
-        ),
+          OutlinedButton.icon(
+            onPressed: () => FileActionService.openFile(path),
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('打开文件'),
+          ),
+        ],
         OutlinedButton.icon(
           onPressed: () => FileActionService.shareFile(path),
           icon: const Icon(Icons.share_outlined),
@@ -307,13 +315,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       Platform.isMacOS ||
       Platform.isIOS ||
       Platform.isWindows ||
-      Platform.isAndroid;
+      Platform.isAndroid ||
+      PlatformX.isOhos;
 
   bool get _canFinalizeApple =>
       Platform.isMacOS ||
       Platform.isIOS ||
       Platform.isWindows ||
-      Platform.isAndroid;
+      Platform.isAndroid ||
+      PlatformX.isOhos;
 
   String get _outputModeHelp {
     if ((Platform.isIOS || Platform.isWindows || Platform.isAndroid) &&

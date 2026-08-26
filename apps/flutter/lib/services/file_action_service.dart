@@ -11,7 +11,16 @@ import 'package:share_plus/share_plus.dart';
 class FileActionService {
   FileActionService._();
 
+  /// True on the CPF-Flutter OpenHarmony fork (dart:io reports "ohos").
+  static bool get _isOhos => Platform.operatingSystem == 'ohos';
+
   static const _nativeShareChannel = MethodChannel('xdremux/native-share');
+
+  // OHOS-only channels registered by the vendored gallery_saver/share_extend
+  // forks (invoked by name so stock platforms never import those packages).
+  static const _ohosGalleryChannel = MethodChannel('gallery_saver');
+  static const _ohosShareChannel =
+      MethodChannel('com.zt.shareextend/share_extend');
 
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
@@ -23,6 +32,16 @@ class FileActionService {
   static Future<bool> saveToGallery(String filePath, {String? album}) async {
     try {
       if (!File(filePath).existsSync()) return false;
+      if (_isOhos) {
+        // OHOS: PhotoAccessHelper via the gallery_saver fork's channel
+        // (handles .heic).
+        final ok = await _ohosGalleryChannel.invokeMethod<bool>('saveImage', {
+          'path': filePath,
+          'albumName': album ?? 'XDRemux',
+          'toDcim': false,
+        });
+        return ok ?? false;
+      }
       // gal handles Android MediaStore insertion and iOS PHPhotoLibrary.
       await Gal.putImage(filePath, album: album ?? 'XDRemux');
       return true;
@@ -34,6 +53,8 @@ class FileActionService {
 
   /// Check if we have permission to save to gallery.
   static Future<bool> hasGalleryPermission() async {
+    // OHOS gallery_saver drives the system save flow; no app permission.
+    if (_isOhos) return true;
     try {
       return await Gal.hasAccess(toAlbum: true);
     } catch (_) {
@@ -43,6 +64,7 @@ class FileActionService {
 
   /// Request permission to save to gallery.
   static Future<bool> requestGalleryPermission() async {
+    if (_isOhos) return true;
     try {
       return await Gal.requestAccess(toAlbum: true);
     } catch (_) {
@@ -68,6 +90,15 @@ class FileActionService {
             ? (lower.endsWith('.heif') ? 'image/heif' : 'image/heic')
             : null,
       );
+      if (_isOhos) {
+        // share_plus has no OHOS implementation; the share_extend fork
+        // registers this channel (system share sheet with file paths).
+        await _ohosShareChannel.invokeMethod<void>('share', {
+          'list': [filePath],
+          'type': isHeic ? 'image' : 'file',
+        });
+        return;
+      }
       await Share.shareXFiles([xFile]);
     } catch (e) {
       debugPrint('shareFile error: $e');
@@ -82,7 +113,7 @@ class FileActionService {
   }) async {
     try {
       if (!File(filePath).existsSync()) return null;
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (Platform.isAndroid || Platform.isIOS || _isOhos) {
         final saved = await saveToGallery(filePath);
         return saved ? filePath : null;
       }
