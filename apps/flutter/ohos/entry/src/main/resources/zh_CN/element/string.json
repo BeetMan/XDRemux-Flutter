@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "模块描述"
+      "value": "XDRemux 主模块"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "ProXDR HEIC 转换工具"
     },
     {
       "name": "EntryAbility_label",
-      "value": "xdremux"
+      "value": "XDRemux"
     }
   ]
 }
