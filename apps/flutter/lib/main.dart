@@ -1940,7 +1940,7 @@ class _HomePageState extends State<HomePage> {
             resolvedPath.split(RegExp(r'[/\\]')).last,
           );
           debugPrint(
-            '[XDRemux][portrait] rejected ${resolvedPath}: $portraitReason',
+            '[XDRemux][portrait] rejected $resolvedPath: $portraitReason',
           );
           continue;
         }
@@ -3981,10 +3981,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   )
                                 : const Icon(Icons.open_in_new, size: 18),
                             onTap: () async {
+                              final messenger = ScaffoldMessenger.of(context);
                               final ok = await ensureAllFilesAccess();
                               if (!mounted) return;
                               setState(() {});
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              messenger.showSnackBar(
                                 SnackBar(
                                   content: Text(
                                     ok
@@ -4218,11 +4219,12 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
         '${tempDir.path}${Platform.pathSeparator}picked_files',
       );
       if (pickedDir.existsSync()) await pickedDir.delete(recursive: true);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _cacheSize = 0;
           _cleared = true;
         });
+      }
     } catch (_) {}
   }
 

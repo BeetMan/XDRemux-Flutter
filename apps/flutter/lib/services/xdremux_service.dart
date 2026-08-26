@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -373,7 +374,7 @@ class XdRemuxService {
         });
         if (bytes != null && bytes.isNotEmpty) return bytes;
       } catch (e) {
-        print('generateThumbnail native error: $e');
+        debugPrint('generateThumbnail native error: $e');
       }
       // Native render returned empty (e.g. no HEIF extension on Windows) or
       // threw — fall through to the FFI embedded-thumbnail path.
@@ -381,7 +382,7 @@ class XdRemuxService {
     try {
       return XdRemuxFFI.extractThumbnail(inputPath);
     } catch (e) {
-      print('generateThumbnail FFI error: $e');
+      debugPrint('generateThumbnail FFI error: $e');
       return null;
     }
   }

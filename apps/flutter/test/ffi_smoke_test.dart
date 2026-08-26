@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ffi/ffi.dart';
 
@@ -28,7 +29,7 @@ void main() {
     final ptr = versionFn();
     expect(ptr, isNot(nullptr));
     final ver = ptr.toDartString();
-    print('xdremux version: $ver');
+    debugPrint('xdremux version: $ver');
     final freeFn = lib.lookupFunction<
         Void Function(Pointer<Utf8>),
         void Function(Pointer<Utf8>)>('xdremux_free_string');

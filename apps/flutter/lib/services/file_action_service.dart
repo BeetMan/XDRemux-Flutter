@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
@@ -26,7 +27,7 @@ class FileActionService {
       await Gal.putImage(filePath, album: album ?? 'XDRemux');
       return true;
     } catch (e) {
-      print('saveToGallery error: $e');
+      debugPrint('saveToGallery error: $e');
       return false;
     }
   }
@@ -69,7 +70,7 @@ class FileActionService {
       );
       await Share.shareXFiles([xFile]);
     } catch (e) {
-      print('shareFile error: $e');
+      debugPrint('shareFile error: $e');
     }
   }
 
@@ -100,7 +101,7 @@ class FileActionService {
       await File(filePath).copy(normalized);
       return normalized;
     } catch (e) {
-      print('saveFile error: $e');
+      debugPrint('saveFile error: $e');
       return null;
     }
   }
@@ -128,11 +129,11 @@ class FileActionService {
             : null,
       );
       if (result.type != ResultType.done) {
-        print('openFile failed: ${result.type} ${result.message}');
+        debugPrint('openFile failed: ${result.type} ${result.message}');
       }
       return result.type == ResultType.done;
     } catch (e) {
-      print('openFile error: $e');
+      debugPrint('openFile error: $e');
       return false;
     }
   }
@@ -159,7 +160,7 @@ class FileActionService {
       await outputFile.copy(destPath);
       return destPath;
     } catch (e) {
-      print('copyToSourceDir error: $e');
+      debugPrint('copyToSourceDir error: $e');
       return null;
     }
   }
