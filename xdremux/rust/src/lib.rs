@@ -181,7 +181,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             return Err("returned photo is not a readable HEIF/HEIC container".into());
         }
 
-        let (output, watermark_metadata, entries, raster_restored) = match output_mode {
+        let (output, watermark_metadata, entries, raster_restored, exif_grafted) = match output_mode {
             0 => {
                 // Apple standard writeback deliberately creates a new Styles
                 // recipe instead of trying to preserve the flattened Photos
@@ -189,7 +189,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                 // rebuild the returned primary in the donor's ISO/UHDR graph,
                 // restore the donor's complete watermark canvas, and then
                 // append a fresh Rust-generated Apple Styles graph.
-                if restore_watermark != 0 && !original_path.is_null() {
+                if !original_path.is_null() {
                     let donor_path = unsafe { CStr::from_ptr(original_path) }
                         .to_str()
                         .map_err(|_| "original path is not valid UTF-8".to_string())?;
@@ -202,7 +202,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                         .ok_or("donor photo has no UHDR gain-map payload")?;
                     let mut source = container::strip_oppo_tail(&returned);
                     let has_watermark = container::has_watermark_entries(&donor);
-                    if has_watermark {
+                    if restore_watermark != 0 && has_watermark {
                         source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
                     }
                     container::disable_apple_filter_recipe(&mut source);
@@ -220,11 +220,15 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     let base = std::fs::read(&iso_path)
                         .map_err(|e| format!("read Apple ISO intermediate: {e}"))?;
                     let _ = std::fs::remove_file(&iso_path);
-                    let styled = styles_native::styles_native(&base)
+                    let mut styled = styles_native::styles_native(&base)
                         .map_err(|e| format!("Rust Apple Styles writeback: {e}"))?;
-                    (styled, false, Vec::new(), has_watermark)
+                    // Apple Photos return files drop the Exif item; graft the
+                    // donor's Exif (incl. GPS) back onto the final output.
+                    let exif_grafted = isobmff_write::graft_exif_item(&mut styled, &donor)
+                        .map_err(|e| format!("Exif graft: {e}"))?;
+                    (styled, false, Vec::new(), has_watermark, exif_grafted)
                 } else {
-                    (container::strip_oppo_tail(&returned), false, Vec::new(), false)
+                    (container::strip_oppo_tail(&returned), false, Vec::new(), false, false)
                 }
             }
             1 => {
@@ -268,12 +272,17 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                 let mut base = std::fs::read(&iso_path)
                     .map_err(|e| format!("read OPPO ISO intermediate: {e}"))?;
                 let _ = std::fs::remove_file(&iso_path);
+                // Graft the donor Exif (incl. GPS) before appending the camera
+                // tail: grafting shifts absolute mdat offsets, the tail is
+                // positioned at EOF afterwards.
+                let exif_grafted = isobmff_write::graft_exif_item(&mut base, &donor)
+                    .map_err(|e| format!("Exif graft: {e}"))?;
                 let tail = container::get_oppo_tail_without_display_filter_keep_local(&donor)
                     .ok_or("donor photo has no OPPO camera footer")?;
                 let names = container::tail_entry_names(&donor);
                 let has_watermark = container::has_watermark_entries(&donor);
                 base.extend_from_slice(&tail);
-                (base, has_watermark, names, false)
+                (base, has_watermark, names, false, exif_grafted)
             }
             _ => return Err("unknown returned-photo output mode".into()),
         };
@@ -293,6 +302,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             "outputMode": if output_mode == 1 { "oppo" } else { "apple" },
             "outputValid": true,
             "rasterWatermarkRestored": raster_restored,
+            "exifGrafted": exif_grafted,
             "watermarkMetadataPreserved": watermark_metadata,
             "requestedRasterWatermark": restore_watermark != 0,
             "restoredOppoEntries": entries,

@@ -1525,6 +1525,256 @@ impl OppoCompat {
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Exif grafting (writeback GPS preservation)
+// ---------------------------------------------------------------------------
+
+/// Graft the donor's Exif item payload into an already-assembled HEIC output.
+///
+/// Apple Photos return files frequently drop the Exif item entirely; the
+/// writeback paths rebuild the container from that returned source, so the
+/// final output would silently lose EXIF (including the GPS IFD) unless the
+/// untouched donor's Exif is grafted back in.
+///
+/// Behaviour:
+/// - donor has no Exif item → Ok(false), output untouched
+/// - output already has an Exif item → its iloc entry is re-pointed at the
+///   donor payload appended to mdat (the donor is capture-time ground truth;
+///   a Photos-processed Exif may have had location data stripped)
+/// - output has no Exif item → a new item (infe + iloc + cdsc→primary) is
+///   created with the donor payload appended to mdat
+///
+/// Must be called before any trailing vendor footer (e.g. the OPPO camera
+/// tail) is appended, because grafting shifts absolute mdat offsets.
+/// Returns Ok(true) when the output was modified.
+pub fn graft_exif_item(output: &mut Vec<u8>, donor: &[u8]) -> Result<bool, String> {
+    // ---- extract donor Exif payload ----
+    let donor_meta = isobmff::parse_source_meta(donor)
+        .map_err(|e| format!("donor meta parse: {e}"))?;
+    let Some(donor_exif_id) = donor_meta
+        .items
+        .iter()
+        .find(|it| it.itype == "Exif")
+        .map(|it| it.item_id)
+    else {
+        return Ok(false);
+    };
+    let donor_entry = donor_meta
+        .iloc_entries
+        .iter()
+        .find(|e| e.item_id == donor_exif_id)
+        .ok_or("donor Exif item has no iloc entry")?;
+    if donor_entry.extents.is_empty() {
+        return Ok(false);
+    }
+    let donor_top = isobmff::parse_boxes(donor, 0, donor.len());
+    let dmeta_box = donor_top
+        .iter()
+        .find(|b| &b.btype == b"meta")
+        .ok_or("donor meta box not found")?;
+    let idat_range = isobmff::parse_boxes(donor, dmeta_box.data_start + 4, dmeta_box.data_end)
+        .iter()
+        .find(|b| &b.btype == b"idat")
+        .map(|b| (b.data_start, b.data_end));
+    let mut payload = Vec::new();
+    for &(off, len) in &donor_entry.extents {
+        let start = match donor_entry.construction_method {
+            0 => off as usize,
+            1 => {
+                let (idat_start, idat_end) =
+                    idat_range.ok_or("donor Exif uses idat but no idat box found")?;
+                let s = idat_start + off as usize;
+                if s + len as usize > idat_end {
+                    return Err("donor Exif idat extent out of range".into());
+                }
+                s
+            }
+            other => return Err(format!("unsupported donor Exif construction method {other}")),
+        };
+        let end = start + len as usize;
+        if end > donor.len() {
+            return Err("donor Exif extent out of range".into());
+        }
+        payload.extend_from_slice(&donor[start..end]);
+    }
+    if payload.is_empty() {
+        return Ok(false);
+    }
+
+    // ---- parse output container ----
+    let top = isobmff::parse_boxes(output, 0, output.len());
+    let meta = top
+        .iter()
+        .find(|b| &b.btype == b"meta")
+        .ok_or("output meta box not found")?
+        .clone();
+    let mdat = top
+        .iter()
+        .find(|b| &b.btype == b"mdat")
+        .ok_or("output mdat box not found")?
+        .clone();
+    if mdat.box_start < meta.box_start + meta.size {
+        return Err("unexpected box order: mdat before meta".into());
+    }
+    if mdat.data_start - mdat.box_start != 8 {
+        return Err("extended-size mdat box is not supported for grafting".into());
+    }
+    let parsed = isobmff::parse_source_meta(output).map_err(|e| format!("output meta parse: {e}"))?;
+    let meta_kids = isobmff::parse_boxes(output, meta.data_start + 4, meta.data_end);
+    let iref_box = meta_kids.iter().find(|b| &b.btype == b"iref").cloned();
+
+    let existing_exif_id = parsed
+        .items
+        .iter()
+        .find(|it| it.itype == "Exif")
+        .map(|it| it.item_id);
+    let exif_id = match existing_exif_id {
+        Some(id) => id,
+        None => (parsed
+            .items
+            .iter()
+            .map(|it| it.item_id)
+            .max()
+            .unwrap_or(1)
+            + 1)
+        .max(2),
+    };
+    if exif_id > 0xffff {
+        return Err("no u16 item id space left for the Exif graft".into());
+    }
+
+    // ---- build updated boxes ----
+    let old_mdat_payload_len = (mdat.data_end - mdat.data_start) as u64;
+    let align_pad = ((4 - (old_mdat_payload_len % 4)) % 4) as u64;
+
+    let mut iloc = parsed.iloc_entries.clone();
+    if let Some(entry) = iloc.iter_mut().find(|e| e.item_id == exif_id) {
+        entry.construction_method = 0;
+        entry.data_reference_index = 0;
+        entry.extents = vec![(0, payload.len() as u64)]; // offset fixed below
+    } else {
+        iloc.push(IlocEntry {
+            item_id: exif_id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, payload.len() as u64)],
+        });
+    }
+
+    // iinf: unchanged when the Exif item already exists; append a new infe otherwise.
+    let new_iinf: Option<Vec<u8>> = if existing_exif_id.is_none() {
+        let mut infes: Vec<Vec<u8>> = parsed.items.iter().map(|it| it.raw_infe.clone()).collect();
+        infes.push(isobmff::make_infe_box(exif_id, "Exif", 0));
+        Some(isobmff::make_iinf_box(parsed.iinf_version, &infes))
+    } else {
+        None
+    };
+
+    // iref: unchanged when the Exif item already exists (its cdsc refs survive);
+    // otherwise add a cdsc reference from the new item to the primary.
+    let new_iref: Option<Vec<u8>> = if existing_exif_id.is_none() {
+        let mut refs = parsed.refs.clone();
+        refs.push(IrefEntry {
+            rtype: "cdsc".into(),
+            from: exif_id,
+            to: vec![parsed.primary_id],
+        });
+        let iref_version = iref_box
+            .as_ref()
+            .map(|b| output[b.data_start])
+            .unwrap_or(0);
+        Some(isobmff::make_iref_full_box(iref_version, &refs))
+    } else {
+        None
+    };
+
+    let prefix = &output[..meta.box_start];
+    let between = &output[meta.box_start + meta.size..mdat.box_start];
+    let suffix = &output[mdat.box_start + mdat.size..];
+    if !suffix.is_empty() {
+        // A trailing vendor footer may carry absolute offsets; refuse rather
+        // than corrupt it. Callers graft before appending tails.
+        return Err("output has trailing data after mdat; graft before appending tails".into());
+    }
+
+    let assemble_meta_box = |iloc_box: &[u8]| -> Vec<u8> {
+        let meta_ver = &output[meta.data_start..meta.data_start + 4];
+        let mut parts: Vec<Vec<u8>> = Vec::new();
+        let mut shown_iref = false;
+        for kid in &meta_kids {
+            match &kid.btype {
+                b"iinf" => parts.push(
+                    new_iinf
+                        .clone()
+                        .unwrap_or_else(|| output[kid.box_start..kid.box_start + kid.size].to_vec()),
+                ),
+                b"iloc" => parts.push(iloc_box.to_vec()),
+                b"iref" => {
+                    parts.push(
+                        new_iref.clone().unwrap_or_else(|| {
+                            output[kid.box_start..kid.box_start + kid.size].to_vec()
+                        }),
+                    );
+                    shown_iref = true;
+                }
+                _ => parts.push(output[kid.box_start..kid.box_start + kid.size].to_vec()),
+            }
+        }
+        if !shown_iref {
+            if let Some(iref) = &new_iref {
+                parts.push(iref.clone());
+            }
+        }
+        let mut body = meta_ver.to_vec();
+        for p in &parts {
+            body.extend_from_slice(p);
+        }
+        isobmff::make_box(b"meta", &body)
+    };
+
+    // Pass 1: placeholder offsets. make_iloc_box uses fixed 4-byte widths, so
+    // the iloc box size is stable across passes.
+    let pass1_iloc = isobmff::make_iloc_box(&iloc);
+    let meta_pass1 = assemble_meta_box(&pass1_iloc);
+    let new_mdat_data_start = prefix.len() + meta_pass1.len() + between.len() + 8;
+    let delta = new_mdat_data_start as i64 - mdat.data_start as i64;
+
+    // Pass 2: final offsets. Source cm=0 extents are absolute file offsets and
+    // shift by delta; the grafted Exif payload sits at the end of mdat.
+    for entry in &mut iloc {
+        if entry.item_id == exif_id {
+            entry.extents = vec![
+                (
+                    new_mdat_data_start as u64 + old_mdat_payload_len + align_pad,
+                    payload.len() as u64,
+                ),
+            ];
+        } else if entry.construction_method == 0 {
+            for extent in &mut entry.extents {
+                extent.0 = (extent.0 as i64 + delta) as u64;
+            }
+        }
+    }
+    let final_iloc = isobmff::make_iloc_box(&iloc);
+    let meta_final = assemble_meta_box(&final_iloc);
+    debug_assert_eq!(meta_pass1.len(), meta_final.len());
+
+    let mut new_mdat_payload =
+        Vec::with_capacity(old_mdat_payload_len as usize + align_pad as usize + payload.len());
+    new_mdat_payload.extend_from_slice(&output[mdat.data_start..mdat.data_end]);
+    new_mdat_payload.extend(std::iter::repeat(0u8).take(align_pad as usize));
+    new_mdat_payload.extend_from_slice(&payload);
+    let mdat_box = isobmff::make_box(b"mdat", &new_mdat_payload);
+
+    let mut out = Vec::with_capacity(prefix.len() + meta_final.len() + between.len() + mdat_box.len());
+    out.extend_from_slice(prefix);
+    out.extend_from_slice(&meta_final);
+    out.extend_from_slice(between);
+    out.extend_from_slice(&mdat_box);
+    *output = out;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
