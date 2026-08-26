@@ -32,6 +32,10 @@ dependencies:
   # Share files via system share sheet (ACTION_SEND)
   share_plus: ^10.0.0
 
+  # OHOS gallery save (PhotoAccessHelper) via CPF-Flutter fork
+  gallery_saver:
+    path: third_party/ohos/gallery_saver
+
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
   # OHOS: pinned to the CPF-Flutter ohos fork (br_v1.8.1_ohos).
   receive_sharing_intent:
@@ -84,8 +88,6 @@ dependency_overrides:
     path: third_party/ohos/open_filex
   permission_handler:
     path: third_party/ohos/permission_handler/permission_handler
-  gallery_saver:
-    path: third_party/ohos/gallery_saver
   path_provider_ohos:
     path: third_party/ohos/path_provider_ohos
   shared_preferences_ohos:

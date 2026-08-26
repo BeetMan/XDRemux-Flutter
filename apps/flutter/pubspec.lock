@@ -232,7 +232,7 @@ packages:
     source: hosted
     version: "2.3.3"
   gallery_saver:
-    dependency: "direct overridden"
+    dependency: "direct main"
     description:
       path: "third_party/ohos/gallery_saver"
       relative: true
