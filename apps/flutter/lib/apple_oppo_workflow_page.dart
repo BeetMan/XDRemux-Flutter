@@ -223,7 +223,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           onStatus: _setStatus,
         );
       } else {
-        await AppleOppoWorkflowService.writebackReturnedPhoto(
+        final report = await AppleOppoWorkflowService.writebackReturnedPhoto(
           donorPath: donor,
           returnedPath: returned,
           outputPath: output,
@@ -231,6 +231,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           restoreWatermark: _restoreWatermark,
           onStatus: _setStatus,
         );
+        // Phase timing from the Rust core (decode/composite/x265/iso/styles).
+        debugPrint('[XDRemux][writeback] timings: ${report['timingsMs']}');
       }
       if (!mounted) return;
       setState(() {
