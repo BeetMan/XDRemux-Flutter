@@ -80,7 +80,7 @@ jobs:
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
             # workflow_dispatch (CI debugging): no tag, use a placeholder.
             "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
-            "TAG_VERSION=ci-${{ github.sha.substring(0,7) }}" >> $env:GITHUB_ENV
+            "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
           $version = "${{ github.ref_name }}" -replace '^[vV]', ''
@@ -208,7 +208,7 @@ jobs:
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
             "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
-            "TAG_VERSION=ci-${{ github.sha.substring(0,7) }}" >> $env:GITHUB_ENV
+            "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
           $version = "${{ github.ref_name }}" -replace '^[vV]', ''
