@@ -15,7 +15,7 @@ dependencies:
   ffi: ^2.1.0
 
   # File/folder picking across platforms
-  file_picker: ^8.0.0
+  file_picker: ^12.1.1  # v12 moves to built-in Kotlin (KGP warning) and win32 v6
 
   # Standard paths (downloads, cache, etc.)
   path_provider: ^2.1.0
@@ -24,13 +24,13 @@ dependencies:
   permission_handler: ^11.0.0
 
   # Persistent user settings
-  shared_preferences: ^2.2.0
+  shared_preferences: ^2.5.0
 
   # Save images/videos to system gallery (MediaStore on Android)
   gal: ^2.3.0
 
   # Share files via system share sheet (ACTION_SEND)
-  share_plus: ^10.0.0
+  share_plus: ^13.0.0
 
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
   receive_sharing_intent: 1.9.0
@@ -51,7 +51,7 @@ dependencies:
   http: ^1.6.0
 
   # App version info for update checks
-  package_info_plus: ^9.0.1
+  package_info_plus: ^10.0.0
 
   # Open release page in browser
   url_launcher: ^6.3.2
@@ -60,7 +60,7 @@ dependencies:
   tray_manager: ^0.5.3
 
   # Win32 ShowWindow/FindWindow for tray hide/restore (Windows)
-  win32: ^5.15.0
+  win32: ^6.0.0
 
 dev_dependencies:
   flutter_test:

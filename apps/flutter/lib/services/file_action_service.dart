@@ -99,7 +99,7 @@ class FileActionService {
         });
         return;
       }
-      await Share.shareXFiles([xFile]);
+      await SharePlus.instance.share(ShareParams(files: [xFile]));
     } catch (e) {
       debugPrint('shareFile error: $e');
     }
@@ -117,20 +117,21 @@ class FileActionService {
         final saved = await saveToGallery(filePath);
         return saved ? filePath : null;
       }
-      final destination = await FilePicker.platform.saveFile(
+      // file_picker v12: saveFile takes the bytes and writes them itself.
+      var fileName = suggestedName ??
+          filePath.split(Platform.pathSeparator).last;
+      if (!fileName.toLowerCase().endsWith('.heic') &&
+          !fileName.toLowerCase().endsWith('.heif')) {
+        fileName = '$fileName.heic';
+      }
+      final destUri = await FilePicker.saveFile(
         dialogTitle: '保存 XDRemux 输出',
-        fileName: suggestedName ?? filePath.split(Platform.pathSeparator).last,
-        type: FileType.custom,
-        allowedExtensions: const <String>['heic', 'heif'],
+        fileName: fileName,
+        bytes: await File(filePath).readAsBytes(),
+        mimeType: 'image/heic',
       );
-      if (destination == null || destination.isEmpty) return null;
-      final normalized =
-          destination.toLowerCase().endsWith('.heic') ||
-              destination.toLowerCase().endsWith('.heif')
-          ? destination
-          : '$destination.heic';
-      await File(filePath).copy(normalized);
-      return normalized;
+      if (destUri == null) return null;
+      return destUri.scheme == 'file' ? destUri.toFilePath() : destUri.toString();
     } catch (e) {
       debugPrint('saveFile error: $e');
       return null;

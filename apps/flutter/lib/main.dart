@@ -36,6 +36,17 @@ bool isSupportedInputPath(String path) {
   return lower.endsWith('.heic') || lower.endsWith('.heif');
 }
 
+/// Picked file carrier that works across file_picker v12 (PlatformFile is
+/// abstract now) and our own photo-picker bridges.
+/// [readBytes] loads lazily to avoid marshalling multi-MB HEICs eagerly.
+typedef PickedItem =
+    ({
+      String name,
+      String? path,
+      Uri? uri,
+      Future<Uint8List> Function()? readBytes,
+    });
+
 void main() {
   runApp(const XdRemuxApp());
 }
@@ -625,7 +636,7 @@ class _HomePageState extends State<HomePage> {
   /// path. Some OEM document providers return readable bytes but no usable
   /// filesystem path; keep a private app-cache copy for the Rust FFI layer in
   /// that case.
-  Future<String?> _resolvePickedFile(PlatformFile file, int index) async {
+  Future<String?> _resolvePickedFile(PickedItem file, int index) async {
     // On Android, file_picker resolves content:// URIs by copying the file to
     // its own cache directory — and on OPPO/ColorOS that copy drops the EXIF
     // GPS block, so conversions lose location data. With all-files access we
@@ -654,7 +665,13 @@ class _HomePageState extends State<HomePage> {
           'using content-URI copy for ${file.name}',
         );
       }
-      final identifier = file.identifier;
+      // file_picker v12: `identifier` retired; the content/file URI is in
+      // `uri` (identifier semantics were content:// on Android).
+      final uri = file.uri;
+      final identifier = uri != null &&
+              (uri.scheme == 'content' || uri.scheme == 'file')
+          ? uri.toString()
+          : null;
       if (identifier != null &&
           (identifier.startsWith('content://') ||
               identifier.startsWith('file://'))) {
@@ -712,11 +729,11 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
-    final bytes = file.bytes;
-    if (bytes == null || bytes.isEmpty) {
+    final bytes = await (file.readBytes?.call() ?? Future.value(Uint8List(0)));
+    if (bytes.isEmpty) {
       debugPrint(
         '[XDRemux][file_picker] no usable path or bytes for '
-        '${file.name} (identifier=${file.identifier})',
+        '${file.name} (uri=${file.uri})',
       );
       return null;
     }
@@ -821,10 +838,11 @@ class _HomePageState extends State<HomePage> {
       if (paths.isEmpty) return;
       final files = paths
           .map(
-            (path) => PlatformFile(
+            (path) => (
               name: path.split('/').last,
-              size: File(path).lengthSync(),
               path: path,
+              uri: null,
+              readBytes: null,
             ),
           )
           .toList();
@@ -847,36 +865,37 @@ class _HomePageState extends State<HomePage> {
     // who need OPPO GPS preservation can enable "保留位置信息" in Settings;
     // gallery-save permission is requested only when saving an output.
 
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['heic', 'heif'],
+      // ignore: deprecated_member_use - multi-select still requires this flag
       allowMultiple: true,
-      // Keep withData off: withData: true makes file_picker read every picked
-      // file's full bytes into memory and marshal them back to Dart, which
-      // OOMs when selecting several multi-MB HEICs at once. The picked file
-      // path is available on Android in practice; _resolvePickedFile falls
-      // back to a byte cache only when a path is missing.
-      withData: false,
     );
 
-    if (result == null) {
-      debugPrint('[XDRemux][file_picker] picker returned null');
+    if (picked.isEmpty) {
+      debugPrint('[XDRemux][file_picker] picker returned nothing');
       if (mounted) setState(() => _currentFileName = '未选择文件');
       return;
     }
+    final files = picked
+        .map(
+          (file) => (
+            name: file.name,
+            path: file.path,
+            uri: file.uri,
+            readBytes: file.readAsBytes,
+          ),
+        )
+        .toList();
     debugPrint(
-      '[XDRemux][file_picker] returned ${result.files.length} file(s): '
-      '${result.files.map((file) => '${file.name}|path=${file.path}|bytes=${file.bytes?.length}|id=${file.identifier}').join('; ')}',
+      '[XDRemux][file_picker] returned ${files.length} file(s): '
+      '${files.map((file) => '${file.name}|path=${file.path}|uri=${file.uri}').join('; ')}',
     );
-    if (result.files.isEmpty) {
-      if (mounted) setState(() => _currentFileName = '文件选择器未返回文件');
-      return;
-    }
-    await _ingestPickedFiles(result.files, source: 'file_picker');
+    await _ingestPickedFiles(files, source: 'file_picker');
   }
 
   Future<void> _ingestPickedFiles(
-    List<PlatformFile> files, {
+    List<PickedItem> files, {
     required String source,
   }) async {
     if (files.isEmpty) {
@@ -885,7 +904,7 @@ class _HomePageState extends State<HomePage> {
     }
     debugPrint(
       '[XDRemux][$source] returned ${files.length} file(s): '
-      '${files.map((file) => '${file.name}|path=${file.path}|bytes=${file.bytes?.length}|id=${file.identifier}').join('; ')}',
+      '${files.map((file) => '${file.name}|path=${file.path}|uri=${file.uri}').join('; ')}',
     );
 
     final existing = _queue.map((item) => item.inputPath).toSet();
@@ -3177,7 +3196,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   }
 
   Future<void> _chooseDirectory() async {
-    final dir = await FilePicker.platform.getDirectoryPath();
+    final dir = await FilePicker.getDirectoryPath();
     if (dir != null) {
       if (mounted) {
         setState(() => _cfg.outputDirectory = dir);
@@ -3187,13 +3206,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   }
 
   Future<void> _pickWritebackPhoto({required bool donor}) async {
-    final picked = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['heic', 'heif'],
     );
-    final path = picked == null || picked.files.isEmpty
-        ? null
-        : picked.files.single.path;
+    final path = picked.isEmpty ? null : picked.single.path;
     if (path == null || !mounted) return;
     setState(() {
       if (donor) {

@@ -77,24 +77,18 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   }
 
   Future<String?> _pickPhoto() async {
-    final result = await FilePicker.platform.pickFiles(
+    // file_picker v12: static pickFile for single selection; bytes load
+    // lazily via readAsBytes().
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['heic', 'heif'],
-      allowMultiple: false,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return null;
-    final file = result.files.single;
+    if (file == null) return null;
     // Resolve via the shared picker resolver so Android prefers the original
     // file on disk (EXIF GPS intact) instead of file_picker's cache copy,
     // which OEM content providers strip of location data.
     return PickedFileResolver.resolve(
-      PickedFileInput(
-        name: file.name,
-        path: file.path,
-        bytes: file.bytes,
-        identifier: file.identifier,
-      ),
+      await PickedFileResolver.fromPlatformFile(file),
     );
   }
 

@@ -40,7 +40,7 @@ class _OrganizePageState extends State<OrganizePage> {
   static const _supportedExt = {'.heic', '.heif', '.jpg', '.jpeg'};
 
   Future<void> _pickInputDir() async {
-    final dir = await FilePicker.platform.getDirectoryPath(
+    final dir = await FilePicker.getDirectoryPath(
       dialogTitle: '选择要整理的照片目录',
     );
     if (dir == null) return;
@@ -53,7 +53,7 @@ class _OrganizePageState extends State<OrganizePage> {
   }
 
   Future<void> _pickOutputDir() async {
-    final dir = await FilePicker.platform.getDirectoryPath(
+    final dir = await FilePicker.getDirectoryPath(
       dialogTitle: '选择分类输出目录',
     );
     if (dir == null) return;

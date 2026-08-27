@@ -41,13 +41,14 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
   String _status = '选择包含 rear.depth 的 OPPO 后置人像照片。';
 
   Future<void> _pickPhotos() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['heic', 'heif'],
+      // ignore: deprecated_member_use - multi-select still requires this flag
       allowMultiple: true,
     );
-    if (result == null || !mounted) return;
-    final paths = result.files
+    if (!mounted) return;
+    final paths = result
         .map((file) => file.path)
         .whereType<String>()
         .where((path) => path.isNotEmpty)
@@ -64,7 +65,7 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
   }
 
   Future<void> _pickOutputDirectory() async {
-    final directory = await FilePicker.platform.getDirectoryPath();
+    final directory = await FilePicker.getDirectoryPath();
     if (directory == null || !mounted) return;
     setState(() {
       _outputDirectory = directory;

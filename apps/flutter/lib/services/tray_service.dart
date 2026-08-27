@@ -1,4 +1,3 @@
-import 'dart:ffi';
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
@@ -60,7 +59,7 @@ class TrayService {
   static void hideWindow() {
     if (!_initialized || _hidden) return;
     final hwnd = _findMainWindow();
-    if (hwnd != 0) {
+    if (hwnd.address != 0) {
       ShowWindow(hwnd, SW_HIDE);
       _hidden = true;
     }
@@ -70,7 +69,7 @@ class TrayService {
   static void showWindow() {
     if (!_initialized || !_hidden) return;
     final hwnd = _findMainWindow();
-    if (hwnd != 0) {
+    if (hwnd.address != 0) {
       ShowWindow(hwnd, SW_RESTORE);
       SetForegroundWindow(hwnd);
       _hidden = false;
@@ -80,10 +79,10 @@ class TrayService {
   /// The runner registers the window class FLUTTER_RUNNER_WIN32_WINDOW with
   /// the app title "XDRemux"; matching on the class name avoids colliding
   /// with any other window that happens to share the title.
-  static int _findMainWindow() {
+  static HWND _findMainWindow() {
     final className = 'FLUTTER_RUNNER_WIN32_WINDOW'.toNativeUtf16();
     try {
-      return FindWindow(className, nullptr);
+      return FindWindow(PCWSTR(className), null).value;
     } finally {
       free(className);
     }

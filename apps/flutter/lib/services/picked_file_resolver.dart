@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +19,28 @@ class PickedFileResolver {
   PickedFileResolver._();
 
   static const _importChannel = MethodChannel('xdremux/file-import');
+
+  /// Build a resolver input from a file_picker v12 PlatformFile: `uri`
+  /// replaces the retired `identifier`, and bytes load lazily only when no
+  /// filesystem path is available.
+  static Future<PickedFileInput> fromPlatformFile(PlatformFile file) async {
+    final uri = file.uri;
+    final path = file.path;
+    final identifier =
+        (uri.scheme == 'content' || uri.scheme == 'file') && path == null
+        ? uri.toString()
+        : null;
+    Uint8List? bytes;
+    if (path == null || identifier != null) {
+      bytes = await file.readAsBytes();
+    }
+    return PickedFileInput(
+      name: file.name,
+      path: path,
+      bytes: bytes,
+      identifier: identifier,
+    );
+  }
 
   /// Whether "all files access" is currently granted. Only checks; never
   /// prompts. Non-Android platforms are treated as granted.

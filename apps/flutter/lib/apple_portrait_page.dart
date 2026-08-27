@@ -49,13 +49,14 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   }
 
   Future<void> _pickPhotos() async {
-    final result = await FilePicker.platform.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['heic', 'heif'],
+      // ignore: deprecated_member_use - multi-select still requires this flag
       allowMultiple: true,
     );
-    if (result == null || !mounted) return;
-    final paths = result.files
+    if (!mounted) return;
+    final paths = files
         .map((file) => file.path)
         .whereType<String>()
         .where((path) => path.isNotEmpty)
@@ -72,7 +73,7 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
   }
 
   Future<void> _pickOutputDirectory() async {
-    final directory = await FilePicker.platform.getDirectoryPath();
+    final directory = await FilePicker.getDirectoryPath();
     if (directory == null || !mounted) return;
     setState(() {
       _outputDirectory = directory;
