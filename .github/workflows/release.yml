@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual runs for CI debugging: asset builds run, the publish job stays
+  # tag-gated so a dispatch can never cut a release.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -429,9 +432,156 @@ jobs:
           path: apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-${{ env.TAG_VERSION }}.apk
           if-no-files-found: error
 
+  macos:
+    name: macOS DMG
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-macos-${{ env.X265_TAG }}
+          restore-keys: |
+            x265-macos-${{ env.X265_TAG }}
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
+            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j4
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build Rust core
+        run: cargo build -p xdremux-core --release
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      - name: Build macOS app
+        working-directory: apps/flutter
+        run: flutter build macos --release
+
+      - name: Verify Rust dylib is bundled
+        shell: bash
+        run: |
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          if [ ! -f "$APP/Contents/Frameworks/libxdremux_core.dylib" ]; then
+            echo "dylib missing from bundle; copying explicitly"
+            mkdir -p "$APP/Contents/Frameworks"
+            cp -f target/release/libxdremux_core.dylib "$APP/Contents/Frameworks/"
+          fi
+
+      - name: Package DMG
+        shell: bash
+        run: |
+          mkdir -p apps/flutter/build/dmg
+          hdiutil create -volname XDRemux \
+            -srcfolder apps/flutter/build/macos/Build/Products/Release/XDRemux.app \
+            -ov -format UDZO \
+            "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: apps/flutter/build/dmg/XDRemux-macOS-${{ env.TAG_VERSION }}.dmg
+          if-no-files-found: error
+
+  ios:
+    name: iOS unsigned IPA
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore x265 iOS build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          key: x265-ios-${{ env.X265_TAG }}
+          restore-keys: |
+            x265-ios-${{ env.X265_TAG }}
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-apple-ios
+
+      - name: Build Rust core + x265 for iOS
+        shell: bash
+        env:
+          IPHONEOS_SDK: ${{ '' }}
+        run: |
+          # build_ios.sh hardcodes an Xcode-beta SDK path; point it at the
+          # runner's current iPhoneOS SDK.
+          export IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          bash xdremux/rust/build_ios.sh
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.5
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get
+
+      - name: Build unsigned IPA
+        working-directory: apps/flutter
+        run: flutter build ipa --release --no-codesign
+
+      - name: Rename IPA for release
+        shell: bash
+        run: |
+          mkdir -p apps/flutter/build/ios/ipa
+          IPA=$(find apps/flutter/build/ios/ipa -name '*.ipa' | head -1)
+          cp "$IPA" "apps/flutter/build/ios/ipa/XDRemux-iOS-$TAG_VERSION-unsigned.ipa"
+
+      - name: Upload iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: [windows, android]
+    # macOS/iOS are new build lines: they must not block a release, so the
+    # publish gate only requires the proven Windows + Android jobs.
+    needs: [windows, android, macos, ios]
+    if: always() && startsWith(github.ref, 'refs/tags/') && needs.windows.result == 'success' && needs.android.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -454,3 +604,5 @@ jobs:
             dist/windows-installer/XDRemux-Windows-*-Setup.exe
             dist/windows-arm64-installer/XDRemux-Windows-arm64-*-Setup.exe
             dist/android-apk/XDRemux-Android-*.apk
+            dist/macos-dmg/XDRemux-macOS-*.dmg
+            dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa
