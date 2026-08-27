@@ -565,8 +565,6 @@ jobs:
 
       - name: Build Rust core + x265 for iOS
         shell: bash
-        env:
-          IPHONEOS_SDK: ${{ '' }}
         run: |
           set -euxo pipefail
           if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
