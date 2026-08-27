@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'models/app_models.dart';
@@ -97,8 +98,26 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     );
   }
 
-  Future<void> _selectSource() async {
-    final path = await _pickPhoto();
+  /// OHOS-only gallery pick: PhotoViewPicker with the API-26 HEIC-original
+  /// declaration (preferredCompatibleMode=CURRENT), bridged natively.
+  static const _ohosGalleryChannel = MethodChannel('xdremux/gallery');
+
+  Future<String?> _pickFromGallery() async {
+    try {
+      final raw = await _ohosGalleryChannel.invokeMethod<List<dynamic>>(
+        'pickImages',
+      );
+      final paths = (raw ?? []).whereType<String>().toList();
+      if (paths.isEmpty) return null;
+      return paths.first;
+    } on PlatformException catch (e) {
+      _showError('无法打开图库：${e.message ?? e.code}');
+      return null;
+    }
+  }
+
+  Future<void> _selectSource({bool fromGallery = false}) async {
+    final path = fromGallery ? await _pickFromGallery() : await _pickPhoto();
     if (path == null || !mounted) return;
     setState(() {
       _sourcePath = path;
@@ -175,8 +194,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     }
   }
 
-  Future<void> _selectReturnedPhoto() async {
-    final path = await _pickPhoto();
+  Future<void> _selectReturnedPhoto({bool fromGallery = false}) async {
+    final path = fromGallery ? await _pickFromGallery() : await _pickPhoto();
     if (path == null || !mounted) return;
     setState(() {
       _returnedPath = path;
@@ -439,10 +458,24 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               children: [
                 _pathText(_sourcePath),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _running ? null : _selectSource,
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('选择照片'),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (PlatformX.isOhos)
+                      OutlinedButton.icon(
+                        onPressed: _running
+                            ? null
+                            : () => _selectSource(fromGallery: true),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('从图库选择'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: _running ? null : () => _selectSource(),
+                      icon: const Icon(Icons.folder_open_outlined),
+                      label: Text(PlatformX.isOhos ? '从文件选择' : '选择照片'),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -562,10 +595,24 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _running ? null : _selectReturnedPhoto,
-                  icon: const Icon(Icons.file_download_outlined),
-                  label: const Text('选择 iPhone 回传照片'),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (PlatformX.isOhos)
+                      OutlinedButton.icon(
+                        onPressed: _running
+                            ? null
+                            : () => _selectReturnedPhoto(fromGallery: true),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('从图库选择'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: _running ? null : () => _selectReturnedPhoto(),
+                      icon: const Icon(Icons.file_download_outlined),
+                      label: Text(PlatformX.isOhos ? '从文件选择' : '选择 iPhone 回传照片'),
+                    ),
+                  ],
                 ),
                 if (_returnedPath != null) ...[
                   const SizedBox(height: 10),

@@ -476,6 +476,7 @@ class _HomePageState extends State<HomePage> {
   /// OHOS share intake: the SharedRecord's file:// URI is not readable by
   /// dart:io; the EntryAbility bridge copies it into the app cache.
   static const _ohosShareChannel = MethodChannel('xdremux/share');
+  static const _ohosGalleryChannel = MethodChannel('xdremux/gallery');
 
   Future<String?> _resolveOhosSharedUri(String uri) async {
     if (uri.isEmpty) return null;
@@ -772,7 +773,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addFiles() async {
     if (!_canEditQueue) return;
-    if (Platform.isIOS) {
+    if (Platform.isIOS || PlatformX.isOhos) {
       final source = await showModalBottomSheet<_ImportSource>(
         context: context,
         useSafeArea: true,
@@ -807,9 +808,15 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addFromPhotos() async {
     try {
-      final rawPaths = await _photoPickerChannel.invokeMethod<List<dynamic>>(
-        'pickPhotos',
-      );
+      // OHOS: PhotoViewPicker bridge with API-26 HEIC-original declaration
+      // (preferredCompatibleMode=CURRENT); iOS uses the photo-picker channel.
+      final rawPaths = PlatformX.isOhos
+          ? await _ohosGalleryChannel.invokeMethod<List<dynamic>>(
+              'pickImages',
+            )
+          : await _photoPickerChannel.invokeMethod<List<dynamic>>(
+              'pickPhotos',
+            );
       final paths = (rawPaths ?? []).whereType<String>().toList();
       if (paths.isEmpty) return;
       final files = paths
@@ -2665,7 +2672,7 @@ class _HomePageState extends State<HomePage> {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 20),
-                  if (Platform.isIOS)
+                  if (Platform.isIOS || PlatformX.isOhos)
                     Row(
                       children: [
                         Expanded(
