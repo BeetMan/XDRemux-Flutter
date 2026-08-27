@@ -24,8 +24,12 @@
 - [x] **app 签名 hap 已在真机安装运行，首页 UI 正常**（PLR-AL50，HarmonyOS 7.0.0.102）
 - [x] 文件选择交互验证通过（fluttertpc_file_picker 鸿蒙实现可用）
 - [x] 保存图库打通（gallery_saver 走 PhotoAccessHelper，支持 .heic）——两个坑：插件必须在 `dependencies` 直接声明才进插件注册表（overrides-only 会编译过但 channel 未注册）；vendored 副本需删 `module:` 老标记 + 放宽 sdk 约束
-- [ ] gal / share_plus / package_info_plus 无 OHOS fork（当前在鸿蒙上运行时缺失，不阻塞构建）
-- [ ] flutter_foreground_task vendored 为 9.2.2（主线用 11）——**vendored path 依赖对所有平台生效，合入主线前必须评估版本回退影响**
+- [x] 从图库选图（PhotoViewPicker + API 26 声明返回原图）：`preferredCompatibleMode: CURRENT` + `supportedMimeType: ['image/heic']`，ArkTS 子类携带法绕过 API 24 typings（`HeicSelectOptions`/`HeicCompatCap`）
+- [x] 接收系统分享：module.json5 声明 `ohos.want.action.sendData` + `general.heic`/`general.image`；EntryAbility 原生桥拷 file:// URI 到缓存。图库分享必转 JPEG（发送方策略）；文件管理器分享是原图（字节级验证一致）
+- [x] 通知系统：鸿蒙侧直驱 fork 的 method channel（initialize/defaultIcon + requestNotificationsPermission + show）
+- [x] UI：应用名 XDRemux + 图标；主界面与工作流导入双按钮（从图库/从文件）；鸿蒙动作行只留分享；深色启动背景
+- [ ] gal / package_info_plus 无 OHOS fork（运行时缺失，不阻塞构建；分享用 share_extend 替代）
+- [x] flutter_foreground_task vendored 为 9.2.2（主线用 11）——已通过 `pubspec.ohos.yaml` 变体 + `tools/ohos/build_hap.ps1` 隔离，主线 pubspec 零影响
 - [x] Rust FFI 端到端验证（完整转换流程）
 - [x] 真机写回回归（OPPO 兼容 + 恢复原机水印，速度已优化，见下）
 
