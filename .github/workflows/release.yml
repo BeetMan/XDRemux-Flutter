@@ -77,6 +77,12 @@ jobs:
       - name: Resolve release version
         shell: pwsh
         run: |
+          if ("${{ github.ref_name }}" -notmatch '^[vV]') {
+            # workflow_dispatch (CI debugging): no tag, use a placeholder.
+            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            "TAG_VERSION=ci-${{ github.sha.substring(0,7) }}" >> $env:GITHUB_ENV
+            return
+          }
           $version = "${{ github.ref_name }}" -replace '^[vV]', ''
           # Strip a pre-release suffix (-pre.N) for the numeric checks; pubspec
           # carries the plain semver, the tag marks it pre-release.
@@ -200,6 +206,11 @@ jobs:
       - name: Resolve release version
         shell: pwsh
         run: |
+          if ("${{ github.ref_name }}" -notmatch '^[vV]') {
+            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            "TAG_VERSION=ci-${{ github.sha.substring(0,7) }}" >> $env:GITHUB_ENV
+            return
+          }
           $version = "${{ github.ref_name }}" -replace '^[vV]', ''
           $baseVersion = ($version -replace '-.*$', '')
           if ($baseVersion -notmatch '^\d+\.\d+\.\d+$') {
@@ -352,6 +363,11 @@ jobs:
       - name: Resolve release version
         shell: bash
         run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
+            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+            return 2>/dev/null || exit 0
+          fi
           version="${GITHUB_REF_NAME#v}"
           # Strip a pre-release suffix (-pre.N) for the numeric version checks;
           # pubspec carries the plain semver, the tag marks it pre-release.
@@ -451,10 +467,20 @@ jobs:
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
         run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch "$X265_TAG" \
+            https://bitbucket.org/multicoreware/x265_git.git \
+            xdremux/rust/vendor/x265
+          mkdir -p xdremux/rust/vendor/x265/include
+          cp xdremux/rust/vendor/x265/source/x265.h \
+            xdremux/rust/vendor/x265/include/x265.h
+          # macos-latest is arm64; x265's NASM assembly is x86-only.
           cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
             -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j4
+          cp xdremux/rust/vendor/x265/build_desktop/x265_config.h \
+            xdremux/rust/vendor/x265/include/x265_config.h
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -470,8 +496,13 @@ jobs:
       - name: Resolve release version
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
+            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          else
+            version="${GITHUB_REF_NAME#v}"
+            echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+          fi
 
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
@@ -537,10 +568,22 @@ jobs:
         env:
           IPHONEOS_SDK: ${{ '' }}
         run: |
+          set -euxo pipefail
+          if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
+            git clone --depth 1 --branch "$X265_TAG" \
+              https://bitbucket.org/multicoreware/x265_git.git \
+              xdremux/rust/vendor/x265
+            mkdir -p xdremux/rust/vendor/x265/include
+            cp xdremux/rust/vendor/x265/source/x265.h \
+              xdremux/rust/vendor/x265/include/x265.h
+          fi
           # build_ios.sh hardcodes an Xcode-beta SDK path; point it at the
           # runner's current iPhoneOS SDK.
           export IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           bash xdremux/rust/build_ios.sh
+          # build.rs needs x265_config.h under include/ (from any configure pass).
+          cp xdremux/rust/vendor/x265/build_ios/x265_config.h \
+            xdremux/rust/vendor/x265/include/x265_config.h
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -551,8 +594,13 @@ jobs:
       - name: Resolve release version
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+          if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
+            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          else
+            version="${GITHUB_REF_NAME#v}"
+            echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
+          fi
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
