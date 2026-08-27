@@ -1,7 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+import '../platform_x.dart';
 
 /// System notification shown when a batch conversion finishes, so the user
 /// can leave the app in the background during long batches.
@@ -18,8 +21,18 @@ class NotificationService {
 
   /// Initialize the platform plugin. Safe to call on every startup; failures
   /// (e.g. missing channel in tests) are swallowed and disable notifications.
+  // OHOS drives the vendored fork's channel directly: its Dart wrapper needs
+  // OhosInitializationSettings, which hosted flutter_local_notifications
+  // (v19, stock platforms) doesn't have.
+  static const _ohosChannel =
+      MethodChannel('dexterous.com/flutter/local_notifications');
+
   static Future<void> init() async {
     if (_initialized) return;
+    if (PlatformX.isOhos) {
+      await _initOhos();
+      return;
+    }
     if (!(Platform.isAndroid || Platform.isWindows)) return;
     try {
       const settings = InitializationSettings(
@@ -50,6 +63,19 @@ class NotificationService {
     }
   }
 
+  static Future<void> _initOhos() async {
+    try {
+      final ok = await _ohosChannel
+          .invokeMethod<bool>('initialize', {'defaultIcon': 'app_icon'});
+      _initialized = ok ?? false;
+      if (_initialized) {
+        await _ohosChannel.invokeMethod<bool>('requestNotificationsPermission');
+      }
+    } catch (e) {
+      debugPrint('[XDRemux][notify] ohos init failed, notifications disabled: $e');
+    }
+  }
+
   /// Post a "batch finished" summary notification.
   static Future<void> notifyBatchComplete({
     required int converted,
@@ -61,6 +87,14 @@ class NotificationService {
     if (skipped > 0) body.write('，跳过 $skipped 个');
     if (failed > 0) body.write('，失败 $failed 个');
     try {
+      if (PlatformX.isOhos) {
+        await _ohosChannel.invokeMethod<void>('show', {
+          'id': 0,
+          'title': 'XDRemux 转换完成',
+          'body': body.toString(),
+        });
+        return;
+      }
       await _plugin.show(
         0,
         'XDRemux 转换完成',
