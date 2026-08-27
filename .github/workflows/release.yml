@@ -243,6 +243,18 @@ jobs:
         working-directory: apps/flutter
         run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
+      # Flutter's x64-emulated SDK on windows-11-arm still writes to the x64
+      # path, but the runner.exe inside is native ARM64. Mirror it to the
+      # arm64 path the installer script expects.
+      - name: Mirror ARM64 output path
+        shell: pwsh
+        run: |
+          $src = 'apps/flutter/build/windows/x64'
+          $dst = 'apps/flutter/build/windows/arm64'
+          if ((Test-Path $src) -and -not (Test-Path $dst)) {
+            Copy-Item $src $dst -Recurse
+          }
+
       - name: Build Inno Setup installer
         shell: pwsh
         run: |
@@ -610,16 +622,22 @@ jobs:
         working-directory: apps/flutter
         run: flutter pub get
 
-      - name: Build unsigned IPA
+      - name: Build unsigned archive
         working-directory: apps/flutter
         run: flutter build ipa --release --no-codesign
 
-      - name: Rename IPA for release
+      - name: Package unsigned IPA
         shell: bash
         run: |
-          mkdir -p apps/flutter/build/ios/ipa
-          IPA=$(find apps/flutter/build/ios/ipa -name '*.ipa' | head -1)
-          cp "$IPA" "apps/flutter/build/ios/ipa/XDRemux-iOS-$TAG_VERSION-unsigned.ipa"
+          set -euxo pipefail
+          # --no-codesign skips the .ipa export, leaving an .xcarchive;
+          # wrap Products/Applications/<App>.app into Payload/ ourselves.
+          ARCHIVE="apps/flutter/build/ios/archive/Runner.xcarchive"
+          APP=$(find "$ARCHIVE/Products/Applications" -name '*.app' | head -1)
+          mkdir -p apps/flutter/build/ios/ipa/Payload
+          cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
+          cd apps/flutter/build/ios/ipa
+          zip -qry "XDRemux-iOS-$TAG_VERSION-unsigned.ipa" Payload
 
       - name: Upload iOS IPA
         uses: actions/upload-artifact@v4
