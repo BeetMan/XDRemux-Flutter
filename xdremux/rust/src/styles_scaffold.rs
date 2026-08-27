@@ -201,7 +201,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     };
     let mut appended: Vec<NewProp> = Vec::new();
     let mut next_index = std_meta.props.iter().map(|p| p.index).max().unwrap_or(0) + 1;
-    let mut add_prop = |raw: Vec<u8>, appended: &mut Vec<NewProp>, next_index: &mut u32| -> u32 {
+    let add_prop = |raw: Vec<u8>, appended: &mut Vec<NewProp>, next_index: &mut u32| -> u32 {
         let idx = *next_index;
         *next_index += 1;
         appended.push(NewProp { raw, index: idx });

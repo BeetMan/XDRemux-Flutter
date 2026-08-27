@@ -240,7 +240,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
             max_item.max(max_group_id) + 1
         });
     let mut next_id = base_id;
-    let mut fresh = |next_id: &mut u32| {
+    let fresh = |next_id: &mut u32| {
         let id = *next_id;
         *next_id += 1;
         id
@@ -499,7 +499,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
 
     // Pass 1: placeholder offsets to learn the final mdat data start.
     let mut placeholder_iloc = std_meta.iloc_entries.clone();
-    let mut zero_extents = |entries: &mut Vec<IlocEntry>| {
+    let zero_extents = |entries: &mut Vec<IlocEntry>| {
         let active_tiles: Vec<u32> = if include & 1 != 0 {
             delta_tile_ids.clone()
         } else {

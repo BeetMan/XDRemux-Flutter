@@ -1052,7 +1052,7 @@ fn attach_portrait_graph(
 
     // ---- ipma (new entries only; build_output chains them onto the source) ---
     let mut extra_ipma: Vec<IpmaEntry> = Vec::new();
-    let mut image_assocs = |ispe_idx: u32, auxc_idx: u32, hvcc_idx: u32| {
+    let image_assocs = |ispe_idx: u32, auxc_idx: u32, hvcc_idx: u32| {
         let mut a = vec![
             (ispe_idx, false),
             (pixi_mono_idx, false),

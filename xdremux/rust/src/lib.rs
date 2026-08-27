@@ -175,7 +175,6 @@ pub extern "C" fn xdremux_writeback_returned_photo(
         let output_path = unsafe { CStr::from_ptr(output_path) }
             .to_str()
             .map_err(|_| "output path is not valid UTF-8".to_string())?;
-        let t0 = std::time::Instant::now();
         let returned = std::fs::read(returned_path)
             .map_err(|e| format!("cannot read returned photo: {e}"))?;
         if !is_heif_container(&returned) {

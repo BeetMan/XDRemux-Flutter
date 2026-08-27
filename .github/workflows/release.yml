@@ -365,6 +365,7 @@ jobs:
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
             echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            echo "APP_BUILD_NUMBER=0" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
             return 2>/dev/null || exit 0
           fi
@@ -483,9 +484,7 @@ jobs:
             xdremux/rust/vendor/x265/include/x265_config.h
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -558,15 +557,15 @@ jobs:
             x265-ios-${{ env.X265_TAG }}
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: aarch64-apple-ios
+          targets: aarch64-apple-ios
 
       - name: Build Rust core + x265 for iOS
         shell: bash
         run: |
           set -euxo pipefail
+          export IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
             git clone --depth 1 --branch "$X265_TAG" \
               https://bitbucket.org/multicoreware/x265_git.git \
@@ -575,13 +574,20 @@ jobs:
             cp xdremux/rust/vendor/x265/source/x265.h \
               xdremux/rust/vendor/x265/include/x265.h
           fi
-          # build_ios.sh hardcodes an Xcode-beta SDK path; point it at the
-          # runner's current iPhoneOS SDK.
-          export IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          bash xdremux/rust/build_ios.sh
-          # build.rs needs x265_config.h under include/ (from any configure pass).
+          # build.rs needs include/x265_config.h before compiling the helper;
+          # a configure-only pass generates it without building the library.
+          cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_ios \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IPHONEOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+            -DCMAKE_BUILD_TYPE=Release
           cp xdremux/rust/vendor/x265/build_ios/x265_config.h \
             xdremux/rust/vendor/x265/include/x265_config.h
+          # build_ios.sh hardcodes an Xcode-beta SDK path; IPHONEOS_SDK points
+          # it at the runner's current iPhoneOS SDK.
+          bash xdremux/rust/build_ios.sh
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
