@@ -19,14 +19,14 @@ jobs:
         uses: openharmony-rs/setup-ohos-sdk@v1.0.1
         with:
           version: '6.1'
+          fixup-path: true
 
       - name: Show SDK layout
         run: |
           echo "sdk-path: ${{ steps.ohos-sdk.outputs.sdk-path }}"
           echo "native:   ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}"
           echo "api:      ${{ steps.ohos-sdk.outputs.api-version }}"
-          ls -la "${{ steps.ohos-sdk.outputs.sdk-path }}" || true
-          ls "${{ steps.ohos-sdk.outputs.sdk-path }}/toolchains" 2>/dev/null | head || echo "no toolchains dir"
+          find "${{ steps.ohos-sdk.outputs.sdk-path }}" -maxdepth 3 -type d | head -20 || true
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
