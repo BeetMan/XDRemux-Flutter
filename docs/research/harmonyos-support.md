@@ -1,8 +1,21 @@
 # 鸿蒙（HarmonyOS）支持研究
 
-> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**Rust 核心 OHOS 构建已跑通；Flutter 引擎已在鸿蒙真机渲染（hello-world）**；待接入我们自己的 app。
+> 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**全链路已通**——Rust 核心、CI（公开 SDK）、app 真机运行、接收分享/保存图库/工作流写回均验证通过。
 
 ## 0.7 真机里程碑（2026-08-26，PLR-AL50 / HarmonyOS 7.0.0.102 / API 26）
+
+**Flutter hello-world 已在鸿蒙真机上运行**：签名 hap（正式包名 `io.github.beetman.xdremux`）安装成功，`aa start` 启动，Flutter Demo UI 完整渲染。
+
+## 0.8 鸿蒙 CI 探针（2026-08-28，GitHub Actions Linux runner，公开 SDK）
+
+**公开 OpenHarmony SDK 上完整 hap 构建成功**。`.github/workflows/ohos-ci.yml`（workflow_dispatch）：
+
+- `openharmony-rs/setup-ohos-sdk@v1.0.1`（version: '6.1'，API 23，GitHub Releases 镜像 + 缓存），无需华为账号或自托管 SDK
+- Rust 核心：`build_ohos.sh` 平台化后 Linux 可用（系统 cmake/ninja，无 .exe）
+- hvigor 构建：镜像 SDK 到数字化 api 目录（`<root>/23/toolchains`）供 flutter 工具检测；hvigorw 由 CPF-Flutter fork 工具链携带
+- 剩余缺口：签名（CI 出未签名 hap，装机仍需本地 DevEco 重签）；HMS kit（systemShare 等）不在公开 SDK——接收分享相关代码需要 HMS，公开 SDK 环境下 ArkTS 编译若引用会失败（探针用的是纯 OpenHarmony 路径）
+
+结论：**鸿蒙 CI 技术上可行**，工具链无账号门槛；商用签名策略确定后再接入 release.yml。
 
 **Flutter hello-world 已在鸿蒙真机上运行**：签名 hap（正式包名 `io.github.beetman.xdremux`）安装成功，`aa start` 启动，Flutter Demo UI 完整渲染。
 
