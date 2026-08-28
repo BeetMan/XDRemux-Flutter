@@ -46,6 +46,9 @@ cp -r "$WORK/permission_handler/permission_handler" "$DEST/permission_handler/pe
 cp -r "$WORK/permission_handler/permission_handler_ohos" "$DEST/permission_handler/permission_handler_ohos"
 cp -r "$WORK/receive_sharing_intent" "$DEST/receive_sharing_intent"
 cp -r "$WORK/gallery_saver" "$DEST/gallery_saver"
+# The vendored fork pins http ^0.13.3; the app uses http ^1.6.0. The fork
+# only uses http for remote-URL downloads, which we never do - relax it.
+sed -i 's|http: "^0.13.3"|http: ">=0.13.3 <2.0.0"|' "$DEST/gallery_saver/pubspec.yaml"
 cp -r "$WORK/share_extend" "$DEST/share_extend"
 cp -r "$WORK/flutter_foreground_task" "$DEST/flutter_foreground_task"
 
