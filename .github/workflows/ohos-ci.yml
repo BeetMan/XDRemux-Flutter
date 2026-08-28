@@ -38,7 +38,7 @@ jobs:
           set -euxo pipefail
           # vendor/x265 is not in git; clone it (same pin as the release jobs)
           if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
-            git clone --depth 1 --branch "$X265_TAG" \
+            git clone --depth 1 --branch 4.2 \
               https://bitbucket.org/multicoreware/x265_git.git \
               xdremux/rust/vendor/x265
             mkdir -p xdremux/rust/vendor/x265/include
