@@ -71,17 +71,21 @@ jobs:
         run: bash tools/ohos/fetch_plugins.sh
 
       - name: Build unsigned hap
+        env:
+          OHOS_SDK_HOME: /home/runner/ohos-sdk-root
+          HOS_SDK_HOME: /home/runner/ohos-sdk-root
+          DEVECO_SDK_HOME: /home/runner/ohos-sdk-root
+          OHOS_NATIVE: ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}
         run: |
           set -euxo pipefail
           export PATH="$HOME/flutter-ohos/bin:$PATH"
+          # The flutter tool enumerates <OHOS_SDK_HOME>/<numeric-api>/toolchains;
+          # setup-ohos-sdk's layout is <root>/<os>/<api>/<component>, so mirror
+          # it into the numeric layout the tool expects.
+          mkdir -p /home/runner/ohos-sdk-root
+          ln -sfn "$(dirname "$OHOS_SDK_NATIVE")" /home/runner/ohos-sdk-root/23
           cd apps/flutter
           cp pubspec.ohos.yaml pubspec.yaml
           flutter pub get
-          # hvigor + ohpm + java must come from the SDK toolchains dir
-          TOOLCHAINS="${{ steps.ohos-sdk.outputs.sdk-path }}/toolchains"
-          export PATH="$TOOLCHAINS/hvigor/bin:$TOOLCHAINS/ohpm/bin:$PATH"
-          export DEVECO_SDK_HOME="${{ steps.ohos-sdk.outputs.sdk-path }}"
-          # hvigor needs java; Ubuntu runners ship Temurin
-          java -version
           cd ohos
-          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon || echo "HVIGOR_FAILED (expected on public SDK?)"
+          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon || echo "HVIGOR_FAILED (diagnostics above)"
