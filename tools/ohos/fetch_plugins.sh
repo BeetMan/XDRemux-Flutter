@@ -26,6 +26,7 @@ clone fluttertpc_flutter_local_notifications br_v19.5.0_ohos flutter_local_notif
 clone fluttertpc_open_filex br_v4.7.0_ohos open_filex &
 clone flutter_permission_handler br_v12.0.1_ohos permission_handler &
 clone fluttertpc_gallery_saver master gallery_saver &
+clone fluttertpc_share_extend master share_extend &
 clone fluttertpc_receive_sharing_intent br_v1.8.1_ohos receive_sharing_intent &
 clone fluttertpc_flutter_foreground_task master flutter_foreground_task &
 wait
@@ -45,6 +46,7 @@ cp -r "$WORK/permission_handler/permission_handler" "$DEST/permission_handler/pe
 cp -r "$WORK/permission_handler/permission_handler_ohos" "$DEST/permission_handler/permission_handler_ohos"
 cp -r "$WORK/receive_sharing_intent" "$DEST/receive_sharing_intent"
 cp -r "$WORK/gallery_saver" "$DEST/gallery_saver"
+cp -r "$WORK/share_extend" "$DEST/share_extend"
 cp -r "$WORK/flutter_foreground_task" "$DEST/flutter_foreground_task"
 
 echo "vendored OHOS plugins -> $DEST"
