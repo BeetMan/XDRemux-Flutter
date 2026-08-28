@@ -1,0 +1,78 @@
+name: OHOS CI experiment
+
+# Feasibility probe: build the OHOS hap on a Linux runner using the public
+# OpenHarmony SDK (openharmony-rs/setup-ohos-sdk). Unsigned output - signing
+# still requires DevEco/Huawei account, which CI cannot do.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ohos-hap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up OpenHarmony SDK
+        id: ohos-sdk
+        uses: openharmony-rs/setup-ohos-sdk@v1.0.1
+        with:
+          version: '6.1'
+
+      - name: Show SDK layout
+        run: |
+          echo "sdk-path: ${{ steps.ohos-sdk.outputs.sdk-path }}"
+          echo "native:   ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}"
+          echo "api:      ${{ steps.ohos-sdk.outputs.api-version }}"
+          ls -la "${{ steps.ohos-sdk.outputs.sdk-path }}" || true
+          ls "${{ steps.ohos-sdk.outputs.sdk-path }}/toolchains" 2>/dev/null | head || echo "no toolchains dir"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-ohos
+
+      - name: Build Rust core for OHOS
+        run: |
+          set -euxo pipefail
+          NATIVE="${{ steps.ohos-sdk.outputs.ohos_sdk_native }}"
+          # build_ohos.sh defaults to the DevEco layout; override via OHOS_NATIVE.
+          OHOS_NATIVE="$NATIVE" bash xdremux/rust/build_ohos.sh
+          file target/aarch64-unknown-linux-ohos/release/libxdremux_core.so || true
+
+      # --- below this line is the hvigor/ArkTS part; likely to fail on the
+      # public SDK (missing HMS kits, different toolchain). Keep going to see
+      # how far it gets. ---
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone CPF-Flutter fork
+        run: |
+          git clone --depth 1 --branch oh-3.41.9-release \
+            https://atomgit.com/CPF-Flutter/flutter_flutter.git "$HOME/flutter-ohos"
+          cd "$HOME/flutter-ohos"
+          git fetch --deepen=2000 origin oh-3.41.9-release --tags
+          export PATH="$HOME/flutter-ohos/bin:$PATH"
+          flutter --version
+
+      - name: Vendored OHOS plugins
+        run: bash tools/ohos/fetch_plugins.sh
+
+      - name: Build unsigned hap
+        run: |
+          set -euxo pipefail
+          export PATH="$HOME/flutter-ohos/bin:$PATH"
+          cd apps/flutter
+          cp pubspec.ohos.yaml pubspec.yaml
+          flutter pub get
+          # hvigor + ohpm + java must come from the SDK toolchains dir
+          TOOLCHAINS="${{ steps.ohos-sdk.outputs.sdk-path }}/toolchains"
+          export PATH="$TOOLCHAINS/hvigor/bin:$TOOLCHAINS/ohpm/bin:$PATH"
+          export DEVECO_SDK_HOME="${{ steps.ohos-sdk.outputs.sdk-path }}"
+          # hvigor needs java; Ubuntu runners ship Temurin
+          java -version
+          cd ohos
+          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon || echo "HVIGOR_FAILED (expected on public SDK?)"
