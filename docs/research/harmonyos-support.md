@@ -8,14 +8,15 @@
 
 ## 0.8 鸿蒙 CI 探针（2026-08-28，GitHub Actions Linux runner，公开 SDK）
 
-**公开 OpenHarmony SDK 上完整 hap 构建成功**。`.github/workflows/ohos-ci.yml`（workflow_dispatch）：
+**结论修正（初版写错了）**：`.github/workflows/ohos-ci.yml` 探针的多轮迭代后，真实边界是：
 
-- `openharmony-rs/setup-ohos-sdk@v1.0.1`（version: '6.1'，API 23，GitHub Releases 镜像 + 缓存），无需华为账号或自托管 SDK
-- Rust 核心：`build_ohos.sh` 平台化后 Linux 可用（系统 cmake/ninja，无 .exe）
-- hvigor 构建：镜像 SDK 到数字化 api 目录（`<root>/23/toolchains`）供 flutter 工具检测；hvigorw 由 CPF-Flutter fork 工具链携带
-- 剩余缺口：签名（CI 出未签名 hap，装机仍需本地 DevEco 重签）；HMS kit（systemShare 等）不在公开 SDK——接收分享相关代码需要 HMS，公开 SDK 环境下 ArkTS 编译若引用会失败（探针用的是纯 OpenHarmony 路径）
+- ✅ **Rust 核心在公开 SDK 上可构建**（`build_ohos.sh` Linux 化后全绿）——这是 CI 价值的确定部分
+- ✅ flutter 工具的 SDK 检测可过（sdk-pkg.json 种子）
+- ❌ **完整 hap 构建在公开 SDK 上未走通**：hvigor 工具链为 DevEco 环境设计——wrapper 的引擎引导优先符号链接 DevEco 捆绑的 hvigor（本地就是这么工作的），无 DevEco 时走 registry 下载但 wrapper 的 workspace/pnpm 机制在干净环境下装不上引擎；`flutter build hap` 路径又卡在 HmosSdk 检测（公开 SDK 无 HMS）
 
-结论：**鸿蒙 CI 技术上可行**，工具链无账号门槛；商用签名策略确定后再接入 release.yml。
+签名也仍是本地 DevEco 的事。所以鸿蒙 CI 的现实范围：**Rust 核心冒烟（.so 可构建）**。完整 hap 出包留本地 DevEco。
+
+结论：**鸿蒙 CI 可行性 = Rust 核心级可上 CI，完整 hap 需 DevEco 环境（自托管 runner 或打包容器镜像才能做）**。
 
 **Flutter hello-world 已在鸿蒙真机上运行**：签名 hap（正式包名 `io.github.beetman.xdremux`）安装成功，`aa start` 启动，Flutter Demo UI 完整渲染。
 
