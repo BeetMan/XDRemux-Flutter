@@ -1,8 +1,8 @@
 name: OHOS CI experiment
 
 # Feasibility probe: build the OHOS hap on a Linux runner using the public
-# OpenHarmony SDK (openharmony-rs/setup-ohos-sdk). Unsigned output - signing
-# still requires DevEco/Huawei account, which CI cannot do.
+# OpenHarmony SDK (openharmony-rs/setup-ohos-sdk) + hvigor from Huawei's npm
+# registry. Unsigned output - signing still requires DevEco/Huawei account.
 
 on:
   workflow_dispatch:
@@ -21,13 +21,6 @@ jobs:
           version: '6.1'
           fixup-path: true
 
-      - name: Show SDK layout
-        run: |
-          echo "sdk-path: ${{ steps.ohos-sdk.outputs.sdk-path }}"
-          echo "native:   ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}"
-          echo "api:      ${{ steps.ohos-sdk.outputs.api-version }}"
-          find "${{ steps.ohos-sdk.outputs.sdk-path }}" -maxdepth 3 -type d | head -20 || true
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -36,7 +29,6 @@ jobs:
       - name: Build Rust core for OHOS
         run: |
           set -euxo pipefail
-          # vendor/x265 is not in git; clone it (same pin as the release jobs)
           if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
             git clone --depth 1 --branch 4.2 \
               https://bitbucket.org/multicoreware/x265_git.git \
@@ -45,18 +37,9 @@ jobs:
             cp xdremux/rust/vendor/x265/source/x265.h \
               xdremux/rust/vendor/x265/include/x265.h
           fi
-          NATIVE="${{ steps.ohos-sdk.outputs.ohos_sdk_native }}"
-          # build_ohos.sh defaults to the DevEco layout; override via OHOS_NATIVE.
-          OHOS_NATIVE="$NATIVE" bash xdremux/rust/build_ohos.sh
-          file target/aarch64-unknown-linux-ohos/release/libxdremux_core.so || true
-
-      # --- below this line is the hvigor/ArkTS part; likely to fail on the
-      # public SDK (missing HMS kits, different toolchain). Keep going to see
-      # how far it gets. ---
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+          OHOS_NATIVE="${{ steps.ohos-sdk.outputs.ohos_sdk_native }}" \
+            bash xdremux/rust/build_ohos.sh
+          ls -la target/aarch64-unknown-linux-ohos/release/libxdremux_core.so
 
       - name: Clone CPF-Flutter fork
         run: |
@@ -66,6 +49,17 @@ jobs:
           git fetch --deepen=2000 origin oh-3.41.9-release --tags
           export PATH="$HOME/flutter-ohos/bin:$PATH"
           flutter --version
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install hvigor from Huawei npm registry
+        run: |
+          npm install -g @ohos/hvigor @ohos/hvigor-ohos-plugin \
+            --registry=https://repo.harmonyos.com/npm/
+          which hvigorw || npm ls -g --registry=https://repo.harmonyos.com/npm/
 
       - name: Vendored OHOS plugins
         run: bash tools/ohos/fetch_plugins.sh
@@ -83,9 +77,24 @@ jobs:
           # setup-ohos-sdk's layout is <root>/<os>/<api>/<component>, so mirror
           # it into the numeric layout the tool expects.
           mkdir -p /home/runner/ohos-sdk-root
-          ln -sfn "$(dirname "$OHOS_SDK_NATIVE")" /home/runner/ohos-sdk-root/23
+          ln -sfn "$(dirname "$OHOS_NATIVE")" /home/runner/ohos-sdk-root/23
           cd apps/flutter
           cp pubspec.ohos.yaml pubspec.yaml
           flutter pub get
+          # The ohos/package.json references the fork's flutter-hvigor-plugin
+          # via a Windows file path; repoint it at the CI clone.
           cd ohos
-          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon || echo "HVIGOR_FAILED (diagnostics above)"
+          sed -i "s|file:.*flutter_tools.\\\\hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
+          sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
+          cat package.json
+          npm install --registry=https://repo.harmonyos.com/npm/
+          # Run the build; DO NOT swallow failures.
+          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
+          find . -name "*.hap" -ls
+
+      - name: Upload hap
+        uses: actions/upload-artifact@v4
+        with:
+          name: ohos-hap-probe
+          path: apps/flutter/ohos/entry/build/default/outputs/default/*.hap
+          if-no-files-found: error
