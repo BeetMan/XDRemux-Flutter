@@ -88,8 +88,9 @@ jobs:
           sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
           cat package.json
           npm install --registry=https://repo.harmonyos.com/npm/
-          # Run the build; DO NOT swallow failures.
-          hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
+          # Run the build via the wrapper checked into the repo (DevEco's
+          # hvigorw is not on PATH in CI).
+          bash ./hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
           find . -name "*.hap" -ls
 
       - name: Upload hap
