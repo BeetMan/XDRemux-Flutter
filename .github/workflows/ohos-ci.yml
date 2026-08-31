@@ -78,6 +78,8 @@ jobs:
           # it into the numeric layout the tool expects.
           mkdir -p /home/runner/ohos-sdk-root
           ln -sfn "$(dirname "$OHOS_NATIVE")" /home/runner/ohos-sdk-root/23
+          # HmosSdk detection reads <root>/<X>/sdk-pkg.json for data.apiVersion.
+          echo '{"data":{"apiVersion":"23"}}' > /home/runner/ohos-sdk-root/23/sdk-pkg.json
           echo "== toolchains contents:"
           ls /home/runner/ohos-sdk-root/23/toolchains/ | head -20
           echo "== hdc present?"
