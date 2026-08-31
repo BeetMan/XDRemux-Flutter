@@ -78,6 +78,10 @@ jobs:
           # it into the numeric layout the tool expects.
           mkdir -p /home/runner/ohos-sdk-root
           ln -sfn "$(dirname "$OHOS_NATIVE")" /home/runner/ohos-sdk-root/23
+          echo "== toolchains contents:"
+          ls /home/runner/ohos-sdk-root/23/toolchains/ | head -20
+          echo "== hdc present?"
+          ls /home/runner/ohos-sdk-root/23/toolchains/hdc 2>&1 || echo "NO hdc in public SDK"
           cd apps/flutter
           cp pubspec.ohos.yaml pubspec.yaml
           flutter pub get
