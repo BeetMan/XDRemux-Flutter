@@ -99,9 +99,10 @@ jobs:
           echo '{"compileSdkVersion":"6.1.1(24)","hvigorVersion":"6.24.4","toolChainsVersion":"6.1.1.125"}' > .hvigor/cache/meta.json
           npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
           npm install
-          # Run the build via the wrapper checked into the repo (DevEco's
-          # hvigorw is not on PATH in CI).
-          bash ./hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
+          # Run the installed hvigor engine directly - the hvigorw wrapper's
+          # meta/workspace machinery wants a DevEco-style prior state we
+          # don't have in CI.
+          node node_modules/@ohos/hvigor/bin/hvigor.js assembleHap -p product=default -p buildMode=debug --no-daemon
           find . -name "*.hap" -ls
 
       - name: Upload hap
