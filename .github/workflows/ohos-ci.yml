@@ -93,6 +93,10 @@ jobs:
           cat package.json
           # Scope @ohos/* to Huawei's registry; everything else stays on npmjs.
           echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
+          # The hvigorw wrapper reads the last-used hvigor version from
+          # .hvigor/cache/meta.json (DevEco writes it locally); seed it.
+          mkdir -p .hvigor/cache
+          echo '{"compileSdkVersion":"6.1.1(24)","hvigorVersion":"6.24.4","toolChainsVersion":"6.1.1.125"}' > .hvigor/cache/meta.json
           npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
           npm install
           # Run the build via the wrapper checked into the repo (DevEco's
