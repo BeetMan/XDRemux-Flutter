@@ -646,114 +646,11 @@ jobs:
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
           if-no-files-found: error
 
-  ohos:
-    name: OHOS unsigned hap
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up OpenHarmony SDK
-        id: ohos-sdk
-        uses: openharmony-rs/setup-ohos-sdk@v1.0.1
-        with:
-          version: '6.1'
-          fixup-path: true
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-ohos
-
-      - name: Build Rust core for OHOS
-        run: |
-          set -euxo pipefail
-          if [ ! -f xdremux/rust/vendor/x265/source/CMakeLists.txt ]; then
-            git clone --depth 1 --branch "$X265_TAG" \
-              https://bitbucket.org/multicoreware/x265_git.git \
-              xdremux/rust/vendor/x265
-            mkdir -p xdremux/rust/vendor/x265/include
-            cp xdremux/rust/vendor/x265/source/x265.h \
-              xdremux/rust/vendor/x265/include/x265.h
-          fi
-          OHOS_NATIVE="${{ steps.ohos-sdk.outputs.ohos_sdk_native }}" \
-            bash xdremux/rust/build_ohos.sh
-
-      - name: Clone CPF-Flutter fork
-        run: |
-          git clone --depth 1 --branch oh-3.41.9-release \
-            https://atomgit.com/CPF-Flutter/flutter_flutter.git "$HOME/flutter-ohos"
-          cd "$HOME/flutter-ohos"
-          git fetch --deepen=2000 origin oh-3.41.9-release --tags
-          export PATH="$HOME/flutter-ohos/bin:$PATH"
-          flutter --version
-
-      - name: Resolve release version
-        shell: bash
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
-            echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
-          else
-            version="${GITHUB_REF_NAME#v}"
-            echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
-          fi
-
-      - name: Vendored OHOS plugins
-        run: bash tools/ohos/fetch_plugins.sh
-
-      - name: Build unsigned hap
-        env:
-          OHOS_SDK_HOME: /home/runner/ohos-sdk-root
-          HOS_SDK_HOME: /home/runner/ohos-sdk-root
-          DEVECO_SDK_HOME: /home/runner/ohos-sdk-root
-          OHOS_NATIVE: ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}
-        run: |
-          set -euxo pipefail
-          export PATH="$HOME/flutter-ohos/bin:$PATH"
-          # The flutter tool enumerates <OHOS_SDK_HOME>/<numeric-api>/toolchains;
-          # setup-ohos-sdk's layout is <root>/<os>/<api>/<component>, so mirror
-          # it into the numeric layout the tool expects.
-          mkdir -p /home/runner/ohos-sdk-root
-          ln -sfn "$(dirname "$OHOS_NATIVE")" /home/runner/ohos-sdk-root/23
-          cd apps/flutter
-          cp pubspec.ohos.yaml pubspec.yaml
-          flutter pub get
-          # flutter build hap orchestrates: project prep (plugin injection,
-          # local.properties, GeneratedPluginRegistrant) then the checked-in
-          # ohos/hvigorw wrapper. Seeds needed on a fresh runner:
-          cd ohos
-          # - HmosSdk detection reads <root>/<X>/sdk-pkg.json data.apiVersion
-          echo '{"data":{"apiVersion":"23"}}' > /home/runner/ohos-sdk-root/23/sdk-pkg.json
-          # - the wrapper installs the hvigor engine per .hvigor/cache/meta.json
-          mkdir -p .hvigor/cache
-          echo '{"compileSdkVersion":"6.1.1(24)","hvigorVersion":"6.24.4","toolChainsVersion":"6.1.1.125"}' > .hvigor/cache/meta.json
-          # - package.json's flutter-hvigor-plugin path is a Windows path
-          sed -i "s|file:.*flutter_tools.\hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
-          sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
-          echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
-          npm install
-          cd ..
-          flutter build hap --debug  # release mode requires the HMS SDK, absent from the public OpenHarmony SDK; the artifact is unsigned either way
-
-      - name: Rename hap for release
-        shell: bash
-        run: |
-          HAP=$(find apps/flutter/build/ohos/hap -name '*unsigned*.hap' -o -name '*.hap' | head -1)
-          cp "$HAP" "apps/flutter/build/ohos/hap/XDRemux-ohos-$TAG_VERSION-unsigned.hap"
-
-      - name: Upload OHOS hap
-        uses: actions/upload-artifact@v4
-        with:
-          name: ohos-hap
-          path: apps/flutter/build/ohos/hap/XDRemux-ohos-${{ env.TAG_VERSION }}-unsigned.hap
-          if-no-files-found: error
-
   publish:
     name: Publish GitHub Release
     # macOS/iOS are new build lines: they must not block a release, so the
     # publish gate only requires the proven Windows + Android jobs.
-    needs: [windows, android, macos, ios, ohos]
+    needs: [windows, android, macos, ios]
     if: always() && startsWith(github.ref, 'refs/tags/') && needs.windows.result == 'success' && needs.android.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -779,4 +676,3 @@ jobs:
             dist/android-apk/XDRemux-Android-*.apk
             dist/macos-dmg/XDRemux-macOS-*.dmg
             dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa
-            dist/ohos-hap/XDRemux-ohos-*-unsigned.hap

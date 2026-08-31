@@ -1,14 +1,20 @@
-name: OHOS CI experiment
+name: OHOS smoke (Rust core)
 
-# Feasibility probe: build the OHOS hap on a Linux runner using the public
-# OpenHarmony SDK (openharmony-rs/setup-ohos-sdk) + hvigor from Huawei's npm
-# registry. Unsigned output - signing still requires DevEco/Huawei account.
+# OHOS smoke check: build the Rust core for aarch64-unknown-linux-ohos on
+# the public OpenHarmony SDK. This is the CI-able part of the OHOS support;
+# the full hap build needs a DevEco environment (hvigor engine bootstrap is
+# DevEco-shaped) - see docs/research/harmonyos-support.md §0.8.
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'xdremux/rust/**'
+      - 'tools/ohos/**'
+      - '.github/workflows/ohos-ci.yml'
 
 jobs:
-  ohos-hap:
+  ohos-rust:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -39,78 +45,4 @@ jobs:
           fi
           OHOS_NATIVE="${{ steps.ohos-sdk.outputs.ohos_sdk_native }}" \
             bash xdremux/rust/build_ohos.sh
-          ls -la target/aarch64-unknown-linux-ohos/release/libxdremux_core.so
-
-      - name: Clone CPF-Flutter fork
-        run: |
-          git clone --depth 1 --branch oh-3.41.9-release \
-            https://atomgit.com/CPF-Flutter/flutter_flutter.git "$HOME/flutter-ohos"
-          cd "$HOME/flutter-ohos"
-          git fetch --deepen=2000 origin oh-3.41.9-release --tags
-          export PATH="$HOME/flutter-ohos/bin:$PATH"
-          flutter --version
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install hvigor from Huawei npm registry
-        run: |
-          npm install -g @ohos/hvigor @ohos/hvigor-ohos-plugin \
-            --registry=https://repo.harmonyos.com/npm/
-          which hvigorw || npm ls -g --registry=https://repo.harmonyos.com/npm/
-
-      - name: Vendored OHOS plugins
-        run: bash tools/ohos/fetch_plugins.sh
-
-      - name: Build unsigned hap
-        env:
-          OHOS_SDK_HOME: /home/runner/ohos-sdk-root
-          HOS_SDK_HOME: /home/runner/ohos-sdk-root
-          DEVECO_SDK_HOME: /home/runner/ohos-sdk-root
-          OHOS_NATIVE: ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}
-        run: |
-          set -euxo pipefail
-          export PATH="$HOME/flutter-ohos/bin:$PATH"
-          # The flutter tool enumerates <OHOS_SDK_HOME>/<numeric-api>/toolchains;
-          # setup-ohos-sdk's layout is <root>/<os>/<api>/<component>, so mirror
-          # it into the numeric layout the tool expects.
-          mkdir -p /home/runner/ohos-sdk-root
-          ln -sfn "$(dirname "$OHOS_NATIVE")" /home/runner/ohos-sdk-root/23
-          # HmosSdk detection reads <root>/<X>/sdk-pkg.json for data.apiVersion.
-          echo '{"data":{"apiVersion":"23"}}' > /home/runner/ohos-sdk-root/23/sdk-pkg.json
-          echo "== toolchains contents:"
-          ls /home/runner/ohos-sdk-root/23/toolchains/ | head -20
-          echo "== hdc present?"
-          ls /home/runner/ohos-sdk-root/23/toolchains/hdc 2>&1 || echo "NO hdc in public SDK"
-          cd apps/flutter
-          cp pubspec.ohos.yaml pubspec.yaml
-          flutter pub get
-          # The ohos/package.json references the fork's flutter-hvigor-plugin
-          # via a Windows file path; repoint it at the CI clone.
-          cd ohos
-          # package.json's flutter-hvigor-plugin path is a Windows file: path;
-          # rewrite the whole value regardless of slash style.
-          python3 -c "import json,os;p='package.json';d=json.load(open(p));d['dependencies']['flutter-hvigor-plugin']='file:'+os.environ['HOME']+'/flutter-ohos/packages/flutter_tools/hvigor';json.dump(d,open(p,'w'),indent=2)"
-          cat package.json
-          # Scope @ohos/* to Huawei's registry; everything else stays on npmjs.
-          echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
-          # The hvigorw wrapper reads the last-used hvigor version from
-          # .hvigor/cache/meta.json (DevEco writes it locally); seed it.
-          mkdir -p .hvigor/cache
-          echo '{"compileSdkVersion":"6.1.1(24)","hvigorVersion":"6.24.4","toolChainsVersion":"6.1.1.125"}' > .hvigor/cache/meta.json
-          npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
-          npm install
-          # Run the installed hvigor engine directly - the hvigorw wrapper's
-          # meta/workspace machinery wants a DevEco-style prior state we
-          # don't have in CI.
-          node node_modules/@ohos/hvigor/bin/hvigor.js assembleHap -p product=default -p buildMode=debug --no-daemon
-          find . -name "*.hap" -ls
-
-      - name: Upload hap
-        uses: actions/upload-artifact@v4
-        with:
-          name: ohos-hap-probe
-          path: apps/flutter/ohos/entry/build/default/outputs/default/*.hap
-          if-no-files-found: error
+          file target/aarch64-unknown-linux-ohos/release/libxdremux_core.so
