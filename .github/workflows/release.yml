@@ -719,7 +719,7 @@ jobs:
           cd apps/flutter
           cp pubspec.ohos.yaml pubspec.yaml
           flutter pub get
-          flutter build hap --release
+          flutter build hap --debug  # release mode requires the HarmonyOS (HMS) SDK, absent from the public OpenHarmony SDK; the artifact is unsigned either way
 
       - name: Rename hap for release
         shell: bash
