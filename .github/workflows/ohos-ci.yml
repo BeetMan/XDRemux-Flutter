@@ -87,8 +87,10 @@ jobs:
           sed -i "s|file:.*flutter_tools.\\\\hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
           sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
           cat package.json
-          npm install @ohos/hvigor @ohos/hvigor-ohos-plugin --registry=https://repo.harmonyos.com/npm/
-          npm install --registry=https://repo.harmonyos.com/npm/
+          # Scope @ohos/* to Huawei's registry; everything else stays on npmjs.
+          echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
+          npm install @ohos/hvigor @ohos/hvigor-ohos-plugin
+          npm install
           # Run the build via the wrapper checked into the repo (DevEco's
           # hvigorw is not on PATH in CI).
           bash ./hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
