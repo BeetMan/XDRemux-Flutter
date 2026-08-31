@@ -719,7 +719,22 @@ jobs:
           cd apps/flutter
           cp pubspec.ohos.yaml pubspec.yaml
           flutter pub get
-          flutter build hap --debug  # release mode requires the HarmonyOS (HMS) SDK, absent from the public OpenHarmony SDK; the artifact is unsigned either way
+          # flutter build hap orchestrates: project prep (plugin injection,
+          # local.properties, GeneratedPluginRegistrant) then the checked-in
+          # ohos/hvigorw wrapper. Seeds needed on a fresh runner:
+          cd ohos
+          # - HmosSdk detection reads <root>/<X>/sdk-pkg.json data.apiVersion
+          echo '{"data":{"apiVersion":"23"}}' > /home/runner/ohos-sdk-root/23/sdk-pkg.json
+          # - the wrapper installs the hvigor engine per .hvigor/cache/meta.json
+          mkdir -p .hvigor/cache
+          echo '{"compileSdkVersion":"6.1.1(24)","hvigorVersion":"6.24.4","toolChainsVersion":"6.1.1.125"}' > .hvigor/cache/meta.json
+          # - package.json's flutter-hvigor-plugin path is a Windows path
+          sed -i "s|file:.*flutter_tools.\hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
+          sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
+          echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
+          npm install
+          cd ..
+          flutter build hap --debug  # release mode requires the HMS SDK, absent from the public OpenHarmony SDK; the artifact is unsigned either way
 
       - name: Rename hap for release
         shell: bash
