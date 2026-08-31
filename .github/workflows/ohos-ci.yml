@@ -90,8 +90,9 @@ jobs:
           # The ohos/package.json references the fork's flutter-hvigor-plugin
           # via a Windows file path; repoint it at the CI clone.
           cd ohos
-          sed -i "s|file:.*flutter_tools.\\\\hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
-          sed -i "s|file:.*flutter_tools/hvigor|file:$HOME/flutter-ohos/packages/flutter_tools/hvigor|" package.json
+          # package.json's flutter-hvigor-plugin path is a Windows file: path;
+          # rewrite the whole value regardless of slash style.
+          python3 -c "import json,os;p='package.json';d=json.load(open(p));d['dependencies']['flutter-hvigor-plugin']='file:'+os.environ['HOME']+'/flutter-ohos/packages/flutter_tools/hvigor';json.dump(d,open(p,'w'),indent=2)"
           cat package.json
           # Scope @ohos/* to Huawei's registry; everything else stays on npmjs.
           echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> .npmrc
