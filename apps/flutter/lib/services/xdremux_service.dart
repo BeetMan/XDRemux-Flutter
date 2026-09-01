@@ -487,6 +487,7 @@ class XdRemuxService {
   static const _keyFileNameSuffix = 'fileNameSuffix';
   static const _keyCategorizeOutputByMode = 'categorizeOutputByMode';
   static const _keyHardwareEncode = 'hardwareEncode';
+  static const _keyMotionPhotoDefaultMode = 'motionPhotoDefaultMode';
 
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -526,6 +527,10 @@ class XdRemuxService {
       categorizeOutputByMode:
           prefs.getBool(_keyCategorizeOutputByMode) ?? false,
       hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? false,
+      motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyMotionPhotoDefaultMode),
+        orElse: () => MotionPhotoMode.skip,
+      ),
     );
   }
 
@@ -556,5 +561,9 @@ class XdRemuxService {
       config.categorizeOutputByMode,
     );
     await prefs.setBool(_keyHardwareEncode, config.hardwareEncode);
+    await prefs.setString(
+      _keyMotionPhotoDefaultMode,
+      config.motionPhotoDefaultMode.name,
+    );
   }
 }

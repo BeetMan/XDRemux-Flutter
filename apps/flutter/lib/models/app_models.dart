@@ -457,6 +457,9 @@ class ConversionConfig {
   bool autoSaveToGallery;
   bool hardwareEncode;
 
+  /// Default per-card handling for Motion Photos (per-card choice overrides).
+  MotionPhotoMode motionPhotoDefaultMode;
+
   ConversionConfig({
     this.language = AppLanguage.chinese,
     this.family = Family.auto,
@@ -474,6 +477,7 @@ class ConversionConfig {
     this.categorizeOutputByMode = false,
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
+    this.motionPhotoDefaultMode = MotionPhotoMode.skip,
   });
 
   /// Persist to SharedPreferences.
@@ -494,6 +498,7 @@ class ConversionConfig {
     'categorizeOutputByMode': categorizeOutputByMode,
     'autoSaveToGallery': autoSaveToGallery,
     'hardwareEncode': hardwareEncode,
+    'motionPhotoDefaultMode': motionPhotoDefaultMode.name,
   };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
@@ -533,6 +538,10 @@ class ConversionConfig {
       categorizeOutputByMode: json['categorizeOutputByMode'] as bool? ?? false,
       autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
       hardwareEncode: json['hardwareEncode'] as bool? ?? false,
+      motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
+        (e) => e.name == json['motionPhotoDefaultMode'],
+        orElse: () => MotionPhotoMode.skip,
+      ),
     );
   }
 
@@ -553,6 +562,7 @@ class ConversionConfig {
     categorizeOutputByMode: categorizeOutputByMode,
     autoSaveToGallery: autoSaveToGallery,
     hardwareEncode: hardwareEncode,
+    motionPhotoDefaultMode: motionPhotoDefaultMode,
   );
 
   /// Compute output path for a given input file.
@@ -588,6 +598,54 @@ class ConversionConfig {
 // QueueItem
 // ---------------------------------------------------------------------------
 
+/// How a Motion Photo queue item is handled at conversion time.
+enum MotionPhotoMode {
+  /// Do not convert; mark the item as skipped.
+  skip,
+
+  /// Convert the still image only (identical to a static photo).
+  still,
+
+  /// Convert the still image and also export the video stream(s) next to
+  /// the converted output.
+  stillAndVideo;
+
+  String get displayName {
+    switch (this) {
+      case MotionPhotoMode.skip:
+        return '跳过';
+      case MotionPhotoMode.still:
+        return '仅静帧';
+      case MotionPhotoMode.stillAndVideo:
+        return '静帧+视频';
+    }
+  }
+}
+
+/// Parsed Motion Photo summary attached to a queue item.
+class MotionPhotoSummary {
+  /// "androidMotionPhotoV1" | "androidHeifMotionPhotoV1" |
+  /// "legacyMicroVideoV1b" | "oppoLivePhoto"
+  final String kind;
+  final int stillBytes;
+  final int videoBytes;
+  final int streamCount;
+
+  const MotionPhotoSummary({
+    required this.kind,
+    required this.stillBytes,
+    required this.videoBytes,
+    required this.streamCount,
+  });
+
+  bool get isDualStream => streamCount >= 2;
+
+  String get videoSizeLabel {
+    final mb = videoBytes / (1024 * 1024);
+    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(videoBytes / 1024).round()}KB';
+  }
+}
+
 class QueueItem {
   final String id; // UUID string
   final String inputPath;
@@ -604,6 +662,14 @@ class QueueItem {
 
   /// "x6" or "x7" family, null when unknown.
   String? family;
+
+  /// Non-null when the input is a Motion Photo (Android V1 / MicroVideo /
+  /// HEIF mpvd / OPPO Live Photo). Filled asynchronously after ingest.
+  MotionPhotoSummary? motionPhoto;
+
+  /// Per-card handling for Motion Photos. Defaults from the configured
+  /// default policy (skip) at ingest time.
+  MotionPhotoMode motionPhotoMode;
 
   /// Backend captured when this item starts, so progress/cancellation remain
   /// tied to the request even if settings change for a later batch.
@@ -646,6 +712,8 @@ class QueueItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.motionPhoto,
+    this.motionPhotoMode = MotionPhotoMode.skip,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,

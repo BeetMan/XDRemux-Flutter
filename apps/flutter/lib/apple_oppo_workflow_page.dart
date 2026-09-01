@@ -10,6 +10,7 @@ import 'models/app_models.dart';
 import 'services/apple_oppo_workflow_service.dart';
 import 'services/file_action_service.dart';
 import 'services/drop_file_service.dart';
+import 'services/motion_photo_service.dart';
 import 'services/picked_file_resolver.dart';
 import 'services/xdremux_service.dart';
 import 'platform_x.dart';
@@ -111,14 +112,30 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   }
 
   Future<void> _selectSource({bool fromGallery = false}) async {
-    final path = fromGallery ? await _pickFromGallery() : await _pickPhoto();
+    var path = fromGallery ? await _pickFromGallery() : await _pickPhoto();
     if (path == null || !mounted) return;
+    // Motion Photo: the donor must be the still image — the watermark graph,
+    // EXIF and ProXDR metadata all live in the still byte range, and the
+    // appended video stream would only confuse downstream parsers.
+    final motion = await MotionPhotoService.inspect(path);
+    var motionNote = '';
+    if (motion != null) {
+      try {
+        path = await MotionPhotoService.extractStillToTemp(path);
+        motionNote = '（动态照片，已取静帧作为原图）';
+      } catch (e) {
+        _showError('动态照片静帧提取失败：$e');
+        return;
+      }
+    }
+    if (!mounted) return;
     setState(() {
       _sourcePath = path;
       _appleEditPath = null;
       _returnedPath = null;
       _finalPath = null;
-      _status = '已选择 ${_fileLabel(path)}。它也是恢复原机水印和元数据的来源，请保留。';
+      _status =
+          '已选择 ${_fileLabel(path!)}$motionNote。它也是恢复原机水印和元数据的来源，请保留。';
     });
   }
 

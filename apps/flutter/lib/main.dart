@@ -25,6 +25,7 @@ import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
+import 'services/motion_photo_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
@@ -894,6 +895,34 @@ class _HomePageState extends State<HomePage> {
     await _ingestPickedFiles(files, source: 'file_picker');
   }
 
+  /// Number of Motion Photo inspections currently in flight. Conversion
+  /// waits for these so per-card policies apply to freshly added items.
+  int _motionInspectsInFlight = 0;
+
+  /// Async Motion Photo detection for a freshly queued item. Best-effort:
+  /// failures leave [QueueItem.motionPhoto] null (treated as static photo).
+  Future<void> _inspectMotionPhoto(QueueItem item) async {
+    _motionInspectsInFlight++;
+    try {
+      final summary = await MotionPhotoService.inspect(item.inputPath);
+      if (summary == null) return;
+      item.motionPhoto = summary;
+      item.motionPhotoMode = _config.motionPhotoDefaultMode;
+      if (mounted) setState(() {});
+    } finally {
+      _motionInspectsInFlight--;
+    }
+  }
+
+  /// Wait until all in-flight Motion Photo inspections finish (bounded, so a
+  /// wedged read can never block a batch).
+  Future<void> _waitForMotionInspections() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (_motionInspectsInFlight > 0 && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
   Future<void> _ingestPickedFiles(
     List<PickedItem> files, {
     required String source,
@@ -972,6 +1001,7 @@ class _HomePageState extends State<HomePage> {
             family: classification['family'] as String?,
           ),
         );
+        _inspectMotionPhoto(_queue.last);
         existing.add(path);
         added++;
       } catch (e) {
@@ -1335,6 +1365,10 @@ class _HomePageState extends State<HomePage> {
     if (!await _runPreflight()) return;
     if (!mounted) return;
 
+    // Let in-flight Motion Photo inspections land so per-card policies apply.
+    await _waitForMotionInspections();
+    if (!mounted) return;
+
     // Android: check battery optimization before starting a batch.
     // ColorOS/other OEMs freeze the Dart VM in background without this.
     if (Platform.isAndroid) {
@@ -1373,6 +1407,16 @@ class _HomePageState extends State<HomePage> {
         if (_queue[cursor].status == QueueItemStatus.pending &&
             !_queue[cursor].outputPlanStatus.blocksConversion) {
           final idx = cursor;
+          final item = _queue[idx];
+          // Motion Photo policy: cards set to 跳过 never enter conversion.
+          if (item.motionPhoto != null &&
+              item.motionPhotoMode == MotionPhotoMode.skip) {
+            item.status = QueueItemStatus.skippedExisting;
+            item.errorMessage = '动态照片已按策略跳过';
+            item.finishedAt = DateTime.now();
+            cursor++;
+            continue;
+          }
           _queue[idx].status = QueueItemStatus.running;
           _queue[idx].startedAt = DateTime.now();
           _queue[idx].errorMessage = null;
@@ -1485,6 +1529,21 @@ class _HomePageState extends State<HomePage> {
         item.errorMessage = '已取消';
       } else if (result['success'] == true) {
         item.status = QueueItemStatus.converted;
+        // Motion Photo policy 静帧+视频: after the still converts, export the
+        // video stream(s) next to the output. Failures degrade to a note on
+        // the card; the converted still is kept either way.
+        if (item.motionPhoto != null &&
+            item.motionPhotoMode == MotionPhotoMode.stillAndVideo) {
+          try {
+            await MotionPhotoService.exportVideos(
+              item.inputPath,
+              item.outputPath,
+            );
+          } catch (e) {
+            item.errorMessage = '视频导出失败: $e';
+            debugPrint('[XDRemux][motion] video export failed: $e');
+          }
+        }
       } else {
         item.status = QueueItemStatus.failed;
         final message = result['errorMessage'] ?? '未知错误';
@@ -2041,6 +2100,7 @@ class _HomePageState extends State<HomePage> {
             family: classification['family'] as String?,
           ),
         );
+        _inspectMotionPhoto(_queue.last);
         existing.add(path);
         added++;
       } catch (_) {
@@ -2841,6 +2901,10 @@ class _HomePageState extends State<HomePage> {
           },
           onRetry: () => _retryItem(itemIndex),
           onRemove: () => _removeItem(itemIndex),
+          onMotionModeChanged: (mode) {
+            if (mode == null) return;
+            setState(() => item.motionPhotoMode = mode);
+          },
         );
       },
     );
@@ -2894,6 +2958,10 @@ class _HomePageState extends State<HomePage> {
               },
               onRetry: () => _retryItem(index),
               onRemove: () => _removeItem(index),
+              onMotionModeChanged: (mode) {
+                if (mode == null) return;
+                setState(() => _queue[index].motionPhotoMode = mode);
+              },
             );
           },
         );
@@ -3938,6 +4006,43 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Motion Photo default policy (per-card menu overrides).
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('动态照片默认策略', style: theme.textTheme.bodyLarge),
+                              Text(
+                                '新加入的动态照片按此策略处理，可在卡片上逐张修改。',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        DropdownButton<MotionPhotoMode>(
+                          value: _cfg.motionPhotoDefaultMode,
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setState(() => _cfg.motionPhotoDefaultMode = mode);
+                            _emit();
+                          },
+                          items: MotionPhotoMode.values
+                              .map(
+                                (mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.displayName),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
                     // Concurrency
                     Row(
                       children: [
@@ -4410,6 +4515,7 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
+  final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
 
   const _MobileQueueCard({
     required this.item,
@@ -4417,6 +4523,7 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onTap,
     required this.onRetry,
     required this.onRemove,
+    required this.onMotionModeChanged,
   });
 
   Color _statusColor(ThemeData theme) {
@@ -4532,8 +4639,35 @@ class _MobileQueueCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
+                          if (item.motionPhoto != null)
+                            _InfoChip(
+                              label: item.motionPhoto!.isDualStream ? '动态·双码流' : '动态',
+                              color: theme.colorScheme.tertiary,
+                            ),
                         ],
                       ),
+                      // Motion Photo per-card policy menu (pre-conversion).
+                      if (item.motionPhoto != null &&
+                          !item.status.isTerminal &&
+                          item.status != QueueItemStatus.running)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              Text(
+                                '视频 ${item.motionPhoto!.videoSizeLabel}',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              _MotionModeMenu(
+                                value: item.motionPhotoMode,
+                                onChanged: onMotionModeChanged,
+                              ),
+                            ],
+                          ),
+                        ),
                       const SizedBox(height: 5),
                       Text(
                         _supportingText,
@@ -4650,6 +4784,58 @@ class _MobileStatusPill extends StatelessWidget {
 
 /// Small non-interactive chip for the queue card metadata row
 /// (LHDR/UHDR, X6/X7, capture mode).
+/// Compact per-card Motion Photo policy menu (跳过 / 仅静帧 / 静帧+视频).
+class _MotionModeMenu extends StatelessWidget {
+  final MotionPhotoMode value;
+  final ValueChanged<MotionPhotoMode?> onChanged;
+
+  const _MotionModeMenu({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return PopupMenuButton<MotionPhotoMode>(
+      initialValue: value,
+      onSelected: onChanged,
+      padding: EdgeInsets.zero,
+      itemBuilder: (context) => MotionPhotoMode.values
+          .map(
+            (mode) => PopupMenuItem<MotionPhotoMode>(
+              value: mode,
+              child: Text(mode.displayName),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.tertiary.withAlpha(24),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: theme.colorScheme.tertiary.withAlpha(90)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value.displayName,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.tertiary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: theme.colorScheme.tertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoChip extends StatelessWidget {
   final String label;
   final Color color;
@@ -4718,6 +4904,7 @@ class _PhotoCard extends StatelessWidget {
   final VoidCallback onRevealOutput;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
+  final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
 
   const _PhotoCard({
     required this.item,
@@ -4727,6 +4914,7 @@ class _PhotoCard extends StatelessWidget {
     required this.onRevealOutput,
     required this.onRetry,
     required this.onRemove,
+    required this.onMotionModeChanged,
   });
 
   @override
@@ -4792,6 +4980,13 @@ class _PhotoCard extends StatelessWidget {
                             _OverlayChip(
                               label: item.captureModeLabel!,
                               color: Colors.white,
+                            ),
+                          if (item.motionPhoto != null)
+                            _OverlayChip(
+                              label: item.motionPhoto!.isDualStream
+                                  ? '动态·双码流'
+                                  : '动态',
+                              color: theme.colorScheme.tertiary,
                             ),
                         ],
                       ),
@@ -4883,6 +5078,13 @@ class _PhotoCard extends StatelessWidget {
                         color: Colors.blue.shade700,
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                  if (item.motionPhoto != null &&
+                      !item.status.isTerminal &&
+                      item.status != QueueItemStatus.running)
+                    _MotionModeMenu(
+                      value: item.motionPhotoMode,
+                      onChanged: onMotionModeChanged,
                     ),
                   if (item.isSuccessful)
                     _cardAction(theme, Icons.check_circle, onRevealOutput),
