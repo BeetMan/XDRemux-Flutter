@@ -2,7 +2,7 @@ name: xdremux
 description: XDRemux cross-platform ProXDR HEIC to ISO 21496-1 HDR converter
 publish_to: 'none'
 
-version: 0.3.1+19
+version: 0.3.2+20
 
 environment:
   sdk: ^3.8.1
@@ -15,43 +15,31 @@ dependencies:
   ffi: ^2.1.0
 
   # File/folder picking across platforms
-  file_picker: ^8.0.0
+  file_picker: ^12.1.1  # v12 moves to built-in Kotlin (KGP warning) and win32 v6
 
   # Standard paths (downloads, cache, etc.)
   path_provider: ^2.1.0
 
   # Permissions on Android/iOS
-  permission_handler: any  # OHOS fork reports 12.0.1
+  permission_handler: ^11.0.0
 
   # Persistent user settings
-  shared_preferences: ^2.2.0
+  shared_preferences: ^2.5.0
 
   # Save images/videos to system gallery (MediaStore on Android)
   gal: ^2.3.0
 
   # Share files via system share sheet (ACTION_SEND)
-  share_plus: ^10.0.0
-
-  # OHOS gallery save (PhotoAccessHelper) via CPF-Flutter fork
-  gallery_saver:
-    path: third_party/ohos/gallery_saver
-
-  # OHOS system share sheet (share_plus has no ohos implementation)
-  share_extend:
-    path: third_party/ohos/share_extend
+  share_plus: ^13.0.0
 
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
-  # OHOS: pinned to the CPF-Flutter ohos fork (br_v1.8.1_ohos).
-  receive_sharing_intent:
-    path: third_party/ohos/receive_sharing_intent
+  receive_sharing_intent: 1.9.0
 
   # System notifications on batch conversion completion (Windows + Android)
-  flutter_local_notifications: ^19.0.0  # keep one positional-API across hosted and the OHOS fork
+  flutter_local_notifications: ^19.0.0  # v20 switched to named-only params; stay on v19 (positional) so the OHOS fork (19.5.0) and hosted builds share one API
 
   # Android foreground service for background conversion
-  # OHOS: CPF-Flutter ohos fork master (upstream ^11 requires Flutter 3.47).
-  flutter_foreground_task:
-    path: third_party/ohos/flutter_foreground_task
+  flutter_foreground_task: ^11.0.0
 
   # Open files with system default app
   open_filex: ^4.5.0
@@ -63,41 +51,15 @@ dependencies:
   http: ^1.6.0
 
   # App version info for update checks
-  package_info_plus: ^9.0.1
+  package_info_plus: ^10.0.0
 
   # Open release page in browser
-  url_launcher: any  # OHOS fork reports 6.1.12
+  url_launcher: ^6.3.2
 
   # Windows system tray (minimize to tray during long batches)
   tray_manager: ^0.5.3
 
   # Win32 ShowWindow/FindWindow for tray hide/restore (Windows)
-  win32: ^5.15.0
-
-# OHOS (OpenHarmony NEXT): CPF-Flutter community forks add the ohos platform
-# implementation. Stock versions of these plugins either lack ohos support or
-# require a newer Flutter SDK than the ohos fork provides.
-dependency_overrides:
-  path_provider:
-    path: third_party/ohos/path_provider
-  shared_preferences:
-    path: third_party/ohos/shared_preferences
-  url_launcher:
-    path: third_party/ohos/url_launcher
-  file_picker:
-    path: third_party/ohos/file_picker
-  flutter_local_notifications:
-    path: third_party/ohos/flutter_local_notifications
-  open_filex:
-    path: third_party/ohos/open_filex
-  permission_handler:
-    path: third_party/ohos/permission_handler/permission_handler
-  path_provider_ohos:
-    path: third_party/ohos/path_provider_ohos
-  shared_preferences_ohos:
-    path: third_party/ohos/shared_preferences_ohos
-  url_launcher_ohos:
-    path: third_party/ohos/url_launcher_ohos
 
 dev_dependencies:
   flutter_test:
