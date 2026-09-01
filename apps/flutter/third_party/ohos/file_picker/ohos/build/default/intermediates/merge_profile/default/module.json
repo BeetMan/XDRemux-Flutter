@@ -1,0 +1,28 @@
+{
+	"app": {
+		"bundleName": "io.github.beetman.xdremux",
+		"debug": false,
+		"versionCode": 19,
+		"versionName": "0.3.1",
+		"minAPIVersion": 50100018,
+		"targetAPIVersion": 60101024,
+		"apiReleaseType": "Release",
+		"targetMinorAPIVersion": 0,
+		"targetPatchAPIVersion": 0,
+		"compileSdkVersion": "6.1.1.125",
+		"compileSdkType": "HarmonyOS",
+		"appEnvironments": [],
+		"bundleType": "app",
+		"buildMode": "release"
+	},
+	"module": {
+		"name": "file_picker",
+		"type": "har",
+		"deviceTypes": [
+			"default",
+			"tablet"
+		],
+		"packageName": "file_picker",
+		"installationFree": false
+	}
+}

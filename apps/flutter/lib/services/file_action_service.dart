@@ -99,7 +99,10 @@ class FileActionService {
         });
         return;
       }
-      await SharePlus.instance.share(ShareParams(files: [xFile]));
+      // Share.shareXFiles exists on both share_plus v10 (OHOS variant) and
+      // v13 (mainline); SharePlus.instance is v11+ only.
+      // ignore: deprecated_member_use
+      await Share.shareXFiles([xFile]);
     } catch (e) {
       debugPrint('shareFile error: $e');
     }

@@ -1,9 +1,42 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'package:win32/win32.dart';
+
+// Raw FFI declarations instead of package:win32: the OHOS vendored plugin set
+// pins win32 v5 while mainline uses v6, and our needs (three User32 calls)
+// are tiny. IntPtr handles keep this version-agnostic.
+typedef _FindWindowNative = IntPtr Function(
+  Pointer<Utf16> lpClassName,
+  Pointer<Utf16> lpWindowName,
+);
+typedef _FindWindowDart = int Function(
+  Pointer<Utf16> lpClassName,
+  Pointer<Utf16> lpWindowName,
+);
+typedef _ShowWindowNative = Int32 Function(IntPtr hWnd, Int32 nCmdShow);
+typedef _ShowWindowDart = int Function(int hWnd, int nCmdShow);
+typedef _SetForegroundWindowNative = Int32 Function(IntPtr hWnd);
+typedef _SetForegroundWindowDart = int Function(int hWnd);
+
+final _user32 = DynamicLibrary.open('user32.dll');
+final _findWindow =
+    _user32.lookupFunction<_FindWindowNative, _FindWindowDart>(
+      'FindWindowW',
+    );
+final _showWindow =
+    _user32.lookupFunction<_ShowWindowNative, _ShowWindowDart>(
+      'ShowWindow',
+    );
+final _setForegroundWindow = _user32
+    .lookupFunction<_SetForegroundWindowNative, _SetForegroundWindowDart>(
+      'SetForegroundWindow',
+    );
+
+const int _swHide = 0;
+const int _swRestore = 9;
 
 /// Windows system tray: lets the app hide to the tray during long batch
 /// conversions instead of occupying the taskbar.
@@ -59,8 +92,8 @@ class TrayService {
   static void hideWindow() {
     if (!_initialized || _hidden) return;
     final hwnd = _findMainWindow();
-    if (hwnd.address != 0) {
-      ShowWindow(hwnd, SW_HIDE);
+    if (hwnd != 0) {
+      _showWindow(hwnd, _swHide);
       _hidden = true;
     }
   }
@@ -69,9 +102,9 @@ class TrayService {
   static void showWindow() {
     if (!_initialized || !_hidden) return;
     final hwnd = _findMainWindow();
-    if (hwnd.address != 0) {
-      ShowWindow(hwnd, SW_RESTORE);
-      SetForegroundWindow(hwnd);
+    if (hwnd != 0) {
+      _showWindow(hwnd, _swRestore);
+      _setForegroundWindow(hwnd);
       _hidden = false;
     }
   }
@@ -79,12 +112,12 @@ class TrayService {
   /// The runner registers the window class FLUTTER_RUNNER_WIN32_WINDOW with
   /// the app title "XDRemux"; matching on the class name avoids colliding
   /// with any other window that happens to share the title.
-  static HWND _findMainWindow() {
+  static int _findMainWindow() {
     final className = 'FLUTTER_RUNNER_WIN32_WINDOW'.toNativeUtf16();
     try {
-      return FindWindow(PCWSTR(className), null).value;
+      return _findWindow(className, nullptr);
     } finally {
-      free(className);
+      malloc.free(className);
     }
   }
 }
