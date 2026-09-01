@@ -1675,9 +1675,9 @@ pub fn install_exif_payload(output: &mut Vec<u8>, payload: &[u8]) -> Result<bool
     if mdat.box_start < meta.box_start + meta.size {
         return Err("unexpected box order: mdat before meta".into());
     }
-    if mdat.data_start - mdat.box_start != 8 {
-        return Err("extended-size mdat box is not supported for grafting".into());
-    }
+    // Extended-size (largesize) mdat is supported: the original header form
+    // is preserved when re-emitting so interior offsets shift uniformly.
+    let mdat_header_size = mdat.data_start - mdat.box_start;
     let parsed = isobmff::parse_source_meta(output).map_err(|e| format!("output meta parse: {e}"))?;
     let meta_kids = isobmff::parse_boxes(output, meta.data_start + 4, meta.data_end);
     let iref_box = meta_kids.iter().find(|b| &b.btype == b"iref").cloned();
@@ -1795,7 +1795,8 @@ pub fn install_exif_payload(output: &mut Vec<u8>, payload: &[u8]) -> Result<bool
     // the iloc box size is stable across passes.
     let pass1_iloc = isobmff::make_iloc_box(&iloc);
     let meta_pass1 = assemble_meta_box(&pass1_iloc);
-    let new_mdat_data_start = prefix.len() + meta_pass1.len() + between.len() + 8;
+    let new_mdat_data_start =
+        prefix.len() + meta_pass1.len() + between.len() + mdat_header_size;
     let delta = new_mdat_data_start as i64 - mdat.data_start as i64;
 
     // Pass 2: final offsets. Source cm=0 extents are absolute file offsets and
@@ -1823,7 +1824,16 @@ pub fn install_exif_payload(output: &mut Vec<u8>, payload: &[u8]) -> Result<bool
     new_mdat_payload.extend_from_slice(&output[mdat.data_start..mdat.data_end]);
     new_mdat_payload.extend(std::iter::repeat(0u8).take(align_pad as usize));
     new_mdat_payload.extend_from_slice(&payload);
-    let mdat_box = isobmff::make_box(b"mdat", &new_mdat_payload);
+    let mdat_box = if mdat_header_size == 8 {
+        isobmff::make_box(b"mdat", &new_mdat_payload)
+    } else {
+        let mut v = Vec::with_capacity(16 + new_mdat_payload.len());
+        v.extend_from_slice(&1u32.to_be_bytes());
+        v.extend_from_slice(b"mdat");
+        v.extend_from_slice(&((16 + new_mdat_payload.len()) as u64).to_be_bytes());
+        v.extend_from_slice(&new_mdat_payload);
+        v
+    };
 
     let mut out = Vec::with_capacity(prefix.len() + meta_final.len() + between.len() + mdat_box.len());
     out.extend_from_slice(prefix);
@@ -1859,9 +1869,7 @@ pub fn replace_item_payload(
     if mdat.box_start < meta.box_start + meta.size {
         return Err("unexpected box order: mdat before meta".into());
     }
-    if mdat.data_start - mdat.box_start != 8 {
-        return Err("extended-size mdat box is not supported".into());
-    }
+    let mdat_header_size = mdat.data_start - mdat.box_start;
     let parsed = isobmff::parse_source_meta(output).map_err(|e| format!("output meta parse: {e}"))?;
     let meta_kids = isobmff::parse_boxes(output, meta.data_start + 4, meta.data_end);
     if parsed.iloc_entries.iter().all(|e| e.item_id != item_id) {
@@ -1955,7 +1963,8 @@ pub fn replace_item_payload(
 
     let pass1_iloc = isobmff::make_iloc_box(&iloc);
     let meta_pass1 = assemble_meta_box(&pass1_iloc);
-    let new_mdat_data_start = prefix.len() + meta_pass1.len() + between.len() + 8;
+    let new_mdat_data_start =
+        prefix.len() + meta_pass1.len() + between.len() + mdat_header_size;
     let delta = new_mdat_data_start as i64 - mdat.data_start as i64;
 
     for entry in &mut iloc {
@@ -1981,7 +1990,16 @@ pub fn replace_item_payload(
     new_mdat_payload.extend_from_slice(&output[mdat.data_start..mdat.data_end]);
     new_mdat_payload.extend(std::iter::repeat(0u8).take(align_pad as usize));
     new_mdat_payload.extend_from_slice(new_payload);
-    let mdat_box = isobmff::make_box(b"mdat", &new_mdat_payload);
+    let mdat_box = if mdat_header_size == 8 {
+        isobmff::make_box(b"mdat", &new_mdat_payload)
+    } else {
+        let mut v = Vec::with_capacity(16 + new_mdat_payload.len());
+        v.extend_from_slice(&1u32.to_be_bytes());
+        v.extend_from_slice(b"mdat");
+        v.extend_from_slice(&((16 + new_mdat_payload.len()) as u64).to_be_bytes());
+        v.extend_from_slice(&new_mdat_payload);
+        v
+    };
 
     let mut out = Vec::with_capacity(prefix.len() + meta_final.len() + between.len() + mdat_box.len());
     out.extend_from_slice(prefix);

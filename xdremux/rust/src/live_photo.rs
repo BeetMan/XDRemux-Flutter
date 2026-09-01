@@ -280,6 +280,199 @@ pub fn inject_makernote(tiff: &[u8], content_identifier: &str) -> Result<Vec<u8>
     Ok(write_tiff(&model))
 }
 
+/// Live-photo pairing additions to an *existing* Apple iOS MakerNote.
+///
+/// Photos validates the MakerNote content: replacing a vendor's Apple-style
+/// note with a minimal 1-entry Live Photo note makes the Photographic Styles
+/// editor disappear (verified 2026-09-02). Instead of replacing, we APPEND a
+/// `tag 0x0011` (content identifier) entry to the vendor's note, keeping all
+/// original entries intact.
+///
+/// The note layout: "Apple iOS\0\0\x01" + byte order ("MM") + entry_count
+/// (u16) + entries (12 bytes each) + next_ifd (u32) + value area. Appending
+/// shifts nothing: existing value offsets stay valid, new entries point into
+/// the appended tail.
+pub fn append_live_photo_entry(
+    note: &[u8],
+    content_identifier: &str,
+) -> Result<Vec<u8>, String> {
+    if !note.starts_with(b"Apple iOS\0\0\x01") {
+        return Err("MakerNote is not an Apple iOS note".into());
+    }
+    let le = &note[12..14] == b"II"; // observed notes are MM; support both anyway
+    let u16 = |o: usize| -> u16 {
+        let b: [u8; 2] = note[o..o + 2].try_into().unwrap();
+        if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) }
+    };
+    let u32 = |o: usize| -> u32 {
+        let b: [u8; 4] = note[o..o + 4].try_into().unwrap();
+        if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+    };
+    let count = u16(14) as usize;
+    if count > 64 || note.len() < 16 + count * 12 + 4 {
+        return Err("MakerNote entry count out of range".into());
+    }
+    let upper = content_identifier.to_uppercase();
+    if upper.is_empty() || !upper.is_ascii() {
+        return Err("invalid Live Photo content identifier".into());
+    }
+    let mut value = upper.into_bytes();
+    value.push(0);
+
+    // Old layout: header(0..14) table(14..14+count*12) next_ifd(4) values(...).
+    // New layout inserts ONE 12-byte entry before next_ifd; every old value
+    // offset therefore shifts by +12 and must be rewritten.
+    let table_start = 16usize; // after the 14-byte header + count u16
+    let table_end = table_start + count * 12;
+    let next_ifd_end = table_end + 4;
+    let values_start = next_ifd_end;
+
+    let shift = 12i64;
+    let mut entries: Vec<u8> = Vec::with_capacity((count + 1) * 12);
+    for k in 0..count {
+        let e = table_start + k * 12;
+        let mut entry_bytes = note[e..e + 12].to_vec();
+        // Rewrite old value offsets (+12): values larger than 4 bytes carry
+        // their absolute offset in bytes 8..12 of the entry.
+        let typ = u16(e + 2);
+        let cnt_e = u32(e + 4) as usize;
+        let unit = match typ {
+            1 | 2 | 6 | 7 => 1usize,
+            3 | 8 => 2,
+            4 | 9 | 11 => 4,
+            5 | 10 | 12 => 8,
+            _ => 1,
+        };
+        if cnt_e * unit > 4 {
+            let old = u32(e + 8) as i64;
+            let newv = old + shift;
+            let bytes = if le {
+                (newv as u32).to_le_bytes().to_vec()
+            } else {
+                (newv as u32).to_be_bytes().to_vec()
+            };
+            entry_bytes[8..12].copy_from_slice(&bytes);
+        }
+        entries.extend_from_slice(&entry_bytes);
+    }
+    // New entry: tag 0x0011, type 2 (ASCII), count, offset.
+    let values_len = note.len() - values_start;
+    let new_value_off = values_start + shift as usize + values_len;
+    entries.extend_from_slice(&0x0011u16.to_be_bytes());
+    entries.extend_from_slice(&2u16.to_be_bytes());
+    entries.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    let off_bytes = if le {
+        (new_value_off as u32).to_le_bytes().to_vec()
+    } else {
+        (new_value_off as u32).to_be_bytes().to_vec()
+    };
+    entries.extend_from_slice(&off_bytes);
+
+    let mut out = Vec::with_capacity(note.len() + 12 + value.len());
+    out.extend_from_slice(&note[..14]);
+    let new_count_u16 = (count + 1) as u16;
+    let cnt_bytes = if le {
+        new_count_u16.to_le_bytes().to_vec()
+    } else {
+        new_count_u16.to_be_bytes().to_vec()
+    };
+    out.extend_from_slice(&cnt_bytes);
+    out.extend_from_slice(&entries);
+    out.extend_from_slice(&note[table_end..table_end + 4]); // next_ifd (0)
+    out.extend_from_slice(&note[values_start..]); // old values verbatim
+    out.extend_from_slice(&value);
+    Ok(out)
+}
+/// Patch a TIFF payload's ExifIFD MakerNote (0x927C) value in place when the
+/// replacement has the SAME size, without any container-level rewriting.
+/// Returns false when the note is absent or the size differs.
+/// Read the Apple iOS MakerNote bytes (tag 0x927C in the Exif IFD) from a
+/// TIFF payload. Returns Ok(None) when the note is absent.
+fn read_makernote_bytes(tiff: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let le = tiff.len() >= 2 && &tiff[0..2] == b"II";
+    let u16v = |t: &[u8], o: usize| -> u16 {
+        let b: [u8; 2] = t[o..o + 2].try_into().unwrap();
+        if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) }
+    };
+    let u32v = |t: &[u8], o: usize| -> u32 {
+        let b: [u8; 4] = t[o..o + 4].try_into().unwrap();
+        if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+    };
+    let ifd0 = u32v(tiff, 4) as usize;
+    let n = u16v(tiff, ifd0) as usize;
+    let mut exif_off = None;
+    for k in 0..n {
+        let e = ifd0 + 2 + k * 12;
+        if u16v(tiff, e) == 0x8769 {
+            exif_off = Some(u32v(tiff, e + 8) as usize);
+        }
+    }
+    let Some(exif_off) = exif_off else {
+        return Ok(None);
+    };
+    let en = u16v(tiff, exif_off) as usize;
+    for k in 0..en {
+        let e = exif_off + 2 + k * 12;
+        if u16v(tiff, e) == 0x927C {
+            let typ = u16v(tiff, e + 2);
+            let cnt = u32v(tiff, e + 4) as usize;
+            let vo = u32v(tiff, e + 8) as usize;
+            let unit = match typ {
+                1 | 2 | 6 | 7 => 1usize,
+                3 | 8 => 2,
+                4 | 9 | 11 => 4,
+                5 | 10 | 12 => 8,
+                _ => return Ok(None),
+            };
+            let sz = cnt * unit;
+            let voff = if sz > 4 { vo } else { e + 8 };
+            if voff + sz > tiff.len() {
+                return Ok(None);
+            }
+            return Ok(Some(tiff[voff..voff + sz].to_vec()));
+        }
+    }
+    Ok(None)
+}
+
+pub fn patch_makernote_inplace(tiff: &mut [u8], replacement: &[u8]) -> Result<bool, String> {
+    let le = tiff.len() >= 2 && &tiff[0..2] == b"II";
+    let u16v = |t: &[u8], o: usize| -> u16 {
+        let b: [u8; 2] = t[o..o + 2].try_into().unwrap();
+        if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) }
+    };
+    let u32v = |t: &[u8], o: usize| -> u32 {
+        let b: [u8; 4] = t[o..o + 4].try_into().unwrap();
+        if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+    };
+    let ifd0 = u32v(tiff, 4) as usize;
+    let n = u16v(tiff, ifd0) as usize;
+    let mut exif_off = None;
+    for k in 0..n {
+        let e = ifd0 + 2 + k * 12;
+        if u16v(tiff, e) == 0x8769 {
+            exif_off = Some(u32v(tiff, e + 8) as usize);
+        }
+    }
+    let Some(exif_off) = exif_off else {
+        return Ok(false);
+    };
+    let en = u16v(tiff, exif_off) as usize;
+    for k in 0..en {
+        let e = exif_off + 2 + k * 12;
+        if u16v(tiff, e) == 0x927C {
+            let cnt = u32v(tiff, e + 4) as usize;
+            let vo = u32v(tiff, e + 8) as usize;
+            if cnt != replacement.len() || vo + cnt > tiff.len() {
+                return Ok(false); // size mismatch: caller must fall back
+            }
+            tiff[vo..vo + cnt].copy_from_slice(replacement);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 // ---------------------------------------------------------------------------
 // ISO BMFF / QuickTime helpers (movie side)
 // ---------------------------------------------------------------------------
@@ -1013,15 +1206,15 @@ pub fn make_live_photo(
     let content_id = uuid_v4();
     let still_time = resolve_still_time(video, cover_pts_us)?;
 
-    // Still side: inject the MakerNote into the Exif item payload.
+    // Still side: pair via the Exif MakerNote. When the still already carries
+    // an Apple iOS MakerNote (OPPO writes one), APPEND the content-identifier
+    // entry to it in place — replacing the whole note makes Photos drop the
+    // Photographic Styles editor (verified 2026-09-02). Only fall back to the
+    // full inject+rewrite path when no note exists.
     let mut still_out = still_heic.to_vec();
     let payload = crate::isobmff_write::read_exif_payload(still_heic)?
         .ok_or("converted still has no Exif item; cannot pair Live Photo")?;
-    // HEIF Exif item prefixes in the wild: bare TIFF, 4-byte offset value 4,
-    // or the Apple-native value 6 + "Exif\0\0". Normalize to the Apple form
-    // so libheif (offset value relative to the end of the 4-byte field)
-    // lands on the TIFF header.
-    let (prefix, tiff_start) = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+    let (_prefix, tiff_start) = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
         (Vec::new(), 0usize)
     } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
         (payload[..4].to_vec(), 10usize)
@@ -1031,12 +1224,71 @@ pub fn make_live_photo(
         return Err("still Exif item payload is too short".into());
     };
     let tiff = &payload[tiff_start..];
-    let new_tiff = inject_makernote(tiff, &content_id)?;
-    let mut new_payload = prefix;
+    // Preferred: APPEND a content-identifier entry to the existing Apple note
+    // (all other TIFF bytes stay identical — replacing the whole note makes
+    // Photos drop the Photographic Styles editor, verified 2026-09-02).
+    // Fallback: no Apple note present — inject a minimal one via the rewrite
+    // path (identity styles then come from a vendor-free file).
+    let mut tiff_mut: Option<Vec<u8>> = None;
+    let mut paired = false;
+    if let Some(note) = read_makernote_bytes(tiff)? {
+        let patched = append_live_photo_entry(&note, &content_id)?;
+        // Splice the enlarged note back into the TIFF at the same position:
+        // everything before and after the note bytes is preserved verbatim.
+        let note_start = tiff
+            .windows(note.len())
+            .position(|w| w == note)
+            .ok_or("appended note not found in TIFF")?;
+        let mut spliced = Vec::with_capacity(tiff.len() - note.len() + patched.len());
+        spliced.extend_from_slice(&tiff[..note_start]);
+        spliced.extend_from_slice(&patched);
+        spliced.extend_from_slice(&tiff[note_start + note.len()..]);
+        // The ExifIFD entry's count field still says the OLD note length;
+        // patch it to the new length so readers see the appended entry.
+        let le = &tiff[0..2] == b"II";
+        let u16v = |t: &[u8], o: usize| -> u16 {
+            let b: [u8; 2] = t[o..o + 2].try_into().unwrap();
+            if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) }
+        };
+        let u32v = |t: &[u8], o: usize| -> u32 {
+            let b: [u8; 4] = t[o..o + 4].try_into().unwrap();
+            if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+        };
+        let ifd0 = u32v(tiff, 4) as usize;
+        let n0 = u16v(tiff, ifd0) as usize;
+        let mut exif_off = None;
+        for k in 0..n0 {
+            let e = ifd0 + 2 + k * 12;
+            if u16v(tiff, e) == 0x8769 {
+                exif_off = Some(u32v(tiff, e + 8) as usize);
+            }
+        }
+        if let Some(exif_off) = exif_off {
+            let en = u16v(tiff, exif_off) as usize;
+            for k in 0..en {
+                let e = exif_off + 2 + k * 12;
+                if u16v(tiff, e) == 0x927C {
+                    let bytes = if le {
+                        (patched.len() as u32).to_le_bytes().to_vec()
+                    } else {
+                        (patched.len() as u32).to_be_bytes().to_vec()
+                    };
+                    spliced[e + 4..e + 8].copy_from_slice(&bytes);
+                    break;
+                }
+            }
+        }
+        tiff_mut = Some(spliced);
+        paired = true;
+    }
+    let tiff_mut = if paired {
+        tiff_mut.expect("paired branch set tiff_mut")
+    } else {
+        inject_makernote(tiff, &content_id)?
+    };
+    let mut new_payload = vec![0u8, 0, 0, 6];
     new_payload.extend_from_slice(b"Exif\0\0");
-    new_payload.extend_from_slice(&new_tiff);
-    // Prefix becomes the Apple-native [0,0,0,6] + "Exif\0\0".
-    new_payload[..4].copy_from_slice(&6u32.to_be_bytes());
+    new_payload.extend_from_slice(&tiff_mut);
     if !crate::isobmff_write::install_exif_payload(&mut still_out, &new_payload)? {
         return Err("failed to write the Live Photo MakerNote into the still".into());
     }
