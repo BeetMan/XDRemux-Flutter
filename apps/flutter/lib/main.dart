@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -1546,10 +1547,30 @@ class _HomePageState extends State<HomePage> {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.stillAndVideo) {
           try {
-            await MotionPhotoService.exportVideos(
+            final written = await MotionPhotoService.exportVideos(
               item.inputPath,
               item.outputPath,
             );
+            // Mobile: the output directory is app-specific and unreachable
+            // from gallery apps, so put the exported videos in the gallery
+            // as well (that is the point of this mode on a phone).
+            if ((Platform.isAndroid || Platform.isIOS) && written.isNotEmpty) {
+              var granted = await FileActionService.hasGalleryPermission();
+              if (!granted) {
+                granted = await FileActionService.requestGalleryPermission();
+              }
+              if (granted) {
+                final parent = File(item.outputPath).parent.path;
+                for (final name in written) {
+                  await Gal.putVideo(
+                    '$parent${Platform.pathSeparator}$name',
+                    album: 'XDRemux',
+                  );
+                }
+              } else {
+                item.errorMessage = '视频已导出到输出目录（未授予相册权限）';
+              }
+            }
           } catch (e) {
             item.errorMessage = '视频导出失败: $e';
             debugPrint('[XDRemux][motion] video export failed: $e');

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'package:xdremux/main.dart';
+import 'package:xdremux/models/app_models.dart';
 
 void main() {
   setUpAll(() {
@@ -129,5 +130,46 @@ void main() {
     expect(find.byIcon(Icons.add_photo_alternate), findsNothing);
     expect(find.byIcon(Icons.add_photo_alternate_outlined), findsWidgets);
     expect(find.byType(GridView), findsNothing);
+  });
+
+  test('Motion Photo policy defaults to skip and persists in config', () {
+    // Default: skip (per 2026-08-27 decision).
+    final config = ConversionConfig();
+    expect(config.motionPhotoDefaultMode, MotionPhotoMode.skip);
+
+    // JSON round-trip preserves a non-default choice.
+    config.motionPhotoDefaultMode = MotionPhotoMode.stillAndVideo;
+    final restored = ConversionConfig.fromJson(config.toJson());
+    expect(restored.motionPhotoDefaultMode, MotionPhotoMode.stillAndVideo);
+
+    // Unknown persisted values fall back to skip.
+    final legacy = ConversionConfig.fromJson(
+      config.toJson()..['motionPhotoDefaultMode'] = 'legacy-value',
+    );
+    expect(legacy.motionPhotoDefaultMode, MotionPhotoMode.skip);
+
+    // QueueItem defaults to skip as well.
+    final item = QueueItem(id: 't', inputPath: '/a.jpg', outputPath: '/b.heic');
+    expect(item.motionPhotoMode, MotionPhotoMode.skip);
+    expect(item.motionPhoto, isNull);
+  });
+
+  test('MotionPhotoSummary labels', () {
+    const summary = MotionPhotoSummary(
+      kind: 'oppoLivePhoto',
+      stillBytes: 4 * 1024 * 1024,
+      videoBytes: 8 * 1024 * 1024,
+      streamCount: 2,
+    );
+    expect(summary.isDualStream, isTrue);
+    expect(summary.videoSizeLabel, '8.0MB');
+    const single = MotionPhotoSummary(
+      kind: 'androidMotionPhotoV1',
+      stillBytes: 1024,
+      videoBytes: 512 * 1024,
+      streamCount: 1,
+    );
+    expect(single.isDualStream, isFalse);
+    expect(single.videoSizeLabel, '512KB');
   });
 }

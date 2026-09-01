@@ -128,7 +128,10 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       let provider = result.itemProvider
       guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
         guard let type = UTType($0) else { return false }
-        return type.conforms(to: .heic) || type.conforms(to: .heif)
+        // JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills
+        // carry the gain map via MPF); plain JPEGs are rejected with a clear
+        // message by the converter.
+        return type.conforms(to: .heic) || type.conforms(to: .heif) || type.conforms(to: .jpeg)
       }) else {
         continue
       }
