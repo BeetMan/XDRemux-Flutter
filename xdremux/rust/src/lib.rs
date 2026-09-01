@@ -6,6 +6,7 @@ pub mod categorize;
 pub mod container;
 pub mod edr;
 pub mod exif;
+pub mod motion_photo;
 pub mod gainmap;
 pub mod hevc;
 pub mod iso21496;
@@ -98,6 +99,109 @@ pub struct ConvertConfig {
 #[no_mangle]
 pub extern "C" fn xdremux_version() -> *mut c_char {
     match CString::new(env!("CARGO_PKG_VERSION")) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect a photo for Motion Photo structure. Returns a JSON report with
+/// `isMotionPhoto` plus the resolved still/video byte ranges when present.
+#[no_mangle]
+pub extern "C" fn xdremux_motion_photo_inspect(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
+        match motion_photo::parse_motion_photo(&data)? {
+            Some(asset) => Ok(asset.to_json()),
+            None => Ok(serde_json::json!({ "isMotionPhoto": false })),
+        }
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "isMotionPhoto": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Split a Motion Photo into its still image and video resources.
+///
+/// Writes `<stem>.still.<ext>`, `<stem>.video.mp4`, and for OPPO dual-stream
+/// files also `<stem>.primary.mp4` (the high-quality stream) into `out_dir`.
+/// Returns a JSON report with the written paths and asset metadata.
+#[no_mangle]
+pub extern "C" fn xdremux_motion_photo_split(
+    path: *const c_char,
+    out_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() || out_dir.is_null() {
+            return Err("path/out_dir is missing".into());
+        }
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let out_dir = unsafe { CStr::from_ptr(out_dir) }
+            .to_str()
+            .map_err(|_| "out_dir is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
+        let asset = motion_photo::parse_motion_photo(&data)?
+            .ok_or("photo is not a Motion Photo")?;
+        std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
+        let stem = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("motion");
+        let still_ext = {
+            let mime = asset
+                .items
+                .first()
+                .map(|it| it.mime.to_ascii_lowercase())
+                .unwrap_or_default();
+            if mime.contains("heic") || mime.contains("heif") {
+                "heic"
+            } else {
+                "jpg"
+            }
+        };
+        let write_range = |range: motion_photo::ByteRange, name: &str| -> Result<String, String> {
+            let dest = format!("{out_dir}/{name}");
+            std::fs::write(
+                &dest,
+                &data[range.start as usize..range.end as usize],
+            )
+            .map_err(|e| format!("write {name}: {e}"))?;
+            Ok(dest)
+        };
+        let still_path = write_range(asset.still_range, &format!("{stem}.still.{still_ext}"))?;
+        let video_path = write_range(asset.video_range, &format!("{stem}.video.mp4"))?;
+        let primary = motion_photo::primary_video_range(&data, &asset);
+        let primary_path = if primary != asset.video_range {
+            Some(write_range(primary, &format!("{stem}.primary.mp4"))?)
+        } else {
+            None
+        };
+        let mut report = asset.to_json();
+        report["success"] = true.into();
+        report["stillPath"] = still_path.into();
+        report["videoPath"] = video_path.into();
+        if let Some(p) = primary_path {
+            report["primaryVideoPath"] = p.into();
+        }
+        Ok(report)
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
     }

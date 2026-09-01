@@ -17,6 +17,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_ffmpeg_fallback)",
 [dependencies]
 heif-oxide = "0.1.0"
 jpeg-decoder = "0.3"
+quick-xml = "0.42"
 serde_json = "1.0"
 zstd = "0.13"
 png = "0.17"

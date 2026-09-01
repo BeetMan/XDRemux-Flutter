@@ -248,6 +248,14 @@ class XdRemuxFFI {
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_output');
 
+  static final _motionPhotoInspect = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_motion_photo_inspect');
+
+  static final _motionPhotoSplit = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
+
   static final _verifyStylesOutput = _lib.lookupFunction<
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_styles_output');
@@ -456,6 +464,52 @@ class XdRemuxFFI {
     } catch (_) {
       // Older platform bundles may not have the new structural verifier yet.
       return verifyOutput(path);
+    }
+  }
+
+  /// Inspect a photo for Motion Photo structure (Android V1 / legacy
+  /// MicroVideo / HEIF mpvd / OPPO LPEX). Returns a JSON-decoded report with
+  /// `isMotionPhoto` and, when present, still/video byte ranges.
+  static Map<String, dynamic> motionPhotoInspect(String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      final report = _motionPhotoInspect(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{'isMotionPhoto': false};
+      }
+      final decoded = jsonDecode(report.toDartString());
+      return decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : {'isMotionPhoto': false};
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  /// Split a Motion Photo into still image + video files under [outDir].
+  /// OPPO dual-stream files also yield a `primaryVideoPath` (high quality).
+  static Map<String, dynamic> motionPhotoSplit(String path, String outDir) {
+    final pathPtr = path.toNativeUtf8();
+    final outPtr = outDir.toNativeUtf8();
+    try {
+      final report = _motionPhotoSplit(pathPtr, outPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust motion photo split returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Rust motion photo split returned an invalid report',
+      };
+    } finally {
+      calloc.free(pathPtr);
+      calloc.free(outPtr);
     }
   }
 
