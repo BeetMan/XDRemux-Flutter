@@ -445,7 +445,9 @@ pub fn synthesize_source_container(
     );
 
     // ---- iinf ----
-    let mut infes: Vec<Vec<u8>> = vec![isobmff::make_infe_box(grid_id, "grid", 1)];
+    // Primary grid must not be hidden (flags=0): libheif refuses a hidden
+    // pitm target ("pitm references an unsupported or non-existing image").
+    let mut infes: Vec<Vec<u8>> = vec![isobmff::make_infe_box(grid_id, "grid", 0)];
     for i in 0..total_tiles {
         infes.push(isobmff::make_infe_box(first_tile_id + i as u32, "hvc1", 1));
     }
@@ -475,10 +477,13 @@ pub fn synthesize_source_container(
     let grid_box = isobmff::make_grid_box(TILE_SIZE, TILE_SIZE, rows, cols, width, height);
     let idat = isobmff::make_box(b"idat", &grid_box[8..]);
 
-    // ---- Exif payload (HEIF convention: 4-byte TIFF offset + TIFF) ----
+    // ---- Exif payload (Apple-native convention: 4-byte offset value 6 +
+    // "Exif\0\0" + TIFF, so libheif/ImageIO land on the TIFF header —
+    // a bare value-4 prefix makes libheif skip 8 bytes and fail) ----
     let exif_payload: Option<Vec<u8>> = info.exif_tiff.as_ref().map(|tiff| {
-        let mut p = Vec::with_capacity(tiff.len() + 4);
-        p.extend_from_slice(&4u32.to_be_bytes());
+        let mut p = Vec::with_capacity(tiff.len() + 10);
+        p.extend_from_slice(&6u32.to_be_bytes());
+        p.extend_from_slice(b"Exif\0\0");
         p.extend_from_slice(tiff);
         p
     });

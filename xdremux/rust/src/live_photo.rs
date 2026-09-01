@@ -223,13 +223,15 @@ fn write_tiff(model: &TiffModel) -> Vec<u8> {
             let size = type_size(e.type_id).unwrap();
             let count = (e.data.len() / size) as u32;
             push_u32(count, &mut table);
-            if e.data.len() <= 4 {
-                table.extend_from_slice(&e.data);
-                table.extend(std::iter::repeat(0u8).take(4 - e.data.len()));
-            } else if e.tag == 0x8769 && exif_target.is_some() {
+            // Sub-IFD pointers are 4-byte LONGs: they must be rewritten to the
+            // new layout even though they fit inline.
+            if e.tag == 0x8769 && exif_target.is_some() {
                 push_u32(exif_target.unwrap(), &mut table);
             } else if e.tag == 0x8825 && gps_target.is_some() {
                 push_u32(gps_target.unwrap(), &mut table);
+            } else if e.data.len() <= 4 {
+                table.extend_from_slice(&e.data);
+                table.extend(std::iter::repeat(0u8).take(4 - e.data.len()));
             } else {
                 let area_start = ifd_start + 2 + entries.len() * 12 + 4;
                 let value_off = area_start + data_area.len();
@@ -1015,16 +1017,26 @@ pub fn make_live_photo(
     let mut still_out = still_heic.to_vec();
     let payload = crate::isobmff_write::read_exif_payload(still_heic)?
         .ok_or("converted still has no Exif item; cannot pair Live Photo")?;
-    // HEIF Exif item: 4-byte TIFF-offset prefix + TIFF payload.
-    let tiff_start = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
-        0
+    // HEIF Exif item prefixes in the wild: bare TIFF, 4-byte offset value 4,
+    // or the Apple-native value 6 + "Exif\0\0". Normalize to the Apple form
+    // so libheif (offset value relative to the end of the 4-byte field)
+    // lands on the TIFF header.
+    let (prefix, tiff_start) = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+        (Vec::new(), 0usize)
+    } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
+        (payload[..4].to_vec(), 10usize)
+    } else if payload.len() >= 4 {
+        (payload[..4].to_vec(), 4usize)
     } else {
-        4
+        return Err("still Exif item payload is too short".into());
     };
     let tiff = &payload[tiff_start..];
     let new_tiff = inject_makernote(tiff, &content_id)?;
-    let mut new_payload = payload[..tiff_start].to_vec();
+    let mut new_payload = prefix;
+    new_payload.extend_from_slice(b"Exif\0\0");
     new_payload.extend_from_slice(&new_tiff);
+    // Prefix becomes the Apple-native [0,0,0,6] + "Exif\0\0".
+    new_payload[..4].copy_from_slice(&6u32.to_be_bytes());
     if !crate::isobmff_write::install_exif_payload(&mut still_out, &new_payload)? {
         return Err("failed to write the Live Photo MakerNote into the still".into());
     }
@@ -1111,6 +1123,37 @@ mod tests {
             .expect("makernote present");
         assert!(note.data.starts_with(b"Apple iOS\0\0\x01MM"));
         assert!(note.data.windows(9).any(|w| w == b"ABCD-1234"));
+    }
+
+    #[test]
+    fn subifd_pointer_rewritten_when_layout_shifts() {
+        // The source ExifIFD lives at a large offset; after the rewrite the
+        // layout differs, so a stale inline pointer would be wrong. This is
+        // the regression that made Photos miss the MakerNote.
+        let mut t = Vec::new();
+        t.extend_from_slice(b"II*\x00");
+        t.extend_from_slice(&8u32.to_le_bytes());
+        // IFD0: one entry (ExifIFD pointer) — original target far away at 512.
+        t.extend_from_slice(&1u16.to_le_bytes());
+        t.extend_from_slice(&0x8769u16.to_le_bytes());
+        t.extend_from_slice(&4u16.to_le_bytes());
+        t.extend_from_slice(&1u32.to_le_bytes());
+        t.extend_from_slice(&512u32.to_le_bytes());
+        t.extend_from_slice(&0u32.to_le_bytes());
+        // pad to 512
+        t.extend(std::iter::repeat(0u8).take(512 - t.len()));
+        // ExifIFD at 512: one entry
+        t.extend_from_slice(&1u16.to_le_bytes());
+        t.extend_from_slice(&0x9000u16.to_le_bytes());
+        t.extend_from_slice(&7u16.to_le_bytes());
+        t.extend_from_slice(&4u32.to_le_bytes());
+        t.extend_from_slice(b"0232");
+        t.extend_from_slice(&0u32.to_le_bytes());
+
+        let out = inject_makernote(&t, "DEAD-BEEF").expect("inject ok");
+        let model = read_tiff(&out).expect("read back");
+        assert!(model.exif_ifd.iter().any(|e| e.tag == 0x9000));
+        assert!(model.exif_ifd.iter().any(|e| e.tag == 0x927C));
     }
 
     #[test]
