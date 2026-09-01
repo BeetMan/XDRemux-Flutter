@@ -342,6 +342,30 @@ pub extern "C" fn xdremux_style_experiment(
     }
 }
 
+/// Validate that a still HEIC + MOV form a consistent Apple Live Photo pair
+/// (their content identifiers match). Returns 1 when the pair is valid.
+#[no_mangle]
+pub extern "C" fn xdremux_live_photo_pair_valid(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+) -> u8 {
+    let result = (|| -> Option<bool> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let still_path = read(still_path)?;
+        let mov_path = read(mov_path)?;
+        let still = std::fs::read(still_path).ok()?;
+        let mov = std::fs::read(mov_path).ok()?;
+        Some(live_photo::existing_pair_is_valid(&still, &mov))
+    })();
+    if result == Some(true) {
+        1
+    } else {
+        0
+    }
+}
+
 /// Frees a string previously returned by `xdremux_version`.
 #[no_mangle]
 pub extern "C" fn xdremux_free_string(s: *mut c_char) {

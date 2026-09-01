@@ -256,6 +256,10 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
+  static final _livePhotoPairValid = _lib.lookupFunction<
+      ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -556,6 +560,21 @@ class XdRemuxFFI {
       calloc.free(sourcePtr);
       calloc.free(stillPtr);
       calloc.free(outPtr);
+    }
+  }
+
+  /// Validate that a still HEIC + MOV form a consistent Apple Live Photo
+  /// pair (content identifiers match on both sides).
+  static bool livePhotoPairValid(String stillPath, String movPath) {
+    final a = stillPath.toNativeUtf8();
+    final b = movPath.toNativeUtf8();
+    try {
+      return _livePhotoPairValid(a, b) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      calloc.free(a);
+      calloc.free(b);
     }
   }
 

@@ -1430,3 +1430,172 @@ mod tests {
         assert!(note.ends_with(b"01234567-89AB-4DEF-8DEF-0123456789AB\0"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Pair validation (for asset-aware classification / resume provenance)
+// ---------------------------------------------------------------------------
+
+/// Read the Live Photo content identifier from a still's Apple iOS MakerNote
+/// (tag 0x0011 in the MakerNote IFD). Returns None when absent or the note
+/// is not an Apple iOS note.
+pub fn read_still_content_identifier(still_heic: &[u8]) -> Option<String> {
+    let payload = crate::isobmff_write::read_exif_payload(still_heic).ok()??;
+    let tiff = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+        &payload[0..]
+    } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
+        &payload[10..]
+    } else {
+        &payload[4..]
+    };
+    let le = &tiff[0..2] == b"II";
+    let u16v = |t: &[u8], o: usize| -> Option<u16> {
+        let b: [u8; 2] = t.get(o..o + 2)?.try_into().ok()?;
+        Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+    };
+    let u32v = |t: &[u8], o: usize| -> Option<usize> {
+        let b: [u8; 4] = t.get(o..o + 4)?.try_into().ok()?;
+        Some(if le {
+            u32::from_le_bytes(b) as usize
+        } else {
+            u32::from_be_bytes(b) as usize
+        })
+    };
+    if tiff.len() < 8 {
+        return None;
+    }
+    let ifd0 = u32v(tiff, 4)?;
+    let n = u16v(tiff, ifd0)? as usize;
+    let mut exif_off = None;
+    for k in 0..n {
+        let e = ifd0 + 2 + k * 12;
+        if u16v(tiff, e)? == 0x8769 {
+            exif_off = u32v(tiff, e + 8).map(|v| v as usize);
+        }
+    }
+    let exif_off = exif_off?;
+    let en = u16v(tiff, exif_off)? as usize;
+    for k in 0..en {
+        let e = exif_off + 2 + k * 12;
+        if u16v(tiff, e)? != 0x927C {
+            continue;
+        }
+        let typ = u16v(tiff, e + 2)?;
+        let cnt = u32v(tiff, e + 4)? as usize;
+        let vo = u32v(tiff, e + 8)? as usize;
+        let unit = match typ {
+            1 | 2 | 6 | 7 => 1usize,
+            3 | 8 => 2,
+            4 | 9 | 11 => 4,
+            5 | 10 | 12 => 8,
+            _ => return None,
+        };
+        let sz = cnt.checked_mul(unit)?;
+        let voff = if sz > 4 { vo } else { e + 8 };
+        let note = tiff.get(voff..voff + sz)?;
+        if !note.starts_with(b"Apple iOS\0\0\x01") {
+            return None;
+        }
+        // MakerNote IFD: count u16 at 14, entries at 16, values relative to
+        // the note start.
+        let cn = u16v(note, 14)? as usize;
+        let mut pos = 16usize;
+        for _ in 0..cn {
+            if pos + 12 > note.len() {
+                return None;
+            }
+            let tag = u16v(note, pos)?;
+            let vcnt = u32v(note, pos + 4)?;
+            let voff = u32v(note, pos + 8)?;
+            if tag == 0x0011 && vcnt >= 36 {
+                let v = note.get(voff..voff + vcnt)?;
+                let s = String::from_utf8_lossy(&v[..vcnt.min(36)]).trim().to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+            pos += 12;
+        }
+        return None;
+    }
+    None
+}
+
+/// Read the `com.apple.quicktime.content.identifier` from a MOV's moov/meta.
+pub fn read_movie_content_identifier(mov: &[u8]) -> Option<String> {
+    let top = scan_boxes(mov, 0, mov.len()).ok()?;
+    let moov_box = top.iter().find(|b| &b.kind == b"moov")?;
+    let moov = &mov[moov_box.offset..moov_box.end()];
+    let root = MovBox {
+        offset: 0,
+        size: moov.len(),
+        kind: *b"moov",
+        header_size: 8,
+    };
+    let meta = scan_boxes(moov, root.payload_offset(), root.end())
+        .ok()?
+        .into_iter()
+        .find(|b| &b.kind == b"meta")?;
+    // meta is a plain box in our writer but a full box in some producers:
+    // try payload first, then payload+4.
+    let children = |skip: usize| -> Option<Vec<MovBox>> {
+        scan_boxes(moov, meta.payload_offset() + skip, meta.end()).ok()
+    };
+    let kids = children(0).or_else(|| children(4))?;
+    let keys = kids.iter().find(|b| &b.kind == b"keys")?;
+    let ilst = kids.iter().find(|b| &b.kind == b"ilst")?;
+    // keys: full box (ver/flags u32) + count u32 + key atoms
+    let mut cursor = keys.payload_offset() + 4;
+    if cursor + 4 > keys.end() {
+        return None;
+    }
+    let count = u32::from_be_bytes(moov[cursor..cursor + 4].try_into().unwrap()) as usize;
+    cursor += 4;
+    let mut content_index = None;
+    for index in 1..=count {
+        if cursor + 8 > keys.end() {
+            return None;
+        }
+        let size = u32::from_be_bytes(moov[cursor..cursor + 4].try_into().unwrap()) as usize;
+        if size < 8 || cursor + size > keys.end() {
+            return None;
+        }
+        if &moov[cursor + 4..cursor + 8] == b"mdta"
+            && &moov[cursor + 8..cursor + size] == CONTENT_IDENTIFIER_KEY
+        {
+            content_index = Some(index);
+        }
+        cursor += size;
+    }
+    let idx = content_index?;
+    let ilst_boxes = scan_boxes(moov, ilst.payload_offset(), ilst.end()).ok()?;
+    for item in ilst_boxes {
+        if item.kind != (idx as u32).to_be_bytes() {
+            continue;
+        }
+        for child in scan_boxes(moov, item.payload_offset(), item.end())
+            .ok()?
+            .into_iter()
+        {
+            if &child.kind == b"data" && child.size >= 16 {
+                let head = u32::from_be_bytes(moov[child.payload_offset()..child.payload_offset() + 4].try_into().unwrap());
+                if head == 1 {
+                    let raw = &moov[child.payload_offset() + 8..child.end()];
+                    return Some(String::from_utf8_lossy(raw).trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Validate that a still + MOV form a consistent Apple Live Photo pair:
+/// both carry the same content identifier.
+pub fn existing_pair_is_valid(still_heic: &[u8], mov: &[u8]) -> bool {
+    let Some(still_cid) = read_still_content_identifier(still_heic) else {
+        return false;
+    };
+    let Some(movie_cid) = read_movie_content_identifier(mov) else {
+        return false;
+    };
+    still_cid.trim().eq_ignore_ascii_case(movie_cid.trim())
+}

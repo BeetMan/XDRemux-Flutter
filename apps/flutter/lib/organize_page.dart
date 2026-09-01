@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/xdremux_service.dart';
+import '../ffi/xdremux_ffi.dart';
 
 /// Standalone "organize photos by capture mode" page.
 ///
@@ -27,6 +28,11 @@ class _OrganizeItem {
   String copyState = 'pending'; // pending | copied | duplicate | failed
   String? error;
 
+  /// Non-null when this image + a same-basename MOV form a validated
+  /// Apple Live Photo pair. The MOV is copied together with the image.
+  String? pairedVideoPath;
+  bool get isLivePhoto => pairedVideoPath != null;
+
   _OrganizeItem({required this.sourcePath, required this.fileName});
 }
 
@@ -38,6 +44,8 @@ class _OrganizePageState extends State<OrganizePage> {
   String _statusText = '选择包含 HEIC / JPEG 照片的目录开始扫描';
 
   static const _supportedExt = {'.heic', '.heif', '.jpg', '.jpeg'};
+  static const _assetLayoutPrefix = '静态照片';
+  static const _liveLayoutPrefix = '实况照片';
 
   Future<void> _pickInputDir() async {
     final dir = await FilePicker.getDirectoryPath(
@@ -65,12 +73,17 @@ class _OrganizePageState extends State<OrganizePage> {
 
   Future<void> _scanDirectory(Directory dir) async {
     final files = <File>[];
+    final movs = <String, File>{};
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
-      if (entity is File &&
-          _supportedExt.contains(
-            entity.path.substring(entity.path.lastIndexOf('.')).toLowerCase(),
-          )) {
+      if (entity is! File) continue;
+      final lower = entity.path.toLowerCase();
+      if (_supportedExt.contains(
+        entity.path.substring(entity.path.lastIndexOf('.')).toLowerCase(),
+      )) {
         files.add(entity);
+      } else if (lower.endsWith('.mov')) {
+        final stem = entity.uri.pathSegments.last.replaceAll(RegExp(r'\.mov$'), '');
+        movs[stem] = entity;
       }
     }
 
@@ -98,6 +111,15 @@ class _OrganizePageState extends State<OrganizePage> {
       } catch (_) {
         item.status = 'unreadable-image';
       }
+      // Asset-aware grouping: a same-basename MOV is only claimed as the
+      // paired video when the content identifiers match on both sides
+      // (upstream v1.4 semantics — never on filename alone).
+      final stem = file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
+      final companion = movs[stem];
+      if (companion != null &&
+          XdRemuxFFI.livePhotoPairValid(file.path, companion.path)) {
+        item.pairedVideoPath = companion.path;
+      }
       _items.add(item);
     }
 
@@ -105,7 +127,8 @@ class _OrganizePageState extends State<OrganizePage> {
     setState(() {
       _scanning = false;
       final categorized = _items.where((i) => i.modeKey != null).length;
-      _statusText = '共 ${_items.length} 张照片，$categorized 张可分类';
+      final live = _items.where((i) => i.isLivePhoto).length;
+      _statusText = '共 ${_items.length} 张照片，$categorized 张可分类，$live 组实况照片';
     });
   }
 
@@ -114,7 +137,11 @@ class _OrganizePageState extends State<OrganizePage> {
     if (root == null) return;
     final reserved = <String, int>{};
     for (final item in _items) {
-      final subdir = item.folderName != null ? '$root/${item.folderName}' : root;
+      // Asset-type level: 静态照片 / 实况照片 (upstream v1.4 layout).
+      final assetPrefix = item.isLivePhoto ? _liveLayoutPrefix : _assetLayoutPrefix;
+      final subdir = item.folderName != null
+          ? '$root/$assetPrefix/${item.folderName}'
+          : '$root/$assetPrefix';
       var candidate = '$subdir/${item.fileName}';
       var seq = 2;
       while (reserved.containsKey(candidate.toLowerCase()) ||
@@ -154,6 +181,14 @@ class _OrganizePageState extends State<OrganizePage> {
         final dest = File(item.destinationPath);
         await dest.parent.create(recursive: true);
         await File(item.sourcePath).copy(dest.path);
+        // Live Photo pair: copy the paired MOV alongside (same basename).
+        if (item.isLivePhoto && item.pairedVideoPath != null) {
+          final videoDest = item.destinationPath.replaceAll(
+            RegExp(r'\.[^.]+$'),
+            '.mov',
+          );
+          await File(item.pairedVideoPath!).copy(videoDest);
+        }
         item.copyState = 'copied';
         copied++;
       } catch (e) {
