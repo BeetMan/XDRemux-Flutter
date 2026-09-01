@@ -328,7 +328,21 @@ pub fn append_live_photo_entry(
     let values_start = next_ifd_end;
 
     let shift = 12i64;
+    // TIFF IFD entries must be sorted by tag. The Live Photo identifier is
+    // tag 0x0011 — prepend it (vendor tags observed are >= 0x002b), then the
+    // shifted vendor entries.
+    let values_len = note.len() - values_start;
+    let new_value_off = values_start + shift as usize + values_len;
     let mut entries: Vec<u8> = Vec::with_capacity((count + 1) * 12);
+    entries.extend_from_slice(&0x0011u16.to_be_bytes());
+    entries.extend_from_slice(&2u16.to_be_bytes());
+    entries.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    let off_bytes = if le {
+        (new_value_off as u32).to_le_bytes().to_vec()
+    } else {
+        (new_value_off as u32).to_be_bytes().to_vec()
+    };
+    entries.extend_from_slice(&off_bytes);
     for k in 0..count {
         let e = table_start + k * 12;
         let mut entry_bytes = note[e..e + 12].to_vec();
@@ -355,18 +369,6 @@ pub fn append_live_photo_entry(
         }
         entries.extend_from_slice(&entry_bytes);
     }
-    // New entry: tag 0x0011, type 2 (ASCII), count, offset.
-    let values_len = note.len() - values_start;
-    let new_value_off = values_start + shift as usize + values_len;
-    entries.extend_from_slice(&0x0011u16.to_be_bytes());
-    entries.extend_from_slice(&2u16.to_be_bytes());
-    entries.extend_from_slice(&(value.len() as u32).to_be_bytes());
-    let off_bytes = if le {
-        (new_value_off as u32).to_le_bytes().to_vec()
-    } else {
-        (new_value_off as u32).to_be_bytes().to_vec()
-    };
-    entries.extend_from_slice(&off_bytes);
 
     let mut out = Vec::with_capacity(note.len() + 12 + value.len());
     out.extend_from_slice(&note[..14]);
@@ -1231,7 +1233,10 @@ pub fn make_live_photo(
     // path (identity styles then come from a vendor-free file).
     let mut tiff_mut: Option<Vec<u8>> = None;
     let mut paired = false;
-    if let Some(note) = read_makernote_bytes(tiff)? {
+    let apple_note = read_makernote_bytes(tiff)
+        .unwrap_or(None)
+        .filter(|note| note.starts_with(b"Apple iOS\0\0\x01"));
+    if let Some(note) = apple_note {
         let patched = append_live_photo_entry(&note, &content_id)?;
         // Splice the enlarged note back into the TIFF at the same position:
         // everything before and after the note bytes is preserved verbatim.
@@ -1281,10 +1286,14 @@ pub fn make_live_photo(
         tiff_mut = Some(spliced);
         paired = true;
     }
-    let tiff_mut = if paired {
-        tiff_mut.expect("paired branch set tiff_mut")
-    } else {
-        inject_makernote(tiff, &content_id)?
+    let tiff_mut = match tiff_mut {
+        Some(t) => t,
+        None => {
+            // No Apple iOS note to extend (e.g. vendor JSON MakerNote):
+            // inject a minimal Live Photo note via the rewrite path. This
+            // file has no style state to preserve, so the replace is safe.
+            inject_makernote(tiff, &content_id)?
+        }
     };
     let mut new_payload = vec![0u8, 0, 0, 6];
     new_payload.extend_from_slice(b"Exif\0\0");
