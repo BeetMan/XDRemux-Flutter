@@ -42,7 +42,7 @@
 | macOS | `XDRemux-macOS-0.3.2.dmg` | 未公证，见下方安装说明 |
 | Android | `XDRemux-Android-0.3.2.apk` | - |
 | iOS | `XDRemux-iOS-0.3.2-unsigned.ipa` | 未签名，需自行签名安装 |
-| 鸿蒙 NEXT | `XDRemux-ohos-0.3.2-unsigned.hap` | 未签名（release 构建），见下方侧载说明 |
+| 鸿蒙 NEXT | `XDRemux-ohos-0.3.2-unsigned.hap` | 未签名（profile 构建，调试签名可签），见下方侧载说明 |
 
 ## 安装说明
 
@@ -70,9 +70,11 @@ hap 未签名，直接安装会报"缺少签名文件"，需签名后安装。
 2. 克隆本仓库，DevEco 打开 `apps/flutter/ohos` 工程，`File → Project Structure → Signing Configs` 勾选自动签名（自动登记设备 UDID 并生成调试证书）
 3. 用 `tools/ohos/build_hap.ps1` 构建，产物 `entry-default-signed.hap` 已带调试签名，`hdc install -r` 安装
 
-**方式二：hap-sign-tool 命令行重签（进阶）**
+**方式二：侧载工具 / hap-sign-tool 重签**
 
-需要自备 AGC 调试证书三件套，且 keystore 必须是**你自己创建、自设明文密码**的 p12：
+本包为 profile 模式构建（`debug: true` + AOT 编译），任何 Development（调试）Profile 均可签名——小白盒等侧载工具可直接使用。
+
+命令行重签需要自备 AGC 调试证书三件套，且 keystore 必须是**你自己创建、自设明文密码**的 p12：
 
 ```
 hap-sign-tool sign-app -keyAlias <别名> -signAlg "SHA256withECDSA"   -mode localSign -appCertFile <调试证书.cer> -profileFile <调试profile.p7b>   -inFile XDRemux-ohos-0.3.2-unsigned.hap -keystoreFile <.p12>   -keystorePwd <明文密码> -outFile signed.hap

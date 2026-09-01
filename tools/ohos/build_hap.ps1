@@ -6,7 +6,7 @@
 # always restores the mainline pubspec.yaml + pubspec.lock.
 #
 # Usage (PowerShell):  tools/ohos/build_hap.ps1 [-Release]
-param([switch]$Release)
+param([switch]$Profile, [switch]$Release)
 
 $ErrorActionPreference = 'Stop'
 $app = Join-Path $PSScriptRoot '..\..\apps\flutter'
@@ -21,9 +21,19 @@ Copy-Item pubspec.yaml pubspec.yaml.mainline.bak -Force
 if (Test-Path pubspec.lock) { Copy-Item pubspec.lock pubspec.lock.mainline.bak -Force }
 try {
     Copy-Item pubspec.ohos.yaml pubspec.yaml -Force
+    # Keep the app version in sync with the mainline pubspec so OHOS builds
+    # never lag behind a version bump.
+    $mainlineVersion = (Select-String -Path pubspec.yaml.mainline.bak -Pattern '^version:').Line
+    (Get-Content pubspec.yaml) -replace '^version:.*', $mainlineVersion | Set-Content pubspec.yaml
     flutter pub get
     if ($LASTEXITCODE -ne 0) { throw 'pub get failed' }
-    if ($Release) { flutter build hap --release } else { flutter build hap --debug }
+    # Profile mode = AOT compiled but flagged debug:true, so sideload tools
+    # signing with a Development profile accept it. Plain debug mode is JIT
+    # (~4x larger, slower); release mode packages can only be signed with a
+    # distribution certificate and cannot be sideloaded with debug profiles.
+    if ($Profile) { flutter build hap --profile }
+    elseif ($Release) { flutter build hap --release }
+    else { flutter build hap --debug }
     if ($LASTEXITCODE -ne 0) { throw 'build hap failed' }
 } finally {
     Move-Item pubspec.yaml.mainline.bak pubspec.yaml -Force
