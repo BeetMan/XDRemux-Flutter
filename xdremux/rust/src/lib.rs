@@ -7,6 +7,7 @@ pub mod container;
 pub mod edr;
 pub mod exif;
 pub mod motion_photo;
+pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
 pub mod iso21496;
@@ -833,18 +834,81 @@ fn xdremux_convert_impl(
         };
     }
 
-    // 2. Extract source metadata from the already-read bytes.
-    let extracted = match container::extract_lhdr_from_bytes(&source) {
-        Ok(e) => e,
-        Err(e) => {
-            return ConversionResult {
-                success: false,
-                mode: ptr::null_mut(),
-                family: ptr::null_mut(),
-                edr_scale: 0.0,
-                gain_map_max: 0.0,
-                error_message: CString::new(e).unwrap().into_raw(),
-            };
+    // 2. Extract source metadata from the already-read bytes. Ultra HDR
+    // JPEGs (OPPO Motion Photo stills, Google Ultra HDR) carry their gain
+    // map via MPF instead of an OPPO tail: decode the base JPEG, re-encode
+    // the primary as HEVC tiles and synthesize a source container so the
+    // regular UHDR path runs unchanged.
+    let mut source = source;
+    let extracted = if source.starts_with(&[0xFF, 0xD8]) {
+        match uhdr_jpeg::parse(&source) {
+            Ok(Some(info)) => {
+                let use_420 = oppo_compat.wants_patch();
+                let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return ConversionResult {
+                            success: false,
+                            mode: ptr::null_mut(),
+                            family: ptr::null_mut(),
+                            edr_scale: 0.0,
+                            gain_map_max: 0.0,
+                            error_message: CString::new(format!("Ultra HDR JPEG container synthesis: {e}"))
+                                .unwrap()
+                                .into_raw(),
+                        };
+                    }
+                };
+                source = synth;
+                container::ExtractedLhdr {
+                    mode: "uhdr".into(),
+                    meta_bytes: Vec::new(),
+                    meta_floats: info.meta_floats,
+                    mask_data: None,
+                    gainmap_data: Some(info.gainmap_jpeg),
+                    manifest_entries: None,
+                }
+            }
+            Ok(None) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(
+                        "JPEG input requires an Ultra HDR gain map (MPF); plain JPEG is not supported",
+                    )
+                    .unwrap()
+                    .into_raw(),
+                };
+            }
+            Err(e) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!("Ultra HDR JPEG parse: {e}"))
+                        .unwrap()
+                        .into_raw(),
+                };
+            }
+        }
+    } else {
+        match container::extract_lhdr_from_bytes(&source) {
+            Ok(e) => e,
+            Err(e) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(e).unwrap().into_raw(),
+                };
+            }
         }
     };
 

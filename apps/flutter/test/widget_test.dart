@@ -17,11 +17,13 @@ void main() {
     );
   });
 
-  test('input path filter accepts HEIC/HEIF and rejects unrelated files', () {
+  test('input path filter accepts HEIC/HEIF/JPEG and rejects unrelated files', () {
     expect(isSupportedInputPath('photo.HEIC'), isTrue);
     expect(isSupportedInputPath('photo.heif'), isTrue);
-    expect(isSupportedInputPath('photo.jpg'), isFalse);
-    expect(isSupportedInputPath('photo.heic.jpg'), isFalse);
+    expect(isSupportedInputPath('photo.jpg'), isTrue);
+    expect(isSupportedInputPath('photo.JPEG'), isTrue);
+    expect(isSupportedInputPath('photo.png'), isFalse);
+    expect(isSupportedInputPath('photo.txt'), isFalse);
   });
 
   testWidgets('XdRemuxApp renders home page', (WidgetTester tester) async {

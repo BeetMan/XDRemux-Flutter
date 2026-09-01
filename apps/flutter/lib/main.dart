@@ -32,9 +32,15 @@ import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
+/// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
+/// gain map via MPF); plain JPEGs are rejected with a clear message by the
+/// converter.
 bool isSupportedInputPath(String path) {
   final lower = path.toLowerCase();
-  return lower.endsWith('.heic') || lower.endsWith('.heif');
+  return lower.endsWith('.heic') ||
+      lower.endsWith('.heif') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg');
 }
 
 /// Picked file carrier that works across file_picker v12 (PlatformFile is
@@ -767,7 +773,12 @@ class _HomePageState extends State<HomePage> {
   String? _resolveRealPathFromName(String? name) {
     if (name == null || name.isEmpty) return null;
     final lower = name.toLowerCase();
-    if (!lower.endsWith('.heic') && !lower.endsWith('.heif')) return null;
+    if (!lower.endsWith('.heic') &&
+        !lower.endsWith('.heif') &&
+        !lower.endsWith('.jpg') &&
+        !lower.endsWith('.jpeg')) {
+      return null;
+    }
     const bases = [
       '/storage/emulated/0/DCIM/Camera',
       '/storage/emulated/0/Pictures',
@@ -868,7 +879,7 @@ class _HomePageState extends State<HomePage> {
 
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['heic', 'heif'],
+      allowedExtensions: ['heic', 'heif', 'jpg', 'jpeg'],
       // ignore: deprecated_member_use - multi-select still requires this flag
       allowMultiple: true,
     );
