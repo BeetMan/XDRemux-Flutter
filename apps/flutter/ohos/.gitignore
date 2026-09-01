@@ -10,3 +10,6 @@ oh-package-lock.json5
 **/.arkui-x/
 node_modules/
 libs/
+hvigorw
+hvigorw.js
+entry/src/main/resources/rawfile/flutter_assets/
