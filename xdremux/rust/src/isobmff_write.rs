@@ -1600,6 +1600,65 @@ pub fn graft_exif_item(output: &mut Vec<u8>, donor: &[u8]) -> Result<bool, Strin
     if payload.is_empty() {
         return Ok(false);
     }
+    install_exif_payload(output, &payload)
+}
+
+/// Read the Exif item payload of a HEIF container, if present.
+pub fn read_exif_payload(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let meta = match isobmff::parse_source_meta(data) {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+    let Some(exif_id) = meta
+        .items
+        .iter()
+        .find(|it| it.itype == "Exif")
+        .map(|it| it.item_id)
+    else {
+        return Ok(None);
+    };
+    let Some(entry) = meta.iloc_entries.iter().find(|e| e.item_id == exif_id) else {
+        return Ok(None);
+    };
+    let top = isobmff::parse_boxes(data, 0, data.len());
+    let meta_box = top
+        .iter()
+        .find(|b| &b.btype == b"meta")
+        .ok_or("meta box not found")?;
+    let idat_range = isobmff::parse_boxes(data, meta_box.data_start + 4, meta_box.data_end)
+        .iter()
+        .find(|b| &b.btype == b"idat")
+        .map(|b| (b.data_start, b.data_end));
+    let mut payload = Vec::new();
+    for &(off, len) in &entry.extents {
+        let start = match entry.construction_method {
+            0 => off as usize,
+            1 => {
+                let (idat_start, _) =
+                    idat_range.ok_or("Exif uses idat but no idat box found")?;
+                idat_start + off as usize
+            }
+            other => return Err(format!("unsupported Exif construction method {other}")),
+        };
+        let end = start + len as usize;
+        if end > data.len() {
+            return Err("Exif extent out of range".into());
+        }
+        payload.extend_from_slice(&data[start..end]);
+    }
+    if payload.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(payload))
+}
+
+/// Install an Exif payload into a HEIF container: when an Exif item already
+/// exists its iloc entry is re-pointed at the new payload appended to mdat;
+/// otherwise a new item (infe + iloc + cdsc→primary) is created.
+pub fn install_exif_payload(output: &mut Vec<u8>, payload: &[u8]) -> Result<bool, String> {
+    if payload.is_empty() {
+        return Ok(false);
+    }
 
     // ---- parse output container ----
     let top = isobmff::parse_boxes(output, 0, output.len());

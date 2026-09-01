@@ -608,7 +608,13 @@ enum MotionPhotoMode {
 
   /// Convert the still image and also export the video stream(s) next to
   /// the converted output.
-  stillAndVideo;
+  stillAndVideo,
+
+  /// Compose an Apple Live Photo pair: the converted still gains the Apple
+  /// MakerNote content identifier and the video is rewritten as a paired MOV
+  /// (still-image-time marker). Both files land next to the output; import
+  /// them together into Apple Photos to get the Live Photo.
+  livePhotoPair;
 
   String get displayName {
     switch (this) {
@@ -618,6 +624,8 @@ enum MotionPhotoMode {
         return '仅静帧';
       case MotionPhotoMode.stillAndVideo:
         return '静帧+视频';
+      case MotionPhotoMode.livePhotoPair:
+        return 'Live Photo';
     }
   }
 }

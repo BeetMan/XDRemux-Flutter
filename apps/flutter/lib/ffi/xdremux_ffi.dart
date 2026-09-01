@@ -256,6 +256,18 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
+  static final _makeLivePhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      )>('xdremux_make_live_photo');
+
   static final _verifyStylesOutput = _lib.lookupFunction<
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_styles_output');
@@ -509,6 +521,40 @@ class XdRemuxFFI {
       };
     } finally {
       calloc.free(pathPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  /// Compose an Apple Live Photo pair (HEIC still + MOV video) from the
+  /// original Motion Photo [sourcePath] and the converted still [stillPath].
+  /// Writes `<stem>.heic` / `<stem>.mov` into [outDir].
+  static Map<String, dynamic> makeLivePhoto(
+    String sourcePath,
+    String stillPath,
+    String outDir,
+  ) {
+    final sourcePtr = sourcePath.toNativeUtf8();
+    final stillPtr = stillPath.toNativeUtf8();
+    final outPtr = outDir.toNativeUtf8();
+    try {
+      final report = _makeLivePhoto(sourcePtr, stillPtr, outPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust live photo composer returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Rust live photo composer returned an invalid report',
+      };
+    } finally {
+      calloc.free(sourcePtr);
+      calloc.free(stillPtr);
       calloc.free(outPtr);
     }
   }

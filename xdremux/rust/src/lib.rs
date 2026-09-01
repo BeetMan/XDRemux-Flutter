@@ -6,6 +6,7 @@ pub mod categorize;
 pub mod container;
 pub mod edr;
 pub mod exif;
+pub mod live_photo;
 pub mod motion_photo;
 pub mod uhdr_jpeg;
 pub mod gainmap;
@@ -197,6 +198,75 @@ pub extern "C" fn xdremux_motion_photo_split(
             report["primaryVideoPath"] = p.into();
         }
         Ok(report)
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Compose an Apple Live Photo pair from a converted HEIC still and the
+/// original Motion Photo source (its video range and OPPO LPEX metadata are
+/// read from the source; the high-quality primary stream is used for
+/// dual-stream files). Writes `<stem>.heic` and `<stem>.mov` into out_dir.
+/// Returns a JSON report with the paths and the shared content identifier.
+#[no_mangle]
+pub extern "C" fn xdremux_make_live_photo(
+    source_path: *const c_char,
+    still_path: *const c_char,
+    out_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if source_path.is_null() || still_path.is_null() || out_dir.is_null() {
+            return Err("source/still/out_dir path is missing".into());
+        }
+        let source_path = unsafe { CStr::from_ptr(source_path) }
+            .to_str()
+            .map_err(|_| "source path is not valid UTF-8".to_string())?;
+        let still_path = unsafe { CStr::from_ptr(still_path) }
+            .to_str()
+            .map_err(|_| "still path is not valid UTF-8".to_string())?;
+        let out_dir = unsafe { CStr::from_ptr(out_dir) }
+            .to_str()
+            .map_err(|_| "out_dir is not valid UTF-8".to_string())?;
+        let source = std::fs::read(source_path)
+            .map_err(|e| format!("cannot read source: {e}"))?;
+        let still = std::fs::read(still_path)
+            .map_err(|e| format!("cannot read still: {e}"))?;
+        let asset = motion_photo::parse_motion_photo(&source)?
+            .ok_or("source is not a Motion Photo")?;
+        let primary = motion_photo::primary_video_range(&source, &asset);
+        let video_full = &source[primary.start as usize..primary.end as usize];
+        // ColorOS Stream-1 payloads can carry an opaque vendor suffix after
+        // the last complete BMFF box; strip it before remuxing.
+        let clean_len = motion_photo::standalone_bmff_length(video_full)?;
+        let video = &video_full[..clean_len];
+        let (still_out, mov, content_id) = live_photo::make_live_photo(
+            &still,
+            video,
+            asset.presentation_timestamp_us,
+            asset.vendor_metadata.as_ref(),
+        )?;
+        std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
+        let stem = std::path::Path::new(source_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("livephoto");
+        let still_out_path = format!("{out_dir}/{stem}.heic");
+        let mov_path = format!("{out_dir}/{stem}.mov");
+        std::fs::write(&still_out_path, &still_out)
+            .map_err(|e| format!("write still: {e}"))?;
+        std::fs::write(&mov_path, &mov).map_err(|e| format!("write movie: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "stillPath": still_out_path,
+            "videoPath": mov_path,
+            "contentIdentifier": content_id,
+        }))
     })();
     let payload = match result {
         Ok(v) => v,

@@ -1576,6 +1576,47 @@ class _HomePageState extends State<HomePage> {
             debugPrint('[XDRemux][motion] video export failed: $e');
           }
         }
+        // Motion Photo policy 合成 Live Photo: inject the Apple MakerNote
+        // into the converted still and rewrite the video as the paired MOV.
+        // Both files land next to the output; importing them together into
+        // Apple Photos yields the Live Photo.
+        if (item.motionPhoto != null &&
+            item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
+          try {
+            final outParent = File(item.outputPath).parent.path;
+            final report = XdRemuxFFI.makeLivePhoto(
+              item.inputPath,
+              item.outputPath,
+              outParent,
+            );
+            if (report['success'] != true) {
+              throw report['errorMessage'] ?? 'live photo compose failed';
+            }
+            // Adopt the paired still (identical pixels + MakerNote) as the
+            // output, and place the MOV next to it under the output name.
+            final pairedStill = report['stillPath'] as String?;
+            final pairedMov = report['videoPath'] as String?;
+            if (pairedStill != null &&
+                pairedMov != null &&
+                File(pairedStill).existsSync()) {
+              final outFile = File(item.outputPath);
+              if (pairedStill != item.outputPath) {
+                await File(pairedStill).copy(item.outputPath);
+                await File(pairedStill).delete();
+              }
+              final movTarget = outFile.path.replaceAll(
+                RegExp(r'\.[^.]+$'),
+                '.mov',
+              );
+              if (pairedMov != movTarget) {
+                await File(pairedMov).rename(movTarget);
+              }
+            }
+          } catch (e) {
+            item.errorMessage = 'Live Photo 合成失败: $e';
+            debugPrint('[XDRemux][motion] live photo compose failed: $e');
+          }
+        }
       } else {
         item.status = QueueItemStatus.failed;
         final message = result['errorMessage'] ?? '未知错误';

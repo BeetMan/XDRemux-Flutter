@@ -56,6 +56,12 @@ pub struct OppoMetadata {
     pub origin_photo_height: Option<u32>,
     pub photo_crop_factor: Option<f64>,
     pub stream_count: u32,
+    /// ColorOS 16+ still-image crop/EIS homographies (row-major 3x3).
+    pub photo_crop_matrix: Option<[f64; 9]>,
+    pub photo_eis_matrix: Option<[f64; 9]>,
+    /// ColorOS 16+ axis crop factors (EIS compensation scale source).
+    pub photo_eis_crop_factor: Option<[f64; 2]>,
+    pub eis_crop_factor: Option<[f64; 2]>,
 }
 
 /// Fully resolved Motion Photo layout.
@@ -628,6 +634,30 @@ fn parse_lpex_object(raw: &[u8]) -> Option<OppoMetadata> {
     };
     let (vw, vh) = size_pair("videoSize");
     let (ow, oh) = size_pair("originPhotoSize");
+    let matrix = |name: &str| -> Option<[f64; 9]> {
+        let arr = obj.get(name)?.as_array()?;
+        if arr.len() != 9 {
+            return None;
+        }
+        let mut out = [0.0; 9];
+        for (i, v) in arr.iter().enumerate() {
+            out[i] = v.as_f64().filter(|x| x.is_finite())?;
+        }
+        Some(out)
+    };
+    let pair2 = |name: &str| -> Option<[f64; 2]> {
+        let arr = obj.get(name)?.as_array()?;
+        if arr.is_empty() || arr.len() > 8 {
+            return None;
+        }
+        let x = arr[0].as_f64().filter(|v| v.is_finite())?;
+        let y = arr
+            .get(1)
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite())
+            .unwrap_or(x);
+        Some([x, y])
+    };
     Some(OppoMetadata {
         cover_frame_pts_us: integer("coverFramePts"),
         version: integer("version").unwrap_or(0),
@@ -638,6 +668,10 @@ fn parse_lpex_object(raw: &[u8]) -> Option<OppoMetadata> {
         origin_photo_height: oh,
         photo_crop_factor: obj.get("photoCropFactor").and_then(|v| v.as_f64()),
         stream_count: 1,
+        photo_crop_matrix: matrix("photoCropMatrix"),
+        photo_eis_matrix: matrix("photoEisMatrix"),
+        photo_eis_crop_factor: pair2("photoEisCropFactor"),
+        eis_crop_factor: pair2("eisCropFactor"),
     })
 }
 
@@ -815,6 +849,12 @@ fn oppo_fallback(data: &[u8], lpex: Option<&OppoMetadata>) -> Option<MotionPhoto
     })
 }
 
+/// Extract OPPO LPEX metadata from any container bytes (used by the Live
+/// Photo movie writer for the still-image transform).
+pub fn parse_oppo_lpex_pub(data: &[u8]) -> Option<OppoMetadata> {
+    parse_oppo_lpex(data)
+}
+
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
@@ -897,6 +937,42 @@ pub fn primary_video_range(data: &[u8], asset: &MotionPhotoAsset) -> ByteRange {
         start: offsets[offsets.len() - 2],
         end: offsets[offsets.len() - 1],
     }
+}
+
+/// Length of the complete standalone BMFF prefix of an embedded video
+/// stream. Some ColorOS Stream-1 payloads carry opaque vendor bytes after the
+/// last complete box; those are excluded. Ported from upstream
+/// `motion_video.standalone_bmff_length`.
+pub fn standalone_bmff_length(data: &[u8]) -> Result<usize, String> {
+    let file_size = data.len();
+    let mut offset = 0usize;
+    let mut kinds: Vec<[u8; 4]> = Vec::new();
+    while offset < file_size {
+        let parsed = read_box_header(data, offset as u64, file_size as u64).filter(|b| {
+            b.kind.iter().all(|&v| (0x20..=0x7e).contains(&v))
+        });
+        match parsed {
+            Some(b) => {
+                if kinds.is_empty() && &b.kind != b"ftyp" {
+                    return Err("embedded video does not begin with ftyp".into());
+                }
+                kinds.push(b.kind);
+                offset += b.size as usize;
+            }
+            None => {
+                let has = |k: &[u8; 4]| kinds.iter().any(|x| x == k);
+                if has(b"ftyp") && has(b"moov") && has(b"mdat") {
+                    break;
+                }
+                return Err(format!("invalid ISO-BMFF data at offset {offset}"));
+            }
+        }
+    }
+    let has = |k: &[u8; 4]| kinds.iter().any(|x| x == k);
+    if !has(b"ftyp") || !has(b"moov") || !has(b"mdat") {
+        return Err("embedded video lacks required ftyp/moov/mdat boxes".into());
+    }
+    Ok(offset)
 }
 
 // ---------------------------------------------------------------------------
