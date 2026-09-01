@@ -278,6 +278,70 @@ pub extern "C" fn xdremux_make_live_photo(
     }
 }
 
+/// EXPERIMENT (Live Photo style triggering): take a styled HEIC, replace the
+/// styleMetadata/metadata uri item's payload with the bytes from
+/// payload_path (a patched bplist) and optionally rename the item to the
+/// Apple-native `metadata` name, writing the result to out_path.
+#[no_mangle]
+pub extern "C" fn xdremux_style_experiment(
+    still_path: *const c_char,
+    payload_path: *const c_char,
+    out_path: *const c_char,
+    rename_to_metadata: u8,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let read = |p: *const c_char, what: &str| -> Result<String, String> {
+            unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .map(|s| s.to_string())
+                .map_err(|_| format!("{what} path is not valid UTF-8"))
+        };
+        let still_path = read(still_path, "still")?;
+        let payload_path = read(payload_path, "payload")?;
+        let out_path = read(out_path, "out")?;
+        let data = std::fs::read(&still_path)
+            .map_err(|e| format!("cannot read still: {e}"))?;
+        let new_payload = std::fs::read(&payload_path)
+            .map_err(|e| format!("cannot read payload: {e}"))?;
+        let parsed = isobmff::parse_source_meta(&data)
+            .map_err(|e| format!("meta parse: {e}"))?;
+        // The style item's infe item_type is "uri "; the distinguishing
+        // item_name is styleMetadata (ours) or metadata (Apple native).
+        let item_id = parsed
+            .items
+            .iter()
+            .find(|it| {
+                it.itype.starts_with("uri")
+                    && (it.raw_infe.windows(13).any(|w| w == b"styleMetadata")
+                        || it.raw_infe.windows(8).any(|w| w == b"metadata"))
+            })
+            .map(|it| it.item_id)
+            .ok_or("no styleMetadata/metadata uri item")?;
+        let mut out = data;
+        let itype = if rename_to_metadata != 0 {
+            Some("metadata")
+        } else {
+            None
+        };
+        isobmff_write::replace_item_payload(&mut out, item_id, itype, &new_payload)?;
+        std::fs::write(&out_path, &out).map_err(|e| format!("write out: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outPath": out_path,
+            "renamed": rename_to_metadata != 0,
+            "payloadLen": new_payload.len(),
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Frees a string previously returned by `xdremux_version`.
 #[no_mangle]
 pub extern "C" fn xdremux_free_string(s: *mut c_char) {

@@ -1834,6 +1834,164 @@ pub fn install_exif_payload(output: &mut Vec<u8>, payload: &[u8]) -> Result<bool
     Ok(true)
 }
 
+/// Replace an existing item's payload and optionally rename its infe item
+/// type. The item must already exist; the new payload is appended to mdat
+/// and the iloc entry re-pointed. Used for the Live Photo style-metadata
+/// experiments (e.g. renaming styleMetadata → metadata, patching plist
+/// keys).
+pub fn replace_item_payload(
+    output: &mut Vec<u8>,
+    item_id: u32,
+    new_itype: Option<&str>,
+    new_payload: &[u8],
+) -> Result<(), String> {
+    let top = isobmff::parse_boxes(output, 0, output.len());
+    let meta = top
+        .iter()
+        .find(|b| &b.btype == b"meta")
+        .ok_or("output meta box not found")?
+        .clone();
+    let mdat = top
+        .iter()
+        .find(|b| &b.btype == b"mdat")
+        .ok_or("output mdat box not found")?
+        .clone();
+    if mdat.box_start < meta.box_start + meta.size {
+        return Err("unexpected box order: mdat before meta".into());
+    }
+    if mdat.data_start - mdat.box_start != 8 {
+        return Err("extended-size mdat box is not supported".into());
+    }
+    let parsed = isobmff::parse_source_meta(output).map_err(|e| format!("output meta parse: {e}"))?;
+    let meta_kids = isobmff::parse_boxes(output, meta.data_start + 4, meta.data_end);
+    if parsed.iloc_entries.iter().all(|e| e.item_id != item_id) {
+        return Err(format!("item {item_id} has no iloc entry"));
+    }
+
+    let old_mdat_payload_len = (mdat.data_end - mdat.data_start) as u64;
+    let align_pad = ((4 - (old_mdat_payload_len % 4)) % 4) as u64;
+
+    let mut iloc = parsed.iloc_entries.clone();
+    if let Some(entry) = iloc.iter_mut().find(|e| e.item_id == item_id) {
+        entry.construction_method = 0;
+        entry.data_reference_index = 0;
+        entry.extents = vec![(0, new_payload.len() as u64)];
+    }
+
+    // iinf: patch the infe when renaming. For `uri ` items the infe layout is
+    // version/flags + id + protection + "uri " + item_name(NUL) +
+    // content_type(NUL); the Apple-native name is "metadata" and the content
+    // type must be preserved.
+    let new_iinf: Option<Result<Vec<u8>, String>> = new_itype.map(|itype| {
+        let mut infes: Vec<Vec<u8>> = Vec::new();
+        for it in &parsed.items {
+            let rebuilt = if it.item_id != item_id {
+                it.raw_infe.clone()
+            } else if it.itype.starts_with("uri") {
+                // raw_infe is the full infe box (header included). Layout:
+                // [size(4)][infe(4)][ver(1)][flags(3)][id][protection]
+                // ["uri "][item_name NUL][content_type NUL].
+                // Rebuild the whole box cleanly with the item_name swapped,
+                // preserving content_type.
+                let raw = &it.raw_infe;
+                let pos_type = raw
+                    .windows(4)
+                    .position(|w| w == b"uri ")
+                    .ok_or_else(|| "uri item without 'uri ' item_type".to_string())?;
+                let name_start = pos_type + 4;
+                let name_end = raw[name_start..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .map(|p| name_start + p)
+                    .unwrap_or(raw.len());
+                let content_type = &raw[name_end + 1..]; // includes its NUL
+                let mut payload = Vec::new();
+                payload.extend_from_slice(&raw[pos_type - 8..pos_type]); // ver/flags/id/prot
+                payload.extend_from_slice(b"uri ");
+                payload.extend_from_slice(itype.as_bytes());
+                payload.push(0);
+                payload.extend_from_slice(content_type);
+                isobmff::make_box(b"infe", &payload)
+            } else {
+                isobmff::make_infe_box(item_id, itype, it.flags)
+            };
+            infes.push(rebuilt);
+        }
+        Ok(isobmff::make_iinf_box(parsed.iinf_version, &infes))
+    });
+
+    let prefix = &output[..meta.box_start];
+    let between = &output[meta.box_start + meta.size..mdat.box_start];
+    let suffix = &output[mdat.box_start + mdat.size..];
+    if !suffix.is_empty() {
+        return Err("output has trailing data after mdat".into());
+    }
+
+    let new_iinf_resolved: Option<Vec<u8>> = match new_iinf {
+        Some(r) => Some(r?),
+        None => None,
+    };
+
+    let assemble_meta_box = |iloc_box: &[u8]| -> Vec<u8> {
+        let meta_ver = &output[meta.data_start..meta.data_start + 4];
+        let mut parts: Vec<Vec<u8>> = Vec::new();
+        for kid in &meta_kids {
+            match &kid.btype {
+                b"iinf" => parts.push(
+                    new_iinf_resolved
+                        .clone()
+                        .unwrap_or_else(|| output[kid.box_start..kid.box_start + kid.size].to_vec()),
+                ),
+                b"iloc" => parts.push(iloc_box.to_vec()),
+                _ => parts.push(output[kid.box_start..kid.box_start + kid.size].to_vec()),
+            }
+        }
+        let mut body = meta_ver.to_vec();
+        for p in &parts {
+            body.extend_from_slice(p);
+        }
+        isobmff::make_box(b"meta", &body)
+    };
+
+    let pass1_iloc = isobmff::make_iloc_box(&iloc);
+    let meta_pass1 = assemble_meta_box(&pass1_iloc);
+    let new_mdat_data_start = prefix.len() + meta_pass1.len() + between.len() + 8;
+    let delta = new_mdat_data_start as i64 - mdat.data_start as i64;
+
+    for entry in &mut iloc {
+        if entry.item_id == item_id {
+            entry.extents = vec![
+                (
+                    new_mdat_data_start as u64 + old_mdat_payload_len + align_pad,
+                    new_payload.len() as u64,
+                ),
+            ];
+        } else if entry.construction_method == 0 {
+            for extent in &mut entry.extents {
+                extent.0 = (extent.0 as i64 + delta) as u64;
+            }
+        }
+    }
+    let final_iloc = isobmff::make_iloc_box(&iloc);
+    let meta_final = assemble_meta_box(&final_iloc);
+    debug_assert_eq!(meta_pass1.len(), meta_final.len());
+
+    let mut new_mdat_payload =
+        Vec::with_capacity(old_mdat_payload_len as usize + align_pad as usize + new_payload.len());
+    new_mdat_payload.extend_from_slice(&output[mdat.data_start..mdat.data_end]);
+    new_mdat_payload.extend(std::iter::repeat(0u8).take(align_pad as usize));
+    new_mdat_payload.extend_from_slice(new_payload);
+    let mdat_box = isobmff::make_box(b"mdat", &new_mdat_payload);
+
+    let mut out = Vec::with_capacity(prefix.len() + meta_final.len() + between.len() + mdat_box.len());
+    out.extend_from_slice(prefix);
+    out.extend_from_slice(&meta_final);
+    out.extend_from_slice(between);
+    out.extend_from_slice(&mdat_box);
+    *output = out;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
