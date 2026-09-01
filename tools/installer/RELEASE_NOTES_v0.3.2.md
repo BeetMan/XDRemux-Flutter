@@ -39,10 +39,46 @@
 |---|---|---|
 | Windows x64 | `XDRemux-Windows-0.3.2-Setup.exe` | 安装包 |
 | Windows ARM64 | `XDRemux-Windows-arm64-0.3.2-Setup.exe` | 实验性 |
-| macOS | `XDRemux-macOS-0.3.2.dmg` | 未公证；首次右键打开 |
+| macOS | `XDRemux-macOS-0.3.2.dmg` | 未公证，见下方安装说明 |
 | Android | `XDRemux-Android-0.3.2.apk` | - |
 | iOS | `XDRemux-iOS-0.3.2-unsigned.ipa` | 未签名，需自行签名安装 |
-| 鸿蒙 NEXT | 无 CI 产物 | 本地构建：`tools/ohos/build_hap.ps1` |
+| 鸿蒙 NEXT | `XDRemux-ohos-0.3.2-unsigned.hap` | 未签名（release 构建），见下方侧载说明 |
+
+## 安装说明
+
+### macOS（未公证 DMG）
+
+应用未经 Apple 公证，首次打开会被 Gatekeeper 拦截：
+
+1. 将 `XDRemux.app` 拖入「应用程序」文件夹
+2. **右键点击应用 → 打开**，在弹窗中再点「打开」（不要直接双击）
+3. 若仍提示"已损坏"或无法验证（Apple Silicon 常见），在终端执行：
+
+   ```
+   sudo xattr -rd com.apple.quarantine /Applications/XDRemux.app
+   ```
+
+之后可正常打开。
+
+### 鸿蒙 NEXT（unsigned hap 侧载）
+
+hap 未签名，直接安装会报"缺少签名文件"，需签名后安装。
+
+**方式一：DevEco Studio 自动签名构建（推荐）**
+
+1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)（需注册华为开发者账号，个人免费）
+2. 克隆本仓库，DevEco 打开 `apps/flutter/ohos` 工程，`File → Project Structure → Signing Configs` 勾选自动签名（自动登记设备 UDID 并生成调试证书）
+3. 用 `tools/ohos/build_hap.ps1` 构建，产物 `entry-default-signed.hap` 已带调试签名，`hdc install -r` 安装
+
+**方式二：hap-sign-tool 命令行重签（进阶）**
+
+需要自备 AGC 调试证书三件套，且 keystore 必须是**你自己创建、自设明文密码**的 p12：
+
+```
+hap-sign-tool sign-app -keyAlias <别名> -signAlg "SHA256withECDSA"   -mode localSign -appCertFile <调试证书.cer> -profileFile <调试profile.p7b>   -inFile XDRemux-ohos-0.3.2-unsigned.hap -keystoreFile <.p12>   -keystorePwd <明文密码> -outFile signed.hap
+```
+
+> 注意：DevEco「自动签名」生成的 p12 密码是加密存储的（build-profile.json5 里的长串是密文），**无法**用于命令行重签；调试 Profile 还需在 AGC 登记目标设备的 UDID。命令行报错乱码时，先 `chcp 65001`。
 
 ## 验证状态
 
