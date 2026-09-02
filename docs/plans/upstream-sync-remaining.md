@@ -15,9 +15,9 @@
 - [ ] **14 个版本化 Motion Photo fixtures 移植**：上游回归资产，可直接用于我们的
   conformance 测试。
 - [ ] **严格的 HEIF/ISO-BMFF 边界检查**：上游加固的容器校验规则。
-- [ ] **styles+pair 组合档**：identity+pair 曾报「无法加载编辑内容」；2026-09-02 发现
-  非身份预测 key1 单独（无配对）真机验收全通过，**pair+预测状态组合尚未真机测试**，
-  通过则可解除互斥。相关代码已保留（`append_live_photo_entry`）。
+- [x] **styles+pair 组合档**：2026-09-03 终局实验（预测非身份 key1 + pair）与 identity+pair
+  同样失败——联合编辑加载是 Apple 结构性拦截，与风格内容无关。互斥转为永久设计约束，
+  本项关闭（见 docs/research/native-fidelity-gap.md 终局实验节）。
 
 ## 已确认不可行 / 无需同步
 
