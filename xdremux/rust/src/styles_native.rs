@@ -505,48 +505,94 @@ fn identity_style_data() -> Vec<u8> {
 }
 
 fn build_style_metadata() -> Vec<u8> {
+    build_style_metadata_with(&StyleStateOverride::identity())
+}
+
+/// Per-photo style-state overrides produced by the upstream universal
+/// Photographic Style state model (CoreML prediction, see
+/// docs/research/styles-upstream-logic-comparison.md). Fields map to
+/// styleMetadata plist keys; `None` keeps the golden-sample reference value.
+pub struct StyleStateOverride {
+    /// styleMetadata key "0" (native protocol tag; iPhone native = 16).
+    pub key0: u64,
+    /// Key "1": the 51840-byte key1 lattice (f16 LE).
+    pub key1: Vec<u8>,
+    /// Key "3": the 516-byte GTC resource.
+    pub gtc: Vec<u8>,
+    /// Key "4" (base exposure scalar, e.g. predicted Tag4).
+    pub tag4: f64,
+    /// Key "5" (processing mode flag, e.g. predicted Tag5).
+    pub tag5: u64,
+    /// Keys "c"/"d": 32x32 f16 tone/linear light maps (2048 bytes each).
+    pub light_c: Vec<u8>,
+    pub light_d: Vec<u8>,
+    /// Key "h" (TagH).
+    pub tag_h: f64,
+    /// Key "i" gain-range dict.
+    pub range_min: f64,
+    pub range_max: f64,
+    pub gain: f64,
+}
+
+impl StyleStateOverride {
+    /// The golden-sample reference state currently used by the default path.
+    pub fn identity() -> Self {
+        Self {
+            key0: 15,
+            key1: identity_style_data(),
+            gtc: FIELD_3.to_vec(),
+            tag4: 4.0,
+            tag5: 2,
+            light_c: FIELD_C.to_vec(),
+            light_d: FIELD_D.to_vec(),
+            tag_h: 1.8384023904800415,
+            range_min: 0.0,
+            range_max: 0.0762939453125,
+            gain: 7.353515625,
+        }
+    }
+}
+
+fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
     let mut w = BplistWriter::new();
 
     // Golden field order: 0, f, 1, j, g, 4, i, 6, c, k, h, 2, 5, 3, e, 7, d
     let k0 = w.add_str("0");
-    let v0 = w.add_int(15);
+    let v0 = w.add_int(state.key0);
     let kf = w.add_str("f");
     let vf = w.add_int(32);
     let k1 = w.add_str("1");
-    let style_data = identity_style_data();
-    let v1 = w.add_data(&style_data);
+    let v1 = w.add_data(&state.key1);
     let kj = w.add_str("j");
     let vj = w.add_real(1.0);
     let kg = w.add_str("g");
     let vg = w.add_int(1278226536);
     let k4 = w.add_str("4");
-    let v4 = w.add_real(4.0);
+    let v4 = w.add_real(state.tag4);
     let ki = w.add_str("i");
     let vi = {
-        // Reference gain-range values from the golden sample; per-photo
-        // computation needs gain-map decode (TODO: derive at convert time).
         let kmin = w.add_str("OriginalRangeMin");
-        let vmin = w.add_real(0.0);
+        let vmin = w.add_real(state.range_min);
         let kmax = w.add_str("OriginalRangeMax");
-        let vmax = w.add_real(0.0762939453125);
+        let vmax = w.add_real(state.range_max);
         let kgain = w.add_str("Gain");
-        let vgain = w.add_real(7.353515625);
+        let vgain = w.add_real(state.gain);
         w.add_dict(&[(kmin, vmin), (kmax, vmax), (kgain, vgain)])
     };
     let k6 = w.add_str("6");
     let v6 = build_stats_dict(&mut w);
     let kc = w.add_str("c");
-    let vc = w.add_data(FIELD_C);
+    let vc = w.add_data(&state.light_c);
     let kk = w.add_str("k");
     let vk = w.add_bool(false);
     let kh = w.add_str("h");
-    let vh = w.add_real(1.8384023904800415);
+    let vh = w.add_real(state.tag_h);
     let k2 = w.add_str("2");
     let v2 = w.add_bool(true);
     let k5 = w.add_str("5");
-    let v5 = w.add_int(2);
+    let v5 = w.add_int(state.tag5);
     let k3 = w.add_str("3");
-    let v3 = w.add_data(FIELD_3);
+    let v3 = w.add_data(&state.gtc);
     let ke = w.add_str("e");
     let ve = w.add_int(32);
     let k7 = w.add_str("7");
@@ -560,7 +606,7 @@ fn build_style_metadata() -> Vec<u8> {
         w.add_dict(&[(kpm, vpm), (ksr, vsr), (kpr, vpr)])
     };
     let kd = w.add_str("d");
-    let vd = w.add_data(FIELD_D);
+    let vd = w.add_data(&state.light_d);
 
     let top = w.add_dict(&[
         (k0, v0),
@@ -710,4 +756,32 @@ fn make_xmp_infe(item_id: u32) -> Vec<u8> {
     payload.push(0);
     payload.extend_from_slice(b"application/rdf+xml\0");
     isobmff::make_box(b"infe", &payload)
+}
+
+/// Replace the styleMetadata payload in an already styles-grafted HEIC with a
+/// new state (e.g. a prediction from the universal Photographic Style state
+/// model). Finds the `styleMetadata` URI item and rewrites its payload in
+/// place; the container geometry stays valid because replace_item_payload
+/// re-points the iloc extent to the appended payload.
+pub fn replace_style_metadata(
+    heic: &[u8],
+    state: &StyleStateOverride,
+) -> Result<Vec<u8>, String> {
+    let mut output = heic.to_vec();
+    let parsed = crate::isobmff::parse_source_meta(&output)
+        .map_err(|e| format!("meta parse: {e}"))?;
+    let item_id = parsed
+        .items
+        .iter()
+        .find(|i| i.raw_infe.windows(13).any(|w| w == b"styleMetadata"))
+        .map(|i| i.item_id)
+        .ok_or("no styleMetadata item in input")?;
+    let plist = build_style_metadata_with(state);
+    crate::isobmff_write::replace_item_payload(
+        &mut output,
+        item_id,
+        None,
+        &plist,
+    )?;
+    Ok(output)
 }

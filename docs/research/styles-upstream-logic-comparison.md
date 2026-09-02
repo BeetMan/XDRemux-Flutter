@@ -132,3 +132,52 @@ iPhone Air 原生 Live Photo，ΔRMS 0.02~0.04：Apple 相机默认处理已经�
   都触发了入口，但带 MakerNote 追加的都报加载错误。最可能的原因是
   Photos 编辑器要求 Live Photo 的编辑状态需要额外的关联数据（如在
   PhotoKit 层面注册配对），这超出了文件级元数据的范围
+
+
+## 通用风格状态模型实验（2026-09-02 下午）
+
+### 上游 UniversalPhotographicStyleStateNet
+
+分支 `codex/reverse-key1-oppo-solver`（PR #33 已并）训练了单图端到端风格
+状态模型，**CoreML 权重直接提交在仓库** `Models/`：
+
+- 输入：9×256×256 主图特征（RGB/luma/Cb/Cr/log-luma/梯度）+ 16 维元数据
+  （带缺失掩码）+ 可选 linear/gain-map 模态
+- 输出：key1（34560 padded）、key1_log_variance（不确定度门控）、GTC 516、
+  light maps 2×32×32、6 个 scalar（TagH/min/max/gain/Tag4/Tag5）
+- 训练语料：603 个 iPhone native 样本（16/16 Pro/17/17 Pro）+ Wikimedia
+  Commons 公开照片合成预训练（`train_public_synthetic_style.py`）
+- OPPO 覆盖：Find X6 Pro~X9 Ultra 213 张，87.8% 通过不确定度门控
+- **诚实边界**：heldout key1 MAE 0.822 vs identity 基线 0.933——只略优于
+  identity；未通过 Photos 导入/编辑/保存验收；仍需少量原生响应 probe
+
+### 我们的实验（macOS 本地推理打通）
+
+`coremltools 9.0` 直接加载上游 mlpackage，numpy 复刻特征准备
+（`/tmp/univ_style_predict.py`），对本地样本推理：
+
+| 样本 | uncertainty | key1 ΔRMS vs identity | 说明 |
+|---|---|---|---|
+| OPPO 标准 3x | 0.405 | 0.016 | 预测 Tag4=6.45 |
+| OPPO 4K | 0.387 | 0.015 | |
+| iPhone IMG_3716（真实 ΔRMS=0.12） | 0.478 | 0.011 | 略保守 |
+
+预测状态普遍贴近 identity——符合「相机默认状态是轻微非 identity」的实测。
+模型精度决定了它预测的是「保守的近似原生状态」。
+
+### 端到端嫁接管线（已实现）
+
+- `styles_native.rs` 新增 `StyleStateOverride` + `replace_style_metadata()`
+  （参数化 plist 构建 + 原位换 payload）
+- `examples/styles_universal_graft.rs`：读状态 bin + 转换 HEIC → 输出
+  带预测状态的 HEIC
+- 产出 `/tmp/univ-style-test/*.heic` 待真机验证：
+  1. 风格入口 + 滑块调整是否产生可见变化（identity 是 no-op，这是关键差异）
+  2. 编辑保存/重开是否正常
+
+### 结论
+
+「真实非 identity key1」的获取路径已经全部打通：上游模型 → coremltools 推理
+→ Rust 嫁接。瓶颈从「没有预测手段」变为「模型精度有限 + 需真机验收」。
+后续若真机验收通过，可考虑：向下游要 .pt checkpoint 转 ONNX（ort crate）
+实现纯 Rust 跨平台推理。

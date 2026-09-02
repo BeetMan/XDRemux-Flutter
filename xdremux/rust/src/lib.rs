@@ -19,10 +19,10 @@ pub mod progress;
 
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
 // separate native Rust path until the Photos conformance surface is stable.
-mod styles_bplist;
+pub mod styles_bplist;
 mod styles_consts;
 mod styles_graft;
-mod styles_native;
+pub mod styles_native;
 mod styles_scaffold;
 
 // R5 native Rust Portrait graph writer, ported from the conformance research
