@@ -83,6 +83,32 @@
 - **待办 2**：OPPO 户外（带天空）样本 A/B——同 state 嫁接，唯一变量 = 蒙版全零 vs
   SegFormer 实值，观察 Photos 风格编辑的天空分区渲染差异（R4-realSkyMatte 验收悬置至今）
 
+## Sky Matte A/B 真机实验定论（2026-09-02 晚，IMG20260822161608）
+
+### 实验设计
+OPPO 50MP 天空照（SegFormer 55.7% 天空）→ 完整转换 + 预测状态嫁接 ×2：
+- A：全零 sky matte（旧行为）
+- B：SegFormer 实值蒙版（54.3% 天空覆盖）
+唯一变量 = 蒙版内容，其余（预测 key1/统计/key7/结构）逐字节一致。
+
+### 结果（决定性）
+用户在 iPhone Photos 对 A/B 各套同款风格 → AirDrop 回传两文件：
+- 全部 275 item 除 Exif 内随机 UUID 外**逐字节相同**
+- 主图 216 tiles、增益图 54 tiles、tmap 全部一致
+- 用户主观：无视觉差异
+
+### 结论：Photos 风格编辑不消费 sky matte
+- `CMISmartStylePixelBufferRendererV1.setInputSkyMaskPixelBuffer:` 只在上游**生成 styleMetadata 状态**
+  时生效（光图 c/d + 场景统计的推导入口）；Photos 编辑器应用风格走另一渲染路径，不读文件蒙版
+- 全零蒙版与真蒙版产出逐字节相同的编辑渲染
+- **我们无需为户外照集成 SegFormer**——转换文件全零蒙版即可，省掉 ONNX runtime 分发/模型打包/
+  分割推理整条依赖链。天空层研究关闭。
+
+### 附带确认
+- AirDrop 编辑导出（照片模式）剥 styleMetadata + delta/linear/matte，只留主图/增益图/tmap + Exif，
+  Exif 带新随机 UUID（导出器重写）
+- 编辑回写（若走原片路径）才会把编辑管线状态写回文件（2120 观察）
+
 ## 风格辅助层图谱与内容解码（2026-09-02 下午，2120/3716/3437 三方对照）
 
 ### 完整辅助层清单（auxC URI + 规格 + 挂载方式）
