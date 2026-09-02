@@ -69,8 +69,32 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let delta_grid_id = next_id + DELTA_ROWS * DELTA_COLS;
     let linear_id = delta_grid_id + 1;
     let style_meta_id = linear_id + 1;
-    let sky_id = style_meta_id + 1;
-    let sky_mime_id = sky_id + 1;
+
+    // ---- existing sky matte detection (dedup) --------------------------
+    // The scaffold stage already emits a zero sky matte + XMP sidecar;
+    // re-adding one here duplicated the item. When the base already carries
+    // a sky matte, REUSE that item: replace its payload + hvcC association
+    // instead of appending a new item/mime/refs trio. (Mirrors the pipeline
+    // fix in xdremux/rust/src/styles_native.rs.)
+    let sky_urn = b"urn:com:apple:photo:2020:aux:semanticskymatte";
+    let existing_sky: Option<u32> = meta.ipma_entries.iter().find_map(|e| {
+        let has_sky_auxc = e.associations.iter().any(|(idx, _)| {
+            meta.props
+                .iter()
+                .find(|p| p.index == *idx)
+                .map(|p| p.ptype == "auxC" && p.raw.windows(sky_urn.len()).any(|w| w == sky_urn))
+                .unwrap_or(false)
+        });
+        if has_sky_auxc {
+            Some(e.item_id)
+        } else {
+            None
+        }
+    });
+    let (sky_id, sky_mime_id, add_sky_items) = match existing_sky {
+        Some(id) => (id, 0, false),
+        None => (style_meta_id + 1, style_meta_id + 2, true),
+    };
 
     // ---- encode payloads ------------------------------------------------
     // Sky matte (styles stage): x265 mono, same as the scaffold stage
@@ -168,7 +192,9 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     new_infes.push(isobmff::make_infe_box(delta_grid_id, "grid", 1));
     new_infes.push(isobmff::make_infe_box(linear_id, "hvc1", 1));
     new_infes.push(make_style_meta_infe(style_meta_id));
-    new_infes.push(isobmff::make_infe_box(sky_id, "hvc1", 1));
+    if add_sky_items {
+        new_infes.push(isobmff::make_infe_box(sky_id, "hvc1", 1));
+    }
     new_infes.push(make_xmp_infe(sky_mime_id));
 
     // ---- ipco ------------------------------------------------------------
@@ -268,10 +294,22 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     if let Some(ir) = irot_idx {
         sky_assocs.push((ir, true));
     }
-    ipma_entries.push(IpmaEntry {
-        item_id: sky_id,
-        associations: sky_assocs,
-    });
+    if add_sky_items {
+        ipma_entries.push(IpmaEntry {
+            item_id: sky_id,
+            associations: sky_assocs.clone(),
+        });
+    }
+    // Reuse path: rewrite the base ipma entry for the existing sky matte
+    // via ipma_base_override (same association set).
+    let sky_ipma_override: Option<IpmaEntry> = if add_sky_items {
+        None
+    } else {
+        Some(IpmaEntry {
+            item_id: sky_id,
+            associations: sky_assocs,
+        })
+    };
 
     // ---- iref ------------------------------------------------------------
     let mut new_refs = meta.refs.clone();
@@ -290,16 +328,20 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         from: linear_id,
         to: vec![primary, tmap],
     });
-    new_refs.push(IrefEntry {
-        rtype: "auxl".into(),
-        from: sky_id,
-        to: vec![primary, tmap],
-    });
-    new_refs.push(IrefEntry {
-        rtype: "cdsc".into(),
-        from: sky_mime_id,
-        to: vec![sky_id],
-    });
+    if add_sky_items {
+        new_refs.push(IrefEntry {
+            rtype: "auxl".into(),
+            from: sky_id,
+            to: vec![primary, tmap],
+        });
+    }
+    if add_sky_items {
+        new_refs.push(IrefEntry {
+            rtype: "cdsc".into(),
+            from: sky_mime_id,
+            to: vec![sky_id],
+        });
+    }
     new_refs.push(IrefEntry {
         rtype: "cdsc".into(),
         from: style_meta_id,
@@ -320,10 +362,14 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let bplist_off = new_idat.len() as u64;
     let bplist_len = bplist.len() as u64;
     new_idat.extend_from_slice(&bplist);
-    let sky_mime_payload = crate::scaffold::matte_xmp_pub();
-    let sky_mime_off = new_idat.len() as u64;
-    let sky_mime_len = sky_mime_payload.len() as u64;
-    new_idat.extend_from_slice(&sky_mime_payload);
+    let mut sky_mime_off = 0u64;
+    let mut sky_mime_len = 0u64;
+    if add_sky_items {
+        let sky_mime_payload = crate::scaffold::matte_xmp_pub();
+        sky_mime_off = new_idat.len() as u64;
+        sky_mime_len = sky_mime_payload.len() as u64;
+        new_idat.extend_from_slice(&sky_mime_payload);
+    }
 
     let std_mdat_payload = base[mdat_hdr.data_start..mdat_hdr.data_end].to_vec();
     let mut appended_mdat = Vec::new();
@@ -344,10 +390,18 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     // ---- two-pass assembly --------------------------------------------------
+    // Reuse path: rewrite the base ipma entry for the existing sky matte.
+    let ipma_base_override: Option<Vec<IpmaEntry>> = sky_ipma_override.map(|patched| {
+        let mut list = meta.ipma_entries.clone();
+        if let Some(entry) = list.iter_mut().find(|e| e.item_id == sky_id) {
+            *entry = patched;
+        }
+        list
+    });
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         crate::styles_graft::build_output_pub(
             None,
-            None,
+            ipma_base_override.as_deref(),
             base,
             &top,
             &meta_hdr,
@@ -365,11 +419,20 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     };
 
     let mut placeholder_iloc = meta.iloc_entries.clone();
-    for id in delta_tile_ids
-        .iter()
-        .copied()
-        .chain([delta_grid_id, linear_id, style_meta_id, sky_id, sky_mime_id])
-    {
+    // Reuse path: drop the base iloc entry for the existing sky matte FIRST
+    // (its payload is replaced by the appended one). Must precede the
+    // placeholder pushes so the two-pass iloc entry sets match exactly.
+    if !add_sky_items {
+        placeholder_iloc.retain(|e| e.item_id != sky_id);
+    }
+    // The sky placeholder must exist in BOTH paths so the placeholder iloc
+    // matches the final iloc entry set (two-pass meta size stability).
+    let mut new_item_ids: Vec<u32> = delta_tile_ids.clone();
+    new_item_ids.extend([delta_grid_id, linear_id, style_meta_id, sky_id]);
+    if add_sky_items {
+        new_item_ids.push(sky_mime_id);
+    }
+    for id in new_item_ids {
         placeholder_iloc.push(IlocEntry {
             item_id: id,
             construction_method: 0,
@@ -399,6 +462,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let mut final_iloc: Vec<IlocEntry> = meta
         .iloc_entries
         .iter()
+        .filter(|entry| add_sky_items || entry.item_id != sky_id)
         .map(|entry| {
             let extents = entry
                 .extents
@@ -450,12 +514,14 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         data_reference_index: 0,
         extents: vec![(appended_abs + sky_rel, sky_stream.len() as u64)],
     });
-    final_iloc.push(IlocEntry {
-        item_id: sky_mime_id,
-        construction_method: 1,
-        data_reference_index: 0,
-        extents: vec![(sky_mime_off, sky_mime_len)],
-    });
+    if add_sky_items {
+        final_iloc.push(IlocEntry {
+            item_id: sky_mime_id,
+            construction_method: 1,
+            data_reference_index: 0,
+            extents: vec![(sky_mime_off, sky_mime_len)],
+        });
+    }
 
     Ok(build(&final_iloc))
 }
