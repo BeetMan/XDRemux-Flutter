@@ -215,3 +215,30 @@ whitePoint=1.0985 **>1.0**——tone-mapped 域按通道统计不 clamp。
 - 无人场景 hint=0.0（V3 已实现）；有人场景（若未来做）应写 +1.0 且需真实统计。
 - 线性统计量化：3670 LinearImage 各分位为 ~1/122 步长的倍数（7-bit 线性域量化特征）。
 
+
+## Live Photo + 风格组合终局实验（2026-09-02 深夜，IMG_1591 预测状态）
+
+### 实验设计
+- 静帧：IMG_1591 人像 → scaffold+styles → graft 预测 state v2
+  （key1 ΔRMS=0.0173 为 6 张人像预测中最大；key7 从文件自带蒙版实算
+  People=0.417/Skin=0.087/hint=+1.0 编辑读路径语义）
+- 视频侧：OPPO motion 流（内容与静帧不匹配——刻意控制变量：配对判定只看
+  双侧 content identifier，与画面无关；失败发生在编辑加载层，内容不影响否证）
+- `make_live_photo` 配对：cid 双侧一致、`existing_pair_is_valid=true`
+
+### 结果（真机）
+- 实况徽章出现（配对成立）
+- 编辑器能打开、风格 tab 可见（style 状态被识别）
+- 编辑加载报「无法加载此图像的编辑内容」——与 identity+pair 失败模式完全一致
+
+### 定论（与 2026-09-02 早间矩阵合并）
+三轮实验（identity key1 / 真实 key1 / 预测非身份 key1 + pair）全部卡在同一层：
+**Photos 对「声明 style 状态的 Live Photo」的联合编辑加载是结构性拦截，与风格
+内容（identity 与否、ΔRMS 大小、key7 语义）无关。**
+- Live Photo 档强制关闭 styles 的互斥决策验证闭环，转为永久设计约束
+- 除非未来观察到 Apple 原生「Live Photo + styleMetadata」样本（目前从未见过，
+  3670 Live 拍摄件无 styleMetadata），否则不应再投入此方向的绕过研究
+
+### 实验工具
+- `xdremux/rust/examples/lp_pair.rs`：带参数 Live Photo 配对 CLI
+  （still + motion.mp4 → 配对静帧 + MOV，可选从源 JPEG 取 pts/vendor 元数据）
