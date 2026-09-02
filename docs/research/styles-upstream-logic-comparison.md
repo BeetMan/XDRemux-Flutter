@@ -201,3 +201,24 @@ GTC 量化 bug 修复后重测（同一张 OPPO 标准 3x 转换输出）：
    .pt checkpoint 转 ONNX 或复刻模型结构加载权重）
 2. 每张图预测专属状态（场景自适应），替换固定 identity
 3. 向上游索取 .pt checkpoint（仓库只发布了 CoreML 导出）
+
+
+## 最终验收（2026-09-02，全部通过）
+
+用户真机确认（V1/V2 均如此）：
+
+1. **滑块调整产生可见画面变化** ✓ —— identity no-op 问题解决
+2. **编辑保存后重新打开正常** ✓ —— 无「无法加载编辑内容」报错
+
+### 路线定案
+
+跨平台真实摄影风格状态 = 上游通用模型预测 + Rust 原位嫁接。
+
+集成计划（v0.4.1+）：
+- macOS/iOS：Swift 桥接 CoreML（编译 mlpackage → mlmodelc），FFI 返回
+  状态 bin 给 Rust，转换时按图嫁接；不确定度门控 fail-closed 到 identity
+- 全平台：索取 .pt checkpoint → ONNX 导出 → ort crate 纯 Rust 推理
+- 元数据增强：EXIF（ISO/曝光/焦距/色温）喂给模型的 16 维 metadata 向量，
+  提升预测质量；当前实验只有宽高/方向/gain-map 标志
+- 未测试项：Live Photo 配对 + 预测风格状态的组合（之前的失败是
+  identity+pair；预测状态下 PhotoKit 行为未知，值得单独验证）
