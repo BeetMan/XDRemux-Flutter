@@ -222,3 +222,54 @@ GTC 量化 bug 修复后重测（同一张 OPPO 标准 3x 转换输出）：
   提升预测质量；当前实验只有宽高/方向/gain-map 标志
 - 未测试项：Live Photo 配对 + 预测风格状态的组合（之前的失败是
   identity+pair；预测状态下 PhotoKit 行为未知，值得单独验证）
+
+
+## Photos 风格编辑的真实参数化格式（2026-09-02，AAE 侧车破译）
+
+### 背景
+用户对嫁接了预测状态的 A/B 文件（唯一变量=sky matte 内容）执行风格编辑，
+以「保留原片」模式导出完整三件套（原 HEIC + IMG_E 渲染 + AAE 侧车）。
+AAE 是 iOS 非破坏性编辑的标准载体——编辑指令不写回原文件。
+
+### AAE 结构（com.apple.photo v1.12，首次完整捕获）
+```xml
+plist: adjustmentData(base64+zlib→JSON), adjustmentEditorBundleID,
+       adjustmentFormatIdentifier=com.apple.photo, adjustmentFormatVersion=1.12,
+       adjustmentRenderTypes=32768, adjustmentBaseVersion=0
+```
+JSON payload：
+```json
+{"metadata":{"masterHeight":9216,"masterWidth":6144,"orientation":1},
+ "formatVersion":1,
+ "versionInfo":{"buildNumber":"24A5430a","appVersion":"912.0.234",
+                "schemaRevision":0,"platform":"iOS"},
+ "adjustments":[{"formatVersion":1,"enabled":true,
+   "settings":{"version":1,"tone":-0.3,"enabled":true,
+               "cast":"Colorful","intensity":1,"color":0.33},
+   "identifier":"SemanticStyle","formatIdentifier":"com.apple.photo"}]}
+```
+
+### SemanticStyle 调整参数语义
+| 字段 | 值（本次实验） | 含义 |
+|---|---|---|
+| tone | -0.3 | 色调滑杆（≈key1 的 tone 分量） |
+| cast | "Colorful" | 风格基底 swatch（Colorful/金色等） |
+| color | 0.33 | 色彩强度 |
+| intensity | 1.0 | 总强度 |
+
+即 Photos 风格编辑 = **cast 基底选择 + tone/color 滑杆参数化**，经编辑
+管线的 constrained solver（或等价路径）落成 styleMetadata/key1 状态。
+
+### 编辑回写机制修正（推翻此前推断）
+1. **Photos 从不把编辑状态写回原 HEIC**：三件套原文件 MD5 与发送时逐字节一致
+2. 编辑状态 100% 存 AAE 侧车；显示/导出时按需烘焙（IMG_E*）
+3. **2120 的 styleMetadata 不是编辑回写产物**——此理论证伪。2120 的
+   styleMetadata 来源需另查（可能拍摄时即写入；其 j=1.3 的解释待重估）
+
+### 对嫁接管线的意义
+- 我们嫁接的 styleMetadata 是**初始状态**，用户编辑时 Photos 用自己的
+  SemanticStyle 参数（经 AAE 记录）现场生成新状态——与文件初始状态独立
+- AAE 的 cast/tone/color 参数 → key1 状态的映射，是「编辑侧 solver」的
+  输入格式；若能捕获同一编辑前后的 key1（库内文件或重渲染），可反推
+  cast→key1 的确定性映射（后续研究方向）
+- sky matte 在本链路不参与（A/B 输出逐字节一致，详见 native-fidelity-gap）
