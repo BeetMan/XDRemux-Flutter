@@ -48,6 +48,41 @@
 滑块响应、编辑保存重开。差异的意义在于「格式保真」本身——向 iPhone 原生
 看齐能最大化未来 iOS 版本兼容性，并消除未知的隐式校验风险。
 
+## Sky Matte 机制全景（2026-09-02 傍晚）
+
+### 内容语义（室外组 3670~3681 实测）
+
+- 软值蒙版 0~255，置信天空饱和 255；3674/3675 大天空 **48.8%/53.3% 覆盖**，3671/3672 小天空 ~8%，无天空照片残留噪声 max≤25
+- 分辨率规则（上游 `fitWithin(max: 2016)`）：**长边 ≤2016 保持宽高比**（4284×5712→1512×2016；4032×3024→2016×1512）
+  ——此前"半分辨率~3MP 上限"的猜测修正
+- 编码：8-bit 单色（RExt profile 4，chroma=0）单 tile；XMP `SemanticSegmentationMatteVersion=65536`
+- 生成源：`VNGenerateSkySegmentationRequest`（Vision 私有 API，L008 pixel buffer）
+- 随 styleMetadata 出现（无风格照片无 sky matte）；auxl→[主图, tmap] + cdsc XMP
+
+### 消费机制（上游 apple_style_scene_payload_probe.m 追踪）
+
+`CMISmartStylePixelBufferRendererV1`（CMImaging 私有框架 SmartStyle 渲染器）：
+`setInputSkyMaskPixelBuffer:` + cropRect（与 person/skin 蒙版并列），
+连同 linear thumbnail RGBA、GTC、tone/linear 图 → `process` 产出：
+- 32×32 tone/linear light maps（**key c/d 是蒙版感知推导的**）
+- codedLinear RGBA（→ linear thumbnail item）
+- 场景统计（key6 字典族）+ extendedStatistics
+
+即：上游的 key c/d、key6 语义统计、linear thumbnail 全部由 Apple 私有渲染器
+吃蒙版算出；我们的等价物 = UniversalPhotographicStyleStateNet 模型预测（已上线）。
+蒙版对 **Photos 编辑器渲染质量** 有意义的假设待 A/B 验证。
+
+### 我们的状态与遗留
+
+- 全零蒙版 = "无天空" 语义（对无天空照片正确；本地全部 OPPO 样本实测无天空）
+- 真实蒙版链路 R4 已建成：`sky-matte` 子命令（SegFormer-B0 ADE20K class 2，
+  ort 动态链接，vs Apple Vision IoU 0.80~0.95）+ `XSCAFFOLD_MATTE_RAW`/`XSTYLES_SKY_RAW`
+  接线，validate-apple + ImageIO 回读全绿
+- **待办 1**：sky matte 重复 bug——scaffold 与 styles 两阶段各写一份（V3 item76/112），
+  修复后才能做干净 A/B
+- **待办 2**：OPPO 户外（带天空）样本 A/B——同 state 嫁接，唯一变量 = 蒙版全零 vs
+  SegFormer 实值，观察 Photos 风格编辑的天空分区渲染差异（R4-realSkyMatte 验收悬置至今）
+
 ## 风格辅助层图谱与内容解码（2026-09-02 下午，2120/3716/3437 三方对照）
 
 ### 完整辅助层清单（auxC URI + 规格 + 挂载方式）
