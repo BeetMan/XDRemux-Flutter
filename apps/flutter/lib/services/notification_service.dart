@@ -81,11 +81,18 @@ class NotificationService {
     required int converted,
     required int skipped,
     required int failed,
+    int failedUnsupported = 0,
   }) async {
     if (!_initialized) return;
     final body = StringBuffer('成功 $converted 个');
     if (skipped > 0) body.write('，跳过 $skipped 个');
-    if (failed > 0) body.write('，失败 $failed 个');
+    if (failed > 0) {
+      body.write(
+        failedUnsupported > 0 && failedUnsupported < failed
+            ? '，失败 $failed 个（其中 $failedUnsupported 个格式不支持）'
+            : '，失败 $failed 个',
+      );
+    }
     try {
       if (PlatformX.isOhos) {
         await _ohosChannel.invokeMethod<void>('show', {

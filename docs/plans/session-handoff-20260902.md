@@ -130,11 +130,11 @@ Neutrino 渲染 → 全局多项式拟合（Huber）→ Gauss-Newton 精化（12
 - 收尾 Live Photo 档（纯配对无风格）回归验证
 - 发布正式 v0.4.0（版本 bump + 重打标签）
 
-### P1：整理页资产感知 + provenance（已部分完成）
+### P1：整理页资产感知 + provenance（已完成 2026-09-03）
 - [x] 整理页资产分组（静态/实况照片目录 + 配对校验）
-- [ ] 批量恢复时 MOV 侧 provenance 校验
-- [ ] 转换输出 MOV 已存在时按序号避让
-- [ ] 跳过报告区分「格式不支持」/「已是转换产物」
+- [x] 批量恢复时 MOV 侧 provenance 校验（restore 时 livePhotoPairValid，失败降级重转；此前已实现，清单滞后）
+- [x] 转换输出 MOV 已存在时按序号避让（工作流侧 `_sideOutputPath` 早有；本轮补齐整理页 `_executeCopy` 的 MOV 避让，抽出 `organizeAvoidCollision` 纯函数 + 6 个单测）
+- [x] 跳过报告区分「格式不支持」/「已是转换产物」（状态栏 + 系统通知：`失败 N（其中 M 个格式不支持）`；导入侧已有「跳过 N 个已转换」）
 
 ### P2：摄影风格 —— 已定案关闭（2026-09-02）
 - 用户拍板：转换目标只是 Apple 可编辑格式，identity 状态满足需求

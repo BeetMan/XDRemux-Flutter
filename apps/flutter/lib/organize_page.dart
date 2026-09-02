@@ -18,6 +18,35 @@ class OrganizePage extends StatefulWidget {
   State<OrganizePage> createState() => _OrganizePageState();
 }
 
+/// Returns a non-colliding path for `[subdir]/[stem][ext]`.
+///
+/// Collision = reserved by another planned copy (case-insensitive) or an
+/// existing file, except when the existing file IS [keepPath] — organizing a
+/// photo into its own directory must not count as a collision and must not
+/// force a rename.
+String organizeAvoidCollision(
+  String subdir,
+  String stem,
+  String ext,
+  Set<String> reserved, {
+  String? keepPath,
+}) {
+  bool collides(String candidate) {
+    if (reserved.contains(candidate.toLowerCase())) return true;
+    if (!File(candidate).existsSync()) return false;
+    if (keepPath == null) return true;
+    return File(candidate).absolute.path != File(keepPath).absolute.path;
+  }
+
+  var candidate = '$subdir/$stem$ext';
+  var seq = 2;
+  while (collides(candidate)) {
+    candidate = '$subdir/$stem ($seq)$ext';
+    seq++;
+  }
+  return candidate;
+}
+
 class _OrganizeItem {
   final String sourcePath;
   final String fileName;
@@ -31,6 +60,10 @@ class _OrganizeItem {
   /// Non-null when this image + a same-basename MOV form a validated
   /// Apple Live Photo pair. The MOV is copied together with the image.
   String? pairedVideoPath;
+
+  /// Collision-avoided destination for the paired MOV. Computed together
+  /// with the still's destination so the preview shows the final layout.
+  String? pairedVideoDestination;
   bool get isLivePhoto => pairedVideoPath != null;
 
   _OrganizeItem({required this.sourcePath, required this.fileName});
@@ -136,25 +169,41 @@ class _OrganizePageState extends State<OrganizePage> {
     final root = _outputDir;
     if (root == null) return;
     final reserved = <String, int>{};
+    final videoReserved = <String>{};
     for (final item in _items) {
       // Asset-type level: 静态照片 / 实况照片 (upstream v1.4 layout).
       final assetPrefix = item.isLivePhoto ? _liveLayoutPrefix : _assetLayoutPrefix;
       final subdir = item.folderName != null
           ? '$root/$assetPrefix/${item.folderName}'
           : '$root/$assetPrefix';
-      var candidate = '$subdir/${item.fileName}';
-      var seq = 2;
-      while (reserved.containsKey(candidate.toLowerCase()) ||
-          (File(candidate).existsSync() &&
-              File(candidate).absolute.path != File(item.sourcePath).absolute.path)) {
-        final dot = item.fileName.lastIndexOf('.');
-        final stem = dot > 0 ? item.fileName.substring(0, dot) : item.fileName;
-        final ext = dot > 0 ? item.fileName.substring(dot) : '';
-        candidate = '$subdir/$stem ($seq)$ext';
-        seq++;
-      }
+      final dot = item.fileName.lastIndexOf('.');
+      final stem = dot > 0 ? item.fileName.substring(0, dot) : item.fileName;
+      final ext = dot > 0 ? item.fileName.substring(dot) : '';
+      final candidate = organizeAvoidCollision(
+        subdir,
+        stem,
+        ext,
+        reserved.keys.toSet(),
+        keepPath: item.sourcePath,
+      );
       reserved[candidate.toLowerCase()] = 1;
       item.destinationPath = candidate;
+      // Paired MOV gets its own collision-avoided destination (same stem,
+      // .mov extension). Without this an existing MOV at the destination
+      // would be silently overwritten by _executeCopy.
+      if (item.isLivePhoto) {
+        final videoCandidate = organizeAvoidCollision(
+          subdir,
+          stem,
+          '.mov',
+          videoReserved,
+          keepPath: item.pairedVideoPath,
+        );
+        videoReserved.add(videoCandidate.toLowerCase());
+        item.pairedVideoDestination = videoCandidate;
+      } else {
+        item.pairedVideoDestination = null;
+      }
       // Same file => duplicate (skip).
       if (File(item.sourcePath).absolute.path == File(candidate).absolute.path) {
         item.copyState = 'duplicate';
@@ -181,13 +230,15 @@ class _OrganizePageState extends State<OrganizePage> {
         final dest = File(item.destinationPath);
         await dest.parent.create(recursive: true);
         await File(item.sourcePath).copy(dest.path);
-        // Live Photo pair: copy the paired MOV alongside (same basename).
-        if (item.isLivePhoto && item.pairedVideoPath != null) {
-          final videoDest = item.destinationPath.replaceAll(
-            RegExp(r'\.[^.]+$'),
-            '.mov',
-          );
-          await File(item.pairedVideoPath!).copy(videoDest);
+        // Live Photo pair: copy the paired MOV to its collision-avoided
+        // destination. In-place organization (video source == destination)
+        // needs no copy.
+        if (item.isLivePhoto &&
+            item.pairedVideoPath != null &&
+            item.pairedVideoDestination != null &&
+            File(item.pairedVideoDestination!).absolute.path !=
+                File(item.pairedVideoPath!).absolute.path) {
+          await File(item.pairedVideoPath!).copy(item.pairedVideoDestination!);
         }
         item.copyState = 'copied';
         copied++;

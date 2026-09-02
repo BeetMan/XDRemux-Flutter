@@ -647,6 +647,25 @@ class _HomePageState extends State<HomePage> {
   int get _failedCount =>
       _queue.where((item) => item.status == QueueItemStatus.failed).length;
 
+  /// Failed items whose error signature matches an unsupported input format
+  /// (non-OPPO/ProXDR files reaching the OPPO pipeline, unreadable bytes).
+  /// Reported separately in the batch summary so real pipeline failures stay
+  /// visible instead of being drowned by plain photos the user selected.
+  int get _failedUnsupportedCount => _queue
+      .where(
+        (item) =>
+            item.status == QueueItemStatus.failed &&
+            _isFormatUnsupported(item.errorMessage),
+      )
+      .length;
+
+  static bool _isFormatUnsupported(String? message) {
+    if (message == null || message.isEmpty) return false;
+    final lower = message.toLowerCase();
+    return lower.contains('failed to locate lhdr') ||
+        lower.contains('unsupported');
+  }
+
   double get _progressFraction {
     if (_totalFiles == 0) return 0.0;
 
@@ -2008,8 +2027,12 @@ class _HomePageState extends State<HomePage> {
     final done = _convertedCount + _skippedCount + _failedCount;
     if (mounted && done > 0) {
       setState(() {
+        final unsupported = _failedUnsupportedCount;
+        final failedDetail = unsupported > 0 && unsupported < _failedCount
+            ? '失败 $_failedCount（其中 $unsupported 个格式不支持）'
+            : '失败 $_failedCount';
         _statusText = _failedCount > 0
-            ? '完成：成功 $_convertedCount，跳过 $_skippedCount，失败 $_failedCount'
+            ? '完成：成功 $_convertedCount，跳过 $_skippedCount，$failedDetail'
             : _skippedPolicyCount > 0
             ? '完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过'
             : '全部完成：$_convertedCount 个文件';
@@ -2020,6 +2043,7 @@ class _HomePageState extends State<HomePage> {
         converted: _convertedCount,
         skipped: _skippedCount,
         failed: _failedCount,
+        failedUnsupported: _failedUnsupportedCount,
       );
       if (mounted) {
         final outcome = _failedCount > 0 ? '完成（有失败）' : '完成';
