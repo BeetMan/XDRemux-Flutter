@@ -48,6 +48,46 @@
 滑块响应、编辑保存重开。差异的意义在于「格式保真」本身——向 iPhone 原生
 看齐能最大化未来 iOS 版本兼容性，并消除未知的隐式校验风险。
 
+## 风格辅助层图谱与内容解码（2026-09-02 下午，2120/3716/3437 三方对照）
+
+### 完整辅助层清单（auxC URI + 规格 + 挂载方式）
+
+| 辅助层 | auxC | 规格 | iref |
+|---|---|---|---|
+| 风格 delta map | `tag:apple.com,2023:photo:aux:styledeltamap` | ½ 像素量 HEVC grid（10-bit 4:2:0） | auxl→[主图, tmap] |
+| 线性缩略图 | `tag:apple.com,2023:photo:aux:linearthumbnail` | **固定 1024×768**（10-bit 4:2:0 彩色） | auxl→[主图, tmap] |
+| 天空蒙版 | `urn:com:apple:photo:2020:aux:semanticskymatte` | ~3MP 8-bit 单色（RExt profile 4） | auxl→[主图, tmap] + cdsc XMP |
+| 人像蒙版族 | portraiteffectsmatte / skin / hair / teeth / glasses | ~3MP 单色 | auxl + cdsc |
+
+**所有风格辅助层都同时 auxl 到主图和 tmap 两个 item**。tmap 自身 dimg→[主图, gainmap]。
+语义蒙版分辨率 = min(半分辨率, ~3MP 上限)；天空蒙版**随 styleMetadata 出现**（3437 无风格即无天空蒙版）。
+
+### styledeltamap 内容语义（ffmpeg 裸解码定案）
+
+2120（金色风格编辑，j=1.3）的 delta tile 10-bit 裸值：**Y/U/V 全部以 512 为中性**（均值 511.8/512.0/512.0），
+偏差仅 ±3~6%（Y 504–530、U 509–543、V 502–513）。即 delta map 是**逐像素 RGB 增益图，
+512=1.0**，风格的空间变换（含 B 通道偏移最多）编码于此。我们 graft 的 golden 中性 tile 常数 506（-1.2%），
+来自真实参考片，Photos 接受。
+
+### linearthumbnail 内容语义
+
+原生为 **10-bit 4:2:0 彩色**（非单色）、固定 1024×768（横置 + irot），是线性域彩色预览。
+我们当前占位：8-bit 黑块 768×1152（profile 4 / chroma 3）。真生成路径 = 解码主图 → 线性化 → 缩到 1024×768 → 10-bit HEVC。
+
+### 传输/导出路径差异
+
+- AirDrop「照片」模式导出：像素烘焙（3437 编辑版均值差 R+4.4/B-8.1）、深度与蒙版全剥、
+  **无 styleMetadata**——导出器不写风格状态。
+- 2120 = 原始像素 + 完整辅助层 + styleMetadata（编辑管线回写原件，传输走了原片路径）。
+- 人像模式拍摄 5/5 从不写 styleMetadata；编辑入口打开时现场重算（Base 渲染 + Vision 蒙版）。
+
+### 我们嫁接件的遗留项（按影响排序）
+
+1. **linearthumbnail 黑块**：唯一实质内容缺口（真生成需解码主图）
+2. **skymatte 重复**：scaffold 阶段与 styles 阶段各写一个（V3 里 item76/112 全零重复）——去重待办
+3. delta map 恒定 506 vs 原生逐像素实值：嫁接预测状态时中性即可，机制上无误
+4. 缩略图规格：768×1152/8-bit vs 原生固定 1024×768/10-bit——Photos 容忍，对齐属锦上添花
+
 ## 语义层机制解码（2026-09-02，人像样本组）
 
 样本：iPhone Air 人像模式 6 张（`samples/portraits-20260902/`，未入 git）+ 此前 3716~3722/3670 组。
