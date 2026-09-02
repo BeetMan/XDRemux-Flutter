@@ -83,6 +83,37 @@
 - **待办 2**：OPPO 户外（带天空）样本 A/B——同 state 嫁接，唯一变量 = 蒙版全零 vs
   SegFormer 实值，观察 Photos 风格编辑的天空分区渲染差异（R4-realSkyMatte 验收悬置至今）
 
+## Sky Matte A/B 定论补充：AAE 非破坏性编辑路径（2026-09-02 深夜，原片三件套）
+
+### 原片路径传输样本（IMG_3730/3731 目录三件套）
+用户从 iPhone 以保留原片方式导出的完整三件套：
+- `IMG_373X.HEIC` = 原始文件，MD5 与发送时**逐字节一致**（Photos 从不回写原文件）
+- `IMG_E373X.heic` = 编辑渲染（烘焙产物）
+- `IMG_373X.AAE` = 编辑指令侧车（base64+zlib+JSON）
+
+### AAE 编辑指令格式（首次完整捕获）
+```json
+{"adjustments":[{"identifier":"SemanticStyle",
+  "settings":{"tone":-0.3,"cast":"Colorful","intensity":1,"color":0.33}}]}
+```
+- 容器：com.apple.photo v1.12，editorBundleID com.apple.mobileslideshow
+- SemanticStyle 调整 = tone（色调滑杆）+ cast（风格基底：Colorful 等）+ color（强度）
+- 两份 AAE 完全一致 → 同一风格同一参数施加于 A/B
+
+### 完整闭环证据
+1. 输入 A（全零蒙版）vs B（实值 54%）MD5 不同（仅蒙版 payload）
+2. 编辑指令 AAE 完全一致
+3. 输出渲染 IMG_E3730 vs IMG_E3731 逐字节相同（仅 Exif UUID）
+
+→ **Photos 风格编辑渲染不消费文件 sky matte**，全零/实值蒙版产出逐字节相同渲染。
+
+### 机制修正（重要）
+- Photos 风格编辑**不写回原文件**：原 HEIC MD5 不变，编辑状态 100% 存 AAE 侧车，
+  导出时按需烘焙（IMG_E*）或原样传输（原文件 + AAE）
+- 2120 的 styleMetadata **不是编辑回写产物**——编辑路径不改 styleMetadata。
+  2120 的 styleMetadata 是拍摄时写入（其 photos 早于编辑存在）或来自更早链路，待另查
+- 我们此前「编辑回写会把状态写回文件」的推断**证伪**——期待对象不存在
+
 ## Sky Matte A/B 真机实验定论（2026-09-02 晚，IMG20260822161608）
 
 ### 实验设计
