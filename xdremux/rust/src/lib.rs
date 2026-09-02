@@ -12,6 +12,7 @@ pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
 pub mod iso21496;
+pub mod iso_validate;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
