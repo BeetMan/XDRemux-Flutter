@@ -1,4 +1,55 @@
-# 会话交接：2026-09-02 工作收尾
+# 会话交接更新：2026-09-02 深夜（摄影风格研究全线收官）
+
+> 接前文。本段覆盖当晚全部工作：语义层机制破解、sky matte A/B 定论、
+> AAE 编辑格式破译。研究侧至此全部闭环。
+
+## 当前状态
+
+- HEAD `09441b6`（本轮全部已推送）
+- 测试：Rust 134 + conformance 12 全绿
+- 用户样本（不入 git）：`~/Documents/XDRemux Playground/samples/portraits-20260902/`（6 张人像 + 1 张编辑版）
+- A/B 实验产物：`/tmp/XDRemux-skyA-zero.heic`、`/tmp/XDRemux-skyB-real.heic`（若 /tmp 清空可从 IMG20260822161608 重跑）
+
+## 本轮完成（按时间序）
+
+1. **V3 stats graft**（e1b1b95）：key6 实算统计 + key7 原生语义嫁接，真机通过
+   - bplist 动态 objectRefSize（对象 >255 时 1→2 字节，否则引用错位）
+   - v2 bin 布局：[key1 51840][unc f32][gtc 516][lightmaps 4096][scalars 12][stats 72][key7 12]
+2. **人像样本组破解**（357494b）：hint 三态（0 无人 / -1.0 拍摄时蒙版 / +1.0 编辑时重算）、
+   key0=16 拍摄/15 编辑、j=1.0 拍摄/1.3 编辑、人像模式拍摄永不写 styleMetadata（5/5）
+3. **辅助层图谱全解**（6c85b37）：styledeltamap（½ 像素 10-bit grid，512=中性增益图）、
+   linearthumbnail（固定 1024×768 10-bit 4:2:0 彩色）、semanticskymatte（长边≤2016 8-bit 单色）
+   —— 全部 auxl→[主图, tmap]
+4. **sky matte 去重修复**（54e9f98）：scaffold+styles 两阶段重复写蒙版；
+   两遍 meta 组装的 iloc 条目集必须完全一致（否则偏移漂移 16B 全毁）
+   注意：tests/conformance/src/styles_native.rs 是管线的镜像副本，修 bug 要两边同步
+5. **A/B 真机实验 + 定论**（91aab90, 1d98ae6）：Photos 风格编辑**不消费 sky matte**
+   （唯一变量蒙版 → 编辑渲染逐字节相同）；Photos 从不回写原 HEIC（MD5 实证）
+6. **AAE 编辑格式破译**（09441b6）：SemanticStyle {tone, cast, color, intensity}，
+   base64+zlib+JSON，编辑状态 100% 存侧车；2120 的 styleMetadata 非编辑回写（证伪）
+
+## 悬案与新方向
+
+1. **2120 谜团**：其 styleMetadata（key0=15/j=1.3/hint=+1.0）来源不明——不是编辑回写
+   （已证伪）。可能拍摄时写入？j=1.3 语义待重估。样本：samples/portraits-20260902/IMG_2120.HEIC
+2. **cast→key1 映射**：AAE 参数（cast/tone/color）是编辑侧 solver 输入格式；
+   捕获同一编辑前后 key1 可反推确定性映射（研究价值高）
+3. **linear thumbnail 真生成**：唯一实质占位（路径明确：解码→线性化→1024×768→10-bit HEVC）
+4. **Live Photo + 预测风格组合真机测试**：仍悬置（之前失败是 identity+pair）
+5. **v0.4.0 正式版发布**：用户搁置中，研究已收官可以考虑
+6. **上游同步 P2**：14 fixtures、容器加固
+
+## 关键工具/路径备忘
+
+- 预测：`/tmp/univ_style_predict.py`（CoreML）+ `/tmp/stats_compute.py`（v2 stats 追加）
+- A/B 流程：conformance `convert` → `sky-matte`（SegFormer, ~/.xdremux/models/）→
+  `XSTYLES_SKY_RAW=<raw> conformance styles` → `styles_universal_graft` 嫁接
+- ISO BMFF 解析：`/tmp/mp_extract.py`；HEVC tile 解码：hvcC 参数集 + annexB + ffmpeg
+- 上游模型：`../XDRemux-upstream/Models/UniversalPhotographicStyleStateNet.mlpackage`
+
+---
+
+# 会话交接：2026-09-02 工作收尾（前段）
 
 > 本文档为压缩上下文后恢复工作的入口。涵盖：v0.4 功能线状态、Live Photo +
 > 摄影风格组合研究结论、Apple 样本数据、后续规划。
