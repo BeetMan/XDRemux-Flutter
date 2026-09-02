@@ -181,3 +181,23 @@ iPhone Air 原生 Live Photo，ΔRMS 0.02~0.04：Apple 相机默认处理已经�
 → Rust 嫁接。瓶颈从「没有预测手段」变为「模型精度有限 + 需真机验收」。
 后续若真机验收通过，可考虑：向下游要 .pt checkpoint 转 ONNX（ort crate）
 实现纯 Rust 跨平台推理。
+
+
+## 真机验收通过（2026-09-02 下午，二分第二轮）
+
+GTC 量化 bug 修复后重测（同一张 OPPO 标准 3x 转换输出）：
+
+- **V1（仅预测 key1，其余 golden）**：风格入口出现，可用 ✓
+- **V2（key1+GTC+light maps+scalars 全预测）**：风格入口出现，可用 ✓
+
+**结论：上游通用模型的完整预测状态在 OPPO 转换输出上被 Photos 接受。**
+「非 identity key1 → Photos 拒收」的假设被证伪；之前唯一失败原因是
+我们导出脚本的 GTC 量化 bug（uint8 截断代替 ×255 重建）。
+
+待确认：滑块调整是否产生可见变化（identity 下理论为 no-op）、编辑
+保存/重开行为。若均通过，方向确定为：
+
+1. 短期：把推理集成进转换管线（macOS 用 coremltools/CoreML；跨平台需
+   .pt checkpoint 转 ONNX 或复刻模型结构加载权重）
+2. 每张图预测专属状态（场景自适应），替换固定 identity
+3. 向上游索取 .pt checkpoint（仓库只发布了 CoreML 导出）
