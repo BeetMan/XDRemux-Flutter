@@ -532,6 +532,23 @@ pub struct StyleStateOverride {
     pub range_min: f64,
     pub range_max: f64,
     pub gain: f64,
+    /// Key "7" semantic flags (None keeps the built-in defaults).
+    pub key7: Option<SemanticFlags>,
+    /// Key "6" per-scene statistics overrides. `None` keeps the golden
+    /// reference dicts. Map keys must match the native dict names; missing
+    /// names keep the golden entry.
+    pub stats: Option<Vec<(&'static str, [f64; 9])>>,
+}
+
+/// Native semantics measured from iPhone Air samples (2026-09-02):
+/// no-person scenes write {hint: 0.0, ratios: 0} with empty-fallback stats
+/// ({blackPoint: 0, highKey: 1.0, rest: 0}); person-present scenes write
+/// hint -1.0 with real ratios.
+#[derive(Debug, Clone, Copy)]
+pub struct SemanticFlags {
+    pub people_ratio: f64,
+    pub skin_ratio: f64,
+    pub person_masks_valid_hint: f64,
 }
 
 impl StyleStateOverride {
@@ -549,6 +566,12 @@ impl StyleStateOverride {
             range_min: 0.0,
             range_max: 0.0762939453125,
             gain: 7.353515625,
+            key7: Some(SemanticFlags {
+                people_ratio: 0.0,
+                skin_ratio: 0.0,
+                person_masks_valid_hint: 0.0,
+            }),
+            stats: None,
         }
     }
 }
@@ -580,7 +603,7 @@ fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
         w.add_dict(&[(kmin, vmin), (kmax, vmax), (kgain, vgain)])
     };
     let k6 = w.add_str("6");
-    let v6 = build_stats_dict(&mut w);
+    let v6 = build_stats_dict(&mut w, state.stats.as_deref());
     let kc = w.add_str("c");
     let vc = w.add_data(&state.light_c);
     let kk = w.add_str("k");
@@ -597,12 +620,17 @@ fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
     let ve = w.add_int(32);
     let k7 = w.add_str("7");
     let v7 = {
+        let flags = state.key7.unwrap_or(SemanticFlags {
+            people_ratio: 0.0,
+            skin_ratio: 0.0,
+            person_masks_valid_hint: -1.0,
+        });
         let kpm = w.add_str("PersonMasksValidHint");
-        let vpm = w.add_real(-1.0);
+        let vpm = w.add_real(flags.person_masks_valid_hint);
         let ksr = w.add_str("SkinRatio");
-        let vsr = w.add_real(0.0);
+        let vsr = w.add_real(flags.skin_ratio);
         let kpr = w.add_str("PeopleRatio");
-        let vpr = w.add_real(0.0);
+        let vpr = w.add_real(flags.people_ratio);
         w.add_dict(&[(kpm, vpm), (ksr, vsr), (kpr, vpr)])
     };
     let kd = w.add_str("d");
@@ -633,7 +661,10 @@ fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
 /// Scene statistics ("6"). Identity path: person/skin segment histograms are
 /// legitimately zero; ToneMappedImage/LinearImage carry reference values from
 /// the golden sample (per-photo computation needs a decoder — TODO).
-fn build_stats_dict(w: &mut BplistWriter) -> usize {
+fn build_stats_dict(
+    w: &mut BplistWriter,
+    overrides: Option<&[(&'static str, [f64; 9])]>,
+) -> usize {
     let zero_stats = |w: &mut BplistWriter| -> usize {
         let entries = [
             ("highKey", 1.0f64),
@@ -689,7 +720,7 @@ fn build_stats_dict(w: &mut BplistWriter) -> usize {
         w.add_dict(&refs)
     };
 
-    let entries: Vec<(usize, usize)> = [
+    let mut entries: Vec<(&'static str, usize)> = vec![
         ("LinearImagePersonSegmentBased", zero_stats(w)),
         ("ToneMappedImageRedChannelSkinBased", zero_stats(w)),
         ("ToneMappedImagePersonSegmentBased", zero_stats(w)),
@@ -700,11 +731,41 @@ fn build_stats_dict(w: &mut BplistWriter) -> usize {
         ("LinearImageSkinBased", zero_stats(w)),
         ("ToneMappedImageBlueChannelSkinBased", zero_stats(w)),
         ("ToneMappedImageSkinBased", zero_stats(w)),
-    ]
-    .into_iter()
-    .map(|(k, v)| (w.add_str(k), v))
-    .collect();
-    w.add_dict(&entries)
+    ];
+    if let Some(overrides) = overrides {
+        for (name, values) in overrides {
+            if let Some(entry) = entries.iter_mut().find(|(n, _)| n == name) {
+                entry.1 = stats_dict_from(w, values);
+            }
+        }
+    }
+    let refs: Vec<(usize, usize)> = entries
+        .into_iter()
+        .map(|(k, v)| (w.add_str(k), v))
+        .collect();
+    w.add_dict(&refs)
+}
+
+/// Percentile field order must match the native layout (see iPhone Air
+/// samples): blackPoint=p0.5, highKey=p95, p02, p10, p25, p50, p75, p98,
+/// whitePoint=p99.5 (upstream `distribution`).
+fn stats_dict_from(w: &mut BplistWriter, values: &[f64; 9]) -> usize {
+    let entries = [
+        ("blackPoint", values[0]),
+        ("highKey", values[1]),
+        ("p02", values[2]),
+        ("p10", values[3]),
+        ("p25", values[4]),
+        ("p50", values[5]),
+        ("p75", values[6]),
+        ("p98", values[7]),
+        ("whitePoint", values[8]),
+    ];
+    let refs: Vec<(usize, usize)> = entries
+        .iter()
+        .map(|(k, v)| (w.add_str(k), w.add_real(*v)))
+        .collect();
+    w.add_dict(&refs)
 }
 
 // ---------------------------------------------------------------------------
@@ -784,4 +845,9 @@ pub fn replace_style_metadata(
         &plist,
     )?;
     Ok(output)
+}
+
+/// Debug helper: expose the parameterized plist builder for tooling.
+pub fn debug_build(state: &StyleStateOverride) -> Vec<u8> {
+    build_style_metadata_with(state)
 }

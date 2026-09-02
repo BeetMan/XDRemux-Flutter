@@ -140,11 +140,14 @@ impl BplistWriter {
     }
 
     pub fn finish(&self, top: usize) -> Vec<u8> {
+        // Object references must be addressable: 1 byte covers 255 objects,
+        // but the stats-override path can exceed that, so widen dynamically.
+        let object_ref_size = if self.objects.len() <= 0xff { 1 } else { 2 };
         let mut out = b"bplist00".to_vec();
         let mut offsets: Vec<u64> = Vec::with_capacity(self.objects.len());
         for obj in &self.objects {
             offsets.push(out.len() as u64);
-            write_obj(&mut out, obj);
+            write_obj(&mut out, obj, object_ref_size);
         }
         let offset_table_offset = out.len() as u64;
         let max_offset = offset_table_offset + 8; // safe upper bound
@@ -166,7 +169,7 @@ impl BplistWriter {
         // topObject + offsetTableOffset.
         out.extend_from_slice(&[0; 6]);
         out.push(offset_int_size);
-        out.push(1); // objectRefSize
+        out.push(object_ref_size);
         out.extend_from_slice(&(self.objects.len() as u64).to_be_bytes());
         out.extend_from_slice(&(top as u64).to_be_bytes());
         out.extend_from_slice(&offset_table_offset.to_be_bytes());
@@ -193,7 +196,7 @@ fn write_len_prefixed(out: &mut Vec<u8>, marker_base: u8, len: usize) {
     }
 }
 
-fn write_obj(out: &mut Vec<u8>, obj: &Obj) {
+fn write_obj(out: &mut Vec<u8>, obj: &Obj, ref_size: u8) {
     match obj {
         Obj::Bool(false) => out.push(0x08),
         Obj::Bool(true) => out.push(0x09),
@@ -233,11 +236,18 @@ fn write_obj(out: &mut Vec<u8>, obj: &Obj) {
         Obj::Dict(entries) => {
             write_len_prefixed(out, 0xd0, entries.len());
             for (k, _) in entries {
-                out.push(*k as u8);
+                push_ref(out, *k, ref_size);
             }
             for (_, v) in entries {
-                out.push(*v as u8);
+                push_ref(out, *v, ref_size);
             }
         }
+    }
+}
+
+fn push_ref(out: &mut Vec<u8>, index: usize, ref_size: u8) {
+    match ref_size {
+        1 => out.push(index as u8),
+        _ => out.extend_from_slice(&(index as u16).to_be_bytes()),
     }
 }

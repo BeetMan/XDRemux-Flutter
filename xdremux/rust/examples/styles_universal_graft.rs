@@ -31,9 +31,10 @@ fn main() -> Result<(), String> {
     }
     let heic = std::fs::read(positional[0]).map_err(|e| e.to_string())?;
     let state_bin = std::fs::read(positional[1]).map_err(|e| e.to_string())?;
-    if state_bin.len() != 51840 + 4 + 516 + 4096 + 12 {
+    let v2 = state_bin.len() == 56468 + 72 + 12;
+    if state_bin.len() != 56468 && !v2 {
         return Err(format!(
-            "state bin size {} != expected 54468",
+            "state bin size {} != expected 56468 (v1) or 56552 (v2)",
             state_bin.len()
         ));
     }
@@ -48,12 +49,29 @@ fn main() -> Result<(), String> {
     pos += 2048;
     let light_d = state_bin[pos..pos + 2048].to_vec();
     pos += 2048;
-    let scalars: Vec<f32> = state_bin[pos..]
+    let tail = &state_bin[pos..];
+    let (stats, key7): (Vec<f32>, [f32; 3]) = if v2 && tail.len() >= 96 {
+        // tail = [scalars 12B][stats 72B][key7 12B]
+        let s: Vec<f32> = tail[12..84]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let k: [f32; 3] = tail[84..96]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect::<Vec<f32>>()
+            .try_into()
+            .unwrap();
+        (s, k)
+    } else {
+        (vec![], [0.0; 3])
+    };
+    let scalars: Vec<f32> = state_bin[pos..pos + 12]
         .chunks_exact(2)
         .map(|c| f16_to_f32(u16::from_le_bytes([c[0], c[1]])))
         .collect();
 
-    let predicted = StyleStateOverride {
+    let mut predicted = StyleStateOverride {
         key0: 16,
         key1,
         gtc,
@@ -65,7 +83,28 @@ fn main() -> Result<(), String> {
         range_min: scalars[1] as f64,
         range_max: scalars[2] as f64,
         gain: scalars[3] as f64,
+        key7: None,
+        stats: None,
     };
+    if !stats.is_empty() {
+        predicted.stats = Some(vec![
+            ("ToneMappedImage", [
+                stats[0] as f64, stats[1] as f64, stats[2] as f64, stats[3] as f64,
+                stats[4] as f64, stats[5] as f64, stats[6] as f64, stats[7] as f64,
+                stats[8] as f64,
+            ]),
+            ("LinearImage", [
+                stats[9] as f64, stats[10] as f64, stats[11] as f64, stats[12] as f64,
+                stats[13] as f64, stats[14] as f64, stats[15] as f64, stats[16] as f64,
+                stats[17] as f64,
+            ]),
+        ]);
+        predicted.key7 = Some(xdremux_core::styles_native::SemanticFlags {
+            people_ratio: key7[0] as f64,
+            skin_ratio: key7[1] as f64,
+            person_masks_valid_hint: key7[2] as f64,
+        });
+    }
     // Bisect mode: keep the golden reference for everything except key1, to
     // isolate which predicted field Photos rejects.
     let state = if key1_only {
