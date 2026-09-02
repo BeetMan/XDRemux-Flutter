@@ -161,3 +161,13 @@ Neutrino 渲染 → 全局多项式拟合（Huber）→ Gauss-Newton 精化（12
 - 我们探针：`cargo run -q --release -p xdremux-core --example styles_diag -- <file>`
 - macOS 27 私有 API 补丁：上游已合并（#32），本地工作区有对应改动
 - 测试：`cargo test -p xdremux-core`（134 passed）、`flutter test`（20 passed）
+
+---
+
+## 测试素材集中（2026-09-02 深夜补记）
+
+所有测试图片/视频已集中到 `~/Documents/XDRemux Playground/test-media/`
+（sources/ 真机原件 + artifacts/ 实验产物，详见其中 README.md）。
+旧路径已失效：`~/Desktop/测试/`、`~/Desktop/室外照片/`、`~/Downloads/动态照片/`、
+`~/Downloads/IMG20260822161608/` 均已迁移删除。人像组仍在
+`samples/portraits-20260902/` 未动。
