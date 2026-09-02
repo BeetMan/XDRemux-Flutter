@@ -85,11 +85,11 @@ Neutrino 渲染 → 全局多项式拟合（Huber）→ Gauss-Newton 精化（12
 - [ ] 转换输出 MOV 已存在时按序号避让
 - [ ] 跳过报告区分「格式不支持」/「已是转换产物」
 
-### P2：摄影风格真实拟合（待样本/上游进展）
-- Apple 相机 key1「自然基线」已确认非 identity——identity 是简化
-- 方案 A：从 iPhone Air 样本提取风格→key1 模板映射
-- 方案 B：跟踪上游 Rust 重写的 Neutrino 替代方案
-- style+pair 组合的 PhotoKit 层面问题：需要真实 Photos 编辑状态分析
+### P2：摄影风格 —— 已定案关闭（2026-09-02）
+- 用户拍板：转换目标只是 Apple 可编辑格式，identity 状态满足需求
+- 非身份 key1 被 Photos 接受已证真（通用模型嫁接真机验收全通过）
+- 集成任务取消；研究成果归档于 docs/research/styles-upstream-logic-comparison.md
+- 嫁接 API（replace_style_metadata/StyleStateOverride）保留备用
 
 ### P3：Motion Photo 批量/恢复
 - 批量 checkpoint 恢复
