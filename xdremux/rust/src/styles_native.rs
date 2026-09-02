@@ -158,11 +158,14 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
     };
 
-    // Linear thumbnail placeholder: black RGB at quarter resolution.
-    // Diagnostic: XSTYLES_LINEAR_STREAM / XSTYLES_LINEAR_HVCC swap in a real
-    // (e.g. golden) thumbnail for Photos-behaviour bisection.
-    let lt_w = pw / 4;
-    let lt_h = ph / 4;
+    // Linear thumbnail: real generated preview (fixed 1024×768 landscape
+    // storage, 4:2:0; the item inherits the primary's irot). Diagnostic:
+    // XSTYLES_LINEAR_STREAM / XSTYLES_LINEAR_HVCC swap in a real (e.g.
+    // golden) thumbnail for Photos-behaviour bisection. On generation
+    // failure the legacy black placeholder keeps the file structurally
+    // valid.
+    const LT_W: u32 = 1024;
+    const LT_H: u32 = 768;
     let env_lt_stream = std::env::var("XSTYLES_LINEAR_STREAM")
         .ok()
         .map(|p| std::fs::read(p).expect("linear stream file"));
@@ -170,30 +173,49 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         .ok()
         .map(|p| std::fs::read(p).expect("linear hvcc file"));
     let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
-        let black = vec![0u8; (lt_w * lt_h * 3) as usize];
+        let black = vec![0u8; (LT_W * LT_H * 3) as usize];
         let black_refs: Vec<&[u8]> = vec![&black];
-        let stream = crate::hevc::x265_encode_tiles(&black_refs, lt_w, lt_h, 3, false)
+        let stream = crate::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
             .map_err(|e| format!("linear thumb encode: {e}"))?
             .into_iter()
             .next()
             .ok_or("linear thumb encode produced no stream")?;
-        let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 3)
+        let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
             .ok_or("linear hvcC extraction failed")?;
         let idr = crate::hevc::drop_parameter_nals(&stream);
         let stream = crate::hevc::hevc_byte_stream_to_length_prefixed(&idr);
         (env_lt_stream.unwrap_or(stream), env_lt_hvcc.unwrap_or(hvcc))
     } else {
-        let black = vec![0u8; (lt_w * lt_h * 3) as usize];
-        let black_refs: Vec<&[u8]> = vec![&black];
-        let stream = crate::hevc::x265_encode_tiles(&black_refs, lt_w, lt_h, 3, false)
-            .map_err(|e| format!("linear thumb encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("linear thumb encode produced no stream")?;
-        let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 3)
-            .ok_or("linear hvcC extraction failed")?;
-        let idr = crate::hevc::drop_parameter_nals(&stream);
-        (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+        let primary_irot_turns = meta
+            .ipma_entries
+            .iter()
+            .find(|e| e.item_id == primary)
+            .and_then(|e| {
+                e.associations.iter().find_map(|(idx, _)| {
+                    meta.props
+                        .iter()
+                        .find(|p| p.index == *idx && p.ptype == "irot")
+                })
+            })
+            .and_then(|p| isobmff::irot_quarter_turns(&p.raw).ok())
+            .unwrap_or(0) as u32;
+        match crate::linear_thumbnail::generate_linear_thumbnail(base, primary_irot_turns) {
+            Ok(pair) => pair,
+            Err(e) => {
+                // Legacy black placeholder fallback.
+                let black = vec![0u8; (LT_W * LT_H * 3) as usize];
+                let black_refs: Vec<&[u8]> = vec![&black];
+                let stream = crate::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
+                    .map_err(|e2| format!("linear thumb encode: {e}; fallback: {e2}"))?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("linear thumb encode: {e}; no stream"))?;
+                let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
+                    .ok_or_else(|| format!("linear thumb encode: {e}; hvcC extraction failed"))?;
+                let idr = crate::hevc::drop_parameter_nals(&stream);
+                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+            }
+        }
     };
 
     // ---- style metadata bplist ------------------------------------------
@@ -258,7 +280,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let delta_h = ((ph as u64 * 2470 + 1756) / 3512) as u32;
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
-    let ispe_lt_idx = add_prop(isobmff::make_ispe_box(lt_w, lt_h));
+    let ispe_lt_idx = add_prop(isobmff::make_ispe_box(LT_W, LT_H));
     let auxc_lt_idx = add_prop(make_auxc_box(
         b"tag:apple.com,2023:photo:aux:linearthumbnail",
     ));

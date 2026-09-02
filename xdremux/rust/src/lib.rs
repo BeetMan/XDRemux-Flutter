@@ -16,6 +16,7 @@ pub mod iso_validate;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
+pub mod linear_thumbnail;
 pub mod progress;
 
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
