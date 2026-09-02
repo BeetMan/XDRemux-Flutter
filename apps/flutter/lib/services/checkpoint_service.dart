@@ -272,6 +272,21 @@ class CheckpointService {
         status: CheckpointItemStatus.pending,
         inputSize: size,
         inputMtimeMs: mtimeMs,
+        captureModeKey: item.captureModeKey,
+        captureModeFolderName: item.captureModeFolderName,
+        classificationStatus: item.classificationStatus,
+        hdrKind: item.hdrKind,
+        family: item.family,
+        motionPhoto:
+            item.motionPhoto == null
+                ? null
+                : {
+                  'kind': item.motionPhoto!.kind,
+                  'stillBytes': item.motionPhoto!.stillBytes,
+                  'videoBytes': item.motionPhoto!.videoBytes,
+                  'streamCount': item.motionPhoto!.streamCount,
+                },
+        motionPhotoMode: item.motionPhotoMode.name,
       );
     }).toList();
   }

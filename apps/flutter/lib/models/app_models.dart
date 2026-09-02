@@ -371,6 +371,7 @@ enum QueueItemStatus {
   running,
   converted,
   skippedExisting,
+  skippedPolicy,
   failed,
   cancelled;
 
@@ -379,12 +380,14 @@ enum QueueItemStatus {
   bool get isTerminal =>
       this == QueueItemStatus.converted ||
       this == QueueItemStatus.skippedExisting ||
+      this == QueueItemStatus.skippedPolicy ||
       this == QueueItemStatus.failed ||
       this == QueueItemStatus.cancelled;
 
   bool get isSuccessful =>
       this == QueueItemStatus.converted ||
-      this == QueueItemStatus.skippedExisting;
+      this == QueueItemStatus.skippedExisting ||
+      this == QueueItemStatus.skippedPolicy;
 
   String get displayName {
     switch (this) {
@@ -396,6 +399,8 @@ enum QueueItemStatus {
         return '已转换';
       case QueueItemStatus.skippedExisting:
         return '已跳过';
+      case QueueItemStatus.skippedPolicy:
+        return '按策略跳过';
       case QueueItemStatus.failed:
         return '失败';
       case QueueItemStatus.cancelled:

@@ -74,9 +74,23 @@ class MotionPhotoService {
         if (src == null || src.isEmpty) continue;
         final srcFile = File(src);
         if (!srcFile.existsSync()) continue;
-        final dest = '${outFile.parent.path}${Platform.pathSeparator}${entry.value}';
-        await srcFile.copy(dest);
-        written.add(entry.value);
+        final destDir = outFile.parent.path;
+        final desired = entry.value;
+        // Collision avoidance: never overwrite a previously exported video.
+        var target = '$destDir${Platform.pathSeparator}$desired';
+        if (File(target).existsSync()) {
+          final dot = desired.lastIndexOf('.');
+          final s = dot > 0 ? desired.substring(0, dot) : desired;
+          final ext = dot > 0 ? desired.substring(dot) : '';
+          var i = 2;
+          while (true) {
+            target = '$destDir${Platform.pathSeparator}$s $i$ext';
+            if (!File(target).existsSync()) break;
+            i++;
+          }
+        }
+        await srcFile.copy(target);
+        written.add(target.split(Platform.pathSeparator).last);
       }
       return written;
     } finally {

@@ -49,6 +49,7 @@ enum CheckpointItemStatus {
   pending,
   converted,
   skippedExisting,
+  skippedPolicy,
   failed;
 
   String get wire => name;
@@ -74,6 +75,19 @@ class CheckpointItem {
   String? error;
   DateTime? finishedAt;
 
+  /// Classification metadata so a restored queue item keeps its capture-mode
+  /// grouping and HDR family without re-classifying.
+  final String? captureModeKey;
+  final String? captureModeFolderName;
+  final String? classificationStatus;
+  final String? hdrKind;
+  final String? family;
+
+  /// Motion Photo detection result (null when not a Motion Photo) and the
+  /// per-card handling mode, so restore reproduces the exact queue state.
+  final Map<String, dynamic>? motionPhoto;
+  final String motionPhotoMode;
+
   CheckpointItem({
     required this.inputPath,
     required this.outputPath,
@@ -82,6 +96,13 @@ class CheckpointItem {
     this.inputMtimeMs = 0,
     this.error,
     this.finishedAt,
+    this.captureModeKey,
+    this.captureModeFolderName,
+    this.classificationStatus,
+    this.hdrKind,
+    this.family,
+    this.motionPhoto,
+    this.motionPhotoMode = 'skip',
   });
 
   Map<String, dynamic> toJson() => {
@@ -93,6 +114,15 @@ class CheckpointItem {
         'inputMtimeMs': inputMtimeMs,
         if (error != null) 'error': error,
         if (finishedAt != null) 'finishedAt': finishedAt!.toIso8601String(),
+        if (captureModeKey != null) 'captureModeKey': captureModeKey,
+        if (captureModeFolderName != null)
+          'captureModeFolderName': captureModeFolderName,
+        if (classificationStatus != null)
+          'classificationStatus': classificationStatus,
+        if (hdrKind != null) 'hdrKind': hdrKind,
+        if (family != null) 'family': family,
+        if (motionPhoto != null) 'motionPhoto': motionPhoto,
+        'motionPhotoMode': motionPhotoMode,
       };
 
   factory CheckpointItem.fromJson(Map<String, dynamic> json) {
@@ -106,6 +136,16 @@ class CheckpointItem {
       finishedAt: json['finishedAt'] != null
           ? DateTime.tryParse(json['finishedAt'] as String)
           : null,
+      captureModeKey: json['captureModeKey'] as String?,
+      captureModeFolderName: json['captureModeFolderName'] as String?,
+      classificationStatus: json['classificationStatus'] as String?,
+      hdrKind: json['hdrKind'] as String?,
+      family: json['family'] as String?,
+      motionPhoto:
+          json['motionPhoto'] != null
+              ? Map<String, dynamic>.from(json['motionPhoto'] as Map)
+              : null,
+      motionPhotoMode: json['motionPhotoMode'] as String? ?? 'skip',
     );
   }
 

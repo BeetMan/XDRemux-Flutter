@@ -354,26 +354,75 @@ class _HomePageState extends State<HomePage> {
           status = QueueItemStatus.converted;
         case CheckpointItemStatus.skippedExisting:
           status = QueueItemStatus.skippedExisting;
+        case CheckpointItemStatus.skippedPolicy:
+          status = QueueItemStatus.skippedPolicy;
         case CheckpointItemStatus.failed:
           status = QueueItemStatus.failed;
         case CheckpointItemStatus.pending:
           status = QueueItemStatus.pending;
       }
 
-      _queue.add(
-        QueueItem(
-          id: _makeId(),
-          inputPath: cpItem.inputPath,
-          outputPath: cpItem.outputPath,
-          status: status,
-          errorMessage: cpItem.error,
-          outputPlanStatus: _computeOutputPlan(
-            cpItem.inputPath,
-            cpItem.outputPath,
-          ),
-          finishedAt: cpItem.finishedAt,
-        ),
+      final mpJson = cpItem.motionPhoto;
+      final mpMode = MotionPhotoMode.values.firstWhere(
+        (e) => e.name == cpItem.motionPhotoMode,
+        orElse: () => MotionPhotoMode.skip,
       );
+
+      final restoredItem = QueueItem(
+        id: _makeId(),
+        inputPath: cpItem.inputPath,
+        outputPath: cpItem.outputPath,
+        status: status,
+        errorMessage: cpItem.error,
+        outputPlanStatus: _computeOutputPlan(
+          cpItem.inputPath,
+          cpItem.outputPath,
+        ),
+        finishedAt: cpItem.finishedAt,
+        captureModeKey: cpItem.captureModeKey,
+        captureModeFolderName: cpItem.captureModeFolderName,
+        classificationStatus: cpItem.classificationStatus,
+        hdrKind: cpItem.hdrKind,
+        family: cpItem.family,
+        motionPhoto:
+            mpJson == null
+                ? null
+                : MotionPhotoSummary(
+                  kind: mpJson['kind'] as String? ?? 'unknown',
+                  stillBytes: (mpJson['stillBytes'] as num?)?.toInt() ?? 0,
+                  videoBytes: (mpJson['videoBytes'] as num?)?.toInt() ?? 0,
+                  streamCount: (mpJson['streamCount'] as num?)?.toInt() ?? 1,
+                ),
+        motionPhotoMode: mpMode,
+      );
+      // Live Photo pairing provenance: a converted pair is only complete
+      // when the sibling MOV still exists and its content identifier
+      // matches the converted still. A missing/invalid MOV downgrades the
+      // item to failed so the next batch run re-composes it.
+      if (restoredItem.status == QueueItemStatus.converted &&
+          restoredItem.motionPhoto != null &&
+          mpMode == MotionPhotoMode.livePhotoPair) {
+        final movPath = cpItem.outputPath.replaceAll(
+          RegExp(r'\.[^.]+$'),
+          '.mov',
+        );
+        var pairOk = false;
+        if (File(movPath).existsSync()) {
+          try {
+            pairOk = XdRemuxFFI.livePhotoPairValid(
+              cpItem.outputPath,
+              movPath,
+            );
+          } catch (_) {
+            pairOk = false;
+          }
+        }
+        if (!pairOk) {
+          restoredItem.status = QueueItemStatus.failed;
+          restoredItem.errorMessage = '配对 MOV 缺失或与静帧不匹配，请重新转换';
+        }
+      }
+      _queue.add(restoredItem);
       existing.add(cpItem.inputPath);
       restored++;
     }
@@ -586,9 +635,14 @@ class _HomePageState extends State<HomePage> {
   int get _convertedCount =>
       _queue.where((item) => item.status == QueueItemStatus.converted).length;
 
-  int get _skippedCount => _queue
+  int get _skippedExistingCount => _queue
       .where((item) => item.status == QueueItemStatus.skippedExisting)
       .length;
+
+  int get _skippedPolicyCount =>
+      _queue.where((item) => item.status == QueueItemStatus.skippedPolicy).length;
+
+  int get _skippedCount => _skippedExistingCount + _skippedPolicyCount;
 
   int get _failedCount =>
       _queue.where((item) => item.status == QueueItemStatus.failed).length;
@@ -1423,7 +1477,7 @@ class _HomePageState extends State<HomePage> {
           // Motion Photo policy: cards set to 跳过 never enter conversion.
           if (item.motionPhoto != null &&
               item.motionPhotoMode == MotionPhotoMode.skip) {
-            item.status = QueueItemStatus.skippedExisting;
+            item.status = QueueItemStatus.skippedPolicy;
             item.errorMessage = '动态照片已按策略跳过';
             item.finishedAt = DateTime.now();
             cursor++;
@@ -1463,6 +1517,13 @@ class _HomePageState extends State<HomePage> {
     final item = _queue[index];
     final runConfig = _config.copy();
     item.backend = runConfig.backend;
+    // Live Photo pairing is incompatible with the style state in Photos'
+    // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
+    // Keep the pairing pure: no styleMetadata in the paired still.
+    if (item.motionPhoto != null &&
+        item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
+      runConfig.applePhotographicStyles = false;
+    }
     final effectiveOppoCompatibility = runConfig.outputMode == OutputMode.apple
         ? OppoCompatMode.off
         : runConfig.oppoCompatibility;
@@ -1604,9 +1665,8 @@ class _HomePageState extends State<HomePage> {
                 await File(pairedStill).copy(item.outputPath);
                 await File(pairedStill).delete();
               }
-              final movTarget = outFile.path.replaceAll(
-                RegExp(r'\.[^.]+$'),
-                '.mov',
+              final movTarget = _sideOutputPath(
+                outFile.path.replaceAll(RegExp(r'\.[^.]+$'), '.mov'),
               );
               if (pairedMov != movTarget) {
                 await File(pairedMov).rename(movTarget);
@@ -1859,6 +1919,21 @@ class _HomePageState extends State<HomePage> {
               status: CheckpointItemStatus.pending,
               inputSize: _fileSize(qItem.inputPath),
               inputMtimeMs: _fileMtimeMs(qItem.inputPath),
+              captureModeKey: qItem.captureModeKey,
+              captureModeFolderName: qItem.captureModeFolderName,
+              classificationStatus: qItem.classificationStatus,
+              hdrKind: qItem.hdrKind,
+              family: qItem.family,
+              motionPhoto:
+                  qItem.motionPhoto == null
+                      ? null
+                      : {
+                        'kind': qItem.motionPhoto!.kind,
+                        'stillBytes': qItem.motionPhoto!.stillBytes,
+                        'videoBytes': qItem.motionPhoto!.videoBytes,
+                        'streamCount': qItem.motionPhoto!.streamCount,
+                      },
+              motionPhotoMode: qItem.motionPhotoMode.name,
             ),
           );
         }
@@ -1888,6 +1963,8 @@ class _HomePageState extends State<HomePage> {
         cpStatus = CheckpointItemStatus.converted;
       case QueueItemStatus.skippedExisting:
         cpStatus = CheckpointItemStatus.skippedExisting;
+      case QueueItemStatus.skippedPolicy:
+        cpStatus = CheckpointItemStatus.skippedPolicy;
       case QueueItemStatus.failed:
         cpStatus = CheckpointItemStatus.failed;
       default:
@@ -1933,6 +2010,8 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _statusText = _failedCount > 0
             ? '完成：成功 $_convertedCount，跳过 $_skippedCount，失败 $_failedCount'
+            : _skippedPolicyCount > 0
+            ? '完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过'
             : '全部完成：$_convertedCount 个文件';
       });
     }
@@ -2018,7 +2097,8 @@ class _HomePageState extends State<HomePage> {
       _queue.removeWhere(
         (item) =>
             item.status == QueueItemStatus.converted ||
-            item.status == QueueItemStatus.skippedExisting,
+            item.status == QueueItemStatus.skippedExisting ||
+            item.status == QueueItemStatus.skippedPolicy,
       );
       if (_selectedIndex != null && _selectedIndex! >= _queue.length) {
         _selectedIndex = _queue.isEmpty ? null : _queue.length - 1;
@@ -2215,6 +2295,23 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(snackText)));
+    }
+  }
+
+  /// Returns [target] with a sequence suffix (" 2", " 3", …) inserted before
+  /// the extension until a non-existing path is found. Side outputs (Live
+  /// Photo MOV, motion video exports) use this so a repeated conversion
+  /// never silently overwrites a previous side file.
+  String _sideOutputPath(String target) {
+    if (!File(target).existsSync()) return target;
+    final dir = File(target).parent.path;
+    final name = File(target).uri.pathSegments.last;
+    final dot = name.lastIndexOf('.');
+    final stem = dot > 0 ? name.substring(0, dot) : name;
+    final ext = dot > 0 ? name.substring(dot) : '';
+    for (var i = 2;; i++) {
+      final candidate = '$dir${Platform.pathSeparator}$stem $i$ext';
+      if (!File(candidate).existsSync()) return candidate;
     }
   }
 
@@ -4605,6 +4702,7 @@ class _MobileQueueCard extends StatelessWidget {
       QueueItemStatus.failed => theme.colorScheme.error,
       QueueItemStatus.running => theme.colorScheme.primary,
       QueueItemStatus.skippedExisting ||
+      QueueItemStatus.skippedPolicy ||
       QueueItemStatus.cancelled => theme.colorScheme.onSurfaceVariant,
       QueueItemStatus.pending => Colors.orange.shade800,
     };
