@@ -24,11 +24,13 @@ fn f16_to_f32(h: u16) -> f32 {
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 4 {
-        return Err("usage: styles_universal_graft <in.heic> <state.bin> <out.heic>".into());
+    let key1_only = args.iter().any(|a| a == "--key1-only");
+    let positional: Vec<&String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).collect();
+    if positional.len() != 3 {
+        return Err("usage: styles_universal_graft <in.heic> <state.bin> <out.heic> [--key1-only]".into());
     }
-    let heic = std::fs::read(&args[1]).map_err(|e| e.to_string())?;
-    let state_bin = std::fs::read(&args[2]).map_err(|e| e.to_string())?;
+    let heic = std::fs::read(positional[0]).map_err(|e| e.to_string())?;
+    let state_bin = std::fs::read(positional[1]).map_err(|e| e.to_string())?;
     if state_bin.len() != 51840 + 4 + 516 + 4096 + 12 {
         return Err(format!(
             "state bin size {} != expected 54468",
@@ -51,7 +53,7 @@ fn main() -> Result<(), String> {
         .map(|c| f16_to_f32(u16::from_le_bytes([c[0], c[1]])))
         .collect();
 
-    let state = StyleStateOverride {
+    let predicted = StyleStateOverride {
         key0: 16,
         key1,
         gtc,
@@ -63,6 +65,16 @@ fn main() -> Result<(), String> {
         range_min: scalars[1] as f64,
         range_max: scalars[2] as f64,
         gain: scalars[3] as f64,
+    };
+    // Bisect mode: keep the golden reference for everything except key1, to
+    // isolate which predicted field Photos rejects.
+    let state = if key1_only {
+        let mut s = StyleStateOverride::identity();
+        s.key0 = predicted.key0;
+        s.key1 = predicted.key1;
+        s
+    } else {
+        predicted
     };
     eprintln!(
         "predicted state: uncertainty={uncertainty:.4} tag4={} tag5={} tag_h={:.4} \
@@ -83,7 +95,7 @@ fn main() -> Result<(), String> {
     }
 
     let out = replace_style_metadata(&heic, &state)?;
-    std::fs::write(&args[3], out).map_err(|e| e.to_string())?;
-    eprintln!("written {}", args[3]);
+    std::fs::write(positional[2], out).map_err(|e| e.to_string())?;
+    eprintln!("written {}", positional[2]);
     Ok(())
 }
