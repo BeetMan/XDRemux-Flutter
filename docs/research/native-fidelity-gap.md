@@ -175,7 +175,9 @@ OPPO 50MP 天空照（SegFormer 55.7% 天空）→ 完整转换 + 预测状态�
 
 ### 我们嫁接件的遗留项（按影响排序）
 
-1. **linearthumbnail 黑块**：唯一实质内容缺口（真生成需解码主图）
+1. ~~**linearthumbnail 黑块**~~：已解决（2026-09-03，`linear_thumbnail.rs` 真生成：
+   heif-oxide 解码主图 → 反 irot 转横置 → 中心裁切 4:3 → box 缩放 1024×768 → 4:2:0
+   HEVC。与原生差异仅 8-bit vs 10-bit——MAIN10 取决于 x265 构建）。
 2. **skymatte 重复**：scaffold 阶段与 styles 阶段各写一个（V3 里 item76/112 全零重复）——去重待办
 3. delta map 恒定 506 vs 原生逐像素实值：嫁接预测状态时中性即可，机制上无误
 4. 缩略图规格：768×1152/8-bit vs 原生固定 1024×768/10-bit——Photos 容忍，对齐属锦上添花

@@ -12,9 +12,14 @@
 
 ## P2（需要设计）
 
-- [ ] **14 个版本化 Motion Photo fixtures 移植**：上游回归资产，可直接用于我们的
-  conformance 测试。
-- [ ] **严格的 HEIF/ISO-BMFF 边界检查**：上游加固的容器校验规则。
+- [x] **14 个版本化 Motion Photo fixtures 移植**（2026-09-03, fixtures_gate.rs）：
+  SHA256 身份 + source kind + still/video 区间 + pts + 双流 primary end + JPEG gain map
+  有无，全部对齐上游 `verify_python_motion_photo_fixtures.py`。fixtures 留在上游克隆
+  （166MB 不入我们的库），`XDEREMUX_FIXTURES` 可覆盖路径。
+- [x] **严格的 HEIF/ISO-BMFF 边界检查**（2026-09-03, iso_validate.rs）：
+  `validate_gain_map_structure` 移植（extent 越界、meta 完整性、tmap→[primary,gain-map]
+  图、grid 行列==tile 数、ispe/pixi/hvcC 交叉校验）。偏差：pixi=1 接受任意 chroma 载体
+  （OPPO donor 图在 4:2:0/4:4:4 上携带 mono gain map）。
 - [x] **styles+pair 组合档**：2026-09-03 终局实验（预测非身份 key1 + pair）与 identity+pair
   同样失败——联合编辑加载是 Apple 结构性拦截，与风格内容无关。互斥转为永久设计约束，
   本项关闭（见 docs/research/native-fidelity-gap.md 终局实验节）。
