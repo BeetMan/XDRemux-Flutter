@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build the Rust core + x265 static libraries for OpenHarmony (aarch64).
 #
-# Outputs:
+# Outputs (cargo workspace root is the repo root, so the target dir is
+# <repo-root>/target, NOT xdremux/rust/target):
 #   - target/aarch64-unknown-linux-ohos/release/libxdremux_core.so (cdylib,
 #     for Flutter OHOS FFI via DynamicLibrary.open)
 #   - vendor/x265/build_ohos/libx265.a (x265 static, built if missing)
