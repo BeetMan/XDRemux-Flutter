@@ -650,7 +650,9 @@ jobs:
     name: Publish GitHub Release
     # macOS/iOS are new build lines: they must not block a release, so the
     # publish gate only requires the proven Windows + Android jobs.
-    needs: [windows, android, macos, ios]
+    # windows-arm64 must be in `needs` (not the gate): its artifact upload
+    # races the download otherwise (pre.2 shipped without it).
+    needs: [windows, windows-arm64, android, macos, ios]
     if: always() && startsWith(github.ref, 'refs/tags/') && needs.windows.result == 'success' && needs.android.result == 'success'
     runs-on: ubuntu-latest
     steps:
