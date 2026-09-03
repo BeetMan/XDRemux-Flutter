@@ -31,6 +31,23 @@
 intensity, color}`，cast 取值为枚举字符串
 （TanWarm/GoldWarm/BlushWarm/BrightPop/Neutral/Cool/DreamyHues）。
 
+## 补验（2026-09-03 深夜，回应单案例质疑）
+
+第二轮 ×2 样本，BrightPop + 大幅参数偏移（tone −0.26/color +0.53 与
+tone −0.20/color −0.74）：
+
+- A：OPPO 天空照转换件（identity 状态，不同图像源）—— key1 ΔRMS=0
+- B：IMG_3716 **Apple 原生风格拍摄件**（真实非 identity key1）—— key1
+  ΔRMS=0，styleMetadata 全字段一致
+- 像素对照：B 的烘焙件 vs 原片均值差 +10.8（ΔB 通道 −14，暖化可见），
+  渲染层确实在变
+
+覆盖矩阵：跨图像源 × 跨状态来源（嫁接 identity / Apple 原生态）× 大
+参数偏移，全部零变化。「cast 不落盘为 key1」为定论。
+
+附：解析坑两枚——原生件 styleMetadata item 名为 `metadata`（我们写的
+叫 `styleMetadata`），mp_extract 的 ctype 'uri ' 带尾空格需 strip。
+
 ## 结论
 
 1. **文件层不存在 cast→key1 映射可反推**——语义→数学的变换只存在于
