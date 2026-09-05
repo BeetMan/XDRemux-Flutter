@@ -5264,7 +5264,6 @@ class _PhotoCard extends StatelessWidget {
                                 ? '${item.progress!.current}/${item.progress!.total}'
                                 : t('转换中', 'Converting'),
                             color: Colors.blue,
-                            bottom: 0,
                           ),
                           const SizedBox(height: 4),
                           Padding(
@@ -5290,25 +5289,34 @@ class _PhotoCard extends StatelessWidget {
                       ),
                     ),
                   if (isDone)
-                    _OverlayBadge(
-                      icon: Icons.check_circle,
-                      label: t('完成', 'Done'),
-                      color: Colors.green,
-                      bottom: 0,
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: _OverlayBadge(
+                        icon: Icons.check_circle,
+                        label: t('完成', 'Done'),
+                        color: Colors.green,
+                      ),
                     ),
                   if (isFailed)
-                    _OverlayBadge(
-                      icon: Icons.cancel,
-                      label: t('失败', 'Failed'),
-                      color: Colors.red,
-                      bottom: 0,
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: _OverlayBadge(
+                        icon: Icons.cancel,
+                        label: t('失败', 'Failed'),
+                        color: Colors.red,
+                      ),
                     ),
                   if (isSkipped)
-                    _OverlayBadge(
-                      icon: Icons.skip_next,
-                      label: t('已跳过', 'Skipped'),
-                      color: Colors.grey,
-                      bottom: 0,
+                    Positioned(
+                      left: 6,
+                      bottom: 6,
+                      child: _OverlayBadge(
+                        icon: Icons.skip_next,
+                        label: t('已跳过', 'Skipped'),
+                        color: Colors.grey,
+                      ),
                     ),
                 ],
               ),
@@ -5527,41 +5535,35 @@ class _OverlayBadge extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  final double bottom;
 
   const _OverlayBadge({
     required this.icon,
     required this.label,
     required this.color,
-    required this.bottom,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: 6,
-      bottom: bottom + 6,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          color: Colors.black.withAlpha(160),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                color: color,
-                fontWeight: FontWeight.w600,
-              ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(160),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color,
+              fontWeight: FontWeight.w600,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
