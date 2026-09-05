@@ -3484,6 +3484,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.categorizeOutputByMode = _cfg.categorizeOutputByMode;
     widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
     widget.config.hardwareEncode = _cfg.hardwareEncode;
+    widget.config.motionPhotoDefaultMode = _cfg.motionPhotoDefaultMode;
     widget.onChanged();
     setState(() {});
   }
