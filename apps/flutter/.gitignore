@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# On-device iOS integration-test fixtures (OPPO camera samples, ~12 MB).
+# Kept out of git per the no-photos-in-repo policy; stage locally to run
+# integration_test/ios_e2e_test.dart.
+apps/flutter/integration_test/assets/
