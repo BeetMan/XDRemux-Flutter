@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../services/xdremux_service.dart';
 import '../ffi/xdremux_ffi.dart';
+import 'l10n/l10n.dart';
 
 /// Standalone "organize photos by capture mode" page.
 ///
@@ -74,20 +75,23 @@ class _OrganizePageState extends State<OrganizePage> {
   String? _outputDir;
   bool _scanning = false;
   bool _copying = false;
-  String _statusText = '选择包含 HEIC / JPEG 照片的目录开始扫描';
+  String _statusText = t(
+    '选择包含 HEIC / JPEG 照片的目录开始扫描',
+    'Choose a directory with HEIC / JPEG photos to start scanning',
+  );
 
   static const _supportedExt = {'.heic', '.heif', '.jpg', '.jpeg'};
-  static const _assetLayoutPrefix = '静态照片';
-  static const _liveLayoutPrefix = '实况照片';
+  static String get _assetLayoutPrefix => t('静态照片', 'Still Photos');
+  static String get _liveLayoutPrefix => t('实况照片', 'Live Photos');
 
   Future<void> _pickInputDir() async {
     final dir = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择要整理的照片目录',
+      dialogTitle: t('选择要整理的照片目录', 'Choose the photo directory to organize'),
     );
     if (dir == null) return;
     setState(() {
       _items.clear();
-      _statusText = '扫描中…';
+      _statusText = t('扫描中…', 'Scanning…');
       _scanning = true;
     });
     await _scanDirectory(Directory(dir));
@@ -95,7 +99,7 @@ class _OrganizePageState extends State<OrganizePage> {
 
   Future<void> _pickOutputDir() async {
     final dir = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择分类输出目录',
+      dialogTitle: t('选择分类输出目录', 'Choose the categorized output directory'),
     );
     if (dir == null) return;
     setState(() {
@@ -123,7 +127,7 @@ class _OrganizePageState extends State<OrganizePage> {
     if (files.isEmpty) {
       setState(() {
         _scanning = false;
-        _statusText = '该目录下没有找到 HEIC / JPEG 照片';
+        _statusText = t('该目录下没有找到 HEIC / JPEG 照片', 'No HEIC / JPEG photos found in this directory');
       });
       return;
     }
@@ -161,7 +165,10 @@ class _OrganizePageState extends State<OrganizePage> {
       _scanning = false;
       final categorized = _items.where((i) => i.modeKey != null).length;
       final live = _items.where((i) => i.isLivePhoto).length;
-      _statusText = '共 ${_items.length} 张照片，$categorized 张可分类，$live 组实况照片';
+      _statusText = t(
+        '共 ${_items.length} 张照片，$categorized 张可分类，$live 组实况照片',
+        '${_items.length} photos, $categorized categorizable, $live Live Photo pairs',
+      );
     });
   }
 
@@ -218,7 +225,7 @@ class _OrganizePageState extends State<OrganizePage> {
     if (root == null) return;
     setState(() {
       _copying = true;
-      _statusText = '复制中…';
+      _statusText = t('复制中…', 'Copying…');
     });
     var copied = 0, failed = 0, skipped = 0;
     for (final item in _items) {
@@ -248,32 +255,41 @@ class _OrganizePageState extends State<OrganizePage> {
         failed++;
       }
       if (mounted && (copied + failed + skipped) % 20 == 0) {
-        setState(() => _statusText = '复制中… $copied 完成 / $failed 失败');
+        setState(
+          () => _statusText = t(
+            '复制中… $copied 完成 / $failed 失败',
+            'Copying… $copied done / $failed failed',
+          ),
+        );
       }
     }
     setState(() {
       _copying = false;
-      _statusText = '完成：$copied 张已复制，$skipped 张跳过，$failed 张失败';
+      _statusText = t(
+        '完成：$copied 张已复制，$skipped 张跳过，$failed 张失败',
+        'Done: $copied copied, $skipped skipped, $failed failed',
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final uncategorizedKey = t('（未分类）', 'Uncategorized');
     final grouped = <String, List<_OrganizeItem>>{};
     for (final item in _items) {
-      grouped.putIfAbsent(item.folderName ?? '（未分类）', () => []).add(item);
+      grouped.putIfAbsent(item.folderName ?? uncategorizedKey, () => []).add(item);
     }
     final sortedKeys = grouped.keys.toList()
       ..sort((a, b) {
-        if (a == '（未分类）') return 1;
-        if (b == '（未分类）') return -1;
+        if (a == uncategorizedKey) return 1;
+        if (b == uncategorizedKey) return -1;
         return a.compareTo(b);
       });
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('按拍摄模式整理'),
+        title: Text(t('按拍摄模式整理', 'Organize by capture mode')),
         backgroundColor: theme.colorScheme.surfaceContainerHighest,
       ),
       body: Column(
@@ -285,7 +301,7 @@ class _OrganizePageState extends State<OrganizePage> {
                 Expanded(
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.drive_folder_upload),
-                    label: const Text('选择照片目录'),
+                    label: Text(t('选择照片目录', 'Choose photo directory')),
                     onPressed: _scanning || _copying ? null : _pickInputDir,
                   ),
                 ),
@@ -294,7 +310,9 @@ class _OrganizePageState extends State<OrganizePage> {
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.output),
                     label: Text(
-                      _outputDir == null ? '选择输出目录' : '输出: ${_shorten(_outputDir!)}',
+                      _outputDir == null
+                          ? t('选择输出目录', 'Choose output directory')
+                          : t('输出: ${_shorten(_outputDir!)}', 'Output: ${_shorten(_outputDir!)}'),
                       overflow: TextOverflow.ellipsis,
                     ),
                     onPressed: _scanning || _copying ? null : _pickOutputDir,
@@ -303,7 +321,7 @@ class _OrganizePageState extends State<OrganizePage> {
                 const SizedBox(width: 12),
                 FilledButton.icon(
                   icon: const Icon(Icons.copy_all),
-                  label: const Text('开始整理'),
+                  label: Text(t('开始整理', 'Start organizing')),
                   onPressed: _items.isEmpty || _scanning || _copying
                       ? null
                       : _executeCopy,
@@ -324,7 +342,7 @@ class _OrganizePageState extends State<OrganizePage> {
             child: _items.isEmpty
                 ? Center(
                     child: Text(
-                      _scanning ? '扫描中…' : '尚未加载照片',
+                      _scanning ? t('扫描中…', 'Scanning…') : t('尚未加载照片', 'No photos loaded yet'),
                       style: theme.textTheme.bodyLarge?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -386,7 +404,7 @@ class _ModeGroupCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '${items.length} 张',
+                  t('${items.length} 张', '${items.length} photos'),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -435,7 +453,7 @@ class _ModeGroupCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '… 共 ${items.length} 张',
+                  t('… 共 ${items.length} 张', '… ${items.length} total'),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),

@@ -15,6 +15,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'models/app_models.dart';
+import 'l10n/l10n.dart';
 import 'models/checkpoint_model.dart';
 import 'apple_oppo_workflow_page.dart';
 import 'organize_page.dart';
@@ -184,8 +185,9 @@ class _PreflightIssue {
 
   bool get isBlocking => severity == _PreflightSeverity.blocking;
 
-  String get displayText =>
-      fileName == null ? '$title：$detail' : '$fileName：$title（$detail）';
+  String get displayText => fileName == null
+      ? t('$title：$detail', '$title: $detail')
+      : t('$fileName：$title（$detail）', '$fileName: $title ($detail)');
 }
 
 // ============================================================================
@@ -202,7 +204,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final List<QueueItem> _queue = [];
   ConversionConfig _config = ConversionConfig();
-  String _statusText = '就绪';
+  String _statusText = t('就绪', 'Ready');
   String _currentFileName = '';
   int _currentConcurrency = 0;
   bool _isProcessing = false;
@@ -250,9 +252,9 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 10),
-        content: Text('发现新版本 ${update.releaseName}'),
+        content: Text(t('发现新版本 ${update.releaseName}', 'New version available: ${update.releaseName}')),
         action: SnackBarAction(
-          label: '去下载',
+          label: t('去下载', 'Download'),
           onPressed: () => launchUrl(
             Uri.parse(update.releaseUrl),
             mode: LaunchMode.externalApplication,
@@ -264,6 +266,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _initAsync() async {
     _config = await XdRemuxService.loadConfig();
+    setUiLanguage(_config.language);
     _backendCapabilities = await XdRemuxService.getBackendCapabilities();
     // Swift is intentionally not exposed on Windows/Android. If a shared
     // preferences store contains an unavailable backend or Apple-only choice,
@@ -419,7 +422,7 @@ class _HomePageState extends State<HomePage> {
         }
         if (!pairOk) {
           restoredItem.status = QueueItemStatus.failed;
-          restoredItem.errorMessage = '配对 MOV 缺失或与静帧不匹配，请重新转换';
+          restoredItem.errorMessage = t('配对 MOV 缺失或与静帧不匹配，请重新转换', 'Paired MOV missing or mismatched with the still; please convert again');
         }
       }
       _queue.add(restoredItem);
@@ -432,12 +435,15 @@ class _HomePageState extends State<HomePage> {
     _updateStatusText();
     setState(() {
       final message = StringBuffer(
-        '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度',
+        t(
+          '已恢复 ${checkpoint.completedCount}/${checkpoint.items.length} 个文件的进度',
+          'Restored progress for ${checkpoint.completedCount}/${checkpoint.items.length} files',
+        ),
       );
       if (restored == 0 && unavailable > 0) {
-        message.write('；临时源文件已失效，请重新选择');
+        message.write(t('；临时源文件已失效，请重新选择', '; temporary source files are gone, please re-select'));
       } else if (unavailable > 0) {
-        message.write('；$unavailable 个源文件不可用，已跳过');
+        message.write(t('；$unavailable 个源文件不可用，已跳过', '; $unavailable source files unavailable, skipped'));
       }
       _currentFileName = message.toString();
     });
@@ -473,24 +479,30 @@ class _HomePageState extends State<HomePage> {
         context: context,
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.battery_saver),
-          title: const Text('后台转换需要关闭电池限制'),
-          content: const Text(
-            '切换到后台时，系统会冻结应用以省电，导致转换暂停。\n\n'
-            '需要完成两步设置：\n'
-            '1. 允许"忽略电池优化"（系统对话框）\n'
-            '2. 在"耗电行为控制"中设为"允许后台运行"（OPPO/一加/realme）',
+          title: Text(t('后台转换需要关闭电池限制', 'Background conversion needs battery optimization off')),
+          content: Text(
+            t(
+              '切换到后台时，系统会冻结应用以省电，导致转换暂停。\n\n'
+              '需要完成两步设置：\n'
+              '1. 允许"忽略电池优化"（系统对话框）\n'
+              '2. 在"耗电行为控制"中设为"允许后台运行"（OPPO/一加/realme）',
+              'When the app goes to the background, the system may freeze it to save power, pausing conversion.\n\n'
+              'Two steps are required:\n'
+              '1. Allow "Ignore battery optimizations" (system dialog)\n'
+              '2. Set "Allow background activity" under "Power consumption behavior" (OPPO/OnePlus/realme)',
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('暂不'),
+              child: Text(t('暂不', 'Not now')),
             ),
             TextButton(
               onPressed: () {
                 Navigator.pop(ctx);
                 _batteryChannel.invokeMethod<bool>('openOemBatterySettings');
               },
-              child: const Text('耗电行为控制'),
+              child: Text(t('耗电行为控制', 'Power behavior')),
             ),
             FilledButton(
               onPressed: () {
@@ -499,7 +511,7 @@ class _HomePageState extends State<HomePage> {
                   'requestIgnoreBatteryOptimizations',
                 );
               },
-              child: const Text('忽略电池优化'),
+              child: Text(t('忽略电池优化', 'Ignore battery optimizations')),
             ),
           ],
         ),
@@ -592,7 +604,7 @@ class _HomePageState extends State<HomePage> {
         debugPrint('[XDRemux][share] cannot read $filePath: $e');
       }
     }
-    await _enqueuePaths(paths, verb: '接收', ignored: ignored + unreadable);
+    await _enqueuePaths(paths, verb: t('接收', 'Received'), ignored: ignored + unreadable);
   }
 
   @override
@@ -689,7 +701,7 @@ class _HomePageState extends State<HomePage> {
   void _updateStatusText() {
     if (_isProcessing) {
       // Show progress of the currently-active file.
-      String label = '转换中';
+      String label = t('转换中', 'Converting');
       for (final item in _queue) {
         if (item.status == QueueItemStatus.running) {
           final pl = item.progressLabel;
@@ -701,11 +713,11 @@ class _HomePageState extends State<HomePage> {
       }
       setState(() => _statusText = label);
     } else if (_queue.isEmpty) {
-      setState(() => _statusText = '就绪');
+      setState(() => _statusText = t('就绪', 'Ready'));
     } else if (_failedCount > 0) {
-      setState(() => _statusText = '完成(有失败)');
+      setState(() => _statusText = t('完成(有失败)', 'Done (with failures)'));
     } else {
-      setState(() => _statusText = '完成');
+      setState(() => _statusText = t('完成', 'Done'));
     }
   }
 
@@ -886,14 +898,14 @@ class _HomePageState extends State<HomePage> {
             children: [
               ListTile(
                 leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('从相册选择'),
-                subtitle: const Text('保留原始 HEIC、HDR 和深度数据'),
+                title: Text(t('从相册选择', 'Choose from Photos')),
+                subtitle: Text(t('保留原始 HEIC、HDR 和深度数据', 'Keep original HEIC, HDR and depth data')),
                 onTap: () => Navigator.pop(ctx, _ImportSource.photos),
               ),
               ListTile(
                 leading: const Icon(Icons.folder_open_outlined),
-                title: const Text('从文件选择'),
-                subtitle: const Text('打开“文件”App 或 iCloud Drive'),
+                title: Text(t('从文件选择', 'Choose from files')),
+                subtitle: Text(t('打开“文件”App 或 iCloud Drive', 'Open the Files app or iCloud Drive')),
                 onTap: () => Navigator.pop(ctx, _ImportSource.files),
               ),
             ],
@@ -936,7 +948,7 @@ class _HomePageState extends State<HomePage> {
     } on PlatformException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('无法打开相册：${e.message ?? e.code}')),
+          SnackBar(content: Text(t('无法打开相册：${e.message ?? e.code}', 'Cannot open Photos: ${e.message ?? e.code}'))),
         );
       }
     }
@@ -960,7 +972,7 @@ class _HomePageState extends State<HomePage> {
 
     if (picked.isEmpty) {
       debugPrint('[XDRemux][file_picker] picker returned nothing');
-      if (mounted) setState(() => _currentFileName = '未选择文件');
+      if (mounted) setState(() => _currentFileName = t('未选择文件', 'No file selected'));
       return;
     }
     final files = picked
@@ -1013,7 +1025,7 @@ class _HomePageState extends State<HomePage> {
     required String source,
   }) async {
     if (files.isEmpty) {
-      if (mounted) setState(() => _currentFileName = '文件选择器未返回文件');
+      if (mounted) setState(() => _currentFileName = t('文件选择器未返回文件', 'File picker returned no files'));
       return;
     }
     debugPrint(
@@ -1093,7 +1105,7 @@ class _HomePageState extends State<HomePage> {
         firstError ??= '$e';
         debugPrint('[XDRemux][$source] classify failed for $path: $e');
         if (mounted) {
-          setState(() => _currentFileName = '添加失败: $e');
+          setState(() => _currentFileName = t('添加失败: $e', 'Add failed: $e'));
         }
       }
     }
@@ -1104,14 +1116,21 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     setState(() {
       final parts = <String>[];
-      if (added > 0) parts.add('已添加 $added 个文件');
-      if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+      if (added > 0) parts.add(t('已添加 $added 个文件', 'Added $added files'));
+      if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
       if (skippedUnsupportedPortrait > 0) {
-        parts.add('跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件');
+        parts.add(
+          t(
+            '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
+            'Skipped $skippedUnsupportedPortrait files without portrait mode support',
+          ),
+        );
       }
-      if (skipped > 0) parts.add('$skipped 个无法读取');
+      if (skipped > 0) parts.add(t('$skipped 个无法读取', '$skipped unreadable'));
       if (firstError != null) parts.add(firstError);
-      _currentFileName = parts.isEmpty ? '未添加新文件' : parts.join('，');
+      _currentFileName = parts.isEmpty
+          ? t('未添加新文件', 'No new files added')
+          : parts.join(t('，', ', '));
     });
     if (unsupportedPortraitFiles.isNotEmpty && mounted) {
       await _showPortraitImportRejection(unsupportedPortraitFiles);
@@ -1120,7 +1139,7 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(content: Text('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过')),
+          SnackBar(content: Text(t('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过', '$skippedExisting files are already converted HDR photos; skipped'))),
         );
     }
   }
@@ -1133,7 +1152,7 @@ class _HomePageState extends State<HomePage> {
 
     final report = await XdRemuxService.diagnosePortrait(inputPath);
     if (report['classification'] == 'missing-rear-depth') {
-      return '缺少 rear.depth（仅包含前置深度数据）';
+      return t('缺少 rear.depth（仅包含前置深度数据）', 'Missing rear.depth (only front depth data present)');
     }
     return null;
   }
@@ -1141,19 +1160,21 @@ class _HomePageState extends State<HomePage> {
   Future<void> _showPortraitImportRejection(List<String> fileNames) async {
     if (!mounted) return;
     final shown = fileNames.take(8).join('\n');
-    final more = fileNames.length > 8 ? '\n还有 ${fileNames.length - 8} 个文件' : '';
+    final more = fileNames.length > 8 ? t('\n还有 ${fileNames.length - 8} 个文件', '\nand ${fileNames.length - 8} more files') : '';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('部分照片不支持 Apple 人像模式'),
+        title: Text(t('部分照片不支持 Apple 人像模式', 'Some photos do not support Apple Portrait')),
         content: Text(
-          '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n'
-          '$shown$more',
+          t(
+            '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n$shown$more',
+            'These photos lack the rear.depth required for Apple Portrait; skipped:\n\n$shown$more',
+          ),
         ),
         actions: [
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('知道了'),
+            child: Text(t('知道了', 'Got it')),
           ),
         ],
       ),
@@ -1245,10 +1266,10 @@ class _HomePageState extends State<HomePage> {
 
     if (runnable.isEmpty) {
       issues.add(
-        const _PreflightIssue(
+        _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: '没有待处理文件',
-          detail: '请先添加照片，或重试失败项目。',
+          title: t('没有待处理文件', 'No pending files'),
+          detail: t('请先添加照片，或重试失败项目。', 'Add photos first, or retry failed items.'),
         ),
       );
       return issues;
@@ -1260,9 +1281,9 @@ class _HomePageState extends State<HomePage> {
         issues.add(
           _PreflightIssue(
             severity: _PreflightSeverity.blocking,
-            title: '输入文件不可用',
+            title: t('输入文件不可用', 'Input file unavailable'),
             fileName: item.fileName,
-            detail: '文件不存在或临时源已失效。请重新添加该文件。',
+            detail: t('文件不存在或临时源已失效。请重新添加该文件。', 'File does not exist or the temporary source is gone. Re-add the file.'),
           ),
         );
         continue;
@@ -1271,9 +1292,9 @@ class _HomePageState extends State<HomePage> {
         issues.add(
           _PreflightIssue(
             severity: _PreflightSeverity.blocking,
-            title: '输入格式不支持',
+            title: t('输入格式不支持', 'Unsupported input format'),
             fileName: item.fileName,
-            detail: '仅支持 HEIC / HEIF 文件。',
+            detail: t('仅支持 HEIC / HEIF 文件。', 'Only HEIC / HEIF files are supported.'),
           ),
         );
       }
@@ -1281,7 +1302,7 @@ class _HomePageState extends State<HomePage> {
         issues.add(
           _PreflightIssue(
             severity: _PreflightSeverity.blocking,
-            title: '输出计划不可用',
+            title: t('输出计划不可用', 'Output plan unavailable'),
             fileName: item.fileName,
             detail: item.outputPlanStatus.displayName,
           ),
@@ -1291,9 +1312,9 @@ class _HomePageState extends State<HomePage> {
         issues.add(
           _PreflightIssue(
             severity: _PreflightSeverity.warning,
-            title: '将覆盖已有输出',
+            title: t('将覆盖已有输出', 'Will overwrite existing output'),
             fileName: item.fileName,
-            detail: '输出文件已存在，继续后会覆盖它。',
+            detail: t('输出文件已存在，继续后会覆盖它。', 'The output file already exists and will be overwritten.'),
           ),
         );
       }
@@ -1303,7 +1324,7 @@ class _HomePageState extends State<HomePage> {
       issues.add(
         _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: '转换后端不可用',
+          title: t('转换后端不可用', 'Conversion backend unavailable'),
           detail: _backendCapabilities.statusFor(_config.backend),
         ),
       );
@@ -1312,10 +1333,10 @@ class _HomePageState extends State<HomePage> {
         _config.backend == ConversionBackend.swift &&
         !_backendCapabilities.swiftPhotographicStyles) {
       issues.add(
-        const _PreflightIssue(
+        _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple 照片摄影风格不可用',
-          detail: '当前平台 capability 未就绪。',
+          title: t('Apple 照片摄影风格不可用', 'Apple Photographic Styles unavailable'),
+          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
         ),
       );
     }
@@ -1323,10 +1344,10 @@ class _HomePageState extends State<HomePage> {
         _config.backend == ConversionBackend.swift &&
         !_backendCapabilities.swiftPortrait) {
       issues.add(
-        const _PreflightIssue(
+        _PreflightIssue(
           severity: _PreflightSeverity.blocking,
-          title: 'Apple 人像模式不可用',
-          detail: '当前平台 capability 未就绪。',
+          title: t('Apple 人像模式不可用', 'Apple Portrait unavailable'),
+          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
         ),
       );
     }
@@ -1341,29 +1362,29 @@ class _HomePageState extends State<HomePage> {
         ..clear()
         ..addAll(issues);
       if (issues.any((issue) => issue.isBlocking)) {
-        _statusText = '需要修复转换前检查问题';
+        _statusText = t('需要修复转换前检查问题', 'Fix preflight issues to continue');
       } else if (issues.isNotEmpty) {
-        _statusText = '转换前检查发现警告';
+        _statusText = t('转换前检查发现警告', 'Preflight warnings');
       } else {
-        _statusText = '检查通过，准备转换';
+        _statusText = t('检查通过，准备转换', 'Checks passed, ready to convert');
       }
     });
 
     final blocking = issues.where((issue) => issue.isBlocking).toList();
     if (blocking.isNotEmpty) {
       await _showPreflightDialog(
-        title: '无法开始转换',
+        title: t('无法开始转换', 'Cannot start conversion'),
         issues: blocking,
-        confirmLabel: '返回队列',
+        confirmLabel: t('返回队列', 'Back to queue'),
       );
       return false;
     }
     if (issues.isEmpty) return true;
 
     return _showPreflightDialog(
-      title: '开始前检查',
+      title: t('开始前检查', 'Preflight check'),
       issues: issues,
-      confirmLabel: '继续转换',
+      confirmLabel: t('继续转换', 'Continue'),
     );
   }
 
@@ -1385,7 +1406,11 @@ class _HomePageState extends State<HomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(canContinue ? '以下项目需要你确认：' : '请先处理以下问题后再开始：'),
+                Text(
+                  canContinue
+                      ? t('以下项目需要你确认：', 'Please confirm the following:')
+                      : t('请先处理以下问题后再开始：', 'Fix the following issues first:'),
+                ),
                 const SizedBox(height: 12),
                 ...issues
                     .take(12)
@@ -1411,7 +1436,12 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                 if (issues.length > 12)
-                  Text('还有 ${issues.length - 12} 项，请在队列中查看。'),
+                  Text(
+                    t(
+                      '还有 ${issues.length - 12} 项，请在队列中查看。',
+                      '${issues.length - 12} more items; see the queue.',
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1420,7 +1450,7 @@ class _HomePageState extends State<HomePage> {
           if (canContinue)
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
+              child: Text(t('取消', 'Cancel')),
             ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, canContinue),
@@ -1464,7 +1494,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _preflightIssues.clear();
       _isProcessing = true;
-      _statusText = '准备转换...';
+      _statusText = t('准备转换...', 'Preparing conversion...');
     });
 
     // Android: start foreground service so the OS doesn't freeze the
@@ -1497,7 +1527,7 @@ class _HomePageState extends State<HomePage> {
           if (item.motionPhoto != null &&
               item.motionPhotoMode == MotionPhotoMode.skip) {
             item.status = QueueItemStatus.skippedPolicy;
-            item.errorMessage = '动态照片已按策略跳过';
+            item.errorMessage = t('动态照片已按策略跳过', 'Motion photo skipped by policy');
             item.finishedAt = DateTime.now();
             cursor++;
             continue;
@@ -1618,7 +1648,7 @@ class _HomePageState extends State<HomePage> {
           XdRemuxService.takeCancellation(item.id);
       if (cancelled) {
         item.status = QueueItemStatus.cancelled;
-        item.errorMessage = '已取消';
+        item.errorMessage = t('已取消', 'Cancelled');
       } else if (result['success'] == true) {
         item.status = QueueItemStatus.converted;
         // Motion Photo policy 静帧+视频: after the still converts, export the
@@ -1648,11 +1678,11 @@ class _HomePageState extends State<HomePage> {
                   );
                 }
               } else {
-                item.errorMessage = '视频已导出到输出目录（未授予相册权限）';
+                item.errorMessage = t('视频已导出到输出目录（未授予相册权限）', 'Video exported to output directory (gallery permission not granted)');
               }
             }
           } catch (e) {
-            item.errorMessage = '视频导出失败: $e';
+            item.errorMessage = t('视频导出失败: $e', 'Video export failed: $e');
             debugPrint('[XDRemux][motion] video export failed: $e');
           }
         }
@@ -1692,20 +1722,20 @@ class _HomePageState extends State<HomePage> {
               }
             }
           } catch (e) {
-            item.errorMessage = 'Live Photo 合成失败: $e';
+            item.errorMessage = t('Live Photo 合成失败: $e', 'Live Photo composition failed: $e');
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
         }
       } else {
         item.status = QueueItemStatus.failed;
-        final message = result['errorMessage'] ?? '未知错误';
+        final message = result['errorMessage'] ?? t('未知错误', 'Unknown error');
         item.errorMessage = _backendError(runConfig.backend, message);
       }
     } catch (e) {
       if (item.status == QueueItemStatus.cancelled ||
           XdRemuxService.takeCancellation(item.id)) {
         item.status = QueueItemStatus.cancelled;
-        item.errorMessage = '已取消';
+        item.errorMessage = t('已取消', 'Cancelled');
       } else {
         item.status = QueueItemStatus.failed;
         item.errorMessage = _backendError(runConfig.backend, e.toString());
@@ -1877,11 +1907,11 @@ class _HomePageState extends State<HomePage> {
         final runningText = running.isEmpty
             ? ''
             : ' — ${running.join(', ')}${running.length < _queue.where((i) => i.status == QueueItemStatus.running).length ? '…' : ''}';
-        ForegroundService.updateProgress('$done/$_totalFiles 完成$runningText');
+        ForegroundService.updateProgress(t('$done/$_totalFiles 完成$runningText', '$done/$_totalFiles done$runningText'));
         // Keep the Windows tray tooltip in sync so the batch stays
         // observable while the window is hidden.
         if (Platform.isWindows && TrayService.isHidden) {
-          TrayService.setToolTip('XDRemux — $done/$_totalFiles 完成');
+          TrayService.setToolTip(t('XDRemux — $done/$_totalFiles 完成', 'XDRemux — $done/$_totalFiles done'));
         }
       } catch (_) {}
     });
@@ -1896,7 +1926,7 @@ class _HomePageState extends State<HomePage> {
     }
     setState(() {
       _isProcessing = false;
-      _statusText = '已取消';
+      _statusText = t('已取消', 'Cancelled');
       _currentConcurrency = 0;
       _currentFileName = '';
     });
@@ -2029,13 +2059,13 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         final unsupported = _failedUnsupportedCount;
         final failedDetail = unsupported > 0 && unsupported < _failedCount
-            ? '失败 $_failedCount（其中 $unsupported 个格式不支持）'
-            : '失败 $_failedCount';
+            ? t('失败 $_failedCount（其中 $unsupported 个格式不支持）', 'Failed $_failedCount ($unsupported unsupported format)')
+            : t('失败 $_failedCount', 'Failed $_failedCount');
         _statusText = _failedCount > 0
-            ? '完成：成功 $_convertedCount，跳过 $_skippedCount，$failedDetail'
+            ? t('完成：成功 $_convertedCount，跳过 $_skippedCount，$failedDetail', 'Done: $_convertedCount succeeded, $_skippedCount skipped, $failedDetail')
             : _skippedPolicyCount > 0
-            ? '完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过'
-            : '全部完成：$_convertedCount 个文件';
+            ? t('完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过', 'Done: $_convertedCount succeeded, $_skippedPolicyCount skipped by policy')
+            : t('全部完成：$_convertedCount 个文件', 'All done: $_convertedCount files');
       });
     }
     if (done > 0) {
@@ -2046,9 +2076,11 @@ class _HomePageState extends State<HomePage> {
         failedUnsupported: _failedUnsupportedCount,
       );
       if (mounted) {
-        final outcome = _failedCount > 0 ? '完成（有失败）' : '完成';
-        final summary =
-            '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个';
+        final outcome = _failedCount > 0 ? t('完成（有失败）', 'Done (with failures)') : t('完成', 'Done');
+        final summary = t(
+          '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个',
+          '${_config.backend.appTitle}: $outcome, $_convertedCount succeeded',
+        );
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(SnackBar(content: Text(summary)));
@@ -2074,8 +2106,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _backendError(ConversionBackend backend, String message) {
-    if (backend == ConversionBackend.swift && !message.startsWith('Swift 后端')) {
-      return 'Swift 后端：$message';
+    if (backend == ConversionBackend.swift &&
+        !message.startsWith(t('Swift 后端', 'Swift backend'))) {
+      return t('Swift 后端：$message', 'Swift backend: $message');
     }
     return message;
   }
@@ -2104,7 +2137,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _queue.clear();
       _selectedIndex = null;
-      _statusText = '就绪';
+      _statusText = t('就绪', 'Ready');
       _currentFileName = '';
     });
     // M6: Clear checkpoint when queue is manually cleared.
@@ -2128,7 +2161,7 @@ class _HomePageState extends State<HomePage> {
         _selectedIndex = _queue.isEmpty ? null : _queue.length - 1;
       }
       if (_queue.isEmpty) {
-        _statusText = '就绪';
+        _statusText = t('就绪', 'Ready');
       }
     });
   }
@@ -2158,7 +2191,7 @@ class _HomePageState extends State<HomePage> {
         }
       }
       if (_queue.isEmpty) {
-        _statusText = '就绪';
+        _statusText = t('就绪', 'Ready');
       }
     });
   }
@@ -2204,7 +2237,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _handleDrop(List<String> paths) =>
-      _enqueuePaths(paths, verb: '拖入');
+      _enqueuePaths(paths, verb: t('拖入', 'Dropped'));
 
   /// Shared intake for desktop drop and Android share: classifies each
   /// supported path and appends it to the queue, then reports how many
@@ -2297,13 +2330,20 @@ class _HomePageState extends State<HomePage> {
     }
 
     final parts = <String>[];
-    if (added > 0) parts.add('已$verb $added 个文件');
-    if (skippedExisting > 0) parts.add('跳过 $skippedExisting 个已转换');
+    if (added > 0) parts.add(t('已$verb $added 个文件', '$verb $added files'));
+    if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
     if (skippedUnsupportedPortrait > 0) {
-      parts.add('跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件');
+      parts.add(
+        t(
+          '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
+          'Skipped $skippedUnsupportedPortrait files without portrait mode support',
+        ),
+      );
     }
-    if (ignored > 0) parts.add('忽略 $ignored 个非 HEIC');
-    final summary = parts.isEmpty ? '未添加新文件' : parts.join('，');
+    if (ignored > 0) parts.add(t('忽略 $ignored 个非 HEIC', 'Ignored $ignored non-HEIC'));
+    final summary = parts.isEmpty
+        ? t('未添加新文件', 'No new files added')
+        : parts.join(t('，', ', '));
     setState(() => _currentFileName = summary);
     if (unsupportedPortraitFiles.isNotEmpty && mounted) {
       await _showPortraitImportRejection(unsupportedPortraitFiles);
@@ -2311,10 +2351,10 @@ class _HomePageState extends State<HomePage> {
     if (ignored > 0 ||
         skippedExisting > 0 ||
         skippedUnsupportedPortrait > 0 ||
-        verb == '接收') {
+        verb == t('接收', 'Received')) {
       if (!mounted) return;
       final snackText = skippedExisting > 0
-          ? '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过'
+          ? t('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过', '$skippedExisting files are already converted HDR photos; skipped')
           : summary;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -2353,7 +2393,7 @@ class _HomePageState extends State<HomePage> {
         if (!ok && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('无法打开: $path'),
+              content: Text(t('无法打开: $path', 'Cannot open: $path')),
               duration: const Duration(seconds: 3),
             ),
           );
@@ -2383,7 +2423,9 @@ class _HomePageState extends State<HomePage> {
     final result = await _saveAllConvertedToGallery(showDeniedHint: true);
     if (result == null || !mounted) return;
     final (saved, failed) = result;
-    final msg = failed > 0 ? '已保存 $saved 个到相册，$failed 个失败' : '已保存 $saved 个到相册';
+    final msg = failed > 0
+        ? t('已保存 $saved 个到相册，$failed 个失败', 'Saved $saved to gallery, $failed failed')
+        : t('已保存 $saved 个到相册', 'Saved $saved to gallery');
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
@@ -2404,7 +2446,7 @@ class _HomePageState extends State<HomePage> {
         if (showDeniedHint && mounted) {
           ScaffoldMessenger.of(
             context,
-          ).showSnackBar(const SnackBar(content: Text('未获得存储权限')));
+          ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
         }
         return null;
       }
@@ -2438,7 +2480,7 @@ class _HomePageState extends State<HomePage> {
 
   String _galleryAlbumSubtitle(QueueItem item) {
     final album = _galleryAlbum(item) ?? 'XDRemux';
-    if (Platform.isIOS) return '相册「$album」';
+    if (Platform.isIOS) return t('相册「$album」', 'Album "$album"');
     // gal/MediaStore places image albums under Pictures/, not DCIM/.
     return 'Pictures/$album';
   }
@@ -2458,19 +2500,19 @@ class _HomePageState extends State<HomePage> {
               if (Platform.isAndroid || Platform.isIOS)
                 ListTile(
                   leading: const Icon(Icons.photo_library),
-                  title: const Text('保存到相册'),
+                  title: Text(t('保存到相册', 'Save to gallery')),
                   subtitle: Text(_galleryAlbumSubtitle(item)),
                   onTap: () => Navigator.pop(ctx, _OutputAction.save),
                 ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: const Text('分享'),
+                title: Text(t('分享', 'Share')),
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
               ListTile(
                 leading: const Icon(Icons.open_in_new),
-                title: const Text('打开'),
-                subtitle: const Text('用系统图库打开'),
+                title: Text(t('打开', 'Open')),
+                subtitle: Text(t('用系统图库打开', 'Open with system gallery')),
                 onTap: () => Navigator.pop(ctx, _OutputAction.open),
               ),
             ],
@@ -2493,7 +2535,7 @@ class _HomePageState extends State<HomePage> {
             if (mounted) {
               ScaffoldMessenger.of(
                 context,
-              ).showSnackBar(const SnackBar(content: Text('未获得存储权限')));
+              ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
             }
             return;
           }
@@ -2505,7 +2547,7 @@ class _HomePageState extends State<HomePage> {
         if (mounted) {
           ScaffoldMessenger.of(
             context,
-          ).showSnackBar(SnackBar(content: Text(ok ? '已保存到相册' : '保存失败')));
+          ).showSnackBar(SnackBar(content: Text(ok ? t('已保存到相册', 'Saved to gallery') : t('保存失败', 'Save failed'))));
         }
       case _OutputAction.share:
         await FileActionService.shareFile(item.outputPath);
@@ -2563,7 +2605,7 @@ class _HomePageState extends State<HomePage> {
       if (!compact)
         IconButton(
           icon: const Icon(Icons.add_photo_alternate),
-          tooltip: '添加 HEIC',
+          tooltip: t('添加 HEIC', 'Add HEIC'),
           onPressed: _canEditQueue ? _addFiles : null,
         ),
       if (!compact && _canStart)
@@ -2571,14 +2613,14 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.only(right: 4),
           child: FilledButton.icon(
             icon: const Icon(Icons.play_arrow),
-            label: const Text('开始转换'),
+            label: Text(t('开始转换', 'Start conversion')),
             onPressed: _startConversion,
           ),
         ),
       if (!compact)
         IconButton(
           icon: const Icon(Icons.stop),
-          tooltip: '取消',
+          tooltip: t('取消', 'Cancel'),
           onPressed: _isProcessing ? _cancelConversion : null,
         ),
       // Desktop: one-tap output-folder access without digging the menu.
@@ -2587,14 +2629,14 @@ class _HomePageState extends State<HomePage> {
       if (!Platform.isAndroid && !Platform.isIOS)
         IconButton(
           icon: const Icon(Icons.folder_open),
-          tooltip: '打开输出目录',
+          tooltip: t('打开输出目录', 'Open output directory'),
           onPressed: !_isProcessing && _queue.any((item) => item.isSuccessful)
               ? _revealOutputs
               : null,
         ),
       IconButton(
         icon: const Icon(Icons.tune),
-        tooltip: '设置',
+        tooltip: t('设置', 'Settings'),
         onPressed: () => _openSettings(context),
       ),
       if (Platform.isMacOS ||
@@ -2604,7 +2646,7 @@ class _HomePageState extends State<HomePage> {
           PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.auto_awesome_motion_outlined),
-          tooltip: '一帧影像，动用两台手机',
+          tooltip: t('一帧影像，动用两台手机', 'One photo, two phones'),
           onPressed: _openAppleOppoWorkflow,
         ),
       // 整理页依赖目录递归扫描 + 任意位置复制，Android scoped storage 和
@@ -2612,7 +2654,7 @@ class _HomePageState extends State<HomePage> {
       if (!Platform.isAndroid && !Platform.isIOS && !PlatformX.isOhos)
         IconButton(
           icon: const Icon(Icons.folder_copy_outlined),
-          tooltip: '按拍摄模式整理',
+          tooltip: t('按拍摄模式整理', 'Organize by capture mode'),
           onPressed: _openOrganizePage,
         ),
       _buildQueueOverflowMenu(),
@@ -2630,7 +2672,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildQueueOverflowMenu() {
     return PopupMenuButton<_QueueMenuAction>(
-      tooltip: '更多操作',
+      tooltip: t('更多操作', 'More actions'),
       icon: const Icon(Icons.more_vert),
       onSelected: (action) {
         switch (action) {
@@ -2650,18 +2692,18 @@ class _HomePageState extends State<HomePage> {
         PopupMenuItem(
           value: _QueueMenuAction.retryFailed,
           enabled: _canEditQueue && _failedCount > 0,
-          child: const ListTile(
+          child: ListTile(
             leading: Icon(Icons.refresh),
-            title: Text('重试失败项'),
+            title: Text(t('重试失败项', 'Retry failed')),
             contentPadding: EdgeInsets.zero,
           ),
         ),
         PopupMenuItem(
           value: _QueueMenuAction.clearCompleted,
           enabled: _canEditQueue && (_convertedCount + _skippedCount) > 0,
-          child: const ListTile(
+          child: ListTile(
             leading: Icon(Icons.checklist),
-            title: Text('清除已完成'),
+            title: Text(t('清除已完成', 'Clear completed')),
             contentPadding: EdgeInsets.zero,
           ),
         ),
@@ -2669,18 +2711,18 @@ class _HomePageState extends State<HomePage> {
           PopupMenuItem(
             value: _QueueMenuAction.saveAllToGallery,
             enabled: _canEditQueue && _convertedCount > 0,
-            child: const ListTile(
+            child: ListTile(
               leading: Icon(Icons.photo_library),
-              title: Text('全部保存到相册'),
+              title: Text(t('全部保存到相册', 'Save all to gallery')),
               contentPadding: EdgeInsets.zero,
             ),
           ),
         if (Platform.isWindows)
           PopupMenuItem(
             value: _QueueMenuAction.minimizeToTray,
-            child: const ListTile(
+            child: ListTile(
               leading: Icon(Icons.minimize),
-              title: Text('最小化到托盘'),
+              title: Text(t('最小化到托盘', 'Minimize to tray')),
               contentPadding: EdgeInsets.zero,
             ),
           ),
@@ -2688,9 +2730,9 @@ class _HomePageState extends State<HomePage> {
         PopupMenuItem(
           value: _QueueMenuAction.clearQueue,
           enabled: _canEditQueue && _queue.isNotEmpty,
-          child: const ListTile(
+          child: ListTile(
             leading: Icon(Icons.delete_outline),
-            title: Text('清空队列'),
+            title: Text(t('清空队列', 'Clear queue')),
             contentPadding: EdgeInsets.zero,
           ),
         ),
@@ -2699,7 +2741,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMobileActionBar(ThemeData theme) {
-    final primaryLabel = _isProcessing ? '取消转换' : '开始转换';
+    final primaryLabel = _isProcessing ? t('取消转换', 'Cancel conversion') : t('开始转换', 'Start conversion');
     final primaryIcon = _isProcessing
         ? Icons.stop_circle_outlined
         : Icons.play_arrow;
@@ -2721,7 +2763,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             IconButton.filledTonal(
               icon: const Icon(Icons.add_photo_alternate_outlined),
-              tooltip: '添加文件',
+              tooltip: t('添加文件', 'Add files'),
               onPressed: _canEditQueue ? _addFiles : null,
             ),
             const SizedBox(width: 12),
@@ -2736,7 +2778,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(width: 12),
               IconButton.filledTonal(
                 icon: const Icon(Icons.photo_library_outlined),
-                tooltip: '全部保存到相册',
+                tooltip: t('全部保存到相册', 'Save all to gallery'),
                 onPressed: _saveAllToGallery,
               ),
             ],
@@ -2760,11 +2802,11 @@ class _HomePageState extends State<HomePage> {
       final file = File('screenshots/windows_main.png');
       await file.writeAsBytes(byteData.buffer.asUint8List());
       if (mounted) {
-        setState(() => _currentFileName = '截图已保存: ${file.path}');
+        setState(() => _currentFileName = t('截图已保存: ${file.path}', 'Screenshot saved: ${file.path}'));
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _currentFileName = '截图失败: $e');
+        setState(() => _currentFileName = t('截图失败: $e', 'Screenshot failed: $e'));
       }
     }
   }
@@ -2854,13 +2896,16 @@ class _HomePageState extends State<HomePage> {
                 const Icon(Icons.memory, size: 14),
                 const SizedBox(width: 4),
                 Text(
-                  '并发 ${_currentConcurrency > 0 ? _currentConcurrency : _config.maxConcurrentJobs}',
+                  t(
+                    '并发 ${_currentConcurrency > 0 ? _currentConcurrency : _config.maxConcurrentJobs}',
+                    'Concurrency ${_currentConcurrency > 0 ? _currentConcurrency : _config.maxConcurrentJobs}',
+                  ),
                   style: theme.textTheme.labelSmall,
                 ),
                 const SizedBox(width: 16),
                 const Icon(Icons.schedule, size: 14),
                 const SizedBox(width: 4),
-                Text('待处理 $_pendingCount', style: theme.textTheme.labelSmall),
+                Text(t('待处理 $_pendingCount', 'Pending $_pendingCount'), style: theme.textTheme.labelSmall),
                 const SizedBox(width: 16),
                 if (_currentFileName.isNotEmpty) ...[
                   Flexible(
@@ -2927,7 +2972,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   SizedBox(height: compact ? 20 : 24),
                   Text(
-                    '让 ProXDR HEIC 更容易分享',
+                    t('让 ProXDR HEIC 更容易分享', 'Make ProXDR HEIC easier to share'),
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -2936,8 +2981,8 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(height: 10),
                   Text(
                     isAndroid
-                        ? '选择 OPPO / OnePlus / realme 的 HEIC，转换为通用 HDR 格式。'
-                        : '拖拽 HEIC 到窗口，或选择文件后转换为通用 HDR 格式。',
+                        ? t('选择 OPPO / OnePlus / realme 的 HEIC，转换为通用 HDR 格式。', 'Choose OPPO / OnePlus / realme HEICs to convert to a universal HDR format.')
+                        : t('拖拽 HEIC 到窗口，或选择文件后转换为通用 HDR 格式。', 'Drop HEICs into the window, or pick files to convert to a universal HDR format.'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       height: 1.45,
@@ -2951,7 +2996,7 @@ class _HomePageState extends State<HomePage> {
                         Expanded(
                           child: FilledButton.icon(
                             icon: const Icon(Icons.photo_library_outlined),
-                            label: const Text('从相册选择'),
+                            label: Text(t('从相册选择', 'Choose from Photos')),
                             onPressed: _addFromPhotos,
                           ),
                         ),
@@ -2959,7 +3004,7 @@ class _HomePageState extends State<HomePage> {
                         Expanded(
                           child: OutlinedButton.icon(
                             icon: const Icon(Icons.folder_open_outlined),
-                            label: const Text('从文件选择'),
+                            label: Text(t('从文件选择', 'Choose from files')),
                             onPressed: _addFilesFromFiles,
                           ),
                         ),
@@ -2968,7 +3013,7 @@ class _HomePageState extends State<HomePage> {
                   else
                     FilledButton.icon(
                       icon: const Icon(Icons.add_photo_alternate_outlined),
-                      label: const Text('添加文件'),
+                      label: Text(t('添加文件', 'Add files')),
                       onPressed: _addFiles,
                     ),
                   const SizedBox(height: 16),
@@ -2976,15 +3021,15 @@ class _HomePageState extends State<HomePage> {
                     alignment: WrapAlignment.center,
                     spacing: 8,
                     runSpacing: 8,
-                    children: const [
-                      _FeatureChip(icon: Icons.shield_outlined, label: '本地处理'),
+                    children: [
+                      _FeatureChip(icon: Icons.shield_outlined, label: t('本地处理', 'On-device')),
                       _FeatureChip(
                         icon: Icons.hdr_on_outlined,
-                        label: '保留 HDR',
+                        label: t('保留 HDR', 'Preserve HDR'),
                       ),
                       _FeatureChip(
                         icon: Icons.batch_prediction_outlined,
-                        label: '支持批量',
+                        label: t('支持批量', 'Batch support'),
                       ),
                     ],
                   ),
@@ -3002,12 +3047,14 @@ class _HomePageState extends State<HomePage> {
     final warnings = _preflightIssues.length - blocking;
     final done = _processedCount == _totalFiles && _totalFiles > 0;
     final summary = done
-        ? (_failedCount > 0 ? '已完成：失败 $_failedCount 项' : '已完成，可导出结果')
+        ? (_failedCount > 0
+              ? t('已完成：失败 $_failedCount 项', 'Done: $_failedCount failed')
+              : t('已完成，可导出结果', 'Done, ready to export'))
         : blocking > 0
-        ? '需要修复 $blocking 项问题'
+        ? t('需要修复 $blocking 项问题', 'Fix $blocking blocking issues')
         : warnings > 0
-        ? '$warnings 项警告待确认'
-        : '可以开始转换';
+        ? t('$warnings 项警告待确认', '$warnings warnings to confirm')
+        : t('可以开始转换', 'Ready to convert');
     final color = done && _failedCount == 0
         ? Colors.green.shade700
         : blocking > 0
@@ -3037,14 +3084,17 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '${_queue.length} 个文件 · 输出：${_config.outputMode.appTitle} · $summary',
+                t(
+                  '${_queue.length} 个文件 · 输出：${_config.outputMode.appTitle} · $summary',
+                  '${_queue.length} files · Output: ${_config.outputMode.appTitle} · $summary',
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(color: color),
               ),
             ),
             if (!_isProcessing && blocking > 0)
-              TextButton(onPressed: _runPreflight, child: const Text('检查')),
+              TextButton(onPressed: _runPreflight, child: Text(t('检查', 'Check'))),
           ],
         ),
       ),
@@ -3067,14 +3117,14 @@ class _HomePageState extends State<HomePage> {
             child: Row(
               children: [
                 Text(
-                  '待转换队列',
+                  t('待转换队列', 'Conversion queue'),
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const Spacer(),
                 Text(
-                  '${_queue.length} 个文件',
+                  t('${_queue.length} 个文件', '${_queue.length} files'),
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -3108,7 +3158,7 @@ class _HomePageState extends State<HomePage> {
     if (_queue.isEmpty) {
       return Center(
         child: Text(
-          '选择队列项目查看详情',
+          t('选择队列项目查看详情', 'Select a queue item to see details'),
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -3182,12 +3232,12 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '转换失败',
+                    t('转换失败', 'Conversion failed'),
                     style: Theme.of(ctx).textTheme.titleMedium,
                   ),
                 ),
                 IconButton(
-                  tooltip: '关闭',
+                  tooltip: t('关闭', 'Close'),
                   onPressed: () => Navigator.pop(ctx),
                   icon: const Icon(Icons.close),
                 ),
@@ -3195,13 +3245,13 @@ class _HomePageState extends State<HomePage> {
             ),
             Text(item.fileName, maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 12),
-            SelectableText(item.errorMessage ?? '未提供错误信息'),
+            SelectableText(item.errorMessage ?? t('未提供错误信息', 'No error message provided')),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 icon: const Icon(Icons.refresh),
-                label: const Text('重新尝试'),
+                label: Text(t('重新尝试', 'Retry')),
                 onPressed: () {
                   Navigator.pop(ctx);
                   final index = _queue.indexOf(item);
@@ -3268,13 +3318,13 @@ class _HomePageState extends State<HomePage> {
           const Spacer(),
           TextButton.icon(
             icon: const Icon(Icons.refresh, size: 16),
-            label: narrow ? const SizedBox.shrink() : const Text('重试失败'),
+            label: narrow ? const SizedBox.shrink() : Text(t('重试失败', 'Retry failed')),
             onPressed: _canEditQueue && _failedCount > 0 ? _retryFailed : null,
           ),
           const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.checklist, size: 16),
-            label: narrow ? const SizedBox.shrink() : const Text('清除已完成'),
+            label: narrow ? const SizedBox.shrink() : Text(t('清除已完成', 'Clear completed')),
             onPressed: _canEditQueue && (_convertedCount + _skippedCount) > 0
                 ? _clearCompleted
                 : null,
@@ -3282,7 +3332,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.folder_open, size: 16),
-            label: narrow ? const SizedBox.shrink() : const Text('打开输出目录'),
+            label: narrow ? const SizedBox.shrink() : Text(t('打开输出目录', 'Open output directory')),
             onPressed: _queue.any((item) => item.isSuccessful)
                 ? _revealOutputs
                 : null,
@@ -3417,6 +3467,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   }
 
   void _emit() {
+    setUiLanguage(_cfg.language);
     widget.config.language = _cfg.language;
     widget.config.family = _cfg.family;
     widget.config.backend = _cfg.backend;
@@ -3516,8 +3567,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         SnackBar(
           content: Text(
             success
-                ? '${_cfg.outputMode.appTitle} 输出已生成：${File(output).uri.pathSegments.last}'
-                : (result['errorMessage']?.toString() ?? '回传照片输出验证失败'),
+                ? t('${_cfg.outputMode.appTitle} 输出已生成：${File(output).uri.pathSegments.last}', '${_cfg.outputMode.appTitle} output generated: ${File(output).uri.pathSegments.last}')
+                : (result['errorMessage']?.toString() ?? t('回传照片输出验证失败', 'Returned-photo output verification failed')),
           ),
         ),
       );
@@ -3525,7 +3576,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('回传照片回写失败：$error')));
+      ).showSnackBar(SnackBar(content: Text(t('回传照片回写失败：$error', 'Returned-photo writeback failed: $error'))));
     } finally {
       if (mounted) setState(() => _writebackRunning = false);
     }
@@ -3548,29 +3599,29 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     };
 
     final content = StringBuffer()
-      ..writeln('设备：${result?['manufacturer']} ${result?['model']}')
-      ..writeln('系统：SDK ${result?['sdkInt']}')
-      ..writeln('芯片：${result?['chipset']}')
+      ..writeln(t('设备：${result?['manufacturer']} ${result?['model']}', 'Device: ${result?['manufacturer']} ${result?['model']}'))
+      ..writeln(t('系统：SDK ${result?['sdkInt']}', 'System: SDK ${result?['sdkInt']}'))
+      ..writeln(t('芯片：${result?['chipset']}', 'Chipset: ${result?['chipset']}'))
       ..writeln('')
-      ..writeln('HEVC 编码器：')
+      ..writeln(t('HEVC 编码器：', 'HEVC encoders:'))
       ..writeln(
-        encoders.isEmpty ? '  (无)' : encoders.map((e) => '  $e').join('\n'),
+        encoders.isEmpty ? t('  (无)', '  (none)') : encoders.map((e) => '  $e').join('\n'),
       )
       ..writeln('')
-      ..writeln('支持颜色格式：')
+      ..writeln(t('支持颜色格式：', 'Supported color formats:'))
       ..writeln(
         colorFormats.isEmpty
-            ? '  (无)'
+            ? t('  (无)', '  (none)')
             : colorFormats.map((f) => '  ${colorNames(f as int)}').join('\n'),
       )
       ..writeln('')
-      ..writeln('4:2:0 flexible 配置：$config420')
-      ..writeln('4:4:4 flexible 配置：$config444');
+      ..writeln(t('4:2:0 flexible 配置：$config420', '4:2:0 flexible config: $config420'))
+      ..writeln(t('4:4:4 flexible 配置：$config444', '4:4:4 flexible config: $config444'));
 
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('硬件编码检测结果'),
+        title: Text(t('硬件编码检测结果', 'Hardware encoder detection result')),
         content: SingleChildScrollView(
           child: SelectableText(content.toString()),
         ),
@@ -3581,13 +3632,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               Navigator.pop(ctx);
               ScaffoldMessenger.of(
                 context,
-              ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
+              ).showSnackBar(SnackBar(content: Text(t('已复制到剪贴板', 'Copied to clipboard'))));
             },
-            child: const Text('复制'),
+            child: Text(t('复制', 'Copy')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('知道了'),
+            child: Text(t('知道了', 'Got it')),
           ),
         ],
       ),
@@ -3689,13 +3740,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _cfg.language == AppLanguage.english
-                          ? (_cfg.outputMode == OutputMode.oppo
-                                ? 'Choose this for OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
-                                : 'Apple Photos-compatible standard file format. Supports next-generation Photographic Styles.')
-                          : (_cfg.outputMode == OutputMode.oppo
-                                ? '兼容 OPPO/一加相册的标准文件格式，支持后续编辑'
-                                : '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格'),
+                      t(
+                        _cfg.outputMode == OutputMode.oppo
+                            ? '兼容 OPPO/一加相册的标准文件格式，支持后续编辑'
+                            : '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格',
+                        _cfg.outputMode == OutputMode.oppo
+                            ? 'Choose this for OPPO/OnePlus Gallery. Keeps compatibility metadata for further editing.'
+                            : 'Apple Photos-compatible standard file format. Supports next-generation Photographic Styles.',
+                      ),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -3948,13 +4000,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _cfg.language == AppLanguage.english
-                                ? (_cfg.outputMode == OutputMode.oppo
-                                      ? 'OPPO Compatible: requires the OPPO original; restores the original watermark, metadata, and tail data.'
-                                      : 'Apple Standard: keeps the iPhone/Apple Photos result without writing OPPO metadata or tail data.')
-                                : (_cfg.outputMode == OutputMode.oppo
-                                      ? 'OPPO 兼容：需要 OPPO 原始照片；恢复原机水印、元数据和尾部数据。'
-                                      : 'Apple 标准：保留 iPhone/Apple 照片结果，不写回 OPPO 信息。'),
+                            t(
+                              _cfg.outputMode == OutputMode.oppo
+                                  ? 'OPPO 兼容：需要 OPPO 原始照片；恢复原机水印、元数据和尾部数据。'
+                                  : 'Apple 标准：保留 iPhone/Apple 照片结果，不写回 OPPO 信息。',
+                              _cfg.outputMode == OutputMode.oppo
+                                  ? 'OPPO Compatible: requires the OPPO original; restores the original watermark, metadata, and tail data.'
+                                  : 'Apple Standard: keeps the iPhone/Apple Photos result without writing OPPO metadata or tail data.',
+                            ),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -3979,7 +4032,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                       ),
                                     )
                                   : const Icon(Icons.output),
-                              label: Text(_writebackRunning ? '处理中…' : '生成输出'),
+                              label: Text(_writebackRunning ? t('处理中…', 'Processing…') : t('生成输出', 'Generate output')),
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -3993,7 +4046,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // directory impossible; output goes to the app-scoped dir
                     // and is exported via 保存到图库 / 分享.
                     Text(
-                      '输出与性能',
+                      t('输出与性能', 'Output & performance'),
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -4004,7 +4057,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         children: [
                           Expanded(
                             child: Text(
-                              _cfg.outputDirectory ?? '使用源文件目录',
+                              _cfg.outputDirectory ?? t('使用源文件目录', 'Use source directory'),
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: _cfg.outputDirectory == null
                                     ? theme.colorScheme.onSurfaceVariant
@@ -4015,12 +4068,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.folder_open),
-                            tooltip: '选择目录',
+                            tooltip: t('选择目录', 'Choose directory'),
                             onPressed: _chooseDirectory,
                           ),
                           IconButton(
                             icon: const Icon(Icons.clear),
-                            tooltip: '清除',
+                            tooltip: t('清除', 'Clear'),
                             onPressed: _cfg.outputDirectory != null
                                 ? () {
                                     setState(() => _cfg.outputDirectory = null);
@@ -4037,13 +4090,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       contentPadding: EdgeInsets.zero,
                       title: Text(
                         (Platform.isAndroid || Platform.isIOS)
-                            ? '按拍摄模式分相册'
-                            : '按拍摄模式分目录输出',
+                            ? t('按拍摄模式分相册', 'Group into albums by capture mode')
+                            : t('按拍摄模式分目录输出', 'Output into capture-mode subdirectories'),
                       ),
                       subtitle: Text(
                         (Platform.isAndroid || Platform.isIOS)
-                            ? '保存到图库时按"大师模式 / 人像 / 夜景"等分相册。'
-                            : '将已识别的照片写入"大师模式 / 人像 / 夜景"等子目录。',
+                            ? t('保存到图库时按“大师模式 / 人像 / 夜景”等分相册。', 'When saving to the gallery, group into albums like “Master mode / Portrait / Night”.')
+                            : t('将已识别的照片写入“大师模式 / 人像 / 夜景”等子目录。', 'Write recognized photos into subdirectories like “Master mode / Portrait / Night”.'),
                       ),
                       value: _cfg.categorizeOutputByMode,
                       onChanged: (value) {
@@ -4062,12 +4115,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       tilePadding: EdgeInsets.zero,
                       childrenPadding: EdgeInsets.zero,
                       title: Text(
-                        '兼容性高级设置',
+                        t('兼容性高级设置', 'Advanced compatibility'),
                         style: theme.textTheme.titleSmall?.copyWith(
                           color: theme.colorScheme.error,
                         ),
                       ),
-                      subtitle: const Text('一般保持默认；只在排查相册兼容性时修改'),
+                      subtitle: Text(t('一般保持默认；只在排查相册兼容性时修改', 'Keep defaults normally; change only when troubleshooting gallery compatibility')),
                       leading: Icon(
                         Icons.tune,
                         size: 20,
@@ -4075,7 +4128,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                       children: [
                         const SizedBox(height: 8),
-                        Text('输入照片类型', style: theme.textTheme.titleSmall),
+                        Text(t('输入照片类型', 'Input photo type'), style: theme.textTheme.titleSmall),
                         const SizedBox(height: 4),
                         SegmentedButton<Family>(
                           segments: Family.values
@@ -4094,7 +4147,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '自动检测 X6/X7；不确定时保持“自动”。',
+                          t('自动检测 X6/X7；不确定时保持“自动”。', 'Auto-detect X6/X7; keep “Auto” when unsure.'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -4102,9 +4155,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 20),
                         DropdownButtonFormField<OppoCompatMode>(
                           initialValue: _cfg.oppoCompatibility,
-                          decoration: const InputDecoration(
-                            labelText: 'OPPO 兼容模式',
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: t('OPPO 兼容模式', 'OPPO compatibility mode'),
+                            border: const OutlineInputBorder(),
                           ),
                           items: OppoCompatMode.values
                               .map(
@@ -4139,9 +4192,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 20),
                         DropdownButtonFormField<OppoCameraTailMode>(
                           initialValue: _cfg.oppoCameraTail,
-                          decoration: const InputDecoration(
-                            labelText: '保留 OPPO 相机附加信息',
-                            border: OutlineInputBorder(),
+                          decoration: InputDecoration(
+                            labelText: t('保留 OPPO 相机附加信息', 'Keep OPPO camera extras'),
+                            border: const OutlineInputBorder(),
                           ),
                           items: OppoCameraTailMode.values
                               .map(
@@ -4172,9 +4225,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 20),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: const Text('严格 ISO 兼容（高级）'),
-                          subtitle: const Text(
-                            '仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。',
+                          title: Text(t('严格 ISO 兼容（高级）', 'Strict ISO compliance (advanced)')),
+                          subtitle: Text(
+                            t('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。', 'Only for strict ISO 21496-1 testing; keep off for normal use — it may reduce gallery compatibility.'),
                           ),
                           value: _cfg.strictTmap,
                           onChanged: (value) {
@@ -4189,8 +4242,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // Skip existing
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('跳过已有有效输出'),
-                      subtitle: const Text('如果输出文件已包含 ISO gain map 则跳过。'),
+                      title: Text(t('跳过已有有效输出', 'Skip existing valid output')),
+                      subtitle: Text(t('如果输出文件已包含 ISO gain map 则跳过。', 'Skip when the output already contains an ISO gain map.')),
                       value: _cfg.skipExisting,
                       dense: true,
                       onChanged: (v) {
@@ -4207,9 +4260,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('动态照片默认策略', style: theme.textTheme.bodyLarge),
+                              Text(t('动态照片默认策略', 'Default Motion Photo policy'), style: theme.textTheme.bodyLarge),
                               Text(
-                                '新加入的动态照片按此策略处理，可在卡片上逐张修改。',
+                                t('新加入的动态照片按此策略处理，可在卡片上逐张修改。', 'Newly added motion photos use this policy; you can change it per card.'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -4240,7 +4293,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // Concurrency
                     Row(
                       children: [
-                        Text('最大并行数', style: theme.textTheme.bodyLarge),
+                        Text(t('最大并行数', 'Max concurrency'), style: theme.textTheme.bodyLarge),
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.remove),
@@ -4272,10 +4325,10 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
                     // File name suffix
                     TextField(
-                      decoration: const InputDecoration(
-                        labelText: '输出文件名后缀',
+                      decoration: InputDecoration(
+                        labelText: t('输出文件名后缀', 'Output filename suffix'),
                         hintText: '_iso',
-                        border: OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
                         isDense: true,
                       ),
                       enabled: _cfg.outputDirectory == null,
@@ -4290,7 +4343,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     const SizedBox(height: 4),
                     if (!Platform.isAndroid && !Platform.isIOS)
                       Text(
-                        '设置输出目录后，后缀将被忽略。',
+                        t('设置输出目录后，后缀将被忽略。', 'The suffix is ignored once an output directory is set.'),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -4301,9 +4354,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('转换完成后自动保存到图库'),
+                        title: Text(t('转换完成后自动保存到图库', 'Auto-save to gallery after conversion')),
                         subtitle: Text(
-                          '批量转换结束后自动存入相册（遵循分相册设置）。',
+                          t('批量转换结束后自动存入相册（遵循分相册设置）。', 'Automatically save to the gallery when a batch finishes (respects album grouping).'),
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.autoSaveToGallery,
@@ -4327,11 +4380,11 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           return ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.folder_special_outlined),
-                            title: const Text('保留位置信息'),
+                            title: Text(t('保留位置信息', 'Preserve location data')),
                             subtitle: Text(
                               granted
-                                  ? '「所有文件访问」已授予，转换保留 GPS'
-                                  : '授予后可保留照片 GPS 位置',
+                                  ? t('「所有文件访问」已授予，转换保留 GPS', 'All files access granted; conversion preserves GPS')
+                                  : t('授予后可保留照片 GPS 位置', 'Grant to preserve photo GPS location'),
                               style: theme.textTheme.bodySmall,
                             ),
                             trailing: granted
@@ -4350,8 +4403,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 SnackBar(
                                   content: Text(
                                     ok
-                                        ? '已授予「所有文件访问」，转换将保留 GPS'
-                                        : '未授予权限，转换将丢失 GPS 位置',
+                                        ? t('已授予「所有文件访问」，转换将保留 GPS', 'All files access granted; conversion will preserve GPS')
+                                        : t('未授予权限，转换将丢失 GPS 位置', 'Permission not granted; conversion will lose GPS location'),
                                   ),
                                   duration: const Duration(seconds: 2),
                                 ),
@@ -4368,9 +4421,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.battery_saver),
-                        title: const Text('后台转换'),
+                        title: Text(t('后台转换', 'Background conversion')),
                         subtitle: Text(
-                          '设置耗电行为控制以保持后台转换',
+                          t('设置耗电行为控制以保持后台转换', 'Configure power behavior to keep background conversion running'),
                           style: theme.textTheme.bodySmall,
                         ),
                         trailing: const Icon(Icons.open_in_new, size: 18),
@@ -4439,9 +4492,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.speed),
-                        title: const Text('硬件编码检测'),
+                        title: Text(t('硬件编码检测', 'Hardware encoder detection')),
                         subtitle: Text(
-                          '检测 MediaCodec HEVC 编码器对 4:4:4 的支持（开发用）',
+                          t('检测 MediaCodec HEVC 编码器对 4:4:4 的支持（开发用）', 'Detect MediaCodec HEVC encoder 4:4:4 support (dev)'),
                           style: theme.textTheme.bodySmall,
                         ),
                         trailing: const Icon(Icons.open_in_new, size: 18),
@@ -4459,12 +4512,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             showDialog<void>(
                               context: context,
                               builder: (ctx) => AlertDialog(
-                                title: const Text('硬件编码检测失败'),
+                                title: Text(t('硬件编码检测失败', 'Hardware encoder detection failed')),
                                 content: Text('$e'),
                                 actions: [
                                   TextButton(
                                     onPressed: () => Navigator.pop(ctx),
-                                    child: const Text('知道了'),
+                                    child: Text(t('知道了', 'Got it')),
                                   ),
                                 ],
                               ),
@@ -4483,9 +4536,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.folder_open),
-                        title: const Text('打开输出目录'),
+                        title: Text(t('打开输出目录', 'Open output directory')),
                         subtitle: Text(
-                          '在「文件」App 中查看已转换的照片',
+                          t('在「文件」App 中查看已转换的照片', 'View converted photos in the Files app'),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         onTap: () => launchUrl(Uri.parse('shareddocuments://')),
@@ -4594,16 +4647,16 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
       context: context,
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.warning_amber),
-        title: const Text('清除输出目录？'),
-        content: const Text('输出目录中的已转换文件将被删除，此操作不可撤销。'),
+        title: Text(t('清除输出目录？', 'Clear output directory?')),
+        content: Text(t('输出目录中的已转换文件将被删除，此操作不可撤销。', 'Converted files in the output directory will be deleted; this cannot be undone.')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(t('取消', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确认清除'),
+            child: Text(t('确认清除', 'Confirm clear')),
           ),
         ],
       ),
@@ -4644,27 +4697,35 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
                 : Icons.delete_sweep_outlined,
             color: _cleared && _cacheSize == 0 ? Colors.green : null,
           ),
-          title: const Text('清除文件缓存'),
+          title: Text(t('清除文件缓存', 'Clear file cache')),
           subtitle: Text(
             _cacheSize > 0
-                ? '已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）'
-                : '无缓存文件',
+                ? t('已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）', 'Cached ${_formatSize(_cacheSize)} (file picker temp copies)')
+                : t('无缓存文件', 'No cached files'),
             style: theme.textTheme.bodySmall,
           ),
           trailing: _cacheSize > 0
-              ? TextButton(onPressed: _clearCache, child: const Text('清除'))
+              ? TextButton(
+                  onPressed: _clearCache,
+                  child: Text(t('清除', 'Clear')),
+                )
               : null,
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.output_outlined),
-          title: const Text('清除输出目录'),
+          title: Text(t('清除输出目录', 'Clear output directory')),
           subtitle: Text(
-            _outputSize > 0 ? '已转换文件共 ${_formatSize(_outputSize)}' : '输出目录为空',
+            _outputSize > 0
+                ? t('已转换文件共 ${_formatSize(_outputSize)}', 'Converted files total ${_formatSize(_outputSize)}')
+                : t('输出目录为空', 'Output directory is empty'),
             style: theme.textTheme.bodySmall,
           ),
           trailing: _outputSize > 0
-              ? TextButton(onPressed: _clearOutput, child: const Text('清除'))
+              ? TextButton(
+                  onPressed: _clearOutput,
+                  child: Text(t('清除', 'Clear')),
+                )
               : null,
         ),
       ],
@@ -4734,10 +4795,10 @@ class _MobileQueueCard extends StatelessWidget {
 
   String get _supportingText {
     if (item.status == QueueItemStatus.running) {
-      return item.progressLabel.isEmpty ? '正在准备转换…' : item.progressLabel;
+      return item.progressLabel.isEmpty ? t('正在准备转换…', 'Preparing conversion…') : item.progressLabel;
     }
     if (item.status == QueueItemStatus.failed) {
-      return item.errorMessage ?? '转换未完成，轻触查看详情。';
+      return item.errorMessage ?? t('转换未完成，轻触查看详情。', 'Conversion incomplete; tap for details.');
     }
     if (item.isSuccessful) return item.outputPlanStatus.displayName;
     return item.outputPlanStatus.blocksConversion
@@ -4836,7 +4897,9 @@ class _MobileQueueCard extends StatelessWidget {
                             ),
                           if (item.motionPhoto != null)
                             _InfoChip(
-                              label: item.motionPhoto!.isDualStream ? '动态·双码流' : '动态',
+                              label: item.motionPhoto!.isDualStream
+                                  ? t('动态·双码流', 'Motion · dual stream')
+                                  : t('动态', 'Motion'),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -4850,7 +4913,7 @@ class _MobileQueueCard extends StatelessWidget {
                           child: Row(
                             children: [
                               Text(
-                                '视频 ${item.motionPhoto!.videoSizeLabel}',
+                                t('视频 ${item.motionPhoto!.videoSizeLabel}', 'Video ${item.motionPhoto!.videoSizeLabel}'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -4907,7 +4970,7 @@ class _MobileQueueCard extends StatelessWidget {
               // removed by the global "清除已完成" action instead.
               if (!item.isSuccessful && item.status != QueueItemStatus.running)
                 PopupMenuButton<_MobileQueueAction>(
-                  tooltip: '项目操作',
+                  tooltip: t('项目操作', 'Item actions'),
                   icon: const Icon(Icons.more_vert),
                   onSelected: (action) {
                     switch (action) {
@@ -4919,19 +4982,19 @@ class _MobileQueueCard extends StatelessWidget {
                   },
                   itemBuilder: (context) => [
                     if (canRetry)
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: _MobileQueueAction.retry,
                         child: ListTile(
                           leading: Icon(Icons.refresh),
-                          title: Text('重新尝试'),
+                          title: Text(t('重新尝试', 'Retry')),
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),
-                    const PopupMenuItem(
+                    PopupMenuItem(
                       value: _MobileQueueAction.remove,
                       child: ListTile(
                         leading: Icon(Icons.delete_outline),
-                        title: Text('移出队列'),
+                        title: Text(t('移出队列', 'Remove from queue')),
                         contentPadding: EdgeInsets.zero,
                       ),
                     ),
@@ -5179,8 +5242,8 @@ class _PhotoCard extends StatelessWidget {
                           if (item.motionPhoto != null)
                             _OverlayChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? '动态·双码流'
-                                  : '动态',
+                                  ? t('动态·双码流', 'Motion · dual stream')
+                                  : t('动态', 'Motion'),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -5198,7 +5261,7 @@ class _PhotoCard extends StatelessWidget {
                             icon: Icons.bolt,
                             label: item.progress != null
                                 ? '${item.progress!.current}/${item.progress!.total}'
-                                : '转换中',
+                                : t('转换中', 'Converting'),
                             color: Colors.blue,
                             bottom: 0,
                           ),
@@ -5226,23 +5289,23 @@ class _PhotoCard extends StatelessWidget {
                       ),
                     ),
                   if (isDone)
-                    const _OverlayBadge(
+                    _OverlayBadge(
                       icon: Icons.check_circle,
-                      label: '完成',
+                      label: t('完成', 'Done'),
                       color: Colors.green,
                       bottom: 0,
                     ),
                   if (isFailed)
-                    const _OverlayBadge(
+                    _OverlayBadge(
                       icon: Icons.cancel,
-                      label: '失败',
+                      label: t('失败', 'Failed'),
                       color: Colors.red,
                       bottom: 0,
                     ),
                   if (isSkipped)
-                    const _OverlayBadge(
+                    _OverlayBadge(
                       icon: Icons.skip_next,
-                      label: '已跳过',
+                      label: t('已跳过', 'Skipped'),
                       color: Colors.grey,
                       bottom: 0,
                     ),
@@ -5442,7 +5505,7 @@ class _ThumbnailWidgetState extends State<_ThumbnailWidget> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      _showOutput ? '转换后' : '源',
+                      _showOutput ? t('转换后', 'After') : t('源', 'Source'),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -5524,28 +5587,28 @@ class _ResumeCheckpointDialog extends StatelessWidget {
         '${startedAt.month}/${startedAt.day} ${startedAt.hour.toString().padLeft(2, '0')}:${startedAt.minute.toString().padLeft(2, '0')}';
 
     return AlertDialog(
-      title: const Text('发现未完成的转换任务'),
+      title: Text(t('发现未完成的转换任务', 'Unfinished conversion found')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '上次转换开始于 $timeStr，共 $total 个文件：',
+            t('上次转换开始于 $timeStr，共 $total 个文件：', 'Last conversion started at $timeStr, $total files:'),
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
           Row(
             children: [
-              _cpStat('已完成', completed, Colors.green),
+              _cpStat(t('已完成', 'Completed'), completed, Colors.green),
               const SizedBox(width: 12),
-              _cpStat('失败', failed, failed > 0 ? Colors.red : Colors.grey),
+              _cpStat(t('失败', 'Failed'), failed, failed > 0 ? Colors.red : Colors.grey),
               const SizedBox(width: 12),
-              _cpStat('待处理', pending, Colors.orange),
+              _cpStat(t('待处理', 'Pending'), pending, Colors.orange),
             ],
           ),
           const SizedBox(height: 12),
           Text(
-            '是否恢复并继续转换未完成的文件？',
+            t('是否恢复并继续转换未完成的文件？', 'Resume and continue converting unfinished files?'),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -5555,11 +5618,11 @@ class _ResumeCheckpointDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('放弃'),
+          child: Text(t('放弃', 'Discard')),
         ),
         FilledButton.icon(
           icon: const Icon(Icons.play_arrow, size: 18),
-          label: const Text('恢复'),
+          label: Text(t('恢复', 'Resume')),
           onPressed: () => Navigator.of(context).pop(true),
         ),
       ],

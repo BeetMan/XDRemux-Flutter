@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../l10n/l10n.dart';
+
 /// Android foreground service that keeps the process alive during batch
 /// conversion, so the OS doesn't freeze the Dart isolates doing HEVC encode.
 /// Shows a persistent notification with live progress.
@@ -20,8 +22,11 @@ class ForegroundService {
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'xdremux_conversion_v2',
-        channelName: '转换进度',
-        channelDescription: '批量转换进行时显示的前台服务通知',
+        channelName: t('转换进度', 'Conversion progress'),
+        channelDescription: t(
+          '批量转换进行时显示的前台服务通知',
+          'Foreground service notification shown during batch conversion',
+        ),
         // DEFAULT importance: ColorOS kills foreground services whose
         // notification is IMPORTANCE_LOW (folded as "unimportant").
         channelImportance: NotificationChannelImportance.DEFAULT,
@@ -48,7 +53,7 @@ class ForegroundService {
       await FlutterForegroundTask.startService(
         serviceId: 256,
         notificationTitle: 'XDRemux',
-        notificationText: '正在转换…',
+        notificationText: t('正在转换…', 'Converting…'),
       );
     } catch (e) {
       debugPrint('[XDRemux][fg] start failed: $e');

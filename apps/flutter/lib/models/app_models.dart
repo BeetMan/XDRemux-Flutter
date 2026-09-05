@@ -3,16 +3,11 @@ library;
 
 import 'dart:io';
 
+import '../l10n/l10n.dart';
+
 // ---------------------------------------------------------------------------
 // Enums (mirror Swift Family / OppoCompatibility / InputProcessingBranch)
 // ---------------------------------------------------------------------------
-
-enum AppLanguage {
-  chinese,
-  english;
-
-  String get appTitle => this == AppLanguage.chinese ? '中文' : 'English';
-}
 
 enum Family {
   auto,
@@ -22,7 +17,7 @@ enum Family {
   String get appTitle {
     switch (this) {
       case Family.auto:
-        return '自动';
+        return t('自动', 'Auto');
       case Family.x6:
         return 'X6';
       case Family.x7:
@@ -43,7 +38,7 @@ enum ConversionBackend {
   String get appTitle {
     switch (this) {
       case ConversionBackend.rust:
-        return 'Rust（推荐）';
+        return t('Rust（推荐）', 'Rust (recommended)');
       case ConversionBackend.swift:
         return 'Swift';
     }
@@ -60,18 +55,24 @@ enum OutputMode {
   String get appTitle {
     switch (this) {
       case OutputMode.oppo:
-        return 'OPPO 兼容';
+        return t('OPPO 兼容', 'OPPO Compatible');
       case OutputMode.apple:
-        return 'Apple 标准';
+        return t('Apple 标准', 'Apple Standard');
     }
   }
 
   String get appHelp {
     switch (this) {
       case OutputMode.oppo:
-        return '兼容 OPPO/一加相册的标准文件格式，保留兼容信息和相机附加信息，便于继续编辑。';
+        return t(
+          '兼容 OPPO/一加相册的标准文件格式，保留兼容信息和相机附加信息，便于继续编辑。',
+          'Standard format compatible with OPPO/OnePlus Gallery. Keeps compatibility metadata and camera extras for further editing.',
+        );
       case OutputMode.apple:
-        return '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格。';
+        return t(
+          '面向 Apple 照片的兼容文件格式，支持继续调节摄影风格。',
+          'Apple Photos-compatible format that supports further Photographic Styles adjustments.',
+        );
     }
   }
 }
@@ -88,18 +89,24 @@ enum AppleWatermarkPolicy {
   String get appTitle {
     switch (this) {
       case AppleWatermarkPolicy.preserve:
-        return '保留水印';
+        return t('保留水印', 'Preserve watermark');
       case AppleWatermarkPolicy.isolate:
-        return '隔离水印元数据（实验性）';
+        return t('隔离水印元数据（实验性）', 'Isolate watermark metadata (experimental)');
     }
   }
 
   String get appHelp {
     switch (this) {
       case AppleWatermarkPolicy.preserve:
-        return 'Apple 照片编辑副本保留当前水印；回传后仍可按设置恢复 OPPO 原始照片中的原机水印。';
+        return t(
+          'Apple 照片编辑副本保留当前水印；回传后仍可按设置恢复 OPPO 原始照片中的原机水印。',
+          'The Apple Photos edit copy keeps the current watermark; after round-trip the original watermark can still be restored from the OPPO source.',
+        );
       case AppleWatermarkPolicy.isolate:
-        return '不把 OPPO 水印私有元数据写入 Apple 照片摄影风格；已经烘焙进画面的水印暂不会被擦除。';
+        return t(
+          '不把 OPPO 水印私有元数据写入 Apple 照片摄影风格；已经烘焙进画面的水印暂不会被擦除。',
+          'Do not write OPPO private watermark metadata into Apple Photographic Styles; watermarks already baked into pixels are not removed yet.',
+        );
     }
   }
 }
@@ -146,10 +153,15 @@ class BackendCapabilities {
       swiftPortrait: false,
       swiftPortraitResearch: false,
       swiftUnavailableReason: apple
-          ? '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。'
-          : 'Swift 后端仅支持 macOS/iOS。',
-      swiftAppleFeaturesUnavailableReason:
-          'Apple 功能仍需 macOS 原生工具链和样例验证；当前版本保持关闭。',
+          ? t(
+              '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。',
+              'This build did not pass the Swift Core capability probe; the Swift CLI is not launched in this version.',
+            )
+          : t('Swift 后端仅支持 macOS/iOS。', 'The Swift backend is only available on macOS/iOS.'),
+      swiftAppleFeaturesUnavailableReason: t(
+        'Apple 功能仍需 macOS 原生工具链和样例验证；当前版本保持关闭。',
+        'Apple features still need the macOS native toolchain and sample validation; disabled in this version.',
+      ),
     );
   }
 
@@ -162,10 +174,10 @@ class BackendCapabilities {
   }
 
   String statusFor(ConversionBackend backend) {
-    if (isAvailable(backend)) return '可用';
+    if (isAvailable(backend)) return t('可用', 'Available');
     return backend == ConversionBackend.swift
         ? swiftUnavailableReason
-        : 'Rust 核心不可用';
+        : t('Rust 核心不可用', 'Rust core unavailable');
   }
 
   BackendCapabilities copyWith({
@@ -212,38 +224,38 @@ enum OppoCompatMode {
   String get appTitle {
     switch (this) {
       case OppoCompatMode.auto:
-        return '自动';
+        return t('自动', 'Auto');
       case OppoCompatMode.on:
-        return 'OPPO 兼容';
+        return t('OPPO 兼容', 'OPPO Compatible');
       case OppoCompatMode.tail:
-        return 'OPPO 兼容 + 完整附加信息';
+        return t('OPPO 兼容 + 完整附加信息', 'OPPO Compatible + full extras');
       case OppoCompatMode.iso:
-        return '标准 ISO';
+        return t('标准 ISO', 'Standard ISO');
       case OppoCompatMode.isoNoLocal:
-        return '标准 ISO（无本地标记）';
+        return t('标准 ISO（无本地标记）', 'Standard ISO (no local marker)');
       case OppoCompatMode.isoGraph:
-        return '标准 ISO（保留元数据图）';
+        return t('标准 ISO（保留元数据图）', 'Standard ISO (keep metadata graph)');
       case OppoCompatMode.off:
-        return '关闭';
+        return t('关闭', 'Off');
     }
   }
 
   String get appHelp {
     switch (this) {
       case OppoCompatMode.auto:
-        return '根据原图标记自动选择；适合大多数照片。';
+        return t('根据原图标记自动选择；适合大多数照片。', 'Chosen automatically from source markers; suits most photos.');
       case OppoCompatMode.on:
-        return '写入 OPPO 兼容标记，优先保证 OPPO 相册识别。';
+        return t('写入 OPPO 兼容标记，优先保证 OPPO 相册识别。', 'Writes OPPO-compatible markers to prioritize OPPO Gallery recognition.');
       case OppoCompatMode.tail:
-        return '写入 OPPO 兼容标记，并完整保留相机附加信息。';
+        return t('写入 OPPO 兼容标记，并完整保留相机附加信息。', 'Writes OPPO-compatible markers and keeps the full camera extras.');
       case OppoCompatMode.iso:
-        return '移除 OPPO 标记，写入标准 ISO HDR 标记。';
+        return t('移除 OPPO 标记，写入标准 ISO HDR 标记。', 'Removes OPPO markers and writes standard ISO HDR markers.');
       case OppoCompatMode.isoNoLocal:
-        return '标准 ISO HDR，并移除本地 HDR 标记。';
+        return t('标准 ISO HDR，并移除本地 HDR 标记。', 'Standard ISO HDR, and removes the local HDR marker.');
       case OppoCompatMode.isoGraph:
-        return '清除路由标记，但保留原始元数据关系图。';
+        return t('清除路由标记，但保留原始元数据关系图。', 'Clears routing markers but keeps the original metadata relationship graph.');
       case OppoCompatMode.off:
-        return '不修改路由标记；适合 Apple 照片/纯 ISO 输出。';
+        return t('不修改路由标记；适合 Apple 照片/纯 ISO 输出。', 'Does not modify routing markers; suits Apple Photos / pure ISO output.');
     }
   }
 
@@ -286,54 +298,54 @@ enum OppoCameraTailMode {
   String get appTitle {
     switch (this) {
       case OppoCameraTailMode.automatic:
-        return '自动';
+        return t('自动', 'Auto');
       case OppoCameraTailMode.off:
-        return '不保留';
+        return t('不保留', 'None');
       case OppoCameraTailMode.watermark:
-        return '仅水印';
+        return t('仅水印', 'Watermark only');
       case OppoCameraTailMode.compact:
-        return '紧凑（含人像编辑）';
+        return t('紧凑（含人像编辑）', 'Compact (incl. portrait edits)');
       case OppoCameraTailMode.preserve:
-        return '完整保留';
+        return t('完整保留', 'Preserve all');
       case OppoCameraTailMode.preserveWithoutPortrait:
-        return '保留（移除人像编辑）';
+        return t('保留（移除人像编辑）', 'Preserve (drop portrait edits)');
       case OppoCameraTailMode.preserveWithoutPortraitOrPrivateHdr:
-        return '保留（移除人像/私有 HDR）';
+        return t('保留（移除人像/私有 HDR）', 'Preserve (drop portrait/private HDR)');
       case OppoCameraTailMode.preserveWithoutPrivateUhdr:
-        return '保留（移除私有 UHDR）';
+        return t('保留（移除私有 UHDR）', 'Preserve (drop private UHDR)');
       case OppoCameraTailMode.preserveWithoutPrivateHdr:
-        return '保留（移除私有 HDR）';
+        return t('保留（移除私有 HDR）', 'Preserve (drop private HDR)');
       case OppoCameraTailMode.preserveNoUhdr:
-        return '保留并中和 UHDR';
+        return t('保留并中和 UHDR', 'Preserve & neutralize UHDR');
       case OppoCameraTailMode.preserveNoHdr:
-        return '保留并中和 HDR';
+        return t('保留并中和 HDR', 'Preserve & neutralize HDR');
     }
   }
 
   String get appHelp {
     switch (this) {
       case OppoCameraTailMode.automatic:
-        return '兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。';
+        return t('兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。', 'Fully preserved when compatibility mode is on; private HDR removed for pure ISO output.');
       case OppoCameraTailMode.off:
-        return '不复制 OPPO 相机尾部元数据。';
+        return t('不复制 OPPO 相机尾部元数据。', 'Does not copy OPPO camera tail metadata.');
       case OppoCameraTailMode.watermark:
-        return '仅保留水印及其辅助元数据。';
+        return t('仅保留水印及其辅助元数据。', 'Keeps only the watermark and its auxiliary metadata.');
       case OppoCameraTailMode.compact:
-        return '保留水印、人像编辑及必要的 HDR 变换条目。';
+        return t('保留水印、人像编辑及必要的 HDR 变换条目。', 'Keeps watermark, portrait edits and required HDR transform entries.');
       case OppoCameraTailMode.preserve:
-        return '原样保留完整相机尾部。';
+        return t('原样保留完整相机尾部。', 'Keeps the full camera tail unchanged.');
       case OppoCameraTailMode.preserveWithoutPortrait:
-        return '删除景深、分割和人像编辑条目。';
+        return t('删除景深、分割和人像编辑条目。', 'Removes depth, segmentation and portrait edit entries.');
       case OppoCameraTailMode.preserveWithoutPortraitOrPrivateHdr:
-        return '同时删除人像编辑和私有 HDR 条目。';
+        return t('同时删除人像编辑和私有 HDR 条目。', 'Removes portrait edits and private HDR entries.');
       case OppoCameraTailMode.preserveWithoutPrivateUhdr:
-        return '仅删除私有 UHDR gain map 条目。';
+        return t('仅删除私有 UHDR gain map 条目。', 'Removes only private UHDR gain-map entries.');
       case OppoCameraTailMode.preserveWithoutPrivateHdr:
-        return '删除所有私有 HDR 条目。';
+        return t('删除所有私有 HDR 条目。', 'Removes all private HDR entries.');
       case OppoCameraTailMode.preserveNoUhdr:
-        return '保留结构，但中和私有 UHDR 条目名。';
+        return t('保留结构，但中和私有 UHDR 条目名。', 'Keeps structure but neutralizes private UHDR entry names.');
       case OppoCameraTailMode.preserveNoHdr:
-        return '保留结构，但中和所有私有 HDR 条目名。';
+        return t('保留结构，但中和所有私有 HDR 条目名。', 'Keeps structure but neutralizes all private HDR entry names.');
     }
   }
 
@@ -392,19 +404,19 @@ enum QueueItemStatus {
   String get displayName {
     switch (this) {
       case QueueItemStatus.pending:
-        return '待处理';
+        return t('待处理', 'Pending');
       case QueueItemStatus.running:
-        return '转换中';
+        return t('转换中', 'Converting');
       case QueueItemStatus.converted:
-        return '已转换';
+        return t('已转换', 'Converted');
       case QueueItemStatus.skippedExisting:
-        return '已跳过';
+        return t('已跳过', 'Skipped');
       case QueueItemStatus.skippedPolicy:
-        return '按策略跳过';
+        return t('按策略跳过', 'Skipped by policy');
       case QueueItemStatus.failed:
-        return '失败';
+        return t('失败', 'Failed');
       case QueueItemStatus.cancelled:
-        return '已取消';
+        return t('已取消', 'Cancelled');
     }
   }
 }
@@ -425,17 +437,17 @@ enum OutputPlanStatus {
   String get displayName {
     switch (this) {
       case OutputPlanStatus.ready:
-        return '就绪';
+        return t('就绪', 'Ready');
       case OutputPlanStatus.willOverwriteExisting:
-        return '将覆盖';
+        return t('将覆盖', 'Will overwrite');
       case OutputPlanStatus.skipsExistingValidOutput:
-        return '跳过(有效)';
+        return t('跳过(有效)', 'Skip (valid)');
       case OutputPlanStatus.duplicateOutput:
-        return '重复输出';
+        return t('重复输出', 'Duplicate output');
       case OutputPlanStatus.inputMissing:
-        return '输入缺失';
+        return t('输入缺失', 'Input missing');
       case OutputPlanStatus.outputParentIsFile:
-        return '输出路径冲突';
+        return t('输出路径冲突', 'Output path conflict');
     }
   }
 }
@@ -624,11 +636,11 @@ enum MotionPhotoMode {
   String get displayName {
     switch (this) {
       case MotionPhotoMode.skip:
-        return '跳过';
+        return t('跳过', 'Skip');
       case MotionPhotoMode.still:
-        return '仅静帧';
+        return t('仅静帧', 'Still only');
       case MotionPhotoMode.stillAndVideo:
-        return '静帧+视频';
+        return t('静帧+视频', 'Still + video');
       case MotionPhotoMode.livePhotoPair:
         return 'Live Photo';
     }
@@ -705,10 +717,10 @@ class QueueItem {
     final p = progress;
     if (p == null || p.stage == 0) return '';
     return switch (p.stage) {
-      1 => '解析元数据…',
-      2 => '解码JPEG…',
-      3 => '编码 HEVC ${p.current}/${p.total}',
-      4 => '组装输出…',
+      1 => t('解析元数据…', 'Parsing metadata…'),
+      2 => t('解码JPEG…', 'Decoding JPEG…'),
+      3 => t('编码 HEVC ${p.current}/${p.total}', 'Encoding HEVC ${p.current}/${p.total}'),
+      4 => t('组装输出…', 'Assembling output…'),
       _ => '',
     };
   }
@@ -743,15 +755,15 @@ class QueueItem {
   String get classificationLabel {
     switch (classificationStatus) {
       case 'missing-user-comment':
-        return '无拍摄模式';
+        return t('无拍摄模式', 'No capture mode');
       case 'malformed-user-comment':
-        return '拍摄模式格式异常';
+        return t('拍摄模式格式异常', 'Malformed capture mode');
       case 'unknown-flags':
-        return '未知拍摄模式';
+        return t('未知拍摄模式', 'Unknown capture mode');
       case 'unreadable-image':
-        return '无法读取拍摄模式';
+        return t('无法读取拍摄模式', 'Unreadable capture mode');
       default:
-        return captureModeFolderName ?? '未分类';
+        return captureModeFolderName ?? t('未分类', 'Uncategorized');
     }
   }
 

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xdremux/models/app_models.dart';
+import 'package:xdremux/l10n/l10n.dart';
 import 'package:xdremux/services/conversion_backend.dart';
 
 void main() {

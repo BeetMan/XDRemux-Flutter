@@ -14,6 +14,7 @@ import 'services/motion_photo_service.dart';
 import 'services/picked_file_resolver.dart';
 import 'services/xdremux_service.dart';
 import 'platform_x.dart';
+import 'l10n/l10n.dart';
 
 /// Dedicated Apple/OPPO round-trip workflow.
 ///
@@ -39,7 +40,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   bool _restoreWatermark = true;
   bool _running = false;
   StreamSubscription<List<String>>? _dropSubscription;
-  String _status = '请先选择 OPPO 原始照片。';
+  String _status = t('请先选择 OPPO 原始照片。', 'Select the original OPPO photo first.');
 
   @override
   void initState() {
@@ -67,7 +68,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     setState(() {
       _returnedPath = candidates.first;
       _finalPath = null;
-      _status = '已拖入 iPhone 回传照片：${_fileLabel(candidates.first)}';
+      _status = t('已拖入 iPhone 回传照片：${_fileLabel(candidates.first)}', 'Dropped iPhone returned photo: ${_fileLabel(candidates.first)}');
     });
   }
 
@@ -106,14 +107,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       if (paths.isEmpty) return null;
       return paths.first;
     } on PlatformException catch (e) {
-      _showError('无法打开图库：${e.message ?? e.code}');
+      _showError(t('无法打开图库：${e.message ?? e.code}', 'Cannot open gallery: ${e.message ?? e.code}'));
       return null;
     }
   }
 
   Future<void> _selectSource({bool fromGallery = false}) async {
-    var path = fromGallery ? await _pickFromGallery() : await _pickPhoto();
-    if (path == null || !mounted) return;
+    final picked = fromGallery ? await _pickFromGallery() : await _pickPhoto();
+    if (picked == null || !mounted) return;
+    var path = picked;
     // Motion Photo: the donor must be the still image — the watermark graph,
     // EXIF and ProXDR metadata all live in the still byte range, and the
     // appended video stream would only confuse downstream parsers.
@@ -122,9 +124,9 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     if (motion != null) {
       try {
         path = await MotionPhotoService.extractStillToTemp(path);
-        motionNote = '（动态照片，已取静帧作为原图）';
+        motionNote = t('（动态照片，已取静帧作为原图）', ' (motion photo; still extracted as source)');
       } catch (e) {
-        _showError('动态照片静帧提取失败：$e');
+        _showError(t('动态照片静帧提取失败：$e', 'Failed to extract still from motion photo: $e'));
         return;
       }
     }
@@ -134,8 +136,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       _appleEditPath = null;
       _returnedPath = null;
       _finalPath = null;
-      _status =
-          '已选择 ${_fileLabel(path!)}$motionNote。它也是恢复原机水印和元数据的来源，请保留。';
+      _status = t(
+        '已选择 ${_fileLabel(path)}$motionNote。它也是恢复原机水印和元数据的来源，请保留。',
+        'Selected ${_fileLabel(path)}$motionNote. It is also the source for restoring the original watermark and metadata — please keep it.',
+      );
     });
   }
 
@@ -168,14 +172,14 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     if (!backendAvailable) {
       _showError(
         _capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-            ? '当前设备未通过 Swift Apple 照片摄影风格能力验证。'
+            ? t('当前设备未通过 Swift Apple 照片摄影风格能力验证。', 'Current device did not pass the Swift Apple Photographic Styles capability check.')
             : _capabilities.swiftAppleFeaturesUnavailableReason,
       );
       return;
     }
     setState(() {
       _running = true;
-      _status = '正在准备 Apple 编辑副本…';
+      _status = t('正在准备 Apple 编辑副本…', 'Preparing Apple edit copy…');
       _returnedPath = null;
       _finalPath = null;
     });
@@ -196,10 +200,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       if (!mounted) return;
       setState(() {
         _appleEditPath = result;
-        _status = 'Apple 编辑副本已生成：${_fileLabel(result)}';
+        _status = t('Apple 编辑副本已生成：${_fileLabel(result)}', 'Apple edit copy generated: ${_fileLabel(result)}');
       });
     } catch (error) {
-      _showError('Apple 照片摄影风格失败：$error');
+      _showError(t('Apple 照片摄影风格失败：$error', 'Apple Photographic Styles failed: $error'));
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -211,7 +215,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     setState(() {
       _returnedPath = path;
       _finalPath = null;
-      _status = '已选择 iPhone 回传照片：${_fileLabel(path)}';
+      _status = t('已选择 iPhone 回传照片：${_fileLabel(path)}', 'Selected iPhone returned photo: ${_fileLabel(path)}');
     });
   }
 
@@ -220,14 +224,14 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     final donor = _sourcePath;
     if (returned == null || _running) return;
     if (_outputMode == OutputMode.oppo && donor == null) {
-      _showError('OPPO 兼容输出必须保留 OPPO 原始照片。');
+      _showError(t('OPPO 兼容输出必须保留 OPPO 原始照片。', 'OPPO Compatible output requires keeping the original OPPO photo.'));
       return;
     }
     if (_restoreWatermark &&
         donor == null &&
         !((Platform.isIOS || Platform.isWindows) &&
             _outputMode == OutputMode.apple)) {
-      _showError('需要恢复原机水印时必须保留 OPPO 原始照片。');
+      _showError(t('需要恢复原机水印时必须保留 OPPO 原始照片。', 'Restoring the original watermark requires keeping the original OPPO photo.'));
       return;
     }
     if (!Platform.isMacOS &&
@@ -235,12 +239,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
         !Platform.isWindows &&
         !Platform.isAndroid &&
         !PlatformX.isOhos) {
-      _showError('当前平台不支持回传照片处理。');
+      _showError(t('当前平台不支持回传照片处理。', 'This platform does not support returned-photo processing.'));
       return;
     }
     setState(() {
       _running = true;
-      _status = '正在生成最终 ${_outputMode.appTitle} 输出…';
+      _status = t('正在生成最终 ${_outputMode.appTitle} 输出…', 'Generating final ${_outputMode.appTitle} output…');
     });
     try {
       final directory = await _workflowDirectory(returned);
@@ -267,13 +271,13 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       if (!mounted) return;
       setState(() {
         _finalPath = output;
-        _status = '最终输出已生成：${_fileLabel(output)}';
+        _status = t('最终输出已生成：${_fileLabel(output)}', 'Final output generated: ${_fileLabel(output)}');
       });
     } catch (error) {
       _showError(
         Platform.isIOS && _outputMode == OutputMode.apple
-            ? '处理失败：$error'
-            : '写回失败：$error',
+            ? t('处理失败：$error', 'Processing failed: $error')
+            : t('写回失败：$error', 'Writeback failed: $error'),
       );
     } finally {
       if (mounted) setState(() => _running = false);
@@ -289,10 +293,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     if (!mounted) return;
     setState(() {
       _status = destination == null
-          ? '保存已取消或失败'
+          ? t('保存已取消或失败', 'Save cancelled or failed')
           : PlatformX.isMobile
-          ? '已保存到照片图库'
-          : '已保存：${_fileLabel(destination)}';
+          ? t('已保存到照片图库', 'Saved to photo library')
+          : t('已保存：${_fileLabel(destination)}', 'Saved: ${_fileLabel(destination)}');
     });
   }
 
@@ -310,18 +314,18 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             icon: Icon(
               mobile ? Icons.photo_library_outlined : Icons.save_alt_outlined,
             ),
-            label: Text(mobile ? '保存到照片' : '另存为…'),
+            label: Text(mobile ? t('保存到照片', 'Save to Photos') : t('另存为…', 'Save as…')),
           ),
           OutlinedButton.icon(
             onPressed: () => FileActionService.openFile(path),
             icon: const Icon(Icons.open_in_new),
-            label: const Text('打开文件'),
+            label: Text(t('打开文件', 'Open file')),
           ),
         ],
         OutlinedButton.icon(
           onPressed: () => FileActionService.shareFile(path),
           icon: const Icon(Icons.share_outlined),
-          label: const Text('分享'),
+          label: Text(t('分享', 'Share')),
         ),
       ],
     );
@@ -361,12 +365,21 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       if ((Platform.isWindows || Platform.isAndroid) &&
           _restoreWatermark &&
           _sourcePath != null) {
-        return 'Rust 恢复可见原机水印后输出 Apple 文件，不写入 OPPO 私有尾部数据。';
+        return t(
+          'Rust 恢复可见原机水印后输出 Apple 文件，不写入 OPPO 私有尾部数据。',
+          'Rust restores the visible original watermark and outputs an Apple file without writing OPPO private tail data.',
+        );
       }
-      return '保留 Apple 照片回传画面，不写入 OPPO 私有元数据和尾部数据。';
+      return t(
+        '保留 Apple 照片回传画面，不写入 OPPO 私有元数据和尾部数据。',
+        'Keeps the Apple Photos returned image without writing OPPO private metadata and tail data.',
+      );
     }
     if (Platform.isIOS && _outputMode == OutputMode.oppo) {
-      return '按 OPPO 原始照片恢复可见原机水印、元数据和尾部数据；iOS 路径尚未完成真机验证，属于实验性能力。';
+      return t(
+        '按 OPPO 原始照片恢复可见原机水印、元数据和尾部数据；iOS 路径尚未完成真机验证，属于实验性能力。',
+        'Restores the visible original watermark, metadata and tail data from the OPPO source; the iOS path is not yet device-verified and is experimental.',
+      );
     }
     return _outputMode.appHelp;
   }
@@ -376,8 +389,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       return _capabilities.swiftAppleFeaturesUnavailableReason;
     }
     return Platform.isIOS
-        ? 'iOS 当前只验证 Rust OPPO 兼容文件；Apple 照片中的摄影风格仍等待嵌入式 Swift Library。'
-        : '当前设备未通过 Apple 照片摄影风格能力验证。';
+        ? t('iOS 当前只验证 Rust OPPO 兼容文件；Apple 照片中的摄影风格仍等待嵌入式 Swift Library。', 'iOS currently only validates Rust OPPO-compatible files; Photographic Styles in Apple Photos still await the embedded Swift Library.')
+        : t('当前设备未通过 Apple 照片摄影风格能力验证。', 'Current device did not pass the Apple Photographic Styles capability check.');
   }
 
   Widget _stepCard({
@@ -419,9 +432,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     );
   }
 
-  Widget _pathText(String? path, {String empty = '尚未选择'}) {
+  Widget _pathText(String? path, {String empty = ''}) {
+    final emptyText = empty.isEmpty ? t('尚未选择', 'Not selected yet') : empty;
     return Text(
-      path == null ? empty : '${_fileLabel(path)}\n$path',
+      path == null ? emptyText : '${_fileLabel(path)}\n$path',
       maxLines: 3,
       overflow: TextOverflow.ellipsis,
       style: Theme.of(context).textTheme.bodySmall,
@@ -436,7 +450,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
         _capabilities.swiftPhotographicStyles;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('一帧影像，动用两台手机'),
+        title: Text(t('一帧影像，动用两台手机', 'One photo, two phones')),
         backgroundColor: theme.colorScheme.surfaceContainerHighest,
         surfaceTintColor: Colors.transparent,
       ),
@@ -449,12 +463,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
               padding: const EdgeInsets.all(16),
               child: Text(
                 Platform.isWindows
-                    ? '这是独立的四步文件往返流程：一次摄影风格转换生成 Apple 编辑副本，回传后由 Rust 恢复原机水印与 OPPO 元数据。普通“批量转换”队列不会参与此流程。'
+                    ? t('这是独立的四步文件往返流程：一次摄影风格转换生成 Apple 编辑副本，回传后由 Rust 恢复原机水印与 OPPO 元数据。普通“批量转换”队列不会参与此流程。', 'This is a standalone four-step file round-trip: a Photographic Styles conversion produces an Apple edit copy, then Rust restores the original watermark and OPPO metadata after round-trip. The normal batch queue is not involved.')
                     : Platform.isAndroid
-                    ? '这是独立的四步文件往返流程。Android 使用 SAF 选择文件；Rust 直接从 OPPO 原始照片生成 Apple 编辑副本并完成 OPPO 写回。'
+                    ? t('这是独立的四步文件往返流程。Android 使用 SAF 选择文件；Rust 直接从 OPPO 原始照片生成 Apple 编辑副本并完成 OPPO 写回。', 'This is a standalone four-step file round-trip. Android selects files via SAF; Rust generates the Apple edit copy directly from the OPPO original and completes the OPPO writeback.')
                     : Platform.isIOS
-                    ? '这是独立的四步文件往返流程。iOS 支持通过相册、文件和分享导入/导出；Rust 直接从 OPPO 原始照片生成 Apple 编辑副本。'
-                    : '这是独立的四步文件往返流程。macOS 使用 Apple 原生图像读写路径；OPPO 原始照片与 iPhone 回传照片会保持配对。',
+                    ? t('这是独立的四步文件往返流程。iOS 支持通过相册、文件和分享导入/导出；Rust 直接从 OPPO 原始照片生成 Apple 编辑副本。', 'This is a standalone four-step file round-trip. iOS imports/exports via Photos, Files and Share; Rust generates the Apple edit copy directly from the OPPO original.')
+                    : t('这是独立的四步文件往返流程。macOS 使用 Apple 原生图像读写路径；OPPO 原始照片与 iPhone 回传照片会保持配对。', 'This is a standalone four-step file round-trip. macOS uses Apple-native image read/write paths; the OPPO original and the iPhone returned photo stay paired.'),
               ),
             ),
           ),
@@ -462,8 +476,8 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 1,
-            title: '选择 OPPO 原始照片',
-            description: '建议选择未经转换的 OPPO 原始照片；它也是后续恢复原机水印和元数据的来源。',
+            title: t('选择 OPPO 原始照片', 'Select the original OPPO photo'),
+            description: t('建议选择未经转换的 OPPO 原始照片；它也是后续恢复原机水印和元数据的来源。', 'Prefer an unconverted OPPO original; it is also the source for restoring the original watermark and metadata later.'),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -479,12 +493,14 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                             ? null
                             : () => _selectSource(fromGallery: true),
                         icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('从图库选择'),
+                        label: Text(t('从图库选择', 'Choose from gallery')),
                       ),
                     OutlinedButton.icon(
                       onPressed: _running ? null : () => _selectSource(),
                       icon: const Icon(Icons.folder_open_outlined),
-                      label: Text(PlatformX.isOhos ? '从文件选择' : '选择照片'),
+                      label: Text(
+                        PlatformX.isOhos ? t('从文件选择', 'Choose from files') : t('选择照片', 'Choose photo'),
+                      ),
                     ),
                   ],
                 ),
@@ -495,12 +511,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 2,
-            title: '生成 Apple 照片摄影风格编辑副本',
-            description: '对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。',
+            title: t('生成 Apple 照片摄影风格编辑副本', 'Generate Apple Photographic Styles edit copy'),
+            description: t('对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。', 'Run a Photographic Styles conversion on the selected OPPO original to produce a working file for editing on iPhone.'),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('转换引擎', style: theme.textTheme.titleSmall),
+                Text(t('转换引擎', 'Conversion engine'), style: theme.textTheme.titleSmall),
                 const SizedBox(height: 4),
                 SegmentedButton<ConversionBackend>(
                   segments: ConversionBackend.values
@@ -559,7 +575,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       ? null
                       : _createAppleEditCopy,
                   icon: const Icon(Icons.auto_awesome),
-                  label: const Text('生成 Apple 照片编辑副本'),
+                  label: Text(t('生成 Apple 照片编辑副本', 'Generate Apple Photos edit copy')),
                 ),
                 if (!canUseSelectedStylesBackend) ...[
                   const SizedBox(height: 8),
@@ -572,7 +588,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 ],
                 if (_appleEditPath != null) ...[
                   const SizedBox(height: 12),
-                  Text('Apple 照片编辑副本', style: theme.textTheme.labelLarge),
+                  Text(t('Apple 照片编辑副本', 'Apple Photos edit copy'), style: theme.textTheme.labelLarge),
                   const SizedBox(height: 4),
                   _pathText(_appleEditPath),
                   const SizedBox(height: 8),
@@ -585,10 +601,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 3,
-            title: '在 iPhone 上编辑',
+            title: t('在 iPhone 上编辑', 'Edit on iPhone'),
             description: Platform.isIOS
-                ? '生成编辑副本后分享至 Apple 照片或“文件”，在 iPhone 上完成调整并回传。'
-                : '把上一步生成的文件传到 iPhone，在 Apple 照片中完成调整并导出/回传。',
+                ? t('生成编辑副本后分享至 Apple 照片或“文件”，在 iPhone 上完成调整并回传。', 'After generating the edit copy, share it to Apple Photos or Files, finish adjustments on iPhone and return it.')
+                : t('把上一步生成的文件传到 iPhone，在 Apple 照片中完成调整并导出/回传。', 'Transfer the file from the previous step to iPhone, finish adjustments in Apple Photos and export/return it.'),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -601,7 +617,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    '支持 HEIC / HEIF 照片；macOS 可直接从 Apple 照片拖到此窗口。',
+                    t('支持 HEIC / HEIF 照片；macOS 可直接从 Apple 照片拖到此窗口。', 'Supports HEIC / HEIF photos; on macOS you can drag them directly from Apple Photos into this window.'),
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
@@ -616,12 +632,16 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                             ? null
                             : () => _selectReturnedPhoto(fromGallery: true),
                         icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('从图库选择'),
+                        label: Text(t('从图库选择', 'Choose from gallery')),
                       ),
                     OutlinedButton.icon(
                       onPressed: _running ? null : () => _selectReturnedPhoto(),
                       icon: const Icon(Icons.file_download_outlined),
-                      label: Text(PlatformX.isOhos ? '从文件选择' : '选择 iPhone 回传照片'),
+                      label: Text(
+                        PlatformX.isOhos
+                            ? t('从文件选择', 'Choose from files')
+                            : t('选择 iPhone 回传照片', 'Select iPhone returned photo'),
+                      ),
                     ),
                   ],
                 ),
@@ -636,22 +656,22 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
           _stepCard(
             context: context,
             step: 4,
-            title: '恢复原机水印并生成最终输出',
+            title: t('恢复原机水印并生成最终输出', 'Restore original watermark & generate final output'),
             description: Platform.isIOS
-                ? 'Apple 标准保留 Apple 照片回传文件并做 ImageIO 可读性检查；OPPO 兼容模式恢复 OPPO 兼容结构（实验性，待真机验证）。'
+                ? t('Apple 标准保留 Apple 照片回传文件并做 ImageIO 可读性检查；OPPO 兼容模式恢复 OPPO 兼容结构（实验性，待真机验证）。', 'Apple Standard keeps the Apple Photos returned file and runs an ImageIO readability check; OPPO Compatible restores the OPPO-compatible structure (experimental, pending device verification).')
                 : Platform.isWindows || Platform.isAndroid
-                ? 'Rust 恢复 OPPO 兼容尾部数据、可见原机水印和元数据；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息，可按开关恢复可见原机水印。'
-                : 'OPPO 兼容模式恢复 OPPO 兼容结构；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息。',
+                ? t('Rust 恢复 OPPO 兼容尾部数据、可见原机水印和元数据；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息，可按开关恢复可见原机水印。', 'Rust restores OPPO-compatible tail data, the visible original watermark and metadata; Apple Standard keeps the Apple Photos result without writing OPPO private info, and can restore the visible original watermark via the toggle.')
+                : t('OPPO 兼容模式恢复 OPPO 兼容结构；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息。', 'OPPO Compatible restores the OPPO-compatible structure; Apple Standard keeps the Apple Photos result without writing OPPO private info.'),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('按 OPPO 原始照片恢复可见原机水印'),
+                  title: Text(t('按 OPPO 原始照片恢复可见原机水印', 'Restore visible original watermark from OPPO source')),
                   subtitle: Text(
                     Platform.isWindows || Platform.isAndroid
-                        ? 'Rust 会解码、恢复可见原机水印并重新编码回传 HEIF，同时保留 OPPO 元数据。'
-                        : '关闭后保留 iPhone 回传画面；OPPO 兼容模式仍会恢复 OPPO 元数据和尾部数据。',
+                        ? t('Rust 会解码、恢复可见原机水印并重新编码回传 HEIF，同时保留 OPPO 元数据。', 'Rust decodes, restores the visible original watermark and re-encodes the returned HEIF while preserving OPPO metadata.')
+                        : t('关闭后保留 iPhone 回传画面；OPPO 兼容模式仍会恢复 OPPO 元数据和尾部数据。', 'When off, keeps the iPhone returned image; OPPO Compatible still restores OPPO metadata and tail data.'),
                   ),
                   value: _restoreWatermark,
                   onChanged: _running || !_canWriteback
@@ -695,12 +715,15 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.output),
-                  label: Text(_running ? '处理中…' : '生成最终输出'),
+                  label: Text(_running ? t('处理中…', 'Processing…') : t('生成最终输出', 'Generate final output')),
                 ),
                 if (Platform.isWindows || Platform.isAndroid) ...[
                   const SizedBox(height: 8),
                   Text(
-                    '当前平台由 Rust 完成可见原机水印、OPPO 尾部数据和元数据写回；输出仍需在 Apple/OPPO 设备上做最终兼容性确认。',
+                    t(
+                      '当前平台由 Rust 完成可见原机水印、OPPO 尾部数据和元数据写回；输出仍需在 Apple/OPPO 设备上做最终兼容性确认。',
+                      'On this platform Rust performs the visible-original-watermark, OPPO tail-data and metadata writeback; the output still needs final compatibility confirmation on Apple/OPPO devices.',
+                    ),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.tertiary,
                     ),
@@ -709,7 +732,10 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 if (Platform.isIOS) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'iOS 的 OPPO 写回与 macOS 共用 Apple ImageIO/ISOBMFF 路径；尚未在实体 iPhone 上完成端到端验证，输出请先在 OPPO 设备上确认。',
+                    t(
+                      'iOS 的 OPPO 写回与 macOS 共用 Apple ImageIO/ISOBMFF 路径；尚未在实体 iPhone 上完成端到端验证，输出请先在 OPPO 设备上确认。',
+                      'iOS OPPO writeback shares the Apple ImageIO/ISOBMFF path with macOS; end-to-end verification on a real iPhone is not complete — confirm output on an OPPO device first.',
+                    ),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.error,
                     ),
@@ -717,7 +743,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 ],
                 if (_finalPath != null) ...[
                   const SizedBox(height: 12),
-                  Text('最终文件', style: theme.textTheme.labelLarge),
+                  Text(t('最终文件', 'Final file'), style: theme.textTheme.labelLarge),
                   const SizedBox(height: 4),
                   _pathText(_finalPath),
                   const SizedBox(height: 8),

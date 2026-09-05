@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
+import '../l10n/l10n.dart';
 
 /// One conversion request shared by all backend implementations.
 class ConversionRequest {
@@ -147,7 +148,11 @@ class RustConversionBackend implements ConversionBackendAdapter {
   @override
   Future<BackendConversionResult> convert(ConversionRequest request) async {
     if (_cancelledRequests.remove(request.id)) {
-      return BackendConversionResult.failure(backend, '转换已取消', cancelled: true);
+      return BackendConversionResult.failure(
+        backend,
+        t('转换已取消', 'Conversion cancelled'),
+        cancelled: true,
+      );
     }
 
     final effectiveOppoCompat = request.outputMode == OutputMode.apple
@@ -196,7 +201,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
       return result.copyWith(
         success: false,
         cancelled: true,
-        errorMessage: '转换已取消',
+        errorMessage: t('转换已取消', 'Conversion cancelled'),
       );
     }
     if (!result.success) return result;
@@ -211,10 +216,13 @@ class RustConversionBackend implements ConversionBackendAdapter {
         success: false,
         outputValid: false,
         errorMessage: request.applePhotographicStyles
-            ? 'Rust 输出缺少 Apple 照片可调摄影风格数据'
+            ? t(
+                'Rust 输出缺少 Apple 照片可调摄影风格数据',
+                'Rust output is missing Apple Photographic Styles data',
+              )
             : request.applePortrait
-            ? 'Rust 输出缺少 Apple 人像模式数据'
-            : 'Rust 输出验证失败',
+            ? t('Rust 输出缺少 Apple 人像模式数据', 'Rust output is missing Apple Portrait data')
+            : t('Rust 输出验证失败', 'Rust output verification failed'),
       );
     }
     return result.copyWith(outputValid: true);
@@ -299,28 +307,37 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
         return result.copyWith(
           success: false,
           outputValid: false,
-          errorMessage: 'Swift 后端输出验证失败',
+          errorMessage: t('Swift 后端输出验证失败', 'Swift backend output verification failed'),
         );
       }
       return result.copyWith(outputValid: true);
     } on MissingPluginException {
       return BackendConversionResult.failure(
         backend,
-        'Swift 后端未连接：当前构建未嵌入 Swift Core。',
+        t(
+          'Swift 后端未连接：当前构建未嵌入 Swift Core。',
+          'Swift backend not connected: this build does not embed Swift Core.',
+        ),
       );
     } on PlatformException catch (error) {
       return BackendConversionResult.failure(
         backend,
-        error.message ?? 'Swift 后端调用失败（${error.code}）',
+        error.message ?? t('Swift 后端调用失败（${error.code}）', 'Swift backend call failed (${error.code})'),
       );
     } catch (error) {
-      return BackendConversionResult.failure(backend, 'Swift 后端调用失败：$error');
+      return BackendConversionResult.failure(
+        backend,
+        t('Swift 后端调用失败：$error', 'Swift backend call failed: $error'),
+      );
     }
   }
 
   BackendConversionResult _parseResult(Object? raw) {
     if (raw is! Map) {
-      return BackendConversionResult.failure(backend, 'Swift 后端返回了无效结果');
+      return BackendConversionResult.failure(
+        backend,
+        t('Swift 后端返回了无效结果', 'Swift backend returned an invalid result'),
+      );
     }
     final map = raw.map((key, value) => MapEntry(key.toString(), value));
     return BackendConversionResult(

@@ -5,6 +5,8 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:tray_manager/tray_manager.dart';
 
+import '../l10n/l10n.dart';
+
 // Raw FFI declarations instead of package:win32: the OHOS vendored plugin set
 // pins win32 v5 while mainline uses v6, and our needs (three User32 calls)
 // are tiny. IntPtr handles keep this version-agnostic.
@@ -68,9 +70,17 @@ class TrayService {
       await trayManager.setContextMenu(
         Menu(
           items: [
-            MenuItem(key: 'show', label: '显示窗口', onClick: (_) => onShowWindow()),
+            MenuItem(
+              key: 'show',
+              label: t('显示窗口', 'Show window'),
+              onClick: (_) => onShowWindow(),
+            ),
             MenuItem.separator(),
-            MenuItem(key: 'exit', label: '退出', onClick: (_) => onExit()),
+            MenuItem(
+              key: 'exit',
+              label: t('退出', 'Exit'),
+              onClick: (_) => onExit(),
+            ),
           ],
         ),
       );

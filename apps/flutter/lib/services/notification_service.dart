@@ -6,6 +6,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../platform_x.dart';
 
+import '../l10n/l10n.dart';
+
 /// System notification shown when a batch conversion finishes, so the user
 /// can leave the app in the background during long batches.
 ///
@@ -84,33 +86,39 @@ class NotificationService {
     int failedUnsupported = 0,
   }) async {
     if (!_initialized) return;
-    final body = StringBuffer('成功 $converted 个');
-    if (skipped > 0) body.write('，跳过 $skipped 个');
+    final body = StringBuffer(t('成功 $converted 个', 'Succeeded: $converted'));
+    if (skipped > 0) body.write(t('，跳过 $skipped 个', ', skipped $skipped'));
     if (failed > 0) {
       body.write(
         failedUnsupported > 0 && failedUnsupported < failed
-            ? '，失败 $failed 个（其中 $failedUnsupported 个格式不支持）'
-            : '，失败 $failed 个',
+            ? t(
+                '，失败 $failed 个（其中 $failedUnsupported 个格式不支持）',
+                ', failed $failed ($failedUnsupported unsupported format)',
+              )
+            : t('，失败 $failed 个', ', failed $failed'),
       );
     }
     try {
       if (PlatformX.isOhos) {
         await _ohosChannel.invokeMethod<void>('show', {
           'id': 0,
-          'title': 'XDRemux 转换完成',
+          'title': t('XDRemux 转换完成', 'XDRemux conversion complete'),
           'body': body.toString(),
         });
         return;
       }
       await _plugin.show(
         0,
-        'XDRemux 转换完成',
+        t('XDRemux 转换完成', 'XDRemux conversion complete'),
         body.toString(),
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
             'conversion',
-            '转换完成',
-            channelDescription: '批量转换完成时的结果摘要',
+            t('转换完成', 'Conversion complete'),
+            channelDescription: t(
+              '批量转换完成时的结果摘要',
+              'Summary of the batch conversion result',
+            ),
             importance: Importance.defaultImportance,
           ),
           // No `windows:` → plugin generates toast XML without the

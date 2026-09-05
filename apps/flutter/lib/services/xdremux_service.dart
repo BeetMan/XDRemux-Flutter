@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
+import '../l10n/l10n.dart';
 import 'conversion_backend.dart';
 
 /// Higher-level service that wraps raw FFI calls and manages settings.
@@ -125,7 +126,10 @@ class XdRemuxService {
         'schema': 'xdremux-portrait-calibration-research-v1',
         'researchOnly': true,
         'safeToTransform': false,
-        'error': 'Apple 人像模式研究仅支持 macOS/iOS。',
+        'error': t(
+          'Apple 人像模式研究仅支持 macOS/iOS。',
+          'Apple Portrait research is only supported on macOS/iOS.',
+        ),
       };
     }
     try {
@@ -140,7 +144,7 @@ class XdRemuxService {
           'schema': 'xdremux-portrait-calibration-research-v1',
           'researchOnly': true,
           'safeToTransform': false,
-          'error': 'Apple 人像模式研究报告无效',
+          'error': t('Apple 人像模式研究报告无效', 'Invalid Apple Portrait research report'),
         };
       }
       return raw.map((key, value) => MapEntry(key.toString(), value));
@@ -149,7 +153,10 @@ class XdRemuxService {
         'schema': 'xdremux-portrait-calibration-research-v1',
         'researchOnly': true,
         'safeToTransform': false,
-        'error': 'macOS Apple 人像模式研究桥接不可用。',
+        'error': t(
+          'macOS Apple 人像模式研究桥接不可用。',
+          'macOS Apple Portrait research bridge unavailable.',
+        ),
       };
     } on PlatformException catch (error) {
       return <String, dynamic>{
@@ -172,7 +179,10 @@ class XdRemuxService {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-              ? 'Apple 照片摄影风格当前未通过能力验证。'
+              ? t(
+                  'Apple 照片摄影风格当前未通过能力验证。',
+                  'Apple Photographic Styles did not pass the capability check.',
+                )
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }
@@ -182,7 +192,10 @@ class XdRemuxService {
         return BackendConversionResult.failure(
           request.backend,
           capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-              ? 'Apple 人像模式当前未通过能力验证。'
+              ? t(
+                  'Apple 人像模式当前未通过能力验证。',
+                  'Apple Portrait did not pass the capability check.',
+                )
               : capabilities.swiftAppleFeaturesUnavailableReason,
         );
       }

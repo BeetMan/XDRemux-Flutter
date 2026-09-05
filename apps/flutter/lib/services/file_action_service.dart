@@ -7,6 +7,8 @@ import 'package:gal/gal.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../l10n/l10n.dart';
+
 /// File actions: save to gallery, share, open with system app.
 class FileActionService {
   FileActionService._();
@@ -128,7 +130,7 @@ class FileActionService {
         fileName = '$fileName.heic';
       }
       final destUri = await FilePicker.saveFile(
-        dialogTitle: '保存 XDRemux 输出',
+        dialogTitle: t('保存 XDRemux 输出', 'Save XDRemux output'),
         fileName: fileName,
         bytes: await File(filePath).readAsBytes(),
         mimeType: 'image/heic',

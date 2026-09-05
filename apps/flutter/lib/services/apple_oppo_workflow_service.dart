@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../models/app_models.dart';
+import '../l10n/l10n.dart';
 import 'conversion_backend.dart';
 import 'xdremux_service.dart';
 
@@ -25,7 +26,9 @@ class AppleOppoWorkflowService {
     AppleWatermarkPolicy watermarkPolicy = AppleWatermarkPolicy.preserve,
     void Function(String message)? onStatus,
   }) async {
-    onStatus?.call('正在生成 Apple 照片摄影风格编辑副本…');
+    onStatus?.call(
+      t('正在生成 Apple 照片摄影风格编辑副本…', 'Generating Apple Photographic Styles edit copy…'),
+    );
     final result = await XdRemuxService.convertWithBackend(
       ConversionRequest(
         id: _requestID('styles'),
@@ -42,7 +45,10 @@ class AppleOppoWorkflowService {
     );
     if (!result.success || result.outputValid == false) {
       throw AppleOppoWorkflowException(
-        'Apple 照片摄影风格编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
+        t(
+          'Apple 照片摄影风格编辑副本生成失败：${result.errorMessage ?? '输出校验失败'}',
+          'Failed to generate the Apple Photographic Styles edit copy: ${result.errorMessage ?? 'output verification failed'}',
+        ),
       );
     }
     return outputPath;
@@ -57,9 +63,14 @@ class AppleOppoWorkflowService {
     void Function(String message)? onStatus,
   }) async {
     if (outputMode == OutputMode.oppo && donorPath == null) {
-      throw const AppleOppoWorkflowException('OPPO 输出需要 OPPO 原始照片作为写回来源。');
+      throw AppleOppoWorkflowException(
+        t(
+          'OPPO 输出需要 OPPO 原始照片作为写回来源。',
+          'OPPO output requires the original OPPO photo as the writeback source.',
+        ),
+      );
     }
-    onStatus?.call('正在写回回传照片…');
+    onStatus?.call(t('正在写回回传照片…', 'Writing back the returned photo…'));
     return XdRemuxService.writebackReturnedPhoto(
       originalPath: donorPath,
       returnedPath: returnedPath,
@@ -82,20 +93,35 @@ class AppleOppoWorkflowService {
     void Function(String message)? onStatus,
   }) async {
     if (!Platform.isIOS) {
-      throw const AppleOppoWorkflowException('Apple 直通输出目前只在 iOS 文件工作流中使用。');
+      throw AppleOppoWorkflowException(
+        t(
+          'Apple 直通输出目前只在 iOS 文件工作流中使用。',
+          'Apple pass-through output is currently only used in the iOS file workflow.',
+        ),
+      );
     }
     final returned = File(returnedPath);
     if (!await returned.exists() || await returned.length() == 0) {
-      throw const AppleOppoWorkflowException('回传文件不存在或为空。');
+      throw AppleOppoWorkflowException(
+        t(
+          '回传文件不存在或为空。',
+          'The returned file does not exist or is empty.',
+        ),
+      );
     }
-    onStatus?.call('正在保留 Apple 回传文件…');
+    onStatus?.call(t('正在保留 Apple 回传文件…', 'Preserving the Apple returned file…'));
     await returned.copy(outputPath);
     final thumbnail = await XdRemuxService.generateThumbnail(outputPath);
     if (thumbnail == null || thumbnail.isEmpty) {
       try {
         await File(outputPath).delete();
       } catch (_) {}
-      throw const AppleOppoWorkflowException('Apple 照片回传文件无法由 iOS ImageIO 读取。');
+      throw AppleOppoWorkflowException(
+        t(
+          'Apple 照片回传文件无法由 iOS ImageIO 读取。',
+          'The Apple Photos returned file cannot be read by iOS ImageIO.',
+        ),
+      );
     }
     return <String, dynamic>{
       'outputPath': outputPath,
