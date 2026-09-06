@@ -28,8 +28,8 @@
 | 相册写回 | 可（用户授权目录） | 不可直写，走分享/导出 |
 | GPS 保留 | 工作流选择器保留 GPS（v0.3.1） | 同 |
 
-## 4. 未完成验证项（ backlog）
+## 4. 未完成验证项（backlog）
 
-- iOS 真机端到端：PHPicker、Files、GPS、HDR、`rear.depth`、Apple 照片编辑往返
-- Rust FFI 写回路径在 iOS 的首次真机验证（v0.3.1 切换后）
-- Apple 开发者签名分发（TestFlight / 公证）
+- ~~iOS 真机端到端：PHPicker、Files、GPS、HDR、`rear.depth`、Apple 照片编辑往返~~ ✅ 2026-08-16 真机验证完成（`docs/validation/ios-device-20260816.md`）
+- ~~Rust FFI 写回路径在 iOS 的首次真机验证（v0.3.1 切换后）~~ ✅ 同上轮覆盖
+- Apple 开发者签名分发（TestFlight / 公证）——未配置，卡点非代码

@@ -78,15 +78,32 @@ oppo-final.heic
 
 ## 4. 平台后端选择
 
-| 功能 | Windows | Android | macOS | iOS |
-|---|---|---|---|---|
-| 转换 / 写回 | Rust FFI | Rust FFI（.so via jniLibs） | Rust FFI | Rust FFI（静态库） |
-| 解码预览 | WIC | ImageDecoder | ImageIO | ImageIO |
-| 文件访问 | 文件系统 | SAF（不索取存储权限） | NSOpenPanel | PHPicker / Files |
+| 功能 | Windows | Android | macOS | iOS | 鸿蒙 |
+|---|---|---|---|---|---|
+| 转换 / 写回 | Rust FFI | Rust FFI（.so via jniLibs） | Rust FFI | Rust FFI（静态库） | Rust FFI（.so，`aarch64-unknown-linux-ohos`） |
+| 解码预览 | WIC | ImageDecoder | ImageIO | ImageIO | Image Kit |
+| 文件访问 | 文件系统 | SAF（不索取存储权限） | NSOpenPanel | PHPicker / Files | file_picker / PhotoViewPicker / sendData 分享 |
 
-Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在四平台都内建 x265（Android/iOS 交叉编译静态库，见 `build.rs` / `build_ios.sh`）。
+Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在五平台都内建 x265（Android/iOS/鸿蒙交叉编译静态库，见 `build.rs` / `build_ios.sh` / `build_ohos.sh`）。
 
-## 5. 状态与检查点
+## 5. Motion Photo 数据流（Phase 3a/3b）
+
+```
+OPPO 动态照片（JPEG + 附加视频，LPEX 单/双码流）
+  │ 入队即异步识别（motionPhotoInspect）→ 卡片「动态」chip + 逐卡四档策略
+  ▼
+跳过（默认）/ 仅静帧 / 静帧+视频 / Live Photo
+  │
+  ├─ 仅静帧：拆静帧（still_range）→ Ultra HDR JPEG 解析（uhdr_jpeg：MPF + hdrgm）
+  │   → 合成源容器 → 走转换主路径
+  ├─ 静帧+视频：同上 + 视频写到输出目录（<输出名>.motion.mp4；双码流另写 .primary.mp4）
+  └─ Live Photo：静帧转换（强制关闭 styles）+ live_photo.rs 重组配对
+      （MOV 重写 content identifier + still-image-time 轨；静帧 MakerNote 追加 0x0011）
+```
+
+工作流页（四步流程）里动态照片 donor 自动拆静帧——水印 graph、EXIF、ProXDR 元数据都在静帧字节段。
+
+## 6. 状态与检查点
 
 - 工作流产物保存在应用目录 `xdremux_workflow/`（Android: `/data/data/<pkg>/app_flutter/`）
 - checkpoint_service.dart 支持中断恢复：donor 与回传文件必须配对（文件名前缀）

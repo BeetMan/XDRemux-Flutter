@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（绑定）、`xdremux/rust/src/lib.rs`（导出，23 个 `extern "C"` 函数）。
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（绑定）、`xdremux/rust/src/lib.rs`（导出，28 个 `extern "C"` 函数）。
 
 ## 1. 库加载
 
@@ -10,6 +10,7 @@
 | iOS | `DynamicLibrary.process()`（静态链接进主二进制） |
 | Windows | 安装目录/开发目录搜索 DLL |
 | macOS | 多级回退：dylib 裸名（rpath）-> 可执行文件旁 -> `../Frameworks` -> `../../Frameworks` |
+| 鸿蒙 | `DynamicLibrary.open('libxdremux_core.so')`（`ohos/entry/libs/arm64-v8a/` 打包） |
 
 绑定在 `XdRemuxFFI` 中以 `lookupFunction` 静态缓存。**添加新导出函数时两侧命名必须同步**：Rust 侧 `xdremux_<snake_case>`，Dart 侧 `_<camelCase>`。
 
@@ -49,9 +50,11 @@
 |---|---|
 | `xdremux_version` | 版本串（与 Cargo 一致） |
 | `xdremux_classify` / `xdremux_inspect` | 输入分类 / 结构检查 |
-| `xdremux_convert` / `xdremux_convert_with_progress` | ProXDR -> ISO 转换 |
+| `xdremux_convert` / `xdremux_convert_with_progress` | ProXDR -> ISO 转换（含 Ultra HDR JPEG 输入） |
 | `xdremux_writeback_returned_photo` | 回传照片写回（全平台统一） |
 | `xdremux_diagnose_portrait` | 人像深度诊断 |
+| `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
+| `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 

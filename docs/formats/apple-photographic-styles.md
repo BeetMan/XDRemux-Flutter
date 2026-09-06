@@ -43,10 +43,10 @@ Apple 二进制 plist，编码风格元数据：tone/warmth 数值、风格标�
 | `styles_graft`（`graft_styles(standard, golden)`） | 从金样文件移植风格图结构 | 对拍验证、疑难样张兜底；返回 `GraftSummary` |
 | 约束求解 / identity 回退 | （Swift 上游概念，golden corpus 里的 styles vs styles-identity） | 研究对照 |
 
-## 4. 已知差异（与 Apple 原生文件对比）
+## 4. 已知差异（与 Apple 原生文件对比）——已定论（2026-08-27 复查）
 
-- 天空蒙版 auxl 引用重复出现两次（待修）
-- 部分 auxl 引用目标为 `[主图, tmap]` 而非仅主图（待修）
+- ~~天空蒙版 auxl 引用重复出现两次（待修）~~ 双天空蒙版 auxl 是 Apple 原生结构，无需清理
+- ~~部分 auxl 引用目标为 `[主图, tmap]` 而非仅主图（待修）~~ 同为 Apple 原生结构
 - 不承诺逐像素等价：目标是"Apple 照片中可继续编辑"，非字节级克隆
 
 ## 5. 验证清单

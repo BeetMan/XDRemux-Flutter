@@ -24,6 +24,7 @@ XDRemux-Windows-arm64-<tag>-Setup.exe
 XDRemux-Android-<tag>.apk
 XDRemux-iOS-<tag>-unsigned.ipa           （如启用）
 XDRemux-macOS-<tag>.dmg                  （本地构建，未进 CI）
+XDRemux-HarmonyOS-<tag>.hap              （本地构建，未进 CI，见 §3.5）
 ```
 
 `<tag>` 含 pre-release 后缀（如 `0.3.0-pre.1`）。资产名即 `TAG_VERSION` 变量拼接，改名需同时改 release.yml 的 path 声明。
@@ -35,15 +36,27 @@ XDRemux-macOS-<tag>.dmg                  （本地构建，未进 CI）
 | Windows installer | windows-2022 | x64 Setup.exe（x265 缓存 + NASM） |
 | Windows ARM64 | windows-11-arm | arm64 Setup.exe（x265 无汇编） |
 | Android | ubuntu-latest | APK（SDK 36 / build-tools 36.0.0） |
-| publish | ubuntu-latest | 汇总挂载 |
+| publish | ubuntu-latest | 汇总挂载（`needs` 含全部构建 job） |
 
 macOS DMG 待纳入 CI（backlog）。
+
+## 3.5 鸿蒙 hap（本地发布流程）
+
+鸿蒙不进 CI（见 `operations/ci.md` §2.5）。本地发布：
+
+1. `bash xdremux/rust/build_ohos.sh` 构建 Rust 核心，产物拷到 `apps/flutter/ohos/entry/libs/arm64-v8a/`
+2. `tools/ohos/build_hap.ps1`（**PowerShell**，默认 profile 模式）
+3. 取签名构建的 `entry-default-unsigned.hap` 中间产物作为公开包（hap 签名是 zip 块，unsigned 中间产物可直接被侧载工具签名）
+4. 手动挂到 Release 资产
+
+侧载规则：Development Profile 只能签 `app.debug: true` 的包——所以发布用 profile 模式（AOT + debug:true）；release 模式包（debug:false）侧载工具全拒。安装方式：DevEco 自动签名构建，或 hap-sign-tool 自备 AGC 证书。
 
 ## 4. 历史踩坑（排障索引）
 
 - JVM target 不一致（`compileReleaseJavaWithJavac (11) vs Kotlin (17)`）-> 分插件对齐（`f258f3e`）
 - Android API 37 缺失 -> 锁 SDK 36（`27e8094`）
 - Windows ARM runner 的 x265 汇编不支持 -> `-DENABLE_ASSEMBLY=OFF`（`d24aecc`）
+- publish job 漏 needs windows-arm64 -> pre.2 缺 ARM64 包（`0eb097b` 修）
 - Release 失败但 tag 已推：**先征得维护者同意再移动 tag**（v0.3.0 曾强移到修复提交）
 
 ## 5. 发版后验证

@@ -1,5 +1,9 @@
 # 会话交接更新：2026-09-02 深夜（摄影风格研究全线收官）
 
+> **已归档（2026-09-06）**：点-in-time 交接记录，内容已被后续工作覆盖
+> （pre.2/pre.3 已发布并完成多平台验证；GPS 透传已验；X9s Pro 修复已入）。
+> 最新状态以 `docs/plans/v0.4-roadmap.md` 与设备兼容矩阵为准。
+
 > 接前文。本段覆盖当晚全部工作：语义层机制破解、sky matte A/B 定论、
 > AAE 编辑格式破译。研究侧至此全部闭环。
 
@@ -120,7 +124,7 @@ Neutrino 渲染 → 全局多项式拟合（Huber）→ Gauss-Newton 精化（12
 | 整理页 | `apps/flutter/lib/organize_page.dart` | 已加资产感知分组（静态/实况照片） |
 | 工作流页 | `apps/flutter/lib/apple_oppo_workflow_page.dart` | OPPO→Apple 回传 |
 | 上游对比文档 | `docs/research/styles-upstream-logic-comparison.md` | key1 布局+solver 研究 |
-| 待同步清单 | `docs/plans/upstream-sync-remaining.md` | v1.4 剩余未同步项 |
+| 待同步清单 | `docs/archive/upstream-sync-remaining-v1.4.md`（已归档，全部完成） | v1.4 剩余未同步项 |
 | 采样计划 | `docs/plans/sample-collection-202608.md` | A~E 组 |
 | 路线图 | `docs/plans/v0.4-roadmap.md` | Phase 1-4 |
 

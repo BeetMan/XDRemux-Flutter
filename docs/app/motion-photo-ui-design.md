@@ -1,16 +1,17 @@
-# Motion Photo（3a）UI/交互设计
+# Motion Photo UI/交互设计（3a + 3b）
 
-> 范围：3a = 识别动态照片 → 提取静帧 → 走现有转换管线。
-> 不做 3b（Live Photo 合成）的 UI，但为其预留设置位。
-> 解析能力已有：`motionPhotoInspect` / `motionPhotoSplit`（ae4e0e0）。
+> 范围：3a = 识别动态照片 → 提取静帧 → 走现有转换管线；3b = Live Photo 配对合成（已交付，`live_photo.rs`）。
+> 解析能力：`motionPhotoInspect` / `motionPhotoSplit`（ae4e0e0）+ Live Photo 合成/配对校验 FFI。
+> 状态（2026-09-06）：全部实现并已在 pre.2/pre.3 真机验证。本文保留为设计记录。
 
 ## 核心决策
 
-1. **逐卡片三档策略，默认「跳过」**（2026-08-27 拍板）
-   动态照片队列项自带策略菜单：`跳过（默认）` / `仅静帧` / `静帧+视频`。
+1. **逐卡片四档策略，默认「跳过」**（2026-08-27 拍板三档；3b 交付后加第四档）
+   动态照片队列项自带策略菜单：`跳过（默认）` / `仅静帧` / `静帧+视频` / `Live Photo`。
    不设全局转换策略；设置页只提供「默认策略」选择（默认跳过），
    卡片上的选择覆盖默认值。理由：动态照片是少数派但意图差异大，
    默认跳过保证批量转换不被意外拖入不熟悉的行为；想要的人逐张点开。
+   **Live Photo 档强制关闭 styles**（Apple 结构性拦截联合编辑，2026-09-02/03 定论）。
 
 2. **识别时机：入队即识别，不是转换时才识别**
    文件进队列（选图/拖入/分享进）后异步跑 `motionPhotoInspect`，
@@ -42,7 +43,7 @@
 
 **设置页「动态照片」组**
 - 仅「默认策略」选择（默认跳过）；卡片选择覆盖默认
-- （3b 预留：`合成 Apple Live Photo`，灰显标注「后续版本」）
+- （~~3b 预留：~~`合成 Apple Live Photo` 已交付，即第四档「Live Photo」策略）
 
 ### Apple/OPPO 工作流页（apple_oppo_workflow_page.dart）
 
@@ -78,8 +79,7 @@
 | 5 | `organize_page.dart` | 属性 tag |
 | 6 | 测试 | widget test（chip 显示、跳过策略）；service 单测用合成 fixture |
 
-## 不做（3a 明确排除）
+## 3b 已交付说明（原「不做」清单作废项）
 
-- 不解析视频时长/编码参数（需要 mvhd/trak 解析，3b 再说）
-- 不做 Live Photo 合成、不做视频预览播放
-- 不改输出文件命名规则
+- ~~不做 Live Photo 合成~~ → 已交付：`live_photo.rs` MOV 重写 + MakerNote 配对，UI 第四档策略
+- 仍不做：视频预览播放；输出文件命名规则不变

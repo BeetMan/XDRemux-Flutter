@@ -1,7 +1,10 @@
 # 上游 issue 草稿：macOS 27 私有 API 适配
 
-> 草稿，待你确认后再发到 21Z121Z1/XDRemux。补丁目前在本机克隆
-> `../XDRemux-upstream` 工作区（`learnnode_coefficient_probe.m`，未提交）。
+> **已关闭（2026-09-06）**：上游已自行修复 macOS 27 兼容，此草稿无需发出。
+> 保留存档。本机克隆里的两个本地补丁也随之作废，下次拉上游 main 即可。
+>
+> ~~草稿，待你确认后再发到 21Z121Z1/XDRemux。补丁目前在本机克隆~~
+> ~~`../XDRemux-upstream` 工作区（`learnnode_coefficient_probe.m`，未提交）。~~
 
 ---
 

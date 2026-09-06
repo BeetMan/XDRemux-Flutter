@@ -52,12 +52,14 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 
 标准化阶段 OPPO 私有 UHDR 已转为 ISO 21496-1 tmap；风格装配只接线引用，不重编码增益映射数据。工作流直通设计（v0.3.0 起）：直接从 OPPO 原始照片做一次 styles 转换，**原始照片同时是写回 donor**——中间 baseline 会带增益映射图，二次转换会产生双增益映射图和重复引用结构（历史 bug，已删除该路径）。
 
-## 3. 已知问题（待修）
+## 3. 已知差异（与 Apple 原生文件对比）——已定论（2026-08-27 复查）
 
-- 天空蒙版 auxl 引用重复出现两次
-- 部分 auxl 引用目标为 `[主图, tmap]` 而非仅主图
+- ~~天空蒙版 auxl 引用重复出现两次（待修）~~ 复查结论：双天空蒙版 auxl 是 **Apple 原生结构**，无需清理
+- ~~部分 auxl 引用目标为 `[主图, tmap]` 而非仅主图（待修）~~ 同上，auxl→[primary,tmap] 也是 Apple 原生结构
+- Apple 照片内编辑兼容性已于 2026-08-16 iPhone 真机验证通过
+- 不承诺逐像素等价：目标是"Apple 照片中可继续编辑"，非字节级克隆
 
-验证现状：直出文件 ColorOS 相册、Windows WIC、heif-oxide 均可打开；Apple 照片内编辑兼容性待 iPhone 真机验证。
+验证现状：直出文件 ColorOS 相册、Windows WIC、heif-oxide 均可打开；Apple 照片内编辑兼容性 iPhone 真机已验证。
 
 ## 4. 诊断工具
 

@@ -19,6 +19,7 @@
 
 - **UI 页面只调 service**，不直接摸 FFI / MethodChannel
 - `xdremux_service.dart` 是 Rust FFI 的唯一门面：负责平台分流、`Isolate.run` 包装、JSON 报告 -> 异常 的翻译
+- `motion_photo_service.dart` 动态照片：异步识别（入队即跑）、拆分、逐卡策略应用
 - `apple_oppo_workflow_service.dart` 编排工作流三动作：`createAppleStylesCopy` / `writebackReturnedPhoto` / `preserveAppleReturnedPhoto`
 
 ## 3. 模型
@@ -39,10 +40,16 @@ Android `MainActivity.kt`：
 
 macOS/iOS：Swift 后端桥（研究路径，见 `architecture/platform-backend.md` §4）+ iOS Share Extension（`ios/Share Extension/ShareViewController.swift`，接收相册分享）。
 
+鸿蒙：无自写 MethodChannel——通知/图库/分享直驱 vendored fork 插件的 channel（`fluttertpc_*` 系列，见 `apps/flutter/third_party/ohos/`）；EntryAbility 原生桥处理系统分享（sendData file:// URI 拷到缓存）。
+
 ## 5. 更新机制
 
 `update_service.dart`：静默查 GitHub `/releases/latest`（自动跳过 pre-release），有新版时 SnackBar 提示。不做强制更新、不做自更新。
 
 ## 6. 术语规范（UI 文案）
 
-统一使用：**Apple 照片 / OPPO 原始照片 / 原机水印 / 元数据 / OPPO 私有尾部数据**；输出模式只说 **OPPO 兼容 / Apple 标准**。7/11 档策略等内部细节不进 UI。
+统一使用：**Apple 照片 / OPPO 原始照片 / 原机水印 / 元数据 / OPPO 私有尾部数据**；输出模式只说 **OPPO 兼容 / Apple 标准**。X6/X7 家族、7/11 档策略等内部细节不进 UI。
+
+## 7. 国际化
+
+全局 `t(zh, en)` 双语层（v0.4.0-pre.3 起）：设置页切换中文/English，全部界面文案即时刷新。批量完成状态栏文案是生成时定稿的，不随语言切换重译（下次批量按新语言生成，属设计行为）。

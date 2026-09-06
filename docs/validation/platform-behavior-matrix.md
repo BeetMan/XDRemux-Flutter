@@ -1,19 +1,19 @@
-# Windows / Android / macOS / iOS 平台行为矩阵
+# 平台行为矩阵（Windows / Android / macOS / iOS / 鸿蒙）
 
 > 用于冻结平台边界，避免导入、输出和队列逻辑继续分叉。
 
 ## 1. 平台职责
 
-| 能力 | Windows | Android | macOS | iOS |
-|---|---|---|---|---|
-| 默认引擎 | Rust | Rust | Rust | Rust |
-| 输入入口 | 文件选择器、桌面拖拽、分享导入 | 文件/媒体选择器、分享导入 | 文件选择器、桌面拖拽、Apple 照片拖入 | PHPicker、Files 文件选择器、分享导入 |
-| 输入副本 | 直接使用用户可访问路径 | 必要时复制 `content://` 到临时目录，再物化到持久输入目录 | 直接使用用户可访问路径 | 选择器返回临时文件，复制到持久输入目录 |
-| 输出目录 | 用户配置目录 / 输出目录 | App 专属外部目录 `output/` | 用户配置目录 / 输出目录 | App Documents `output/` |
-| 输出到系统图库 | 不提供 | `Gal.putImage`，支持相册分类 | 不提供 | `Gal.putImage`，支持相册分类 |
-| 分享 | `share_plus` | `share_plus` | `share_plus` | Runner 原生 `UIActivityViewController` |
-| 打开输出 | Explorer 定位 | `open_filex` + `image/*` | Finder 定位 | `open_filex` + HEIC UTI |
-| 批量后台 | 托盘 / 桌面进程 | Foreground Service | 托盘 / 桌面进程 | 不承诺后台持续转换 |
+| 能力 | Windows | Android | macOS | iOS | 鸿蒙 |
+|---|---|---|---|---|---|
+| 默认引擎 | Rust | Rust | Rust | Rust | Rust |
+| 输入入口 | 文件选择器、桌面拖拽、分享导入 | 文件/媒体选择器、分享导入 | 文件选择器、桌面拖拽、Apple 照片拖入 | PHPicker、Files 文件选择器、分享导入 | file_picker（vendored）、PhotoViewPicker 图库原图、sendData 分享 |
+| 输入副本 | 直接使用用户可访问路径 | 必要时复制 `content://` 到临时目录，再物化到持久输入目录 | 直接使用用户可访问路径 | 选择器返回临时文件，复制到持久输入目录 | file:// URI 拷到缓存后物化 |
+| 输出目录 | 用户配置目录 / 输出目录 | App 专属外部目录 `output/` | 用户配置目录 / 输出目录 | App Documents `output/` | App 私有目录，可保存图库 |
+| 输出到系统图库 | 不提供 | `Gal.putImage`，支持相册分类 | 不提供 | `Gal.putImage`，支持相册分类 | PhotoAccessHelper（gallery_saver fork） |
+| 分享 | `share_plus` | `share_plus` | `share_plus` | Runner 原生 `UIActivityViewController` | share_extend（vendored fork） |
+| 打开输出 | Explorer 定位 | `open_filex` + `image/*` | Finder 定位 | `open_filex` + HEIC UTI | open_filex fork |
+| 批量后台 | 托盘 / 桌面进程 | Foreground Service | 托盘 / 桌面进程 | 不承诺后台持续转换 | 桌面级进程（无前台服务需求） |
 
 ## 2. 当前导入流程
 
@@ -63,7 +63,7 @@
 
 | 平台 | Apple 标准输出 | OPPO 兼容输出 |
 |---|---|---|
-| Windows / Android / macOS / iOS | Rust HEIF 编解码器；可按 OPPO 原始照片恢复可见原机水印，不追加 OPPO 私有信息 | Rust HEIF 编解码器恢复可见原机水印、元数据和 OPPO 私有尾部数据 |
+| Windows / Android / macOS / iOS / 鸿蒙 | Rust HEIF 编解码器；可按 OPPO 原始照片恢复可见原机水印，不追加 OPPO 私有信息 | Rust HEIF 编解码器恢复可见原机水印、元数据和 OPPO 私有尾部数据 |
 
 macOS / iOS 仍保留 Swift/ImageIO 写回实现作为研究路径，但默认不再调用。
 
@@ -71,7 +71,7 @@ macOS / iOS 仍保留 Swift/ImageIO 写回实现作为研究路径，但默认�
 
 ## 5. 下一轮审计重点
 
-1. Android 各系统版本及 OPPO 设备上确认权限降级路径。
+1. ~~Android 各系统版本及 OPPO 设备上确认权限降级路径。~~（2026-08-27 真机回归覆盖）
 2. Windows 输出目录、重名覆盖和 Explorer 定位行为统一文案。
-3. 三端统一“取消、失败、重试、清除”的状态转换。
+3. ~~三端统一「取消、失败、重试、清除」的状态转换。~~（五端已统一走同一队列模型）
 4. 将平台行为矩阵中的规则补成自动化测试和 Release 验收清单。

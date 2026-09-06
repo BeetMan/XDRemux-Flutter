@@ -43,8 +43,9 @@
 
 | 文档 | 内容 |
 |---|---|
-| [flutter-app.md](app/flutter-app.md) | 页面/服务/模型结构、术语规范 |
+| [flutter-app.md](app/flutter-app.md) | 页面/服务/模型结构、术语规范、双语层 |
 | [workflow-design.md](app/workflow-design.md) | 四步工作流状态机、donor 配对、检查点 |
+| [motion-photo-ui-design.md](app/motion-photo-ui-design.md) | 动态照片四档策略、识别时机、3a/3b 设计记录 |
 | [android-integration.md](app/android-integration.md) | SAF 原则、原生组件、构建锁死项、调试速查 |
 | [apple-integration.md](app/apple-integration.md) | macOS dylib 打包、iOS 静态库、分发现状 |
 
@@ -53,19 +54,32 @@
 | 文档 | 内容 |
 |---|---|
 | [testing/conformance-suite.md](testing/conformance-suite.md) | 对拍套件、golden corpus、加用例流程 |
-| [operations/building.md](operations/building.md) | 四平台构建、变体说明 |
-| [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、历史踩坑 |
-| [operations/ci.md](operations/ci.md) | 三 workflow 剖析、runner 矩阵 |
+| [operations/building.md](operations/building.md) | 五平台构建、变体说明（含鸿蒙 hap） |
+| [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
+| [operations/ci.md](operations/ci.md) | 四 workflow 剖析、runner 矩阵 |
+
+## 研究记录（research/）
+
+| 文档 | 内容 |
+|---|---|
+| [harmonyos-support.md](research/harmonyos-support.md) | 鸿蒙支持研究全记录（已落地为正式平台） |
+| [motion-photo-parser-differential.md](research/motion-photo-parser-differential.md) | Motion Photo 解析器 Swift/Python/Rust 三方差分（12/12） |
+| [styles-upstream-logic-comparison.md](research/styles-upstream-logic-comparison.md) | key1 布局 + constrained solver 研究（研究闭环定案） |
+| [cast-to-key1-study.md](research/cast-to-key1-study.md) | cast→key1 映射研究（结论：不存在文件级映射） |
+| [reverse-key1-eval-20260825.md](research/reverse-key1-eval-20260825.md) | ReverseKey1 Core ML 批量评估（34 样本） |
+| [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
+| [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
 
 ## 路线图
 
-- [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 → Phase 2 ReverseKey1 评估 → Phase 3 动态照片 → Phase 4 性能与分发）
+- [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
+- [`docs/plans/sample-collection-202608.md`](plans/sample-collection-202608.md)：样本采集计划（A~E 组状态见 v0.4-roadmap 与设备兼容矩阵）
 
 ## 历史文档
 
 - `docs/standards/`：ISO 21496-1 / 23008-12 中译（formats/ 页面的标准依据，仍在引用）
 - `docs/validation/`：平台行为矩阵 + 设备兼容矩阵（**在维护**，排障时对照）
-- `docs/archive/`：历史阶段计划、交接备忘、一次性验证报告（v0.3.0 前）。仅作考古参考，内容可能与现状不符
+- `docs/archive/`：历史阶段计划、交接备忘、已完成清单与一次性验证报告。仅作考古参考，内容可能与现状不符
 
 ## 维护纪律
 

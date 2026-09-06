@@ -1,6 +1,9 @@
 # 鸿蒙（HarmonyOS）支持研究
 
 > 研究分支：`research/harmonyos`。调研时间：2026-08。结论状态：**全链路已通**——Rust 核心、CI（公开 SDK）、app 真机运行、接收分享/保存图库/工作流写回均验证通过。
+> **后续状态（2026-09-06）**：鸿蒙已落地为第五个正式发布平台（v0.3.2 起随 Release 发 hap）。
+> 发布/构建的现行规则（profile 模式、签名、vendored 插件）见 `operations/releasing.md` §3.5
+> 与 `operations/building.md`；本文保留为研究过程记录。
 
 ## 0.7 真机里程碑（2026-08-26，PLR-AL50 / HarmonyOS 7.0.0.102 / API 26）
 
