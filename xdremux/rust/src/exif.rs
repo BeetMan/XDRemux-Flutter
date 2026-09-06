@@ -137,9 +137,11 @@ impl ExifOrientation {
 
 /// Read the primary image's EXIF orientation from an HEIF Exif item.
 ///
-/// Missing EXIF or a missing orientation tag are both normal and map to
-/// orientation 1. A malformed Exif item is an error because silently using an
-/// unaligned gain map would produce visibly incorrect HDR output.
+/// Missing EXIF, a missing orientation tag, or an out-of-range orientation
+/// value (e.g. OPPO X9s Pro exports write 0) all map to orientation 1,
+/// matching ImageIO and the Swift reference. A structurally malformed Exif
+/// item is still an error because silently using an unaligned gain map would
+/// produce visibly incorrect HDR output.
 pub fn read_heif_exif_orientation(
     data: &[u8],
     items: &[ItemInfo],
@@ -262,16 +264,23 @@ fn parse_heif_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, Stri
             return Err("EXIF orientation must contain exactly one value".into());
         }
         let value = match field_type {
-            3 => read_tiff_u16(tiff, entry + 8, little_endian)?,
-            4 => u16::try_from(read_tiff_u32(tiff, entry + 8, little_endian)?)
-                .map_err(|_| "EXIF orientation LONG value exceeds u16")?,
+            3 => u32::from(read_tiff_u16(tiff, entry + 8, little_endian)?),
+            4 => read_tiff_u32(tiff, entry + 8, little_endian)?,
             _ => {
                 return Err(format!(
                     "unsupported EXIF orientation field type {field_type}"
                 ))
             }
         };
-        return ExifOrientation::from_u16(value);
+        // Out-of-range values (OPPO X9s Pro exports write 0, and writers in
+        // the wild also emit 9+) are clamped to Normal, matching ImageIO and
+        // the Swift reference — both treat an invalid orientation as 1
+        // instead of failing the whole conversion.
+        return Ok(match value {
+            1..=8 => ExifOrientation::from_u16(value as u16)
+                .expect("EXIF orientation 1..=8 is always valid"),
+            _ => ExifOrientation::Normal,
+        });
     }
 
     Ok(ExifOrientation::Normal)
@@ -762,6 +771,19 @@ mod tests {
             parse_heif_exif_orientation(&heif_exif_blob(None)).unwrap(),
             ExifOrientation::Normal
         );
+    }
+
+    /// OPPO X9s Pro exports write Orientation=0 with no irot; ImageIO and the
+    /// Swift reference clamp any out-of-range value to 1 instead of failing.
+    #[test]
+    fn heif_exif_orientation_clamps_out_of_range_values_to_normal() {
+        for value in [0u16, 9, 255, u16::MAX] {
+            assert_eq!(
+                parse_heif_exif_orientation(&heif_exif_blob(Some(value))).unwrap(),
+                ExifOrientation::Normal,
+                "EXIF orientation {value} must clamp to Normal"
+            );
+        }
     }
 
     #[test]
