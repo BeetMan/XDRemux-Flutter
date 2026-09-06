@@ -11,6 +11,8 @@
 |---|---|---|---|---|---|---|---|
 | OPPO Find X8 Ultra | 现款（2026-08/09） | 多张（含 5 张动态照片 + 1 张定位样本） | ✅ | ✅ | ✅ 真实坐标逐值一致（22.767672, 113.893064，2026-09-06） | ✅（源已带 UHDR 位时幂等） | Orientation=1；UserComment 带 `ASCII\0\0\0` 前缀；顶层 `QTI` box + 私有尾部 |
 | OnePlus 12 | 早期固件（2023-12 批次） | 15 | ✅ 3 张抽测 | ✅ 15/15 检测 + 几何校验 | ✅ 8 条目保留 | ✅ `oplus_1441792`→`oplus_538312704` | Orientation=1；**UserComment 无 ASCII 前缀**（更老格式）；两种分辨率 4608×3952 / 4096×3512 均通过；源不带 UHDR 路由位（0x160000/0x160400） |
+| OnePlus 12 | 新固件动态照片（2024-10） | 5 张 Live JPEG | ✅ 5/5 端到端（拆静帧→转换） | - | - | - | 单码流（LPEX v0）；静帧全为 Ultra HDR JPEG（hdrgm+MPF）；与 X8 Ultra 的双码流（LPEX v1+）不同 |
+| OnePlus 13 | 早期固件动态照片（2024-11） | 14 张 Live JPEG | ✅ 14/14 端到端 | - | - | - | 同上，LPEX v0 额外带 `frameInterpolationInfo`；全部 androidXMP 时间戳 |
 
 ## 已知设备特定问题
 
