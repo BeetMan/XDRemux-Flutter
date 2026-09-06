@@ -4872,8 +4872,9 @@ class _MobileQueueCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 5),
-                      // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
-                      // capture mode. Stacked as small pills on the second line.
+                      // Format chips: HDR kind (LHDR/UHDR) + capture mode.
+                      // The x6/x7 family is kept in the model for FFI/tests but
+                      // not shown — it duplicates the HDR kind for users.
                       Wrap(
                         spacing: 6,
                         runSpacing: 4,
@@ -4884,11 +4885,6 @@ class _MobileQueueCard extends StatelessWidget {
                               color: item.hdrKind == 'uhdr'
                                   ? theme.colorScheme.tertiary
                                   : theme.colorScheme.primary,
-                            ),
-                          if (item.family != null)
-                            _InfoChip(
-                              label: item.family!.toUpperCase(),
-                              color: theme.colorScheme.secondary,
                             ),
                           if (item.captureModeLabel != null &&
                               item.captureModeLabel!.isNotEmpty)
@@ -5208,10 +5204,10 @@ class _PhotoCard extends StatelessWidget {
                     outputPath: item.outputPath,
                     isConverted: isDone,
                   ),
-                  // Format chips: HDR kind (LHDR/UHDR) + family (X6/X7) +
-                  // capture mode. Same set as the mobile queue card.
+                  // Format chips: HDR kind (LHDR/UHDR) + capture mode.
+                  // Same set as the mobile queue card (family intentionally
+                  // omitted — see the queue card comment).
                   if (item.hdrKind != null ||
-                      item.family != null ||
                       (item.captureModeLabel != null &&
                           item.captureModeLabel!.isNotEmpty))
                     Positioned(
@@ -5228,11 +5224,6 @@ class _PhotoCard extends StatelessWidget {
                               color: item.hdrKind == 'uhdr'
                                   ? theme.colorScheme.tertiary
                                   : theme.colorScheme.primary,
-                            ),
-                          if (item.family != null)
-                            _OverlayChip(
-                              label: item.family!.toUpperCase(),
-                              color: theme.colorScheme.secondary,
                             ),
                           if (item.captureModeLabel != null &&
                               item.captureModeLabel!.isNotEmpty)
