@@ -148,11 +148,42 @@ Huawei HEIC（ISO 21496-1 tmap + HDR Vivid）
 | DfxData / HDR Vivid 私有元数据被 Apple 拒绝 | Apple 输出默认不 graft 华为私有 item，仅保留安全 EXIF/GPS |
 | 原始 Huawei HEIC 已被 Apple Photos 直接接受 | 优先考虑无损保留/轻量兼容路径，避免不必要重编码 |
 
-## 4. 当前下一步
+## 4. Step 0 执行记录（2026-09-07）
 
-**先执行 Step 0，不改 Rust 主路径：**
+### 4.1 样本 manifest
 
-1. 在 Mate 70 上保留 9 张 S0 原图；
-2. 生成样本 manifest 与现有探针基线；
-3. 测试 Mate 原图进入 Apple Photos 的原生行为；
-4. 根据结果决定 Step 1 的报告字段和 Step 2 是否必须完整解码。
+已冻结 9 张 Mate 70 HEIC：初始样本 3 张 + 通过 hdc 拉取的受控样本 6 张。
+照片与完整 manifest 只保存在本机 `C:/tmp/huawei/`，不入 git；仓库只记录结构结论和哈希前缀。
+
+| 样本组 | 数量 | 来源 | 关键差异 |
+|---|---:|---|---|
+| 初始 Mate 70 | 3 | 用户提供的 Mate 70 HEIC 压缩包 | 2 张含 `xtstyle`，1 张不含 |
+| 受控高像素 | 3 | Mate 70 → Docs → hdc | 1x / 0.6x / 4x；均不含 `xtstyle` |
+| 受控标准 | 3 | Mate 70 → Docs → hdc | 1x / 0.6x / 4x；均含 `xtstyle` |
+
+### 4.2 当前核心基线
+
+| 检查 | 结果 |
+|---|---|
+| `xdremux_classify` | 9/9 `missing-user-comment`；没有误报 OPPO 模式 |
+| `xdremux_inspect` | 9/9 失败：`Failed to locate LHDR metadata block` |
+| `tail_dump` | 9/9 `entries: []`；无 OPPO 私有尾部 |
+| `ftyp tmap` | 9/9 存在 |
+| `tmap` + base/gain-map grid | 9/9 存在 |
+| HDR 静态标记 `nclx/clli/mdcv` | 9/9 存在 |
+| HDR Vivid `it35` / `_cuva` | 9/9 存在 |
+| `xtstyle` | 5/9 存在；只在标准路径出现，高像素模式明确不支持 |
+| ffmpeg 基础解码 | 9/9 成功 |
+
+**Step 0 结论**：现有 Rust 核心不会误处理 Huawei HEIC，但也完全不识别它；
+下一步应先做只读 Huawei 分类/诊断，不应直接修改 OPPO 的 `extract_lhdr` 路径。
+
+### 4.3 尚待完成的闸门
+
+- [ ] 用 iPhone/Apple Photos 打开一张 Mate 标准样本和一张高像素样本；记录 HDR 显示、编辑、导出结果。
+- [ ] 若原图已被 Apple Photos 正确识别，保留“无需转换”的可能路径；否则进入 Step 1/2 的完整读取与归一化。
+
+## 5. 当前下一步
+
+**Step 1：只读识别与诊断。**先新增/临时实现 Huawei HEIC 结构报告，不触碰转换主路径；
+通过 9 张 S0 样本锁定报告字段和分类规则后，再进入 tmap 读取。
