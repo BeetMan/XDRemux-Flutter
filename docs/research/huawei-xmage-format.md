@@ -67,9 +67,72 @@
     └─ HDR Vivid → 查动态元数据标准（T/UWA 005）静态图用法
 ```
 
+## 6. 第一批样本解剖结果（2026-09-06，Mate 70 Pro HEIC ×3 + Pura 90 Pro Max JPEG ×28）
+
+### 6.1 核心结论：华为 HDR = ISO 21496-1 + HDR Vivid，双容器一致
+
+**与 OPPO 完全不同**：无私有顶层 box、无文件尾部 manifest——华为直接把 HDR 做进了
+**我们输出的同一个标准**（ISO 21496-1 gain map），并叠加中国 HDR Vivid（CUVA）元数据。
+
+### 6.2 HEIC 结构（Mate 70 Pro，HarmonyOS NEXT）
+
+```
+ftyp(heic, mif1, tmap) ── tmap 品牌即 ISO 21496-1 信号
+meta
+├─ 主图：grid 'base'（30 块 hvc1 tile）
+├─ 增益映射：grid 'gain map image'（4 块 hvc1 tile，1/4 分辨率）
+├─ tmap 'Tone-mapped representation' → dimg [base grid, gainmap grid]
+│   （与我们为 OPPO 转换生成的结构逐字节同型）
+├─ mime 'urn:com:huawei:photo:5:1:0:meta:xtstyle'（442KB，XMAGE 色卡，见 6.4）
+├─ mime 'DfxData'（473KB，内嵌 TIFF 'HUAWEI' + 相机诊断数据）
+├─ it35（237B，13 条记录，HDR Vivid/CUVA 元数据）
+└─ Exif（ImageDescription = '_cuva'，HUAWEI MakerNote，GPS 正常）
+iprp: rICC(672B) + nclx(BT.2020 primaries=9 / HLG transfer=18 / BT.2020 matrix=9)
+      + clli(maxCLL=900) + mdcv（静态 HDR 元数据齐备）
+```
+
+HDR 表示法 = **HLG 传递函数 + ISO 21496-1 增益映射 + HDR Vivid 元数据**三重冗余。
+注意：SDR 照片（IMG_...233644）仍有 tmap+增益映射网格，但**无 nclx/clli/mdcv/xtstyle**，
+体积减半——增益映射可能为恒等（待验证）。
+
+### 6.3 JPEG 结构（Pura 90 Pro Max，28 张全一致）
+
+- **ISO 21496-1 JPEG**：APP2 `urn:iso:std:iso:ts:21496:-1` + MPF 双图
+- 第二图 = **半分辨率 8-bit 3 分量 JPEG 增益映射**（如 4320×6240 主图 → 2160×3120 增益图），
+  自身还携带 APP8 ITUT35 / MPF / ICC
+- APP8 `ITUT35` = HDR Vivid T.35 元数据；EXIF `_cuva` 标记
+- **无 Google hdrgm XMP**（不是 Android Ultra HDR 体系）；**JPEG 中无 xtstyle**
+
+### 6.4 XMAGE 色卡（xtstyle）初剖
+
+- 固定 442368 字节；头部：`05 00 00 00`（版本 5，与 URN 中 `photo:5:1:0` 对应）
+  + 三个 float32 0.5；主体为**量化系数块**（字节分布集中在 0–3 与 192/128/64/255，
+  即 int8 小值与 -64/-128，典型的量化权重签名）
+- 两张不同照片载荷同尺寸同头部、12% 字节不同——色卡随场景/选择变化
+- 与 Apple 摄影风格 key1（34560 维 float16 格点 ≈ 69KB）概念对应，但体积约 6.4 倍，
+  且以 HEIF mime item 内嵌（Apple 走 AAE sidecar + 容器内私有结构）
+
+### 6.5 对 XDRemux 的含义（初步）
+
+1. **华为输入支持门槛低**：增益映射是标准 tmap/auxl 而非私有尾部——
+   读路径只需识别 tmap 品牌 + HLG，不需要 container.rs 的 OPPO 尾部族逻辑
+2. **输出兼容性假设（待真机验证）**：我们为 OPPO 转换生成的 ISO 21496-1 HEIC
+   理论上鸿蒙图库可直接识别 HDR——需要在 PLR-AL50 上实测（解读 C 的关键实验）
+3. **XMAGE 色卡 vs Apple 摄影风格**：两者都是「可编辑风格元数据 + 场景自适应系数」，
+   存在做双向概念映射的可能（长期研究项，类比 styles 管线）
+
+### 6.6 待办
+
+- [ ] 验证 SDR 照片的增益映射是否恒等（解码 233644 增益图看数值范围）
+- [ ] 233642 与 233646 是否为不同色卡/同卡异参（问用户拍摄时的操作）
+- [ ] it35 记录与 T/UWA 005 (HDR Vivid) 语法元素逐字段对应
+- [ ] xtstyle 系数块的几何形状推断（110592 个 int8 = 3×192×192？还是格点表）
+- [ ] DfxData 内嵌 TIFF 完整解析（可能含编辑参数）
+- [ ] **PLR-AL50 真机实验**：我们转换的 OPPO 输出在鸿蒙图库是否显示 HDR
+- [ ] H2/H4/H5/H6 组样本（PLR-AL50 自产：HDR 开关对比、人像、水印、动态照片）
+
 ## 5. 产出目标
 
 - `docs/formats/huawei-xmage.md`：格式文档（结论无论是否可接入都写）
 - 设备兼容矩阵加华为条目
-- 若可接入：管线接入方案（大概率是 container.rs 加华为 tail 族 +
-  categorize.rs 加识别规则）
+- 若可接入：管线接入方案（华为无尾部——大概率是新增 tmap 输入识别路径 + categorize.rs 规则，而非 container.rs 尾部族）
