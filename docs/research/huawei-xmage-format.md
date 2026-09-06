@@ -21,9 +21,16 @@
 
 ## 1. 方法论（沿用 ProXDR 逆向的成熟路径）
 
-1. **样本采集** → 2. **结构解剖**（box/tail  dump）→ 3. **双解码器验证**
+1. **样本采集** → 2. **结构解剖**（box/tail dump）→ 3. **双解码器验证**
    （heif-oxide vs 系统解码器，见 `formats/hevc-hevc-conventions.md` §5）→
    4. **格式文档化**（回填 `docs/formats/`）→ 5. **管线接入评估**
+
+### 样本可信度分级
+
+- **S0（唯一规范基准）**：Mate 70 Pro 优享版（PLR-AL50）相机原图，
+  通过 hdc 从设备文件路径直接拉取；保留完整 HEIF 容器、EXIF、MakerNote、HDR 元数据和私有 item。
+- **S1（探索性线索）**：此前从其他手机/其他来源收到的照片。由于传输链路可能重编码或清理元数据，
+  只用于提出假设，**不用于格式定论、兼容矩阵或产品实现**。
 
 探针全部现成：`tail_dump` / `styles_diag` / `wm_oneplus_probe`（结构）；
 `check_gps` / `heic_exif.py` / `heic_boxes.py`（EXIF/容器，/tmp 下的 Python 脚本可移植入库）。
@@ -67,12 +74,17 @@
     └─ HDR Vivid → 查动态元数据标准（T/UWA 005）静态图用法
 ```
 
-## 6. 第一批样本解剖结果（2026-09-06，Mate 70 Pro HEIC ×3 + Pura 90 Pro Max JPEG ×28）
+## 6. 第一批样本解剖结果（S0：Mate 70 Pro 原始 HEIC；S1 JPEG 仅作历史线索）
 
-### 6.1 核心结论：华为 HDR = ISO 21496-1 + HDR Vivid，双容器一致
+> 规范结论以下面的 Mate 70 Pro 原始 HEIC 为准。此前其他手机的 JPEG/HEIC 可能已丢失或改变元数据，
+> 不参与产品接入判断；相关内容单独降级为 §6.3 的探索性记录。
 
-**与 OPPO 完全不同**：无私有顶层 box、无文件尾部 manifest——华为直接把 HDR 做进了
+### 6.1 核心结论（以 Mate 70 Pro 原始 HEIC 为准）：ISO 21496-1 + HDR Vivid
+
+**与 OPPO 完全不同**：无私有顶层 box、无文件尾部 manifest——Mate 70 Pro 直接把 HDR 做进了
 **我们输出的同一个标准**（ISO 21496-1 gain map），并叠加中国 HDR Vivid（CUVA）元数据。
+
+结论已由 3 张初始 HEIC + 6 张通过 hdc 拉取的受控 HEIC 交叉确认。
 
 ### 6.2 HEIC 结构（Mate 70 Pro，HarmonyOS NEXT）
 
@@ -94,13 +106,16 @@ iprp: rICC(672B) + nclx(BT.2020 primaries=9 / HLG transfer=18 / BT.2020 matrix=9
 HDR 表示法 = **HLG 传递函数 + ISO 21496-1 增益映射 + HDR Vivid 元数据**三重冗余。
 三张图都含 nclx/clli/mdcv 与 tmap/增益映射；差异在于：233642/233646 是 **4320×5760 高像素路径**，带 xtstyle、DfxData 约 473KB、it35 237B；233644 是 **3072×4096 标准/合并像素路径**，不带 xtstyle、DfxData 约 436KB、it35 160B，文件也约小一半。
 
-### 6.3 JPEG 结构（Pura 90 Pro Max，28 张全一致）
+### 6.3 历史 JPEG 线索（S1，非权威）
 
-- **ISO 21496-1 JPEG**：APP2 `urn:iso:std:iso:ts:21496:-1` + MPF 双图
-- 第二图 = **半分辨率 8-bit 3 分量 JPEG 增益映射**（如 4320×6240 主图 → 2160×3120 增益图），
-  自身还携带 APP8 ITUT35 / MPF / ICC
-- APP8 `ITUT35` = HDR Vivid T.35 元数据；EXIF `_cuva` 标记
-- **无 Google hdrgm XMP**（不是 Android Ultra HDR 体系）；**JPEG 中无 xtstyle**
+此前收到的 Pura 90 Pro Max JPEG 曾观察到 APP2 `urn:iso:std:iso:ts:21496:-1`、MPF、ITUT35 和
+`_cuva` 等线索，但这些文件的来源/传输链路可能已经清理或改变元数据。
+
+因此本节只保留为后续重新采集时的**待验证假设**：
+
+- 可能存在 ISO 21496-1 JPEG + MPF 增益图路径；
+- 可能叠加 HDR Vivid T.35 元数据；
+- **不据此添加 JPEG 输入支持、不据此更新兼容矩阵**；需要从 Mate 70 Pro 或原始 Pura 设备通过 hdc 直接拉取原件后再确认。
 
 ### 6.4 XMAGE 色卡（xtstyle）初剖
 
