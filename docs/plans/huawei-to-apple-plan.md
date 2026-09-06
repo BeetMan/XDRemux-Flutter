@@ -1,156 +1,185 @@
-# 华为 Mate 70 HEIC → Apple 标准实施计划
+# 华为 Mate 70 照片支持计划：识别、色彩风格、人像与 Live Photo
 
-> 分支：`research/huawei-xmage`。制定时间：2026-09-07。
-> 规范样本：Mate 70 Pro 优享版（PLR-AL50）原始 HEIC，均通过 hdc 从设备文件路径直接拉取。
+> 分支：`research/huawei-xmage`。制定时间：2026-09-07，Step 0 已完成。
+> 规范样本：Mate 70 Pro 优享版（PLR-AL50）原始 HEIC，优先使用 hdc 直接拉取的文件。
 > 其他手机照片只作探索性线索，不作为实现依据。
 
-## 1. 目标与边界
+## 1. 已确认的产品判断
 
-### 目标
+Mate 70 原生 HEIC 已验证可以在 iPhone Apple Photos 中触发 HDR 显示：
 
-把 Mate 70 Pro 相机产生的 Huawei HDR HEIC 接入 XDRemux 现有 Rust 主路径，输出已有的
-**Apple 标准**模式：
+- 标准模式：可触发 HDR；包含 `xtstyle`；
+- 高像素模式：可触发 HDR；明确不支持 XMAGE 风格；
+- 两者都使用 ISO 21496-1 `tmap` + gain map，并带 HDR Vivid 元数据。
+
+因此，普通的“华为 HDR → Apple HDR”重编码**没有产品意义**。对于普通华为 HDR 照片，
+产品行为应是：
 
 ```text
-Huawei HEIC（ISO 21496-1 tmap + HDR Vivid）
-  → 读取 base/gain map
-  → 归一化 HDR 元数据与色彩路径
-  → 复用现有 Apple tmap/gain-map writer
-  → Apple Photos 可继续编辑的 HEIC
+识别为 Apple 已可读的 Huawei HDR
+  → 提示「无需转换」
+  → 保留原文件，不重编码
 ```
 
-支持两种已确认输入路径：
+后续研究只围绕 Apple Photos 不会自动解决的差异：
 
-- **标准模式**：4320×5760，包含 `xtstyle`（XMAGE 风格）
-- **高像素模式**：约 5K–8K，明确**不支持 XMAGE 风格**，但仍包含 ISO 21496-1 + HDR Vivid
+1. XMAGE 色彩风格（`xtstyle`）；
+2. 华为人像模式到 Apple 人像结构；
+3. 华为动态照片到 Apple Live Photo。
 
-### 不做
+## 2. 产品边界
 
-- 暂不实现 XMAGE `xtstyle` → Apple Photographic Styles 的语义转换
-- 不为高像素模式“恢复”不存在的 XMAGE 风格
-- 暂不实现 Huawei JPEG 输入（之前样本元数据来源不可靠）
-- 暂不生成 Huawei 专属 `it35` / `_cuva` 作为新的输出格式
-- 暂不恢复华为原机水印（需要 Mate 70 原始带水印样本）
-- 不新增“华为兼容”用户输出模式；输出仍只有 **OPPO 兼容 / Apple 标准**
+### 做
 
-## 2. 阶段计划
+- Mate 70 Huawei HDR HEIC 只读识别、诊断和“无需转换”判断；
+- 标准模式 XMAGE `xtstyle` 的结构研究，以及未来是否能映射 Apple 摄影风格的评估；
+- 华为人像深度/辅助图提取与 Apple 人像图研究；
+- 华为动态照片拆分、静帧处理、Apple Live Photo 配对合成；
+- 普通 EXIF、GPS、Orientation 和拍摄时间安全保留。
 
-### Step 0：基线与兼容性闸门（先做，不改主路径）
+### 暂不做
 
-**工作**
+- 不把普通 Huawei HDR 重新编码为 Apple HDR；
+- 不实现 `xtstyle` → Apple Photographic Styles 的语义转换，除非完成字段/效果验证；
+- 不为高像素模式恢复不存在的 XMAGE 风格；
+- 暂不实现 Huawei JPEG 输入（此前样本元数据来源不可靠）；
+- 暂不生成 Huawei 专属 `it35` / `_cuva` 输出；
+- 暂不恢复华为原机水印（需要 Mate 70 原始带水印样本）；
+- 不新增“华为兼容”输出模式；现有输出模式仍只有 **OPPO 兼容 / Apple 标准**。
 
-1. 固定 9 张 S0 样本清单：初始 HEIC ×3 + hdc 受控样本 ×6。
-2. 为每张记录结构摘要（尺寸、焦段、item、tmap、gain map、`xtstyle`、HDR 标记、EXIF/GPS）。
-3. 跑当前 `xdremux_classify` / `xdremux_inspect` / `iso_validate_probe`，记录当前行为：
-   是成功、普通 HEIC、还是不支持。
-4. 直接验证原始 Mate HEIC 在 Apple Photos 中是否已经能显示 HDR；这决定是否需要
-   “完整重写”还是可以增加“标准兼容检查/轻量归一化”。
+## 3. 阶段计划
 
-**验收**
+### Step 0：基线与兼容性闸门——已完成
 
-- 9 张样本有可复现 manifest（照片不入 git）；
-- 明确当前代码的失败边界；
-- 原图在 Apple Photos 的显示、编辑、导出结果有记录。
+- 冻结 9 张 Mate 70 HEIC：初始样本 3 张 + hdc 受控样本 6 张；
+- 9/9 含 `tmap`、base/gain-map grid、`nclx/clli/mdcv`、HDR Vivid `it35` / `_cuva`；
+- 5/9 含 `xtstyle`，只出现在标准路径；高像素路径不支持 XMAGE 风格；
+- 当前 Rust 9/9 无法识别为 OPPO，也无法通过现有 LHDR inspect；
+- iPhone Apple Photos 已确认标准/高像素原图都能触发 HDR 显示；
+- Photos 内编辑、导出和回读仍待验证。
 
-### Step 1：只读识别与诊断
+详细记录见本文件 §6。
 
-**工作**
+### Step 1：Huawei 原生 HDR 只读识别与“无需转换”
 
-- 新增 Huawei HEIC 识别器（建议放入 `huawei_heic.rs`，通用 box 解析复用 `isobmff.rs`）：
+**目标：不解码、不重编码即可安全判断。**
+
+工作：
+
+- 新增独立 Huawei HEIC 结构识别器（建议 `huawei_heic.rs`，复用 `isobmff.rs` 通用解析）：
   - `ftyp` 是否含 `tmap`；
-  - `tmap` item 与 `dimg` 引用；
-  - `grid 'base'` / `grid 'gain map image'`；
-  - gain map 的 `auxC` / item 关系；
-  - HLG `nclx`、`clli`、`mdcv`、`it35`、`_cuva`；
-  - `xtstyle` 是否存在及其字节长度/版本；
-  - EXIF、GPS、Orientation、焦段和尺寸。
-- 扩展 `categorize.rs` / `xdremux_classify`：华为 HDR 单独分类，不误报 OPPO LHDR/UHDR。
-- 扩展 inspect JSON/FFI 报告：只读报告，不尝试转换。
+  - `tmap` item、`dimg`、base/gain-map grid；
+  - `nclx`、`clli`、`mdcv`、`it35`、`_cuva`；
+  - `xtstyle` 是否存在、版本和长度；
+  - EXIF/GPS/Orientation/尺寸/焦段。
+- 扩展输入分类和 inspect 报告，增加 Huawei 原生 HDR 状态；
+- 普通 Huawei HDR 进入队列后显示：**“无需转换：此照片已是 Apple 可读 HDR”**；
+- 不调用 OPPO `extract_lhdr`，不进入 x265、gain-map 重编码流程；
+- 原文件保持原样，允许用户打开输出目录或继续分享。
 
-**验收**
+验收：
 
-- 9 张样本全部识别为 Huawei HDR；
-- 标准/高像素和 1x/0.6x/4x 的差异准确报告；
-- 普通 HEIC、OPPO HEIC 不被误分类；
-- 无样本时 fixture 门禁优雅跳过。
+- 9 张 S0 样本全部识别为 Huawei HDR；
+- 标准/高像素、1x/0.6x/4x 差异准确报告；
+- OPPO、普通 HEIC、UHDR JPEG 不误分类；
+- 无样本 fixture 时测试优雅跳过；
+- UI 不显示内部 X6/X7 或私有实现标签。
 
-### Step 2：读取 Huawei tmap 图
+### Step 2：XMAGE 色彩风格研究
 
-**工作**
+**目标：先回答“Apple Photos 是否已经保留/理解色彩效果”，不急于转换。**
 
-- 解析华为 `tmap` 图：primary base grid + gain-map grid + `dimg` tile 列表。
-- 读取 `iloc` extent、`ipma` 属性、`ispe` 几何和 `hvcC`；处理 1024/2048 tile 两种路径。
-- 解码 base 与 gain-map HEVC，确认 gain map 的通道布局、尺寸和数值域。
-- 将结果转换成现有内部 gain-map 表示，不改变现有 OPPO/LHDR/UHDR 输入路径。
+工作：
 
-**验收**
+1. 对标准模式的 `xtstyle` 做只读结构解析：版本、头部、长度、系数布局；
+2. 采集至少两种不同 XMAGE 色彩设定的标准模式原图，比较 `xtstyle` 与像素效果；
+3. 验证高像素模式无 `xtstyle` 是固定产品限制；
+4. 在 Apple Photos 中比较：原图显示、编辑面板、导出后是否保留视觉效果；
+5. 对 Apple Photographic Styles 做概念字段对照，但不假设两者可互转。
 
-- 9 张样本 base/gain map 均可解码；
-- gain map 尺寸、Orientation、旋转后的几何关系正确；
-- heif-oxide 与系统/ffmpeg 解码结果无结构性差异；
-- 不修改源文件，不依赖 Huawei 私有 DfxData/xtstyle 才能得到 HDR。
+第一版产品行为：
 
-### Step 3：归一化到 Apple 标准输出
+- 识别并报告“含 XMAGE 色彩风格”；
+- 不把 Huawei `xtstyle` 伪装成 Apple 摄影风格；
+- 不因风格 item 存在而重编码普通 HDR；
+- 任何未来转换都必须保留原文件，避免丢失 Huawei 风格信息。
 
-**工作**
+验收：
 
-- 复用 `iso21496.rs` 与 `isobmff_write.rs` 的 Apple tmap writer。
-- 将 Huawei HLG/HDR Vivid 输入转换成 Apple 输出所需的内部 `IsoMeta`；具体 transfer/
-  luminance 映射必须由 Step 0 的 Apple Photos 实测决定，不凭名称猜测。
-- 默认保留：EXIF、GPS、Orientation、拍摄时间、相机基本信息。
-- 默认不把 Huawei 私有 `xtstyle`、DfxData、`it35` 原样塞进 Apple 输出；报告中说明已检测到，
-  但不声称已完成 XMAGE → Apple 风格转换。
-- 输出只走现有 **Apple 标准**分支；OPPO 兼容写回保持回归不变。
+- `xtstyle` 无损检测；
+- 标准/高像素行为有明确文档；
+- 至少两种风格设定有差分样本；
+- 没有 Apple Photos 语义映射结论前，不进入生产转换。
 
-**验收**
+### Step 3：华为人像 → Apple 人像
 
-- 标准模式和高像素模式都能输出可解码 HEIC；
-- 输出包含 Apple tmap + base/gain map；
-- EXIF/GPS/Orientation 保留；
-- 无重复或悬空 item、iref、ipma、iloc；
-- 旧 OPPO、UHDR JPEG、普通 HEIC 回归全过。
+**目标：研究华为深度/辅助图是否能接入现有 Apple 人像图管线。**
 
-### Step 4：Apple Photos 真机闭环
+工作：
 
-**验证矩阵**
+- 用 Mate 70 拍原始人像 HEIC（标准模式、高像素模式各至少一张）；
+- 解析 `iinf` / `iref` / `iprp`，寻找 depth/disparity/auxiliary item；
+- 记录华为深度图的尺寸、位深、通道、方向和深度语义；
+- 与现有 OPPO `rear.depth` → Apple portrait graph 路径对照；
+- 只在深度语义确认后，适配 `portrait.rs` / `portrait_depth.rs`；
+- Apple Photos 真机验证景深滑杆、主体识别、编辑往返。
 
-| 输入 | 输出 | 检查 |
-|---|---|---|
-| Mate 标准模式 | Apple 标准 | Apple Photos HDR 显示、继续编辑、导出 |
-| Mate 高像素模式 | Apple 标准 | 同上；确认无 XMAGE 风格不影响 HDR |
-| 1x / 0.6x / 4x | Apple 标准 | 尺寸、色彩、Orientation、GPS |
-| 夜景/人像（后续样本） | Apple 标准 | 不误损 depth/辅助图 |
+验收：
 
-**验收门槛**
+- 人像源文件不损坏，普通 HDR 仍保持原图直通；
+- 深度图结构可解释；
+- 失败时明确提示“华为人像结构暂不支持”，不输出错误景深图。
 
-- Apple Photos 显示 HDR，无黑屏、灰屏、增益错位；
-- Photos 内编辑后导出仍可读；
-- iPhone/macOS ImageIO 可读；
-- 与原图 EXIF/GPS 对照一致；
-- 失败时报告清楚区分：不支持格式、解码失败、输出验证失败。
+### Step 4：华为动态照片 → Apple Live Photo
 
-### Step 5：产品接入与文档
+**目标：复用现有 Motion Photo / Live Photo 能力完成配对。**
 
-- Flutter 选图/拖入保持 HEIC 入口不变；只更新分类 chip、诊断报告和失败文案。
-- 不在 UI 展示 X6/X7 或 Huawei 内部格式标签；设置页排障信息可显示输入类型。
-- 更新 `docs/formats/huawei-xmage.md`、设备兼容矩阵、FFI 契约和平台验证记录。
-- 增加本地 fixture 门禁：照片/模型不入 git，缺 fixture 时跳过而不是让 CI 失败。
-- 完成后再决定是否从 research 分支合并到主线；不自动创建 release tag。
+工作：
 
-## 3. 技术风险与决策点
+- 用 Mate 70 拍一张原始动态照片，并通过文件管理器复制到 Docs；
+- 检查 Huawei 动态照片是 Android Motion Photo、LPEX 还是新的 Huawei 结构；
+- 接入现有 `motion_photo.rs` 拆分/识别路径；
+- 静帧如果已是 Apple 可读 HDR，则不重复转换；
+- 复用 `live_photo.rs` 合成 MOV 配对、content identifier 和 still-image-time；
+- iPhone Apple Photos 验证长按播放、编辑、导出和重新导入。
+
+验收：
+
+- 原始动态照片识别稳定；
+- 静帧 HDR 不丢失；
+- Live Photo 配对可被 Apple Photos 接受；
+- 不把 Huawei 原视频错误当作普通 JPEG/HEIC。
+
+### Step 5：Flutter 产品接入与文档
+
+- 队列卡显示“无需转换（Apple 已支持 HDR）”；
+- 允许用户查看原图、复制原图或继续进入人像/动态照片专用流程；
+- XMAGE 风格只做诊断信息，不进入普通转换按钮；
+- 人像和 Live Photo 采用独立策略，不改变普通 OPPO/Apple 工作流；
+- 更新 `docs/formats/`、设备兼容矩阵、FFI 契约和真机验证记录；
+- 照片和 ONNX 模型不入 git，fixture 缺失时优雅跳过。
+
+## 4. 技术风险与决策点
 
 | 风险 | 处理 |
 |---|---|
-| Huawei HLG 与 Apple EDR/ISO gain map 的映射关系不等同 | 先做原图 Apple Photos 验证，再定 `IsoMeta` 映射 |
-| Huawei `tmap` item 的 62B payload 与我们的 Apple payload 不同 | 只复用图结构读取；输出由现有 Apple writer 重新生成 |
-| 高像素 base 尺寸与标准模式不同 | 以 `ispe`/tile graph 动态读取，不写死 4320×5760 |
-| `xtstyle` 是 Huawei 私有量化数据 | 第一版只检测/报告，不做语义转换 |
-| DfxData / HDR Vivid 私有元数据被 Apple 拒绝 | Apple 输出默认不 graft 华为私有 item，仅保留安全 EXIF/GPS |
-| 原始 Huawei HEIC 已被 Apple Photos 直接接受 | 优先考虑无损保留/轻量兼容路径，避免不必要重编码 |
+| 普通 Huawei HDR 已被 Apple Photos 接受 | 默认不重编码，只做识别和原图直通 |
+| `xtstyle` 是 Huawei 私有量化数据 | 第一版只检测/保留原文件，不做语义转换 |
+| 高像素模式不支持 XMAGE 风格 | 不尝试恢复或伪造风格 |
+| 华为人像深度语义未知 | 先采样和解码，无法确认就不写 Apple 人像图 |
+| 华为动态照片结构未知 | 先接入现有 Motion Photo probe，再决定适配器 |
+| Apple Photos 编辑后可能改变 Huawei 私有 item | 原文件永远保留，输出作为新副本 |
 
-## 4. Step 0 执行记录（2026-09-07）
+## 5. 当前下一步
 
-### 4.1 样本 manifest
+**Step 1：只读识别与“无需转换”诊断。**
+
+先实现/验证 Huawei HEIC 的结构报告和输入分类，不触碰普通 HDR 转换主路径；
+确认后再分别推进 XMAGE 风格、人像和 Live Photo 三条研究线。
+
+## 6. Step 0 执行记录（2026-09-07）
+
+### 6.1 样本 manifest
 
 已冻结 9 张 Mate 70 HEIC：初始样本 3 张 + 通过 hdc 拉取的受控样本 6 张。
 照片与完整 manifest 只保存在本机 `C:/tmp/huawei/`，不入 git；仓库只记录结构结论和哈希前缀。
@@ -161,7 +190,7 @@ Huawei HEIC（ISO 21496-1 tmap + HDR Vivid）
 | 受控高像素 | 3 | Mate 70 → Docs → hdc | 1x / 0.6x / 4x；均不含 `xtstyle` |
 | 受控标准 | 3 | Mate 70 → Docs → hdc | 1x / 0.6x / 4x；均含 `xtstyle` |
 
-### 4.2 当前核心基线
+### 6.2 当前核心基线
 
 | 检查 | 结果 |
 |---|---|
@@ -175,15 +204,11 @@ Huawei HEIC（ISO 21496-1 tmap + HDR Vivid）
 | `xtstyle` | 5/9 存在；只在标准路径出现，高像素模式明确不支持 |
 | ffmpeg 基础解码 | 9/9 成功 |
 
-**Step 0 结论**：现有 Rust 核心不会误处理 Huawei HEIC，但也完全不识别它；
-下一步应先做只读 Huawei 分类/诊断，不应直接修改 OPPO 的 `extract_lhdr` 路径。
+### 6.3 Apple Photos 闸门
 
-### 4.3 尚待完成的闸门
+- [x] Mate 标准模式原图在 iPhone Apple Photos 中触发 HDR 显示；
+- [x] Mate 高像素模式原图在 iPhone Apple Photos 中触发 HDR 显示；
+- [ ] Photos 内编辑、导出并回读验证。
 
-- [ ] 用 iPhone/Apple Photos 打开一张 Mate 标准样本和一张高像素样本；记录 HDR 显示、编辑、导出结果。
-- [ ] 若原图已被 Apple Photos 正确识别，保留“无需转换”的可能路径；否则进入 Step 1/2 的完整读取与归一化。
-
-## 5. 当前下一步
-
-**Step 1：只读识别与诊断。**先新增/临时实现 Huawei HEIC 结构报告，不触碰转换主路径；
-通过 9 张 S0 样本锁定报告字段和分类规则后，再进入 tmap 读取。
+**Step 0 结论**：普通 Huawei HDR 不需要 XDRemux 重编码即可在 Apple Photos 显示 HDR；
+产品价值应集中在识别提示、XMAGE 风格、人像和 Live Photo，而不是普通 HDR 转换。
