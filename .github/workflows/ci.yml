@@ -9,8 +9,6 @@ permissions:
   contents: read
 
 env:
-  # Project memory: pub packages are fetched through the China mirror.
-  PUB_HOSTED_URL: https://pub.flutter-io.cn
   X265_TAG: 4.2
 
 jobs:
