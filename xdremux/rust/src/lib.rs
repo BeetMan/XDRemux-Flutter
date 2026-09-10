@@ -999,7 +999,8 @@ fn xdremux_convert_impl(
     // map via MPF instead of an OPPO tail: decode the base JPEG, re-encode
     // the primary as HEVC tiles and synthesize a source container so the
     // regular UHDR path runs unchanged.
-    let mut source = source;
+    let raw_source = source;
+    let mut source = raw_source.clone();
     let extracted = if source.starts_with(&[0xFF, 0xD8]) {
         match uhdr_jpeg::parse(&source) {
             Ok(Some(info)) => {
@@ -1123,7 +1124,7 @@ fn xdremux_convert_impl(
                         };
                     }
                 };
-                match portrait::run_portrait(&source, &base) {
+                match portrait::run_portrait(&raw_source, &base) {
                     Ok(portraited) => {
                         if let Err(error) = std::fs::write(&standard_output, portraited) {
                             let _ = std::fs::remove_file(&standard_output);
