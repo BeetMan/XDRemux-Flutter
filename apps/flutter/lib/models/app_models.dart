@@ -721,6 +721,81 @@ class PhotographicStyleSummary {
   }
 }
 
+/// Parsed photo shooting parameters (EXIF) and HDR GainMap properties.
+class PhotoDetailsModel {
+  final bool success;
+  final String? errorMessage;
+  final String? make;
+  final String? model;
+  final String? dateTime;
+  final String? exposureTime;
+  final String? fNumber;
+  final String? iso;
+  final String? focalLength;
+  final String? focalLength35mm;
+  final String? exposureBias;
+  final int? width;
+  final int? height;
+  final String? hdrKind;
+  final double? edrScale;
+  final double? gainMapMax;
+
+  const PhotoDetailsModel({
+    required this.success,
+    this.errorMessage,
+    this.make,
+    this.model,
+    this.dateTime,
+    this.exposureTime,
+    this.fNumber,
+    this.iso,
+    this.focalLength,
+    this.focalLength35mm,
+    this.exposureBias,
+    this.width,
+    this.height,
+    this.hdrKind,
+    this.edrScale,
+    this.gainMapMax,
+  });
+
+  factory PhotoDetailsModel.fromJson(Map<String, dynamic> json) {
+    return PhotoDetailsModel(
+      success: json['success'] == true,
+      errorMessage: json['errorMessage'] as String?,
+      make: json['make'] as String?,
+      model: json['model'] as String?,
+      dateTime: json['dateTime'] as String?,
+      exposureTime: json['exposureTime'] as String?,
+      fNumber: json['fNumber'] as String?,
+      iso: json['iso'] as String?,
+      focalLength: json['focalLength'] as String?,
+      focalLength35mm: json['focalLength35mm'] as String?,
+      exposureBias: json['exposureBias'] as String?,
+      width: json['width'] as int?,
+      height: json['height'] as int?,
+      hdrKind: json['hdrKind'] as String?,
+      edrScale: (json['edrScale'] as num?)?.toDouble(),
+      gainMapMax: (json['gainMapMax'] as num?)?.toDouble(),
+    );
+  }
+
+  String get focalLengthSummary {
+    if (focalLength != null && focalLength35mm != null) {
+      return '$focalLength (${t('等效', 'equiv.')} $focalLength35mm)';
+    }
+    return focalLength ?? focalLength35mm ?? '';
+  }
+
+  String get dimensionsSummary {
+    if (width != null && height != null) {
+      final mp = (width! * height!) / 1000000.0;
+      return '$width × $height (${mp.toStringAsFixed(1)} MP)';
+    }
+    return '';
+  }
+}
+
 class QueueItem {
   final String id; // UUID string
   final String inputPath;
