@@ -8,6 +8,7 @@ pub mod edr;
 pub mod exif;
 pub mod live_photo;
 pub mod motion_photo;
+pub mod photographic_style;
 pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
@@ -268,6 +269,68 @@ pub extern "C" fn xdremux_make_live_photo(
             "stillPath": still_out_path,
             "videoPath": mov_path,
             "contentIdentifier": content_id,
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect a photo for OPPO Photographic Style metadata and embedded un-styled base image.
+/// Returns a JSON report with `hasPhotographicStyle` and style parameters when present.
+#[no_mangle]
+pub extern "C" fn xdremux_photographic_style_inspect(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path_str).map_err(|e| format!("cannot read photo: {e}"))?;
+        match photographic_style::parse_photographic_style(&data) {
+            Some(style) => Ok(style.to_json()),
+            None => Ok(serde_json::json!({ "hasPhotographicStyle": false })),
+        }
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "hasPhotographicStyle": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Extract the un-styled base photo from a photo containing an OPPO Photographic Style.
+/// Writes the full-resolution base photo directly to `output_path`.
+#[no_mangle]
+pub extern "C" fn xdremux_extract_base_photo(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if input_path.is_null() || output_path.is_null() {
+            return Err("input_path and output_path are required".into());
+        }
+        let in_str = unsafe { CStr::from_ptr(input_path) }
+            .to_str()
+            .map_err(|_| "input_path is not valid UTF-8".to_string())?;
+        let out_str = unsafe { CStr::from_ptr(output_path) }
+            .to_str()
+            .map_err(|_| "output_path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(in_str).map_err(|e| format!("cannot read photo: {e}"))?;
+        let bytes = photographic_style::extract_base_photo_to_file(&data, std::path::Path::new(out_str))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputPath": out_str,
+            "bytesWritten": bytes,
         }))
     })();
     let payload = match result {

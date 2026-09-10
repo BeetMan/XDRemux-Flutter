@@ -256,6 +256,14 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
+  static final _photographicStyleInspect = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_photographic_style_inspect');
+
+  static final _extractBasePhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_extract_base_photo');
+
   static final _livePhotoPairValid = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
@@ -525,6 +533,49 @@ class XdRemuxFFI {
       };
     } finally {
       calloc.free(pathPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  /// Inspect a photo for OPPO Photographic Style metadata and embedded un-styled base image.
+  static Map<String, dynamic> photographicStyleInspect(String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      final report = _photographicStyleInspect(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{'hasPhotographicStyle': false};
+      }
+      final decoded = jsonDecode(report.toDartString());
+      return decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : {'hasPhotographicStyle': false};
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  /// Extract the un-styled base photo directly from the container tail and write to [outputPath].
+  static Map<String, dynamic> extractBasePhoto(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final report = _extractBasePhoto(inPtr, outPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust extract base photo returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Malformed report from Rust extract base photo',
+      };
+    } finally {
+      calloc.free(inPtr);
       calloc.free(outPtr);
     }
   }

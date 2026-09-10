@@ -671,6 +671,56 @@ class MotionPhotoSummary {
   }
 }
 
+/// How a Photographic Style photo is handled at conversion time.
+enum PhotographicStyleMode {
+  /// Keep the styled photo (default conversion).
+  keepStyle,
+
+  /// Convert the styled photo and also export the un-styled base photo (.base.jpg)
+  /// next to the converted output.
+  extractBasePhoto,
+
+  /// Convert the un-styled base photo as the primary output (restore un-styled original).
+  convertBasePhoto;
+
+  String get displayName {
+    switch (this) {
+      case PhotographicStyleMode.keepStyle:
+        return t('保留风格', 'Keep style');
+      case PhotographicStyleMode.extractBasePhoto:
+        return t('提取底片', 'Extract base');
+      case PhotographicStyleMode.convertBasePhoto:
+        return t('仅转换底片', 'Convert base');
+    }
+  }
+}
+
+/// Parsed Photographic Style summary attached to a queue item.
+class PhotographicStyleSummary {
+  final String styleNameZh;
+  final String styleNameEn;
+  final String lutName;
+  final int baseImageBytes;
+  final int intensity;
+  final int tone;
+  final String version;
+
+  const PhotographicStyleSummary({
+    required this.styleNameZh,
+    required this.styleNameEn,
+    required this.lutName,
+    required this.baseImageBytes,
+    required this.intensity,
+    required this.tone,
+    required this.version,
+  });
+
+  String get baseSizeLabel {
+    final mb = baseImageBytes / (1024 * 1024);
+    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(baseImageBytes / 1024).round()}KB';
+  }
+}
+
 class QueueItem {
   final String id; // UUID string
   final String inputPath;
@@ -695,6 +745,12 @@ class QueueItem {
   /// Per-card handling for Motion Photos. Defaults from the configured
   /// default policy (skip) at ingest time.
   MotionPhotoMode motionPhotoMode;
+
+  /// Non-null when the input carries an OPPO Photographic Style with an embedded base image.
+  PhotographicStyleSummary? photographicStyle;
+
+  /// Per-card handling for Photographic Styles.
+  PhotographicStyleMode photographicStyleMode;
 
   /// Backend captured when this item starts, so progress/cancellation remain
   /// tied to the request even if settings change for a later batch.
@@ -739,6 +795,8 @@ class QueueItem {
     this.family,
     this.motionPhoto,
     this.motionPhotoMode = MotionPhotoMode.skip,
+    this.photographicStyle,
+    this.photographicStyleMode = PhotographicStyleMode.keepStyle,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,

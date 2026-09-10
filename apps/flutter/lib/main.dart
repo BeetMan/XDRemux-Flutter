@@ -28,6 +28,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/photographic_style_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
@@ -371,6 +372,12 @@ class _HomePageState extends State<HomePage> {
         orElse: () => MotionPhotoMode.skip,
       );
 
+      final psJson = cpItem.photographicStyle;
+      final psMode = PhotographicStyleMode.values.firstWhere(
+        (e) => e.name == cpItem.photographicStyleMode,
+        orElse: () => PhotographicStyleMode.keepStyle,
+      );
+
       final restoredItem = QueueItem(
         id: _makeId(),
         inputPath: cpItem.inputPath,
@@ -397,6 +404,19 @@ class _HomePageState extends State<HomePage> {
                   streamCount: (mpJson['streamCount'] as num?)?.toInt() ?? 1,
                 ),
         motionPhotoMode: mpMode,
+        photographicStyle:
+            psJson == null
+                ? null
+                : PhotographicStyleSummary(
+                  styleNameZh: psJson['styleNameZh'] as String? ?? '摄影风格',
+                  styleNameEn: psJson['styleNameEn'] as String? ?? 'Style',
+                  lutName: psJson['lutName'] as String? ?? '',
+                  baseImageBytes: (psJson['baseImageBytes'] as num?)?.toInt() ?? 0,
+                  intensity: (psJson['intensity'] as num?)?.toInt() ?? 100,
+                  tone: (psJson['tone'] as num?)?.toInt() ?? 0,
+                  version: psJson['version'] as String? ?? '1.0',
+                ),
+        photographicStyleMode: psMode,
       );
       // Live Photo pairing provenance: a converted pair is only complete
       // when the sibling MOV still exists and its content identifier
@@ -1020,6 +1040,18 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Async Photographic Style detection for a freshly queued item.
+  Future<void> _inspectPhotographicStyle(QueueItem item) async {
+    try {
+      final summary = await PhotographicStyleService.inspect(item.inputPath);
+      if (summary == null) return;
+      item.photographicStyle = summary;
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('[XDRemux][style] inspect failed for ${item.inputPath}: $e');
+    }
+  }
+
   Future<void> _ingestPickedFiles(
     List<PickedItem> files, {
     required String source,
@@ -1099,6 +1131,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
+        _inspectPhotographicStyle(_queue.last);
         existing.add(path);
         added++;
       } catch (e) {
@@ -1586,6 +1619,7 @@ class _HomePageState extends State<HomePage> {
         ? XdRemuxFFI.progressBegin()
         : 0;
 
+    String? tempBaseInput;
     try {
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
@@ -1614,6 +1648,21 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
+      // Photographic Style policy: 仅转换底片 (convert base photo)
+      // Extract the un-styled raw base photo into a temp file and use it as conversion input.
+      String effectiveInputPath = item.inputPath;
+      if (item.photographicStyle != null &&
+          item.photographicStyleMode == PhotographicStyleMode.convertBasePhoto) {
+        try {
+          final tempDir = await getTemporaryDirectory();
+          tempBaseInput = '${tempDir.path}${Platform.pathSeparator}base_${DateTime.now().microsecondsSinceEpoch}.jpg';
+          await PhotographicStyleService.extractBasePhoto(item.inputPath, tempBaseInput);
+          effectiveInputPath = tempBaseInput;
+        } catch (e) {
+          debugPrint('[XDRemux][style] extract base for conversion failed: $e');
+        }
+      }
+
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
@@ -1623,7 +1672,7 @@ class _HomePageState extends State<HomePage> {
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
-        result = await _convertOneHardware(item, runConfig);
+        result = await _convertOneHardware(item, runConfig, inputPathOverride: effectiveInputPath);
       }
 
       result ??= (await XdRemuxService.convertWithBackend(
@@ -1631,7 +1680,7 @@ class _HomePageState extends State<HomePage> {
           id: item.id,
           backend: runConfig.backend,
           outputMode: runConfig.outputMode,
-          inputPath: item.inputPath,
+          inputPath: effectiveInputPath,
           outputPath: item.outputPath,
           oppoCompat: effectiveOppoCompatibility.rustValue,
           oppoCameraTail: effectiveOppoCameraTail.rustValue,
@@ -1726,6 +1775,31 @@ class _HomePageState extends State<HomePage> {
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
         }
+        // Photographic Style policy 提取底片: after still converts, export the un-styled base photo (.base.jpg)
+        if (item.photographicStyle != null &&
+            item.photographicStyleMode == PhotographicStyleMode.extractBasePhoto) {
+          try {
+            final outFile = File(item.outputPath);
+            final stem = outFile.uri.pathSegments.last.replaceAll(
+              RegExp(r'\.[^.]+$'),
+              '',
+            );
+            final baseTarget = '${outFile.parent.path}${Platform.pathSeparator}$stem.base.jpg';
+            await PhotographicStyleService.extractBasePhoto(item.inputPath, baseTarget);
+            if (Platform.isAndroid || Platform.isIOS) {
+              var granted = await FileActionService.hasGalleryPermission();
+              if (!granted) {
+                granted = await FileActionService.requestGalleryPermission();
+              }
+              if (granted) {
+                await Gal.putImage(baseTarget, album: 'XDRemux');
+              }
+            }
+          } catch (e) {
+            item.errorMessage = t('底片导出失败: $e', 'Base photo export failed: $e');
+            debugPrint('[XDRemux][style] base photo export failed: $e');
+          }
+        }
       } else {
         item.status = QueueItemStatus.failed;
         final message = result['errorMessage'] ?? t('未知错误', 'Unknown error');
@@ -1739,6 +1813,13 @@ class _HomePageState extends State<HomePage> {
       } else {
         item.status = QueueItemStatus.failed;
         item.errorMessage = _backendError(runConfig.backend, e.toString());
+      }
+    } finally {
+      if (tempBaseInput != null) {
+        try {
+          final f = File(tempBaseInput);
+          if (f.existsSync()) f.deleteSync();
+        } catch (_) {}
       }
     }
 
@@ -1761,8 +1842,9 @@ class _HomePageState extends State<HomePage> {
   /// Returns null on any failure so the caller falls back to software encode.
   Future<Map<String, dynamic>?> _convertOneHardware(
     QueueItem item,
-    ConversionConfig runConfig,
-  ) async {
+    ConversionConfig runConfig, {
+    String? inputPathOverride,
+  }) async {
     final handle = item.progressHandle;
     PreparedTilesResult? prepared;
     try {
@@ -1771,7 +1853,7 @@ class _HomePageState extends State<HomePage> {
       // the software path.
       prepared = await Isolate.run(
         () => XdRemuxFFI.prepareTiles(
-          item.inputPath,
+          inputPathOverride ?? item.inputPath,
           oppoCompat: runConfig.outputMode == OutputMode.apple
               ? OppoCompatMode.off.rustValue
               : runConfig.oppoCompatibility.rustValue,
@@ -1983,6 +2065,19 @@ class _HomePageState extends State<HomePage> {
                         'streamCount': qItem.motionPhoto!.streamCount,
                       },
               motionPhotoMode: qItem.motionPhotoMode.name,
+              photographicStyle:
+                  qItem.photographicStyle == null
+                      ? null
+                      : {
+                        'styleNameZh': qItem.photographicStyle!.styleNameZh,
+                        'styleNameEn': qItem.photographicStyle!.styleNameEn,
+                        'lutName': qItem.photographicStyle!.lutName,
+                        'baseImageBytes': qItem.photographicStyle!.baseImageBytes,
+                        'intensity': qItem.photographicStyle!.intensity,
+                        'tone': qItem.photographicStyle!.tone,
+                        'version': qItem.photographicStyle!.version,
+                      },
+              photographicStyleMode: qItem.photographicStyleMode.name,
             ),
           );
         }
@@ -2311,6 +2406,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
+        _inspectPhotographicStyle(_queue.last);
         existing.add(path);
         added++;
       } catch (_) {
@@ -3149,6 +3245,10 @@ class _HomePageState extends State<HomePage> {
             if (mode == null) return;
             setState(() => item.motionPhotoMode = mode);
           },
+          onStyleModeChanged: (mode) {
+            if (mode == null) return;
+            setState(() => item.photographicStyleMode = mode);
+          },
         );
       },
     );
@@ -3205,6 +3305,10 @@ class _HomePageState extends State<HomePage> {
               onMotionModeChanged: (mode) {
                 if (mode == null) return;
                 setState(() => _queue[index].motionPhotoMode = mode);
+              },
+              onStyleModeChanged: (mode) {
+                if (mode == null) return;
+                setState(() => _queue[index].photographicStyleMode = mode);
               },
             );
           },
@@ -4772,6 +4876,7 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
+  final ValueChanged<PhotographicStyleMode?>? onStyleModeChanged;
 
   const _MobileQueueCard({
     required this.item,
@@ -4780,6 +4885,7 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     required this.onMotionModeChanged,
+    this.onStyleModeChanged,
   });
 
   Color _statusColor(ThemeData theme) {
@@ -4892,6 +4998,11 @@ class _MobileQueueCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
+                          if (item.photographicStyle != null)
+                            _InfoChip(
+                              label: t('风格·${item.photographicStyle!.styleNameZh}', 'Style · ${item.photographicStyle!.styleNameEn}'),
+                              color: theme.colorScheme.secondary,
+                            ),
                           if (item.motionPhoto != null)
                             _InfoChip(
                               label: item.motionPhoto!.isDualStream
@@ -4901,6 +5012,28 @@ class _MobileQueueCard extends StatelessWidget {
                             ),
                         ],
                       ),
+                      // Photographic Style per-card mode menu (pre-conversion).
+                      if (item.photographicStyle != null &&
+                          !item.status.isTerminal &&
+                          item.status != QueueItemStatus.running)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              Text(
+                                t('摄影风格', 'Photo style'),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              _PhotographicStyleModeMenu(
+                                value: item.photographicStyleMode,
+                                onChanged: onStyleModeChanged,
+                              ),
+                            ],
+                          ),
+                        ),
                       // Motion Photo per-card policy menu (pre-conversion).
                       if (item.motionPhoto != null &&
                           !item.status.isTerminal &&
@@ -5037,8 +5170,58 @@ class _MobileStatusPill extends StatelessWidget {
   }
 }
 
-/// Small non-interactive chip for the queue card metadata row
-/// (LHDR/UHDR, X6/X7, capture mode).
+/// Compact per-card Photographic Style mode menu (保留风格 / 提取底片 / 仅转换底片).
+class _PhotographicStyleModeMenu extends StatelessWidget {
+  final PhotographicStyleMode value;
+  final ValueChanged<PhotographicStyleMode?>? onChanged;
+
+  const _PhotographicStyleModeMenu({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return PopupMenuButton<PhotographicStyleMode>(
+      initialValue: value,
+      onSelected: onChanged,
+      padding: EdgeInsets.zero,
+      itemBuilder: (context) => PhotographicStyleMode.values
+          .map(
+            (mode) => PopupMenuItem<PhotographicStyleMode>(
+              value: mode,
+              child: Text(mode.displayName),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondary.withAlpha(24),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: theme.colorScheme.secondary.withAlpha(90)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value.displayName,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.secondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: theme.colorScheme.secondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Compact per-card Motion Photo policy menu (跳过 / 仅静帧 / 静帧+视频).
 class _MotionModeMenu extends StatelessWidget {
   final MotionPhotoMode value;
@@ -5160,6 +5343,7 @@ class _PhotoCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
+  final ValueChanged<PhotographicStyleMode?>? onStyleModeChanged;
 
   const _PhotoCard({
     required this.item,
@@ -5170,6 +5354,7 @@ class _PhotoCard extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     required this.onMotionModeChanged,
+    this.onStyleModeChanged,
   });
 
   @override
@@ -5230,6 +5415,11 @@ class _PhotoCard extends StatelessWidget {
                             _OverlayChip(
                               label: item.captureModeLabel!,
                               color: Colors.white,
+                            ),
+                          if (item.photographicStyle != null)
+                            _OverlayChip(
+                              label: t('风格·${item.photographicStyle!.styleNameZh}', 'Style · ${item.photographicStyle!.styleNameEn}'),
+                              color: theme.colorScheme.secondary,
                             ),
                           if (item.motionPhoto != null)
                             _OverlayChip(
@@ -5336,6 +5526,13 @@ class _PhotoCard extends StatelessWidget {
                         color: Colors.blue.shade700,
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                  if (item.photographicStyle != null &&
+                      !item.status.isTerminal &&
+                      item.status != QueueItemStatus.running)
+                    _PhotographicStyleModeMenu(
+                      value: item.photographicStyleMode,
+                      onChanged: onStyleModeChanged,
                     ),
                   if (item.motionPhoto != null &&
                       !item.status.isTerminal &&

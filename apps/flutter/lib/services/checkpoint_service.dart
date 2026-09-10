@@ -287,6 +287,19 @@ class CheckpointService {
                   'streamCount': item.motionPhoto!.streamCount,
                 },
         motionPhotoMode: item.motionPhotoMode.name,
+        photographicStyle:
+            item.photographicStyle == null
+                ? null
+                : {
+                  'styleNameZh': item.photographicStyle!.styleNameZh,
+                  'styleNameEn': item.photographicStyle!.styleNameEn,
+                  'lutName': item.photographicStyle!.lutName,
+                  'baseImageBytes': item.photographicStyle!.baseImageBytes,
+                  'intensity': item.photographicStyle!.intensity,
+                  'tone': item.photographicStyle!.tone,
+                  'version': item.photographicStyle!.version,
+                },
+        photographicStyleMode: item.photographicStyleMode.name,
       );
     }).toList();
   }

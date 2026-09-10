@@ -601,7 +601,7 @@ fn is_private_hdr_tail_entry(name: &str) -> bool {
 /// Returns `(ext_start, extension_bytes)` where `ext_start` is the absolute
 /// offset within `data` and `extension_bytes` is a slice of `data` starting
 /// at that offset.
-fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
+pub(crate) fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
     // Try QTI marker first
     if let Ok(ext_start) = find_extension_start(data) {
         return Ok((ext_start, &data[ext_start..]));
@@ -691,7 +691,7 @@ fn find_extension_start(data: &[u8]) -> Result<usize, String> {
 /// Parse JSON manifest from the extension region tail.
 ///
 /// Returns `(entries, json_start_offset, json_end_offset)` or `None`.
-fn parse_manifest(data: &[u8]) -> Option<(Vec<ManifestEntry>, usize, usize)> {
+pub(crate) fn parse_manifest(data: &[u8]) -> Option<(Vec<ManifestEntry>, usize, usize)> {
     let json_start = data.windows(2).rposition(|w| w == b"[{")?;
     let json_end = data[json_start..].iter().position(|&b| b == b']')? + json_start;
 

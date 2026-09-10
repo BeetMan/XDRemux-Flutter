@@ -88,6 +88,40 @@ void main() {
       );
     });
 
+    test('JSONL round-trip keeps photographic style fields', () {
+      final checkpoint = Checkpoint(
+        header: CheckpointHeader(
+          configHash: 'abc',
+          totalJobs: 1,
+          startedAt: DateTime.parse('2026-09-10T08:00:00Z'),
+          appVersion: '0.4.0',
+        ),
+        items: [
+          CheckpointItem(
+            inputPath: '/tmp/IMG_0001.JPG',
+            outputPath: '/out/IMG_0001.heic',
+            status: CheckpointItemStatus.converted,
+            photographicStyle: const {
+              'styleNameZh': '清透',
+              'styleNameEn': 'Crisp',
+              'lutName': 'qing_tou.bin',
+              'baseImageBytes': 8192000,
+              'intensity': 100,
+              'tone': 90,
+              'version': '5.1f',
+            },
+            photographicStyleMode: 'extractBasePhoto',
+          ),
+        ],
+      );
+
+      final restored = Checkpoint.fromJsonl(checkpoint.toJsonl());
+      expect(restored, isNotNull);
+      expect(restored!.items.single.photographicStyle, isNotNull);
+      expect(restored.items.single.photographicStyle!['styleNameZh'], '清透');
+      expect(restored.items.single.photographicStyleMode, 'extractBasePhoto');
+    });
+
     test('old checkpoint JSONL without new fields still restores', () {
       final legacy = jsonEncode({
         'type': 'item',
@@ -105,6 +139,9 @@ void main() {
       expect(restored, isNotNull);
       expect(restored!.items.single.status, CheckpointItemStatus.converted);
       expect(restored.items.single.motionPhotoMode, 'skip');
+      expect(restored.items.single.photographicStyle, isNull);
+      expect(restored.items.single.photographicStyleMode, 'keepStyle');
     });
   });
 }
+
