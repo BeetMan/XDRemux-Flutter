@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xdremux/models/app_models.dart';
 import 'package:xdremux/models/checkpoint_model.dart';
+import 'package:xdremux/services/motion_photo_service.dart';
 
 void main() {
   group('Checkpoint motion-photo round-trip', () {
@@ -183,6 +186,73 @@ void main() {
       expect(restored.items.single.portrait, isNull);
       expect(restored.items.single.portraitMode, 'applePortrait');
     });
+
+    test('MotionPhotoSummary round-trips all rich stream and audio fields', () {
+      const original = MotionPhotoSummary(
+        kind: 'oppoLivePhoto',
+        stillBytes: 10259134,
+        videoBytes: 16434648,
+        streamCount: 2,
+        videoWidth: 3840,
+        videoHeight: 2880,
+        durationMs: 2895,
+        fps: 30.04,
+        frameCount: 87,
+        videoCodec: 'hvc1',
+        hasAudio: true,
+        audioCodec: 'mp4a',
+        audioChannels: 1,
+        audioSampleRate: 16000,
+        audioDurationMs: 2905,
+        presentationTimestampUs: 1496141,
+        presentationSource: 'androidXMP',
+        primaryBytes: 13622680,
+        secondaryBytes: 2811968,
+        secondaryWidth: 1920,
+        secondaryHeight: 1440,
+        secondaryFps: 30.09,
+      );
+
+      final json = original.toJson();
+      final restored = MotionPhotoSummary.fromJson(json);
+
+      expect(restored.kind, 'oppoLivePhoto');
+      expect(restored.isDualStream, isTrue);
+      expect(restored.videoWidth, 3840);
+      expect(restored.videoHeight, 2880);
+      expect(restored.resolutionLabel, '3840×2880 (4K)');
+      expect(restored.durationLabel, '2.90s');
+      expect(restored.fpsLabel, '30.0 fps');
+      expect(restored.audioLabel, contains('MP4A'));
+      expect(restored.audioLabel, contains('16kHz'));
+      expect(restored.dualStreamSummary, contains('双码流'));
+      expect(restored.hasAudio, isTrue);
+      expect(restored.audioChannels, 1);
+      expect(restored.presentationTimestampUs, 1496141);
+      expect(restored.secondaryWidth, 1920);
+      expect(restored.secondaryHeight, 1440);
+    });
+
+    test('MotionPhotoService inspects real OPPO Find X10 live photo if present', () async {
+      const sample = r'C:\Users\Beet\Desktop\Find X10\IMG20260910130211.jpg';
+      if (!File(sample).existsSync()) return;
+
+      final summary = await MotionPhotoService.inspect(sample);
+      expect(summary, isNotNull);
+      expect(summary!.kind, 'oppoLivePhoto');
+      expect(summary.isDualStream, isTrue);
+      expect(summary.videoWidth, 3840);
+      expect(summary.videoHeight, 2880);
+      expect(summary.resolutionLabel, contains('3840×2880'));
+      expect(summary.hasAudio, isTrue);
+      expect(summary.audioCodec, 'mp4a');
+      expect(summary.audioChannels, 1);
+      expect(summary.audioSampleRate, 16000);
+      expect(summary.secondaryWidth, 1920);
+      expect(summary.secondaryHeight, 1440);
+      expect(summary.presentationTimestampUs, 1496141);
+    });
   });
 }
+
 

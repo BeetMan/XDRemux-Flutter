@@ -123,7 +123,7 @@ pub extern "C" fn xdremux_motion_photo_inspect(path: *const c_char) -> *mut c_ch
             .map_err(|_| "path is not valid UTF-8".to_string())?;
         let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
         match motion_photo::parse_motion_photo(&data)? {
-            Some(asset) => Ok(asset.to_json()),
+            Some(asset) => Ok(asset.to_json_with_media(&data)),
             None => Ok(serde_json::json!({ "isMotionPhoto": false })),
         }
     })();

@@ -277,15 +277,7 @@ class CheckpointService {
         classificationStatus: item.classificationStatus,
         hdrKind: item.hdrKind,
         family: item.family,
-        motionPhoto:
-            item.motionPhoto == null
-                ? null
-                : {
-                  'kind': item.motionPhoto!.kind,
-                  'stillBytes': item.motionPhoto!.stillBytes,
-                  'videoBytes': item.motionPhoto!.videoBytes,
-                  'streamCount': item.motionPhoto!.streamCount,
-                },
+        motionPhoto: item.motionPhoto?.toJson(),
         motionPhotoMode: item.motionPhotoMode.name,
         photographicStyle:
             item.photographicStyle == null

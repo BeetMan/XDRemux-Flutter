@@ -64,6 +64,22 @@ pub struct OppoMetadata {
     pub eis_crop_factor: Option<[f64; 2]>,
 }
 
+/// Video & audio stream details extracted from embedded MP4 tracks.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VideoStreamDetails {
+    pub width: u32,
+    pub height: u32,
+    pub duration_ms: u64,
+    pub frame_count: u32,
+    pub fps: f64,
+    pub codec: String,
+    pub has_audio: bool,
+    pub audio_codec: Option<String>,
+    pub audio_channels: Option<u16>,
+    pub audio_sample_rate: Option<u32>,
+    pub audio_duration_ms: Option<u64>,
+}
+
 /// Fully resolved Motion Photo layout.
 #[derive(Debug, Clone)]
 pub struct MotionPhotoAsset {
@@ -79,8 +95,14 @@ pub struct MotionPhotoAsset {
 }
 
 impl MotionPhotoAsset {
-    /// JSON summary for the FFI report.
+    /// JSON summary for the FFI report (basic ranges and XMP).
     pub fn to_json(&self) -> serde_json::Value {
+        let is_dual = self.source_kind == "oppoLivePhoto"
+            && self
+                .vendor_metadata
+                .as_ref()
+                .map(|m| m.stream_count >= 2)
+                .unwrap_or(false);
         let mut v = json!({
             "isMotionPhoto": true,
             "sourceKind": self.source_kind,
@@ -88,6 +110,7 @@ impl MotionPhotoAsset {
             "stillEnd": self.still_range.end,
             "videoStart": self.video_range.start,
             "videoEnd": self.video_range.end,
+            "isDualStream": is_dual,
             "items": self
                 .items
                 .iter()
@@ -117,6 +140,63 @@ impl MotionPhotoAsset {
                 "photoCropFactor": meta.photo_crop_factor,
                 "streamCount": meta.stream_count,
             });
+        }
+        v
+    }
+
+    /// Extended JSON summary that parses the embedded MP4 video and audio tracks.
+    pub fn to_json_with_media(&self, data: &[u8]) -> serde_json::Value {
+        let mut v = self.to_json();
+        let primary = primary_video_range(data, self);
+        let p_start = primary.start as usize;
+        let p_end = primary.end as usize;
+        if p_end <= data.len() && p_start < p_end {
+            let stream0_data = &data[p_start..p_end];
+            let clean0 = standalone_bmff_length(stream0_data).unwrap_or(stream0_data.len());
+            if let Some(details) = parse_stream_details(&stream0_data[..clean0]) {
+                v["videoWidth"] = details.width.into();
+                v["videoHeight"] = details.height.into();
+                v["durationMs"] = details.duration_ms.into();
+                v["fps"] = details.fps.into();
+                v["frameCount"] = details.frame_count.into();
+                v["videoCodec"] = details.codec.into();
+                v["hasAudio"] = details.has_audio.into();
+                if let Some(ac) = details.audio_codec {
+                    v["audioCodec"] = ac.into();
+                }
+                if let Some(ch) = details.audio_channels {
+                    v["audioChannels"] = ch.into();
+                }
+                if let Some(sr) = details.audio_sample_rate {
+                    v["audioSampleRate"] = sr.into();
+                }
+                if let Some(ad) = details.audio_duration_ms {
+                    v["audioDurationMs"] = ad.into();
+                }
+            }
+            v["primaryBytes"] = primary.length().into();
+        }
+        let is_dual = self.source_kind == "oppoLivePhoto"
+            && self
+                .vendor_metadata
+                .as_ref()
+                .map(|m| m.stream_count >= 2)
+                .unwrap_or(false)
+            && self.video_range.end > primary.end;
+        v["isDualStream"] = is_dual.into();
+        if is_dual {
+            let s_start = primary.end as usize;
+            let s_end = self.video_range.end as usize;
+            if s_end <= data.len() && s_start < s_end {
+                let stream1_data = &data[s_start..s_end];
+                v["secondaryBytes"] = (self.video_range.end - primary.end).into();
+                let clean1 = standalone_bmff_length(stream1_data).unwrap_or(stream1_data.len());
+                if let Some(s1_details) = parse_stream_details(&stream1_data[..clean1]) {
+                    v["secondaryWidth"] = s1_details.width.into();
+                    v["secondaryHeight"] = s1_details.height.into();
+                    v["secondaryFps"] = s1_details.fps.into();
+                }
+            }
         }
         v
     }
@@ -975,6 +1055,242 @@ pub fn standalone_bmff_length(data: &[u8]) -> Result<usize, String> {
     Ok(offset)
 }
 
+/// Inspect an embedded MP4/MOV byte slice and extract video/audio track details.
+pub fn parse_stream_details(data: &[u8]) -> Option<VideoStreamDetails> {
+    let mut offset = 0usize;
+    let mut moov_range: Option<(usize, usize)> = None;
+    while offset + 8 <= data.len() {
+        let size32 = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap());
+        let kind = &data[offset + 4..offset + 8];
+        let (size, header_size) = if size32 == 1 {
+            if offset + 16 > data.len() {
+                break;
+            }
+            (
+                u64::from_be_bytes(data[offset + 8..offset + 16].try_into().unwrap()) as usize,
+                16usize,
+            )
+        } else if size32 == 0 {
+            (data.len() - offset, 8usize)
+        } else {
+            (size32 as usize, 8usize)
+        };
+        if size < header_size || offset + size > data.len() {
+            break;
+        }
+        if kind == b"moov" {
+            moov_range = Some((offset, offset + size));
+            break;
+        }
+        offset += size;
+    }
+
+    let (moov_start, moov_end) = moov_range?;
+    let moov = &data[moov_start..moov_end];
+
+    let mut movie_timescale = 1000u32;
+    let mut movie_duration = 0u64;
+    let mut details = VideoStreamDetails::default();
+
+    let mut cursor = 8usize;
+    while cursor + 8 <= moov.len() {
+        let sz = u32::from_be_bytes(moov[cursor..cursor + 4].try_into().unwrap()) as usize;
+        let kd = &moov[cursor + 4..cursor + 8];
+        if sz < 8 || cursor + sz > moov.len() {
+            break;
+        }
+
+        if kd == b"mvhd" && sz >= 32 {
+            let ver = moov[cursor + 8];
+            if ver == 0 && sz >= 28 {
+                movie_timescale =
+                    u32::from_be_bytes(moov[cursor + 20..cursor + 24].try_into().unwrap());
+                movie_duration =
+                    u32::from_be_bytes(moov[cursor + 24..cursor + 28].try_into().unwrap()) as u64;
+            } else if ver == 1 && sz >= 40 {
+                movie_timescale =
+                    u32::from_be_bytes(moov[cursor + 28..cursor + 32].try_into().unwrap());
+                movie_duration =
+                    u64::from_be_bytes(moov[cursor + 32..cursor + 40].try_into().unwrap());
+            }
+        } else if kd == b"trak" {
+            let trak = &moov[cursor..cursor + sz];
+            parse_trak_into(trak, &mut details);
+        }
+        cursor += sz;
+    }
+
+    if movie_timescale > 0 && movie_duration > 0 && details.duration_ms == 0 {
+        details.duration_ms = (movie_duration * 1000) / movie_timescale as u64;
+    }
+
+    Some(details)
+}
+
+fn parse_trak_into(trak: &[u8], out: &mut VideoStreamDetails) {
+    let mut toff = 8usize;
+    let mut handler = [0u8; 4];
+    let mut tkhd_w = 0u32;
+    let mut tkhd_h = 0u32;
+    let mut sample_count = 0u32;
+    let mut codec = String::new();
+    let mut media_ts = 0u32;
+    let mut media_dur = 0u64;
+    let mut audio_ch = 0u16;
+    let mut audio_sr = 0u32;
+
+    while toff + 8 <= trak.len() {
+        let sz = u32::from_be_bytes(trak[toff..toff + 4].try_into().unwrap()) as usize;
+        let kd = &trak[toff + 4..toff + 8];
+        if sz < 8 || toff + sz > trak.len() {
+            break;
+        }
+
+        if kd == b"tkhd" {
+            let ver = trak[toff + 8];
+            let w_off = if ver == 0 { toff + 84 } else { toff + 96 };
+            if w_off + 8 <= toff + sz {
+                let w_fix = u32::from_be_bytes(trak[w_off..w_off + 4].try_into().unwrap());
+                let h_fix = u32::from_be_bytes(trak[w_off + 4..w_off + 8].try_into().unwrap());
+                tkhd_w = w_fix >> 16;
+                tkhd_h = h_fix >> 16;
+            }
+        } else if kd == b"mdia" {
+            let mdia = &trak[toff..toff + sz];
+            let mut moff = 8usize;
+            while moff + 8 <= mdia.len() {
+                let msz = u32::from_be_bytes(mdia[moff..moff + 4].try_into().unwrap()) as usize;
+                let mkd = &mdia[moff + 4..moff + 8];
+                if msz < 8 || moff + msz > mdia.len() {
+                    break;
+                }
+
+                if mkd == b"hdlr" && msz >= 20 {
+                    handler.copy_from_slice(&mdia[moff + 16..moff + 20]);
+                } else if mkd == b"mdhd" {
+                    let ver = mdia[moff + 8];
+                    if ver == 0 && msz >= 28 {
+                        media_ts =
+                            u32::from_be_bytes(mdia[moff + 20..moff + 24].try_into().unwrap());
+                        media_dur =
+                            u32::from_be_bytes(mdia[moff + 24..moff + 28].try_into().unwrap())
+                                as u64;
+                    } else if ver == 1 && msz >= 40 {
+                        media_ts =
+                            u32::from_be_bytes(mdia[moff + 28..moff + 32].try_into().unwrap());
+                        media_dur =
+                            u64::from_be_bytes(mdia[moff + 32..moff + 40].try_into().unwrap());
+                    }
+                } else if mkd == b"minf" {
+                    let minf = &mdia[moff..moff + msz];
+                    let mut ioff = 8usize;
+                    while ioff + 8 <= minf.len() {
+                        let isz =
+                            u32::from_be_bytes(minf[ioff..ioff + 4].try_into().unwrap()) as usize;
+                        let ikd = &minf[ioff + 4..ioff + 8];
+                        if isz < 8 || ioff + isz > minf.len() {
+                            break;
+                        }
+
+                        if ikd == b"stbl" {
+                            let stbl = &minf[ioff..ioff + isz];
+                            let mut soff = 8usize;
+                            while soff + 8 <= stbl.len() {
+                                let ssz = u32::from_be_bytes(
+                                    stbl[soff..soff + 4].try_into().unwrap(),
+                                ) as usize;
+                                let skd = &stbl[soff + 4..soff + 8];
+                                if ssz < 8 || soff + ssz > stbl.len() {
+                                    break;
+                                }
+
+                                if skd == b"stsz" && ssz >= 20 {
+                                    sample_count = u32::from_be_bytes(
+                                        stbl[soff + 16..soff + 20].try_into().unwrap(),
+                                    );
+                                } else if skd == b"stsd" && ssz >= 24 {
+                                    let entry_count = u32::from_be_bytes(
+                                        stbl[soff + 12..soff + 16].try_into().unwrap(),
+                                    );
+                                    if entry_count > 0 && soff + 24 <= soff + ssz {
+                                        let entry_start = soff + 16;
+                                        let entry_sz = u32::from_be_bytes(
+                                            stbl[entry_start..entry_start + 4]
+                                                .try_into()
+                                                .unwrap(),
+                                        ) as usize;
+                                        if entry_sz >= 8 && entry_start + entry_sz <= soff + ssz {
+                                            codec = String::from_utf8_lossy(
+                                                &stbl[entry_start + 4..entry_start + 8],
+                                            )
+                                            .to_string();
+                                            if &handler == b"soun" && entry_sz >= 36 {
+                                                audio_ch = u16::from_be_bytes(
+                                                    stbl[entry_start + 24..entry_start + 26]
+                                                        .try_into()
+                                                        .unwrap(),
+                                                );
+                                                audio_sr = u32::from_be_bytes(
+                                                    stbl[entry_start + 32..entry_start + 36]
+                                                        .try_into()
+                                                        .unwrap(),
+                                                ) >> 16;
+                                            } else if &handler == b"vide" && entry_sz >= 32 {
+                                                let w = u16::from_be_bytes(
+                                                    stbl[entry_start + 32..entry_start + 34]
+                                                        .try_into()
+                                                        .unwrap(),
+                                                ) as u32;
+                                                let h = u16::from_be_bytes(
+                                                    stbl[entry_start + 34..entry_start + 36]
+                                                        .try_into()
+                                                        .unwrap(),
+                                                ) as u32;
+                                                if w > 0 && h > 0 {
+                                                    tkhd_w = w;
+                                                    tkhd_h = h;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                soff += ssz;
+                            }
+                        }
+                        ioff += isz;
+                    }
+                }
+                moff += msz;
+            }
+        }
+        toff += sz;
+    }
+
+    if &handler == b"vide" {
+        out.width = tkhd_w;
+        out.height = tkhd_h;
+        out.frame_count = sample_count;
+        out.codec = codec;
+        if media_ts > 0 && media_dur > 0 {
+            let dur_sec = media_dur as f64 / media_ts as f64;
+            if dur_sec > 0.0 {
+                out.fps = (sample_count as f64 / dur_sec * 100.0).round() / 100.0;
+            }
+            if out.duration_ms == 0 {
+                out.duration_ms = (media_dur * 1000) / media_ts as u64;
+            }
+        }
+    } else if &handler == b"soun" {
+        out.has_audio = true;
+        out.audio_codec = Some(codec);
+        out.audio_channels = if audio_ch > 0 { Some(audio_ch) } else { None };
+        out.audio_sample_rate = if audio_sr > 0 { Some(audio_sr) } else { None };
+        if media_ts > 0 && media_dur > 0 {
+            out.audio_duration_ms = Some((media_dur * 1000) / media_ts as u64);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1155,5 +1471,26 @@ mod tests {
         let primary = primary_video_range(&data, &asset);
         assert_eq!(primary.start, v1_start);
         assert_eq!(primary.length(), video1.len() as u64);
+    }
+
+    #[test]
+    fn inspects_real_motion_photo_sample_if_present() {
+        let sample = r"C:\Users\Beet\Desktop\Find X10\IMG20260910130211.jpg";
+        if !std::path::Path::new(sample).exists() {
+            return;
+        }
+        let data = std::fs::read(sample).expect("read sample");
+        let asset = parse_motion_photo(&data).expect("parse ok").expect("is motion photo");
+        assert_eq!(asset.source_kind, "oppoLivePhoto");
+        let json = asset.to_json_with_media(&data);
+        assert_eq!(json["isDualStream"], true);
+        assert_eq!(json["videoWidth"], 3840);
+        assert_eq!(json["videoHeight"], 2880);
+        assert_eq!(json["hasAudio"], true);
+        assert_eq!(json["audioCodec"], "mp4a");
+        assert_eq!(json["audioChannels"], 1);
+        assert_eq!(json["audioSampleRate"], 16000);
+        assert_eq!(json["secondaryWidth"], 1920);
+        assert_eq!(json["secondaryHeight"], 1440);
     }
 }

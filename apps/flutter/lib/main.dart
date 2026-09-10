@@ -405,12 +405,7 @@ class _HomePageState extends State<HomePage> {
         motionPhoto:
             mpJson == null
                 ? null
-                : MotionPhotoSummary(
-                  kind: mpJson['kind'] as String? ?? 'unknown',
-                  stillBytes: (mpJson['stillBytes'] as num?)?.toInt() ?? 0,
-                  videoBytes: (mpJson['videoBytes'] as num?)?.toInt() ?? 0,
-                  streamCount: (mpJson['streamCount'] as num?)?.toInt() ?? 1,
-                ),
+                : MotionPhotoSummary.fromJson(mpJson),
         motionPhotoMode: mpMode,
         photographicStyle:
             psJson == null
@@ -2035,15 +2030,7 @@ class _HomePageState extends State<HomePage> {
               classificationStatus: qItem.classificationStatus,
               hdrKind: qItem.hdrKind,
               family: qItem.family,
-              motionPhoto:
-                  qItem.motionPhoto == null
-                      ? null
-                      : {
-                        'kind': qItem.motionPhoto!.kind,
-                        'stillBytes': qItem.motionPhoto!.stillBytes,
-                        'videoBytes': qItem.motionPhoto!.videoBytes,
-                        'streamCount': qItem.motionPhoto!.streamCount,
-                      },
+              motionPhoto: qItem.motionPhoto?.toJson(),
               motionPhotoMode: qItem.motionPhotoMode.name,
               photographicStyle:
                   qItem.photographicStyle == null
@@ -5033,8 +5020,10 @@ class _MobileQueueCard extends StatelessWidget {
                           if (item.motionPhoto != null)
                             _InfoChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -5092,7 +5081,9 @@ class _MobileQueueCard extends StatelessWidget {
                           child: Row(
                             children: [
                               Text(
-                                t('视频 ${item.motionPhoto!.videoSizeLabel}', 'Video ${item.motionPhoto!.videoSizeLabel}'),
+                                item.motionPhoto!.resolutionLabel.isNotEmpty
+                                    ? t('实况 ${item.motionPhoto!.resolutionLabel}', 'Live ${item.motionPhoto!.resolutionLabel}')
+                                    : t('实况 ${item.motionPhoto!.videoSizeLabel}', 'Live ${item.motionPhoto!.videoSizeLabel}'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -5539,8 +5530,10 @@ class _PhotoCard extends StatelessWidget {
                           if (item.motionPhoto != null)
                             _OverlayChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -6140,15 +6133,52 @@ class _PhotoDetailsContent extends StatelessWidget {
                 const SizedBox(height: 12),
                 _buildSection(
                   theme,
-                  title: t('🎬 实况/动态照片 (Motion Photo)', '🎬 Motion Photo'),
+                  title: t('🎬 实况照片 (Live / Motion Photo)', '🎬 Live / Motion Photo'),
                   children: [
+                    if (item.motionPhoto!.resolutionLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频流分辨率', 'Video Resolution'),
+                        item.motionPhoto!.resolutionLabel,
+                      ),
+                    if (item.motionPhoto!.durationLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频时长', 'Duration'),
+                        '${item.motionPhoto!.durationLabel}${item.motionPhoto!.frameCount != null ? " (${item.motionPhoto!.frameCount} 帧)" : ""}',
+                      ),
+                    if (item.motionPhoto!.fpsLabel.isNotEmpty || item.motionPhoto!.videoCodec != null)
+                      _detailRow(
+                        theme,
+                        t('编码与帧率', 'Codec & Frame Rate'),
+                        [
+                          if (item.motionPhoto!.videoCodec != null)
+                            item.motionPhoto!.videoCodec!.toUpperCase() == 'HVC1' ? 'HEVC (H.265)' : item.motionPhoto!.videoCodec!.toUpperCase(),
+                          if (item.motionPhoto!.fpsLabel.isNotEmpty) item.motionPhoto!.fpsLabel,
+                        ].join(' / '),
+                      ),
                     _detailRow(
                       theme,
-                      t('视频流大小', 'Video Track Size'),
+                      t('音频轨道', 'Audio Track'),
+                      item.motionPhoto!.audioLabel,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('码流架构', 'Stream Architecture'),
+                      item.motionPhoto!.dualStreamSummary,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('数据大小', 'Video Track Size'),
                       item.motionPhoto!.videoSizeLabel,
                     ),
+                    if (item.motionPhoto!.presentationTimestampUs != null)
+                      _detailRow(
+                        theme,
+                        t('封面静帧时间点', 'Still Image Time'),
+                        '${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s (${item.motionPhoto!.presentationTimestampUs} µs)',
+                      ),
                     _detailRow(theme, t('封装格式', 'Container Format'), item.motionPhoto!.kind),
-                    _detailRow(theme, t('视频流路数', 'Stream Count'), '${item.motionPhoto!.streamCount}'),
                     _detailRow(
                       theme,
                       t('转换处理策略', 'Processing Policy'),
@@ -6419,9 +6449,19 @@ class _PhotoDetailsContent extends StatelessWidget {
     }
     if (item.motionPhoto != null) {
       buffer.writeln('--- 实况/动态照片 ---');
+      if (item.motionPhoto!.resolutionLabel.isNotEmpty) {
+        buffer.writeln('视频分辨率: ${item.motionPhoto!.resolutionLabel}');
+      }
+      if (item.motionPhoto!.durationLabel.isNotEmpty) {
+        buffer.writeln('视频时长: ${item.motionPhoto!.durationLabel} (${item.motionPhoto!.fpsLabel})');
+      }
+      buffer.writeln('音频轨道: ${item.motionPhoto!.audioLabel}');
+      buffer.writeln('码流架构: ${item.motionPhoto!.dualStreamSummary}');
       buffer.writeln('视频流大小: ${item.motionPhoto!.videoSizeLabel}');
+      if (item.motionPhoto!.presentationTimestampUs != null) {
+        buffer.writeln('封面帧时间: ${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s');
+      }
       buffer.writeln('封装格式: ${item.motionPhoto!.kind}');
-      buffer.writeln('码流数: ${item.motionPhoto!.streamCount}');
       buffer.writeln('处理策略: ${item.motionPhotoMode.displayName}');
     }
     if (item.portrait != null) {

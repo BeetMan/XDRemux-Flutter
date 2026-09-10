@@ -656,19 +656,154 @@ class MotionPhotoSummary {
   final int videoBytes;
   final int streamCount;
 
+  // Rich stream & audio details
+  final int? videoWidth;
+  final int? videoHeight;
+  final int? durationMs;
+  final double? fps;
+  final int? frameCount;
+  final String? videoCodec;
+  final bool hasAudio;
+  final String? audioCodec;
+  final int? audioChannels;
+  final int? audioSampleRate;
+  final int? audioDurationMs;
+  final int? presentationTimestampUs;
+  final String? presentationSource;
+  final int? primaryBytes;
+  final int? secondaryBytes;
+  final int? secondaryWidth;
+  final int? secondaryHeight;
+  final double? secondaryFps;
+
   const MotionPhotoSummary({
     required this.kind,
     required this.stillBytes,
     required this.videoBytes,
     required this.streamCount,
+    this.videoWidth,
+    this.videoHeight,
+    this.durationMs,
+    this.fps,
+    this.frameCount,
+    this.videoCodec,
+    this.hasAudio = false,
+    this.audioCodec,
+    this.audioChannels,
+    this.audioSampleRate,
+    this.audioDurationMs,
+    this.presentationTimestampUs,
+    this.presentationSource,
+    this.primaryBytes,
+    this.secondaryBytes,
+    this.secondaryWidth,
+    this.secondaryHeight,
+    this.secondaryFps,
   });
 
   bool get isDualStream => streamCount >= 2;
 
   String get videoSizeLabel {
-    final mb = videoBytes / (1024 * 1024);
-    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(videoBytes / 1024).round()}KB';
+    final bytes = primaryBytes ?? videoBytes;
+    final mb = bytes / (1024 * 1024);
+    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(bytes / 1024).round()}KB';
   }
+
+  String get resolutionLabel {
+    if (videoWidth != null && videoHeight != null && videoWidth! > 0 && videoHeight! > 0) {
+      final is4k = (videoWidth! >= 3840 || videoHeight! >= 3840);
+      final tag = is4k ? ' (4K)' : (videoWidth! >= 1920 || videoHeight! >= 1920 ? ' (1080P)' : '');
+      return '$videoWidth×$videoHeight$tag';
+    }
+    return '';
+  }
+
+  String get durationLabel {
+    if (durationMs != null && durationMs! > 0) {
+      final s = durationMs! / 1000.0;
+      return '${s.toStringAsFixed(2)}s';
+    }
+    return '';
+  }
+
+  String get fpsLabel {
+    if (fps != null && fps! > 0) {
+      return '${fps!.toStringAsFixed(fps! % 1 == 0 ? 0 : 1)} fps';
+    }
+    return '';
+  }
+
+  String get audioLabel {
+    if (!hasAudio) {
+      return t('无音频', 'No audio');
+    }
+    final codec = (audioCodec ?? 'AAC').toUpperCase();
+    final rate = audioSampleRate != null && audioSampleRate! > 0
+        ? ' ${(audioSampleRate! / 1000).toStringAsFixed(audioSampleRate! % 1000 == 0 ? 0 : 1)}kHz'
+        : '';
+    final ch = audioChannels == 1 ? t('单声道', 'Mono') : (audioChannels == 2 ? t('立体声', 'Stereo') : '');
+    return [codec, if (rate.isNotEmpty) rate.trim(), if (ch.isNotEmpty) ch].join(' · ');
+  }
+
+  String get dualStreamSummary {
+    if (!isDualStream) return t('单码流', 'Single stream');
+    final pMb = primaryBytes != null ? (primaryBytes! / (1024 * 1024)).toStringAsFixed(1) : null;
+    final sMb = secondaryBytes != null ? (secondaryBytes! / (1024 * 1024)).toStringAsFixed(1) : null;
+    if (pMb != null && sMb != null) {
+      return t('双码流 (高清主流 ${pMb}MB + 预览代理 ${sMb}MB)', 'Dual stream (Primary ${pMb}MB + Proxy ${sMb}MB)');
+    }
+    return t('双码流 (高清流 + 预览流)', 'Dual stream (High-res + Preview)');
+  }
+
+  Map<String, dynamic> toJson() => {
+    'kind': kind,
+    'stillBytes': stillBytes,
+    'videoBytes': videoBytes,
+    'streamCount': streamCount,
+    'videoWidth': videoWidth,
+    'videoHeight': videoHeight,
+    'durationMs': durationMs,
+    'fps': fps,
+    'frameCount': frameCount,
+    'videoCodec': videoCodec,
+    'hasAudio': hasAudio,
+    'audioCodec': audioCodec,
+    'audioChannels': audioChannels,
+    'audioSampleRate': audioSampleRate,
+    'audioDurationMs': audioDurationMs,
+    'presentationTimestampUs': presentationTimestampUs,
+    'presentationSource': presentationSource,
+    'primaryBytes': primaryBytes,
+    'secondaryBytes': secondaryBytes,
+    'secondaryWidth': secondaryWidth,
+    'secondaryHeight': secondaryHeight,
+    'secondaryFps': secondaryFps,
+  };
+
+  factory MotionPhotoSummary.fromJson(Map<String, dynamic> json) => MotionPhotoSummary(
+    kind: json['kind'] as String? ?? 'unknown',
+    stillBytes: (json['stillBytes'] as num?)?.toInt() ?? 0,
+    videoBytes: (json['videoBytes'] as num?)?.toInt() ?? 0,
+    streamCount: (json['streamCount'] as num?)?.toInt() ?? 1,
+    videoWidth: (json['videoWidth'] as num?)?.toInt(),
+    videoHeight: (json['videoHeight'] as num?)?.toInt(),
+    durationMs: (json['durationMs'] as num?)?.toInt(),
+    fps: (json['fps'] as num?)?.toDouble(),
+    frameCount: (json['frameCount'] as num?)?.toInt(),
+    videoCodec: json['videoCodec'] as String?,
+    hasAudio: json['hasAudio'] as bool? ?? false,
+    audioCodec: json['audioCodec'] as String?,
+    audioChannels: (json['audioChannels'] as num?)?.toInt(),
+    audioSampleRate: (json['audioSampleRate'] as num?)?.toInt(),
+    audioDurationMs: (json['audioDurationMs'] as num?)?.toInt(),
+    presentationTimestampUs: (json['presentationTimestampUs'] as num?)?.toInt(),
+    presentationSource: json['presentationSource'] as String?,
+    primaryBytes: (json['primaryBytes'] as num?)?.toInt(),
+    secondaryBytes: (json['secondaryBytes'] as num?)?.toInt(),
+    secondaryWidth: (json['secondaryWidth'] as num?)?.toInt(),
+    secondaryHeight: (json['secondaryHeight'] as num?)?.toInt(),
+    secondaryFps: (json['secondaryFps'] as num?)?.toDouble(),
+  );
 }
 
 /// How a Photographic Style photo is handled at conversion time.
