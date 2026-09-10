@@ -12,8 +12,6 @@ permissions:
   contents: write
 
 env:
-  # Project memory: pub packages are fetched through the China mirror.
-  PUB_HOSTED_URL: https://pub.flutter-io.cn
   X265_TAG: 4.2
   ANDROID_NDK_VERSION: 28.2.13676358
 
