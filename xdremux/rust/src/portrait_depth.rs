@@ -482,9 +482,91 @@ pub(crate) fn cmd_portrait_depth(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortraitSummaryInfo {
+    pub has_portrait: bool,
+    pub width: usize,
+    pub height: usize,
+    pub scale: f64,
+    pub scale_mode: String,
+    pub current_f_number: Option<f64>,
+    pub focal_length: Option<f64>,
+    pub object_distance: Option<i32>,
+    pub has_portrait_matte: bool,
+    pub has_hair_matte: bool,
+    pub has_pet_matte: bool,
+}
+
+impl PortraitSummaryInfo {
+    pub fn to_json(&self) -> serde_json::Value {
+        json!({
+            "hasPortrait": self.has_portrait,
+            "width": self.width,
+            "height": self.height,
+            "scale": self.scale,
+            "scaleMode": self.scale_mode,
+            "currentFNumber": self.current_f_number,
+            "focalLength": self.focal_length,
+            "objectDistance": self.object_distance,
+            "hasPortraitMatte": self.has_portrait_matte,
+            "hasHairMatte": self.has_hair_matte,
+            "hasPetMatte": self.has_pet_matte,
+        })
+    }
+}
+
+pub fn inspect_portrait_summary(data: &[u8]) -> Option<PortraitSummaryInfo> {
+    let compressed = crate::container::extract_tail_entry(data, "rear.depth")?;
+    let decoded = zstd::decode_all(compressed.as_slice()).ok()?;
+    if decoded.len() < HEADER_SIZE {
+        return None;
+    }
+    let width = read_u32le(&decoded, 0)? as usize;
+    let height = read_u32le(&decoded, 4)? as usize;
+    if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
+        return None;
+    }
+    let raw_scale = read_u32le(&decoded, 0x18)?;
+    let embedded_scale = f32::from_bits(raw_scale) as f64;
+    let hair_present = decoded.get(0x24).copied().unwrap_or(0) != 0;
+    let portrait_present = decoded.get(0x25).copied().unwrap_or(0) != 0;
+    let pet_present = decoded.get(0x26).copied().unwrap_or(0) != 0;
+    let disparity_minimum = read_u16le(&decoded, 0x2e).unwrap_or(0);
+    let disparity_maximum = read_u16le(&decoded, 0x30).unwrap_or(0);
+    let exponentiation = decoded.get(0x32).copied().unwrap_or(0);
+
+    let config_bytes = crate::container::extract_tail_entry(data, "rear.depth.config");
+    let config = parse_config(config_bytes.as_deref());
+
+    let quantization_valid = disparity_maximum > disparity_minimum && (1..=2).contains(&exponentiation);
+    let (scale, scale_mode) = if quantization_valid && embedded_scale.is_finite() && embedded_scale > 0.0 {
+        (embedded_scale, "passthrough".to_string())
+    } else {
+        (embedded_scale.max(0.005), "fallback".to_string())
+    };
+
+    let current_f_number = config.as_ref().and_then(|c| c.current_f_number).map(|f| f as f64);
+    let focal_length = read_f32le(&decoded, 0x1c).map(|f| f as f64);
+    let object_distance = config.as_ref().and_then(|c| c.object_distance);
+
+    Some(PortraitSummaryInfo {
+        has_portrait: true,
+        width,
+        height,
+        scale,
+        scale_mode,
+        current_f_number,
+        focal_length,
+        object_distance,
+        has_portrait_matte: portrait_present,
+        has_hair_matte: hair_present,
+        has_pet_matte: pet_present,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::portrait_depth_report;
+    use super::*;
 
     #[test]
     fn missing_rear_depth_is_reported_without_transforming() {
@@ -492,5 +574,28 @@ mod tests {
         assert_eq!(report["classification"], "missing-rear-depth");
         assert_eq!(report["safeToTransform"], false);
         assert_eq!(report["available"], false);
+    }
+
+    #[test]
+    fn inspect_summary_returns_none_for_missing_depth() {
+        assert!(inspect_portrait_summary(b"not-an-heic").is_none());
+    }
+
+    #[test]
+    fn inspects_real_portrait_sample_if_present() {
+        let candidates = [
+            r"C:\Users\Beet\Desktop\Find X10\IMG20260910130252.heic",
+            r"C:\Users\Beet\Desktop\Find X10\IMG20260910111932.jpg",
+        ];
+        for path in candidates {
+            if let Ok(data) = std::fs::read(path) {
+                let summary = inspect_portrait_summary(&data).expect("portrait summary");
+                assert!(summary.has_portrait);
+                assert_eq!(summary.width, 1024);
+                assert_eq!(summary.height, 768);
+                assert!(summary.has_portrait_matte);
+                assert!(summary.scale > 0.0);
+            }
+        }
     }
 }

@@ -369,6 +369,36 @@ pub extern "C" fn xdremux_inspect_photo_details(path: *const c_char) -> *mut c_c
     }
 }
 
+/// Inspect raw photo for OPPO portrait depth (rear.depth + config).
+/// Returns a JSON string with portrait summary (dimensions, f-number, mattes).
+/// Free the returned pointer with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_inspect_portrait(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path_str)
+            .map_err(|e| format!("read {path_str}: {e}"))?;
+        if let Some(info) = portrait_depth::inspect_portrait_summary(&data) {
+            Ok(info.to_json())
+        } else {
+            Ok(serde_json::json!({ "hasPortrait": false }))
+        }
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "hasPortrait": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// EXPERIMENT (Live Photo style triggering): take a styled HEIC, replace the
 /// styleMetadata/metadata uri item's payload with the bytes from
 /// payload_path (a patched bplist) and optionally rename the item to the
@@ -1228,15 +1258,19 @@ fn xdremux_convert_impl(
                         }
                     }
                     Err(error) => {
-                        let _ = std::fs::remove_file(&standard_output);
-                        return ConversionResult {
-                            success: false,
-                            mode: ptr::null_mut(),
-                            family: ptr::null_mut(),
-                            edr_scale: 0.0,
-                            gain_map_max: 0.0,
-                            error_message: CString::new(format!("Rust Apple Portrait: {error}")).unwrap().into_raw(),
-                        };
+                        if !error.contains("no rear.depth") && !error.contains("not an OPPO portrait photo") {
+                            let _ = std::fs::remove_file(&standard_output);
+                            return ConversionResult {
+                                success: false,
+                                mode: ptr::null_mut(),
+                                family: ptr::null_mut(),
+                                edr_scale: 0.0,
+                                gain_map_max: 0.0,
+                                error_message: CString::new(format!("Rust Apple Portrait: {error}")).unwrap().into_raw(),
+                            };
+                        } else {
+                            eprintln!("Rust Apple Portrait: skipping non-portrait photo ({error})");
+                        }
                     }
                 }
             }

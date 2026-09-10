@@ -29,6 +29,7 @@ import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
 import 'services/photographic_style_service.dart';
+import 'services/portrait_service.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
@@ -379,6 +380,12 @@ class _HomePageState extends State<HomePage> {
         orElse: () => PhotographicStyleMode.keepStyle,
       );
 
+      final ptJson = cpItem.portrait;
+      final ptMode = PortraitMode.values.firstWhere(
+        (e) => e.name == cpItem.portraitMode,
+        orElse: () => PortraitMode.applePortrait,
+      );
+
       final restoredItem = QueueItem(
         id: _makeId(),
         inputPath: cpItem.inputPath,
@@ -418,6 +425,8 @@ class _HomePageState extends State<HomePage> {
                   version: psJson['version'] as String? ?? '1.0',
                 ),
         photographicStyleMode: psMode,
+        portrait: ptJson == null ? null : PortraitSummary.fromJson(ptJson),
+        portraitMode: ptMode,
       );
       // Live Photo pairing provenance: a converted pair is only complete
       // when the sibling MOV still exists and its content identifier
@@ -1053,6 +1062,31 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  int _portraitInspectsInFlight = 0;
+
+  /// Async Portrait Depth detection for a freshly queued item.
+  Future<void> _inspectPortrait(QueueItem item) async {
+    _portraitInspectsInFlight++;
+    try {
+      final summary = await PortraitService.inspect(item.inputPath);
+      if (summary == null) return;
+      item.portrait = summary;
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('[XDRemux][portrait] inspect failed for ${item.inputPath}: $e');
+    } finally {
+      _portraitInspectsInFlight--;
+    }
+  }
+
+  /// Wait until all in-flight Portrait inspections finish (bounded).
+  Future<void> _waitForPortraitInspections() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (_portraitInspectsInFlight > 0 && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
   Future<void> _ingestPickedFiles(
     List<PickedItem> files, {
     required String source,
@@ -1070,8 +1104,6 @@ class _HomePageState extends State<HomePage> {
     int added = 0;
     int skipped = 0;
     int skippedExisting = 0;
-    int skippedUnsupportedPortrait = 0;
-    final unsupportedPortraitFiles = <String>[];
     String? firstError;
 
     for (var index = 0; index < files.length; index++) {
@@ -1087,18 +1119,6 @@ class _HomePageState extends State<HomePage> {
         resolvedPath,
       );
       if (existing.contains(path)) continue;
-
-      if (_config.applePortrait) {
-        final portraitReason = await _portraitImportRejection(path);
-        if (portraitReason != null) {
-          skippedUnsupportedPortrait++;
-          unsupportedPortraitFiles.add(file.name);
-          debugPrint(
-            '[XDRemux][portrait] rejected ${file.name}: $portraitReason',
-          );
-          continue;
-        }
-      }
 
       try {
         final classification = await XdRemuxService.classify(path);
@@ -1133,6 +1153,7 @@ class _HomePageState extends State<HomePage> {
         );
         _inspectMotionPhoto(_queue.last);
         _inspectPhotographicStyle(_queue.last);
+        _inspectPortrait(_queue.last);
         existing.add(path);
         added++;
       } catch (e) {
@@ -1152,23 +1173,12 @@ class _HomePageState extends State<HomePage> {
       final parts = <String>[];
       if (added > 0) parts.add(t('已添加 $added 个文件', 'Added $added files'));
       if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
-      if (skippedUnsupportedPortrait > 0) {
-        parts.add(
-          t(
-            '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
-            'Skipped $skippedUnsupportedPortrait files without portrait mode support',
-          ),
-        );
-      }
       if (skipped > 0) parts.add(t('$skipped 个无法读取', '$skipped unreadable'));
       if (firstError != null) parts.add(firstError);
       _currentFileName = parts.isEmpty
           ? t('未添加新文件', 'No new files added')
           : parts.join(t('，', ', '));
     });
-    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
-      await _showPortraitImportRejection(unsupportedPortraitFiles);
-    }
     if (skippedExisting > 0 && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1176,43 +1186,6 @@ class _HomePageState extends State<HomePage> {
           SnackBar(content: Text(t('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过', '$skippedExisting files are already converted HDR photos; skipped'))),
         );
     }
-  }
-
-  Future<String?> _portraitImportRejection(String inputPath) async {
-    // The native diagnostic bridge is currently available on Apple platforms.
-    // Other platforms keep the existing conversion behavior until a portable
-    // Rust diagnostic FFI is exposed.
-    if (!Platform.isMacOS && !Platform.isIOS) return null;
-
-    final report = await XdRemuxService.diagnosePortrait(inputPath);
-    if (report['classification'] == 'missing-rear-depth') {
-      return t('缺少 rear.depth（仅包含前置深度数据）', 'Missing rear.depth (only front depth data present)');
-    }
-    return null;
-  }
-
-  Future<void> _showPortraitImportRejection(List<String> fileNames) async {
-    if (!mounted) return;
-    final shown = fileNames.take(8).join('\n');
-    final more = fileNames.length > 8 ? t('\n还有 ${fileNames.length - 8} 个文件', '\nand ${fileNames.length - 8} more files') : '';
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(t('部分照片不支持 Apple 人像模式', 'Some photos do not support Apple Portrait')),
-        content: Text(
-          t(
-            '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n$shown$more',
-            'These photos lack the rear.depth required for Apple Portrait; skipped:\n\n$shown$more',
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(t('知道了', 'Got it')),
-          ),
-        ],
-      ),
-    );
   }
 
   OutputPlanStatus _computeOutputPlan(String inputPath, String outputPath) {
@@ -1514,8 +1487,9 @@ class _HomePageState extends State<HomePage> {
     if (!await _runPreflight()) return;
     if (!mounted) return;
 
-    // Let in-flight Motion Photo inspections land so per-card policies apply.
+    // Let in-flight Motion Photo & Portrait inspections land so per-card policies apply.
     await _waitForMotionInspections();
+    await _waitForPortraitInspections();
     if (!mounted) return;
 
     // Android: check battery optimization before starting a batch.
@@ -1622,6 +1596,10 @@ class _HomePageState extends State<HomePage> {
 
     String? tempBaseInput;
     try {
+      final effectiveApplePortrait = item.portrait != null
+          ? (item.portraitMode == PortraitMode.applePortrait)
+          : runConfig.applePortrait;
+
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
@@ -1629,7 +1607,7 @@ class _HomePageState extends State<HomePage> {
             runConfig.backend,
             item.inputPath,
             applePhotographicStyles: runConfig.applePhotographicStyles,
-            applePortrait: runConfig.applePortrait,
+            applePortrait: effectiveApplePortrait,
           )) {
         item.status = QueueItemStatus.skippedExisting;
         item.finishedAt = DateTime.now();
@@ -1670,6 +1648,7 @@ class _HomePageState extends State<HomePage> {
       Map<String, dynamic>? result;
       if (runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
+          !effectiveApplePortrait &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
@@ -1687,7 +1666,7 @@ class _HomePageState extends State<HomePage> {
           oppoCameraTail: effectiveOppoCameraTail.rustValue,
           strictTmap: runConfig.strictTmap,
           applePhotographicStyles: runConfig.applePhotographicStyles,
-          applePortrait: runConfig.applePortrait,
+          applePortrait: effectiveApplePortrait,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
@@ -2346,8 +2325,6 @@ class _HomePageState extends State<HomePage> {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
-    int skippedUnsupportedPortrait = 0;
-    final unsupportedPortraitFiles = <String>[];
     for (final resolvedPath in paths) {
       if (!isSupportedInputPath(resolvedPath)) {
         ignored++;
@@ -2360,19 +2337,7 @@ class _HomePageState extends State<HomePage> {
         resolvedPath,
       );
       if (existing.contains(path)) continue;
-      if (_config.applePortrait) {
-        final portraitReason = await _portraitImportRejection(path);
-        if (portraitReason != null) {
-          skippedUnsupportedPortrait++;
-          unsupportedPortraitFiles.add(
-            resolvedPath.split(RegExp(r'[/\\]')).last,
-          );
-          debugPrint(
-            '[XDRemux][portrait] rejected $resolvedPath: $portraitReason',
-          );
-          continue;
-        }
-      }
+
       try {
         final classification = await XdRemuxService.classify(path);
         final folderName = classification['folderName'] as String?;
@@ -2408,6 +2373,7 @@ class _HomePageState extends State<HomePage> {
         );
         _inspectMotionPhoto(_queue.last);
         _inspectPhotographicStyle(_queue.last);
+        _inspectPortrait(_queue.last);
         existing.add(path);
         added++;
       } catch (_) {
@@ -2421,33 +2387,20 @@ class _HomePageState extends State<HomePage> {
     }
     if (added == 0 &&
         ignored == 0 &&
-        skippedExisting == 0 &&
-        skippedUnsupportedPortrait == 0) {
+        skippedExisting == 0) {
       return;
     }
 
     final parts = <String>[];
     if (added > 0) parts.add(t('已$verb $added 个文件', '$verb $added files'));
     if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
-    if (skippedUnsupportedPortrait > 0) {
-      parts.add(
-        t(
-          '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
-          'Skipped $skippedUnsupportedPortrait files without portrait mode support',
-        ),
-      );
-    }
     if (ignored > 0) parts.add(t('忽略 $ignored 个非 HEIC', 'Ignored $ignored non-HEIC'));
     final summary = parts.isEmpty
         ? t('未添加新文件', 'No new files added')
         : parts.join(t('，', ', '));
     setState(() => _currentFileName = summary);
-    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
-      await _showPortraitImportRejection(unsupportedPortraitFiles);
-    }
     if (ignored > 0 ||
         skippedExisting > 0 ||
-        skippedUnsupportedPortrait > 0 ||
         verb == t('接收', 'Received')) {
       if (!mounted) return;
       final snackText = skippedExisting > 0
@@ -3250,6 +3203,10 @@ class _HomePageState extends State<HomePage> {
             if (mode == null) return;
             setState(() => item.photographicStyleMode = mode);
           },
+          onPortraitModeChanged: (mode) {
+            if (mode == null) return;
+            setState(() => item.portraitMode = mode);
+          },
           onDetails: () => _showPhotoDetails(item),
         );
       },
@@ -3312,6 +3269,10 @@ class _HomePageState extends State<HomePage> {
                 if (mode == null) return;
                 setState(() => _queue[index].photographicStyleMode = mode);
               },
+              onPortraitModeChanged: (mode) {
+                if (mode == null) return;
+                setState(() => _queue[index].portraitMode = mode);
+              },
               onDetails: () => _showPhotoDetails(_queue[index]),
             );
           },
@@ -3321,6 +3282,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showPhotoDetails(QueueItem item) {
+    if (item.portrait == null) {
+      try {
+        final raw = XdRemuxFFI.inspectPortrait(item.inputPath);
+        if (raw['hasPortrait'] == true) {
+          item.portrait = PortraitSummary.fromJson(raw);
+        }
+      } catch (_) {}
+    }
     final details = PhotoDetailsService.inspect(item.inputPath);
     final file = File(item.inputPath);
     final exists = file.existsSync();
@@ -4926,6 +4895,7 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
   final ValueChanged<PhotographicStyleMode?>? onStyleModeChanged;
+  final ValueChanged<PortraitMode?>? onPortraitModeChanged;
   final VoidCallback onDetails;
 
   const _MobileQueueCard({
@@ -4936,6 +4906,7 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onRemove,
     required this.onMotionModeChanged,
     this.onStyleModeChanged,
+    this.onPortraitModeChanged,
     required this.onDetails,
   });
 
@@ -5049,6 +5020,11 @@ class _MobileQueueCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
+                          if (item.portrait != null)
+                            _InfoChip(
+                              label: t('人像·${item.portrait!.apertureLabel}', 'Portrait · ${item.portrait!.apertureLabel}'),
+                              color: theme.colorScheme.primary,
+                            ),
                           if (item.photographicStyle != null)
                             _InfoChip(
                               label: t('风格·${item.photographicStyle!.styleNameZh}', 'Style · ${item.photographicStyle!.styleNameEn}'),
@@ -5063,6 +5039,28 @@ class _MobileQueueCard extends StatelessWidget {
                             ),
                         ],
                       ),
+                      // Portrait per-card mode menu (pre-conversion).
+                      if (item.portrait != null &&
+                          !item.status.isTerminal &&
+                          item.status != QueueItemStatus.running)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(
+                            children: [
+                              Text(
+                                t('人像模式', 'Portrait'),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              _PortraitModeMenu(
+                                value: item.portraitMode,
+                                onChanged: onPortraitModeChanged,
+                              ),
+                            ],
+                          ),
+                        ),
                       // Photographic Style per-card mode menu (pre-conversion).
                       if (item.photographicStyle != null &&
                           !item.status.isTerminal &&
@@ -5330,6 +5328,58 @@ class _MotionModeMenu extends StatelessWidget {
   }
 }
 
+/// Compact per-card Portrait mode menu (转苹果人像 / 标准 HDR).
+class _PortraitModeMenu extends StatelessWidget {
+  final PortraitMode value;
+  final ValueChanged<PortraitMode?>? onChanged;
+
+  const _PortraitModeMenu({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return PopupMenuButton<PortraitMode>(
+      initialValue: value,
+      onSelected: onChanged,
+      padding: EdgeInsets.zero,
+      itemBuilder: (context) => PortraitMode.values
+          .map(
+            (mode) => PopupMenuItem<PortraitMode>(
+              value: mode,
+              child: Text(mode.displayName),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withAlpha(24),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: theme.colorScheme.primary.withAlpha(90)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value.displayName,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoChip extends StatelessWidget {
   final String label;
   final Color color;
@@ -5400,6 +5450,7 @@ class _PhotoCard extends StatelessWidget {
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
   final ValueChanged<PhotographicStyleMode?>? onStyleModeChanged;
+  final ValueChanged<PortraitMode?>? onPortraitModeChanged;
   final VoidCallback onDetails;
 
   const _PhotoCard({
@@ -5412,6 +5463,7 @@ class _PhotoCard extends StatelessWidget {
     required this.onRemove,
     required this.onMotionModeChanged,
     this.onStyleModeChanged,
+    this.onPortraitModeChanged,
     required this.onDetails,
   });
 
@@ -5473,6 +5525,11 @@ class _PhotoCard extends StatelessWidget {
                             _OverlayChip(
                               label: item.captureModeLabel!,
                               color: Colors.white,
+                            ),
+                          if (item.portrait != null)
+                            _OverlayChip(
+                              label: t('人像·${item.portrait!.apertureLabel}', 'Portrait · ${item.portrait!.apertureLabel}'),
+                              color: theme.colorScheme.primary,
                             ),
                           if (item.photographicStyle != null)
                             _OverlayChip(
@@ -5584,6 +5641,13 @@ class _PhotoCard extends StatelessWidget {
                         color: Colors.blue.shade700,
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                  if (item.portrait != null &&
+                      !item.status.isTerminal &&
+                      item.status != QueueItemStatus.running)
+                    _PortraitModeMenu(
+                      value: item.portraitMode,
+                      onChanged: onPortraitModeChanged,
                     ),
                   if (item.photographicStyle != null &&
                       !item.status.isTerminal &&
@@ -6094,6 +6158,64 @@ class _PhotoDetailsContent extends StatelessWidget {
                 ),
               ],
 
+              // Portrait Depth (人像模式景深与 Apple Portrait)
+              if (item.portrait != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  title: t('📷 人像与景深 (Portrait Depth)', '📷 Portrait Depth'),
+                  children: [
+                    _detailRow(
+                      theme,
+                      t('景深数据', 'Depth Data'),
+                      '${t("包含后置景深", "Rear depth present")} (${item.portrait!.resolutionLabel})',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('拍摄光圈', 'Aperture'),
+                      item.portrait!.apertureLabel,
+                    ),
+                    if (item.portrait!.focalLength != null)
+                      _detailRow(
+                        theme,
+                        t('焦距', 'Focal Length'),
+                        '${item.portrait!.focalLength!.toStringAsFixed(1)} mm',
+                      ),
+                    if (item.portrait!.objectDistance != null)
+                      _detailRow(
+                        theme,
+                        t('物距/主体距离', 'Subject Distance'),
+                        '${(item.portrait!.objectDistance! / 100.0).toStringAsFixed(2)} m (${item.portrait!.objectDistance} cm)',
+                      ),
+                    _detailRow(
+                      theme,
+                      t('深度尺度 / 标定', 'Scale / Calibration'),
+                      '${item.portrait!.scale.toStringAsPrecision(4)} (${item.portrait!.scaleMode})',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('语义遮罩 (Mattes)', 'Semantic Mattes'),
+                      [
+                        if (item.portrait!.hasPortraitMatte) t('人物主体', 'Portrait'),
+                        if (item.portrait!.hasHairMatte) t('发丝', 'Hair'),
+                        if (item.portrait!.hasPetMatte) t('宠物', 'Pet'),
+                      ].isEmpty
+                          ? t('无', 'None')
+                          : [
+                              if (item.portrait!.hasPortraitMatte) t('人物主体', 'Portrait'),
+                              if (item.portrait!.hasHairMatte) t('发丝', 'Hair'),
+                              if (item.portrait!.hasPetMatte) t('宠物', 'Pet'),
+                            ].join(' / '),
+                    ),
+                    _detailRow(
+                      theme,
+                      t('人像转换策略', 'Portrait Policy'),
+                      item.portraitMode.displayName,
+                    ),
+                  ],
+                ),
+              ],
+
               const SizedBox(height: 12),
               // Path section
               _buildSection(
@@ -6301,6 +6423,19 @@ class _PhotoDetailsContent extends StatelessWidget {
       buffer.writeln('封装格式: ${item.motionPhoto!.kind}');
       buffer.writeln('码流数: ${item.motionPhoto!.streamCount}');
       buffer.writeln('处理策略: ${item.motionPhotoMode.displayName}');
+    }
+    if (item.portrait != null) {
+      buffer.writeln('--- 人像与景深 ---');
+      buffer.writeln('景深分辨率: ${item.portrait!.resolutionLabel}');
+      buffer.writeln('拍摄光圈: ${item.portrait!.apertureLabel}');
+      if (item.portrait!.focalLength != null) {
+        buffer.writeln('焦距: ${item.portrait!.focalLength!.toStringAsFixed(1)} mm');
+      }
+      if (item.portrait!.objectDistance != null) {
+        buffer.writeln('物距: ${item.portrait!.objectDistance} cm');
+      }
+      buffer.writeln('深度标定: ${item.portrait!.scale.toStringAsPrecision(4)} (${item.portrait!.scaleMode})');
+      buffer.writeln('处理策略: ${item.portraitMode.displayName}');
     }
     buffer.writeln('--- 路径 ---');
     buffer.writeln('输入路径: ${item.inputPath}');

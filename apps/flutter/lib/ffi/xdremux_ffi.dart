@@ -268,6 +268,10 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_photo_details');
 
+  static final _inspectPortrait = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_portrait');
+
   static final _livePhotoPairValid = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
@@ -604,6 +608,32 @@ class XdRemuxFFI {
         'errorMessage': 'Malformed report from Rust inspect photo details',
       };
     } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  /// Inspect a photo for OPPO Portrait Depth (rear.depth / rear.depth.config).
+  static Map<String, dynamic> inspectPortrait(String path) {
+    final pathPtr = path.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _inspectPortrait(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{'hasPortrait': false};
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{'hasPortrait': false};
+    } catch (_) {
+      return <String, dynamic>{'hasPortrait': false};
+    } finally {
+      if (report != ffi.nullptr) {
+        try {
+          _freeString(report);
+        } catch (_) {}
+      }
       calloc.free(pathPtr);
     }
   }

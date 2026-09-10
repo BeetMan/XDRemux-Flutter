@@ -721,6 +721,88 @@ class PhotographicStyleSummary {
   }
 }
 
+/// How an OPPO Portrait photo (with rear.depth) is handled at conversion time.
+enum PortraitMode {
+  /// Convert to Apple Portrait (generates depth map, semantic mattes, and Apple sidecar so Photos app on iOS/macOS can adjust aperture).
+  applePortrait,
+
+  /// Convert standard photo (keep ISO HDR gain map only, do not inject Apple depth graph).
+  standard;
+
+  String get displayName {
+    switch (this) {
+      case PortraitMode.applePortrait:
+        return t('转苹果人像', 'Apple Portrait');
+      case PortraitMode.standard:
+        return t('标准 HDR', 'Standard HDR');
+    }
+  }
+}
+
+/// Parsed Portrait Depth summary attached to a queue item.
+class PortraitSummary {
+  final bool hasPortrait;
+  final int width;
+  final int height;
+  final double scale;
+  final String scaleMode;
+  final double? currentFNumber;
+  final double? focalLength;
+  final int? objectDistance;
+  final bool hasPortraitMatte;
+  final bool hasHairMatte;
+  final bool hasPetMatte;
+
+  const PortraitSummary({
+    required this.hasPortrait,
+    required this.width,
+    required this.height,
+    required this.scale,
+    required this.scaleMode,
+    this.currentFNumber,
+    this.focalLength,
+    this.objectDistance,
+    required this.hasPortraitMatte,
+    required this.hasHairMatte,
+    required this.hasPetMatte,
+  });
+
+  factory PortraitSummary.fromJson(Map<String, dynamic> json) {
+    return PortraitSummary(
+      hasPortrait: json['hasPortrait'] == true,
+      width: json['width'] as int? ?? 0,
+      height: json['height'] as int? ?? 0,
+      scale: (json['scale'] as num?)?.toDouble() ?? 0.0,
+      scaleMode: json['scaleMode'] as String? ?? '',
+      currentFNumber: (json['currentFNumber'] as num?)?.toDouble(),
+      focalLength: (json['focalLength'] as num?)?.toDouble(),
+      objectDistance: json['objectDistance'] as int?,
+      hasPortraitMatte: json['hasPortraitMatte'] == true,
+      hasHairMatte: json['hasHairMatte'] == true,
+      hasPetMatte: json['hasPetMatte'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'hasPortrait': hasPortrait,
+    'width': width,
+    'height': height,
+    'scale': scale,
+    'scaleMode': scaleMode,
+    'currentFNumber': currentFNumber,
+    'focalLength': focalLength,
+    'objectDistance': objectDistance,
+    'hasPortraitMatte': hasPortraitMatte,
+    'hasHairMatte': hasHairMatte,
+    'hasPetMatte': hasPetMatte,
+  };
+
+  String get resolutionLabel => '$width × $height';
+  String get apertureLabel =>
+      currentFNumber != null ? 'f/${currentFNumber!.toStringAsFixed(1)}' : 'f/--';
+  String get distanceLabel => objectDistance != null ? '${objectDistance!} cm' : '-';
+}
+
 /// Parsed photo shooting parameters (EXIF) and HDR GainMap properties.
 class PhotoDetailsModel {
   final bool success;
@@ -827,6 +909,12 @@ class QueueItem {
   /// Per-card handling for Photographic Styles.
   PhotographicStyleMode photographicStyleMode;
 
+  /// Non-null when the input carries OPPO Portrait Depth (rear.depth + config).
+  PortraitSummary? portrait;
+
+  /// Per-card handling for Portrait Photos.
+  PortraitMode portraitMode;
+
   /// Backend captured when this item starts, so progress/cancellation remain
   /// tied to the request even if settings change for a later batch.
   ConversionBackend backend;
@@ -872,6 +960,8 @@ class QueueItem {
     this.motionPhotoMode = MotionPhotoMode.skip,
     this.photographicStyle,
     this.photographicStyleMode = PhotographicStyleMode.keepStyle,
+    this.portrait,
+    this.portraitMode = PortraitMode.applePortrait,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,

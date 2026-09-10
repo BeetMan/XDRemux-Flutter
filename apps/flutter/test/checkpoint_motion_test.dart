@@ -122,6 +122,45 @@ void main() {
       expect(restored.items.single.photographicStyleMode, 'extractBasePhoto');
     });
 
+    test('JSONL round-trip keeps portrait fields', () {
+      final checkpoint = Checkpoint(
+        header: CheckpointHeader(
+          configHash: 'abc',
+          totalJobs: 1,
+          startedAt: DateTime.parse('2026-09-10T08:00:00Z'),
+          appVersion: '0.4.0',
+        ),
+        items: [
+          CheckpointItem(
+            inputPath: '/tmp/IMG_130252.HEIC',
+            outputPath: '/out/IMG_130252.heic',
+            status: CheckpointItemStatus.converted,
+            portrait: const {
+              'hasPortrait': true,
+              'width': 1024,
+              'height': 768,
+              'scale': 0.00748,
+              'scaleMode': 'passthrough',
+              'currentFNumber': 4.5,
+              'focalLength': 7.1,
+              'objectDistance': 1080,
+              'hasPortraitMatte': true,
+              'hasHairMatte': false,
+              'hasPetMatte': false,
+            },
+            portraitMode: 'applePortrait',
+          ),
+        ],
+      );
+
+      final restored = Checkpoint.fromJsonl(checkpoint.toJsonl());
+      expect(restored, isNotNull);
+      expect(restored!.items.single.portrait, isNotNull);
+      expect(restored.items.single.portrait!['currentFNumber'], 4.5);
+      expect(restored.items.single.portrait!['scaleMode'], 'passthrough');
+      expect(restored.items.single.portraitMode, 'applePortrait');
+    });
+
     test('old checkpoint JSONL without new fields still restores', () {
       final legacy = jsonEncode({
         'type': 'item',
@@ -141,6 +180,8 @@ void main() {
       expect(restored.items.single.motionPhotoMode, 'skip');
       expect(restored.items.single.photographicStyle, isNull);
       expect(restored.items.single.photographicStyleMode, 'keepStyle');
+      expect(restored.items.single.portrait, isNull);
+      expect(restored.items.single.portraitMode, 'applePortrait');
     });
   });
 }

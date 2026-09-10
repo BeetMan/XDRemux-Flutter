@@ -300,6 +300,8 @@ class CheckpointService {
                   'version': item.photographicStyle!.version,
                 },
         photographicStyleMode: item.photographicStyleMode.name,
+        portrait: item.portrait?.toJson(),
+        portraitMode: item.portraitMode.name,
       );
     }).toList();
   }

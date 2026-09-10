@@ -92,6 +92,10 @@ class CheckpointItem {
   final Map<String, dynamic>? photographicStyle;
   final String photographicStyleMode;
 
+  /// Portrait Depth detection result and per-card handling mode.
+  final Map<String, dynamic>? portrait;
+  final String portraitMode;
+
   CheckpointItem({
     required this.inputPath,
     required this.outputPath,
@@ -109,6 +113,8 @@ class CheckpointItem {
     this.motionPhotoMode = 'skip',
     this.photographicStyle,
     this.photographicStyleMode = 'keepStyle',
+    this.portrait,
+    this.portraitMode = 'applePortrait',
   });
 
   Map<String, dynamic> toJson() => {
@@ -131,6 +137,8 @@ class CheckpointItem {
         'motionPhotoMode': motionPhotoMode,
         if (photographicStyle != null) 'photographicStyle': photographicStyle,
         'photographicStyleMode': photographicStyleMode,
+        if (portrait != null) 'portrait': portrait,
+        'portraitMode': portraitMode,
       };
 
   factory CheckpointItem.fromJson(Map<String, dynamic> json) {
@@ -160,6 +168,12 @@ class CheckpointItem {
               : null,
       photographicStyleMode:
           json['photographicStyleMode'] as String? ?? 'keepStyle',
+      portrait:
+          json['portrait'] != null
+              ? Map<String, dynamic>.from(json['portrait'] as Map)
+              : null,
+      portraitMode:
+          json['portraitMode'] as String? ?? 'applePortrait',
     );
   }
 
