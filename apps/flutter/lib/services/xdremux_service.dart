@@ -144,7 +144,10 @@ class XdRemuxService {
           'schema': 'xdremux-portrait-calibration-research-v1',
           'researchOnly': true,
           'safeToTransform': false,
-          'error': t('Apple 人像模式研究报告无效', 'Invalid Apple Portrait research report'),
+          'error': t(
+            'Apple 人像模式研究报告无效',
+            'Invalid Apple Portrait research report',
+          ),
         };
       }
       return raw.map((key, value) => MapEntry(key.toString(), value));
@@ -264,6 +267,23 @@ class XdRemuxService {
       };
     } finally {
       XdRemuxFFI.freeResult(result);
+    }
+  }
+
+  static Future<Map<String, dynamic>> inspectHuawei(String inputPath) async {
+    try {
+      return XdRemuxFFI.inspectHuawei(inputPath);
+    } catch (error) {
+      // Older platform bundles may not have the new diagnostic symbol yet.
+      // Recognition is advisory, so never reject an otherwise supported file.
+      return <String, dynamic>{
+        'schema': 'xdremux-huawei-heic-v1',
+        'status': 'diagnostic-unavailable',
+        'isHuaweiHdr': false,
+        'applePhotosHdrCompatible': false,
+        'recommendedAction': 'inspect',
+        'error': error.toString(),
+      };
     }
   }
 

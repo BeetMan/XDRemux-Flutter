@@ -1,7 +1,9 @@
 use std::env;
 
 fn main() {
-    let path = env::args().nth(1).expect("usage: tail_dump <file.heic> [entry ...]");
+    let path = env::args()
+        .nth(1)
+        .expect("usage: tail_dump <file.heic> [entry ...]");
     let data = std::fs::read(&path).expect("read failed");
     let names = xdremux_core::container::tail_entry_names(&data);
     println!("entries: {:?}", names);
@@ -13,7 +15,13 @@ fn main() {
                 let preview = &bytes[..bytes.len().min(600)];
                 match std::str::from_utf8(preview) {
                     Ok(s) => println!("{}", s),
-                    Err(_) => println!("hex: {}", preview[..preview.len().min(128)].iter().map(|b| format!("{b:02x}")).collect::<String>()),
+                    Err(_) => println!(
+                        "hex: {}",
+                        preview[..preview.len().min(128)]
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>()
+                    ),
                 }
             }
             None => println!("--- {} MISSING", name),

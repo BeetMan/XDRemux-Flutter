@@ -19,7 +19,9 @@ pub struct BplistWriter {
 
 impl BplistWriter {
     pub fn new() -> Self {
-        Self { objects: Vec::new() }
+        Self {
+            objects: Vec::new(),
+        }
     }
     pub fn add_bool(&mut self, v: bool) -> usize {
         self.objects.push(Obj::Bool(v));
@@ -114,12 +116,13 @@ fn write_obj(out: &mut Vec<u8>, obj: &Obj) {
             } else {
                 8
             };
-            let marker = 0x10 | match bytes {
-                1 => 0,
-                2 => 1,
-                4 => 2,
-                _ => 3,
-            };
+            let marker = 0x10
+                | match bytes {
+                    1 => 0,
+                    2 => 1,
+                    4 => 2,
+                    _ => 3,
+                };
             out.push(marker);
             out.extend_from_slice(&v.to_be_bytes()[8 - bytes..]);
         }

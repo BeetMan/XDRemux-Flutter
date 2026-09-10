@@ -19,7 +19,10 @@ fn main() {
     // Meta structure
     match xdremux_core::isobmff::parse_source_meta(&data) {
         Ok(meta) => {
-            println!("primary_id={} pitm_version={}", meta.primary_id, meta.pitm_version);
+            println!(
+                "primary_id={} pitm_version={}",
+                meta.primary_id, meta.pitm_version
+            );
             println!("items:");
             for item in &meta.items {
                 let extent: u64 = meta
@@ -40,16 +43,13 @@ fn main() {
             }
             println!("props:");
             for p in &meta.props {
-                println!(
-                    "  idx={} type={} len={}",
-                    p.index,
-                    p.ptype,
-                    p.raw.len()
-                );
+                println!("  idx={} type={} len={}", p.index, p.ptype, p.raw.len());
             }
 
             // ipma associations for key items + anything carrying auxC
-            let key_items = [10081u32, 10108, 10136, 10173, 10140, 10174, 10176, 10109, 10137];
+            let key_items = [
+                10081u32, 10108, 10136, 10173, 10140, 10174, 10176, 10109, 10137,
+            ];
             println!("ipma associations:");
             for e in &meta.ipma_entries {
                 let has_auxc = e.associations.iter().any(|&(idx, _)| {
@@ -126,7 +126,10 @@ fn main() {
     // OPPO tail entries
     let tails = xdremux_core::container::tail_entry_names(&data);
     println!("tail entries: {:?}", tails);
-    println!("has_watermark_entries={}", xdremux_core::container::has_watermark_entries(&data));
+    println!(
+        "has_watermark_entries={}",
+        xdremux_core::container::has_watermark_entries(&data)
+    );
 
     // heif-oxide decode test
     match heif_oxide::decode_bytes(&data) {
@@ -198,7 +201,11 @@ fn png_chunk(out: &mut Vec<u8>, ctype: &[u8; 4], payload: &[u8]) {
     for &b in ctype.iter().chain(payload.iter()) {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     out.extend_from_slice(&(!crc).to_be_bytes());

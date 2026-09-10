@@ -3,7 +3,8 @@
 //! Ported from upstream XDRemux v1.4 `xdremux_py/motion_photo.py` (MIT,
 //! 21Z121Z1/XDRemux). Understands Android Motion Photo V1 (XMP
 //! `Container:Directory`), legacy MicroVideo, HEIF `mpvd` payloads, and the
-//! OPPO LPEX extensions used by ColorOS 15/16.
+//! OPPO LPEX extensions used by ColorOS 15/16, and the appended-video form
+//! observed on Huawei Mate 70/OpenHarmony.
 //!
 //! Everything works on in-memory bytes; the photo files we handle are at most
 //! a few tens of MB and the rest of the pipeline already buffers whole files.
@@ -64,11 +65,25 @@ pub struct OppoMetadata {
     pub eis_crop_factor: Option<[f64; 2]>,
 }
 
+/// Read-only metadata observed in Mate 70/OpenHarmony appended-video files.
+///
+/// These fields identify the container variant and its cover-frame candidate;
+/// they do not claim that the Huawei timed metadata is an Apple Live Photo
+/// contract.
+#[derive(Debug, Clone, Default)]
+pub struct HuaweiMotionMetadata {
+    pub cover_time_ms: Option<f64>,
+    pub start_time_ms: Option<i64>,
+    pub video_id: Option<String>,
+    pub deferred_video_enhance_flag: Option<bool>,
+}
+
 /// Fully resolved Motion Photo layout.
 #[derive(Debug, Clone)]
 pub struct MotionPhotoAsset {
     /// "androidMotionPhotoV1" | "androidHeifMotionPhotoV1" |
-    /// "legacyMicroVideoV1b" | "oppoLivePhoto"
+    /// "legacyMicroVideoV1b" | "oppoLivePhoto" |
+    /// "huaweiOpenHarmonyMotionPhoto"
     pub source_kind: String,
     pub items: Vec<MotionPhotoItem>,
     pub still_range: ByteRange,
@@ -76,6 +91,7 @@ pub struct MotionPhotoAsset {
     pub presentation_timestamp_us: Option<i64>,
     pub presentation_source: Option<String>,
     pub vendor_metadata: Option<OppoMetadata>,
+    pub huawei_metadata: Option<HuaweiMotionMetadata>,
 }
 
 impl MotionPhotoAsset {
@@ -118,6 +134,14 @@ impl MotionPhotoAsset {
                 "streamCount": meta.stream_count,
             });
         }
+        if let Some(meta) = &self.huawei_metadata {
+            v["huaweiMetadata"] = json!({
+                "coverTimeMs": meta.cover_time_ms,
+                "startTimeMs": meta.start_time_ms,
+                "videoId": meta.video_id,
+                "deferredVideoEnhanceFlag": meta.deferred_video_enhance_flag,
+            });
+        }
         v
     }
 }
@@ -128,10 +152,13 @@ impl MotionPhotoAsset {
 
 fn extract_xmp_prefix(data: &[u8]) -> Result<Option<&[u8]>, String> {
     let prefix = &data[..data.len().min(MAX_XMP_SCAN_BYTES)];
-    let starts = [find_sub(prefix, b"<x:xmpmeta"), find_sub(prefix, b"<xmpmeta")]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let starts = [
+        find_sub(prefix, b"<x:xmpmeta"),
+        find_sub(prefix, b"<xmpmeta"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
     let Some(&start) = starts.iter().min() else {
         return Ok(None);
     };
@@ -152,9 +179,7 @@ fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 fn local_name(name: &str) -> &str {
@@ -245,8 +270,8 @@ fn parse_standard_xmp(xmp: &[u8]) -> Result<StandardXmp, String> {
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.clone())
     };
-    let enabled = attr("MotionPhoto").as_deref() == Some("1")
-        || attr("MicroVideo").as_deref() == Some("1");
+    let enabled =
+        attr("MotionPhoto").as_deref() == Some("1") || attr("MicroVideo").as_deref() == Some("1");
     let version = attr("MotionPhotoVersion").and_then(|v| v.parse::<i64>().ok());
     let mut timestamp: Option<i64> = None;
     for name in [
@@ -317,7 +342,10 @@ fn validate_directory(items: &[MotionPhotoItem]) -> Result<(), String> {
 }
 
 /// Tightly packed Android JPEG resources, walked from EOF backwards.
-fn jpeg_resource_ranges(items: &[MotionPhotoItem], file_size: u64) -> Result<Vec<ByteRange>, String> {
+fn jpeg_resource_ranges(
+    items: &[MotionPhotoItem],
+    file_size: u64,
+) -> Result<Vec<ByteRange>, String> {
     validate_directory(items)?;
     let n = items.len();
     let mut starts = vec![0u64; n];
@@ -347,13 +375,19 @@ fn jpeg_resource_ranges(items: &[MotionPhotoItem], file_size: u64) -> Result<Vec
     if starts[0] != 0 || ends[n - 1] != file_size {
         return Err("invalid Motion Photo resource ranges".into());
     }
-    Ok((0..n).map(|i| ByteRange { start: starts[i], end: ends[i] }).collect())
+    Ok((0..n)
+        .map(|i| ByteRange {
+            start: starts[i],
+            end: ends[i],
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
 // ISO BMFF helpers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy)]
 struct BoxHeaderLite {
     offset: u64,
     size: u64,
@@ -445,6 +479,275 @@ fn ftyp_offsets(data: &[u8], range: ByteRange) -> Vec<u64> {
     out
 }
 
+/// Walk a complete top-level ISO-BMFF range. Unlike `ftyp_offsets`, this
+/// rejects a coincidental `ftyp` byte sequence inside an mdat payload.
+fn top_level_boxes(data: &[u8], range: ByteRange) -> Result<Vec<BoxHeaderLite>, String> {
+    if range.start > range.end || range.end > data.len() as u64 {
+        return Err("ISO-BMFF range is outside the input".into());
+    }
+    let mut boxes = Vec::new();
+    let mut cursor = range.start;
+    while cursor < range.end {
+        if boxes.len() >= 4096 {
+            return Err("too many ISO-BMFF top-level boxes".into());
+        }
+        let b = read_box_header(data, cursor, range.end).ok_or("invalid ISO-BMFF top-level box")?;
+        cursor = b.end();
+        boxes.push(b);
+    }
+    Ok(boxes)
+}
+
+/// Return direct children of a box. `full_box` skips the version/flags word
+/// used by containers such as `meta` before walking their children.
+fn child_boxes(data: &[u8], parent: &BoxHeaderLite, full_box: bool) -> Option<Vec<BoxHeaderLite>> {
+    let start = parent
+        .payload_offset()
+        .checked_add(if full_box { 4 } else { 0 })?;
+    if start > parent.end() {
+        return None;
+    }
+    let mut children = Vec::new();
+    let mut cursor = start;
+    while cursor < parent.end() {
+        let child = read_box_header(data, cursor, parent.end())?;
+        cursor = child.end();
+        children.push(child);
+    }
+    Some(children)
+}
+
+fn is_heif_ftyp(data: &[u8], ftyp: &BoxHeaderLite) -> bool {
+    if &ftyp.kind != b"ftyp" || ftyp.size < ftyp.header_size + 8 {
+        return false;
+    }
+    let start = ftyp.payload_offset() as usize;
+    let end = ftyp.end() as usize;
+    let Some(payload) = data.get(start..end) else {
+        return false;
+    };
+    let is_heif_brand = |brand: &[u8]| {
+        brand == b"heic"
+            || brand == b"heix"
+            || brand == b"heis"
+            || brand == b"hevs"
+            || brand == b"mif1"
+            || brand == b"msf1"
+    };
+    is_heif_brand(&payload[..4])
+        || (payload.len() >= 8 && payload[8..].chunks_exact(4).any(is_heif_brand))
+}
+
+fn mdta_keys(data: &[u8], keys: &BoxHeaderLite) -> Option<Vec<String>> {
+    let start = keys.payload_offset() as usize;
+    let end = keys.end() as usize;
+    if start.checked_add(8)? > end {
+        return None;
+    }
+    let count = u32::from_be_bytes(data[start + 4..start + 8].try_into().ok()?) as usize;
+    if count > 256 {
+        return None;
+    }
+    let mut cursor = start + 8;
+    let mut names = Vec::with_capacity(count);
+    for _ in 0..count {
+        if cursor.checked_add(8)? > end {
+            return None;
+        }
+        let size = u32::from_be_bytes(data[cursor..cursor + 4].try_into().ok()?) as usize;
+        if size < 8 || cursor.checked_add(size)? > end {
+            return None;
+        }
+        let name = String::from_utf8_lossy(&data[cursor + 8..cursor + size])
+            .trim_end_matches('\0')
+            .to_string();
+        names.push(name);
+        cursor += size;
+    }
+    Some(names)
+}
+
+fn mdta_values(
+    data: &[u8],
+    ilst: &BoxHeaderLite,
+    keys: &[String],
+) -> Option<Vec<(String, Vec<u8>)>> {
+    let mut values = Vec::new();
+    for item in child_boxes(data, ilst, false)? {
+        let id = u32::from_be_bytes(item.kind);
+        if id == 0 {
+            continue;
+        }
+        let Some(name) = keys.get(id as usize - 1) else {
+            continue;
+        };
+        let Some(data_box) = child_boxes(data, &item, false)?
+            .into_iter()
+            .find(|child| &child.kind == b"data")
+        else {
+            continue;
+        };
+        let start = data_box.payload_offset().checked_add(8)? as usize;
+        let end = data_box.end() as usize;
+        if start <= end && end <= data.len() && end - start <= MAX_METADATA_STRING {
+            values.push((name.clone(), data[start..end].to_vec()));
+        }
+    }
+    Some(values)
+}
+
+/// Parse the direct `moov/meta/keys+ilst` metadata used by OpenHarmony's
+/// appended video. The values are diagnostic only; unknown keys are ignored.
+fn parse_huawei_movie_metadata(data: &[u8], moov: &BoxHeaderLite) -> HuaweiMotionMetadata {
+    let mut values = Vec::new();
+    let Some(moov_children) = child_boxes(data, moov, false) else {
+        return HuaweiMotionMetadata::default();
+    };
+    let mut metas: Vec<BoxHeaderLite> = moov_children
+        .iter()
+        .filter(|child| &child.kind == b"meta")
+        .copied()
+        .collect();
+    // Be tolerant of a vendor placing the mdta metadata under udta.
+    for udta in moov_children.iter().filter(|child| &child.kind == b"udta") {
+        if let Some(children) = child_boxes(data, udta, false) {
+            metas.extend(children.into_iter().filter(|child| &child.kind == b"meta"));
+        }
+    }
+    for meta in metas {
+        let Some(children) = child_boxes(data, &meta, true) else {
+            continue;
+        };
+        let Some(keys) = children.iter().find(|child| &child.kind == b"keys") else {
+            continue;
+        };
+        let Some(ilst) = children.iter().find(|child| &child.kind == b"ilst") else {
+            continue;
+        };
+        let Some(names) = mdta_keys(data, keys) else {
+            continue;
+        };
+        if let Some(parsed) = mdta_values(data, ilst, &names) {
+            values = parsed;
+            break;
+        }
+    }
+
+    let text = |name: &str| -> Option<String> {
+        values
+            .iter()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| std::str::from_utf8(value).ok())
+            .map(|value| value.trim_end_matches('\0').to_string())
+    };
+    // OpenHarmony stores this float32 in network/big-endian order; the
+    // neighbouring string metadata is ordinary UTF-8/ASCII.
+    let cover_time_ms = values
+        .iter()
+        .find(|(key, value)| key == "com.openharmony.covertime" && value.len() == 4)
+        .and_then(|(_, value)| {
+            let value = f32::from_be_bytes(value[..4].try_into().ok()?) as f64;
+            (value.is_finite() && value >= 0.0).then_some(value)
+        });
+    let start_time_ms = text("com.openharmony.starttime").and_then(|value| value.parse().ok());
+    let video_id = text("com.openharmony.videoId")
+        .filter(|value| !value.is_empty() && value.len() <= MAX_METADATA_STRING);
+    let deferred_video_enhance_flag =
+        text("com.openharmony.deferredVideoEnhanceFlag").and_then(|value| match value.as_str() {
+            "0" => Some(false),
+            "1" => Some(true),
+            _ => None,
+        });
+    HuaweiMotionMetadata {
+        cover_time_ms,
+        start_time_ms,
+        video_id,
+        deferred_video_enhance_flag,
+    }
+}
+
+fn milliseconds_to_microseconds(value: Option<f64>) -> Option<i64> {
+    let value = value? * 1000.0;
+    (value.is_finite() && value >= 0.0 && value <= i64::MAX as f64).then_some(value.round() as i64)
+}
+
+/// Mate 70/OpenHarmony dynamic photos keep the HEIF still as the first set of
+/// top-level boxes and append a complete MP4 (`ftyp`/`mdat`/`moov`) afterwards.
+/// This is deliberately conservative: both the HEIF prefix and the vendor
+/// `covertime`/`videoId` metadata must be present before classification.
+fn parse_huawei_appended_motion_photo(data: &[u8]) -> Result<Option<MotionPhotoAsset>, String> {
+    if data.len() < 24 {
+        return Ok(None);
+    }
+    let Some(first_ftyp) = read_box_header(data, 0, data.len() as u64) else {
+        return Ok(None);
+    };
+    if !is_heif_ftyp(data, &first_ftyp) {
+        return Ok(None);
+    }
+    let has_openharmony_marker = find_sub(data, b"com.openharmony.covertime").is_some()
+        && find_sub(data, b"com.openharmony.videoId").is_some();
+    if !has_openharmony_marker {
+        return Ok(None);
+    }
+
+    let full_range = ByteRange::new(0, data.len() as u64)?;
+    let offsets = ftyp_offsets(data, full_range);
+    for video_start in offsets.into_iter().filter(|offset| *offset > 0) {
+        let video_range = ByteRange::new(video_start, data.len() as u64)?;
+        let clean_len = match standalone_bmff_length(&data[video_start as usize..]) {
+            Ok(length) => length,
+            Err(_) => continue,
+        };
+        let clean_end = video_start.saturating_add(clean_len as u64);
+        let Ok(boxes) = top_level_boxes(data, ByteRange::new(video_start, clean_end)?) else {
+            continue;
+        };
+        if boxes.first().map(|box_| &box_.kind) != Some(b"ftyp")
+            || boxes.iter().filter(|box_| &box_.kind == b"ftyp").count() != 1
+            || !boxes.iter().any(|box_| &box_.kind == b"mdat")
+        {
+            continue;
+        }
+        let Some(moov) = boxes.iter().find(|box_| &box_.kind == b"moov") else {
+            continue;
+        };
+        let metadata = parse_huawei_movie_metadata(data, moov);
+        if metadata.cover_time_ms.is_none() || metadata.video_id.is_none() {
+            continue;
+        }
+        let still_range = ByteRange::new(0, video_start)?;
+        let items = vec![
+            MotionPhotoItem {
+                mime: "image/heic".into(),
+                semantic: "Primary".into(),
+                length: 0,
+                padding: 0,
+            },
+            MotionPhotoItem {
+                mime: "video/mp4".into(),
+                semantic: "MotionPhoto".into(),
+                length: video_range.length(),
+                padding: 0,
+            },
+        ];
+        return Ok(Some(MotionPhotoAsset {
+            source_kind: "huaweiOpenHarmonyMotionPhoto".into(),
+            items,
+            still_range,
+            video_range,
+            presentation_timestamp_us: milliseconds_to_microseconds(metadata.cover_time_ms),
+            presentation_source: metadata
+                .cover_time_ms
+                .map(|_| "huaweiOpenHarmony".to_string()),
+            vendor_metadata: None,
+            huawei_metadata: Some(metadata),
+        }));
+    }
+
+    Err("Huawei OpenHarmony Motion Photo has no valid appended MP4".into())
+}
+
 fn heif_ranges(
     data: &[u8],
     items: &[MotionPhotoItem],
@@ -463,8 +766,7 @@ fn heif_ranges(
         if boxes.len() >= 4096 {
             return Err("too many HEIF top-level boxes".into());
         }
-        let b = read_box_header(data, cursor, file_size)
-            .ok_or("invalid HEIF top-level box")?;
+        let b = read_box_header(data, cursor, file_size).ok_or("invalid HEIF top-level box")?;
         cursor = b.end();
         boxes.push(b);
     }
@@ -554,9 +856,7 @@ fn parse_android_motion_photo(data: &[u8]) -> Result<Option<MotionPhotoAsset>, S
             },
         ];
         source_kind = "legacyMicroVideoV1b";
-        presentation_source = parsed
-            .timestamp
-            .map(|_| "legacyMicroVideoXMP".to_string());
+        presentation_source = parsed.timestamp.map(|_| "legacyMicroVideoXMP".to_string());
     } else {
         return Err("Motion Photo directory is missing".into());
     }
@@ -568,6 +868,7 @@ fn parse_android_motion_photo(data: &[u8]) -> Result<Option<MotionPhotoAsset>, S
         presentation_timestamp_us: parsed.timestamp,
         presentation_source,
         vendor_metadata: None,
+        huawei_metadata: None,
     }))
 }
 
@@ -749,8 +1050,10 @@ fn oppo_fallback(data: &[u8], lpex: Option<&OppoMetadata>) -> Option<MotionPhoto
         .map(|x| String::from_utf8_lossy(x).into_owned())
         .unwrap_or_default();
     let lower = text.to_ascii_lowercase();
-    let has_signature =
-        lpex.is_some() || text.contains("OpCamera:") || lower.contains("oppo") || lower.contains("oplus");
+    let has_signature = lpex.is_some()
+        || text.contains("OpCamera:")
+        || lower.contains("oppo")
+        || lower.contains("oplus");
     if !has_signature {
         return None;
     }
@@ -799,22 +1102,21 @@ fn oppo_fallback(data: &[u8], lpex: Option<&OppoMetadata>) -> Option<MotionPhoto
         ],
     );
 
-    let (video_start, stream_count) = if lpex.map(|l| l.version >= 1).unwrap_or(false)
-        && offsets.len() >= 2
-    {
-        (offsets[offsets.len() - 2], 2u32)
-    } else {
-        let mut start = None;
-        let mut lengths = declared_lengths.clone();
-        lengths.sort_unstable_by(|a, b| b.cmp(a));
-        for length in lengths {
-            if length > 0 && length <= size && is_ftyp_start(data, size - length, size) {
-                start = Some(size - length);
-                break;
+    let (video_start, stream_count) =
+        if lpex.map(|l| l.version >= 1).unwrap_or(false) && offsets.len() >= 2 {
+            (offsets[offsets.len() - 2], 2u32)
+        } else {
+            let mut start = None;
+            let mut lengths = declared_lengths.clone();
+            lengths.sort_unstable_by(|a, b| b.cmp(a));
+            for length in lengths {
+                if length > 0 && length <= size && is_ftyp_start(data, size - length, size) {
+                    start = Some(size - length);
+                    break;
+                }
             }
-        }
-        (start.unwrap_or(offsets[offsets.len() - 1]), 1u32)
-    };
+            (start.unwrap_or(offsets[offsets.len() - 1]), 1u32)
+        };
 
     let mut metadata = lpex.cloned().unwrap_or_default();
     metadata.stream_count = stream_count;
@@ -822,7 +1124,9 @@ fn oppo_fallback(data: &[u8], lpex: Option<&OppoMetadata>) -> Option<MotionPhoto
     let source_name = if presentation.is_some() {
         Some("androidXMP".to_string())
     } else {
-        metadata.cover_frame_pts_us.map(|_| "oppoCoverFrame".to_string())
+        metadata
+            .cover_frame_pts_us
+            .map(|_| "oppoCoverFrame".to_string())
     };
     let video_range = ByteRange::new(video_start, size).ok()?;
     Some(MotionPhotoAsset {
@@ -846,6 +1150,7 @@ fn oppo_fallback(data: &[u8], lpex: Option<&OppoMetadata>) -> Option<MotionPhoto
         presentation_timestamp_us: selected,
         presentation_source: source_name,
         vendor_metadata: Some(metadata),
+        huawei_metadata: None,
     })
 }
 
@@ -863,6 +1168,9 @@ pub fn parse_oppo_lpex_pub(data: &[u8]) -> Option<OppoMetadata> {
 /// photos, Ok(Some(asset)) for recognized Motion Photos, Err for malformed
 /// Motion-Photo-looking inputs.
 pub fn parse_motion_photo(data: &[u8]) -> Result<Option<MotionPhotoAsset>, String> {
+    if let Some(asset) = parse_huawei_appended_motion_photo(data)? {
+        return Ok(Some(asset));
+    }
     let lpex = parse_oppo_lpex(data);
     let base = match parse_android_motion_photo(data) {
         Ok(base) => base,
@@ -914,6 +1222,7 @@ pub fn parse_motion_photo(data: &[u8]) -> Result<Option<MotionPhotoAsset>, Strin
         presentation_timestamp_us: selected,
         presentation_source: selected_source,
         vendor_metadata: Some(metadata),
+        huawei_metadata: None,
     }))
 }
 
@@ -940,17 +1249,17 @@ pub fn primary_video_range(data: &[u8], asset: &MotionPhotoAsset) -> ByteRange {
 }
 
 /// Length of the complete standalone BMFF prefix of an embedded video
-/// stream. Some ColorOS Stream-1 payloads carry opaque vendor bytes after the
-/// last complete box; those are excluded. Ported from upstream
+/// stream. Some ColorOS Stream-1 payloads and Huawei OpenHarmony appended
+/// movies carry opaque vendor bytes after the last complete box; those are
+/// excluded. Ported from upstream
 /// `motion_video.standalone_bmff_length`.
 pub fn standalone_bmff_length(data: &[u8]) -> Result<usize, String> {
     let file_size = data.len();
     let mut offset = 0usize;
     let mut kinds: Vec<[u8; 4]> = Vec::new();
     while offset < file_size {
-        let parsed = read_box_header(data, offset as u64, file_size as u64).filter(|b| {
-            b.kind.iter().all(|&v| (0x20..=0x7e).contains(&v))
-        });
+        let parsed = read_box_header(data, offset as u64, file_size as u64)
+            .filter(|b| b.kind.iter().all(|&v| (0x20..=0x7e).contains(&v)));
         match parsed {
             Some(b) => {
                 if kinds.is_empty() && &b.kind != b"ftyp" {
@@ -1061,6 +1370,68 @@ mod tests {
         v
     }
 
+    fn make_mdta_meta() -> Vec<u8> {
+        let names = [
+            b"com.openharmony.covertime".as_slice(),
+            b"com.openharmony.deferredVideoEnhanceFlag".as_slice(),
+            b"com.openharmony.starttime".as_slice(),
+            b"com.openharmony.videoId".as_slice(),
+        ];
+        let values: [&[u8]; 4] = [
+            &1234.5f32.to_be_bytes(),
+            b"0",
+            b"1788718230582",
+            b"20260907021031595",
+        ];
+        let mut keys_payload = vec![0, 0, 0, 0]; // version + flags
+        keys_payload.extend_from_slice(&(names.len() as u32).to_be_bytes());
+        for name in names {
+            keys_payload.extend_from_slice(&((name.len() + 8) as u32).to_be_bytes());
+            keys_payload.extend_from_slice(b"mdta");
+            keys_payload.extend_from_slice(name);
+        }
+        let keys = make_box(b"keys", &keys_payload);
+        let mut ilst_payload = Vec::new();
+        for (index, value) in values.into_iter().enumerate() {
+            let mut data_payload = vec![0; 8]; // data type + locale
+            data_payload.extend_from_slice(value);
+            let data = make_box(b"data", &data_payload);
+            let item_id = (index as u32 + 1).to_be_bytes();
+            ilst_payload.extend_from_slice(&make_box(&item_id, &data));
+        }
+        let ilst = make_box(b"ilst", &ilst_payload);
+        let mut meta_payload = vec![0, 0, 0, 0]; // meta version + flags
+        meta_payload.extend_from_slice(&make_box(b"hdlr", &[0; 8]));
+        meta_payload.extend_from_slice(&keys);
+        meta_payload.extend_from_slice(&ilst);
+        make_box(b"meta", &meta_payload)
+    }
+
+    fn build_huawei_openharmony_motion_photo() -> Vec<u8> {
+        let mut still_ftyp_payload = Vec::new();
+        still_ftyp_payload.extend_from_slice(b"heic");
+        still_ftyp_payload.extend_from_slice(&[0; 4]);
+        still_ftyp_payload.extend_from_slice(b"heicmif1");
+        let mut data = make_box(b"ftyp", &still_ftyp_payload);
+        data.extend_from_slice(&make_box(b"meta", &[0; 4]));
+        data.extend_from_slice(&make_box(b"mdat", b"heif-still"));
+
+        let mut video_ftyp_payload = Vec::new();
+        video_ftyp_payload.extend_from_slice(b"mp42");
+        video_ftyp_payload.extend_from_slice(&[0; 4]);
+        video_ftyp_payload.extend_from_slice(b"isommp42");
+        data.extend_from_slice(&make_box(b"ftyp", &video_ftyp_payload));
+        data.extend_from_slice(&make_box(b"free", &[]));
+        data.extend_from_slice(&make_box(b"mdat", b"video-samples"));
+        data.extend_from_slice(&make_box(b"moov", &make_mdta_meta()));
+        // Mate 70 leaves a 60-byte vendor trailer after moov. It is kept in
+        // the reported video range but must be excluded by
+        // standalone_bmff_length before a future MOV rewrite.
+        data.extend_from_slice(b"v6_f27");
+        data.extend(std::iter::repeat(b' ').take(54));
+        data
+    }
+
     #[test]
     fn parses_heif_mpvd_motion_photo() {
         let video = make_ftyp_stream(150);
@@ -1099,6 +1470,48 @@ mod tests {
     }
 
     #[test]
+    fn parses_huawei_openharmony_appended_motion_photo() {
+        let data = build_huawei_openharmony_motion_photo();
+        let asset = parse_motion_photo(&data)
+            .expect("parse ok")
+            .expect("is Huawei Motion Photo");
+        assert_eq!(asset.source_kind, "huaweiOpenHarmonyMotionPhoto");
+        assert_eq!(asset.presentation_timestamp_us, Some(1_234_500));
+        assert_eq!(
+            asset.presentation_source.as_deref(),
+            Some("huaweiOpenHarmony")
+        );
+        assert_eq!(asset.still_range.start, 0);
+        assert_eq!(
+            &data[asset.video_range.start as usize..asset.video_range.start as usize + 4],
+            &(24u32.to_be_bytes())
+        );
+        let metadata = asset.huawei_metadata.as_ref().expect("Huawei metadata");
+        assert_eq!(metadata.cover_time_ms, Some(1234.5));
+        assert_eq!(metadata.start_time_ms, Some(1_788_718_230_582));
+        assert_eq!(metadata.video_id.as_deref(), Some("20260907021031595"));
+        assert_eq!(metadata.deferred_video_enhance_flag, Some(false));
+        assert_eq!(
+            standalone_bmff_length(
+                &data[asset.video_range.start as usize..asset.video_range.end as usize]
+            )
+            .expect("standalone MP4"),
+            asset.video_range.length() as usize - 60
+        );
+        let json = asset.to_json();
+        assert_eq!(json["huaweiMetadata"]["coverTimeMs"], 1234.5);
+    }
+
+    #[test]
+    fn ordinary_heif_with_appended_mp4_is_not_huawei_motion_photo() {
+        let mut data = build_huawei_openharmony_motion_photo();
+        let marker = b"com.openharmony.videoId";
+        let marker_start = find_sub(&data, marker).expect("test marker");
+        data[marker_start..marker_start + marker.len()].fill(b'x');
+        assert!(parse_motion_photo(&data).expect("parse ok").is_none());
+    }
+
+    #[test]
     fn rejects_dtd_in_xmp() {
         let mut data = build_jpeg_motion_photo();
         let marker = b"<rdf:RDF";
@@ -1125,7 +1538,8 @@ mod tests {
     fn parses_oppo_dual_stream_fallback() {
         let video1 = make_ftyp_stream(120);
         let video2 = make_ftyp_stream(180);
-        let lpex_json = br#"{"version":1,"coverFramePts":1634640,"videoSize":[1920,1080],"streamCount":2}"#;
+        let lpex_json =
+            br#"{"version":1,"coverFramePts":1634640,"videoSize":[1920,1080],"streamCount":2}"#;
         let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:OpCamera="http://com.oppo/camera" OpCamera:VideoLength="0"/></rdf:RDF></x:xmpmeta>"#;
         let mut data = vec![0xFF, 0xD8];
         data.extend(std::iter::repeat(0x55u8).take(3000));
@@ -1144,10 +1558,7 @@ mod tests {
         assert_eq!(meta.cover_frame_pts_us, Some(1_634_640));
         assert_eq!(meta.video_width, Some(1920));
         assert_eq!(asset.presentation_timestamp_us, Some(1_634_640));
-        assert_eq!(
-            asset.presentation_source.as_deref(),
-            Some("oppoCoverFrame")
-        );
+        assert_eq!(asset.presentation_source.as_deref(), Some("oppoCoverFrame"));
         // video range covers both streams; the primary (high quality) video
         // is the FIRST stream, the second is a proxy (matches upstream's
         // ColorOS 16 fixture expectations).

@@ -479,6 +479,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let ipma_for_build: &[IpmaEntry] = &new_ipma_entries;
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         build_output(
+            None,
             if golden_style_gainmap { gainmap_grid_s } else { None },
             None,
             standard,
@@ -732,6 +733,7 @@ fn patch_infe_id(raw: &[u8], new_id: u32) -> Result<Vec<u8>, String> {
 /// must then contain ONLY genuinely new items. When None, the source entries
 /// are used as-is and `new_ipma_entries` is appended.
 pub(crate) fn build_output_pub(
+    primary_id_override: Option<u32>,
     drop_auxc_for: Option<u32>,
     ipma_base_override: Option<&[IpmaEntry]>,
     standard: &[u8],
@@ -749,6 +751,7 @@ pub(crate) fn build_output_pub(
     appended_mdat: &[u8],
 ) -> Vec<u8> {
     build_output(
+        primary_id_override,
         drop_auxc_for,
         ipma_base_override,
         standard,
@@ -768,6 +771,7 @@ pub(crate) fn build_output_pub(
 }
 
 fn build_output(
+    primary_id_override: Option<u32>,
     drop_auxc_for: Option<u32>,
     ipma_base_override: Option<&[IpmaEntry]>,
     standard: &[u8],
@@ -823,6 +827,13 @@ fn build_output(
             b"idat" => {
                 meta_payload.extend_from_slice(&idat_box);
                 shown_idat = true;
+            }
+            b"pitm" => {
+                if let Some(new_primary) = primary_id_override {
+                    meta_payload.extend_from_slice(&isobmff::make_pitm_box(std_meta.pitm_version, new_primary));
+                } else {
+                    meta_payload.extend_from_slice(&standard[kid.box_start..kid.box_start + kid.size]);
+                }
             }
             _ => meta_payload
                 .extend_from_slice(&standard[kid.box_start..kid.box_start + kid.size]),
@@ -932,7 +943,7 @@ pub fn rewrite_meta_passthrough(data: &[u8]) -> Result<Vec<u8>, String> {
     // two-pass like graft: meta may grow/shrink from reserialization
     let build = |iloc: &[IlocEntry]| {
         build_output(
-            None, None, data, &top, &meta_hdr, &mdat_hdr, &meta, &infes, iloc,
+            None, None, None, data, &top, &meta_hdr, &mdat_hdr, &meta, &infes, iloc,
             &ipco_raw, &[], &refs, &idat, &mdat_payload, &[],
         )
     };

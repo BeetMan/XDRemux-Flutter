@@ -25,9 +25,7 @@
 //!     settings (the golden scaffold re-encodes; content is identical 8-bit
 //!     SDR, so we keep the passthrough bitstreams).
 
-use xdremux_core::isobmff::{
-    self, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta,
-};
+use xdremux_core::isobmff::{self, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
 
 use crate::styles_graft::{find_top, idat_payload, top_level_boxes};
 
@@ -43,8 +41,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let std_top = top_level_boxes(standard)?;
     let std_meta_hdr = find_top(&std_top, b"meta").ok_or("no meta box")?;
     let std_mdat_hdr = find_top(&std_top, b"mdat").ok_or("no mdat box")?;
-    let std_meta =
-        isobmff::parse_source_meta(standard).map_err(|e| format!("meta parse: {e}"))?;
+    let std_meta = isobmff::parse_source_meta(standard).map_err(|e| format!("meta parse: {e}"))?;
     let std_idat = idat_payload(standard, &std_meta_hdr).unwrap_or_default();
 
     let primary = std_meta.primary_id;
@@ -84,7 +81,12 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         }
         for p in &std_meta.props {
             if p.ptype == "ispe" {
-                eprintln!("ispe idx={} len={} head={:02x?}", p.index, p.raw.len(), &p.raw[..p.raw.len().min(20)]);
+                eprintln!(
+                    "ispe idx={} len={} head={:02x?}",
+                    p.index,
+                    p.raw.len(),
+                    &p.raw[..p.raw.len().min(20)]
+                );
             }
         }
     }
@@ -99,34 +101,48 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     // "x265 rejected" finding was actually an annex-B-in-mdat bug. Envs:
     // XSCAFFOLD_VT_MATTE=1 embedded VT constant; XSCAFFOLD_X265_MATTE_420=1
     // (with XDREMUX_GM_420=1) 4:2:0 gray variant.
-    let x265_matte = |w: u32, h: u32, use_420: bool, chroma: u8| -> Result<(Vec<u8>, Vec<u8>), String> {
-        let pixels = vec![0u8; (w * h) as usize];
-        let refs: Vec<&[u8]> = vec![&pixels];
-        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, use_420)
-            .map_err(|e| format!("matte HEVC encode: {e}"))?
-            .into_iter().next().ok_or("matte encode produced no stream")?;
-        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
-            .ok_or("matte hvcC extraction failed")?;
-        let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
-        Ok((xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc))
-    };
+    let x265_matte =
+        |w: u32, h: u32, use_420: bool, chroma: u8| -> Result<(Vec<u8>, Vec<u8>), String> {
+            let pixels = vec![0u8; (w * h) as usize];
+            let refs: Vec<&[u8]> = vec![&pixels];
+            let stream = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, use_420)
+                .map_err(|e| format!("matte HEVC encode: {e}"))?
+                .into_iter()
+                .next()
+                .ok_or("matte encode produced no stream")?;
+            let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
+                .ok_or("matte hvcC extraction failed")?;
+            let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
+            Ok((
+                xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr),
+                hvcc,
+            ))
+        };
     let (matte_stream, matte_hvcc) = if let Ok(raw_path) = std::env::var("XSCAFFOLD_MATTE_RAW") {
         // Real matte bitmap (raw gray8, matte_w x matte_h), e.g. from the
         // `sky-matte` subcommand's SegFormer output.
         let raw = std::fs::read(&raw_path).map_err(|e| format!("matte raw: {e}"))?;
         if raw.len() != (matte_w * matte_h) as usize {
             return Err(format!(
-                "matte raw size {} != {}x{}", raw.len(), matte_w, matte_h
+                "matte raw size {} != {}x{}",
+                raw.len(),
+                matte_w,
+                matte_h
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
         let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
             .map_err(|e| format!("matte HEVC encode: {e}"))?
-            .into_iter().next().ok_or("matte encode produced no stream")?;
+            .into_iter()
+            .next()
+            .ok_or("matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
             .ok_or("matte hvcC extraction failed")?;
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
-        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+        (
+            xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr),
+            hvcc,
+        )
     } else if std::env::var("XSCAFFOLD_X265_MATTE_420").is_ok() {
         x265_matte(matte_w, matte_h, true, 1)?
     } else if std::env::var("XSCAFFOLD_VT_MATTE").is_ok() {
@@ -139,8 +155,8 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     };
 
     // ---- 3. XMP payloads -----------------------------------------------
-    let exif_payload = item_payload(standard, &std_meta, exif_item.item_id)
-        .ok_or("Exif item payload missing")?;
+    let exif_payload =
+        item_payload(standard, &std_meta, exif_item.item_id).ok_or("Exif item payload missing")?;
     let (datetime, offset_time) = exif_datetime(&exif_payload)
         .unwrap_or_else(|| ("1970:01:01 00:00:00".to_string(), "+00:00".to_string()));
     let dates_xmp = build_dates_xmp(&datetime, &offset_time);
@@ -152,13 +168,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Exif MakerNote injection: {e}"))?;
 
     // ---- 5. New item IDs -----------------------------------------------
-    let mut next_id = std_meta
-        .items
-        .iter()
-        .map(|i| i.item_id)
-        .max()
-        .unwrap_or(1)
-        + 1;
+    let mut next_id = std_meta.items.iter().map(|i| i.item_id).max().unwrap_or(1) + 1;
     // Avoid colliding with grpl/altr group_ids (R2 bug): group ids share
     // the same namespace in some readers; bump past any group id too.
     let max_group = max_group_id(standard, &std_meta_hdr).unwrap_or(0);
@@ -338,8 +348,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let matte_xmp_len = matte_xmp.len() as u64;
     new_idat.extend_from_slice(&matte_xmp);
 
-    let std_mdat_payload =
-        standard[std_mdat_hdr.data_start..std_mdat_hdr.data_end].to_vec();
+    let std_mdat_payload = standard[std_mdat_hdr.data_start..std_mdat_hdr.data_end].to_vec();
     let mut appended_mdat = Vec::new();
     let exif_rel_off = appended_mdat.len() as u64;
     appended_mdat.extend_from_slice(&new_exif_payload);
@@ -347,11 +356,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     appended_mdat.extend_from_slice(&matte_stream);
 
     // ---- 11. ipco rebuild ------------------------------------------------
-    let mut new_ipco: Vec<u8> = std_meta
-        .props
-        .iter()
-        .flat_map(|p| p.raw.clone())
-        .collect();
+    let mut new_ipco: Vec<u8> = std_meta.props.iter().flat_map(|p| p.raw.clone()).collect();
     for p in &appended {
         new_ipco.extend_from_slice(&p.raw);
     }
@@ -548,7 +553,13 @@ fn build_maker_note() -> Vec<u8> {
     let uuid = uuid_v4_upper();
     // 91 bytes, copied verbatim from the golden scaffold (keys '0'..'7').
     let flags_bplist: &[u8] = &[
-        0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0xd8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0a, 0x0a, 0x0a, 0x09, 0x0b, 0x09, 0x51, 0x37, 0x51, 0x33, 0x51, 0x34, 0x51, 0x30, 0x51, 0x35, 0x51, 0x31, 0x51, 0x36, 0x51, 0x32, 0x10, 0x00, 0x10, 0x01, 0x10, 0x04, 0x08, 0x19, 0x1b, 0x1d, 0x1f, 0x21, 0x23, 0x25, 0x27, 0x29, 0x2b, 0x2d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2f,
+        0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30, 0xd8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+        0x07, 0x08, 0x09, 0x0a, 0x0a, 0x0a, 0x0a, 0x09, 0x0b, 0x09, 0x51, 0x37, 0x51, 0x33, 0x51,
+        0x34, 0x51, 0x30, 0x51, 0x35, 0x51, 0x31, 0x51, 0x36, 0x51, 0x32, 0x10, 0x00, 0x10, 0x01,
+        0x10, 0x04, 0x08, 0x19, 0x1b, 0x1d, 0x1f, 0x21, 0x23, 0x25, 0x27, 0x29, 0x2b, 0x2d, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x2f,
     ];
     let uuid_bytes = {
         let mut u = uuid.into_bytes();
@@ -656,11 +667,19 @@ impl Bo {
         }
     }
     fn put_u16(self, out: &mut [u8], v: u16) {
-        let b = if self.0 { v.to_be_bytes() } else { v.to_le_bytes() };
+        let b = if self.0 {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        };
         out.copy_from_slice(&b);
     }
     fn put_u32(self, out: &mut [u8], v: u32) {
-        let b = if self.0 { v.to_be_bytes() } else { v.to_le_bytes() };
+        let b = if self.0 {
+            v.to_be_bytes()
+        } else {
+            v.to_le_bytes()
+        };
         out.copy_from_slice(&b);
     }
 }
@@ -719,14 +738,13 @@ fn read_ifd(tiff: &[u8], bo: Bo, ifd_off: u32) -> Option<(Vec<IfdEntry>, u32)> {
         let cnt = bo.u32(&tiff[e + 4..e + 8]);
         let value_field_pos = e + 8;
         let inline_capacity = 4u64;
-        let payload_offset = type_size(typ)
-            .and_then(|ts| {
-                if ts.saturating_mul(cnt as u64) > inline_capacity {
-                    Some(bo.u32(&tiff[e + 8..e + 12]))
-                } else {
-                    None
-                }
-            });
+        let payload_offset = type_size(typ).and_then(|ts| {
+            if ts.saturating_mul(cnt as u64) > inline_capacity {
+                Some(bo.u32(&tiff[e + 8..e + 12]))
+            } else {
+                None
+            }
+        });
         entries.push(IfdEntry {
             tag,
             typ,
@@ -791,18 +809,31 @@ pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8
         .map(|e| bo.u32(&tiff[e.value_field_pos..e.value_field_pos + 4]))
         .ok_or("no ExifIFD pointer")?;
     let (exif_entries, _) = read_ifd(&tiff, bo, exif_ifd_off).ok_or("bad ExifIFD")?;
-    if let Some(existing) = exif_entries.iter().find(|e| e.tag == 0x927c) {
-        // The source camera's own MakerNote (e.g. OPPO's JSON blob) — replace
-        // it with the Apple MakerNote: patch the entry in place and append
-        // the new payload at the end of the TIFF (old bytes become dead
-        // space). No insertion, so no offset fixups are needed.
+    let existing_mns: Vec<_> = exif_entries.iter().filter(|e| e.tag == 0x927c).collect();
+    if !existing_mns.is_empty() {
+        let first = existing_mns[0];
+        // The source camera's own MakerNote (e.g. OPPO's JSON blob or Huawei's MakerNote)
+        // — replace it with the Apple MakerNote: patch the first entry in place and append
+        // the new payload at the end of the TIFF (old bytes become dead space).
+        // No insertion, so no offset fixups are needed.
         let mut patched = tiff.clone();
         let mn_off = patched.len() as u32;
-        let vp = existing.value_field_pos;
+        let vp = first.value_field_pos;
         bo.put_u16(&mut patched[vp - 6..vp - 4], 7); // type = undefined
         bo.put_u32(&mut patched[vp - 4..vp], maker_note.len() as u32);
         bo.put_u32(&mut patched[vp..vp + 4], mn_off);
         patched.extend_from_slice(maker_note);
+
+        // Rename any duplicate 0x927c entries (e.g. Huawei Mate 70 Pro writes up to 4
+        // separate 0x927c entries) to unused tags (0x927d, 0x927e, ...) so that standard
+        // Exif parsers like Apple's ImageIO do not overwrite the Apple MakerNote.
+        let mut extra_tag = 0x927du16;
+        for dup in &existing_mns[1..] {
+            let tag_pos = dup.value_field_pos - 8;
+            bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
+            extra_tag += 1;
+        }
+
         let mut result = exif[..prefix_len].to_vec();
         result.extend_from_slice(&patched);
         return Ok(result);
@@ -854,13 +885,19 @@ pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8
             if matches!(e.tag, 0x8769 | 0x8825 | 0x014a) && e.typ == 4 {
                 let v = bo.u32(&tiff[e.value_field_pos..e.value_field_pos + 4]);
                 if v >= shift_after {
-                    bo.put_u32(&mut patched[e.value_field_pos..e.value_field_pos + 4], v + 12);
+                    bo.put_u32(
+                        &mut patched[e.value_field_pos..e.value_field_pos + 4],
+                        v + 12,
+                    );
                 }
                 continue;
             }
             if let Some(po) = e.payload_offset {
                 if po >= shift_after {
-                    bo.put_u32(&mut patched[e.value_field_pos..e.value_field_pos + 4], po + 12);
+                    bo.put_u32(
+                        &mut patched[e.value_field_pos..e.value_field_pos + 4],
+                        po + 12,
+                    );
                 }
             }
         }
@@ -888,7 +925,6 @@ pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8
 pub(crate) fn max_group_id_pub(data: &[u8], meta: &isobmff::BoxHeader) -> Option<u32> {
     max_group_id(data, meta)
 }
-
 
 /// Minimal manifest-entry parse for callers that only need (name, offset,
 /// length) from the tail JSON array.
@@ -921,7 +957,11 @@ pub(crate) fn parse_manifest_entries(
             }
         }
         if let (Some(n), Some(o), Some(l)) = (name, offset, length) {
-            out.push(TailEntrySpec { name: n, offset: o, length: l });
+            out.push(TailEntrySpec {
+                name: n,
+                offset: o,
+                length: l,
+            });
         }
     }
     Some(out)

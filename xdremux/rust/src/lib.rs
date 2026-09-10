@@ -2,22 +2,25 @@
 //!
 //! Exposes a small C FFI surface consumed by Flutter via `dart:ffi`.
 
+#![recursion_limit = "256"]
+
 pub mod categorize;
 pub mod container;
 pub mod edr;
 pub mod exif;
-pub mod live_photo;
-pub mod motion_photo;
-pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
+pub mod huawei_heic;
 pub mod iso21496;
 pub mod iso_validate;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
 pub mod linear_thumbnail;
+pub mod live_photo;
+pub mod motion_photo;
 pub mod progress;
+pub mod uhdr_jpeg;
 
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
 // separate native Rust path until the Photos conformance surface is stable.
@@ -29,11 +32,11 @@ mod styles_scaffold;
 
 // R5 native Rust Portrait graph writer, ported from the conformance research
 // implementation. It produces an Apple-editable depth graph from OPPO rear.depth.
-mod portrait;
-mod portrait_consts;
-mod portrait_depth;
-mod portrait_graft;
-mod portrait_scaffold;
+pub mod portrait;
+pub mod portrait_consts;
+pub mod portrait_depth;
+pub mod portrait_graft;
+pub mod portrait_scaffold;
 pub mod watermark_codec;
 
 #[cfg(not(xdremux_ffmpeg_fallback))]
@@ -156,8 +159,8 @@ pub extern "C" fn xdremux_motion_photo_split(
             .to_str()
             .map_err(|_| "out_dir is not valid UTF-8".to_string())?;
         let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
-        let asset = motion_photo::parse_motion_photo(&data)?
-            .ok_or("photo is not a Motion Photo")?;
+        let asset =
+            motion_photo::parse_motion_photo(&data)?.ok_or("photo is not a Motion Photo")?;
         std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
         let stem = std::path::Path::new(path)
             .file_stem()
@@ -177,11 +180,8 @@ pub extern "C" fn xdremux_motion_photo_split(
         };
         let write_range = |range: motion_photo::ByteRange, name: &str| -> Result<String, String> {
             let dest = format!("{out_dir}/{name}");
-            std::fs::write(
-                &dest,
-                &data[range.start as usize..range.end as usize],
-            )
-            .map_err(|e| format!("write {name}: {e}"))?;
+            std::fs::write(&dest, &data[range.start as usize..range.end as usize])
+                .map_err(|e| format!("write {name}: {e}"))?;
             Ok(dest)
         };
         let still_path = write_range(asset.still_range, &format!("{stem}.still.{still_ext}"))?;
@@ -235,12 +235,10 @@ pub extern "C" fn xdremux_make_live_photo(
         let out_dir = unsafe { CStr::from_ptr(out_dir) }
             .to_str()
             .map_err(|_| "out_dir is not valid UTF-8".to_string())?;
-        let source = std::fs::read(source_path)
-            .map_err(|e| format!("cannot read source: {e}"))?;
-        let still = std::fs::read(still_path)
-            .map_err(|e| format!("cannot read still: {e}"))?;
-        let asset = motion_photo::parse_motion_photo(&source)?
-            .ok_or("source is not a Motion Photo")?;
+        let source = std::fs::read(source_path).map_err(|e| format!("cannot read source: {e}"))?;
+        let still = std::fs::read(still_path).map_err(|e| format!("cannot read still: {e}"))?;
+        let asset =
+            motion_photo::parse_motion_photo(&source)?.ok_or("source is not a Motion Photo")?;
         let primary = motion_photo::primary_video_range(&source, &asset);
         let video_full = &source[primary.start as usize..primary.end as usize];
         // ColorOS Stream-1 payloads can carry an opaque vendor suffix after
@@ -260,8 +258,7 @@ pub extern "C" fn xdremux_make_live_photo(
             .unwrap_or("livephoto");
         let still_out_path = format!("{out_dir}/{stem}.heic");
         let mov_path = format!("{out_dir}/{stem}.mov");
-        std::fs::write(&still_out_path, &still_out)
-            .map_err(|e| format!("write still: {e}"))?;
+        std::fs::write(&still_out_path, &still_out).map_err(|e| format!("write still: {e}"))?;
         std::fs::write(&mov_path, &mov).map_err(|e| format!("write movie: {e}"))?;
         Ok(serde_json::json!({
             "success": true,
@@ -301,12 +298,10 @@ pub extern "C" fn xdremux_style_experiment(
         let still_path = read(still_path, "still")?;
         let payload_path = read(payload_path, "payload")?;
         let out_path = read(out_path, "out")?;
-        let data = std::fs::read(&still_path)
-            .map_err(|e| format!("cannot read still: {e}"))?;
-        let new_payload = std::fs::read(&payload_path)
-            .map_err(|e| format!("cannot read payload: {e}"))?;
-        let parsed = isobmff::parse_source_meta(&data)
-            .map_err(|e| format!("meta parse: {e}"))?;
+        let data = std::fs::read(&still_path).map_err(|e| format!("cannot read still: {e}"))?;
+        let new_payload =
+            std::fs::read(&payload_path).map_err(|e| format!("cannot read payload: {e}"))?;
+        let parsed = isobmff::parse_source_meta(&data).map_err(|e| format!("meta parse: {e}"))?;
         // The style item's infe item_type is "uri "; the distinguishing
         // item_name is styleMetadata (ours) or metadata (Apple native).
         let item_id = parsed
@@ -353,7 +348,10 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
 ) -> u8 {
     let result = (|| -> Option<bool> {
         let read = |p: *const c_char| -> Option<String> {
-            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+            unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .ok()
+                .map(|s| s.to_string())
         };
         let still_path = read(still_path)?;
         let mov_path = read(mov_path)?;
@@ -440,13 +438,14 @@ pub extern "C" fn xdremux_writeback_returned_photo(
         let output_path = unsafe { CStr::from_ptr(output_path) }
             .to_str()
             .map_err(|_| "output path is not valid UTF-8".to_string())?;
-        let returned = std::fs::read(returned_path)
-            .map_err(|e| format!("cannot read returned photo: {e}"))?;
+        let returned =
+            std::fs::read(returned_path).map_err(|e| format!("cannot read returned photo: {e}"))?;
         if !is_heif_container(&returned) {
             return Err("returned photo is not a readable HEIF/HEIC container".into());
         }
 
-        let (output, watermark_metadata, entries, raster_restored, exif_grafted) = match output_mode {
+        let (output, watermark_metadata, entries, raster_restored, exif_grafted) = match output_mode
+        {
             0 => {
                 // Apple standard writeback deliberately creates a new Styles
                 // recipe instead of trying to preserve the flattened Photos
@@ -499,7 +498,13 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                         .map_err(|e| format!("Exif graft: {e}"))?;
                     (styled, false, Vec::new(), has_watermark, exif_grafted)
                 } else {
-                    (container::strip_oppo_tail(&returned), false, Vec::new(), false, false)
+                    (
+                        container::strip_oppo_tail(&returned),
+                        false,
+                        Vec::new(),
+                        false,
+                        false,
+                    )
                 }
             }
             1 => {
@@ -571,8 +576,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("create writeback directory: {e}"))?;
         }
-        std::fs::write(output_path, &output)
-            .map_err(|e| format!("write writeback output: {e}"))?;
+        std::fs::write(output_path, &output).map_err(|e| format!("write writeback output: {e}"))?;
         Ok(serde_json::json!({
             "success": true,
             "outputMode": if output_mode == 1 { "oppo" } else { "apple" },
@@ -586,13 +590,15 @@ pub extern "C" fn xdremux_writeback_returned_photo(
             "errorMessage": serde_json::Value::Null,
         }))
     })();
-    let report = result.unwrap_or_else(|error| serde_json::json!({
-        "success": false,
-        "outputValid": false,
-        "rasterWatermarkRestored": false,
-        "watermarkMetadataPreserved": false,
-        "errorMessage": error,
-    }));
+    let report = result.unwrap_or_else(|error| {
+        serde_json::json!({
+            "success": false,
+            "outputValid": false,
+            "rasterWatermarkRestored": false,
+            "watermarkMetadataPreserved": false,
+            "errorMessage": error,
+        })
+    });
     serde_json::to_string(&report)
         .ok()
         .and_then(|json| CString::new(json).ok())
@@ -707,7 +713,12 @@ pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationR
                 let kind = Some(extracted.mode.clone());
                 let fam = if extracted.mode == "uhdr" {
                     Some("x7".to_string())
-                } else if extracted.meta_floats.first().map(|v| *v >= 3.0).unwrap_or(false) {
+                } else if extracted
+                    .meta_floats
+                    .first()
+                    .map(|v| *v >= 3.0)
+                    .unwrap_or(false)
+                {
                     Some("x7".to_string())
                 } else {
                     Some("x6".to_string())
@@ -738,6 +749,62 @@ pub extern "C" fn xdremux_free_classification_result(result: ClassificationResul
             }
         }
     }
+}
+
+/// Inspect a Huawei HDR HEIC without decoding or rewriting it.
+///
+/// The returned JSON is owned and must be released with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_huawei_inspect(input_path: *const c_char) -> *mut c_char {
+    let report = std::panic::catch_unwind(|| {
+        if input_path.is_null() {
+            serde_json::json!({
+                "schema": "xdremux-huawei-heic-v1",
+                "status": "invalid-input-path",
+                "isHuaweiHdr": false,
+                "applePhotosHdrCompatible": false,
+                "recommendedAction": "inspect",
+                "error": "input path is missing",
+            })
+            .to_string()
+        } else {
+            match unsafe { CStr::from_ptr(input_path) }.to_str() {
+                Ok(path) => match huawei_heic::inspect_path(path) {
+                    Ok(report) => report.to_json(),
+                    Err(error) => serde_json::json!({
+                        "schema": "xdremux-huawei-heic-v1",
+                        "status": "input-read-error",
+                        "isHuaweiHdr": false,
+                        "applePhotosHdrCompatible": false,
+                        "recommendedAction": "inspect",
+                        "error": error,
+                    })
+                    .to_string(),
+                },
+                Err(_) => serde_json::json!({
+                    "schema": "xdremux-huawei-heic-v1",
+                    "status": "invalid-input-path",
+                    "isHuaweiHdr": false,
+                    "applePhotosHdrCompatible": false,
+                    "recommendedAction": "inspect",
+                    "error": "input path is not valid UTF-8",
+                })
+                .to_string(),
+            }
+        }
+    })
+    .unwrap_or_else(|_| {
+        serde_json::json!({
+            "schema": "xdremux-huawei-heic-v1",
+            "status": "diagnostic-panic",
+            "isHuaweiHdr": false,
+            "applePhotosHdrCompatible": false,
+            "recommendedAction": "inspect",
+            "error": "malformed HEIF metadata caused a diagnostic parser failure",
+        })
+        .to_string()
+    });
+    CString::new(report).unwrap_or_default().into_raw()
 }
 
 // ---------------------------------------------------------------------------
@@ -886,32 +953,27 @@ fn xdremux_convert_impl(
     output_path: *const c_char,
     config: *const ConvertConfig,
 ) -> ConversionResult {
-    let (
-        oppo_compat,
-        oppo_camera_tail,
-        strict_tmap,
-        apple_photographic_styles,
-        apple_portrait,
-    ) = if config.is_null() {
-        let oppo_compat = OppoCompat::Off;
-        (
-            oppo_compat,
-            OppoCameraTail::default_for_compat(oppo_compat),
-            false,
-            false,
-            false,
-        )
-    } else {
-        let oppo_compat = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
-        let tail_value = unsafe { (*config).oppo_camera_tail };
-        (
-            oppo_compat,
-            OppoCameraTail::resolve(tail_value, oppo_compat),
-            unsafe { (*config).strict_tmap != 0 },
-            unsafe { (*config).apple_photographic_styles != 0 },
-            unsafe { (*config).apple_portrait != 0 },
-        )
-    };
+    let (oppo_compat, oppo_camera_tail, strict_tmap, apple_photographic_styles, apple_portrait) =
+        if config.is_null() {
+            let oppo_compat = OppoCompat::Off;
+            (
+                oppo_compat,
+                OppoCameraTail::default_for_compat(oppo_compat),
+                false,
+                false,
+                false,
+            )
+        } else {
+            let oppo_compat = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
+            let tail_value = unsafe { (*config).oppo_camera_tail };
+            (
+                oppo_compat,
+                OppoCameraTail::resolve(tail_value, oppo_compat),
+                unsafe { (*config).strict_tmap != 0 },
+                unsafe { (*config).apple_photographic_styles != 0 },
+                unsafe { (*config).apple_portrait != 0 },
+            )
+        };
 
     let input = match unsafe { CStr::from_ptr(input_path) }.to_str() {
         Ok(p) => p,
@@ -1013,9 +1075,11 @@ fn xdremux_convert_impl(
                             family: ptr::null_mut(),
                             edr_scale: 0.0,
                             gain_map_max: 0.0,
-                            error_message: CString::new(format!("Ultra HDR JPEG container synthesis: {e}"))
-                                .unwrap()
-                                .into_raw(),
+                            error_message: CString::new(format!(
+                                "Ultra HDR JPEG container synthesis: {e}"
+                            ))
+                            .unwrap()
+                            .into_raw(),
                         };
                     }
                 };
@@ -1057,6 +1121,49 @@ fn xdremux_convert_impl(
             }
         }
     } else {
+        let huawei_rep = huawei_heic::inspect_bytes(&source);
+        if huawei_rep.is_huawei_hdr {
+                if let Some(portrait_rep) = &huawei_rep.portrait {
+                    if portrait_rep.detected && portrait_rep.classification == "huawei-portrait" {
+                        match portrait::run_huawei_portrait(&source) {
+                            Ok(converted) => {
+                                if let Err(e) = std::fs::write(output, &converted) {
+                                    return ConversionResult {
+                                        success: false,
+                                        mode: ptr::null_mut(),
+                                        family: ptr::null_mut(),
+                                        edr_scale: 0.0,
+                                        gain_map_max: 0.0,
+                                        error_message: CString::new(format!("cannot write output: {e}"))
+                                            .unwrap()
+                                            .into_raw(),
+                                    };
+                                }
+                                return ConversionResult {
+                                    success: true,
+                                    mode: CString::new("huawei-portrait").unwrap().into_raw(),
+                                    family: CString::new("mate70").unwrap().into_raw(),
+                                    edr_scale: 1.0,
+                                    gain_map_max: 1.0,
+                                    error_message: ptr::null_mut(),
+                                };
+                            }
+                            Err(e) => {
+                                return ConversionResult {
+                                    success: false,
+                                    mode: ptr::null_mut(),
+                                    family: ptr::null_mut(),
+                                    edr_scale: 0.0,
+                                    gain_map_max: 0.0,
+                                    error_message: CString::new(format!("Huawei portrait conversion: {e}"))
+                                        .unwrap()
+                                        .into_raw(),
+                                };
+                            }
+                        }
+                    }
+                }
+            }
         match container::extract_lhdr_from_bytes(&source) {
             Ok(e) => e,
             Err(e) => {
@@ -1119,7 +1226,11 @@ fn xdremux_convert_impl(
                             family: ptr::null_mut(),
                             edr_scale: 0.0,
                             gain_map_max: 0.0,
-                            error_message: CString::new(format!("read Rust Portrait base output: {error}")).unwrap().into_raw(),
+                            error_message: CString::new(format!(
+                                "read Rust Portrait base output: {error}"
+                            ))
+                            .unwrap()
+                            .into_raw(),
                         };
                     }
                 };
@@ -1133,7 +1244,11 @@ fn xdremux_convert_impl(
                                 family: ptr::null_mut(),
                                 edr_scale: 0.0,
                                 gain_map_max: 0.0,
-                                error_message: CString::new(format!("write Rust Portrait output: {error}")).unwrap().into_raw(),
+                                error_message: CString::new(format!(
+                                    "write Rust Portrait output: {error}"
+                                ))
+                                .unwrap()
+                                .into_raw(),
                             };
                         }
                     }
@@ -1145,7 +1260,9 @@ fn xdremux_convert_impl(
                             family: ptr::null_mut(),
                             edr_scale: 0.0,
                             gain_map_max: 0.0,
-                            error_message: CString::new(format!("Rust Apple Portrait: {error}")).unwrap().into_raw(),
+                            error_message: CString::new(format!("Rust Apple Portrait: {error}"))
+                                .unwrap()
+                                .into_raw(),
                         };
                     }
                 }
@@ -1171,7 +1288,11 @@ fn xdremux_convert_impl(
                         family: ptr::null_mut(),
                         edr_scale: 0.0,
                         gain_map_max: 0.0,
-                        error_message: CString::new(format!("publish Rust Portrait output: {error}")).unwrap().into_raw(),
+                        error_message: CString::new(format!(
+                            "publish Rust Portrait output: {error}"
+                        ))
+                        .unwrap()
+                        .into_raw(),
                     };
                 }
             }
@@ -1201,14 +1322,13 @@ fn xdremux_convert_impl(
 }
 
 fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), String> {
-    let base = std::fs::read(base_path)
-        .map_err(|e| format!("read Rust Styles base output: {e}"))?;
+    let base =
+        std::fs::read(base_path).map_err(|e| format!("read Rust Styles base output: {e}"))?;
     let styled = styles_native::styles_native(&base)
         .map_err(|e| format!("Rust Photographic Styles: {e}"))?;
     std::fs::write(output_path, styled)
         .map_err(|e| format!("write Rust Photographic Styles output: {e}"))?;
-    std::fs::remove_file(base_path)
-        .map_err(|e| format!("remove Styles base output: {e}"))?;
+    std::fs::remove_file(base_path).map_err(|e| format!("remove Styles base output: {e}"))?;
     Ok(())
 }
 
@@ -1371,7 +1491,12 @@ pub extern "C" fn xdremux_prepare_tiles(
     let input = match unsafe { CStr::from_ptr(input_path) }.to_str() {
         Ok(p) => p,
         Err(_) => {
-            return PreparedTilesResult { error_message: CString::new("input path is not valid UTF-8").unwrap().into_raw(), ..fail };
+            return PreparedTilesResult {
+                error_message: CString::new("input path is not valid UTF-8")
+                    .unwrap()
+                    .into_raw(),
+                ..fail
+            };
         }
     };
 
@@ -1383,10 +1508,12 @@ pub extern "C" fn xdremux_prepare_tiles(
 
     let result = (|| -> Result<(PreparedOutput, Vec<u8>), String> {
         let source = std::fs::read(input).map_err(|e| format!("cannot read input: {e}"))?;
-        let extracted = container::extract_lhdr_from_bytes(&source)
-            .map_err(|e| e.to_string())?;
+        let extracted = container::extract_lhdr_from_bytes(&source).map_err(|e| e.to_string())?;
         if extracted.mode == "uhdr" {
-            let gm = extracted.gainmap_data.as_ref().ok_or("no gainmap JPEG in UHDR data")?;
+            let gm = extracted
+                .gainmap_data
+                .as_ref()
+                .ok_or("no gainmap JPEG in UHDR data")?;
             progress::set_progress(2, 0, 0); // decode JPEG
             isobmff_write::prepare_uhdr_tiles(
                 &source,
@@ -1493,12 +1620,22 @@ pub extern "C" fn xdremux_assemble_tiles(
         error_message: ptr::null_mut(),
     };
     if opaque.is_null() || tile_streams.is_null() || tile_lengths.is_null() {
-        return ConversionResult { error_message: CString::new("invalid prepared tiles handle").unwrap().into_raw(), ..fail };
+        return ConversionResult {
+            error_message: CString::new("invalid prepared tiles handle")
+                .unwrap()
+                .into_raw(),
+            ..fail
+        };
     }
     let output = match unsafe { CStr::from_ptr(output_path) }.to_str() {
         Ok(p) => p,
         Err(_) => {
-            return ConversionResult { error_message: CString::new("output path is not valid UTF-8").unwrap().into_raw(), ..fail };
+            return ConversionResult {
+                error_message: CString::new("output path is not valid UTF-8")
+                    .unwrap()
+                    .into_raw(),
+                ..fail
+            };
         }
     };
 
@@ -1508,7 +1645,12 @@ pub extern "C" fn xdremux_assemble_tiles(
         let ptr = unsafe { *tile_streams.add(i) };
         let len = unsafe { *tile_lengths.add(i) };
         if ptr.is_null() {
-            return ConversionResult { error_message: CString::new(format!("tile {i} stream is null")).unwrap().into_raw(), ..fail };
+            return ConversionResult {
+                error_message: CString::new(format!("tile {i} stream is null"))
+                    .unwrap()
+                    .into_raw(),
+                ..fail
+            };
         }
         let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
         streams.push(slice.to_vec());
@@ -1662,10 +1804,7 @@ fn verify_photographic_styles(data: &[u8]) -> bool {
         Some(box_) => box_,
         None => return false,
     };
-    let start = match idat
-        .data_start
-        .checked_add(location.0 as usize)
-    {
+    let start = match idat.data_start.checked_add(location.0 as usize) {
         Some(start) => start,
         None => return false,
     };

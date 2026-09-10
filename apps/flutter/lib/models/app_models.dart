@@ -157,7 +157,10 @@ class BackendCapabilities {
               '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。',
               'This build did not pass the Swift Core capability probe; the Swift CLI is not launched in this version.',
             )
-          : t('Swift 后端仅支持 macOS/iOS。', 'The Swift backend is only available on macOS/iOS.'),
+          : t(
+              'Swift 后端仅支持 macOS/iOS。',
+              'The Swift backend is only available on macOS/iOS.',
+            ),
       swiftAppleFeaturesUnavailableReason: t(
         'Apple 功能仍需 macOS 原生工具链和样例验证；当前版本保持关闭。',
         'Apple features still need the macOS native toolchain and sample validation; disabled in this version.',
@@ -243,19 +246,40 @@ enum OppoCompatMode {
   String get appHelp {
     switch (this) {
       case OppoCompatMode.auto:
-        return t('根据原图标记自动选择；适合大多数照片。', 'Chosen automatically from source markers; suits most photos.');
+        return t(
+          '根据原图标记自动选择；适合大多数照片。',
+          'Chosen automatically from source markers; suits most photos.',
+        );
       case OppoCompatMode.on:
-        return t('写入 OPPO 兼容标记，优先保证 OPPO 相册识别。', 'Writes OPPO-compatible markers to prioritize OPPO Gallery recognition.');
+        return t(
+          '写入 OPPO 兼容标记，优先保证 OPPO 相册识别。',
+          'Writes OPPO-compatible markers to prioritize OPPO Gallery recognition.',
+        );
       case OppoCompatMode.tail:
-        return t('写入 OPPO 兼容标记，并完整保留相机附加信息。', 'Writes OPPO-compatible markers and keeps the full camera extras.');
+        return t(
+          '写入 OPPO 兼容标记，并完整保留相机附加信息。',
+          'Writes OPPO-compatible markers and keeps the full camera extras.',
+        );
       case OppoCompatMode.iso:
-        return t('移除 OPPO 标记，写入标准 ISO HDR 标记。', 'Removes OPPO markers and writes standard ISO HDR markers.');
+        return t(
+          '移除 OPPO 标记，写入标准 ISO HDR 标记。',
+          'Removes OPPO markers and writes standard ISO HDR markers.',
+        );
       case OppoCompatMode.isoNoLocal:
-        return t('标准 ISO HDR，并移除本地 HDR 标记。', 'Standard ISO HDR, and removes the local HDR marker.');
+        return t(
+          '标准 ISO HDR，并移除本地 HDR 标记。',
+          'Standard ISO HDR, and removes the local HDR marker.',
+        );
       case OppoCompatMode.isoGraph:
-        return t('清除路由标记，但保留原始元数据关系图。', 'Clears routing markers but keeps the original metadata relationship graph.');
+        return t(
+          '清除路由标记，但保留原始元数据关系图。',
+          'Clears routing markers but keeps the original metadata relationship graph.',
+        );
       case OppoCompatMode.off:
-        return t('不修改路由标记；适合 Apple 照片/纯 ISO 输出。', 'Does not modify routing markers; suits Apple Photos / pure ISO output.');
+        return t(
+          '不修改路由标记；适合 Apple 照片/纯 ISO 输出。',
+          'Does not modify routing markers; suits Apple Photos / pure ISO output.',
+        );
     }
   }
 
@@ -325,27 +349,54 @@ enum OppoCameraTailMode {
   String get appHelp {
     switch (this) {
       case OppoCameraTailMode.automatic:
-        return t('兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。', 'Fully preserved when compatibility mode is on; private HDR removed for pure ISO output.');
+        return t(
+          '兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。',
+          'Fully preserved when compatibility mode is on; private HDR removed for pure ISO output.',
+        );
       case OppoCameraTailMode.off:
-        return t('不复制 OPPO 相机尾部元数据。', 'Does not copy OPPO camera tail metadata.');
+        return t(
+          '不复制 OPPO 相机尾部元数据。',
+          'Does not copy OPPO camera tail metadata.',
+        );
       case OppoCameraTailMode.watermark:
-        return t('仅保留水印及其辅助元数据。', 'Keeps only the watermark and its auxiliary metadata.');
+        return t(
+          '仅保留水印及其辅助元数据。',
+          'Keeps only the watermark and its auxiliary metadata.',
+        );
       case OppoCameraTailMode.compact:
-        return t('保留水印、人像编辑及必要的 HDR 变换条目。', 'Keeps watermark, portrait edits and required HDR transform entries.');
+        return t(
+          '保留水印、人像编辑及必要的 HDR 变换条目。',
+          'Keeps watermark, portrait edits and required HDR transform entries.',
+        );
       case OppoCameraTailMode.preserve:
         return t('原样保留完整相机尾部。', 'Keeps the full camera tail unchanged.');
       case OppoCameraTailMode.preserveWithoutPortrait:
-        return t('删除景深、分割和人像编辑条目。', 'Removes depth, segmentation and portrait edit entries.');
+        return t(
+          '删除景深、分割和人像编辑条目。',
+          'Removes depth, segmentation and portrait edit entries.',
+        );
       case OppoCameraTailMode.preserveWithoutPortraitOrPrivateHdr:
-        return t('同时删除人像编辑和私有 HDR 条目。', 'Removes portrait edits and private HDR entries.');
+        return t(
+          '同时删除人像编辑和私有 HDR 条目。',
+          'Removes portrait edits and private HDR entries.',
+        );
       case OppoCameraTailMode.preserveWithoutPrivateUhdr:
-        return t('仅删除私有 UHDR gain map 条目。', 'Removes only private UHDR gain-map entries.');
+        return t(
+          '仅删除私有 UHDR gain map 条目。',
+          'Removes only private UHDR gain-map entries.',
+        );
       case OppoCameraTailMode.preserveWithoutPrivateHdr:
         return t('删除所有私有 HDR 条目。', 'Removes all private HDR entries.');
       case OppoCameraTailMode.preserveNoUhdr:
-        return t('保留结构，但中和私有 UHDR 条目名。', 'Keeps structure but neutralizes private UHDR entry names.');
+        return t(
+          '保留结构，但中和私有 UHDR 条目名。',
+          'Keeps structure but neutralizes private UHDR entry names.',
+        );
       case OppoCameraTailMode.preserveNoHdr:
-        return t('保留结构，但中和所有私有 HDR 条目名。', 'Keeps structure but neutralizes all private HDR entry names.');
+        return t(
+          '保留结构，但中和所有私有 HDR 条目名。',
+          'Keeps structure but neutralizes all private HDR entry names.',
+        );
     }
   }
 
@@ -650,7 +701,8 @@ enum MotionPhotoMode {
 /// Parsed Motion Photo summary attached to a queue item.
 class MotionPhotoSummary {
   /// "androidMotionPhotoV1" | "androidHeifMotionPhotoV1" |
-  /// "legacyMicroVideoV1b" | "oppoLivePhoto"
+  /// "legacyMicroVideoV1b" | "oppoLivePhoto" |
+  /// "huaweiOpenHarmonyMotionPhoto"
   final String kind;
   final int stillBytes;
   final int videoBytes;
@@ -667,7 +719,9 @@ class MotionPhotoSummary {
 
   String get videoSizeLabel {
     final mb = videoBytes / (1024 * 1024);
-    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(videoBytes / 1024).round()}KB';
+    return mb >= 1
+        ? '${mb.toStringAsFixed(1)}MB'
+        : '${(videoBytes / 1024).round()}KB';
   }
 }
 
@@ -688,8 +742,20 @@ class QueueItem {
   /// "x6" or "x7" family, null when unknown.
   String? family;
 
+  /// Huawei Mate-series HDR HEIC recognized as already compatible with Apple
+  /// Photos. Such originals are informational queue entries and are never
+  /// sent through the OPPO conversion path. A Huawei Motion Photo is kept
+  /// out of this native-HDR-only flag so its motion policy remains usable.
+  bool huaweiHdr;
+  bool huaweiHasXtstyle;
+
+  /// Read-only Huawei portrait resource observations from the Rust HEIF
+  /// inspector. This never enables conversion or writes Huawei-private data.
+  Map<String, dynamic>? huaweiPortrait;
+
   /// Non-null when the input is a Motion Photo (Android V1 / MicroVideo /
-  /// HEIF mpvd / OPPO Live Photo). Filled asynchronously after ingest.
+  /// HEIF mpvd / OPPO Live Photo / Huawei OpenHarmony). Filled during or
+  /// immediately after ingest.
   MotionPhotoSummary? motionPhoto;
 
   /// Per-card handling for Motion Photos. Defaults from the configured
@@ -719,7 +785,10 @@ class QueueItem {
     return switch (p.stage) {
       1 => t('解析元数据…', 'Parsing metadata…'),
       2 => t('解码JPEG…', 'Decoding JPEG…'),
-      3 => t('编码 HEVC ${p.current}/${p.total}', 'Encoding HEVC ${p.current}/${p.total}'),
+      3 => t(
+        '编码 HEVC ${p.current}/${p.total}',
+        'Encoding HEVC ${p.current}/${p.total}',
+      ),
       4 => t('组装输出…', 'Assembling output…'),
       _ => '',
     };
@@ -737,6 +806,9 @@ class QueueItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.huaweiHdr = false,
+    this.huaweiHasXtstyle = false,
+    this.huaweiPortrait,
     this.motionPhoto,
     this.motionPhotoMode = MotionPhotoMode.skip,
     this.backend = ConversionBackend.rust,
@@ -768,6 +840,13 @@ class QueueItem {
   }
 
   bool get isSuccessful => status.isSuccessful;
+
+  /// A native Huawei HDR or a Motion Photo skipped by policy has no converted
+  /// output; file actions must target the original input in both cases.
+  bool get actionUsesInput =>
+      huaweiHdr ||
+      (huaweiPortrait != null && status == QueueItemStatus.skippedPolicy) ||
+      (motionPhoto != null && status == QueueItemStatus.skippedPolicy);
 
   Duration? get duration {
     if (startedAt == null || finishedAt == null) return null;

@@ -1,7 +1,21 @@
 
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\Beet\\.ohos\\config\\default_ohos_nCOOaPfKutjN7JOK4NdNBkYmyoIT0CSkxCPF0CmNjzs=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001ACC32D09314BB47EA2D82452EDD891591BD7DBE4559E38BF8712F5952B704836011EE57F71A2D",
+          "profile": "C:\\Users\\Beet\\.ohos\\config\\default_ohos_nCOOaPfKutjN7JOK4NdNBkYmyoIT0CSkxCPF0CmNjzs=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\Beet\\.ohos\\config\\default_ohos_nCOOaPfKutjN7JOK4NdNBkYmyoIT0CSkxCPF0CmNjzs=.p12",
+          "storePassword": "0000001AB533687EF91AB415D54545556D223D80E063806B302048016368296DAC70AC0FD214433603A3"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

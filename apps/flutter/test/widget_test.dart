@@ -18,14 +18,17 @@ void main() {
     );
   });
 
-  test('input path filter accepts HEIC/HEIF/JPEG and rejects unrelated files', () {
-    expect(isSupportedInputPath('photo.HEIC'), isTrue);
-    expect(isSupportedInputPath('photo.heif'), isTrue);
-    expect(isSupportedInputPath('photo.jpg'), isTrue);
-    expect(isSupportedInputPath('photo.JPEG'), isTrue);
-    expect(isSupportedInputPath('photo.png'), isFalse);
-    expect(isSupportedInputPath('photo.txt'), isFalse);
-  });
+  test(
+    'input path filter accepts HEIC/HEIF/JPEG and rejects unrelated files',
+    () {
+      expect(isSupportedInputPath('photo.HEIC'), isTrue);
+      expect(isSupportedInputPath('photo.heif'), isTrue);
+      expect(isSupportedInputPath('photo.jpg'), isTrue);
+      expect(isSupportedInputPath('photo.JPEG'), isTrue);
+      expect(isSupportedInputPath('photo.png'), isFalse);
+      expect(isSupportedInputPath('photo.txt'), isFalse);
+    },
+  );
 
   testWidgets('XdRemuxApp renders home page', (WidgetTester tester) async {
     await tester.pumpWidget(const XdRemuxApp());
@@ -171,5 +174,21 @@ void main() {
     );
     expect(single.isDualStream, isFalse);
     expect(single.videoSizeLabel, '512KB');
+
+    final huaweiMotion = QueueItem(
+      id: 'huawei-motion',
+      inputPath: '/motion.heic',
+      outputPath: '/motion-out.heic',
+      status: QueueItemStatus.skippedPolicy,
+      motionPhoto: const MotionPhotoSummary(
+        kind: 'huaweiOpenHarmonyMotionPhoto',
+        stillBytes: 10,
+        videoBytes: 20,
+        streamCount: 1,
+      ),
+    );
+    expect(huaweiMotion.actionUsesInput, isTrue);
+    huaweiMotion.status = QueueItemStatus.converted;
+    expect(huaweiMotion.actionUsesInput, isFalse);
   });
 }

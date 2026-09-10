@@ -40,13 +40,41 @@ void main() {
     });
 
     test('CheckpointItem without motion fields defaults to skip', () {
-      final item = CheckpointItem(
-        inputPath: '/a.heic',
-        outputPath: '/b.heic',
-      );
+      final item = CheckpointItem(inputPath: '/a.heic', outputPath: '/b.heic');
       final restored = CheckpointItem.fromJson(item.toJson());
       expect(restored.motionPhoto, isNull);
+      expect(restored.huaweiPortrait, isNull);
       expect(restored.motionPhotoMode, 'skip');
+    });
+
+    test('CheckpointItem persists Huawei portrait diagnostics read-only', () {
+      final item = CheckpointItem(
+        inputPath: '/portrait.heic',
+        outputPath: '/portrait-out.heic',
+        huaweiHdr: true,
+        huaweiHasXtstyle: true,
+        huaweiPortrait: const {
+          'classification': 'huawei-portrait',
+          'safeToTransform': false,
+          'edofDimensions': {'width': 3072, 'height': 4096},
+          'edofAuxiliaryTypes': ['urn:com:huawei:photo:5:0:0:aux:unrefocusmap'],
+          'rfDataBObservedPlaneDimensions': {'width': 1024, 'height': 768},
+        },
+      );
+      final restored = CheckpointItem.fromJson(item.toJson());
+
+      expect(restored.huaweiHdr, isTrue);
+      expect(restored.huaweiHasXtstyle, isTrue);
+      expect(restored.huaweiPortrait?['classification'], 'huawei-portrait');
+      expect(restored.huaweiPortrait?['safeToTransform'], isFalse);
+      expect(
+        (restored.huaweiPortrait?['edofDimensions'] as Map)['width'],
+        3072,
+      );
+      expect(
+        (restored.huaweiPortrait?['edofAuxiliaryTypes'] as List).single,
+        'urn:com:huawei:photo:5:0:0:aux:unrefocusmap',
+      );
     });
 
     test('skippedPolicy wire status round-trips', () {

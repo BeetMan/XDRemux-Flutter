@@ -257,12 +257,7 @@ fn restore_watermark_pixels(
                 .unwrap_or_else(|| "watermark mask unavailable".into());
             let bands = detect_frame_bands(donor_rgba, image_width, image_height)
                 .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
-            restore_frame_watermark_pixels(
-                donor_rgba,
-                returned_rgba,
-                image_width,
-                &bands,
-            );
+            restore_frame_watermark_pixels(donor_rgba, returned_rgba, image_width, &bands);
             Ok(())
         }
     }
@@ -298,8 +293,7 @@ fn restore_frame_watermark_pixels(
             }
         }
     }
-    let Some((_, (count, red, green, blue))) = bins.into_iter().max_by_key(|(_, bin)| bin.0)
-    else {
+    let Some((_, (count, red, green, blue))) = bins.into_iter().max_by_key(|(_, bin)| bin.0) else {
         return;
     };
     let background = [
@@ -312,9 +306,7 @@ fn restore_frame_watermark_pixels(
             for x in 0..width {
                 let index = (y * width + x) * 4;
                 let distance = (0..3)
-                    .map(|channel| {
-                        (donor_rgba[index + channel] as i32 - background[channel]).abs()
-                    })
+                    .map(|channel| (donor_rgba[index + channel] as i32 - background[channel]).abs())
                     .max()
                     .unwrap_or(0);
                 if distance <= 4 {
@@ -360,7 +352,11 @@ fn decode_watermark_png(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
                 rgba.extend_from_slice(&[value, value, value, 255]);
             }
         }
-        other => return Err(format!("unsupported OPPO watermark PNG color type: {other:?}")),
+        other => {
+            return Err(format!(
+                "unsupported OPPO watermark PNG color type: {other:?}"
+            ))
+        }
     }
     Ok((rgba, info.width, info.height))
 }
@@ -661,7 +657,10 @@ fn make_oppo_native_tmap(
     let Some(tmap) = parsed.items.iter().find(|item| item.itype == "tmap") else {
         return Ok(None);
     };
-    let Some(entry) = parsed.iloc_entries.iter().find(|entry| entry.item_id == tmap.item_id)
+    let Some(entry) = parsed
+        .iloc_entries
+        .iter()
+        .find(|entry| entry.item_id == tmap.item_id)
     else {
         return Err("OPPO tmap iloc entry is missing".into());
     };
@@ -699,7 +698,9 @@ fn make_oppo_native_tmap(
         scale: value(2).max(1.0),
         channel_count: 3,
     };
-    Ok(Some(crate::iso21496::make_imageio_native_tmap_payload(&meta)))
+    Ok(Some(crate::iso21496::make_imageio_native_tmap_payload(
+        &meta,
+    )))
 }
 
 /// Replace the existing donor primary tiles without changing the primary ID
@@ -783,7 +784,9 @@ fn rewrite_primary_grid_in_place(
             }
             let (offset, length) = tmap_entry.extents[0];
             if length != 62 {
-                return Err(format!("OPPO output expects a 62-byte Apple tmap, got {length}"));
+                return Err(format!(
+                    "OPPO output expects a 62-byte Apple tmap, got {length}"
+                ));
             }
             let start = 8usize
                 .checked_add(offset as usize)
@@ -879,11 +882,7 @@ fn rewrite_primary_grid_in_place(
 /// sampled) plus sparse text; a row counts as frame when at least 85% of
 /// sampled pixels stay within +/-6 of the frame colour. Returns the
 /// `(y0, y1)` row ranges to copy from the donor.
-pub fn detect_frame_bands(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<Vec<(u32, u32)>, String> {
+pub fn detect_frame_bands(rgba: &[u8], width: u32, height: u32) -> Result<Vec<(u32, u32)>, String> {
     let stride = width as usize * 4;
     if rgba.len() < stride * height as usize || width < 64 || height < 64 {
         return Err("donor raster too small for frame detection".into());

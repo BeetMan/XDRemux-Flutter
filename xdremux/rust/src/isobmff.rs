@@ -625,7 +625,11 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         let item_id: u32 = if v >= 2 {
             if p + 8 <= data.len() {
                 let type_at_u16 = std::str::from_utf8(&data[p + 4..p + 8]).unwrap_or("");
-                if ["hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "uri "].contains(&type_at_u16) {
+                if [
+                    "hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "uri ", "it35",
+                ]
+                .contains(&type_at_u16)
+                {
                     p += 2;
                     read_u16be(data, p - 2) as u32
                 } else {
@@ -642,21 +646,15 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         // Skip item_protection_index (u16)
         p += 2;
 
-        // Read item type (4-char code, null-terminated)
+        // ISO BMFF item_type is exactly four bytes. The item name/content
+        // follows it; do not fold those strings into the type (Huawei's
+        // `gridbase`, `tmapTone-mapped representation`, and `mime...`
+        // items exposed this bug in the previous null-terminated parser).
         let type_start = p;
-        while p < infe_end && data[p] != 0 {
-            p += 1;
-        }
-        let itype = std::str::from_utf8(&data[type_start..p])
+        let type_end = type_start.saturating_add(4).min(infe_end);
+        let itype = std::str::from_utf8(&data[type_start..type_end])
             .unwrap_or("????")
             .to_string();
-        // p is at null byte; advance past it
-        p += 1;
-        let _ = p; // suppress unused-assignment warning
-
-        // For mime type, skip content type + content encoding null-terminated strings
-        // (we don't need them for passthrough)
-
         let flags = if v >= 2 {
             ((data[child.data_start + 1] as u32) << 16)
                 | ((data[child.data_start + 2] as u32) << 8)
@@ -1019,6 +1017,14 @@ mod tests {
         // Verify it contains "hvc1"
         let hvc1_pos = infe.windows(4).position(|w| w == b"hvc1");
         assert!(hvc1_pos.is_some(), "infe should contain 'hvc1'");
+    }
+
+    #[test]
+    fn parse_iinf_keeps_four_byte_item_type_separate_from_name() {
+        let iinf = make_iinf_box(0, &[make_mime_infe_box(20, 1)]);
+        let header = find_box(&iinf, b"iinf", 0, iinf.len()).expect("iinf box");
+        let items = parse_iinf(&iinf, &header).expect("parse iinf");
+        assert_eq!(items[0].itype, "mime");
     }
 
     #[test]

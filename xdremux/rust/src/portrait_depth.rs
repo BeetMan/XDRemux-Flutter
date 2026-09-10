@@ -59,7 +59,8 @@ pub(crate) fn read_u32le(d: &[u8], off: usize) -> Option<u32> {
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 pub(crate) fn read_u16le(d: &[u8], off: usize) -> Option<u16> {
-    d.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]))
+    d.get(off..off + 2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
 }
 pub(crate) fn read_i32le(d: &[u8], off: usize) -> Option<i32> {
     d.get(off..off + 4)
@@ -131,8 +132,8 @@ pub(crate) fn parse_config(data: Option<&[u8]>) -> Option<ConfigSummary> {
     let canvas_height = read_i32le(data, 8)?;
     let focus_x = read_i32le(data, 12)?;
     let focus_y = read_i32le(data, 16)?;
-    let current_f_number = read_f32le(data, 292)
-        .filter(|v| v.is_finite() && (1.0..=64.0).contains(v));
+    let current_f_number =
+        read_f32le(data, 292).filter(|v| v.is_finite() && (1.0..=64.0).contains(v));
     let object_distance = read_i32le(data, 296).filter(|&v| v > 0);
     let focus_roi_type = read_i32le(data, 404);
     Some(ConfigSummary {
@@ -271,14 +272,16 @@ pub(crate) fn percentile(sorted: &[u8], fraction: f64) -> f64 {
 pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     let names = crate::container::tail_entry_names(data);
     let mut report = Map::new();
-    report.insert("schema".into(), json!("xdremux-portrait-depth-diagnostic-v1"));
+    report.insert(
+        "schema".into(),
+        json!("xdremux-portrait-depth-diagnostic-v1"),
+    );
     report.insert("available".into(), json!(false));
     report.insert("safeToTransform".into(), json!(false));
     report.insert("classification".into(), json!("missing-rear-depth"));
     report.insert("resources".into(), json!(names));
 
-    let Some(compressed) = crate::container::extract_tail_entry(data, "rear.depth")
-    else {
+    let Some(compressed) = crate::container::extract_tail_entry(data, "rear.depth") else {
         return Ok(Value::Object(report));
     };
     let config_data = crate::container::extract_tail_entry(data, "rear.depth.config");
@@ -319,8 +322,8 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     let portrait_present = decoded[0x25] != 0;
     let pet_present = decoded[0x26] != 0;
 
-    let rank_stats = plane_stats(&decoded, HEADER_SIZE, plane_size)
-        .ok_or("rank plane truncated")?;
+    let rank_stats =
+        plane_stats(&decoded, HEADER_SIZE, plane_size).ok_or("rank plane truncated")?;
 
     // ---- planes ------------------------------------------------------------
     let mut planes = Map::new();
@@ -342,8 +345,7 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     // ---- classification + calibration decision -----------------------------
     let quantization_valid =
         disparity_maximum > disparity_minimum && (1..=2).contains(&exponentiation);
-    let zero_quantization =
-        disparity_minimum == 0 && disparity_maximum == 0 && exponentiation == 0;
+    let zero_quantization = disparity_minimum == 0 && disparity_maximum == 0 && exponentiation == 0;
     let classification = if zero_quantization && rank_stats.maximum > 0 {
         "rear-v4-zero-quantization"
     } else if quantization_valid {
@@ -356,8 +358,8 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     // The focus point lives in full-res source-image coordinates; the config
     // canvas is a small preview space, so read the real dims from src.image
     // (falling back to the canvas when src.image is absent).
-    let src_dims = crate::container::extract_tail_entry(data, "src.image")
-        .and_then(|b| image_dimensions(&b));
+    let src_dims =
+        crate::container::extract_tail_entry(data, "src.image").and_then(|b| image_dimensions(&b));
     let source_dims = src_dims
         .or_else(|| {
             config
@@ -366,45 +368,48 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
         })
         .unwrap_or((0, 0));
 
-    let decision: ScaleDecision = if quantization_valid
-        && embedded_scale.is_finite()
-        && embedded_scale > 0.0
-    {
-        ScaleDecision::Passthrough(embedded_scale)
-    } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
-        match cfg.object_distance {
-            Some(dist) if dist > 0 && focal_length > 0.0 && stereo_baseline > 0.0 => {
-                match focus_window_ranks(&decoded, width, height, cfg, source_dims) {
-                    Some(ranks) => {
-                        let p50 = percentile(&ranks, 0.50);
-                        let scale = scale_for_rank(
-                            p50,
-                            rank_stats.maximum as u32,
-                            focal_length,
-                            stereo_baseline,
-                            dist as f64,
-                        );
-                        if scale.is_finite() && scale > 0.0 {
-                            ScaleDecision::CalibratedP50(scale)
-                        } else {
-                            ScaleDecision::Unavailable("p50 formula produced non-finite scale".into())
+    let decision: ScaleDecision =
+        if quantization_valid && embedded_scale.is_finite() && embedded_scale > 0.0 {
+            ScaleDecision::Passthrough(embedded_scale)
+        } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
+            match cfg.object_distance {
+                Some(dist) if dist > 0 && focal_length > 0.0 && stereo_baseline > 0.0 => {
+                    match focus_window_ranks(&decoded, width, height, cfg, source_dims) {
+                        Some(ranks) => {
+                            let p50 = percentile(&ranks, 0.50);
+                            let scale = scale_for_rank(
+                                p50,
+                                rank_stats.maximum as u32,
+                                focal_length,
+                                stereo_baseline,
+                                dist as f64,
+                            );
+                            if scale.is_finite() && scale > 0.0 {
+                                ScaleDecision::CalibratedP50(scale)
+                            } else {
+                                ScaleDecision::Unavailable(
+                                    "p50 formula produced non-finite scale".into(),
+                                )
+                            }
                         }
+                        None => ScaleDecision::Unavailable("focus window out of range".into()),
                     }
-                    None => ScaleDecision::Unavailable("focus window out of range".into()),
                 }
+                _ => ScaleDecision::Unavailable(
+                    "missing objectDistance/focalLength/stereoBaseline".into(),
+                ),
             }
-            _ => ScaleDecision::Unavailable(
-                "missing objectDistance/focalLength/stereoBaseline".into(),
-            ),
-        }
-    } else {
-        ScaleDecision::Unavailable("no config or empty rank plane".into())
-    };
+        } else {
+            ScaleDecision::Unavailable("no config or empty rank plane".into())
+        };
 
     // Diagnostic candidates (kept for parity with the Swift report).
     let mut calibration = Map::new();
     calibration.insert("classification".into(), json!(classification));
-    calibration.insert("producerQuantizationValid".into(), json!(quantization_valid));
+    calibration.insert(
+        "producerQuantizationValid".into(),
+        json!(quantization_valid),
+    );
     calibration.insert("safeToTransform".into(), json!(quantization_valid));
     calibration.insert(
         "rankScaleInterpretations".into(),
@@ -437,9 +442,12 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     }
 
     report.insert("available".into(), json!(true));
-    report.insert("sourceImage".into(), src_dims
-        .map(|(w, h)| json!({"width": w, "height": h}))
-        .unwrap_or(Value::Null));
+    report.insert(
+        "sourceImage".into(),
+        src_dims
+            .map(|(w, h)| json!({"width": w, "height": h}))
+            .unwrap_or(Value::Null),
+    );
     report.insert("safeToTransform".into(), json!(quantization_valid));
     report.insert("classification".into(), json!(classification));
     report.insert(
@@ -460,7 +468,10 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
         }),
     );
     report.insert("planes".into(), Value::Object(planes));
-    report.insert("config".into(), config.as_ref().map(|c| c.json()).unwrap_or(Value::Null));
+    report.insert(
+        "config".into(),
+        config.as_ref().map(|c| c.json()).unwrap_or(Value::Null),
+    );
     report.insert("calibration".into(), Value::Object(calibration));
     Ok(Value::Object(report))
 }

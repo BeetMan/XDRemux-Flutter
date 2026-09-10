@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（绑定）、`xdremux/rust/src/lib.rs`（导出，28 个 `extern "C"` 函数）。
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（绑定）、`xdremux/rust/src/lib.rs`（导出，29 个 `extern "C"` 函数）。
 
 ## 1. 库加载
 
@@ -50,6 +50,7 @@
 |---|---|
 | `xdremux_version` | 版本串（与 Cargo 一致） |
 | `xdremux_classify` / `xdremux_inspect` | 输入分类 / 结构检查 |
+| `xdremux_huawei_inspect` | Huawei HDR / 人像 HEIC 只读识别与“无需转换”诊断（含 `xtstyle` 及 `huaweiPortrait` 的 `edof`、`auxC`、`auxl`、`RfDataB` 尺寸/字节形态；不做语义转换） |
 | `xdremux_convert` / `xdremux_convert_with_progress` | ProXDR -> ISO 转换（含 Ultra HDR JPEG 输入） |
 | `xdremux_writeback_returned_photo` | 回传照片写回（全平台统一） |
 | `xdremux_diagnose_portrait` | 人像深度诊断 |
@@ -57,6 +58,17 @@
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
+
+当报告含 `huaweiPortrait` 时，嵌套对象只描述观察到的 ISOBMFF 资源：
+`edofItemId` / `edofDimensions` / `edofTileItemIds`、`edofAuxiliaryTypes`（`auxC`）、
+`edofAuxlTargets`，以及 `RfDataB` 的 `cdsc` 目标、字节数、观察到的 header/平面
+偏移、尺寸、sample 字节数和完整性。`safeToTransform` 固定为 `false`，
+`recommendedAction` 为 `inspect-only`；这些字段不代表深度单位、通道语义或 Apple
+人像兼容性，Flutter 只提供只读诊断入口，不启动转换。
+
+动态照片报告的 `sourceKind` 还包括 `huaweiOpenHarmonyMotionPhoto`。该类型的
+`huaweiMetadata` 只读返回 `coverTimeMs`、`startTimeMs`、`videoId` 和
+`deferredVideoEnhanceFlag`；它不等同于 Apple Live Photo 元数据，也不自动触发重编码。
 
 ## 4. 变更纪律
 

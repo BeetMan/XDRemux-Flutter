@@ -14,21 +14,21 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod bplist;
 mod compare;
 mod compare_dump;
 mod convert;
 mod dump;
 mod inspect;
 mod json;
-mod bplist;
 mod portrait;
 mod portrait_consts;
 mod portrait_depth;
 mod scaffold;
 mod seg;
 mod styles_consts;
-mod styles_native;
 mod styles_graft;
+mod styles_native;
 
 const USAGE: &str = "\
 Usage:
@@ -352,7 +352,11 @@ fn cmd_styles_native(args: &[String]) -> ExitCode {
                 eprintln!("styles: write {}: {e}", args[1]);
                 return ExitCode::from(1);
             }
-            println!("styles-native: {} -> {} bytes", standard.len(), output.len());
+            println!(
+                "styles-native: {} -> {} bytes",
+                standard.len(),
+                output.len()
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {

@@ -269,7 +269,13 @@ class CheckpointService {
       return CheckpointItem(
         inputPath: item.inputPath,
         outputPath: item.outputPath,
-        status: CheckpointItemStatus.pending,
+        status: switch (item.status) {
+          QueueItemStatus.converted => CheckpointItemStatus.converted,
+          QueueItemStatus.skippedExisting =>
+            CheckpointItemStatus.skippedExisting,
+          QueueItemStatus.skippedPolicy => CheckpointItemStatus.skippedPolicy,
+          _ => CheckpointItemStatus.pending,
+        },
         inputSize: size,
         inputMtimeMs: mtimeMs,
         captureModeKey: item.captureModeKey,
@@ -277,15 +283,17 @@ class CheckpointService {
         classificationStatus: item.classificationStatus,
         hdrKind: item.hdrKind,
         family: item.family,
-        motionPhoto:
-            item.motionPhoto == null
-                ? null
-                : {
-                  'kind': item.motionPhoto!.kind,
-                  'stillBytes': item.motionPhoto!.stillBytes,
-                  'videoBytes': item.motionPhoto!.videoBytes,
-                  'streamCount': item.motionPhoto!.streamCount,
-                },
+        huaweiHdr: item.huaweiHdr,
+        huaweiHasXtstyle: item.huaweiHasXtstyle,
+        huaweiPortrait: item.huaweiPortrait,
+        motionPhoto: item.motionPhoto == null
+            ? null
+            : {
+                'kind': item.motionPhoto!.kind,
+                'stillBytes': item.motionPhoto!.stillBytes,
+                'videoBytes': item.motionPhoto!.videoBytes,
+                'streamCount': item.motionPhoto!.streamCount,
+              },
         motionPhotoMode: item.motionPhotoMode.name,
       );
     }).toList();

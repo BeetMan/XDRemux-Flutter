@@ -23,9 +23,7 @@
 use std::fs;
 use std::path::Path;
 
-use xdremux_core::isobmff::{
-    parse_boxes, parse_source_meta, PropertyInfo,
-};
+use xdremux_core::isobmff::{parse_boxes, parse_source_meta, PropertyInfo};
 
 use crate::json;
 
@@ -83,7 +81,9 @@ fn write_ftyp(s: &mut String, data: &[u8]) -> Result<(), String> {
         return Err("ftyp payload too short".to_string());
     }
 
-    let major = std::str::from_utf8(&payload[0..4]).unwrap_or("????").to_string();
+    let major = std::str::from_utf8(&payload[0..4])
+        .unwrap_or("????")
+        .to_string();
     let _minor = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
     let brands: Vec<String> = payload[8..]
         .chunks(4)
@@ -236,8 +236,10 @@ fn write_property(s: &mut String, _data: &[u8], prop: &PropertyInfo) -> Result<(
     match prop.ptype.as_str() {
         "ispe" => {
             if prop.raw.len() >= 16 {
-                let w = u32::from_be_bytes([prop.raw[12], prop.raw[13], prop.raw[14], prop.raw[15]]);
-                let h = u32::from_be_bytes([prop.raw[16], prop.raw[17], prop.raw[18], prop.raw[19]]);
+                let w =
+                    u32::from_be_bytes([prop.raw[12], prop.raw[13], prop.raw[14], prop.raw[15]]);
+                let h =
+                    u32::from_be_bytes([prop.raw[16], prop.raw[17], prop.raw[18], prop.raw[19]]);
                 s.push(',');
                 kv_u32(s, "width", w, false);
                 s.push(',');
@@ -246,7 +248,9 @@ fn write_property(s: &mut String, _data: &[u8], prop: &PropertyInfo) -> Result<(
         }
         "colr" => {
             if prop.raw.len() >= 12 {
-                let kind = std::str::from_utf8(&prop.raw[8..12]).unwrap_or("????").to_string();
+                let kind = std::str::from_utf8(&prop.raw[8..12])
+                    .unwrap_or("????")
+                    .to_string();
                 s.push(',');
                 kv_str(s, "kind", &kind, false);
                 if kind == "nclx" && prop.raw.len() >= 19 {
@@ -300,8 +304,13 @@ fn write_property(s: &mut String, _data: &[u8], prop: &PropertyInfo) -> Result<(
             // Extract the URN string (null-terminated)
             if prop.raw.len() > 12 {
                 let urn_bytes = &prop.raw[12..];
-                let urn_end = urn_bytes.iter().position(|&b| b == 0).unwrap_or(urn_bytes.len());
-                let urn = std::str::from_utf8(&urn_bytes[..urn_end]).unwrap_or("").to_string();
+                let urn_end = urn_bytes
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(urn_bytes.len());
+                let urn = std::str::from_utf8(&urn_bytes[..urn_end])
+                    .unwrap_or("")
+                    .to_string();
                 s.push(',');
                 kv_str(s, "urn", &urn, false);
             }

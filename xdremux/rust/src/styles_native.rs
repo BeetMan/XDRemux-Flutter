@@ -474,11 +474,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         placeholder_iloc.retain(|e| e.item_id != sky_id);
     }
     let mut new_item_ids: Vec<u32> = delta_tile_ids.clone();
-    new_item_ids.extend([
-        delta_grid_id,
-        linear_id,
-        style_meta_id,
-    ]);
+    new_item_ids.extend([delta_grid_id, linear_id, style_meta_id]);
     // The sky placeholder must exist in BOTH paths so the placeholder iloc
     // matches the final iloc entry set (two-pass meta size stability).
     new_item_ids.push(sky_id);
@@ -756,10 +752,7 @@ fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
 /// Scene statistics ("6"). Identity path: person/skin segment histograms are
 /// legitimately zero; ToneMappedImage/LinearImage carry reference values from
 /// the golden sample (per-photo computation needs a decoder — TODO).
-fn build_stats_dict(
-    w: &mut BplistWriter,
-    overrides: Option<&[(&'static str, [f64; 9])]>,
-) -> usize {
+fn build_stats_dict(w: &mut BplistWriter, overrides: Option<&[(&'static str, [f64; 9])]>) -> usize {
     let zero_stats = |w: &mut BplistWriter| -> usize {
         let entries = [
             ("highKey", 1.0f64),
@@ -919,13 +912,10 @@ fn make_xmp_infe(item_id: u32) -> Vec<u8> {
 /// model). Finds the `styleMetadata` URI item and rewrites its payload in
 /// place; the container geometry stays valid because replace_item_payload
 /// re-points the iloc extent to the appended payload.
-pub fn replace_style_metadata(
-    heic: &[u8],
-    state: &StyleStateOverride,
-) -> Result<Vec<u8>, String> {
+pub fn replace_style_metadata(heic: &[u8], state: &StyleStateOverride) -> Result<Vec<u8>, String> {
     let mut output = heic.to_vec();
-    let parsed = crate::isobmff::parse_source_meta(&output)
-        .map_err(|e| format!("meta parse: {e}"))?;
+    let parsed =
+        crate::isobmff::parse_source_meta(&output).map_err(|e| format!("meta parse: {e}"))?;
     let item_id = parsed
         .items
         .iter()
@@ -933,12 +923,7 @@ pub fn replace_style_metadata(
         .map(|i| i.item_id)
         .ok_or("no styleMetadata item in input")?;
     let plist = build_style_metadata_with(state);
-    crate::isobmff_write::replace_item_payload(
-        &mut output,
-        item_id,
-        None,
-        &plist,
-    )?;
+    crate::isobmff_write::replace_item_payload(&mut output, item_id, None, &plist)?;
     Ok(output)
 }
 

@@ -44,8 +44,7 @@ pub(crate) fn segment_sky(
             let px = resized.get_pixel(x as u32, y as u32);
             for c in 0..3 {
                 let v = px[c] as f32 / 255.0;
-                input[c * MODEL_SIZE * MODEL_SIZE + y * MODEL_SIZE + x] =
-                    (v - MEAN[c]) / STD[c];
+                input[c * MODEL_SIZE * MODEL_SIZE + y * MODEL_SIZE + x] = (v - MEAN[c]) / STD[c];
             }
         }
     }
@@ -62,11 +61,8 @@ pub(crate) fn segment_sky(
         .commit_from_file(model_path)
         .map_err(|e| format!("load model {}: {e}", model_path.display()))?;
 
-    let input_tensor = ort::value::Tensor::from_array((
-        [1usize, 3, MODEL_SIZE, MODEL_SIZE],
-        input,
-    ))
-    .map_err(|e| format!("input tensor: {e}"))?;
+    let input_tensor = ort::value::Tensor::from_array(([1usize, 3, MODEL_SIZE, MODEL_SIZE], input))
+        .map_err(|e| format!("input tensor: {e}"))?;
     let outputs = session
         .run(ort::inputs![input_tensor])
         .map_err(|e| format!("inference: {e}"))?;
@@ -118,15 +114,12 @@ pub(crate) fn segment_sky(
 /// matte convention.
 pub(crate) fn cmd_sky_matte(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
-        return Err(
-            "sky-matte: expected <photo.png> <model.onnx> <out.raw> [w h]".into(),
-        );
+        return Err("sky-matte: expected <photo.png> <model.onnx> <out.raw> [w h]".into());
     }
     let photo = Path::new(&args[0]);
     let model = Path::new(&args[1]);
     let out = Path::new(&args[2]);
-    let img = image::open(photo)
-        .map_err(|e| format!("decode photo {}: {e}", photo.display()))?;
+    let img = image::open(photo).map_err(|e| format!("decode photo {}: {e}", photo.display()))?;
     let (pw, ph) = (img.width(), img.height());
     let (matte_w, matte_h) = if args.len() >= 5 {
         let w: u32 = args[3].parse().map_err(|_| "bad width")?;

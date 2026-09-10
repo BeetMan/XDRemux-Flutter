@@ -15,11 +15,8 @@ fn main() {
         apple_photographic_styles: 1,
         apple_portrait: 0,
     };
-    let result = xdremux_core::xdremux_convert(
-        input.as_ptr(),
-        output.as_ptr(),
-        &config as *const _,
-    );
+    let result =
+        xdremux_core::xdremux_convert(input.as_ptr(), output.as_ptr(), &config as *const _);
     println!("success={}", result.success);
     if !result.error_message.is_null() {
         let msg = unsafe { std::ffi::CStr::from_ptr(result.error_message) };

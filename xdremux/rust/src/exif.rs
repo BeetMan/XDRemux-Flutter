@@ -477,9 +477,7 @@ pub fn find_exif_iloc_entry<'a>(
     iloc_entries: &'a [IlocEntry],
 ) -> Option<&'a IlocEntry> {
     let exif_id = items.iter().find(|item| item.itype == "Exif")?.item_id;
-    iloc_entries
-        .iter()
-        .find(|entry| entry.item_id == exif_id)
+    iloc_entries.iter().find(|entry| entry.item_id == exif_id)
 }
 
 /// Apply the OPPO UserComment patch to the source mdat payload, confined to
@@ -523,7 +521,8 @@ pub fn apply_oppo_usercomment_patch(
 
     // TIFF byte-order marker sits after the 4-byte Exif-to-TIFF offset field
     // ("Exif\0\0"). Swift reads that field as a BE u32; OPPO files use 6.
-    let tiff_offset = u32::from_be_bytes(exif_payload[0..4].try_into().expect("4-byte field")) as usize;
+    let tiff_offset =
+        u32::from_be_bytes(exif_payload[0..4].try_into().expect("4-byte field")) as usize;
     let tiff_start = 4 + tiff_offset;
     if tiff_start < 4 || tiff_start + 8 > exif_payload.len() {
         return None;
@@ -619,8 +618,9 @@ pub fn apply_oppo_usercomment_patch(
     let (digits_start, digits_end, replacement) = adjust_oppo_usercomment(tag, mode)?;
 
     // Rebuild the value: bytes before prefix + prefix + new digits + trailing.
-    let mut rebuilt =
-        Vec::with_capacity(new_value.len() + replacement.len().saturating_sub(digits_end - digits_start));
+    let mut rebuilt = Vec::with_capacity(
+        new_value.len() + replacement.len().saturating_sub(digits_end - digits_start),
+    );
     rebuilt.extend_from_slice(&new_value[..tag.offset]);
     rebuilt.extend_from_slice(&new_value[tag.offset..digits_start]);
     rebuilt.extend_from_slice(&replacement);
@@ -956,7 +956,11 @@ mod tests {
         let trailing = b"TAIL-DATA";
         let trailing_start = payload.len();
         payload.extend_from_slice(trailing);
-        assert_eq!(uc_entry_slot + 4 + 21, trailing_start, "value is 21 bytes after the offset field");
+        assert_eq!(
+            uc_entry_slot + 4 + 21,
+            trailing_start,
+            "value is 21 bytes after the offset field"
+        );
 
         let extent_off = 100u64;
         let mut mdat = vec![0u8; extent_off as usize];

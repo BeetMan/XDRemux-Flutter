@@ -352,7 +352,10 @@ pub fn disable_apple_filter_recipe(data: &mut [u8]) -> usize {
     {
         let start = offset + relative;
         let mut cursor = start + FILTER_KEY.len();
-        while data.get(cursor).is_some_and(|byte| byte.is_ascii_whitespace()) {
+        while data
+            .get(cursor)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
             cursor += 1;
         }
         if data.get(cursor) == Some(&b':') {
@@ -382,10 +385,10 @@ pub fn watermark_canvas_rect(
     image_width: u32,
     image_height: u32,
 ) -> Result<(u32, u32, u32, u32), String> {
-    let watermark = extract_tail_entry(data, "watermark")
-        .ok_or("OPPO watermark payload is missing")?;
-    let config = extract_tail_entry(data, "watermark.config")
-        .ok_or("OPPO watermark config is missing")?;
+    let watermark =
+        extract_tail_entry(data, "watermark").ok_or("OPPO watermark payload is missing")?;
+    let config =
+        extract_tail_entry(data, "watermark.config").ok_or("OPPO watermark config is missing")?;
     if config.len() < 20 || watermark.len() < 24 {
         return Err("OPPO watermark payload or config is truncated".into());
     }
@@ -420,10 +423,10 @@ pub fn watermark_overlay_rect(
     image_width: u32,
     image_height: u32,
 ) -> Result<(u32, u32, u32, u32), String> {
-    let watermark = extract_tail_entry(data, "watermark")
-        .ok_or("OPPO watermark payload is missing")?;
-    let config = extract_tail_entry(data, "watermark.config")
-        .ok_or("OPPO watermark config is missing")?;
+    let watermark =
+        extract_tail_entry(data, "watermark").ok_or("OPPO watermark payload is missing")?;
+    let config =
+        extract_tail_entry(data, "watermark.config").ok_or("OPPO watermark config is missing")?;
     if config.len() < 20 || watermark.len() < 24 {
         return Err("OPPO watermark payload or config is truncated".into());
     }
@@ -1041,7 +1044,7 @@ mod tests {
         // compressed data produces when the whole file is scanned.
         let mut floats = [0.0f32; 36];
         floats[2] = 144.0; // sentinel hit
-        // f0, f5, f18, f19, f29 all left at garbage defaults
+                           // f0, f5, f18, f19, f29 all left at garbage defaults
         assert!(!plausible_lhdr_meta(&floats));
         assert!(score_lhdr_meta(&floats) < MIN_FLOAT144_SCORE);
 

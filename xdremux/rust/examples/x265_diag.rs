@@ -155,13 +155,8 @@ mod imp {
             let mut out = Vec::new();
             let mut nals: *mut x265_nal = std::ptr::null_mut();
             let mut nnal: u32 = 0;
-            let mut ret = x265_encoder_encode(
-                encoder,
-                &mut nals,
-                &mut nnal,
-                pic,
-                std::ptr::null_mut(),
-            );
+            let mut ret =
+                x265_encoder_encode(encoder, &mut nals, &mut nnal, pic, std::ptr::null_mut());
             if ret >= 0 {
                 // flush
                 ret = x265_encoder_encode(
@@ -175,8 +170,7 @@ mod imp {
             if ret >= 0 && !nals.is_null() {
                 for i in 0..nnal as isize {
                     let nal = &*nals.offset(i);
-                    let payload =
-                        std::slice::from_raw_parts(nal.payload, nal.size_bytes as usize);
+                    let payload = std::slice::from_raw_parts(nal.payload, nal.size_bytes as usize);
                     out.extend_from_slice(payload);
                 }
             }

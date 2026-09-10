@@ -18,10 +18,10 @@ pub fn run<P1: AsRef<Path>, P2: AsRef<Path>>(a: P1, b: P2) -> Result<String, Str
 
 /// Compare two JSON strings and return a Markdown report.
 pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
-    let a: serde_json::Value = serde_json::from_str(a_json)
-        .map_err(|e| format!("cannot parse A JSON: {e}"))?;
-    let b: serde_json::Value = serde_json::from_str(b_json)
-        .map_err(|e| format!("cannot parse B JSON: {e}"))?;
+    let a: serde_json::Value =
+        serde_json::from_str(a_json).map_err(|e| format!("cannot parse A JSON: {e}"))?;
+    let b: serde_json::Value =
+        serde_json::from_str(b_json).map_err(|e| format!("cannot parse B JSON: {e}"))?;
 
     let mut report = String::new();
     report.push_str("# ISOBMFF Structure Comparison Report\n\n");
@@ -30,7 +30,10 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     let a_schema = a.get("schema").and_then(|v| v.as_str()).unwrap_or("");
     let b_schema = b.get("schema").and_then(|v| v.as_str()).unwrap_or("");
     if a_schema != b_schema {
-        report.push_str(&format!("⚠ Schema version mismatch: A={}, B={}\n\n", a_schema, b_schema));
+        report.push_str(&format!(
+            "⚠ Schema version mismatch: A={}, B={}\n\n",
+            a_schema, b_schema
+        ));
     }
 
     // Compare ftyp
@@ -38,8 +41,14 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     let b_ftyp = b.get("ftyp");
     if a_ftyp != b_ftyp {
         report.push_str("## ftyp differences\n\n");
-        report.push_str(&format!("- A: {}\n", serde_json::to_string_pretty(&a_ftyp).unwrap_or_default()));
-        report.push_str(&format!("- B: {}\n\n", serde_json::to_string_pretty(&b_ftyp).unwrap_or_default()));
+        report.push_str(&format!(
+            "- A: {}\n",
+            serde_json::to_string_pretty(&a_ftyp).unwrap_or_default()
+        ));
+        report.push_str(&format!(
+            "- B: {}\n\n",
+            serde_json::to_string_pretty(&b_ftyp).unwrap_or_default()
+        ));
     } else {
         report.push_str("✓ ftyp: identical\n\n");
     }
@@ -52,14 +61,21 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     let a_pitm = a_meta.and_then(|m| m.get("pitm"));
     let b_pitm = b_meta.and_then(|m| m.get("pitm"));
     if a_pitm != b_pitm {
-        report.push_str(&format!("## pitm differences\n\n- A: {:?}\n- B: {:?}\n\n", a_pitm, b_pitm));
+        report.push_str(&format!(
+            "## pitm differences\n\n- A: {:?}\n- B: {:?}\n\n",
+            a_pitm, b_pitm
+        ));
     } else {
         report.push_str(&format!("✓ pitm: {:?}\n\n", a_pitm));
     }
 
     // Compare iinf
-    let a_iinf = a_meta.and_then(|m| m.get("iinf")).and_then(|v| v.as_array());
-    let b_iinf = b_meta.and_then(|m| m.get("iinf")).and_then(|v| v.as_array());
+    let a_iinf = a_meta
+        .and_then(|m| m.get("iinf"))
+        .and_then(|v| v.as_array());
+    let b_iinf = b_meta
+        .and_then(|m| m.get("iinf"))
+        .and_then(|v| v.as_array());
     if a_iinf != b_iinf {
         report.push_str("## iinf differences\n\n");
         let a_count = a_iinf.map(|v| v.len()).unwrap_or(0);
@@ -71,7 +87,10 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
         if let (Some(a_items), Some(b_items)) = (a_iinf, b_iinf) {
             for (i, (a_item, b_item)) in a_items.iter().zip(b_items.iter()).enumerate() {
                 if a_item != b_item {
-                    report.push_str(&format!("Item {} differs:\n- A: {}\n- B: {}\n\n", i, a_item, b_item));
+                    report.push_str(&format!(
+                        "Item {} differs:\n- A: {}\n- B: {}\n\n",
+                        i, a_item, b_item
+                    ));
                     if i >= 5 {
                         report.push_str("... (more differences omitted)\n\n");
                         break;
@@ -85,8 +104,12 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     }
 
     // Compare iref
-    let a_iref = a_meta.and_then(|m| m.get("iref")).and_then(|v| v.as_array());
-    let b_iref = b_meta.and_then(|m| m.get("iref")).and_then(|v| v.as_array());
+    let a_iref = a_meta
+        .and_then(|m| m.get("iref"))
+        .and_then(|v| v.as_array());
+    let b_iref = b_meta
+        .and_then(|m| m.get("iref"))
+        .and_then(|v| v.as_array());
     if a_iref != b_iref {
         report.push_str("## iref differences\n\n");
         let a_count = a_iref.map(|v| v.len()).unwrap_or(0);
@@ -99,8 +122,12 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     }
 
     // Compare ipco
-    let a_ipco = a_meta.and_then(|m| m.get("ipco")).and_then(|v| v.as_array());
-    let b_ipco = b_meta.and_then(|m| m.get("ipco")).and_then(|v| v.as_array());
+    let a_ipco = a_meta
+        .and_then(|m| m.get("ipco"))
+        .and_then(|v| v.as_array());
+    let b_ipco = b_meta
+        .and_then(|m| m.get("ipco"))
+        .and_then(|v| v.as_array());
     if a_ipco != b_ipco {
         report.push_str("## ipco differences\n\n");
         let a_count = a_ipco.map(|v| v.len()).unwrap_or(0);
@@ -113,8 +140,12 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     }
 
     // Compare ipma
-    let a_ipma = a_meta.and_then(|m| m.get("ipma")).and_then(|v| v.as_array());
-    let b_ipma = b_meta.and_then(|m| m.get("ipma")).and_then(|v| v.as_array());
+    let a_ipma = a_meta
+        .and_then(|m| m.get("ipma"))
+        .and_then(|v| v.as_array());
+    let b_ipma = b_meta
+        .and_then(|m| m.get("ipma"))
+        .and_then(|v| v.as_array());
     if a_ipma != b_ipma {
         report.push_str("## ipma differences\n\n");
         let a_count = a_ipma.map(|v| v.len()).unwrap_or(0);
@@ -127,8 +158,12 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     }
 
     // Compare iloc
-    let a_iloc = a_meta.and_then(|m| m.get("iloc")).and_then(|v| v.as_array());
-    let b_iloc = b_meta.and_then(|m| m.get("iloc")).and_then(|v| v.as_array());
+    let a_iloc = a_meta
+        .and_then(|m| m.get("iloc"))
+        .and_then(|v| v.as_array());
+    let b_iloc = b_meta
+        .and_then(|m| m.get("iloc"))
+        .and_then(|v| v.as_array());
     if a_iloc != b_iloc {
         report.push_str("## iloc differences\n\n");
         let a_count = a_iloc.map(|v| v.len()).unwrap_or(0);
@@ -152,7 +187,8 @@ pub fn compare_str(a_json: &str, b_json: &str) -> Result<String, String> {
     if all_match {
         report.push_str("## Summary\n\n✓ All structural elements match!\n");
     } else {
-        report.push_str("## Summary\n\n⚠ Structural differences detected. See above for details.\n");
+        report
+            .push_str("## Summary\n\n⚠ Structural differences detected. See above for details.\n");
     }
 
     Ok(report)

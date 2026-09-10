@@ -103,6 +103,9 @@ iprp: rICC(672B) + nclx(BT.2020 primaries=9 / HLG transfer=18 / BT.2020 matrix=9
       + clli(maxCLL=900) + mdcv（静态 HDR 元数据齐备）
 ```
 
+Rust 只读报告现在还会摘要 EXIF Make/Model、Orientation（越界值归 Normal）、
+GPS 字段存在性/字段数和焦段；为避免诊断泄露位置，不返回 GPS 经纬度。
+
 HDR 表示法 = **HLG 传递函数 + ISO 21496-1 增益映射 + HDR Vivid 元数据**三重冗余。
 三张图都含 nclx/clli/mdcv 与 tmap/增益映射；差异在于：233642/233646 是 **4320×5760 高像素路径**，带 xtstyle、DfxData 约 473KB、it35 237B；233644 是 **3072×4096 标准/合并像素路径**，不带 xtstyle、DfxData 约 436KB、it35 160B，文件也约小一半。
 
@@ -119,20 +122,37 @@ HDR 表示法 = **HLG 传递函数 + ISO 21496-1 增益映射 + HDR Vivid 元数
 
 ### 6.4 XMAGE 色卡（xtstyle）初剖
 
-- 固定 442368 字节；头部：`05 00 00 00`（版本 5，与 URN 中 `photo:5:1:0` 对应）
-  + 三个 float32 0.5；主体为**量化系数块**（字节分布集中在 0–3 与 192/128/64/255，
-  即 int8 小值与 -64/-128，典型的量化权重签名）
-- 两张不同照片载荷同尺寸同头部、12% 字节不同——色卡随场景/选择变化
-- 与 Apple 摄影风格 key1（34560 维 float16 格点 ≈ 69KB）概念对应，但体积约 6.4 倍，
-  且以 HEIF mime item 内嵌（Apple 走 AAE sidecar + 容器内私有结构）
+当前新增的 4 张标准模式样本的 `xtstyle` 都是 442368 字节，Rust 诊断器已加入**只读结构摘要**：
+
+- 前 16 字节稳定为 little-endian：`u32 version` 为 5 或 6，后接三个 `float32 = 0.5`。
+  HEIF `mime` 名称仍为 `urn:com:huawei:photo:5:1:0:meta:xtstyle`，因此 URN 版本和
+  payload 版本不能混为一谈。
+- 总长度恰好等于 `6 × 192 × 192 × 2`。按 little-endian `u16` 对齐可观察到
+  `u16le[6][192][192]` 的固定字节形态；当前样本均有 4 个 plane 含非零字节，
+  其余区域包括近似保留区和尾部字段。
+- 本次用户按拍摄顺序提供的两组样本显示：前两张「鲜艳」为 payload version 5，后两张
+  「明快」为 payload version 6；两组总长度和大体布局相同，但 version 6 在头部之后更早
+  出现非零表数据，说明不是单纯改一个风格名称。
+- 同一设定的两张样本差异约 11.3%（鲜艳）/11.4%（明快）；跨设定首张样本差异约
+  14.5%。由于手持拍摄存在构图、曝光和场景变化，这些数字只能证明载荷会变化，不能单独
+  作为色彩语义或系数通道的结论。
+- 这一步只报告版本、头部、字节布局、非零字节数和非零 plane 数，**不把 u16 槽位命名为
+  色彩系数，也不声称已经知道其通道语义**。因此不会生成伪造的 Apple 摄影风格。
+- `xtstyle` 是 HEIF `mime` item 内嵌私有数据；与 Apple 摄影风格 key1 的尺寸和布局不能
+  直接类比，当前没有双向转换结论。
 
 ### 6.5 设备确认与解释
 
+Step 2 结构诊断已落地到 `xdremux_huawei_inspect`：报告 `xtstyleVersion`、
+`xtstyleHeaderFloat32`、`xtstyleObservedLayout`、非零字节/plane 数，以及 EXIF/GPS
+只读摘要；这些字段只用于诊断和研究，不触发重编码。
+
 - 通过 hdc 连接到实际设备：`HUAWEI Mate 70 Pro 优享版`（型号 `PLR-AL50`）。
-- 2026-09-06 相机当前界面右上角明确显示 XMAGE 色卡 **「鲜艳」**；用户确认三张样本都是同一设定。
-- 因此不能把 233644 缺少 `xtstyle` 解释为“没有选择鲜艳”。用户确认：**高像素模式本身不支持 XMAGE 风格**；高像素文件没有 `xtstyle` 是预期行为，而不是漏写或损坏。
+- 2026-09-06 基线样本为 XMAGE **「鲜艳」**；本次新增一组 **「明快」**，两组均为标准
+  4320×5760、1x、同一室内场景附近连续拍摄。
+- 高像素模式本身不支持 XMAGE 风格；高像素文件没有 `xtstyle` 是预期行为，而不是漏写或损坏。
 - 标准路径支持 XMAGE 风格；高像素路径仍可输出 ISO 21496-1 + HDR Vivid，但不提供 XMAGE 风格这一项。
-- 受控实验已完成：同一「鲜艳」设定下，1x / 0.6x / 4x 各拍高像素与标准两组；结果见 §6.8。
+- 受控焦段实验见 §6.8；本次不同设定差分见 §6.9。
 
 ### 6.6 对 XDRemux 的含义（初步）
 
@@ -146,9 +166,12 @@ HDR 表示法 = **HLG 传递函数 + ISO 21496-1 增益映射 + HDR Vivid 元数
 ### 6.7 待办
 
 - [x] 同一「鲜艳」设定下的标准/高像素三焦段配对已完成（6 张；见 §6.8）：高像素模式不支持 XMAGE 风格，`xtstyle` 只在标准路径出现
+- [x] 已采集「鲜艳」/「明快」两种标准模式样本并确认 payload version 5/6 差异（见 §6.9）
+- [x] 在 Apple Photos 中比较两组原图的编辑面板、导出和回读结果；编辑副本仍能显示 HDR
 - [ ] 验证 233644 增益映射是否恒等（解码增益图看数值范围）
 - [ ] it35 记录与 T/UWA 005 (HDR Vivid) 语法元素逐字段对应
-- [ ] xtstyle 系数块的几何形状推断（110592 个 int8 = 3×192×192？还是格点表）
+- [x] xtstyle 固定字节形状初步确认：442368B = `u16le[6][192][192]`（只作布局观察）
+- [ ] xtstyle plane/尾部字段的语义和系数布局仍待不同 XMAGE 设定样本验证
 - [ ] DfxData 内嵌 TIFF 完整解析（可能含编辑参数）
 - [ ] **Mate 70 Pro 真机实验**：我们转换的 OPPO 输出在鸿蒙图库是否显示 HDR
 - [ ] H2/H4/H5/H6 组样本（Mate 70 Pro 自产：HDR 开关对比、人像、水印、动态照片）
@@ -177,6 +200,57 @@ BT.2020/HLG `nclx`、`clli`、`mdcv`。因此本实验把变量锁定为**高像
 此外，三张标准路径的 `xtstyle` 都是 442368B，但 SHA-256 前 16 位分别为
 `50570b79e63b1aa6` / `bfa11d872aeb57dc` / `c9682150f18a3e1e`，说明载荷会随焦段/场景变化，
 不是简单固定的「鲜艳」常量。
+
+### 6.9 两种 XMAGE 设定样本：鲜艳 vs 明快（2026-09-07）
+
+用户在同一台 PLR-AL50 上先以「鲜艳」拍摄两张，再切换「明快」拍摄两张；四张均为标准
+4320×5760、1x、原始 HEIC，并通过文件管理器复制到 Docs 后由 hdc 拉取：
+
+| 文件 | 设定（按拍摄顺序） | payload version | `xtstyle` 字节数 | 非零字节数 | SHA-256 前 16 位 |
+|---|---|---:|---:|---:|---|
+| `014239` | 鲜艳 | 5 | 442368 | 156830 | `4d98a3ec74f34f99` |
+| `014240` | 鲜艳 | 5 | 442368 | 157084 | `3277bdc890e093eb` |
+| `014245` | 明快 | 6 | 442368 | 161888 | `64fb896bb0374805` |
+| `014246` | 明快 | 6 | 442368 | 163801 | `c10fc74d6da2c739` |
+
+四张均为 Huawei HDR、`tmap` + base/gain-map graph、GPS/Orientation/焦段可读；因此此次实验
+确认了：**XMAGE 设定切换会改变 `xtstyle` payload version 和载荷内容，而不会改变普通 Huawei
+HDR 的直通判定。** 这仍不是 version 5/6 字段语义的完整逆向，也不足以推出 Apple 摄影风格映射。
+
+### 6.10 Apple Photos 编辑/导出回读（2026-09-07）
+
+用户将四张原始样本导入 Apple 照片，分别做了轻微调整，并导出 ZIP。`原片/` 与
+`编辑/IMG_xxxx/IMG_xxxx.HEIC` 的 SHA-256 完全相同，说明原文件没有被覆盖；
+`IMG_Exxxx.heic` 是 Apple Photos 重新渲染的副本，旁边还有 Apple `AAE` 调整 sidecar
+（`com.apple.mobileslideshow` / `com.apple.photo`，format version 1.5）。
+
+对四个编辑副本的结构回读结果一致：
+
+- 不再含 Huawei `xtstyle`、`DfxData` 或 HDR Vivid `it35`；原始 payload version 5/6 均未被带入；
+- Apple 重新建立了自己的 `tmap` + `dimg` gain-map graph，主图仍为 4320×5760，增益图为
+  2160×2880，并保留 `nclx`/`clli` 和 EXIF Make/Model/GPS/焦段；
+- 当前 Huawei 专用识别器将编辑副本报告为 `iso-tmap-heif`，而不是
+  `huawei-hdr`；诊断器通过 tmap 的 primary/gain graph 识别了 Apple 重建的标准图，
+  同时确认 `hasHuaweiPrivateMarker=false`。这是预期的安全结果：编辑副本已经是 Apple
+  Photos 的新渲染结果，不能再按原始 Huawei 私有风格数据处理；
+- 因此结论是：Apple Photos 可以把 Huawei 原图的视觉效果渲染进编辑副本，但**不会保留
+  可继续编辑的 Huawei `xtstyle` 私有载荷**。原始 HEIC 必须始终保留。
+
+用户将四个 `IMG_Exxxx.heic` 编辑副本重新导入 Apple 照片后确认仍能显示 HDR。
+因此这完成了“编辑→导出→结构回读→再次导入 HDR 显示”验证：Apple Photos 保留了 HDR
+视觉结果，但没有保留可继续编辑的 Huawei `xtstyle` 语义；也没有把编辑副本当作 Huawei
+原图重新转换。
+
+### 6.11 设备 Docs 目录中的负样本探针
+
+为避免把 `tmap` 品牌本身误当作 Huawei，另外从设备 Docs 目录直接拉取了两个已有文件：
+
+| 文件 | EXIF Make/Model | Huawei HDR 结果 |
+|---|---|---|
+| `IMG_3716.HEIC` | Apple / iPhone Air | `not-huawei`；无 Huawei marker、无完整 tmap graph |
+| `IMG20260807131731.heic` | OPPO / OPPO Find X8 Ultra | `not-huawei`；无 Huawei marker、无完整 tmap graph |
+
+这只是两张探索性负样本，不能替代完整误分类矩阵；规范 Huawei 样本仍以 PLR-AL50 原始 HEIC 为准。
 
 ## 7. 产出目标
 

@@ -25,9 +25,7 @@ pub fn compare_str<'a>(a_json: &'a str, b_json: &'a str, tolerance: f32) -> Resu
     // Helper: extract a JSON object field by name from a flat document.
     // Our writer produces flat single-level JSON with no nested arrays-of-objects
     // except "tmap_payloads" and "xmp.hdrgm". Use a tiny key-value walker.
-    let extract = |s: &'a str, path: &str| -> Option<Extracted<'a>> {
-        extract_path(s, path)
-    };
+    let extract = |s: &'a str, path: &str| -> Option<Extracted<'a>> { extract_path(s, path) };
 
     macro_rules! check {
         ($name:expr, $a:expr, $b:expr) => {
@@ -36,25 +34,48 @@ pub fn compare_str<'a>(a_json: &'a str, b_json: &'a str, tolerance: f32) -> Resu
                     if va == vb {
                         passes.push(format!("{}: equal", $name));
                     } else if va.is_fuzzy_eq(&vb, tolerance) {
-                        passes.push(format!("{}: ≈equal (|Δ|={:.3e} ≤ {:.0e})", $name, va.distance(&vb), tolerance));
+                        passes.push(format!(
+                            "{}: ≈equal (|Δ|={:.3e} ≤ {:.0e})",
+                            $name,
+                            va.distance(&vb),
+                            tolerance
+                        ));
                     } else {
                         diffs.push(format!("{}: {} ≠ {}", $name, va, vb));
                     }
                 }
-                (Some(v), None) => diffs.push(format!("{}: {} present in A but missing in B", $name, v)),
-                (None, Some(v)) => diffs.push(format!("{}: missing in A but {} present in B", $name, v)),
+                (Some(v), None) => {
+                    diffs.push(format!("{}: {} present in A but missing in B", $name, v))
+                }
+                (None, Some(v)) => {
+                    diffs.push(format!("{}: missing in A but {} present in B", $name, v))
+                }
                 (None, None) => {}
             }
         };
     }
 
     // ── Tier 1: numerics ──
-    check!("lhdr.mode",       extract(a_json, "lhdr.mode"),       extract(b_json, "lhdr.mode"));
-    check!("lhdr.meta_floats",
+    check!(
+        "lhdr.mode",
+        extract(a_json, "lhdr.mode"),
+        extract(b_json, "lhdr.mode")
+    );
+    check!(
+        "lhdr.meta_floats",
         extract(a_json, "lhdr.meta_floats"),
-        extract(b_json, "lhdr.meta_floats"));
-    check!("edr_scale",       extract(a_json, "edr_scale"),       extract(b_json, "edr_scale"));
-    check!("family",          extract(a_json, "family"),          extract(b_json, "family"));
+        extract(b_json, "lhdr.meta_floats")
+    );
+    check!(
+        "edr_scale",
+        extract(a_json, "edr_scale"),
+        extract(b_json, "edr_scale")
+    );
+    check!(
+        "family",
+        extract(a_json, "family"),
+        extract(b_json, "family")
+    );
     check!(
         "iso_meta.gain_map_max",
         extract(a_json, "iso_meta.gain_map_max"),
@@ -411,7 +432,11 @@ fn parse_extracted<'a>(raw: &'a str) -> Extracted<'a> {
     if trimmed.starts_with('[') && trimmed.ends_with(']') {
         let inner = &trimmed[1..trimmed.len() - 1];
         // Try as a number array first.
-        let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<&str> = inner
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !parts.is_empty() {
             if let Ok(arr) = parts
                 .iter()
@@ -463,10 +488,7 @@ fn parse_xmp_num_vec<'a>(e: Option<&'a Extracted<'a>>) -> Option<Extracted<'a>> 
         Extracted::NumArray(a) => return Some(Extracted::NumArray(a.clone())),
         _ => return None,
     };
-    let parts: Result<Vec<f64>, _> = s
-        .split_whitespace()
-        .map(|p| p.parse::<f64>())
-        .collect();
+    let parts: Result<Vec<f64>, _> = s.split_whitespace().map(|p| p.parse::<f64>()).collect();
     match parts {
         Ok(v) if !v.is_empty() => Some(Extracted::NumArray(v)),
         _ => Some(e?.clone()),
@@ -502,10 +524,7 @@ mod tests {
     #[test]
     fn extract_simple() {
         let json = r#"{"foo": 1.5, "bar": [1,2,3]}"#;
-        assert_eq!(
-            format!("{}", extract(json, "foo").unwrap()),
-            "1.5"
-        );
+        assert_eq!(format!("{}", extract(json, "foo").unwrap()), "1.5");
         let arr = extract(json, "bar").unwrap();
         assert_eq!(arr.distance(&Extracted::NumArray(vec![1.0, 2.0, 3.0])), 0.0);
     }
@@ -513,10 +532,7 @@ mod tests {
     #[test]
     fn extract_nested_object() {
         let json = r#"{"outer": {"inner": "v"}, "list": [1,2]}"#;
-        assert_eq!(
-            format!("{}", extract(json, "outer.inner").unwrap()),
-            "v"
-        );
+        assert_eq!(format!("{}", extract(json, "outer.inner").unwrap()), "v");
     }
 
     #[test]
@@ -531,7 +547,8 @@ mod tests {
 
     #[test]
     fn extract_nested_indented() {
-        let json = "{\n  \"tmap_payloads\": {\n    \"apple_62\": {\n      \"md5\": \"abc\"\n    }\n  }\n}";
+        let json =
+            "{\n  \"tmap_payloads\": {\n    \"apple_62\": {\n      \"md5\": \"abc\"\n    }\n  }\n}";
         let v = extract(json, "tmap_payloads.apple_62.md5");
         assert!(v.is_some(), "deeply nested should work");
         assert_eq!(format!("{}", v.unwrap()), "abc");
