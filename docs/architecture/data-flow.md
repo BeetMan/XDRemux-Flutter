@@ -45,6 +45,7 @@ apple-edit.heic（ISO 21496-1 增益映射 + 风格编辑图）
 - 增益映射：OPPO 私有 UHDR -> ISO 21496-1 tmap（增益映射图为独立 grid item，`dimg` 引用）
 - 尺寸不一致时失败关闭；缺 `rear.depth` 直接跳过（人像）
 - 输出可在 Apple 照片中继续编辑（保留风格图结构是关键）
+- **人像**：底图取自尾部 `src.image`（Ultra HDR JPEG，自带 GainMap），主图与 tmap 同尺寸、GainMap 为其 0.5×；`src.image` 的 EXIF 旋转烘焙进主图像素（`irot`=0）。深度/蒙版按 `src.image` 几何等比映射；标定走 `rear.depth.config` 的每张照片深度曲线（详见 `modules/portrait-pipeline.md` §2.1 / §3）
 
 ## 3. 流程②：写回（`writebackReturnedPhoto`）
 

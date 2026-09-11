@@ -67,6 +67,13 @@ xdremux/rust/vendor/
 .claude/
 .sisyphus/
 .flake8
+
+# Ad-hoc debug screenshots and captures (never source)
+screen_*.png
+screen_*.jpg
+Screenshot*.png
+screenshot*.png
+*.log
 AGENTS.md
 CLAUDE.md
 HANDOFF.md
