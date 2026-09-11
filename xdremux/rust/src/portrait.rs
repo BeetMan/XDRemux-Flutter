@@ -657,7 +657,7 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     };
     // Gain-map headroom from the LHDR/UHDR metadata floats (index 17 holds
     // the alternate headroom as a linear ratio; REND wants stops).
-    let headroom = crate::container::extract_lhdr_from_bytes(input)
+    let headroom = crate::extract_lhdr_or_uhdr_from_bytes(input)
         .ok()
         .and_then(|l| l.meta_floats.get(17).copied())
         .map(|v| (v.max(1.0) as f64).log2().max(0.0))
