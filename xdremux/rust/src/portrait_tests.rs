@@ -93,6 +93,43 @@ fn packed_watermark_rejects_unknown_malformed_or_inconsistent_layouts() {
 }
 
 #[test]
+fn src_image_base_maps_depth_by_plain_proportional_scaling() {
+    // The packed Hasselblad watermark tail describes the OPPO primary
+    // (3072x4608). Against the src.image storage frame (4096x3072) it must not
+    // be applied: the aux canvas is the whole storage frame, so the depth plane
+    // (1024x768, the same landscape storage orientation as the JPEG) covers it
+    // at exactly 2x with no rotation.
+    let (tail, crop) = packed_watermark();
+    assert_eq!(
+        parse_watermark_rect(&tail, (4096, 3072), (4096, 3072), 6, Some(&crop)),
+        None
+    );
+    let placement = PortraitPlacement::new((4096, 3072), None, (1024, 768));
+    assert_eq!(placement.content, (0, 0, 2048, 1536));
+    assert_eq!(placement.crop, (0, 0, 1024, 768));
+    let (placed, w, h) = placement.place(&[7u8; 1024 * 768], 1024, 768);
+    assert_eq!((w, h), (2048, 1536));
+    assert!(placed.iter().all(|&v| v == 7));
+    assert_eq!(placement.focus((0.5, 0.5)), (0.5, 0.5));
+    assert_eq!(placement.focus((0.25, 0.75)), (0.25, 0.75));
+
+    // Find X10 variant: 4080x3072 src.image, 1020x768 depth plane.
+    let placement = PortraitPlacement::new((4080, 3072), None, (1020, 768));
+    assert_eq!(placement.content, (0, 0, 2040, 1536));
+    assert_eq!(placement.crop, (0, 0, 1020, 768));
+}
+
+#[test]
+fn framed_watermark_tail_is_not_a_content_rect() {
+    // Find X10 framed/irregular watermark layout (hassel_style_4, 23487 bytes)
+    // has no supported geometry: the caller falls back to the full frame.
+    let mut tail = vec![0u8; 23487];
+    tail[..4].copy_from_slice(&1f32.to_le_bytes());
+    tail[4..19].copy_from_slice(b"hassel_style_4\0");
+    assert_eq!(parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None), None);
+}
+
+#[test]
 fn aligned_legacy_watermark_symmetric_corners_remain_supported() {
     let tail: Vec<u8> = [1f32, 100., 200., 3100., 4400., 0.]
         .iter()
@@ -169,4 +206,51 @@ fn depth_and_upscaled_matte_share_identical_crop_window() {
         placement.place(&depth, 201, 100),
         placement.place(&matte, 402, 200)
     );
+}
+
+// --- per-photo depth curve calibration (rear.depth.config) -------------------
+
+/// Build a minimal OPPO `rear.depth.config` with the observed layout: float 0
+/// is the version, floats 38..=58 carry the per-aperture blur-strength curve.
+fn depth_config_with_curve(curve: &[f32]) -> Vec<u8> {
+    let mut config = vec![0u8; 59 * 4];
+    config[0..4].copy_from_slice(&4.0f32.to_le_bytes());
+    for (i, v) in curve.iter().enumerate() {
+        let at = (38 + i) * 4;
+        if at + 4 <= config.len() {
+            config[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        }
+    }
+    config
+}
+
+#[test]
+fn depth_curve_max_reads_the_oppo_curve() {
+    let config = depth_config_with_curve(&[3.0, 5.0, 9.0, 12.0, 150.0]);
+    assert_eq!(pd::depth_curve_max(&config), Some(150.0));
+}
+
+#[test]
+fn depth_curve_scale_maps_the_full_scale_onto_the_reference_span() {
+    let config = depth_config_with_curve(&[3.0, 150.0]);
+    let scale = pd::scale_from_depth_curve(&config).expect("curve scale");
+    assert!((scale * 255.0 - pd::APPLE_REFERENCE_SPAN).abs() < 1e-9);
+    // Half-scale curve -> half the reference span.
+    let half = depth_config_with_curve(&[3.0, pd::CURVE_FULL_SCALE as f32 / 2.0]);
+    let half_scale = pd::scale_from_depth_curve(&half).expect("curve scale");
+    assert!((half_scale * 255.0 - pd::APPLE_REFERENCE_SPAN / 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn depth_curve_is_rejected_when_absent_or_all_zero() {
+    assert_eq!(pd::depth_curve_max(&[]), None);
+    assert_eq!(pd::depth_curve_max(&[0u8; 40]), None);
+    assert_eq!(pd::depth_curve_max(&vec![0u8; 59 * 4]), None);
+    assert_eq!(pd::scale_from_depth_curve(&vec![0u8; 59 * 4]), None);
+}
+
+#[test]
+fn curve_derived_scale_is_accepted_by_the_decision() {
+    let decision = pd::ScaleDecision::CurveDerived(0.008);
+    assert_eq!(decision.scale(), Some(0.008));
 }

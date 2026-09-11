@@ -162,6 +162,20 @@ impl ConfigSummary {
     }
 }
 
+/// Smallest producer rank->disparity scale treated as usable (mirrors the
+/// production guard in `xdremux/rust/src/portrait_depth.rs`).
+///
+/// OPPO writes the header scale both as `f32::from_bits` and as a raw uint32;
+/// derivation other than a real float (observed `rawScaleUInt32 = 14` ->
+/// `1.96e-44`) passes `is_finite() && > 0.0` and collapses the disparity span
+/// to ~0, which Photos renders as no depth at all.
+pub(crate) const MIN_USABLE_SCALE: f64 = 1e-6;
+
+/// A producer scale is only usable when it is finite and meaningfully non-zero.
+pub(crate) fn usable_producer_scale(scale: f64) -> bool {
+    scale.is_finite() && scale > MIN_USABLE_SCALE
+}
+
 /// The calibration decision (R5 stage 3 closure).
 #[derive(Debug, Clone)]
 pub(crate) enum ScaleDecision {
@@ -171,6 +185,8 @@ pub(crate) enum ScaleDecision {
     /// Zero-quantization variant: embedded scale unusable; use the p50
     /// physical formula derived from the focus window.
     CalibratedP50(f64),
+    /// Per-photo depth-curve calibration from `rear.depth.config`.
+    CurveDerived(f64),
     /// Cannot calibrate (missing config / distance / focus data).
     Unavailable(String),
 }
@@ -179,9 +195,44 @@ impl ScaleDecision {
     /// The chosen scale value, when available.
     pub(crate) fn scale(&self) -> Option<f64> {
         match self {
-            Self::Passthrough(v) | Self::CalibratedP50(v) => Some(*v),
+            Self::Passthrough(v) | Self::CalibratedP50(v) | Self::CurveDerived(v) => Some(*v),
             Self::Unavailable(_) => None,
         }
+    }
+
+    /// Full-scale value of the OPPO per-photo blur-strength curve.
+    pub(crate) const CURVE_FULL_SCALE: f64 = 150.0;
+
+    /// Apple's observed absolute disparity span for a typical portrait scene.
+    pub(crate) const APPLE_REFERENCE_SPAN: f64 = 2.1;
+
+    /// The per-photo depth-scale indicator OPPO writes into
+    /// `rear.depth.config` (floats 38..=58): verified invariant across
+    /// aperture edits of one photo and proportional to the lens focal length
+    /// across devices. See the production module for the full rationale.
+    pub(crate) fn depth_curve_max(config: &[u8]) -> Option<f64> {
+        const CURVE_START: usize = 38;
+        const CURVE_END: usize = 59;
+        if config.len() < CURVE_END * 4 {
+            return None;
+        }
+        let mut max = 0.0f64;
+        for i in CURVE_START..CURVE_END {
+            let b = &config[i * 4..i * 4 + 4];
+            let v = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
+            if v.is_finite() && v > max {
+                max = v;
+            }
+        }
+        (max > 0.0).then_some(max)
+    }
+
+    /// Map the curve maximum onto the observed Apple absolute disparity span.
+    pub(crate) fn scale_from_depth_curve(config: &[u8]) -> Option<f64> {
+        let max = Self::depth_curve_max(config)?;
+        let span = (max / Self::CURVE_FULL_SCALE) * Self::APPLE_REFERENCE_SPAN;
+        let scale = span / 255.0;
+        (scale.is_finite() && scale > 0.0).then_some(scale)
     }
 
     fn json(&self) -> Value {
@@ -195,6 +246,11 @@ impl ScaleDecision {
                 "mode": "calibrated-p50",
                 "scale": s,
                 "rationale": "zero-quantization depth; focal*baseline/(disparity*distance) at the median focus-window rank",
+            }),
+            Self::CurveDerived(s) => json!({
+                "mode": "curve-derived",
+                "scale": s,
+                "rationale": "per-photo rear.depth.config blur-strength curve maximum mapped onto the observed Apple absolute disparity span",
             }),
             Self::Unavailable(reason) => json!({
                 "mode": "unavailable",
@@ -366,11 +422,13 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
         })
         .unwrap_or((0, 0));
 
-    let decision: ScaleDecision = if quantization_valid
-        && embedded_scale.is_finite()
-        && embedded_scale > 0.0
-    {
+    let decision: ScaleDecision = if quantization_valid && usable_producer_scale(embedded_scale) {
         ScaleDecision::Passthrough(embedded_scale)
+    } else if let Some(scale) = config_data
+        .as_deref()
+        .and_then(ScaleDecision::scale_from_depth_curve)
+    {
+        ScaleDecision::CurveDerived(scale)
     } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
         match cfg.object_distance {
             Some(dist) if dist > 0 && focal_length > 0.0 && stereo_baseline > 0.0 => {

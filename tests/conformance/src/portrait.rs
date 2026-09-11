@@ -133,7 +133,7 @@ fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
     let quantization_valid =
         disparity_maximum > disparity_minimum && (1..=2).contains(&exponentiation);
     let rank_max = ranks.iter().copied().max().unwrap_or(0);
-    let decision = if quantization_valid && embedded_scale.is_finite() && embedded_scale > 0.0 {
+    let decision = if quantization_valid && pd::usable_producer_scale(embedded_scale) {
         pd::ScaleDecision::Passthrough(embedded_scale)
     } else if rank_max > 0 {
         let cfg = config.as_ref();

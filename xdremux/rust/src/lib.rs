@@ -1081,9 +1081,27 @@ fn xdremux_convert_impl(
     // map via MPF instead of an OPPO tail: decode the base JPEG, re-encode
     // the primary as HEVC tiles and synthesize a source container so the
     // regular UHDR path runs unchanged.
+    //
+    // Portrait photos take the tail `src.image` Ultra HDR JPEG as their base
+    // instead of the OPPO primary (see [portrait_src_image_base]). Both HEIC
+    // and JPEG inputs can carry that tail entry; a portrait input without a
+    // usable one falls through to the unchanged paths below.
     let raw_source = source;
     let mut source = raw_source.clone();
-    let extracted = if source.starts_with(&[0xFF, 0xD8]) {
+    let src_image_base = if apple_portrait {
+        portrait_src_image_base(&source)
+    } else {
+        None
+    };
+    let portrait_base_origin = if src_image_base.is_some() {
+        portrait::BaseOrigin::SrcImage
+    } else {
+        portrait::BaseOrigin::OppoPrimary
+    };
+    let extracted = if let Some((synth, extracted)) = src_image_base {
+        source = synth;
+        extracted
+    } else if source.starts_with(&[0xFF, 0xD8]) {
         match uhdr_jpeg::parse(&source) {
             Ok(Some(info)) => {
                 // Primary image in HEIF must always be 4:2:0 (Main profile) so that
@@ -1209,7 +1227,7 @@ fn xdremux_convert_impl(
                         };
                     }
                 };
-                match portrait::run_portrait(&raw_source, &base) {
+                match portrait::run_portrait(&raw_source, &base, portrait_base_origin) {
                     Ok(portraited) => {
                         if let Err(error) = std::fs::write(&standard_output, portraited) {
                             let _ = std::fs::remove_file(&standard_output);
@@ -1296,6 +1314,66 @@ fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), Stri
     std::fs::remove_file(base_path)
         .map_err(|e| format!("remove Styles base output: {e}"))?;
     Ok(())
+}
+
+/// Build the portrait conversion base from the OPPO tail `src.image` entry.
+///
+/// The OPPO portrait primary is the already blur-rendered portrait result, so
+/// Photos can never recover the clear original or re-render the depth from a
+/// wider aperture. `src.image` is the clear, un-blurred Ultra HDR JPEG the
+/// camera stored before rendering (primary JPEG + its own MPF GainMap), so the
+/// standard Ultra HDR JPEG path consumes it unchanged: no new JPEG/HEVC
+/// pipeline, and no OPPO-primary pixel or gain-map data is reused.
+///
+/// Returns the synthesized source container plus its extracted UHDR metadata,
+/// or `None` when there is no usable Ultra HDR `src.image` (entry missing,
+/// plain JPEG, unparsable) — the caller then keeps the OPPO primary exactly as
+/// before. `XDREMUX_PORTRAIT_OPPO_BASE=1` forces that previous behaviour for
+/// A/B testing.
+fn portrait_src_image_base(source: &[u8]) -> Option<(Vec<u8>, container::ExtractedLhdr)> {
+    if std::env::var("XDREMUX_PORTRAIT_OPPO_BASE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let src_image = container::extract_tail_entry(source, "src.image")?;
+    let info = match uhdr_jpeg::parse(&src_image) {
+        Ok(Some(info)) => info,
+        Ok(None) => {
+            eprintln!("portrait: src.image carries no Ultra HDR gain map; keeping the OPPO primary base");
+            return None;
+        }
+        Err(e) => {
+            eprintln!("portrait: src.image Ultra HDR parse failed ({e}); keeping the OPPO primary base");
+            return None;
+        }
+    };
+    // Same 4:2:0 requirement as the standalone JPEG path: a HEIF primary must
+    // be Main profile 4:2:0 for hardware decoders and heif-oxide.
+    let synth = match uhdr_jpeg::synthesize_source_container(&src_image, &info, true) {
+        Ok(synth) => synth,
+        Err(e) => {
+            eprintln!("portrait: src.image container synthesis failed ({e}); keeping the OPPO primary base");
+            return None;
+        }
+    };
+    eprintln!(
+        "portrait: base from src.image Ultra HDR JPEG ({} bytes, gain map {} bytes)",
+        src_image.len(),
+        info.gainmap_jpeg.len()
+    );
+    Some((
+        synth,
+        container::ExtractedLhdr {
+            mode: "uhdr".into(),
+            meta_bytes: Vec::new(),
+            meta_floats: info.meta_floats,
+            mask_data: None,
+            gainmap_data: Some(info.gainmap_jpeg),
+            manifest_entries: None,
+        },
+    ))
 }
 
 fn reject_lossy_gainmap_promotion(source: &[u8], oppo_compat: OppoCompat) -> Result<(), String> {
@@ -2141,6 +2219,15 @@ mod tests {
         let v = xdremux_version();
         assert!(!v.is_null());
         xdremux_free_string(v);
+    }
+
+    #[test]
+    fn portrait_src_image_base_needs_a_tail_entry_that_is_ultra_hdr() {
+        // No container tail, an empty input and a bare JPEG all fall back to
+        // the OPPO primary / standalone JPEG base.
+        assert!(portrait_src_image_base(b"not a container").is_none());
+        assert!(portrait_src_image_base(b"\xff\xd8\xff\xd9").is_none());
+        assert!(portrait_src_image_base(&[]).is_none());
     }
 
     #[test]

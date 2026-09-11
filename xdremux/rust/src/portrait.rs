@@ -137,8 +137,15 @@ fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
     let quantization_valid =
         disparity_maximum > disparity_minimum && (1..=2).contains(&exponentiation);
     let rank_max = ranks.iter().copied().max().unwrap_or(0);
-    let decision = if quantization_valid && embedded_scale.is_finite() && embedded_scale > 0.0 {
+    let decision = if quantization_valid && pd::usable_producer_scale(embedded_scale) {
         pd::ScaleDecision::Passthrough(embedded_scale)
+    } else if let Some(scale) = config_bytes
+        .as_deref()
+        .and_then(pd::scale_from_depth_curve)
+    {
+        // Preferred path for OPPO photo whose header scale is unusable:
+        // the producer's own per-photo depth curve.
+        pd::ScaleDecision::CurveDerived(scale)
     } else if rank_max > 0 {
         let cfg = config.as_ref();
         let dist = cfg.and_then(|c| c.object_distance).filter(|&d| d > 0);
@@ -196,16 +203,28 @@ fn build_disparity(
     ranks: &[u8],
     exponentiation: u8,
     scale: f64,
+    stretch_to_span: bool,
 ) -> (Vec<u8>, f64, f64) {
     let span = 255.0 * scale;
-    let near = span;
     let exp = exponentiation.max(1) as f64; // zero-quant variant is patched to 1
-    let floats: Vec<f32> = ranks
+    let normalized: Vec<f64> = ranks
         .iter()
-        .map(|&r| {
-            let normalized = (r as f32 / 255.0).powf(exp as f32);
-            (near as f32 - normalized * span as f32).max(0.0)
-        })
+        .map(|&r| (r as f64 / 255.0).powf(exp))
+        .collect();
+    // A curve-derived scale is a target for the *usable* range, so stretch this
+    // scene's rank distribution across the whole span and let the declared
+    // FloatMin/FloatMax carry the absolute scale. Producer-supplied scales keep
+    // the legacy mapping (the scene's own rank coverage sets the used range).
+    let (lo, hi) = if stretch_to_span {
+        let mn = normalized.iter().copied().fold(f64::INFINITY, f64::min);
+        let mx = normalized.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        (mn, (mx - mn).max(1e-9))
+    } else {
+        (0.0, 1.0)
+    };
+    let floats: Vec<f32> = normalized
+        .iter()
+        .map(|&n| (span * (1.0 - (n - lo) / hi)).clamp(0.0, span) as f32)
         .collect();
     let mut min = f32::INFINITY;
     let mut max = f32::NEG_INFINITY;
@@ -741,7 +760,20 @@ fn upscale2x(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, u32, u32) {
     (out, dw as u32, dh as u32)
 }
 
-pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
+/// Which rendition the conversion base primary was built from.
+///
+/// The OPPO primary is crop/framed by the Hasselblad watermark, so the depth
+/// and matte planes have to be mapped through the watermark content rectangle.
+/// The `src.image` base (`lib::portrait_src_image_base`) is the clean,
+/// un-cropped camera frame, so its aux planes map by plain proportional
+/// scaling of the src.image geometry and no content rectangle is consulted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseOrigin {
+    OppoPrimary,
+    SrcImage,
+}
+
+pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec<u8>, String> {
     let depth = parse_depth(input)?;
     // Disparity scale selection.
     //
@@ -763,7 +795,9 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     // a different device needs its own calibration.
     const ZERO_QUANTIZATION_CALIBRATION: f64 = 5.6;
     let mut scale = match &depth.decision {
-        pd::ScaleDecision::Passthrough(value) => *value,
+        // Producer-supplied and producer-curve values are already in the
+        // absolute range; only the physical reconstruction is rescaled.
+        pd::ScaleDecision::Passthrough(value) | pd::ScaleDecision::CurveDerived(value) => *value,
         pd::ScaleDecision::CalibratedP50(value) => *value * ZERO_QUANTIZATION_CALIBRATION,
         pd::ScaleDecision::Unavailable(reason) => {
             return Err(format!("no usable disparity scale: {reason}"));
@@ -782,8 +816,9 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     );
 
     // ---- disparity pixels + apdi range ------------------------------------
+    let stretch_to_span = matches!(depth.decision, pd::ScaleDecision::CurveDerived(_));
     let (disparity_u8, float_min, float_max) =
-        build_disparity(&depth.ranks, depth.exponentiation, scale);
+        build_disparity(&depth.ranks, depth.exponentiation, scale, stretch_to_span);
 
     // ---- REND dynamic records ---------------------------------------------
     // Focus: median rank of the config focus window (matches the p50
@@ -858,13 +893,21 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
         .as_ref()
         .map(|h| upscale2x(h, depth.width, depth.height).0);
 
-    // Keep OPPO primary pixels. Rotate source-coordinate auxiliaries to the
-    // actual content frame, then share one cover-crop/padding map with focus.
+    // Keep the OPPO primary pixels when that is the base. Rotate
+    // source-coordinate auxiliaries to the actual content frame, then share
+    // one cover-crop/padding map with focus.
     let m0 = isobmff::parse_source_meta(base).map_err(|e| format!("meta parse: {e}"))?;
     let (pw_frame, ph_frame) = base_primary_dims(&m0)?;
     let source_orientation = crate::container::extract_tail_entry(input, "src.image")
         .as_deref().map(jpeg_orientation).unwrap_or(1);
-    let content_rect = watermark_content_rect(input, pw_frame, ph_frame, depth.src_dims, source_orientation);
+    let content_rect = match origin {
+        BaseOrigin::OppoPrimary => {
+            watermark_content_rect(input, pw_frame, ph_frame, depth.src_dims, source_orientation)
+        }
+        // The src.image base has no watermark frame: the primary storage frame
+        // is the whole clean frame, so the aux planes cover it proportionally.
+        BaseOrigin::SrcImage => None,
+    };
     let (_, _, content_w, content_h) = content_rect.unwrap_or((0, 0, pw_frame, ph_frame));
     let rotate = content_h > content_w && depth.width > depth.height;
     let turns = if rotate { if source_orientation == 8 { 3 } else { 1 } }
@@ -1130,15 +1173,22 @@ fn attach_portrait_graph(
 
     // Swift-reference marker metadata: CustomRendered = 9 + the Apple portrait
     // MakerNote. These repairs do not by themselves prove Photos capability gating.
+    // A base without an Exif item (some JPEG exports synthesize one only when the
+    // JPEG carries APP1 Exif) still gets the complete depth graph; only the marker
+    // repair is skipped.
     let exif_item = meta
         .items
         .iter()
         .find(|i| i.itype == "Exif")
-        .ok_or("no Exif item in base")?
-        .item_id;
-    let exif_payload = read_item_payload(base, &meta, exif_item)
-        .ok_or("Exif payload unreadable")?;
-    let patched_exif = patch_exif_portrait_markers(&exif_payload, PORTRAIT_MAKER_NOTE)?;
+        .map(|i| i.item_id);
+    let patched_exif = match exif_item {
+        Some(id) => {
+            let exif_payload =
+                read_item_payload(base, &meta, id).ok_or("Exif payload unreadable")?;
+            Some(patch_exif_portrait_markers(&exif_payload, PORTRAIT_MAKER_NOTE)?)
+        }
+        None => None,
+    };
     let merged_main_xmp = merge_focus_into_xmp(
         &hdrgm_payload,
         focus_normalized.0,
@@ -1165,9 +1215,11 @@ fn attach_portrait_graph(
     let hdrgm_rel = appended_mdat.len() as u64;
     appended_mdat.extend_from_slice(&merged_main_xmp);
     let hdrgm_len = merged_main_xmp.len() as u64;
-    let exif_rel = appended_mdat.len() as u64;
-    appended_mdat.extend_from_slice(&patched_exif);
-    let exif_len = patched_exif.len() as u64;
+    let exif_rewrite: Option<(u64, u64)> = patched_exif.as_ref().map(|patched| {
+        let rel = appended_mdat.len() as u64;
+        appended_mdat.extend_from_slice(patched);
+        (rel, patched.len() as u64)
+    });
     push_mdat(portrait_matte_xmp_id, &portrait_matte_xmp(), &mut appended_mdat);
     for xmp_id in [skin_xmp_id, hair_xmp_id, teeth_xmp_id, glasses_xmp_id] {
         push_mdat(xmp_id, &semantic_xmp, &mut appended_mdat);
@@ -1238,17 +1290,19 @@ fn attach_portrait_graph(
         .iloc_entries
         .iter()
         .map(|entry| {
-            if entry.item_id == exif_item {
+            if Some(entry.item_id) == exif_item {
                 // Repoint Exif to the portrait-marked rewrite (mdat-appended).
-                return IlocEntry {
-                    item_id: entry.item_id,
-                    construction_method: 0,
-                    data_reference_index: 0,
-                    extents: vec![(
-                        (new_mdat_data_start + std_mdat_payload.len()) as u64 + exif_rel,
-                        exif_len,
-                    )],
-                };
+                if let Some((exif_rel, exif_len)) = exif_rewrite {
+                    return IlocEntry {
+                        item_id: entry.item_id,
+                        construction_method: 0,
+                        data_reference_index: 0,
+                        extents: vec![(
+                            (new_mdat_data_start + std_mdat_payload.len()) as u64 + exif_rel,
+                            exif_len,
+                        )],
+                    };
+                }
             }
             if entry.item_id == hdrgm_item {
                 // Repoint to the merged payload appended to mdat.
@@ -1461,16 +1515,24 @@ fn extract_exif_datetime(base: &[u8], meta: &ParsedMeta) -> Option<String> {
     None
 }
 
-/// CLI entry: `portrait <source.heic> <base.heic> <output.heic>`.
+/// CLI entry: `portrait <source.heic> <base.heic> <output.heic> [src-image]`.
 /// `base` is the standard converted output for the same photo (the portrait
-/// graph attaches onto it).
+/// graph attaches onto it); pass `src-image` when that base was built from the
+/// tail `src.image` rendition instead of the OPPO primary.
 pub(crate) fn cmd_portrait(args: &[String]) -> Result<(), String> {
-    if args.len() != 3 {
-        return Err("portrait: expected <source.heic> <base.heic> <output.heic>".into());
+    if args.len() < 3 || args.len() > 4 {
+        return Err(
+            "portrait: expected <source.heic> <base.heic> <output.heic> [src-image]".into(),
+        );
     }
+    let origin = match args.get(3).map(String::as_str) {
+        None => BaseOrigin::OppoPrimary,
+        Some("src-image") => BaseOrigin::SrcImage,
+        Some(other) => return Err(format!("portrait: unknown base origin {other}")),
+    };
     let input = std::fs::read(&args[0]).map_err(|e| format!("read {}: {e}", args[0]))?;
     let base = std::fs::read(&args[1]).map_err(|e| format!("read {}: {e}", args[1]))?;
-    let out = run_portrait(&input, &base)?;
+    let out = run_portrait(&input, &base, origin)?;
     std::fs::write(&args[2], &out).map_err(|e| format!("write {}: {e}", args[2]))?;
     println!("portrait: {} -> {} bytes", args[2], out.len());
     Ok(())
