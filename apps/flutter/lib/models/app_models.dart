@@ -494,7 +494,7 @@ class ConversionConfig {
     this.categorizeOutputByMode = false,
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
-    this.motionPhotoDefaultMode = MotionPhotoMode.skip,
+    this.motionPhotoDefaultMode = MotionPhotoMode.livePhotoPair,
   });
 
   /// Persist to SharedPreferences.
@@ -557,7 +557,7 @@ class ConversionConfig {
       hardwareEncode: json['hardwareEncode'] as bool? ?? false,
       motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
         (e) => e.name == json['motionPhotoDefaultMode'],
-        orElse: () => MotionPhotoMode.skip,
+        orElse: () => MotionPhotoMode.livePhotoPair,
       ),
     );
   }
@@ -617,32 +617,27 @@ class ConversionConfig {
 
 /// How a Motion Photo queue item is handled at conversion time.
 enum MotionPhotoMode {
-  /// Do not convert; mark the item as skipped.
-  skip,
+  /// Compose an Apple Live Photo pair: the converted still gains the Apple
+  /// MakerNote content identifier and the video is rewritten as a paired MOV
+  /// (still-image-time marker). Both files land next to the output; import
+  /// them together into Apple Photos to get the Live Photo.
+  livePhotoPair,
 
   /// Convert the still image only (identical to a static photo).
   still,
 
   /// Convert the still image and also export the video stream(s) next to
   /// the converted output.
-  stillAndVideo,
-
-  /// Compose an Apple Live Photo pair: the converted still gains the Apple
-  /// MakerNote content identifier and the video is rewritten as a paired MOV
-  /// (still-image-time marker). Both files land next to the output; import
-  /// them together into Apple Photos to get the Live Photo.
-  livePhotoPair;
+  stillAndVideo;
 
   String get displayName {
     switch (this) {
-      case MotionPhotoMode.skip:
-        return t('跳过', 'Skip');
+      case MotionPhotoMode.livePhotoPair:
+        return t('Live Photo 合成', 'Live Photo');
       case MotionPhotoMode.still:
         return t('仅静帧', 'Still only');
       case MotionPhotoMode.stillAndVideo:
-        return t('静帧+视频', 'Still + video');
-      case MotionPhotoMode.livePhotoPair:
-        return 'Live Photo';
+        return t('拆分静帧 + 视频', 'Split still + video');
     }
   }
 }
@@ -738,7 +733,7 @@ class QueueItem {
     this.hdrKind,
     this.family,
     this.motionPhoto,
-    this.motionPhotoMode = MotionPhotoMode.skip,
+    this.motionPhotoMode = MotionPhotoMode.livePhotoPair,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,

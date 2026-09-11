@@ -84,7 +84,7 @@ void main() {
     expect(menus, findsOneWidget);
     await tester.tap(menus.first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text(t('静帧+视频', 'Still + video')).last);
+    await tester.tap(find.text(t('拆分静帧 + 视频', 'Split still + video')).last);
     await tester.pumpAndSettle();
 
     // Start the batch.

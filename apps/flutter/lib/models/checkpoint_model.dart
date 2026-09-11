@@ -102,7 +102,7 @@ class CheckpointItem {
     this.hdrKind,
     this.family,
     this.motionPhoto,
-    this.motionPhotoMode = 'skip',
+    this.motionPhotoMode = 'livePhotoPair',
   });
 
   Map<String, dynamic> toJson() => {
@@ -145,7 +145,7 @@ class CheckpointItem {
           json['motionPhoto'] != null
               ? Map<String, dynamic>.from(json['motionPhoto'] as Map)
               : null,
-      motionPhotoMode: json['motionPhotoMode'] as String? ?? 'skip',
+      motionPhotoMode: json['motionPhotoMode'] as String? ?? 'livePhotoPair',
     );
   }
 

@@ -132,25 +132,24 @@ void main() {
     expect(find.byType(GridView), findsNothing);
   });
 
-  test('Motion Photo policy defaults to skip and persists in config', () {
-    // Default: skip (per 2026-08-27 decision).
+  test('Motion Photo policy defaults to livePhotoPair and persists in config', () {
     final config = ConversionConfig();
-    expect(config.motionPhotoDefaultMode, MotionPhotoMode.skip);
+    expect(config.motionPhotoDefaultMode, MotionPhotoMode.livePhotoPair);
 
     // JSON round-trip preserves a non-default choice.
-    config.motionPhotoDefaultMode = MotionPhotoMode.stillAndVideo;
+    config.motionPhotoDefaultMode = MotionPhotoMode.still;
     final restored = ConversionConfig.fromJson(config.toJson());
-    expect(restored.motionPhotoDefaultMode, MotionPhotoMode.stillAndVideo);
+    expect(restored.motionPhotoDefaultMode, MotionPhotoMode.still);
 
-    // Unknown persisted values fall back to skip.
+    // Unknown persisted values (e.g. legacy 'skip') fall back to livePhotoPair.
     final legacy = ConversionConfig.fromJson(
-      config.toJson()..['motionPhotoDefaultMode'] = 'legacy-value',
+      config.toJson()..['motionPhotoDefaultMode'] = 'skip',
     );
-    expect(legacy.motionPhotoDefaultMode, MotionPhotoMode.skip);
+    expect(legacy.motionPhotoDefaultMode, MotionPhotoMode.livePhotoPair);
 
-    // QueueItem defaults to skip as well.
+    // QueueItem defaults to livePhotoPair as well.
     final item = QueueItem(id: 't', inputPath: '/a.jpg', outputPath: '/b.heic');
-    expect(item.motionPhotoMode, MotionPhotoMode.skip);
+    expect(item.motionPhotoMode, MotionPhotoMode.livePhotoPair);
     expect(item.motionPhoto, isNull);
   });
 

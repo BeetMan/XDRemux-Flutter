@@ -39,14 +39,14 @@ void main() {
       expect(restored.status, CheckpointItemStatus.converted);
     });
 
-    test('CheckpointItem without motion fields defaults to skip', () {
+    test('CheckpointItem without motion fields defaults to livePhotoPair', () {
       final item = CheckpointItem(
         inputPath: '/a.heic',
         outputPath: '/b.heic',
       );
       final restored = CheckpointItem.fromJson(item.toJson());
       expect(restored.motionPhoto, isNull);
-      expect(restored.motionPhotoMode, 'skip');
+      expect(restored.motionPhotoMode, 'livePhotoPair');
     });
 
     test('skippedPolicy wire status round-trips', () {
@@ -104,7 +104,7 @@ void main() {
       );
       expect(restored, isNotNull);
       expect(restored!.items.single.status, CheckpointItemStatus.converted);
-      expect(restored.items.single.motionPhotoMode, 'skip');
+      expect(restored.items.single.motionPhotoMode, 'livePhotoPair');
     });
   });
 }

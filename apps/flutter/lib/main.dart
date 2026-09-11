@@ -411,7 +411,7 @@ class _HomePageState extends State<HomePage> {
       final mpJson = cpItem.motionPhoto;
       final mpMode = MotionPhotoMode.values.firstWhere(
         (e) => e.name == cpItem.motionPhotoMode,
-        orElse: () => MotionPhotoMode.skip,
+        orElse: () => MotionPhotoMode.livePhotoPair,
       );
 
       final restoredItem = QueueItem(
@@ -1584,16 +1584,6 @@ class _HomePageState extends State<HomePage> {
         if (_queue[cursor].status == QueueItemStatus.pending &&
             !_queue[cursor].outputPlanStatus.blocksConversion) {
           final idx = cursor;
-          final item = _queue[idx];
-          // Motion Photo policy: cards set to 跳过 never enter conversion.
-          if (item.motionPhoto != null &&
-              item.motionPhotoMode == MotionPhotoMode.skip) {
-            item.status = QueueItemStatus.skippedPolicy;
-            item.errorMessage = t('动态照片已按策略跳过', 'Motion photo skipped by policy');
-            item.finishedAt = DateTime.now();
-            cursor++;
-            continue;
-          }
           _queue[idx].status = QueueItemStatus.running;
           _queue[idx].startedAt = DateTime.now();
           _queue[idx].errorMessage = null;
@@ -5204,7 +5194,7 @@ class _MobileStatusPill extends StatelessWidget {
 
 /// Small non-interactive chip for the queue card metadata row
 /// (LHDR/UHDR, X6/X7, capture mode).
-/// Compact per-card Motion Photo policy menu (跳过 / 仅静帧 / 静帧+视频).
+/// Compact per-card Motion Photo policy menu (Live Photo 合成 / 仅静帧 / 拆分静帧 + 视频).
 class _MotionModeMenu extends StatelessWidget {
   final MotionPhotoMode value;
   final ValueChanged<MotionPhotoMode?> onChanged;
