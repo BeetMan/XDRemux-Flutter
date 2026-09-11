@@ -343,6 +343,25 @@ pub fn synthesize_source_container(
 ) -> Result<Vec<u8>, String> {
     let (rgb, width, height) = crate::jpeg_decode::decode_jpeg_to_rgb(source)
         .map_err(|e| format!("Ultra HDR base JPEG decode failed: {e}"))?;
+    // The base JPEG stores its pixels in capture orientation plus an EXIF
+    // orientation. Store the primary in presentation orientation instead (like
+    // Apple's references, which need no `irot`) and keep the source orientation
+    // in the Exif item so the gain map can still be rotated to match.
+    let orientation = info
+        .exif_tiff
+        .as_deref()
+        .map(crate::exif::parse_exif_orientation)
+        .transpose()?
+        .unwrap_or(crate::exif::ExifOrientation::Normal);
+    let (rgb, width, height) = crate::isobmff_write::orient_gainmap_pixels(
+        &rgb,
+        width,
+        height,
+        3,
+        width as usize * 3,
+        orientation,
+    )
+    .map_err(|e| format!("Ultra HDR base JPEG orientation failed: {e}"))?;
     let cols = width.div_ceil(TILE_SIZE).max(1);
     let rows = height.div_ceil(TILE_SIZE).max(1);
     let total_tiles = (cols * rows) as usize;
@@ -405,11 +424,17 @@ pub fn synthesize_source_container(
     let idx_tile_ispe = 2u32;
     let idx_hvcc = 3u32;
     let idx_colr = 4u32;
+    // Explicit zero-turn `irot` on the primary: the tiles above are already in
+    // presentation orientation, so `isobmff_write` must not generate a rotation
+    // from the container's EXIF orientation. The gain map still reads that EXIF
+    // orientation to end up in the same frame.
+    let idx_irot = 5u32;
     let mut ipco = Vec::new();
     ipco.extend_from_slice(&grid_ispe);
     ipco.extend_from_slice(&tile_ispe);
     ipco.extend_from_slice(&hvcc_box);
     ipco.extend_from_slice(isobmff::COLR_SRGB_BOX);
+    ipco.extend_from_slice(&isobmff::make_irot_box(0));
 
     let mut ipma_entries: Vec<u8> = Vec::new();
     let mut entry_count = 0u32;
@@ -419,7 +444,7 @@ pub fn synthesize_source_container(
     };
     push_entry(
         grid_id,
-        &[(idx_grid_ispe, true), (idx_colr, true)],
+        &[(idx_grid_ispe, true), (idx_colr, true), (idx_irot, true)],
         &mut ipma_entries,
     );
     for i in 0..total_tiles {
@@ -662,5 +687,168 @@ mod tests {
     fn plain_jpeg_returns_none() {
         let data = tiny_jpeg(0x33, 256);
         assert!(parse(&data).expect("ok").is_none());
+    }
+
+    /// A real, decodable 16x8 RGB baseline JPEG (Pillow, quality 85). The
+    /// orientation tests need decoded pixels, which the synthetic
+    /// `tiny_jpeg` buffers above cannot provide.
+    #[rustfmt::skip]
+    const TINY_16X8_JPEG: &[u8] = &[
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+        0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
+        0x00, 0x05, 0x03, 0x04, 0x04, 0x04, 0x03, 0x05, 0x04, 0x04, 0x04, 0x05,
+        0x05, 0x05, 0x06, 0x07, 0x0c, 0x08, 0x07, 0x07, 0x07, 0x07, 0x0f, 0x0b,
+        0x0b, 0x09, 0x0c, 0x11, 0x0f, 0x12, 0x12, 0x11, 0x0f, 0x11, 0x11, 0x13,
+        0x16, 0x1c, 0x17, 0x13, 0x14, 0x1a, 0x15, 0x11, 0x11, 0x18, 0x21, 0x18,
+        0x1a, 0x1d, 0x1d, 0x1f, 0x1f, 0x1f, 0x13, 0x17, 0x22, 0x24, 0x22, 0x1e,
+        0x24, 0x1c, 0x1e, 0x1f, 0x1e, 0xff, 0xdb, 0x00, 0x43, 0x01, 0x05, 0x05,
+        0x05, 0x07, 0x06, 0x07, 0x0e, 0x08, 0x08, 0x0e, 0x1e, 0x14, 0x11, 0x14,
+        0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e,
+        0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e,
+        0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e,
+        0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e, 0x1e,
+        0x1e, 0x1e, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x08, 0x00, 0x10, 0x03,
+        0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xc4, 0x00,
+        0x16, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x07, 0xff, 0xc4, 0x00,
+        0x19, 0x10, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x07, 0x24, 0x32, 0xa2,
+        0xff, 0xc4, 0x00, 0x15, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x06, 0xff,
+        0xc4, 0x00, 0x19, 0x11, 0x00, 0x02, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x05, 0x06,
+        0x22, 0x52, 0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03,
+        0x11, 0x00, 0x3f, 0x00, 0x80, 0x4e, 0x34, 0xb5, 0x8d, 0x93, 0x49, 0x4e,
+        0x34, 0xb5, 0x8d, 0x90, 0x09, 0xa5, 0xa4, 0xd8, 0xe8, 0x1e, 0x93, 0x69,
+        0x92, 0xce, 0xcf, 0xff, 0xd9,
+    ];
+
+    /// Minimal little-endian TIFF with a single IFD0 Orientation tag.
+    fn tiff_with_orientation(orientation: u16) -> Vec<u8> {
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42u16.to_le_bytes());
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+        tiff.extend_from_slice(&3u16.to_le_bytes());
+        tiff.extend_from_slice(&1u32.to_le_bytes());
+        tiff.extend_from_slice(&orientation.to_le_bytes());
+        tiff.extend_from_slice(&[0, 0]);
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff
+    }
+
+    fn associated_property<'a>(
+        meta: &'a isobmff::ParsedMeta,
+        item_id: u32,
+        property_type: &str,
+    ) -> &'a isobmff::PropertyInfo {
+        let entry = meta
+            .ipma_entries
+            .iter()
+            .find(|entry| entry.item_id == item_id)
+            .expect("item has an ipma entry");
+        entry
+            .associations
+            .iter()
+            .find_map(|(index, _)| {
+                meta.props
+                    .iter()
+                    .find(|property| property.index == *index && property.ptype == property_type)
+            })
+            .expect("item has the associated property")
+    }
+
+    /// The Ultra HDR base JPEG's EXIF orientation is baked into the primary
+    /// tiles, and the whole graph stays self-consistent: the primary is stored
+    /// in presentation orientation with an explicit zero-turn `irot`, the tmap
+    /// matches that ispe, and the gain map is rotated into the same frame so it
+    /// remains a 0.5x companion. A non-zero `irot` here is what made Photos
+    /// render the portrait aperture preview black.
+    #[test]
+    fn synthesize_bakes_exif_orientation_into_primary_and_gain_map() {
+        let info = UhdrJpeg {
+            gainmap_jpeg: TINY_16X8_JPEG.to_vec(),
+            meta_floats: vec![0.0f32; 20],
+            exif_tiff: Some(tiff_with_orientation(6)),
+        };
+        let container =
+            synthesize_source_container(TINY_16X8_JPEG, &info, true).expect("synthesize container");
+        let parsed = isobmff::parse_source_meta(&container).expect("parse synthesized container");
+        let primary_ispe = associated_property(&parsed, parsed.primary_id, "ispe");
+        assert_eq!(
+            isobmff::ispe_dimensions(&primary_ispe.raw).unwrap(),
+            (8, 16),
+            "a 16x8 EXIF-6 base must be stored as its 8x16 presentation"
+        );
+        let primary_irot = associated_property(&parsed, parsed.primary_id, "irot");
+        assert_eq!(isobmff::irot_quarter_turns(&primary_irot.raw).unwrap(), 0);
+
+        // The grid descriptor must describe the same (presentation) geometry.
+        let top = isobmff::parse_boxes(&container, 0, container.len());
+        let meta_box = top.iter().find(|b| &b.btype == b"meta").expect("meta box");
+        let idat = isobmff::parse_boxes(&container, meta_box.data_start + 4, meta_box.data_end)
+            .into_iter()
+            .find(|b| &b.btype == b"idat")
+            .expect("idat box");
+        let grid = &container[idat.data_start..idat.data_end];
+        assert_eq!(&grid[0..4], &[0, 0, 0, 0], "single 512x512 tile");
+        assert_eq!(u16::from_be_bytes([grid[4], grid[5]]), 8);
+        assert_eq!(u16::from_be_bytes([grid[6], grid[7]]), 16);
+
+        // Feed the same container through the UHDR writer: the explicit `irot`
+        // wins over the EXIF-derived one and the 16x8 gain map is rotated to
+        // the primary's presentation frame.
+        let unique = format!(
+            "xdremux_test_baked_orientation_{}_{}.heic",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos(),
+        );
+        let tmp = std::env::temp_dir().join(unique);
+        crate::isobmff_write::write_uhdr_iso_output(
+            &container,
+            &info.gainmap_jpeg,
+            &info.meta_floats,
+            crate::exif::OppoCompat::Off,
+            crate::container::OppoCameraTail::default_for_compat(crate::exif::OppoCompat::Off),
+            false,
+            tmp.to_str().expect("temporary path is valid UTF-8"),
+        )
+        .expect("UHDR writer accepts the synthesized container");
+
+        let written = std::fs::read(&tmp).expect("read written HEIC");
+        let out = isobmff::parse_source_meta(&written).expect("parse written HEIC");
+        let out_primary_irot = associated_property(&out, out.primary_id, "irot");
+        assert_eq!(
+            isobmff::irot_quarter_turns(&out_primary_irot.raw).unwrap(),
+            0,
+            "the container's explicit irot must replace the EXIF-derived one"
+        );
+        let gain_grid = out
+            .items
+            .iter()
+            .find(|item| item.itype == "grid" && item.item_id != out.primary_id)
+            .expect("gain-map grid item")
+            .item_id;
+        let gain_ispe = associated_property(&out, gain_grid, "ispe");
+        assert_eq!(
+            isobmff::ispe_dimensions(&gain_ispe.raw).unwrap(),
+            (8, 16),
+            "the gain map must follow the primary into presentation orientation"
+        );
+        let tmap_id = out
+            .items
+            .iter()
+            .find(|item| item.itype == "tmap")
+            .expect("tmap item")
+            .item_id;
+        let tmap_ispe = associated_property(&out, tmap_id, "ispe");
+        assert_eq!(isobmff::ispe_dimensions(&tmap_ispe.raw).unwrap(), (8, 16));
+
+        std::fs::remove_file(&tmp).expect("remove written HEIC");
     }
 }

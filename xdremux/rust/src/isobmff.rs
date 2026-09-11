@@ -129,15 +129,16 @@ pub fn irot_quarter_turns(irot: &[u8]) -> Result<u8, String> {
 /// the primary image's orientation, so odd `irot` values swap its dimensions.
 pub fn make_imageio_canonical_tmap_ispe_box(
     primary_ispe: &[u8],
-    irot: &[u8],
+    _irot: &[u8],
 ) -> Result<Vec<u8>, String> {
     let (width, height) = ispe_dimensions(primary_ispe)?;
-    let quarter_turns = irot_quarter_turns(irot)?;
-    if quarter_turns % 2 == 0 {
-        Ok(make_ispe_box(width, height))
-    } else {
-        Ok(make_ispe_box(height, width))
-    }
+    // The tmap keeps the primary's storage dimensions. Verified against an
+    // Apple portrait reference: primary 4284x5712, tmap 4284x5712 and gain map
+    // grid 2142x2856, i.e. the gain map matches the primary's storage
+    // orientation rather than its presented one. Transposing by the irot here
+    // turned a 4096x3072 primary with a 90 degree rotation into a 3072x4096
+    // tmap that disagreed with both the primary and its own gain map grid.
+    Ok(make_ispe_box(width, height))
 }
 
 /// sRGB color box (nclx: primaries=2, transfer=2, matrix=2).
@@ -1088,13 +1089,17 @@ mod tests {
         assert_eq!(h, 1024);
     }
 
+    /// The tmap keeps the primary's storage dimensions; ImageIO only applies
+    /// the primary's `irot` at display time, so the tmap ispe must not be
+    /// transposed by it. Verified against an Apple portrait reference with a
+    /// 4284x5712 primary, 4284x5712 tmap and 2142x2856 gain map.
     #[test]
-    fn canonical_tmap_ispe_swaps_dimensions_for_odd_irot() {
+    fn canonical_tmap_ispe_keeps_primary_storage_dimensions() {
         let primary_ispe = make_ispe_box(4000, 3000);
         let even = make_imageio_canonical_tmap_ispe_box(&primary_ispe, &make_irot_box(2)).unwrap();
         let odd = make_imageio_canonical_tmap_ispe_box(&primary_ispe, &make_irot_box(3)).unwrap();
         assert_eq!(ispe_dimensions(&even).unwrap(), (4000, 3000));
-        assert_eq!(ispe_dimensions(&odd).unwrap(), (3000, 4000));
+        assert_eq!(ispe_dimensions(&odd).unwrap(), (4000, 3000));
     }
 
     #[test]

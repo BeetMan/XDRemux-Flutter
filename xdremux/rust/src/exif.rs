@@ -169,7 +169,7 @@ pub fn read_heif_exif_orientation(
         .find(|entry| entry.item_id == exif_item.item_id)
         .ok_or_else(|| format!("Exif item {} has no iloc entry", exif_item.item_id))?;
     let exif_blob = read_heif_item_payload(data, entry, idat)?;
-    parse_heif_exif_orientation(&exif_blob)
+    parse_exif_orientation(&exif_blob)
 }
 
 fn read_heif_item_payload(
@@ -210,7 +210,12 @@ fn read_heif_item_payload(
     Ok(payload)
 }
 
-fn parse_heif_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, String> {
+/// Read the EXIF orientation from an Exif payload.
+///
+/// Accepts either a bare TIFF payload (the bytes after the `Exif\0\0` JPEG
+/// APP1 prefix) or a HEIF Exif item body whose leading 4-byte field points at
+/// the TIFF header.
+pub fn parse_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, String> {
     let tiff = if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
         exif_blob
     } else {
@@ -773,7 +778,7 @@ mod tests {
     fn heif_exif_orientation_reads_ifd0_tag() {
         let blob = heif_exif_blob(Some(6));
         assert_eq!(
-            parse_heif_exif_orientation(&blob).unwrap(),
+            parse_exif_orientation(&blob).unwrap(),
             ExifOrientation::Rotate90Clockwise
         );
     }
@@ -781,7 +786,7 @@ mod tests {
     #[test]
     fn heif_exif_orientation_defaults_when_tag_is_absent() {
         assert_eq!(
-            parse_heif_exif_orientation(&heif_exif_blob(None)).unwrap(),
+            parse_exif_orientation(&heif_exif_blob(None)).unwrap(),
             ExifOrientation::Normal
         );
     }
@@ -792,7 +797,7 @@ mod tests {
     fn heif_exif_orientation_clamps_out_of_range_values_to_normal() {
         for value in [0u16, 9, 255, u16::MAX] {
             assert_eq!(
-                parse_heif_exif_orientation(&heif_exif_blob(Some(value))).unwrap(),
+                parse_exif_orientation(&heif_exif_blob(Some(value))).unwrap(),
                 ExifOrientation::Normal,
                 "EXIF orientation {value} must clamp to Normal"
             );
@@ -1008,7 +1013,7 @@ mod tests {
     }
 
     /// Locate the TIFF byte-order marker in an Exif item payload (which may be
-    /// bare TIFF or "offset + Exif\0\0" prefixed), matching `parse_heif_exif_orientation`.
+    /// bare TIFF or "offset + Exif\0\0" prefixed), matching `parse_exif_orientation`.
     fn tiff_start_of(exif_blob: &[u8]) -> usize {
         if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
             return 0;

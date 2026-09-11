@@ -235,8 +235,21 @@ pub fn write_uhdr_iso_output(
     // UHDR gain maps are RGB JPEGs; we decode to RGB and optionally extract gray
     let (rgb_pixels, gm_w, gm_h) = crate::jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg)
         .map_err(|e| format!("UHDR gain map JPEG decode failed: {e}"))?;
+    // Keep the gain map in its storage orientation when the primary tiles are
+    // too. It inherits the primary's `irot` (see the ipma assembly below), so
+    // applying the EXIF presentation transform to its pixels here would rotate
+    // it twice. Only visible when the source primary carries a non-normal EXIF
+    // orientation - e.g. an OPPO tail `src.image` whose JPEG is orientation=6:
+    // the primary stayed 4096x3072 while its gain map became 3072x4096 and HDR
+    // stopped rendering. A primary whose tiles are already presentation
+    // oriented (the synthesized `src.image` container) instead needs the EXIF
+    // transform here to stay a 0.5x companion in the same frame.
     let (rgb_pixels, gain_width, gain_height) =
-        orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?;
+        if primary_is_presentation_oriented(&parsed, orientation) {
+            orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?
+        } else {
+            (rgb_pixels, gm_w, gm_h)
+        };
 
     // UHDR gain maps are 3-channel RGB regardless of compat mode
     let (hevc_pixels, pixel_bytes): (&[u8], usize) = (&rgb_pixels[..], 3);
@@ -507,8 +520,17 @@ pub fn prepare_uhdr_tiles(
 
     let (rgb_pixels, gm_w, gm_h) = crate::jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg)
         .map_err(|e| format!("UHDR gain map JPEG decode failed: {e}"))?;
+    // Keep the storage orientation for a passthrough primary: the gain map
+    // inherits the primary's `irot`, so rotating pixels here would
+    // double-apply the presentation transform. A primary whose tiles are
+    // already presentation oriented needs the EXIF transform (see
+    // `primary_is_presentation_oriented`).
     let (rgb_pixels, gain_width, gain_height) =
-        orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?;
+        if primary_is_presentation_oriented(&parsed, orientation) {
+            orient_gainmap_pixels(&rgb_pixels, gm_w, gm_h, 3, gm_w as usize * 3, orientation)?
+        } else {
+            (rgb_pixels, gm_w, gm_h)
+        };
 
     let yuv = tile_all_to_yuv420(&rgb_pixels, gain_width, gain_height, 3)?;
     let (cols, rows) = tile_grid_dims(gain_width, gain_height);
@@ -749,9 +771,11 @@ fn parse_source_structure(
 // Gain-map orientation
 // ---------------------------------------------------------------------------
 
-/// Apply the primary image's EXIF storage-to-presentation transform to a gain
-/// map. Input rows may be padded; the returned raster is tightly packed.
-fn orient_gainmap_pixels(
+/// Apply the primary image's EXIF storage-to-presentation transform to a
+/// tightly strided pixel raster. Input rows may be padded; the returned raster
+/// is tightly packed. Used for both gain maps and the Ultra HDR primary tiles
+/// (`uhdr_jpeg::synthesize_source_container`).
+pub(crate) fn orient_gainmap_pixels(
     pixels: &[u8],
     width: u32,
     height: u32,
@@ -800,6 +824,28 @@ fn orient_gainmap_pixels(
     }
 
     Ok((output, out_width, out_height))
+}
+
+/// Whether the source primary's tiles are already stored in presentation
+/// orientation, i.e. its gain map still needs the container's EXIF transform.
+///
+/// `uhdr_jpeg::synthesize_source_container` bakes the Ultra HDR base JPEG's
+/// EXIF rotation into the primary tiles and declares an explicit zero-turn
+/// `irot`, while its Exif item keeps the source JPEG's orientation so the gain
+/// map can be brought into the same presentation frame. A passthrough primary
+/// keeps its storage layout instead, so it and its gain map share the
+/// EXIF-derived `irot` and the gain-map pixels must not move.
+fn primary_is_presentation_oriented(
+    parsed: &ParsedSource,
+    orientation: ExifOrientation,
+) -> bool {
+    if orientation == ExifOrientation::Normal {
+        return false;
+    }
+    item_property_index(parsed, parsed.primary_id, "irot")
+        .and_then(|index| parsed.props.get(index.checked_sub(1)? as usize))
+        .and_then(|property| isobmff::irot_quarter_turns(&property.raw).ok())
+        .is_some_and(|quarter_turns| quarter_turns == 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -2421,8 +2467,11 @@ mod tests {
         assert_eq!(tmap_extent.1, 65);
     }
 
+    /// A source primary without its own `irot` gets the EXIF-derived rotation
+    /// and a tmap that keeps the primary's storage dimensions (ImageIO applies
+    /// the shared rotation at display time).
     #[test]
-    fn write_lhdr_uses_exif_orientation_for_irot_and_tmap_dimensions() {
+    fn write_lhdr_derives_irot_from_exif_and_keeps_tmap_storage_dimensions() {
         let source = make_minimal_heic_with_exif_orientation(Some(6));
         let mask = vec![128u8; 16];
         let mut meta = [0.0f32; 36];
@@ -2471,10 +2520,7 @@ mod tests {
         let tmap_irot = associated_property(&parsed, tmap_id, "irot");
         assert_eq!(isobmff::irot_quarter_turns(&tmap_irot.raw).unwrap(), 3);
         let tmap_ispe = associated_property(&parsed, tmap_id, "ispe");
-        assert_eq!(
-            isobmff::ispe_dimensions(&tmap_ispe.raw).unwrap(),
-            (256, 512)
-        );
+        assert_eq!(isobmff::ispe_dimensions(&tmap_ispe.raw).unwrap(), (512, 256));
 
         std::fs::remove_file(&tmp).expect("remove generated HEIC");
     }
