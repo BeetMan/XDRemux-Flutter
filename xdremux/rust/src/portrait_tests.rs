@@ -262,7 +262,7 @@ fn curve_derived_span_stretches_the_scene_ranks_across_the_target_span() {
     // A scene that only uses ranks 40..=200 still has to fill the declared span.
     let ranks: Vec<u8> = (40..=200).collect();
     let target = pd::APPLE_REFERENCE_SPAN;
-    let (bytes, fmin, fmax) = build_disparity(&ranks, 1, target / 255.0, true);
+    let (bytes, fmin, fmax, _norm) = build_disparity(&ranks, 1, target / 255.0, true);
     assert_eq!(fmin, 0.0);
     assert!((fmax - target).abs() < 1e-5, "fmax={fmax}");
     // The extreme ranks must reach both ends of the quantised range.
@@ -276,7 +276,7 @@ fn curve_derived_span_stretches_the_scene_ranks_across_the_target_span() {
 fn producer_scale_path_keeps_the_legacy_unstretched_mapping() {
     let ranks: Vec<u8> = (40..=200).collect();
     let span = 2.0f64;
-    let (bytes, fmin, fmax) = build_disparity(&ranks, 1, span / 255.0, false);
+    let (bytes, fmin, fmax, _norm) = build_disparity(&ranks, 1, span / 255.0, false);
     // Legacy mapping: values are span * (1 - pow(rank/255, exp)), so the range
     // is set by the scene's own rank coverage, not stretched to the full span.
     let expect_min = span * (1.0 - (200.0f64 / 255.0));
@@ -291,7 +291,7 @@ fn producer_scale_path_keeps_the_legacy_unstretched_mapping() {
 fn constant_rank_plane_stays_finite_in_both_modes() {
     let flat = vec![128u8; 64];
     for stretch in [true, false] {
-        let (bytes, fmin, fmax) = build_disparity(&flat, 1, 2.0 / 255.0, stretch);
+        let (bytes, fmin, fmax, _norm) = build_disparity(&flat, 1, 2.0 / 255.0, stretch);
         assert!(fmin.is_finite() && fmax.is_finite(), "stretch={stretch}");
         assert!(fmax >= fmin, "stretch={stretch}");
         assert!(bytes.iter().all(|b| *b == bytes[0]), "stretch={stretch}");

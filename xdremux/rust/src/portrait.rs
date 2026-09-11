@@ -208,7 +208,7 @@ fn build_disparity(
     exponentiation: u8,
     scale: f64,
     stretch_to_span: bool,
-) -> (Vec<u8>, f64, f64) {
+) -> (Vec<u8>, f64, f64, (f64, f64)) {
     let span = 255.0 * scale;
     let exp = exponentiation.max(1) as f64; // zero-quant variant is patched to 1
     let normalized: Vec<f64> = ranks
@@ -241,7 +241,9 @@ fn build_disparity(
         .iter()
         .map(|&v| ((v - min) / range * 255.0).round().clamp(0.0, 255.0) as u8)
         .collect();
-    (quantized, min as f64, max as f64)
+    // The normalization window is returned so the REND focus value can be
+    // mapped through exactly the same transform as the pixels.
+    (quantized, min as f64, max as f64, (lo, hi))
 }
 
 /// Recovered XHLRB CPU scaler (iOS 26.5 ControlLogicForXHLRB): dynamic REND
@@ -821,7 +823,7 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
 
     // ---- disparity pixels + apdi range ------------------------------------
     let stretch_to_span = matches!(depth.decision, pd::ScaleDecision::CurveDerived(_));
-    let (disparity_u8, float_min, float_max) =
+    let (disparity_u8, float_min, float_max, norm_range) =
         build_disparity(&depth.ranks, depth.exponentiation, scale, stretch_to_span);
 
     // ---- REND dynamic records ---------------------------------------------
@@ -839,7 +841,13 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
         .map(|sorted| pd::percentile(&sorted, 0.50))
         .unwrap_or(128.0);
     let exp = depth.exponentiation.max(1) as f64;
-    let normalized_focus = (focus_rank / 255.0).clamp(0.0, 1.0).powf(exp);
+    // Map the focus rank through the same normalization window build_disparity
+    // used, so the REND activation agrees with the plane it was derived from
+    // (a curve-derived plane stretches the scene's own rank range across the
+    // span, so the unstretched `rank/255` form would disagree).
+    let (norm_lo, norm_hi) = norm_range;
+    let focus_norm = (focus_rank / 255.0).clamp(0.0, 1.0).powf(exp);
+    let normalized_focus = ((focus_norm - norm_lo) / norm_hi).clamp(0.0, 1.0);
     let focus_disparity = span * (1.0 - normalized_focus);
     let focus_normalized = if span > 0.0 {
         (focus_disparity / span).clamp(0.0, 1.0)

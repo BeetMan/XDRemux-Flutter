@@ -1408,16 +1408,21 @@ fn extract_exif_datetime(base: &[u8], meta: &ParsedMeta) -> Option<String> {
 }
 
 /// CLI entry: `portrait <source.heic> <base.heic> <output.heic>`.
-/// `base` is the standard converted output for the same photo (the portrait
-/// graph attaches onto it).
-pub(crate) fn cmd_portrait(args: &[String]) -> Result<(), String> {
-    if args.len() != 3 {
-        return Err("portrait: expected <source.heic> <base.heic> <output.heic>".into());
-    }
-    let input = std::fs::read(&args[0]).map_err(|e| format!("read {}: {e}", args[0]))?;
-    let base = std::fs::read(&args[1]).map_err(|e| format!("read {}: {e}", args[1]))?;
-    let out = run_portrait(&input, &base)?;
-    std::fs::write(&args[2], &out).map_err(|e| format!("write {}: {e}", args[2]))?;
-    println!("portrait: {} -> {} bytes", args[2], out.len());
-    Ok(())
+///
+/// **Disabled: stale mirror.** This module is a snapshot of the pre-curve-calibration
+/// portrait writer and no longer matches `xdremux-core`. It predates the per-photo
+/// depth-curve calibration, the `stretch_to_span` disparity mapping and the
+/// `BaseOrigin` base selection (that last one lives in the core's `lib.rs` and cannot
+/// be reproduced here at all), so any output it produced would differ from the real
+/// pipeline and must not be used as a conformance oracle. `portrait_depth.rs` in this
+/// crate *is* up to date, which makes running the two together actively misleading.
+///
+/// Convert through the core library (or the app) instead; see
+/// `docs/modules/portrait-pipeline.md` §3.
+pub(crate) fn cmd_portrait(_args: &[String]) -> Result<(), String> {
+    Err("xdremux-conformance portrait: disabled - this module is a stale mirror of the \
+         pre-curve-calibration writer and no longer matches xdremux-core (no depth-curve \
+         calibration, no stretch mapping, no BaseOrigin base selection). Use the core \
+         library or the app for portrait conversion; see docs/modules/portrait-pipeline.md"
+        .into())
 }

@@ -87,5 +87,5 @@ OPPO 的 JPEG 导出带同样的尾部条目，因此与 HEIC 走同一路径。
 ## 6. 诊断
 
 - `xdremux_diagnose_portrait` FFI 入口（Dart 侧人像页使用）
-- conformance：`portrait.rs` / `portrait_depth.rs` 对拍模块
+- conformance：`portrait_depth.rs` 对拍模块（`portrait.rs` 镜像已停用，见 `testing/conformance-suite.md`）
 - macOS 研究路径：`PortraitDepthDiagnostics.swift`、`PortraitCalibrationResearch.swift`
