@@ -8,6 +8,7 @@ pub mod edr;
 pub mod exif;
 pub mod live_photo;
 pub mod motion_photo;
+pub mod photo_details;
 pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
@@ -121,7 +122,7 @@ pub extern "C" fn xdremux_motion_photo_inspect(path: *const c_char) -> *mut c_ch
             .map_err(|_| "path is not valid UTF-8".to_string())?;
         let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
         match motion_photo::parse_motion_photo(&data)? {
-            Some(asset) => Ok(asset.to_json()),
+            Some(asset) => Ok(asset.to_json_with_media(&data)),
             None => Ok(serde_json::json!({ "isMotionPhoto": false })),
         }
     })();
@@ -269,6 +270,31 @@ pub extern "C" fn xdremux_make_live_photo(
             "videoPath": mov_path,
             "contentIdentifier": content_id,
         }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect detailed EXIF and HDR GainMap properties of a photo.
+/// Returns a JSON string with shooting parameters (model, f-number, shutter, iso, etc.)
+/// and HDR headroom. Free the returned pointer with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_inspect_photo_details(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let details = photo_details::inspect_photo_details(path_str)?;
+        Ok(details.to_json())
     })();
     let payload = match result {
         Ok(v) => v,

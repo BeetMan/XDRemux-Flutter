@@ -24,14 +24,32 @@ class MotionPhotoService {
       final videoStart = (report['videoStart'] as num?)?.toInt() ?? 0;
       final videoEnd = (report['videoEnd'] as num?)?.toInt() ?? 0;
       final meta = report['oppoMetadata'];
-      final streams = meta is Map
-          ? (meta['streamCount'] as num?)?.toInt() ?? 1
-          : 1;
+      final streams = report['isDualStream'] == true
+          ? 2
+          : (meta is Map ? (meta['streamCount'] as num?)?.toInt() ?? 1 : 1);
       return MotionPhotoSummary(
         kind: report['sourceKind'] as String? ?? 'unknown',
         stillBytes: stillEnd - stillStart,
         videoBytes: videoEnd - videoStart,
         streamCount: streams,
+        videoWidth: (report['videoWidth'] as num?)?.toInt(),
+        videoHeight: (report['videoHeight'] as num?)?.toInt(),
+        durationMs: (report['durationMs'] as num?)?.toInt(),
+        fps: (report['fps'] as num?)?.toDouble(),
+        frameCount: (report['frameCount'] as num?)?.toInt(),
+        videoCodec: report['videoCodec'] as String?,
+        hasAudio: report['hasAudio'] as bool? ?? false,
+        audioCodec: report['audioCodec'] as String?,
+        audioChannels: (report['audioChannels'] as num?)?.toInt(),
+        audioSampleRate: (report['audioSampleRate'] as num?)?.toInt(),
+        audioDurationMs: (report['audioDurationMs'] as num?)?.toInt(),
+        presentationTimestampUs: (report['presentationTimestampUs'] as num?)?.toInt(),
+        presentationSource: report['presentationSource'] as String?,
+        primaryBytes: (report['primaryBytes'] as num?)?.toInt(),
+        secondaryBytes: (report['secondaryBytes'] as num?)?.toInt(),
+        secondaryWidth: (report['secondaryWidth'] as num?)?.toInt(),
+        secondaryHeight: (report['secondaryHeight'] as num?)?.toInt(),
+        secondaryFps: (report['secondaryFps'] as num?)?.toDouble(),
       );
     } catch (e) {
       debugPrint('[XDRemux][motion] inspect failed for $path: $e');

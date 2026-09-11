@@ -256,6 +256,10 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
+  static final _inspectPhotoDetails = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_photo_details');
+
   static final _livePhotoPairValid = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
@@ -560,6 +564,30 @@ class XdRemuxFFI {
       calloc.free(sourcePtr);
       calloc.free(stillPtr);
       calloc.free(outPtr);
+    }
+  }
+
+  /// Inspect detailed EXIF and HDR GainMap properties of a photo.
+  static Map<String, dynamic> inspectPhotoDetails(String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      final report = _inspectPhotoDetails(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust inspect photo details returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Malformed report from Rust inspect photo details',
+      };
+    } finally {
+      calloc.free(pathPtr);
     }
   }
 

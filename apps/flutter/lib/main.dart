@@ -28,6 +28,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
@@ -433,12 +434,7 @@ class _HomePageState extends State<HomePage> {
         motionPhoto:
             mpJson == null
                 ? null
-                : MotionPhotoSummary(
-                  kind: mpJson['kind'] as String? ?? 'unknown',
-                  stillBytes: (mpJson['stillBytes'] as num?)?.toInt() ?? 0,
-                  videoBytes: (mpJson['videoBytes'] as num?)?.toInt() ?? 0,
-                  streamCount: (mpJson['streamCount'] as num?)?.toInt() ?? 1,
-                ),
+                : MotionPhotoSummary.fromJson(mpJson),
         motionPhotoMode: mpMode,
       );
       // Live Photo pairing provenance: a converted pair is only complete
@@ -2025,15 +2021,7 @@ class _HomePageState extends State<HomePage> {
               classificationStatus: qItem.classificationStatus,
               hdrKind: qItem.hdrKind,
               family: qItem.family,
-              motionPhoto:
-                  qItem.motionPhoto == null
-                      ? null
-                      : {
-                        'kind': qItem.motionPhoto!.kind,
-                        'stillBytes': qItem.motionPhoto!.stillBytes,
-                        'videoBytes': qItem.motionPhoto!.videoBytes,
-                        'streamCount': qItem.motionPhoto!.streamCount,
-                      },
+              motionPhoto: qItem.motionPhoto?.toJson(),
               motionPhotoMode: qItem.motionPhotoMode.name,
             ),
           );
@@ -3278,6 +3266,7 @@ class _HomePageState extends State<HomePage> {
             if (mode == null) return;
             setState(() => item.motionPhotoMode = mode);
           },
+          onDetails: () => _showPhotoDetails(item),
         );
       },
     );
@@ -3335,11 +3324,58 @@ class _HomePageState extends State<HomePage> {
                 if (mode == null) return;
                 setState(() => _queue[index].motionPhotoMode = mode);
               },
+              onDetails: () => _showPhotoDetails(_queue[index]),
             );
           },
         );
       },
     );
+  }
+
+  void _showPhotoDetails(QueueItem item) {
+    final details = PhotoDetailsService.inspect(item.inputPath);
+    final file = File(item.inputPath);
+    final exists = file.existsSync();
+    final fileSizeMb = exists
+        ? (file.lengthSync() / (1024 * 1024)).toStringAsFixed(2)
+        : '-';
+
+    final isNarrow = MediaQuery.of(context).size.width < 640;
+    if (isNarrow) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (ctx) => ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: _PhotoDetailsContent(
+            item: item,
+            details: details,
+            fileSizeMb: fileSizeMb,
+            isBottomSheet: true,
+          ),
+        ),
+      );
+    } else {
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 580, maxHeight: 720),
+            child: _PhotoDetailsContent(
+              item: item,
+              details: details,
+              fileSizeMb: fileSizeMb,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void _showItemFailure(QueueItem item) {
@@ -4918,6 +4954,7 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
+  final VoidCallback onDetails;
 
   const _MobileQueueCard({
     required this.item,
@@ -4926,6 +4963,7 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     required this.onMotionModeChanged,
+    required this.onDetails,
   });
 
   Color _statusColor(ThemeData theme) {
@@ -5049,8 +5087,10 @@ class _MobileQueueCard extends StatelessWidget {
                           if (item.motionPhoto != null)
                             _InfoChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -5064,7 +5104,9 @@ class _MobileQueueCard extends StatelessWidget {
                           child: Row(
                             children: [
                               Text(
-                                t('视频 ${item.motionPhoto!.videoSizeLabel}', 'Video ${item.motionPhoto!.videoSizeLabel}'),
+                                item.motionPhoto!.resolutionLabel.isNotEmpty
+                                    ? t('实况 ${item.motionPhoto!.resolutionLabel}', 'Live ${item.motionPhoto!.resolutionLabel}')
+                                    : t('实况 ${item.motionPhoto!.videoSizeLabel}', 'Live ${item.motionPhoto!.videoSizeLabel}'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -5122,6 +5164,8 @@ class _MobileQueueCard extends StatelessWidget {
                   icon: const Icon(Icons.more_vert),
                   onSelected: (action) {
                     switch (action) {
+                      case _MobileQueueAction.details:
+                        onDetails();
                       case _MobileQueueAction.retry:
                         onRetry();
                       case _MobileQueueAction.remove:
@@ -5129,6 +5173,14 @@ class _MobileQueueCard extends StatelessWidget {
                     }
                   },
                   itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: _MobileQueueAction.details,
+                      child: ListTile(
+                        leading: const Icon(Icons.info_outline),
+                        title: Text(t('照片详情', 'Photo details')),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
                     if (canRetry || item.isSuccessful)
                       PopupMenuItem(
                         value: _MobileQueueAction.retry,
@@ -5164,7 +5216,7 @@ enum _ImportSource { photos, files }
 
 enum _OutputAction { save, share, open, reconvert }
 
-enum _MobileQueueAction { retry, remove }
+enum _MobileQueueAction { details, retry, remove }
 
 class _MobileStatusPill extends StatelessWidget {
   final String label;
@@ -5315,6 +5367,7 @@ class _PhotoCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
+  final VoidCallback onDetails;
 
   const _PhotoCard({
     required this.item,
@@ -5325,6 +5378,7 @@ class _PhotoCard extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     required this.onMotionModeChanged,
+    required this.onDetails,
   });
 
   @override
@@ -5364,7 +5418,8 @@ class _PhotoCard extends StatelessWidget {
                   // omitted — see the queue card comment).
                   if (item.hdrKind != null ||
                       (item.captureModeLabel != null &&
-                          item.captureModeLabel!.isNotEmpty))
+                          item.captureModeLabel!.isNotEmpty) ||
+                      item.motionPhoto != null)
                     Positioned(
                       top: 6,
                       right: 6,
@@ -5389,8 +5444,10 @@ class _PhotoCard extends StatelessWidget {
                           if (item.motionPhoto != null)
                             _OverlayChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -5517,6 +5574,12 @@ class _PhotoCard extends StatelessWidget {
                           ? t('按当前设置重新转换', 'Re-convert with current settings')
                           : t('重新尝试', 'Retry'),
                     ),
+                  _cardAction(
+                    theme,
+                    Icons.info_outline,
+                    onDetails,
+                    tooltip: t('照片详情', 'Photo details'),
+                  ),
                   _cardAction(
                     theme,
                     Icons.close,
@@ -5817,6 +5880,423 @@ class _ResumeCheckpointDialog extends StatelessWidget {
           color: color,
           fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+  }
+}
+
+class _PhotoDetailsContent extends StatelessWidget {
+  final QueueItem item;
+  final PhotoDetailsModel details;
+  final String fileSizeMb;
+  final bool isBottomSheet;
+
+  const _PhotoDetailsContent({
+    required this.item,
+    required this.details,
+    required this.fileSizeMb,
+    this.isBottomSheet = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (isBottomSheet)
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withAlpha(80),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        // Title Bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, color: colorScheme.primary, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  t('照片详情', 'Photo Details'),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: t('关闭', 'Close'),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Scrollable body
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            children: [
+              // Error banner if any
+              if (!details.success && details.errorMessage != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withAlpha(20),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withAlpha(50)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, size: 18, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          t('EXIF 解析提示: ${details.errorMessage}', 'EXIF parse note: ${details.errorMessage}'),
+                          style: const TextStyle(color: Colors.red, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // File basic summary
+              _buildFileSummaryCard(theme),
+              const SizedBox(height: 12),
+
+              // EXIF / Shooting parameters
+              _buildSection(
+                theme,
+                title: t('📷 拍摄参数 (EXIF)', '📷 Shooting Parameters (EXIF)'),
+                children: [
+                  _detailRow(theme, t('设备机型', 'Camera Model'), details.model ?? details.make ?? '-'),
+                  _detailRow(theme, t('镜头光圈', 'Aperture'), details.fNumber ?? '-'),
+                  _detailRow(theme, t('快门速度', 'Shutter Speed'), details.exposureTime ?? '-'),
+                  _detailRow(theme, t('感光度 (ISO)', 'ISO'), details.iso ?? '-'),
+                  _detailRow(theme, t('焦距', 'Focal Length'), details.focalLengthSummary.isNotEmpty ? details.focalLengthSummary : '-'),
+                  _detailRow(theme, t('曝光补偿', 'Exposure Bias'), details.exposureBias ?? '-'),
+                  _detailRow(theme, t('拍摄时间', 'Capture Time'), details.dateTime ?? '-'),
+                  _detailRow(theme, t('图像分辨率', 'Resolution'), details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : '-'),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // HDR & Dynamic Range
+              _buildSection(
+                theme,
+                title: t('🌈 HDR & 动态范围', '🌈 HDR & Dynamic Range'),
+                children: [
+                  _detailRow(
+                    theme,
+                    t('HDR 格式', 'HDR Format'),
+                    details.hdrKind != null
+                        ? 'ProXDR (${details.hdrKind!.toUpperCase()})'
+                        : (item.hdrKind != null ? 'ProXDR (${item.hdrKind!.toUpperCase()})' : t('无 (SDR)', 'None (SDR)')),
+                  ),
+                  _detailRow(
+                    theme,
+                    t('EDR 亮度倍率', 'EDR Headroom'),
+                    details.edrScale != null ? '${details.edrScale!.toStringAsFixed(2)}x' : '-',
+                  ),
+                  _detailRow(
+                    theme,
+                    t('最大增益 (GainMap Max)', 'GainMap Max'),
+                    details.gainMapMax != null ? '+${details.gainMapMax!.toStringAsFixed(2)} EV' : '-',
+                  ),
+                ],
+              ),
+
+              // Motion Photo
+              if (item.motionPhoto != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  title: t('🎬 实况照片 (Live / Motion Photo)', '🎬 Live / Motion Photo'),
+                  children: [
+                    if (item.motionPhoto!.resolutionLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频流分辨率', 'Video Resolution'),
+                        item.motionPhoto!.resolutionLabel,
+                      ),
+                    if (item.motionPhoto!.durationLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频时长', 'Duration'),
+                        '${item.motionPhoto!.durationLabel}${item.motionPhoto!.frameCount != null ? " (${item.motionPhoto!.frameCount} 帧)" : ""}',
+                      ),
+                    if (item.motionPhoto!.fpsLabel.isNotEmpty || item.motionPhoto!.videoCodec != null)
+                      _detailRow(
+                        theme,
+                        t('编码与帧率', 'Codec & Frame Rate'),
+                        [
+                          if (item.motionPhoto!.videoCodec != null)
+                            item.motionPhoto!.videoCodec!.toUpperCase() == 'HVC1' ? 'HEVC (H.265)' : item.motionPhoto!.videoCodec!.toUpperCase(),
+                          if (item.motionPhoto!.fpsLabel.isNotEmpty) item.motionPhoto!.fpsLabel,
+                        ].join(' / '),
+                      ),
+                    _detailRow(
+                      theme,
+                      t('音频轨道', 'Audio Track'),
+                      item.motionPhoto!.audioLabel,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('码流架构', 'Stream Architecture'),
+                      item.motionPhoto!.dualStreamSummary,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('数据大小', 'Video Track Size'),
+                      item.motionPhoto!.videoSizeLabel,
+                    ),
+                    if (item.motionPhoto!.presentationTimestampUs != null)
+                      _detailRow(
+                        theme,
+                        t('封面静帧时间点', 'Still Image Time'),
+                        '${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s (${item.motionPhoto!.presentationTimestampUs} µs)',
+                      ),
+                    _detailRow(theme, t('封装格式', 'Container Format'), item.motionPhoto!.kind),
+                    _detailRow(
+                      theme,
+                      t('转换处理策略', 'Processing Policy'),
+                      item.motionPhotoMode.displayName,
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 12),
+              // Path section
+              _buildSection(
+                theme,
+                title: t('📁 文件与路径', '📁 Files & Paths'),
+                children: [
+                  _detailRow(theme, t('输入路径', 'Input Path'), item.inputPath, selectable: true),
+                  _detailRow(theme, t('输出路径', 'Output Path'), item.outputPath, selectable: true),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Footer buttons
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.copy, size: 16),
+                label: Text(t('复制全部信息', 'Copy Details')),
+                onPressed: () => _copyDetailsToClipboard(context),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(t('关闭', 'Close')),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFileSummaryCard(ThemeData theme) {
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              item.fileName,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _chip(theme, '$fileSizeMb MB'),
+                if (details.hdrKind != null || item.hdrKind != null)
+                  _chip(
+                    theme,
+                    'ProXDR (${(details.hdrKind ?? item.hdrKind!).toUpperCase()})',
+                    color: Colors.orange,
+                  ),
+                if (item.motionPhoto != null)
+                  _chip(theme, t('实况照片', 'Live Photo'), color: Colors.blue),
+                _chip(theme, item.status.displayName, color: _statusColor(item.status)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(QueueItemStatus status) {
+    return switch (status) {
+      QueueItemStatus.pending => Colors.grey,
+      QueueItemStatus.running => Colors.blue,
+      QueueItemStatus.converted => Colors.green,
+      QueueItemStatus.skippedExisting => Colors.teal,
+      QueueItemStatus.skippedPolicy => Colors.teal,
+      QueueItemStatus.failed => Colors.red,
+      QueueItemStatus.cancelled => Colors.orange,
+    };
+  }
+
+  Widget _chip(ThemeData theme, String label, {Color? color}) {
+    final c = color ?? theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withAlpha(24),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: c.withAlpha(48)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: c,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection(ThemeData theme, {required String title, required List<Widget> children}) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: theme.colorScheme.outlineVariant.withAlpha(100)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(ThemeData theme, String label, String value, {bool selectable = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: selectable
+                ? SelectableText(
+                    value,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  )
+                : Text(
+                    value,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _copyDetailsToClipboard(BuildContext context) {
+    final buffer = StringBuffer();
+    buffer.writeln('【${item.fileName}】');
+    buffer.writeln('文件大小: $fileSizeMb MB');
+    buffer.writeln('--- 拍摄参数 (EXIF) ---');
+    buffer.writeln('设备机型: ${details.model ?? details.make ?? "-"}');
+    buffer.writeln('镜头光圈: ${details.fNumber ?? "-"}');
+    buffer.writeln('快门速度: ${details.exposureTime ?? "-"}');
+    buffer.writeln('感光度 (ISO): ${details.iso ?? "-"}');
+    buffer.writeln('焦距: ${details.focalLengthSummary.isNotEmpty ? details.focalLengthSummary : "-"}');
+    buffer.writeln('曝光补偿: ${details.exposureBias ?? "-"}');
+    buffer.writeln('拍摄时间: ${details.dateTime ?? "-"}');
+    buffer.writeln('图像分辨率: ${details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : "-"}');
+    buffer.writeln('--- HDR & 动态范围 ---');
+    buffer.writeln('HDR 格式: ${details.hdrKind?.toUpperCase() ?? item.hdrKind?.toUpperCase() ?? "None"}');
+    if (details.edrScale != null) {
+      buffer.writeln('EDR Headroom: ${details.edrScale!.toStringAsFixed(2)}x');
+    }
+    if (details.gainMapMax != null) {
+      buffer.writeln('GainMap Max: +${details.gainMapMax!.toStringAsFixed(2)} EV');
+    }
+    if (item.motionPhoto != null) {
+      buffer.writeln('--- 实况/动态照片 ---');
+      if (item.motionPhoto!.resolutionLabel.isNotEmpty) {
+        buffer.writeln('视频分辨率: ${item.motionPhoto!.resolutionLabel}');
+      }
+      if (item.motionPhoto!.durationLabel.isNotEmpty) {
+        buffer.writeln('视频时长: ${item.motionPhoto!.durationLabel} (${item.motionPhoto!.fpsLabel})');
+      }
+      buffer.writeln('音频轨道: ${item.motionPhoto!.audioLabel}');
+      buffer.writeln('码流架构: ${item.motionPhoto!.dualStreamSummary}');
+      buffer.writeln('视频流大小: ${item.motionPhoto!.videoSizeLabel}');
+      if (item.motionPhoto!.presentationTimestampUs != null) {
+        buffer.writeln('封面帧时间: ${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s');
+      }
+      buffer.writeln('封装格式: ${item.motionPhoto!.kind}');
+      buffer.writeln('处理策略: ${item.motionPhotoMode.displayName}');
+    }
+    buffer.writeln('--- 路径 ---');
+    buffer.writeln('输入路径: ${item.inputPath}');
+    buffer.writeln('输出路径: ${item.outputPath}');
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(t('已复制照片详情到剪贴板', 'Copied photo details to clipboard')),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
