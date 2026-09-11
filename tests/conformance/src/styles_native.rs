@@ -32,9 +32,14 @@ use crate::styles_consts::{DELTA_HVCC_BOX, DELTA_TILE, FIELD_3, FIELD_C, FIELD_D
 use crate::styles_graft::{find_top, top_level_boxes};
 
 const STYLE_DATA_BLOCKS: usize = 864;
-const DELTA_ROWS: u32 = 5;
-const DELTA_COLS: u32 = 6;
 const DELTA_TILE_SIZE: u32 = 512;
+
+fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let scale = 1.0f64.min((max_w as f64 / source_w as f64).min(max_h as f64 / source_h as f64));
+    let w = (((source_w as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    let h = (((source_h as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    (w.min(max_w), h.min(max_h))
+}
 
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
     let scaffolded = scaffold::scaffold(standard)?;
@@ -57,16 +62,24 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         .ok_or("no tmap item")?;
     let (pw, ph) = primary_dims(&meta, primary)?;
 
+    let landscape = pw >= ph;
+    let (delta_rows, delta_cols) = if landscape { (5u32, 6u32) } else { (6u32, 5u32) };
+    let (delta_w, delta_h) = if landscape {
+        fitted_size(pw, ph, 2880, 2560)
+    } else {
+        fitted_size(pw, ph, 2560, 2880)
+    };
+
     // ---- new item ids (clear of grpl/altr group ids) -------------------
     let mut next_id = meta.items.iter().map(|i| i.item_id).max().unwrap_or(1) + 1;
     let max_group = crate::scaffold::max_group_id_pub(base, &meta_hdr).unwrap_or(0);
     if next_id <= max_group {
         next_id = max_group + 1;
     }
-    let delta_tile_ids: Vec<u32> = (0..DELTA_ROWS * DELTA_COLS)
+    let delta_tile_ids: Vec<u32> = (0..delta_rows * delta_cols)
         .map(|i| next_id + i)
         .collect();
-    let delta_grid_id = next_id + DELTA_ROWS * DELTA_COLS;
+    let delta_grid_id = next_id + delta_rows * delta_cols;
     let linear_id = delta_grid_id + 1;
     let style_meta_id = linear_id + 1;
 
@@ -258,9 +271,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     })
     .unwrap_or_else(|| add_prop(isobmff::make_ispe_box(512, 512)));
 
-    // Delta grid dims: 0.703× primary (golden ratio at 4096×3512).
-    let delta_w = ((pw as u64 * 2880 + 2048) / 4096) as u32;
-    let delta_h = ((ph as u64 * 2470 + 1756) / 3512) as u32;
+    // Delta grid dims: fitted to 2880×2560 landscape or 2560×2880 portrait.
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
     let ispe_lt_idx = add_prop(isobmff::make_ispe_box(LT_W, LT_H));
@@ -373,7 +384,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // ---- payloads ----------------------------------------------------------
     let std_idat = crate::styles_graft::idat_payload(base, &meta_hdr).unwrap_or_default();
     // grid item payload = compact ImageGrid (8 bytes, no box header).
-    let mut grid_payload = vec![0u8, 0, (DELTA_ROWS - 1) as u8, (DELTA_COLS - 1) as u8];
+    let mut grid_payload = vec![0u8, 0, (delta_rows - 1) as u8, (delta_cols - 1) as u8];
     grid_payload.extend_from_slice(&(delta_w as u16).to_be_bytes());
     grid_payload.extend_from_slice(&(delta_h as u16).to_be_bytes());
 

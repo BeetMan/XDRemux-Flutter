@@ -1123,7 +1123,10 @@ fn xdremux_convert_impl(
     let extracted = if source.starts_with(&[0xFF, 0xD8]) {
         match uhdr_jpeg::parse(&source) {
             Ok(Some(info)) => {
-                let use_420 = oppo_compat.wants_patch();
+                // Primary image in HEIF must always be 4:2:0 (Main profile) so that
+                // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser libraries
+                // (heif-oxide) can decode it properly without black-screening.
+                let use_420 = true;
                 let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
                     Ok(s) => s,
                     Err(e) => {
