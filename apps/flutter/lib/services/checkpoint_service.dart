@@ -110,18 +110,26 @@ class CheckpointService {
     return hash.toRadixString(16).padLeft(16, '0');
   }
 
-  /// Remove persistent picker copies after a completely successful batch.
-  /// Failed/cancelled checkpoints retain them for resume.
-  static Future<void> cleanupMaterializedInputs(Checkpoint checkpoint) async {
+  /// Remove persistent picker copies for checkpoint items, skipping any paths
+  /// currently retained by the active UI queue.
+  static Future<void> cleanupMaterializedInputs(
+    Checkpoint checkpoint, {
+    Set<String> retainedPaths = const {},
+  }) async {
     final supportDir = await getApplicationSupportDirectory();
     final dir = Directory(
       '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
     );
     for (final item in checkpoint.items) {
       if (!_isWithin(item.inputPath, dir.path)) continue;
+      if (retainedPaths.contains(item.inputPath)) continue;
       try {
         final file = File(item.inputPath);
         if (file.existsSync()) await file.delete();
+        final parent = file.parent;
+        if (parent.existsSync() && parent.listSync().isEmpty) {
+          await parent.delete();
+        }
       } catch (_) {}
     }
     try {
@@ -132,6 +140,36 @@ class CheckpointService {
           }
         }
         if (dir.listSync().isEmpty) await dir.delete();
+      }
+    } catch (_) {}
+  }
+
+  /// Remove a persistent picker copy for a single path when removed from queue.
+  static Future<void> cleanupSingleMaterializedInput(String inputPath) async {
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      final dir = Directory(
+        '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
+      );
+      if (!_isWithin(inputPath, dir.path)) return;
+      final file = File(inputPath);
+      if (file.existsSync()) await file.delete();
+      final parent = file.parent;
+      if (parent.existsSync() && parent.listSync().isEmpty) {
+        await parent.delete();
+      }
+    } catch (_) {}
+  }
+
+  /// Remove all persistent picker copies.
+  static Future<void> cleanupAllMaterializedInputs() async {
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      final dir = Directory(
+        '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
+      );
+      if (dir.existsSync()) {
+        await dir.delete(recursive: true);
       }
     } catch (_) {}
   }

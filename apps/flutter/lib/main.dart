@@ -2103,11 +2103,9 @@ class _HomePageState extends State<HomePage> {
     if (_checkpoint == null) return;
 
     if (_failedCount == 0) {
-      // All success — remove checkpoint and release private picker copies.
-      final completedCheckpoint = _checkpoint!;
-      unawaited(
-        CheckpointService.cleanupMaterializedInputs(completedCheckpoint),
-      );
+      // All success — delete checkpoint record so relaunch starts fresh,
+      // but retain materialized input copies in case user re-converts items
+      // still residing in the active queue.
       unawaited(CheckpointService.delete());
       _checkpoint = null;
     } else {
@@ -2207,18 +2205,23 @@ class _HomePageState extends State<HomePage> {
     if (oldCheckpoint != null) {
       unawaited(CheckpointService.cleanupMaterializedInputs(oldCheckpoint));
     }
+    unawaited(CheckpointService.cleanupAllMaterializedInputs());
     unawaited(CheckpointService.delete());
   }
 
   void _clearCompleted() {
     if (!_canEditQueue) return;
+    final removedPaths = <String>{};
     setState(() {
-      _queue.removeWhere(
-        (item) =>
-            item.status == QueueItemStatus.converted ||
+      _queue.removeWhere((item) {
+        final matches = item.status == QueueItemStatus.converted ||
             item.status == QueueItemStatus.skippedExisting ||
-            item.status == QueueItemStatus.skippedPolicy,
-      );
+            item.status == QueueItemStatus.skippedPolicy;
+        if (matches) {
+          removedPaths.add(item.inputPath);
+        }
+        return matches;
+      });
       if (_selectedIndex != null && _selectedIndex! >= _queue.length) {
         _selectedIndex = _queue.isEmpty ? null : _queue.length - 1;
       }
@@ -2226,6 +2229,12 @@ class _HomePageState extends State<HomePage> {
         _statusText = t('就绪', 'Ready');
       }
     });
+    final remainingPaths = _queue.map((i) => i.inputPath).toSet();
+    for (final path in removedPaths) {
+      if (!remainingPaths.contains(path)) {
+        unawaited(CheckpointService.cleanupSingleMaterializedInput(path));
+      }
+    }
   }
 
   void _retryFailed() {
@@ -2271,6 +2280,7 @@ class _HomePageState extends State<HomePage> {
 
   void _removeItem(int index) {
     if (!_canEditQueue) return;
+    final removed = _queue[index];
     setState(() {
       _queue.removeAt(index);
       if (_selectedIndex != null) {
@@ -2282,6 +2292,10 @@ class _HomePageState extends State<HomePage> {
         _statusText = t('就绪', 'Ready');
       }
     });
+    final remainingPaths = _queue.map((i) => i.inputPath).toSet();
+    if (!remainingPaths.contains(removed.inputPath)) {
+      unawaited(CheckpointService.cleanupSingleMaterializedInput(removed.inputPath));
+    }
   }
 
   void _openOrganizePage() {
