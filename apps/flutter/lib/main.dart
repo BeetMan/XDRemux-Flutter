@@ -45,6 +45,48 @@ bool isSupportedInputPath(String path) {
       lower.endsWith('.jpeg');
 }
 
+/// When a user picks a previously converted output file (e.g. `foo_iso.heic`),
+/// attempts to locate the original donor source photo in the same directory
+/// so re-conversion with different settings can succeed cleanly.
+String? findOriginalDonorForConvertedFile(
+  String convertedPath, {
+  String? customSuffix,
+}) {
+  try {
+    final file = File(convertedPath);
+    final parent = file.parent;
+    final name = file.uri.pathSegments.last;
+    final dot = name.lastIndexOf('.');
+    final ext = dot > 0 ? name.substring(dot) : '';
+    final stem = dot > 0 ? name.substring(0, dot) : name;
+
+    final suffixes = <String>[
+      if (customSuffix != null && customSuffix.isNotEmpty) customSuffix,
+      '_iso',
+      '_apple',
+      '_v2',
+      '_hdr',
+    ];
+    final candidates = <String>[];
+    for (final s in suffixes) {
+      if (s.isNotEmpty && stem.endsWith(s)) {
+        final baseStem = stem.substring(0, stem.length - s.length);
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem$ext');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.heic');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.HEIC');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.jpg');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.jpeg');
+      }
+    }
+    for (final cand in candidates) {
+      if (File(cand).existsSync() && cand != convertedPath) {
+        return cand;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 /// Picked file carrier that works across file_picker v12 (PlatformFile is
 /// abstract now) and our own photo-picker bridges.
 /// [readBytes] loads lazily to avoid marshalling multi-MB HEICs eagerly.
@@ -162,6 +204,7 @@ class XdRemuxApp extends StatelessWidget {
 
 enum _QueueMenuAction {
   retryFailed,
+  reconvertAll,
   clearCompleted,
   saveAllToGallery,
   minimizeToTray,
@@ -1068,29 +1111,33 @@ class _HomePageState extends State<HomePage> {
       }
 
       try {
-        final classification = await XdRemuxService.classify(path);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          resolvedPath,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        if (_config.skipExisting) {
-          final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint(
-            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
-          );
-          if (inputIsConverted) {
+        String effectivePath = path;
+        final inputIsConverted = await XdRemuxService.verifyOutput(path);
+        if (inputIsConverted) {
+          final donor = _findOriginalDonorForConvertedFile(path);
+          if (donor != null && !existing.contains(donor)) {
+            debugPrint(
+              '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
+            );
+            effectivePath = donor;
+          } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
+        final classification = await XdRemuxService.classify(effectivePath);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          effectivePath,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
         _queue.add(
           QueueItem(
             id: _makeId(),
-            inputPath: path,
+            inputPath: effectivePath,
             outputPath: outputPath,
-            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
@@ -1099,7 +1146,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
-        existing.add(path);
+        existing.add(effectivePath);
         added++;
       } catch (e) {
         firstError ??= '$e';
@@ -1139,7 +1186,14 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(content: Text(t('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过', '$skippedExisting files are already converted HDR photos; skipped'))),
+          SnackBar(
+            content: Text(
+              t(
+                '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
+                '$skippedExisting files are already converted HDR photos (choose original photo to apply new settings)',
+              ),
+            ),
+          ),
         );
     }
   }
@@ -1178,6 +1232,13 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  String? _findOriginalDonorForConvertedFile(String convertedPath) {
+    return findOriginalDonorForConvertedFile(
+      convertedPath,
+      customSuffix: _config.fileNameSuffix,
     );
   }
 
@@ -1229,11 +1290,12 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _refreshOutputPaths() {
+  void _refreshOutputPaths({bool refreshAll = false}) {
     _preflightIssues.clear();
     for (int i = 0; i < _queue.length; i++) {
       final item = _queue[i];
-      if (item.status == QueueItemStatus.pending ||
+      if (refreshAll ||
+          item.status == QueueItemStatus.pending ||
           item.status == QueueItemStatus.failed ||
           item.status == QueueItemStatus.cancelled) {
         item.outputPath = _config.outputPathFor(
@@ -2181,6 +2243,32 @@ class _HomePageState extends State<HomePage> {
     if (hadFailed) _refreshOutputPaths();
   }
 
+  void _reconvertAll() {
+    if (!_canEditQueue) return;
+    setState(() {
+      for (int i = 0; i < _queue.length; i++) {
+        final item = _queue[i];
+        if (item.status.isTerminal) {
+          item.status = QueueItemStatus.pending;
+          item.errorMessage = null;
+          item.startedAt = null;
+          item.finishedAt = null;
+          item.progress = null;
+          item.outputPath = _config.outputPathFor(
+            item.inputPath,
+            fallbackDir: _androidOutputDir,
+            captureModeFolderName: item.captureModeFolderName,
+          );
+          item.outputPlanStatus = File(item.outputPath).existsSync()
+              ? OutputPlanStatus.willOverwriteExisting
+              : OutputPlanStatus.ready;
+        }
+      }
+    });
+    _validateOutputPlans();
+    _updateStatusText();
+  }
+
   void _removeItem(int index) {
     if (!_canEditQueue) return;
     setState(() {
@@ -2278,31 +2366,33 @@ class _HomePageState extends State<HomePage> {
         }
       }
       try {
-        final classification = await XdRemuxService.classify(path);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          resolvedPath,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        // Skip files that are already converted ISO HDR outputs —
-        // re-converting produces a broken nested gain map.
-        if (_config.skipExisting) {
-          final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint(
-            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
-          );
-          if (inputIsConverted) {
+        String effectivePath = path;
+        final inputIsConverted = await XdRemuxService.verifyOutput(path);
+        if (inputIsConverted) {
+          final donor = _findOriginalDonorForConvertedFile(path);
+          if (donor != null && !existing.contains(donor)) {
+            debugPrint(
+              '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
+            );
+            effectivePath = donor;
+          } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
+        final classification = await XdRemuxService.classify(effectivePath);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          effectivePath,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
         _queue.add(
           QueueItem(
             id: _makeId(),
-            inputPath: path,
+            inputPath: effectivePath,
             outputPath: outputPath,
-            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
@@ -2311,7 +2401,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
-        existing.add(path);
+        existing.add(effectivePath);
         added++;
       } catch (_) {
         // Keep the intake responsive even if metadata classification fails.
@@ -2354,7 +2444,10 @@ class _HomePageState extends State<HomePage> {
         verb == t('接收', 'Received')) {
       if (!mounted) return;
       final snackText = skippedExisting > 0
-          ? t('$skippedExisting 个文件已是转换后的 HDR 照片，已跳过', '$skippedExisting files are already converted HDR photos; skipped')
+          ? t(
+              '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
+              '$skippedExisting files are already converted HDR photos (choose original photo to apply new settings)',
+            )
           : summary;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -2515,6 +2608,18 @@ class _HomePageState extends State<HomePage> {
                 subtitle: Text(t('用系统图库打开', 'Open with system gallery')),
                 onTap: () => Navigator.pop(ctx, _OutputAction.open),
               ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.refresh),
+                title: Text(t('重新转换', 'Re-convert')),
+                subtitle: Text(
+                  t(
+                    '按当前设置重新转换并覆盖旧输出',
+                    'Re-convert with current settings and overwrite',
+                  ),
+                ),
+                onTap: () => Navigator.pop(ctx, _OutputAction.reconvert),
+              ),
             ],
           ),
         );
@@ -2553,6 +2658,9 @@ class _HomePageState extends State<HomePage> {
         await FileActionService.shareFile(item.outputPath);
       case _OutputAction.open:
         await FileActionService.openFile(item.outputPath);
+      case _OutputAction.reconvert:
+        final index = _queue.indexOf(item);
+        if (index >= 0) _retryItem(index);
     }
   }
 
@@ -2678,6 +2786,8 @@ class _HomePageState extends State<HomePage> {
         switch (action) {
           case _QueueMenuAction.retryFailed:
             _retryFailed();
+          case _QueueMenuAction.reconvertAll:
+            _reconvertAll();
           case _QueueMenuAction.clearCompleted:
             _clearCompleted();
           case _QueueMenuAction.saveAllToGallery:
@@ -2693,8 +2803,17 @@ class _HomePageState extends State<HomePage> {
           value: _QueueMenuAction.retryFailed,
           enabled: _canEditQueue && _failedCount > 0,
           child: ListTile(
-            leading: Icon(Icons.refresh),
+            leading: const Icon(Icons.refresh),
             title: Text(t('重试失败项', 'Retry failed')),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem(
+          value: _QueueMenuAction.reconvertAll,
+          enabled: _canEditQueue && (_convertedCount + _skippedCount) > 0,
+          child: ListTile(
+            leading: const Icon(Icons.replay),
+            title: Text(t('全部重新转换', 'Re-convert all')),
             contentPadding: EdgeInsets.zero,
           ),
         ),
@@ -3095,6 +3214,12 @@ class _HomePageState extends State<HomePage> {
             ),
             if (!_isProcessing && blocking > 0)
               TextButton(onPressed: _runPreflight, child: Text(t('检查', 'Check'))),
+            if (!_isProcessing && done && _totalFiles > 0)
+              TextButton.icon(
+                icon: const Icon(Icons.replay, size: 16),
+                label: Text(t('重新转换全部', 'Re-convert all')),
+                onPressed: _reconvertAll,
+              ),
           ],
         ),
       ),
@@ -3285,11 +3410,23 @@ class _HomePageState extends State<HomePage> {
   void _retryItem(int index) {
     if (index < 0 || index >= _queue.length) return;
     setState(() {
-      _queue[index].status = QueueItemStatus.pending;
-      _queue[index].errorMessage = null;
-      _queue[index].startedAt = null;
-      _queue[index].finishedAt = null;
+      final item = _queue[index];
+      item.status = QueueItemStatus.pending;
+      item.errorMessage = null;
+      item.startedAt = null;
+      item.finishedAt = null;
+      item.progress = null;
+      item.outputPath = _config.outputPathFor(
+        item.inputPath,
+        fallbackDir: _androidOutputDir,
+        captureModeFolderName: item.captureModeFolderName,
+      );
+      item.outputPlanStatus = File(item.outputPath).existsSync()
+          ? OutputPlanStatus.willOverwriteExisting
+          : OutputPlanStatus.ready;
     });
+    _validateOutputPlans();
+    _updateStatusText();
   }
 
   Widget _buildFooter(ThemeData theme) {
@@ -3353,7 +3490,7 @@ class _HomePageState extends State<HomePage> {
         config: _config,
         onChanged: () {
           _scheduleConfigSave();
-          _refreshOutputPaths();
+          _refreshOutputPaths(refreshAll: true);
         },
       ),
     );
@@ -4244,7 +4381,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: Text(t('跳过已有有效输出', 'Skip existing valid output')),
-                      subtitle: Text(t('如果输出文件已包含 ISO gain map 则跳过。', 'Skip when the output already contains an ISO gain map.')),
+                      subtitle: Text(
+                        t(
+                          '批量处理时跳过已包含有效 ISO gain map 的输出；手动重新转换不受影响。',
+                          'Skip files with valid ISO gain maps during batch processing; manual re-conversion always applies.',
+                        ),
+                      ),
                       value: _cfg.skipExisting,
                       dense: true,
                       onChanged: (v) {
@@ -4801,7 +4943,15 @@ class _MobileQueueCard extends StatelessWidget {
     if (item.status == QueueItemStatus.failed) {
       return item.errorMessage ?? t('转换未完成，轻触查看详情。', 'Conversion incomplete; tap for details.');
     }
-    if (item.isSuccessful) return item.outputPlanStatus.displayName;
+    if (item.status == QueueItemStatus.converted) {
+      return item.classificationLabel.isNotEmpty
+          ? item.classificationLabel
+          : t('转换完成', 'Converted');
+    }
+    if (item.status == QueueItemStatus.skippedExisting ||
+        item.status == QueueItemStatus.skippedPolicy) {
+      return item.outputPlanStatus.displayName;
+    }
     return item.outputPlanStatus.blocksConversion
         ? item.outputPlanStatus.displayName
         : item.classificationLabel;
@@ -4962,10 +5112,7 @@ class _MobileQueueCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Queue management is separate from completed-output actions.
-              // Completed items use the card tap for save/share/open and are
-              // removed by the global "清除已完成" action instead.
-              if (!item.isSuccessful && item.status != QueueItemStatus.running)
+              if (item.status != QueueItemStatus.running)
                 PopupMenuButton<_MobileQueueAction>(
                   tooltip: t('项目操作', 'Item actions'),
                   icon: const Icon(Icons.more_vert),
@@ -4978,19 +5125,23 @@ class _MobileQueueCard extends StatelessWidget {
                     }
                   },
                   itemBuilder: (context) => [
-                    if (canRetry)
+                    if (canRetry || item.isSuccessful)
                       PopupMenuItem(
                         value: _MobileQueueAction.retry,
                         child: ListTile(
-                          leading: Icon(Icons.refresh),
-                          title: Text(t('重新尝试', 'Retry')),
+                          leading: const Icon(Icons.refresh),
+                          title: Text(
+                            item.isSuccessful
+                                ? t('重新转换', 'Re-convert')
+                                : t('重新尝试', 'Retry'),
+                          ),
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),
                     PopupMenuItem(
                       value: _MobileQueueAction.remove,
                       child: ListTile(
-                        leading: Icon(Icons.delete_outline),
+                        leading: const Icon(Icons.delete_outline),
                         title: Text(t('移出队列', 'Remove from queue')),
                         contentPadding: EdgeInsets.zero,
                       ),
@@ -5007,7 +5158,7 @@ class _MobileQueueCard extends StatelessWidget {
 
 enum _ImportSource { photos, files }
 
-enum _OutputAction { save, share, open }
+enum _OutputAction { save, share, open, reconvert }
 
 enum _MobileQueueAction { retry, remove }
 
@@ -5345,10 +5496,29 @@ class _PhotoCard extends StatelessWidget {
                       onChanged: onMotionModeChanged,
                     ),
                   if (item.isSuccessful)
-                    _cardAction(theme, Icons.check_circle, onRevealOutput),
-                  if (isFailed || status == QueueItemStatus.cancelled)
-                    _cardAction(theme, Icons.refresh, onRetry),
-                  _cardAction(theme, Icons.close, onRemove),
+                    _cardAction(
+                      theme,
+                      Icons.check_circle,
+                      onRevealOutput,
+                      tooltip: t('查看输出', 'View output'),
+                    ),
+                  if (isFailed ||
+                      status == QueueItemStatus.cancelled ||
+                      item.isSuccessful)
+                    _cardAction(
+                      theme,
+                      Icons.refresh,
+                      onRetry,
+                      tooltip: item.isSuccessful
+                          ? t('按当前设置重新转换', 'Re-convert with current settings')
+                          : t('重新尝试', 'Retry'),
+                    ),
+                  _cardAction(
+                    theme,
+                    Icons.close,
+                    onRemove,
+                    tooltip: t('移出队列', 'Remove from queue'),
+                  ),
                 ],
               ),
             ),
@@ -5358,8 +5528,13 @@ class _PhotoCard extends StatelessWidget {
     );
   }
 
-  Widget _cardAction(ThemeData theme, IconData icon, VoidCallback onTap) {
-    return InkWell(
+  Widget _cardAction(
+    ThemeData theme,
+    IconData icon,
+    VoidCallback onTap, {
+    String? tooltip,
+  }) {
+    final button = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
@@ -5367,6 +5542,7 @@ class _PhotoCard extends StatelessWidget {
         child: Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
       ),
     );
+    return tooltip != null ? Tooltip(message: tooltip, child: button) : button;
   }
 }
 

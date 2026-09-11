@@ -172,4 +172,31 @@ void main() {
     expect(single.isDualStream, isFalse);
     expect(single.videoSizeLabel, '512KB');
   });
+
+  test('findOriginalDonorForConvertedFile resolves converted output to donor', () {
+    final tempDir = Directory.systemTemp.createTempSync('xdremux_donor_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    final donorFile = File('${tempDir.path}${Platform.pathSeparator}IMG_0001.heic');
+    donorFile.writeAsBytesSync([1, 2, 3]);
+
+    final convertedFile = File('${tempDir.path}${Platform.pathSeparator}IMG_0001_iso.heic');
+    convertedFile.writeAsBytesSync([4, 5, 6]);
+
+    final resolved = findOriginalDonorForConvertedFile(convertedFile.path);
+    expect(resolved, equals(donorFile.path));
+
+    final nonExistentDonorFile = File('${tempDir.path}${Platform.pathSeparator}IMG_9999_iso.heic');
+    nonExistentDonorFile.writeAsBytesSync([7, 8, 9]);
+    expect(findOriginalDonorForConvertedFile(nonExistentDonorFile.path), isNull);
+
+    final customDonor = File('${tempDir.path}${Platform.pathSeparator}IMG_0002.jpg');
+    customDonor.writeAsBytesSync([1, 2, 3]);
+    final customConverted = File('${tempDir.path}${Platform.pathSeparator}IMG_0002_custom.heic');
+    customConverted.writeAsBytesSync([4, 5, 6]);
+    expect(
+      findOriginalDonorForConvertedFile(customConverted.path, customSuffix: '_custom'),
+      equals(customDonor.path),
+    );
+  });
 }
