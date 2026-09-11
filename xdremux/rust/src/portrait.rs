@@ -743,10 +743,39 @@ fn upscale2x(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, u32, u32) {
 
 pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let depth = parse_depth(input)?;
-    let scale = depth
-        .decision
-        .scale()
-        .ok_or_else(|| format!("no usable disparity scale: {:?}", depth.decision))?;
+    // Disparity scale selection.
+    //
+    // `Passthrough` uses the producer's own rank->disparity scale from the
+    // rear.depth header (offset 0x18), which is already in the absolute range
+    // Photos expects; upstream XDRemux 1.4 relies on exactly this value and
+    // explicitly warns not to multiply the focal length into the range a
+    // second time.
+    //
+    // `CalibratedP50` covers OPPO's zero-quantization depth variant, which
+    // carries no usable producer scale (header 0x18 is not a positive float)
+    // and which upstream 1.4 refuses outright. Our physical reconstruction
+    // (focal*baseline/(disparity*distance)) systematically undershoots the
+    // absolute disparity range Photos needs: on the reference samples it
+    // produced 0.04..0.47 where an Apple portrait reference (IMG_3953)
+    // carries 0.49..2.62. At the raw value Photos reads the whole scene as
+    // far away and applies no depth blur, so the aperture slider has no
+    // visible effect. Empirically calibrated on OPPO Find X8 Ultra samples;
+    // a different device needs its own calibration.
+    const ZERO_QUANTIZATION_CALIBRATION: f64 = 5.6;
+    let mut scale = match &depth.decision {
+        pd::ScaleDecision::Passthrough(value) => *value,
+        pd::ScaleDecision::CalibratedP50(value) => *value * ZERO_QUANTIZATION_CALIBRATION,
+        pd::ScaleDecision::Unavailable(reason) => {
+            return Err(format!("no usable disparity scale: {reason}"));
+        }
+    };
+    // Debug escape hatch: keep the raw recovered scale.
+    if std::env::var("XDREMUX_PORTRAIT_SCALE_UNCALIBRATED")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        scale = depth.decision.scale().unwrap_or(scale);
+    }
     eprintln!(
         "portrait: depth {}x{}, scale={:.7} ({:?})",
         depth.width, depth.height, scale, depth.decision
@@ -788,11 +817,18 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
     let headroom_normalized = (headroom / 4.0).min(1.0);
     let lux_normalized = 0.5; // Swift default when aecLuxIndex is absent
     let near_boost = if depth.near_object_detected { 1.15 } else { 1.0 };
+    // Temporary experimental knob for REND strength. Default = 1.0.
+    let rend_boost: f64 = std::env::var("XDREMUX_PORTRAIT_REND_BOOST")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(1.0)
+        .max(0.0);
     let fitted_primary_gain = ((0.02
         + 0.17 * focus_normalized
         + 0.04 * headroom_normalized
         + 0.02 * lux_normalized)
-        * near_boost)
+        * near_boost
+        * rend_boost)
         .clamp(0.005, 0.25);
     let activation = fitted_primary_gain / 0.25;
     let dynamic = xhlrb_dynamic_values(activation, headroom, true);
