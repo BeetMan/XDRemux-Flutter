@@ -273,11 +273,24 @@ pub(crate) fn depth_curve_max(config: &[u8]) -> Option<f64> {
     (max > 0.0).then_some(max)
 }
 
+/// Observed envelope for the derived span. Apple reference portraits measure
+/// 0.41..2.13, so a curve claiming far outside that range is untrusted.
+pub(crate) const MIN_REFERENCE_SPAN: f64 = 0.3;
+pub(crate) const MAX_REFERENCE_SPAN: f64 = 2.4;
+
 /// Map the per-photo curve maximum onto the absolute disparity span Apple
 /// expects, returned as a `rank -> disparity` scale (span = 255 * scale).
 pub(crate) fn scale_from_depth_curve(config: &[u8]) -> Option<f64> {
+    // Only trust the documented layout: version 1.0..=4.0 at float 0, which is
+    // what `parse_config` validates. A different layout would make floats
+    // 38..=58 meaningless.
+    let version = f32::from_le_bytes(config.get(0..4)?.try_into().ok()?);
+    if !(1.0..=4.0).contains(&version) {
+        return None;
+    }
     let max = depth_curve_max(config)?;
-    let span = (max / CURVE_FULL_SCALE) * APPLE_REFERENCE_SPAN;
+    let span = ((max / CURVE_FULL_SCALE) * APPLE_REFERENCE_SPAN)
+        .clamp(MIN_REFERENCE_SPAN, MAX_REFERENCE_SPAN);
     let scale = span / 255.0;
     (scale.is_finite() && scale > 0.0).then_some(scale)
 }

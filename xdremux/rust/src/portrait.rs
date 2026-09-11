@@ -139,40 +139,44 @@ fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
     let rank_max = ranks.iter().copied().max().unwrap_or(0);
     let decision = if quantization_valid && pd::usable_producer_scale(embedded_scale) {
         pd::ScaleDecision::Passthrough(embedded_scale)
-    } else if let Some(scale) = config_bytes
-        .as_deref()
-        .and_then(pd::scale_from_depth_curve)
-    {
-        // Preferred path for OPPO photo whose header scale is unusable:
-        // the producer's own per-photo depth curve.
-        pd::ScaleDecision::CurveDerived(scale)
     } else if rank_max > 0 {
-        let cfg = config.as_ref();
-        let dist = cfg.and_then(|c| c.object_distance).filter(|&d| d > 0);
-        match (cfg, dist) {
-            (Some(cfg), Some(dist)) if focal_length > 0.0 && stereo_baseline > 0.0 => {
-                match pd::focus_window_ranks(&decoded, width, height, cfg, src_dims) {
-                    Some(sorted) => {
-                        let p50 = pd::percentile(&sorted, 0.50);
-                        let scale = pd::scale_for_rank(
-                            p50,
-                            rank_max as u32,
-                            focal_length,
-                            stereo_baseline,
-                            dist as f64,
-                        );
-                        if scale.is_finite() && scale > 0.0 {
-                            pd::ScaleDecision::CalibratedP50(scale)
-                        } else {
-                            pd::ScaleDecision::Unavailable("p50 formula non-finite".into())
+        // The empty-rank gate applies to every calibrated path, and the curve
+        // is preferred over the physical reconstruction when available.
+        if let Some(scale) = config_bytes
+            .as_deref()
+            .and_then(pd::scale_from_depth_curve)
+        {
+            pd::ScaleDecision::CurveDerived(scale)
+        } else {
+            let cfg = config.as_ref();
+            let dist = cfg.and_then(|c| c.object_distance).filter(|&d| d > 0);
+            match (cfg, dist) {
+                (Some(cfg), Some(dist)) if focal_length > 0.0 && stereo_baseline > 0.0 => {
+                    match pd::focus_window_ranks(&decoded, width, height, cfg, src_dims) {
+                        Some(sorted) => {
+                            let p50 = pd::percentile(&sorted, 0.50);
+                            let scale = pd::scale_for_rank(
+                                p50,
+                                rank_max as u32,
+                                focal_length,
+                                stereo_baseline,
+                                dist as f64,
+                            );
+                            if scale.is_finite() && scale > 0.0 {
+                                pd::ScaleDecision::CalibratedP50(scale)
+                            } else {
+                                pd::ScaleDecision::Unavailable("p50 formula non-finite".into())
+                            }
+                        }
+                        None => {
+                            pd::ScaleDecision::Unavailable("focus window out of range".into())
                         }
                     }
-                    None => pd::ScaleDecision::Unavailable("focus window out of range".into()),
                 }
+                _ => pd::ScaleDecision::Unavailable(
+                    "missing objectDistance/focalLength/stereoBaseline".into(),
+                ),
             }
-            _ => pd::ScaleDecision::Unavailable(
-                "missing objectDistance/focalLength/stereoBaseline".into(),
-            ),
         }
     } else {
         pd::ScaleDecision::Unavailable("empty rank plane".into())

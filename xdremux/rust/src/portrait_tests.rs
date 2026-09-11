@@ -254,3 +254,60 @@ fn curve_derived_scale_is_accepted_by_the_decision() {
     let decision = pd::ScaleDecision::CurveDerived(0.008);
     assert_eq!(decision.scale(), Some(0.008));
 }
+
+// --- disparity plane construction -------------------------------------------
+
+#[test]
+fn curve_derived_span_stretches_the_scene_ranks_across_the_target_span() {
+    // A scene that only uses ranks 40..=200 still has to fill the declared span.
+    let ranks: Vec<u8> = (40..=200).collect();
+    let target = pd::APPLE_REFERENCE_SPAN;
+    let (bytes, fmin, fmax) = build_disparity(&ranks, 1, target / 255.0, true);
+    assert_eq!(fmin, 0.0);
+    assert!((fmax - target).abs() < 1e-5, "fmax={fmax}");
+    // The extreme ranks must reach both ends of the quantised range.
+    assert!(bytes.contains(&0), "no zero byte");
+    assert!(bytes.contains(&255), "no full-scale byte");
+    // Nearer (smaller rank) must be farther (larger disparity).
+    assert!(bytes[0] > bytes[ranks.len() - 1]);
+}
+
+#[test]
+fn producer_scale_path_keeps_the_legacy_unstretched_mapping() {
+    let ranks: Vec<u8> = (40..=200).collect();
+    let span = 2.0f64;
+    let (bytes, fmin, fmax) = build_disparity(&ranks, 1, span / 255.0, false);
+    // Legacy mapping: values are span * (1 - pow(rank/255, exp)), so the range
+    // is set by the scene's own rank coverage, not stretched to the full span.
+    let expect_min = span * (1.0 - (200.0f64 / 255.0));
+    let expect_max = span * (1.0 - (40.0f64 / 255.0));
+    assert!((fmin - expect_min).abs() < 1e-4, "fmin={fmin} expect={expect_min}");
+    assert!((fmax - expect_max).abs() < 1e-4, "fmax={fmax} expect={expect_max}");
+    assert!(fmax - fmin < span - 1e-6, "legacy range must not fill the span");
+    assert!(bytes.contains(&0) && bytes.contains(&255));
+}
+
+#[test]
+fn constant_rank_plane_stays_finite_in_both_modes() {
+    let flat = vec![128u8; 64];
+    for stretch in [true, false] {
+        let (bytes, fmin, fmax) = build_disparity(&flat, 1, 2.0 / 255.0, stretch);
+        assert!(fmin.is_finite() && fmax.is_finite(), "stretch={stretch}");
+        assert!(fmax >= fmin, "stretch={stretch}");
+        assert!(bytes.iter().all(|b| *b == bytes[0]), "stretch={stretch}");
+    }
+}
+
+#[test]
+fn curve_scale_is_bounded_and_version_gated() {
+    // Out-of-envelope curve maxima are clamped to the observed reference range.
+    let huge = depth_config_with_curve(&[3.0, 100000.0]);
+    let scale = pd::scale_from_depth_curve(&huge).expect("clamped scale");
+    let span = scale * 255.0;
+    assert!(span <= pd::MAX_REFERENCE_SPAN + 1e-9, "span={span}");
+    assert!(span >= pd::MIN_REFERENCE_SPAN - 1e-9, "span={span}");
+    // A config whose version is not the documented layout is not trusted.
+    let mut wrong_version = depth_config_with_curve(&[3.0, 150.0]);
+    wrong_version[0..4].copy_from_slice(&99.0f32.to_le_bytes());
+    assert_eq!(pd::scale_from_depth_curve(&wrong_version), None);
+}
