@@ -105,6 +105,19 @@ impl ExifOrientation {
         }
     }
 
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::Normal => 1,
+            Self::FlipHorizontal => 2,
+            Self::Rotate180 => 3,
+            Self::FlipVertical => 4,
+            Self::Transpose => 5,
+            Self::Rotate90Clockwise => 6,
+            Self::Transverse => 7,
+            Self::Rotate90CounterClockwise => 8,
+        }
+    }
+
     /// HEIF `irot` stores counter-clockwise quarter turns. Mirror-only EXIF
     /// orientations cannot be expressed by `irot`, so they use zero turns.
     pub const fn irot_quarter_turns_ccw(self) -> u8 {

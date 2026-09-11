@@ -14,6 +14,14 @@
 //!    the portable floor (Photos tolerates it — placeholder acceptance
 //!    precedent).
 
+#[derive(Debug, Clone)]
+pub struct LinearThumbnailOutput {
+    pub stream: Vec<u8>,
+    pub hvcc: Vec<u8>,
+    pub light_c: Vec<u8>,
+    pub light_d: Vec<u8>,
+}
+
 /// Generate the linear thumbnail HEVC stream + hvcC for a converted HEIC.
 ///
 /// `rotate_cw_quarter_turns` is the primary's `irot` value (quarter turns
@@ -25,6 +33,16 @@ pub fn generate_linear_thumbnail(
     source_heic: &[u8],
     rotate_cw_quarter_turns: u32,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    generate_linear_thumbnail_and_light_maps(source_heic, rotate_cw_quarter_turns, 1)
+        .map(|out| (out.stream, out.hvcc))
+}
+
+/// Generate linear thumbnail and dynamic 32×32 photographic style light maps.
+pub fn generate_linear_thumbnail_and_light_maps(
+    source_heic: &[u8],
+    rotate_cw_quarter_turns: u32,
+    orientation: u16,
+) -> Result<LinearThumbnailOutput, String> {
     const OUT_W: u32 = 1024;
     const OUT_H: u32 = 768;
 
@@ -86,6 +104,9 @@ pub fn generate_linear_thumbnail(
         return Err("linear thumb: decoded primary has zero extent".into());
     }
 
+    // Dynamic 32×32 photographic styles light maps derived from decoded primary pixels.
+    let (light_c, light_d) = compute_storage_light_maps(&rgb, w, h, orientation);
+
     // Undo the display rotation: rotate CW by the primary's irot amount so
     // the stored (pre-irot) orientation matches the primary's storage.
     let (mut rgb, mut w, mut h) = (rgb, w, h);
@@ -146,7 +167,12 @@ pub fn generate_linear_thumbnail(
     let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
         .ok_or("linear thumb hvcC extraction failed")?;
     let idr = crate::hevc::drop_parameter_nals(&stream);
-    Ok((crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc))
+    Ok(LinearThumbnailOutput {
+        stream: crate::hevc::hevc_byte_stream_to_length_prefixed(&idr),
+        hvcc,
+        light_c,
+        light_d,
+    })
 }
 
 /// Area-average (box) downsample of an interleaved RGB8 raster.
@@ -201,4 +227,169 @@ fn row_weight(y: usize, y0: f64, y1: f64) -> f64 {
 
 fn col_weight(x: usize, x0: f64, x1: f64) -> f64 {
     x1.min((x + 1) as f64) - x0.max(x as f64)
+}
+
+/// Convert f32 to f16 (IEEE 754 half-precision) using round-to-nearest-even.
+pub fn f32_to_f16(val: f32) -> u16 {
+    let bits = val.to_bits();
+    let sign = ((bits >> 31) & 1) as u16;
+    let exp = ((bits >> 23) & 0xff) as i32;
+    let frac = bits & 0x7f_ffff;
+
+    if exp == 0xff {
+        let f16_frac = if frac != 0 { 0x200 } else { 0 };
+        return (sign << 15) | 0x7c00 | f16_frac;
+    }
+    let new_exp = exp - 127 + 15;
+    if new_exp >= 31 {
+        return (sign << 15) | 0x7c00;
+    }
+    if new_exp <= 0 {
+        if new_exp < -10 {
+            return sign << 15;
+        }
+        let frac_full = frac | 0x80_0000;
+        let shift = (14 - new_exp) as u32;
+        let mut f16_frac = frac_full >> shift;
+        let round_bits = frac_full & ((1 << shift) - 1);
+        let half_way = 1 << (shift - 1);
+        if (round_bits > half_way) || (round_bits == half_way && (f16_frac & 1) != 0) {
+            f16_frac += 1;
+        }
+        return (sign << 15) | (f16_frac as u16);
+    }
+    let mut f16_frac = frac >> 13;
+    let round_bits = frac & 0x1fff;
+    if (round_bits > 0x1000) || (round_bits == 0x1000 && (f16_frac & 1) != 0) {
+        f16_frac += 1;
+    }
+    let mant = ((new_exp as u16) << 10) + (f16_frac as u16);
+    (sign << 15) | mant
+}
+
+/// Compute 32×32 toneLightMap (key "c") and linearLightMap (key "d") in display
+/// (presentation) order from decoded primary sRGB pixels.
+/// Each map is returned as 2048 bytes (32×32 f16 little-endian).
+pub fn compute_presentation_light_maps(rgb: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8>) {
+    const SIDE: usize = 32;
+    const TONE_SCALE: f32 = 0.71372382;
+    const TONE_OFFSET: f32 = 0.02554340;
+    const LINEAR_SCALE: f32 = 0.93942103;
+    const LINEAR_OFFSET: f32 = 0.06494295;
+    const TONE_MIN: f32 = 0.040740966796875;
+    const TONE_MAX: f32 = 0.76123046875;
+    const LINEAR_MIN: f32 = 0.040740966796875;
+    const LINEAR_MAX: f32 = 0.75830078125;
+
+    let w = width as usize;
+    let h = height as usize;
+    let mut light_c = Vec::with_capacity(SIDE * SIDE * 2);
+    let mut light_d = Vec::with_capacity(SIDE * SIDE * 2);
+
+    for ty in 0..SIDE {
+        let y0 = ty * h / SIDE;
+        let y1 = ((ty + 1) * h / SIDE).max(y0 + 1).min(h);
+        for tx in 0..SIDE {
+            let x0 = tx * w / SIDE;
+            let x1 = ((tx + 1) * w / SIDE).max(x0 + 1).min(w);
+            let mut sum_luma = 0.0f64;
+            let mut count = 0usize;
+            for y in y0..y1 {
+                let row_start = y * w * 3;
+                for x in x0..x1 {
+                    let idx = row_start + x * 3;
+                    let r = rgb[idx] as f64 / 255.0;
+                    let g = rgb[idx + 1] as f64 / 255.0;
+                    let b = rgb[idx + 2] as f64 / 255.0;
+                    sum_luma += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    count += 1;
+                }
+            }
+            let avg = if count > 0 { (sum_luma / count as f64) as f32 } else { 0.0 };
+            let t_val = (avg * TONE_SCALE + TONE_OFFSET).clamp(TONE_MIN, TONE_MAX);
+            let l_val = (avg * LINEAR_SCALE + LINEAR_OFFSET).clamp(LINEAR_MIN, LINEAR_MAX);
+            light_c.extend_from_slice(&f32_to_f16(t_val).to_le_bytes());
+            light_d.extend_from_slice(&f32_to_f16(l_val).to_le_bytes());
+        }
+    }
+    (light_c, light_d)
+}
+
+/// Convert presentation-ordered 32×32 f16 light map into storage coordinates
+/// according to EXIF storage orientation (1..8).
+pub fn storage_ordered_light_map(presentation: &[u8], orientation: u16) -> Vec<u8> {
+    const SIDE: usize = 32;
+    if presentation.len() != SIDE * SIDE * 2 {
+        return presentation.to_vec();
+    }
+    let mut out = vec![0u8; SIDE * SIDE * 2];
+    for storage_y in 0..SIDE {
+        for storage_x in 0..SIDE {
+            let (disp_x, disp_y) = match orientation {
+                2 => (SIDE - 1 - storage_x, storage_y),
+                3 => (SIDE - 1 - storage_x, SIDE - 1 - storage_y),
+                4 => (storage_x, SIDE - 1 - storage_y),
+                5 => (storage_y, storage_x),
+                6 => (SIDE - 1 - storage_y, storage_x),
+                7 => (SIDE - 1 - storage_y, SIDE - 1 - storage_x),
+                8 => (storage_y, SIDE - 1 - storage_x),
+                _ => (storage_x, storage_y),
+            };
+            let src_idx = (disp_y * SIDE + disp_x) * 2;
+            let dst_idx = (storage_y * SIDE + storage_x) * 2;
+            out[dst_idx] = presentation[src_idx];
+            out[dst_idx + 1] = presentation[src_idx + 1];
+        }
+    }
+    out
+}
+
+/// Compute 32×32 toneLightMap and linearLightMap in storage order.
+pub fn compute_storage_light_maps(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    orientation: u16,
+) -> (Vec<u8>, Vec<u8>) {
+    let (c_pres, d_pres) = compute_presentation_light_maps(rgb, width, height);
+    (
+        storage_ordered_light_map(&c_pres, orientation),
+        storage_ordered_light_map(&d_pres, orientation),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_f32_to_f16_known_values() {
+        assert_eq!(f32_to_f16(0.0), 0x0000);
+        assert_eq!(f32_to_f16(1.0), 0x3c00);
+        assert_eq!(f32_to_f16(0.5), 0x3800);
+        assert_eq!(f32_to_f16(2.0), 0x4000);
+        assert_eq!(f32_to_f16(-1.0), 0xbc00);
+    }
+
+    #[test]
+    fn test_light_map_dimensions_and_clamping() {
+        // 64x64 white image
+        let white = vec![255u8; 64 * 64 * 3];
+        let (c, d) = compute_presentation_light_maps(&white, 64, 64);
+        assert_eq!(c.len(), 32 * 32 * 2);
+        assert_eq!(d.len(), 32 * 32 * 2);
+
+        // 64x64 black image
+        let black = vec![0u8; 64 * 64 * 3];
+        let (cb, db) = compute_presentation_light_maps(&black, 64, 64);
+        assert_eq!(cb.len(), 32 * 32 * 2);
+        assert_eq!(db.len(), 32 * 32 * 2);
+    }
+
+    #[test]
+    fn test_storage_ordered_light_map_identity() {
+        let dummy: Vec<u8> = (0..(32 * 32 * 2)).map(|i| (i & 0xff) as u8).collect();
+        let reordered = storage_ordered_light_map(&dummy, 1);
+        assert_eq!(dummy, reordered);
+    }
 }
