@@ -1511,17 +1511,30 @@ pub fn read_still_content_identifier(still_heic: &[u8]) -> Option<String> {
         if !note.starts_with(b"Apple iOS\0\0\x01") {
             return None;
         }
+        let note_le = note.get(12..14) == Some(b"II");
+        let note_u16v = |t: &[u8], o: usize| -> Option<u16> {
+            let b: [u8; 2] = t.get(o..o + 2)?.try_into().ok()?;
+            Some(if note_le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+        };
+        let note_u32v = |t: &[u8], o: usize| -> Option<usize> {
+            let b: [u8; 4] = t.get(o..o + 4)?.try_into().ok()?;
+            Some(if note_le {
+                u32::from_le_bytes(b) as usize
+            } else {
+                u32::from_be_bytes(b) as usize
+            })
+        };
         // MakerNote IFD: count u16 at 14, entries at 16, values relative to
         // the note start.
-        let cn = u16v(note, 14)? as usize;
+        let cn = note_u16v(note, 14)? as usize;
         let mut pos = 16usize;
         for _ in 0..cn {
             if pos + 12 > note.len() {
                 return None;
             }
-            let tag = u16v(note, pos)?;
-            let vcnt = u32v(note, pos + 4)?;
-            let voff = u32v(note, pos + 8)?;
+            let tag = note_u16v(note, pos)?;
+            let vcnt = note_u32v(note, pos + 4)?;
+            let voff = note_u32v(note, pos + 8)?;
             if tag == 0x0011 && vcnt >= 36 {
                 let v = note.get(voff..voff + vcnt)?;
                 let s = String::from_utf8_lossy(&v[..vcnt.min(36)]).trim().to_string();
