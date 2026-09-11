@@ -797,12 +797,52 @@ fn classification_result(
     }
 }
 
+/// Extract LHDR/UHDR metadata from in-memory photo bytes, checking both HEIF
+/// containers and Ultra HDR JPEGs (MPF + hdrgm).
+pub(crate) fn extract_lhdr_or_uhdr_from_bytes(
+    data: &[u8],
+) -> Result<container::ExtractedLhdr, String> {
+    if data.starts_with(&[0xFF, 0xD8]) {
+        match uhdr_jpeg::parse(data) {
+            Ok(Some(uhdr)) => Ok(container::ExtractedLhdr {
+                mode: "uhdr".into(),
+                meta_bytes: Vec::new(),
+                meta_floats: uhdr.meta_floats,
+                mask_data: None,
+                gainmap_data: Some(uhdr.gainmap_jpeg),
+                manifest_entries: None,
+            }),
+            Ok(None) => Err("JPEG lacks an Ultra HDR gain map".into()),
+            Err(e) => Err(e),
+        }
+    } else {
+        match container::extract_lhdr_from_bytes(data) {
+            Ok(e) => Ok(e),
+            Err(e) => {
+                // Fallback: file might be JPEG disguised with .heic or other extension
+                if let Ok(Some(uhdr)) = uhdr_jpeg::parse(data) {
+                    Ok(container::ExtractedLhdr {
+                        mode: "uhdr".into(),
+                        meta_bytes: Vec::new(),
+                        meta_floats: uhdr.meta_floats,
+                        mask_data: None,
+                        gainmap_data: Some(uhdr.gainmap_jpeg),
+                        manifest_entries: None,
+                    })
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
 /// Classify one image into an OPPO/OnePlus capture mode.
 ///
 /// The result always contains a status. `mode_key` and `folder_name` are null
 /// for unreadable, missing, malformed, or unknown-only UserComment metadata.
 /// `hdr_kind` ("lhdr"/"uhdr") and `family` ("x6"/"x7") come from the source
-/// container when it is a ProXDR HEIC.
+/// container when it is a ProXDR HEIC or Ultra HDR JPEG.
 #[no_mangle]
 pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationResult {
     let (path, data) = if input_path.is_null() {
@@ -821,7 +861,7 @@ pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationR
 
     // Parse the container for LHDR/UHDR kind and x6/x7 family when readable.
     let (hdr_kind, family) = match data.as_deref() {
-        Some(bytes) => match container::extract_lhdr_from_bytes(bytes) {
+        Some(bytes) => match extract_lhdr_or_uhdr_from_bytes(bytes) {
             Ok(extracted) => {
                 let kind = Some(extracted.mode.clone());
                 let fam = if extracted.mode == "uhdr" {
@@ -863,7 +903,7 @@ pub extern "C" fn xdremux_free_classification_result(result: ClassificationResul
 // FFI: inspect
 // ---------------------------------------------------------------------------
 
-/// Inspect a ProXDR HEIC file and return parsed metadata.
+/// Inspect a ProXDR HEIC or Ultra HDR JPEG file and return parsed metadata.
 #[no_mangle]
 pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult {
     let path = match unsafe { CStr::from_ptr(input_path) }.to_str() {
@@ -893,7 +933,21 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
         };
     }
 
-    match container::extract_lhdr(path) {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            return ConversionResult {
+                success: false,
+                mode: ptr::null_mut(),
+                family: ptr::null_mut(),
+                edr_scale: 0.0,
+                gain_map_max: 0.0,
+                error_message: CString::new(format!("cannot read input: {e}")).unwrap().into_raw(),
+            };
+        }
+    };
+
+    match extract_lhdr_or_uhdr_from_bytes(&data) {
         Ok(extracted) => {
             let (edr_scale, gain_map_max) = if extracted.mode == "uhdr" {
                 let scale = if extracted.meta_floats.len() >= 19 {
@@ -920,7 +974,9 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
                 (edr as f64, gm_max)
             };
 
-            let family = if extracted.meta_floats[0] >= 3.0 || extracted.mode == "uhdr" {
+            let family = if extracted.meta_floats.first().map(|v| *v >= 3.0).unwrap_or(false)
+                || extracted.mode == "uhdr"
+            {
                 "x7"
             } else {
                 "x6"
@@ -1510,8 +1566,16 @@ pub extern "C" fn xdremux_prepare_tiles(
 
     let result = (|| -> Result<(PreparedOutput, Vec<u8>), String> {
         let source = std::fs::read(input).map_err(|e| format!("cannot read input: {e}"))?;
-        let extracted = container::extract_lhdr_from_bytes(&source)
-            .map_err(|e| e.to_string())?;
+        let (source, extracted) = if source.starts_with(&[0xFF, 0xD8]) {
+            let info = uhdr_jpeg::parse(&source)?
+                .ok_or_else(|| "JPEG lacks an Ultra HDR gain map".to_string())?;
+            let synth = uhdr_jpeg::synthesize_source_container(&source, &info, false)?;
+            let ext = container::extract_lhdr_from_bytes(&synth)?;
+            (synth, ext)
+        } else {
+            let ext = extract_lhdr_or_uhdr_from_bytes(&source)?;
+            (source, ext)
+        };
         if extracted.mode == "uhdr" {
             let gm = extracted.gainmap_data.as_ref().ok_or("no gainmap JPEG in UHDR data")?;
             progress::set_progress(2, 0, 0); // decode JPEG
@@ -2225,6 +2289,40 @@ mod tests {
         assert_eq!(result.tag_flags, 16);
         xdremux_free_classification_result(result);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn classify_recognizes_uhdr_jpeg_sample() {
+        let sample = r"C:\Users\Beet\Desktop\Find X10\IMG20260910130245.heic";
+        if std::path::Path::new(sample).exists() {
+            let path_c = CString::new(sample).unwrap();
+            let result = xdremux_classify(path_c.as_ptr());
+            assert!(!result.hdr_kind.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr(result.hdr_kind) }.to_str().unwrap(),
+                "uhdr"
+            );
+            assert!(!result.family.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr(result.family) }.to_str().unwrap(),
+                "x7"
+            );
+            xdremux_free_classification_result(result);
+
+            let inspect = xdremux_inspect(path_c.as_ptr());
+            assert!(inspect.success);
+            assert_eq!(
+                unsafe { CStr::from_ptr(inspect.mode) }.to_str().unwrap(),
+                "uhdr"
+            );
+            assert_eq!(
+                unsafe { CStr::from_ptr(inspect.family) }.to_str().unwrap(),
+                "x7"
+            );
+            assert!(inspect.edr_scale > 3.0);
+            assert!(inspect.gain_map_max > 2.0);
+            xdremux_free_result(inspect);
+        }
     }
 
     /// Diagnostic: dump source and output ISOBMFF structures for comparison.

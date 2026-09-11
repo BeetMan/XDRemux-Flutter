@@ -488,7 +488,7 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
     }
 
     // 3. HDR GainMap inspection (UHDR or LHDR)
-    if let Ok(extracted) = container::extract_lhdr_from_bytes(data) {
+    if let Ok(extracted) = crate::extract_lhdr_or_uhdr_from_bytes(data) {
         details.hdr_kind = Some(extracted.mode.clone());
         let (edr_scale, gain_map_max) = if extracted.mode == "uhdr" {
             let scale = if extracted.meta_floats.len() >= 19 {
@@ -516,29 +516,6 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
         };
         details.edr_scale = Some((edr_scale * 10.0).round() / 10.0);
         details.gain_map_max = Some((gain_map_max * 10.0).round() / 10.0);
-    } else if data.starts_with(b"\xff\xd8\xff") {
-        if let Ok(Some(uhdr)) = crate::uhdr_jpeg::parse(data) {
-            details.hdr_kind = Some("uhdr".to_string());
-            let scale = if uhdr.meta_floats.len() >= 19 {
-                uhdr.meta_floats[18]
-            } else {
-                1.0
-            };
-            let ratio_max = if uhdr.meta_floats.len() >= 7 {
-                uhdr.meta_floats[4]
-                    .max(uhdr.meta_floats[5])
-                    .max(uhdr.meta_floats[6])
-            } else {
-                1.0
-            };
-            let gm_max = if ratio_max > 0.0 {
-                ratio_max.log2()
-            } else {
-                0.0
-            };
-            details.edr_scale = Some(((scale as f64) * 10.0).round() / 10.0);
-            details.gain_map_max = Some(((gm_max as f64) * 10.0).round() / 10.0);
-        }
     }
 
     details
