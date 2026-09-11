@@ -33,6 +33,7 @@ import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
+import 'widgets/photo_details_section.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -2600,6 +2601,14 @@ class _HomePageState extends State<HomePage> {
                 subtitle: Text(t('用系统图库打开', 'Open with system gallery')),
                 onTap: () => Navigator.pop(ctx, _OutputAction.open),
               ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(t('照片详情', 'Photo details')),
+                subtitle: Text(
+                  t('查看 EXIF、HDR 及实况参数', 'View EXIF, HDR, and live photo parameters'),
+                ),
+                onTap: () => Navigator.pop(ctx, _OutputAction.details),
+              ),
               const Divider(height: 1),
               ListTile(
                 leading: const Icon(Icons.refresh),
@@ -2624,6 +2633,8 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     switch (action) {
+      case _OutputAction.details:
+        _showPhotoDetails(item);
       case _OutputAction.save:
         final hasAccess = await FileActionService.hasGalleryPermission();
         if (!hasAccess) {
@@ -3266,7 +3277,6 @@ class _HomePageState extends State<HomePage> {
             if (mode == null) return;
             setState(() => item.motionPhotoMode = mode);
           },
-          onDetails: () => _showPhotoDetails(item),
         );
       },
     );
@@ -3424,16 +3434,71 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
             ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.info_outline),
+                label: Text(t('照片详情', 'Photo details')),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showPhotoDetails(item);
+                },
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
+  Future<void> _showPendingActions(QueueItem item) async {
+    final action = await showModalBottomSheet<_PendingItemAction>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(t('照片详情', 'Photo details')),
+                subtitle: Text(
+                  t('查看 EXIF、HDR 及实况参数', 'View EXIF, HDR, and live photo parameters'),
+                ),
+                onTap: () => Navigator.pop(ctx, _PendingItemAction.details),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: Text(t('移出队列', 'Remove from queue')),
+                onTap: () => Navigator.pop(ctx, _PendingItemAction.remove),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+
+    switch (action) {
+      case _PendingItemAction.details:
+        _showPhotoDetails(item);
+      case _PendingItemAction.remove:
+        final index = _queue.indexOf(item);
+        if (index >= 0) _removeItem(index);
+    }
+  }
+
   /// Tap behavior per item status:
-  /// - Completed → output actions (save/share/open)
-  /// - Failed/cancelled → error details; retry is explicit
-  /// - Pending/running → select only
+  /// - Completed → output actions (save/share/open/details)
+  /// - Failed/cancelled → error details & photo details; retry is explicit
+  /// - Pending → photo details & remove actions
+  /// - Running → select only
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
       if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
@@ -3444,6 +3509,10 @@ class _HomePageState extends State<HomePage> {
     } else if (item.status == QueueItemStatus.failed ||
         item.status == QueueItemStatus.cancelled) {
       _showItemFailure(item);
+    } else if (item.status == QueueItemStatus.pending) {
+      if (Platform.isAndroid || Platform.isIOS) {
+        _showPendingActions(item);
+      }
     }
   }
 
@@ -4954,7 +5023,6 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
-  final VoidCallback onDetails;
 
   const _MobileQueueCard({
     required this.item,
@@ -4963,7 +5031,6 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onRetry,
     required this.onRemove,
     required this.onMotionModeChanged,
-    required this.onDetails,
   });
 
   Color _statusColor(ThemeData theme) {
@@ -5164,8 +5231,6 @@ class _MobileQueueCard extends StatelessWidget {
                   icon: const Icon(Icons.more_vert),
                   onSelected: (action) {
                     switch (action) {
-                      case _MobileQueueAction.details:
-                        onDetails();
                       case _MobileQueueAction.retry:
                         onRetry();
                       case _MobileQueueAction.remove:
@@ -5173,14 +5238,6 @@ class _MobileQueueCard extends StatelessWidget {
                     }
                   },
                   itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: _MobileQueueAction.details,
-                      child: ListTile(
-                        leading: const Icon(Icons.info_outline),
-                        title: Text(t('照片详情', 'Photo details')),
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
                     if (canRetry || item.isSuccessful)
                       PopupMenuItem(
                         value: _MobileQueueAction.retry,
@@ -5214,9 +5271,11 @@ class _MobileQueueCard extends StatelessWidget {
 
 enum _ImportSource { photos, files }
 
-enum _OutputAction { save, share, open, reconvert }
+enum _OutputAction { save, share, open, details, reconvert }
 
-enum _MobileQueueAction { details, retry, remove }
+enum _PendingItemAction { details, remove }
+
+enum _MobileQueueAction { retry, remove }
 
 class _MobileStatusPill extends StatelessWidget {
   final String label;
@@ -5980,7 +6039,8 @@ class _PhotoDetailsContent extends StatelessWidget {
               // EXIF / Shooting parameters
               _buildSection(
                 theme,
-                title: t('📷 拍摄参数 (EXIF)', '📷 Shooting Parameters (EXIF)'),
+                icon: Icons.camera_alt_outlined,
+                title: t('拍摄参数 (EXIF)', 'Shooting Parameters (EXIF)'),
                 children: [
                   _detailRow(theme, t('设备机型', 'Camera Model'), details.model ?? details.make ?? '-'),
                   _detailRow(theme, t('镜头光圈', 'Aperture'), details.fNumber ?? '-'),
@@ -5997,7 +6057,8 @@ class _PhotoDetailsContent extends StatelessWidget {
               // HDR & Dynamic Range
               _buildSection(
                 theme,
-                title: t('🌈 HDR & 动态范围', '🌈 HDR & Dynamic Range'),
+                icon: Icons.hdr_on_outlined,
+                title: t('HDR & 动态范围', 'HDR & Dynamic Range'),
                 children: [
                   _detailRow(
                     theme,
@@ -6024,7 +6085,8 @@ class _PhotoDetailsContent extends StatelessWidget {
                 const SizedBox(height: 12),
                 _buildSection(
                   theme,
-                  title: t('🎬 实况照片 (Live / Motion Photo)', '🎬 Live / Motion Photo'),
+                  icon: Icons.motion_photos_on_outlined,
+                  title: t('实况照片 (Live / Motion Photo)', 'Live / Motion Photo'),
                   children: [
                     if (item.motionPhoto!.resolutionLabel.isNotEmpty)
                       _detailRow(
@@ -6083,7 +6145,8 @@ class _PhotoDetailsContent extends StatelessWidget {
               // Path section
               _buildSection(
                 theme,
-                title: t('📁 文件与路径', '📁 Files & Paths'),
+                icon: Icons.folder_outlined,
+                title: t('文件与路径', 'Files & Paths'),
                 children: [
                   _detailRow(theme, t('输入路径', 'Input Path'), item.inputPath, selectable: true),
                   _detailRow(theme, t('输出路径', 'Output Path'), item.outputPath, selectable: true),
@@ -6187,31 +6250,13 @@ class _PhotoDetailsContent extends StatelessWidget {
     );
   }
 
-  Widget _buildSection(ThemeData theme, {required String title, required List<Widget> children}) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: theme.colorScheme.outlineVariant.withAlpha(100)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: theme.textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...children,
-          ],
-        ),
-      ),
-    );
+  Widget _buildSection(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    required List<Widget> children,
+  }) {
+    return PhotoDetailsSection(icon: icon, title: title, children: children);
   }
 
   Widget _detailRow(ThemeData theme, String label, String value, {bool selectable = false}) {

@@ -19,6 +19,10 @@
 //! (the Swift pipeline fused Vision semantic mattes with these planes as
 //! priors; portable semantic mattes are the R4 segmenter's later job).
 
+#[cfg(test)]
+#[path = "portrait_tests.rs"]
+mod tests;
+
 use crate::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
 
 use crate::portrait_consts::{PORTRAIT_MAKER_NOTE, REND_TEMPLATE};
@@ -380,27 +384,69 @@ fn portrait_matte_xmp() -> Vec<u8> {
 
 
 
-/// Content rectangle from the OPPO watermark tail entry
-/// (`watermark.master.params`: a float array containing CORNER quads
-/// (x0, y0, x1, y1) with x1 = primary width - right pad and y1 = primary
-/// height - bottom pad; the photo itself is the untouched sensor frame
-/// centered by a symmetric border). Returns (x0, y0, w, h) or None when
-/// the photo has no watermark frame (content = full primary).
+/// Content rectangle in primary pixels. Recognize the observed packed Hasselblad
+/// layout explicitly; retain the older aligned symmetric-corner format separately.
 fn watermark_content_rect(
     input: &[u8],
     primary_w: u32,
     primary_h: u32,
+    source_dims: (u32, u32),
+    orientation: u16,
 ) -> Option<(u32, u32, u32, u32)> {
-    let tail = {
-        // extract the manifest region without the full LHDR machinery
-        let json_start = input.windows(2).rposition(|w| w == b"[{")?;
-        let json_end = input[json_start..].iter().position(|&b| b == b']')? + json_start;
-        let entries =
-            crate::portrait_scaffold::parse_manifest_entries(input, json_start, json_end)?;
-        let e = entries.into_iter().find(|e| e.name == "watermark.master.params")?;
-        let start = (json_start as i64 - e.offset as i64) as usize;
-        input.get(start..start + e.length as usize)?
-    };
+    let tail = crate::container::extract_tail_entry(input, "watermark.master.params")?;
+    let crop = crate::container::extract_tail_entry(input, "crop.region");
+    parse_watermark_rect(&tail, (primary_w, primary_h), source_dims, orientation, crop.as_deref())
+}
+
+fn parse_watermark_rect(
+    tail: &[u8],
+    primary: (u32, u32),
+    source: (u32, u32),
+    orientation: u16,
+    crop: Option<&[u8]>,
+) -> Option<(u32, u32, u32, u32)> {
+    let (primary_w, primary_h) = primary;
+    // This exact version/style/length was observed in both 192113 and 192141.
+    // Its geometry starts at byte 14129 (unaligned); never scan arbitrary bytes.
+    if tail.len() % 4 != 0 || tail.get(4..10) == Some(b"hassel") {
+        if tail.len() != 14185 || tail.get(..4) != Some(&1f32.to_le_bytes())
+            || tail.get(4..19) != Some(b"hassel_style_1\0")
+            || tail[19..68].iter().any(|&b| b != 0)
+            || tail[14149..14153] != [0xff; 4]
+        {
+            return None;
+        }
+        let integer = |offset| -> Option<u32> {
+            let value = pd::read_f32le(tail, offset)?;
+            (value.is_finite() && value >= 0.0 && value <= 1_000_000.0 && value.fract() == 0.0)
+                .then_some(value as u32)
+        };
+        let raw = (integer(14177)?, integer(14181)?);
+        let (x, y, w, h) = (integer(14153)?, integer(14157)?, integer(14161)?, integer(14165)?);
+        let oriented = match orientation {
+            1 | 3 => source,
+            6 | 8 => (source.1, source.0),
+            _ => return None,
+        };
+        let crop = crop?;
+        if crop.len() != 20 || pd::read_f32le(crop, 0)? != 1.0
+            || pd::read_u32le(crop, 4)? != 0 || pd::read_u32le(crop, 8)? != 0
+            || (pd::read_u32le(crop, 12)?, pd::read_u32le(crop, 16)?) != source
+            || raw != source || source.0 == 0 || source.1 == 0
+            || integer(14129)? != source.0 || integer(14133)? != primary_w
+            || integer(14137)? != primary_h
+            || integer(14141)? != 0 || integer(14145)? != 0
+            || integer(14169)? != 0 || integer(14173)? != 0
+            // Only zero-origin packed content is demonstrated by these samples;
+            // nonzero origins would require distinguishing sizes from corners.
+            || x != 0 || y != 0
+            || (w, h) != oriented || w == 0 || h == 0
+            || x.checked_add(w)? > primary_w || y.checked_add(h)? > primary_h
+        {
+            return None;
+        }
+        return Some((x, y, w, h));
+    }
     let n = tail.len() / 4;
     let mut f = vec![0f32; n];
     for (k, chunk) in tail.chunks_exact(4).enumerate() {
@@ -426,6 +472,8 @@ fn watermark_content_rect(
             && (y + h - primary_h as i64).abs() <= 3
             && w > primary_w as i64 / 2
             && h > primary_h as i64 / 2
+            && w <= primary_w as i64
+            && h <= primary_h as i64
         {
             // corner quad (x0, y0, x1, y1) -> (x0, y0, w, h)
             let (cw, ch) = (w - x, h - y);
@@ -435,6 +483,81 @@ fn watermark_content_rect(
         }
     }
     None
+}
+
+/// Integer cover crop shared by focus and all auxiliary planes.
+fn cover_crop(rw: usize, rh: usize, tw: usize, th: usize) -> (usize, usize, usize, usize) {
+    let scale = (tw as f64 / rw as f64).max(th as f64 / rh as f64);
+    let sw = ((tw as f64 / scale).round() as usize).clamp(1, rw);
+    let sh = ((th as f64 / scale).round() as usize).clamp(1, rh);
+    ((rw - sw) / 2, (rh - sh) / 2, sw, sh)
+}
+
+struct PortraitPlacement {
+    canvas: (usize, usize),
+    content: (usize, usize, usize, usize),
+    source: (usize, usize),
+    crop: (usize, usize, usize, usize),
+}
+
+impl PortraitPlacement {
+    fn new(frame: (u32, u32), rect: Option<(u32, u32, u32, u32)>, source: (usize, usize)) -> Self {
+        let half = |n: u32| ((n as f64 * 0.5).round() as usize).max(64) & !1;
+        let canvas = (half(frame.0), half(frame.1));
+        let (x, y, w, h) = rect.unwrap_or((0, 0, frame.0, frame.1));
+        let scaled = |n: u32, full: u32, target: usize| (n as f64 / full as f64 * target as f64).round() as usize;
+        let cx = scaled(x, frame.0, canvas.0).min(canvas.0 - 1);
+        let cy = scaled(y, frame.1, canvas.1).min(canvas.1 - 1);
+        let cw = scaled(w, frame.0, canvas.0).clamp(1, canvas.0 - cx);
+        let ch = scaled(h, frame.1, canvas.1).clamp(1, canvas.1 - cy);
+        Self { canvas, content: (cx, cy, cw, ch), source, crop: cover_crop(source.0, source.1, cw, ch) }
+    }
+
+    fn focus(&self, normalized: (f64, f64)) -> (f64, f64) {
+        let (sx, sy, sw, sh) = self.crop;
+        let (cx, cy, cw, ch) = self.content;
+        // Inverse crop: divide by the retained fraction, never multiply.
+        let x = ((normalized.0 * self.source.0 as f64 - sx as f64) / sw as f64).clamp(0.0, 1.0);
+        let y = ((normalized.1 * self.source.1 as f64 - sy as f64) / sh as f64).clamp(0.0, 1.0);
+        ((cx as f64 + x * cw as f64) / self.canvas.0 as f64,
+         (cy as f64 + y * ch as f64) / self.canvas.1 as f64)
+    }
+
+    fn place(&self, plane: &[u8], rw: usize, rh: usize) -> (Vec<u8>, u32, u32) {
+        let (sx, sy, sw, sh) = self.crop;
+        // Mattes are 2x the depth plane: scale the SAME crop rather than rounding
+        // a second crop independently and moving subject edges by a pixel.
+        let (sx, sy, sw, sh) = (sx * rw / self.source.0, sy * rh / self.source.1,
+            sw * rw / self.source.0, sh * rh / self.source.1);
+        let mut cropped = vec![0; sw * sh];
+        for y in 0..sh {
+            cropped[y * sw..(y + 1) * sw].copy_from_slice(&plane[(sy + y) * rw + sx..(sy + y) * rw + sx + sw]);
+        }
+        let (cx, cy, cw, ch) = self.content;
+        let content = resample_plane(&cropped, sw, sh, cw, ch);
+        let mut canvas = vec![0; self.canvas.0 * self.canvas.1];
+        for y in 0..ch {
+            let start = (cy + y) * self.canvas.0 + cx;
+            canvas[start..start + cw].copy_from_slice(&content[y * cw..(y + 1) * cw]);
+        }
+        (canvas, self.canvas.0 as u32, self.canvas.1 as u32)
+    }
+}
+
+fn rotate_focus((x, y): (f64, f64), turns: u8) -> (f64, f64) {
+    match turns { 1 => (1.0 - y, x), 2 => (1.0 - x, 1.0 - y), 3 => (y, 1.0 - x), _ => (x, y) }
+}
+
+fn rotate_plane(plane: &[u8], w: usize, h: usize, turns: u8) -> (Vec<u8>, usize, usize) {
+    match turns {
+        1 => rotate_cw90(plane, w, h),
+        2 => (rotate_180(plane, w, h), w, h),
+        3 => {
+            let (r, rw, rh) = rotate_cw90(plane, w, h);
+            (rotate_180(&r, rw, rh), rw, rh)
+        }
+        _ => (plane.to_vec(), w, h),
+    }
 }
 
 /// Bilinear-resample a gray plane to arbitrary target dims.
@@ -699,188 +822,33 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
         .as_ref()
         .map(|h| upscale2x(h, depth.width, depth.height).0);
 
-    // Frame alignment: the OPPO primary is baked portrait while the depth
-    // planes live in the landscape sensor frame (the golden pipeline swapped
-    // the base to the landscape src.image + orientation 6; we keep the OPPO
-    // primary and rotate the aux data - orientation-6 semantics). Residual
-    // aspect stretch (sensor 4:3 vs the hi-res primary crop) is a documented
-    // v1 approximation.
+    // Keep OPPO primary pixels. Rotate source-coordinate auxiliaries to the
+    // actual content frame, then share one cover-crop/padding map with focus.
     let m0 = isobmff::parse_source_meta(base).map_err(|e| format!("meta parse: {e}"))?;
     let (pw_frame, ph_frame) = base_primary_dims(&m0)?;
-    let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
     let source_orientation = crate::container::extract_tail_entry(input, "src.image")
-        .as_deref()
-        .map(jpeg_orientation)
-        .unwrap_or(1);
-    let rotate180 = source_orientation == 3;
-    // Use the actual watermark content frame when present. Some OPPO files
-    // have a portrait outer canvas but a landscape 4:3 photo centered inside;
-    // rotating the aux maps based on the outer canvas flips those files.
-    let rotate = match content_rect {
-        Some((_, _, content_w, content_h)) =>
-            content_h > content_w && depth.width > depth.height,
-        None => ph_frame > pw_frame && depth.width > depth.height,
-    };
-    eprintln!(
-        "portrait: primary frame {pw_frame}x{ph_frame}, depth {}x{}, rotate90={rotate}",
-        depth.width, depth.height
+        .as_deref().map(jpeg_orientation).unwrap_or(1);
+    let content_rect = watermark_content_rect(input, pw_frame, ph_frame, depth.src_dims, source_orientation);
+    let (_, _, content_w, content_h) = content_rect.unwrap_or((0, 0, pw_frame, ph_frame));
+    let rotate = content_h > content_w && depth.width > depth.height;
+    let turns = if rotate { if source_orientation == 8 { 3 } else { 1 } }
+        else if source_orientation == 3 { 2 } else { 0 };
+    let source = if turns % 2 == 1 { (depth.height, depth.width) } else { (depth.width, depth.height) };
+    let placement = PortraitPlacement::new((pw_frame, ph_frame), content_rect, source);
+    eprintln!("portrait: primary frame {pw_frame}x{ph_frame}, quarter-turns={turns}, watermark content rect: {content_rect:?}");
+    let cfg = depth.config.as_ref();
+    let source_focus = (
+        cfg.map(|c| c.focus_x as f64 / depth.src_dims.0.max(1) as f64).unwrap_or(0.5),
+        cfg.map(|c| c.focus_y as f64 / depth.src_dims.1.max(1) as f64).unwrap_or(0.5),
     );
-    eprintln!("portrait: watermark content rect: {content_rect:?}");
-    let mut focus_x_norm: Option<f64> = None;
-    let mut focus_y_norm: Option<f64> = None;
-    if rotate {
-        let cfg2 = depth.config.as_ref();
-        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
-            / depth.src_dims.0.max(1) as f64;
-        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
-            / depth.src_dims.1.max(1) as f64;
-        // landscape (nx, ny) -> portrait content (1 - ny, nx), then into
-        // the padded primary frame.
-        match content_rect {
-            Some((cx, cy, cw2, ch2)) => {
-                // normalized sensor point -> rotated point, then into the
-                // cover-cropped content window (center crop), then offset by
-                // the frame padding.
-                let (rx, ry) = (1.0 - ny, nx); // rotated normalized
-                let s_aspect = (depth.height as f64 / depth.width as f64)
-                    / (cw2 as f64 / ch2 as f64); // rotated-frame / content aspect
-                let content_x;
-                let content_y;
-                if s_aspect > 1.0 {
-                    // content is narrower: horizontal center crop
-                    let used = 1.0 / s_aspect;
-                    content_x = (rx - 0.5) * used + 0.5;
-                    content_y = ry;
-                } else {
-                    let used = s_aspect;
-                    content_x = rx;
-                    content_y = (ry - 0.5) * used + 0.5;
-                }
-                focus_x_norm =
-                    Some((cx as f64 + content_x.clamp(0.0, 1.0) * cw2 as f64) / pw_frame as f64);
-                focus_y_norm =
-                    Some((cy as f64 + content_y.clamp(0.0, 1.0) * ch2 as f64) / ph_frame as f64);
-            }
-            None => {
-                focus_x_norm = Some(1.0 - ny);
-                focus_y_norm = Some(nx);
-            }
-        }
-    } else {
-        let cfg2 = depth.config.as_ref();
-        let mut nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
-            / depth.src_dims.0.max(1) as f64;
-        let mut ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
-            / depth.src_dims.1.max(1) as f64;
-        if rotate180 {
-            nx = 1.0 - nx;
-            ny = 1.0 - ny;
-        }
-        match content_rect {
-            Some((cx, cy, cw2, ch2)) => {
-                focus_x_norm =
-                    Some((cx as f64 + nx.clamp(0.0, 1.0) * cw2 as f64) / pw_frame as f64);
-                focus_y_norm =
-                    Some((cy as f64 + ny.clamp(0.0, 1.0) * ch2 as f64) / ph_frame as f64);
-            }
-            None => {
-                focus_x_norm = Some(nx);
-                focus_y_norm = Some(ny);
-            }
-        }
-    }
-
-    // Aux geometry: Photos linearly stretches aux maps to the primary size,
-    // so the aux canvas uses the primary aspect. Watermark photos carry a
-    // padded frame (content rect from the watermark tail entry): content is
-    // resampled into the content rect and the frame border gets the far
-    // plane (disparity 0 = fully blurred, mattes 0).
-    let canvas_dims = |scale: f64| -> (usize, usize) {
-        let w = ((pw_frame as f64 * scale).round() as usize).max(64) & !1;
-        let h = ((ph_frame as f64 * scale).round() as usize).max(64) & !1;
-        (w, h)
+    let focus = placement.focus(rotate_focus(source_focus, turns));
+    let place = |plane: &[u8], w: usize, h: usize| {
+        let (rotated, rw, rh) = rotate_plane(plane, w, h, turns);
+        placement.place(&rotated, rw, rh)
     };
-    // Compose: rotate -> resample into the content-rect proportions ->
-    // place onto the canvas (pad-aware). Without a watermark frame the
-    // content rect covers the whole canvas (plain resample).
-    // Cover mapping: the content rect (e.g. a full-screen-ratio crop inside
-    // the watermark frame) relates to the sensor frame by uniform scale +
-    // center crop, NOT a stretch. Resample the center-cropped sensor window
-    // to the content rect, then pad the canvas with the far plane.
-    let cover_crop = |rw: usize, rh: usize, tw: usize, th: usize| -> (usize, usize, usize, usize) {
-        let scale = (tw as f64 / rw as f64).max(th as f64 / rh as f64);
-        let sw = ((tw as f64 / scale).round() as usize).clamp(1, rw);
-        let sh = ((th as f64 / scale).round() as usize).clamp(1, rh);
-        let sx = (rw - sw) / 2;
-        let sy = (rh - sh) / 2;
-        (sx, sy, sw, sh)
-    };
-    let place = |rotated: &[u8], rw: usize, rh: usize, target_scale: f64| -> (Vec<u8>, u32, u32) {
-        let (cw, chh) = canvas_dims(target_scale);
-        let (cx, cy, ccw, cch) = match content_rect {
-            Some((x, y, w, h)) => (
-                ((x as f64 * target_scale).round() as usize).min(cw),
-                ((y as f64 * target_scale).round() as usize).min(chh),
-                ((w as f64 * target_scale).round() as usize).max(64),
-                ((h as f64 * target_scale).round() as usize).max(64),
-            ),
-            None => (0, 0, cw, chh),
-        };
-        let ccw = ccw.min(cw.saturating_sub(cx));
-        let cch = cch.min(chh.saturating_sub(cy));
-        // center-crop the source to the content aspect, then resample
-        let (sx, sy, sw, sh) = cover_crop(rw, rh, ccw, cch);
-        let mut cropped = vec![0u8; sw * sh];
-        for y in 0..sh {
-            let src = (sy + y) * rw + sx;
-            cropped[y * sw..(y + 1) * sw].copy_from_slice(&rotated[src..src + sw]);
-        }
-        let content = resample_plane(&cropped, sw, sh, ccw, cch);
-        let mut canvas = vec![0u8; cw * chh];
-        for y in 0..cch {
-            let dst = (cy + y) * cw + cx;
-            canvas[dst..dst + ccw].copy_from_slice(&content[y * ccw..(y + 1) * ccw]);
-        }
-        (canvas, cw as u32, chh as u32)
-    };
-    let (disp_final, disp_fw, disp_fh) = if rotate {
-        let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
-        place(&r, w2, h2, 0.5) // disparity at half the primary frame
-    } else if rotate180 {
-        let r = rotate_180(&disparity_u8, depth.width, depth.height);
-        place(&r, depth.width, depth.height, 0.5)
-    } else if content_rect.is_some() {
-        place(&disparity_u8, depth.width, depth.height, 0.5)
-    } else {
-        (disparity_u8.clone(), depth.width as u32, depth.height as u32)
-    };
-    let (matte_final, matte_fw, matte_fh) = if rotate {
-        let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
-        place(&r, w2, h2, 0.5)
-    } else if rotate180 {
-        let r = rotate_180(&person_up, mu_w as usize, mu_h as usize);
-        place(&r, mu_w as usize, mu_h as usize, 0.5)
-    } else if content_rect.is_some() {
-        place(&person_up, mu_w as usize, mu_h as usize, 0.5)
-    } else {
-        (person_up.clone(), mu_w, mu_h)
-    };
-    let hair_final = match (&hair_up, rotate, rotate180) {
-        (Some(h), true, _) => {
-            let (r, w2, h2) = rotate_cw90(h, mu_w as usize, mu_h as usize);
-            let (m, _, _) = place(&r, w2, h2, 0.5);
-            Some(m)
-        }
-        (Some(h), false, true) => {
-            let r = rotate_180(h, mu_w as usize, mu_h as usize);
-            Some(place(&r, mu_w as usize, mu_h as usize, 0.5).0)
-        }
-        (Some(h), false, false) if content_rect.is_some() => {
-            Some(place(h, mu_w as usize, mu_h as usize, 0.5).0)
-        }
-        (Some(h), false, false) => Some(h.clone()),
-        (None, _, _) => None,
-    };
+    let (disp_final, disp_fw, disp_fh) = place(&disparity_u8, depth.width, depth.height);
+    let (matte_final, matte_fw, matte_fh) = place(&person_up, mu_w as usize, mu_h as usize);
+    let hair_final = hair_up.as_ref().map(|h| place(h, mu_w as usize, mu_h as usize).0);
     let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
     let (person_stream, person_hvcc) = encode_mono(&matte_final, matte_fw, matte_fh)?;
     let (hair_stream, hair_hvcc) = match &hair_final {
@@ -902,9 +870,7 @@ pub fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String> {
         hair_hvcc,
         matte_fw,
         matte_fh,
-        &depth,
-        focus_x_norm,
-        focus_y_norm,
+        focus,
         (pw_frame, ph_frame),
     )
 }
@@ -939,9 +905,7 @@ fn attach_portrait_graph(
     hair_hvcc: Vec<u8>,
     matte_w: u32,
     matte_h: u32,
-    depth: &DepthData,
-    focus_x_norm: Option<f64>,
-    focus_y_norm: Option<f64>,
+    focus_normalized: (f64, f64),
     primary_frame: (u32, u32),
 ) -> Result<Vec<u8>, String> {
     let top = top_level_boxes(base)?;
@@ -1122,16 +1086,14 @@ fn attach_portrait_graph(
     let new_idat = std_idat; // XMP payloads go to mdat (golden layout), idat stays untouched
     let semantic_xmp = crate::portrait_scaffold::matte_xmp_pub();
     let datetime = extract_exif_datetime(base, &meta).unwrap_or_else(|| "1970:01:01 00:00:00".into());
-    let cfg = depth.config.as_ref();
     // Merge the Focus region into the base converter's hdrgm-xmp mime item
     // (the only mime XMP ImageIO merges for the primary).
     let hdrgm_item = find_primary_xmp_item(&meta, primary)?;
     let hdrgm_payload = read_item_payload(base, &meta, hdrgm_item)
         .ok_or("hdrgm-xmp item payload unreadable")?;
 
-    // Portrait marker metadata: CustomRendered = 9 + the Apple portrait
-    // MakerNote (Photos' portrait detection reads these; the golden pipeline
-    // sets both via ImageIO properties on the blank carrier).
+    // Swift-reference marker metadata: CustomRendered = 9 + the Apple portrait
+    // MakerNote. These repairs do not by themselves prove Photos capability gating.
     let exif_item = meta
         .items
         .iter()
@@ -1140,22 +1102,13 @@ fn attach_portrait_graph(
         .item_id;
     let exif_payload = read_item_payload(base, &meta, exif_item)
         .ok_or("Exif payload unreadable")?;
-    let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
-    let (fx, fy, ap_w, ap_h) = match (focus_x_norm, focus_y_norm) {
-        (Some(nx), Some(ny)) => (nx, ny, primary_frame.0, primary_frame.1),
-        _ => (
-            cfg.map(|c| c.focus_x as f64).unwrap_or(depth.src_dims.0 as f64 / 2.0),
-            cfg.map(|c| c.focus_y as f64).unwrap_or(depth.src_dims.1 as f64 / 2.0),
-            depth.src_dims.0,
-            depth.src_dims.1,
-        ),
-    };
+    let patched_exif = patch_exif_portrait_markers(&exif_payload, PORTRAIT_MAKER_NOTE)?;
     let merged_main_xmp = merge_focus_into_xmp(
         &hdrgm_payload,
-        fx,
-        fy,
-        ap_w,
-        ap_h,
+        focus_normalized.0,
+        focus_normalized.1,
+        primary_frame.0,
+        primary_frame.1,
         &datetime,
     )?;
 
@@ -1350,15 +1303,16 @@ fn read_item_payload(data: &[u8], meta: &ParsedMeta, item_id: u32) -> Option<Vec
 /// before </rdf:RDF>, mirroring the golden's main-XMP content.
 fn merge_focus_into_xmp(
     xmp: &[u8],
-    focus_x: f64,
-    focus_y: f64,
+    focus_x_normalized: f64,
+    focus_y_normalized: f64,
     src_w: u32,
     src_h: u32,
     datetime: &str,
 ) -> Result<Vec<u8>, String> {
     let text = String::from_utf8(xmp.to_vec()).map_err(|_| "hdrgm XMP not UTF-8")?;
-    let nx = focus_x / src_w.max(1) as f64;
-    let ny = focus_y / src_h.max(1) as f64;
+    // Callers supply normalized primary-frame coordinates, not source pixels.
+    let nx = focus_x_normalized;
+    let ny = focus_y_normalized;
     let mut chars: Vec<char> = datetime.chars().collect();
     for i in [4usize, 7] {
         if chars.get(i) == Some(&':') {
@@ -1408,70 +1362,10 @@ fn merge_focus_into_xmp(
 }
 
 
-/// Set CustomRendered (0xA404) = 9 (portrait-rendered marker, golden layout:
-/// type 5 / count 1) and inject the Apple portrait MakerNote into the Exif
-/// item payload (Exif items carry a 4-byte big-endian TIFF offset prefix).
+/// Source-supported CustomRendered=9 (SHORT), without touching DigitalZoomRatio.
 fn patch_exif_portrait_markers(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
-    // CustomRendered first (in-place value patch inside the TIFF body).
-    let prefix_len = 4 + u32::from_be_bytes([exif[0], exif[1], exif[2], exif[3]]) as usize;
-    let mut tiff = exif[prefix_len..].to_vec();
-    let le = tiff.starts_with(b"II");
-    let rd16 = |b: &[u8]| {
-        if le {
-            u16::from_le_bytes([b[0], b[1]])
-        } else {
-            u16::from_be_bytes([b[0], b[1]])
-        }
-    };
-    let rd32 = |b: &[u8]| {
-        if le {
-            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-        } else {
-            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
-        }
-    };
-    let wr16 = |b: &mut [u8], v: u16| {
-        if le {
-            b.copy_from_slice(&v.to_le_bytes());
-        } else {
-            b.copy_from_slice(&v.to_be_bytes());
-        }
-    };
-    let wr32 = |b: &mut [u8], v: u32| {
-        if le {
-            b.copy_from_slice(&v.to_le_bytes());
-        } else {
-            b.copy_from_slice(&v.to_be_bytes());
-        }
-    };
-    let ifd0_off = rd32(&tiff[4..8]) as usize;
-    let ifd0_count = rd16(&tiff[ifd0_off..ifd0_off + 2]);
-    let mut exif_ifd_off = 0usize;
-    for k in 0..ifd0_count as usize {
-        let e = ifd0_off + 2 + k * 12;
-        if rd16(&tiff[e..e + 2]) == 0x8769 {
-            exif_ifd_off = rd32(&tiff[e + 8..e + 12]) as usize;
-        }
-    }
-    if exif_ifd_off == 0 {
-        return Err("Exif item has no ExifIFD pointer".into());
-    }
-    let exif_count = rd16(&tiff[exif_ifd_off..exif_ifd_off + 2]);
-    for k in 0..exif_count as usize {
-        let e = exif_ifd_off + 2 + k * 12;
-        if rd16(&tiff[e..e + 2]) == 0xA404 {
-            // golden layout: type 5 (LONG), count 1, value 9 (portrait render)
-            wr16(&mut tiff[e + 2..e + 4], 5);
-            wr32(&mut tiff[e + 4..e + 8], 1);
-            wr32(&mut tiff[e + 8..e + 12], 9);
-            break;
-        }
-    }
-    // Reassemble with the original prefix, then run the scaffold MakerNote
-    // injector (handles both the replace-in-place and insert+fixup paths).
-    let mut with_prefix = exif[..prefix_len].to_vec();
-    with_prefix.extend_from_slice(&tiff);
-    crate::portrait_scaffold::inject_maker_note(&with_prefix, maker_note)
+    let marked = crate::styles_scaffold::set_portrait_custom_rendered(exif)?;
+    crate::styles_scaffold::inject_maker_note(&marked, maker_note)
 }
 
 fn make_auxc(urn: &[u8]) -> Vec<u8> {
