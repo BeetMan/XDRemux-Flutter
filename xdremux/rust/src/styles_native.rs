@@ -187,19 +187,11 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC")
         .ok()
         .map(|p| std::fs::read(p).expect("linear hvcc file"));
-    let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
-        let black = vec![0u8; (LT_W * LT_H * 3) as usize];
-        let black_refs: Vec<&[u8]> = vec![&black];
-        let stream = crate::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
-            .map_err(|e| format!("linear thumb encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("linear thumb encode produced no stream")?;
-        let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
-            .ok_or("linear hvcC extraction failed")?;
+    let (linear_stream, linear_hvcc, dynamic_light_maps) = if let Some(stream) = env_lt_stream {
+        let hvcc = env_lt_hvcc.ok_or("XDREMUX_LT_STREAM requires XDREMUX_LT_HVCC")?;
         let idr = crate::hevc::drop_parameter_nals(&stream);
         let stream = crate::hevc::hevc_byte_stream_to_length_prefixed(&idr);
-        (env_lt_stream.unwrap_or(stream), env_lt_hvcc.unwrap_or(hvcc))
+        (stream, hvcc, None)
     } else {
         let primary_irot_turns = meta
             .ipma_entries
@@ -214,8 +206,20 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             })
             .and_then(|p| isobmff::irot_quarter_turns(&p.raw).ok())
             .unwrap_or(0) as u32;
-        match crate::linear_thumbnail::generate_linear_thumbnail(base, primary_irot_turns) {
-            Ok(pair) => pair,
+        let orientation = crate::exif::read_heif_exif_orientation(
+            base,
+            &meta.items,
+            &meta.iloc_entries,
+            None,
+        )
+        .map(|o| o.to_u16())
+        .unwrap_or(1);
+        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps(
+            base,
+            primary_irot_turns,
+            orientation,
+        ) {
+            Ok(out) => (out.stream, out.hvcc, Some((out.light_c, out.light_d))),
             Err(e) => {
                 // Legacy black placeholder fallback.
                 let black = vec![0u8; (LT_W * LT_H * 3) as usize];
@@ -228,13 +232,18 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
                 let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
                     .ok_or_else(|| format!("linear thumb encode: {e}; hvcC extraction failed"))?;
                 let idr = crate::hevc::drop_parameter_nals(&stream);
-                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc, None)
             }
         }
     };
 
     // ---- style metadata bplist ------------------------------------------
-    let bplist = build_style_metadata();
+    let mut style_state = StyleStateOverride::identity();
+    if let Some((c, d)) = dynamic_light_maps {
+        style_state.light_c = c;
+        style_state.light_d = d;
+    }
+    let bplist = build_style_metadata_with(&style_state);
 
     // ---- iinf ------------------------------------------------------------
     let mut new_infes: Vec<Vec<u8>> = meta.items.iter().map(|i| i.raw_infe.clone()).collect();
@@ -612,7 +621,7 @@ fn identity_style_data() -> Vec<u8> {
     out
 }
 
-fn build_style_metadata() -> Vec<u8> {
+pub fn build_style_metadata() -> Vec<u8> {
     build_style_metadata_with(&StyleStateOverride::identity())
 }
 
