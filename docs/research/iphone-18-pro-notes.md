@@ -118,10 +118,24 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 ## 待办 / 下一步
 - [x] 确认 `CaptureType=LF` / `ImageCaptureType=13` 的语义（= 48MP Fusion 可变光圈
   主摄的静止拍摄；光圈 f/1.5~f/4 在样张中被实际使用）。
-- [ ] 解析新语义部件蒙版的编码（dtype/分辨率/与 tmap 的引用关系）。
+- [x] 解析新语义部件蒙版的编码（dtype/分辨率/与 tmap 的引用关系）。
 - [ ] BrightPop/TanWarm 的 key1 晶格与既有风格的差异（沿用 universal graft 思路）。
-- [ ] 评估现有 Rust 核心对这些新样本的兼容（转换/回写路径）。
-- [ ] 解析 `texture_styles` 元数据项的结构（质感参数的具体布局）。
+- [x] 评估现有 Rust 核心对这些新样本的兼容（转换/回写路径）。
+- [x] 解析 `texture_styles` 元数据项的结构（质感参数的具体布局）。
 - [ ] 「Texture Style Post Processed People Data」各 Image Stats 的语义与 Photos
   质感滑杆的映射（磨皮 / 去油光 / 眼下提亮）。
 - [ ] Film Grain Seed 如何驱动颗粒渲染（可复现性验证）。
+
+## 兼容性评估（Rust 核心 vs iPhone 18 Pro 样本）
+- **解析**：31/31 样本能被 `isobmff` 解析器完整解析，无失败。
+- **gain map 校验**：`iso_validate_probe` 认可新结构（grid 5×3、mono gain map、
+  pixi 1ch、profile 4）。
+- **新项读取**：texture_styles / 语义部件蒙版都能被解析器读出（可分析）。
+- 结论：现有 Rust 核心读/校验新格式无障碍；转换/回写路径不受影响
+  （这些样本是目标格式参考，非 OPPO 输入）。
+
+## key1 晶格差异（受阻说明）
+样张全是 `Preset=Standard`（拍摄时无风格）；BrightPop/TanWarm 是 Photos 里**编辑**
+加的（AAE 里有 cast/tone/intensity 输入参数），编辑后的 IMG_E 被展平（无可编辑 key1）。
+→ 新风格的 key1 只在 Photos 编辑会话里临时存在，样张拿不到；要拿到需在跑 iOS 27 的
+设备上对 BrightPop/TanWarm 做一次编辑并捕获编辑前后的 key1。暂搁置。
