@@ -801,6 +801,158 @@ class MotionPhotoSummary {
   );
 }
 
+/// How a Photographic Style photo is handled at conversion time.
+enum PhotographicStyleMode {
+  /// Keep the styled photo (default conversion).
+  keepStyle,
+
+  /// Convert the styled photo and also export the un-styled base photo (.base.jpg)
+  /// next to the converted output.
+  extractBasePhoto,
+
+  /// Convert the un-styled base photo as the primary output (restore un-styled original).
+  convertBasePhoto;
+
+  String get displayName {
+    switch (this) {
+      case PhotographicStyleMode.keepStyle:
+        return t('保留风格', 'Keep style');
+      case PhotographicStyleMode.extractBasePhoto:
+        return t('提取底片', 'Extract base');
+      case PhotographicStyleMode.convertBasePhoto:
+        return t('仅转换底片', 'Convert base');
+    }
+  }
+}
+
+/// Parsed Photographic Style summary attached to a queue item.
+class PhotographicStyleSummary {
+  final String styleNameZh;
+  final String styleNameEn;
+  final String lutName;
+  final int baseImageBytes;
+  final int intensity;
+  final int tone;
+  final String version;
+
+  const PhotographicStyleSummary({
+    required this.styleNameZh,
+    required this.styleNameEn,
+    required this.lutName,
+    required this.baseImageBytes,
+    required this.intensity,
+    required this.tone,
+    required this.version,
+  });
+
+  factory PhotographicStyleSummary.fromJson(Map<String, dynamic> json) => PhotographicStyleSummary(
+    styleNameZh: json['styleNameZh'] as String? ?? '',
+    styleNameEn: json['styleNameEn'] as String? ?? '',
+    lutName: json['lutName'] as String? ?? '',
+    baseImageBytes: (json['baseImageBytes'] as num?)?.toInt() ?? 0,
+    intensity: (json['intensity'] as num?)?.toInt() ?? 100,
+    tone: (json['tone'] as num?)?.toInt() ?? 0,
+    version: json['version'] as String? ?? '',
+  );
+
+  Map<String, dynamic> toJson() => {
+    'styleNameZh': styleNameZh, 'styleNameEn': styleNameEn,
+    'lutName': lutName, 'baseImageBytes': baseImageBytes,
+    'intensity': intensity, 'tone': tone, 'version': version,
+  };
+
+  String get baseSizeLabel {
+    final mb = baseImageBytes / (1024 * 1024);
+    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(baseImageBytes / 1024).round()}KB';
+  }
+}
+
+/// How an OPPO Portrait photo (with rear.depth) is handled at conversion time.
+enum PortraitMode {
+  /// Use the current global Apple Portrait setting.
+  inherit,
+  /// Convert to Apple Portrait (generates depth map, semantic mattes, and Apple sidecar so Photos app on iOS/macOS can adjust aperture).
+  applePortrait,
+
+  /// Convert standard photo (keep ISO HDR gain map only, do not inject Apple depth graph).
+  standard;
+
+  String get displayName {
+    switch (this) {
+      case PortraitMode.inherit:
+        return t('跟随全局设置', 'Use global setting');
+      case PortraitMode.applePortrait:
+        return t('转苹果人像', 'Apple Portrait');
+      case PortraitMode.standard:
+        return t('标准 HDR', 'Standard HDR');
+    }
+  }
+}
+
+/// Parsed Portrait Depth summary attached to a queue item.
+class PortraitSummary {
+  final bool hasPortrait;
+  final int width;
+  final int height;
+  final double? scale;
+  final String scaleMode;
+  final double? currentFNumber;
+  final double? focalLengthPixels;
+  final int? objectDistance;
+  final bool hasPortraitMatte;
+  final bool hasHairMatte;
+  final bool hasPetMatte;
+
+  const PortraitSummary({
+    required this.hasPortrait,
+    required this.width,
+    required this.height,
+    required this.scale,
+    required this.scaleMode,
+    this.currentFNumber,
+    this.focalLengthPixels,
+    this.objectDistance,
+    required this.hasPortraitMatte,
+    required this.hasHairMatte,
+    required this.hasPetMatte,
+  });
+
+  factory PortraitSummary.fromJson(Map<String, dynamic> json) {
+    return PortraitSummary(
+      hasPortrait: json['hasPortrait'] == true,
+      width: json['width'] as int? ?? 0,
+      height: json['height'] as int? ?? 0,
+      scale: (json['scale'] as num?)?.toDouble(),
+      scaleMode: json['scaleMode'] as String? ?? '',
+      currentFNumber: (json['currentFNumber'] as num?)?.toDouble(),
+      focalLengthPixels: (json['focalLengthPixels'] as num?)?.toDouble(),
+      objectDistance: json['objectDistance'] as int?,
+      hasPortraitMatte: json['hasPortraitMatte'] == true,
+      hasHairMatte: json['hasHairMatte'] == true,
+      hasPetMatte: json['hasPetMatte'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'hasPortrait': hasPortrait,
+    'width': width,
+    'height': height,
+    'scale': scale,
+    'scaleMode': scaleMode,
+    'currentFNumber': currentFNumber,
+    'focalLengthPixels': focalLengthPixels,
+    'objectDistance': objectDistance,
+    'hasPortraitMatte': hasPortraitMatte,
+    'hasHairMatte': hasHairMatte,
+    'hasPetMatte': hasPetMatte,
+  };
+
+  String get resolutionLabel => '$width × $height';
+  String get apertureLabel =>
+      currentFNumber != null ? 'f/${currentFNumber!.toStringAsFixed(1)}' : 'f/--';
+  String get distanceLabel => objectDistance != null ? '${objectDistance!} cm' : '-';
+}
+
 class QueueItem {
   final String id; // UUID string
   final String inputPath;
@@ -825,6 +977,43 @@ class QueueItem {
   /// Per-card handling for Motion Photos. Defaults from the configured
   /// default policy (skip) at ingest time.
   MotionPhotoMode motionPhotoMode;
+
+  PhotographicStyleSummary? photographicStyle;
+  PhotographicStyleMode photographicStyleMode;
+  PortraitSummary? portrait;
+  PortraitMode portraitMode;
+  // Runtime capability: not persisted, since a restored queue may use an older library.
+  bool portraitInspectionAvailable = false;
+
+  bool effectiveApplePortrait(ConversionConfig config) => switch (portraitMode) {
+    PortraitMode.inherit => config.applePortrait,
+    PortraitMode.applePortrait => true,
+    PortraitMode.standard => false,
+  };
+
+  /// Detection never opts into conversion; explicit overrides still go through
+  /// the backend capability contract. Do not strip the original depth tail.
+  String? photoPolicyRejection(ConversionConfig config) {
+    if (effectiveApplePortrait(config)) {
+      if (!portraitInspectionAvailable && portraitMode == PortraitMode.applePortrait) {
+        return t('当前核心库不支持人像检测，请更新核心库或选择跟随全局设置。',
+          'Portrait inspection is unavailable. Update the core library or inherit global settings.');
+      }
+      if (portraitInspectionAvailable && portrait == null) {
+        return t('未检测到有效后置景深；请选择标准 HDR，或检查原始照片。',
+          'No valid rear depth detected. Choose Standard HDR or check the original photo.');
+      }
+    }
+    if (photographicStyleMode != PhotographicStyleMode.keepStyle && photographicStyle == null) {
+      return t('未检测到可提取的风格底片', 'No embedded photographic style base detected');
+    }
+    if (photographicStyleMode == PhotographicStyleMode.convertBasePhoto && effectiveApplePortrait(config)) {
+      return t('转换底片不能与 Apple 人像同时使用，请选择标准 HDR 或保留风格（人像流程会保留原始景深并自动使用干净底片）。',
+        'Convert base cannot be combined with Apple Portrait. Choose Standard HDR or Keep style (the portrait pipeline retains original depth and selects its clean base).');
+    }
+    return null;
+  }
+
 
   /// Backend captured when this item starts, so progress/cancellation remain
   /// tied to the request even if settings change for a later batch.
@@ -869,6 +1058,10 @@ class QueueItem {
     this.family,
     this.motionPhoto,
     this.motionPhotoMode = MotionPhotoMode.livePhotoPair,
+    this.photographicStyle,
+    this.photographicStyleMode = PhotographicStyleMode.keepStyle,
+    this.portrait,
+    this.portraitMode = PortraitMode.inherit,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,

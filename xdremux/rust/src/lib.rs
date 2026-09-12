@@ -33,6 +33,7 @@ mod styles_scaffold;
 mod portrait;
 mod portrait_consts;
 mod portrait_depth;
+mod photographic_style;
 mod portrait_graft;
 mod portrait_scaffold;
 pub mod watermark_codec;
@@ -274,6 +275,96 @@ pub extern "C" fn xdremux_make_live_photo(
     let payload = match result {
         Ok(v) => v,
         Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect a photo for OPPO Photographic Style metadata and embedded un-styled base image.
+/// Returns a JSON report with `hasPhotographicStyle` and style parameters when present.
+/// Free the returned pointer with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_photographic_style_inspect(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path_str).map_err(|e| format!("cannot read photo: {e}"))?;
+        match photographic_style::parse_photographic_style(&data) {
+            Some(style) => Ok(style.to_json()),
+            None => Ok(serde_json::json!({ "hasPhotographicStyle": false })),
+        }
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "hasPhotographicStyle": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Extract the un-styled base photo from a photo containing an OPPO Photographic Style.
+/// Writes validated embedded JPEG bytes without changing their EXIF/orientation.
+/// The destination must not exist. Free the report with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_extract_base_photo(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if input_path.is_null() || output_path.is_null() {
+            return Err("input_path and output_path are required".into());
+        }
+        let in_str = unsafe { CStr::from_ptr(input_path) }
+            .to_str()
+            .map_err(|_| "input_path is not valid UTF-8".to_string())?;
+        let out_str = unsafe { CStr::from_ptr(output_path) }
+            .to_str()
+            .map_err(|_| "output_path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(in_str).map_err(|e| format!("cannot read photo: {e}"))?;
+        let bytes = photographic_style::extract_base_photo_to_file(&data, std::path::Path::new(out_str))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputPath": out_str,
+            "bytesWritten": bytes,
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect raw photo for OPPO portrait depth (rear.depth + config).
+/// Returns a JSON string with portrait summary (dimensions, f-number, mattes).
+/// Free the returned pointer with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_inspect_portrait(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path_str)
+            .map_err(|e| format!("read {path_str}: {e}"))?;
+        portrait_depth::inspect_portrait_summary(&data)
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "hasPortrait": false, "errorMessage": e }),
     };
     match CString::new(payload.to_string()) {
         Ok(s) => s.into_raw(),

@@ -291,7 +291,10 @@ class CheckpointService {
   }
 
   /// Create checkpoint items from the current queue, capturing file metadata.
-  static List<CheckpointItem> createItemsFromQueue(List<QueueItem> queue) {
+  static List<CheckpointItem> createItemsFromQueue(
+    List<QueueItem> queue, {List<CheckpointItem> previous = const []}
+  ) {
+    final previousByPath = {for (final item in previous) item.inputPath: item};
     return queue.map((item) {
       int size = 0;
       int mtimeMs = 0;
@@ -307,9 +310,13 @@ class CheckpointService {
       return CheckpointItem(
         inputPath: item.inputPath,
         outputPath: item.outputPath,
-        status: CheckpointItemStatus.pending,
-        inputSize: size,
-        inputMtimeMs: mtimeMs,
+        status: CheckpointItemStatus.fromWire(item.status.name),
+        error: item.errorMessage,
+        finishedAt: item.finishedAt,
+        // A policy/status refresh must not bless a changed source as the
+        // original used by an already completed checkpoint item.
+        inputSize: previousByPath[item.inputPath]?.inputSize ?? size,
+        inputMtimeMs: previousByPath[item.inputPath]?.inputMtimeMs ?? mtimeMs,
         captureModeKey: item.captureModeKey,
         captureModeFolderName: item.captureModeFolderName,
         classificationStatus: item.classificationStatus,
@@ -317,6 +324,10 @@ class CheckpointService {
         family: item.family,
         motionPhoto: item.motionPhoto?.toJson(),
         motionPhotoMode: item.motionPhotoMode.name,
+        photographicStyle: item.photographicStyle?.toJson(),
+        photographicStyleMode: item.photographicStyleMode.name,
+        portrait: item.portrait?.toJson(),
+        portraitMode: item.portraitMode.name,
       );
     }).toList();
   }

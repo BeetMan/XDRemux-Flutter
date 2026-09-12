@@ -28,12 +28,14 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/photo_feature_service.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
+import 'widgets/photo_feature_menu.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -253,6 +255,7 @@ class _HomePageState extends State<HomePage> {
   String _currentFileName = '';
   int _currentConcurrency = 0;
   bool _isProcessing = false;
+  bool _isPreparingBatch = false;
   final List<_PreflightIssue> _preflightIssues = <_PreflightIssue>[];
   int? _selectedIndex;
   Timer? _progressTimer;
@@ -437,6 +440,10 @@ class _HomePageState extends State<HomePage> {
                 ? null
                 : MotionPhotoSummary.fromJson(mpJson),
         motionPhotoMode: mpMode,
+        photographicStyle: cpItem.photographicStyle == null ? null : PhotographicStyleSummary.fromJson(cpItem.photographicStyle!),
+        photographicStyleMode: PhotographicStyleMode.values.firstWhere((e) => e.name == cpItem.photographicStyleMode, orElse: () => PhotographicStyleMode.keepStyle),
+        portrait: cpItem.portrait == null ? null : PortraitSummary.fromJson(cpItem.portrait!),
+        portraitMode: PortraitMode.values.firstWhere((e) => e.name == cpItem.portraitMode, orElse: () => PortraitMode.inherit),
       );
       // Live Photo pairing provenance: a converted pair is only complete
       // when the sibling MOV still exists and its content identifier
@@ -466,6 +473,7 @@ class _HomePageState extends State<HomePage> {
         }
       }
       _queue.add(restoredItem);
+      _inspectPhotoFeatures(restoredItem);
       existing.add(cpItem.inputPath);
       restored++;
     }
@@ -667,13 +675,13 @@ class _HomePageState extends State<HomePage> {
   // Queue management
   // ---------------------------------------------------------------------------
 
-  bool get _canEditQueue => !_isProcessing;
+  bool get _canEditQueue => !_isProcessing && !_isPreparingBatch;
 
   // Keep the start action enabled when there are pending items with
   // blockers, so the user can see the preflight explanation instead of a
   // mysteriously disabled button.
   bool get _canStart =>
-      !_isProcessing &&
+      _canEditQueue &&
       _queue.any((item) => item.status == QueueItemStatus.pending);
 
   int get _totalFiles => _queue.length;
@@ -1032,6 +1040,38 @@ class _HomePageState extends State<HomePage> {
     await _ingestPickedFiles(files, source: 'file_picker');
   }
 
+  final _photoFeatures = PhotoFeatureService();
+  final _featureInspections = <String, Future<void>>{};
+
+  void _inspectPhotoFeatures(QueueItem item) {
+    late final Future<void> work;
+    work = _photoFeatures.inspect(item.inputPath).then((summary) {
+      if (!mounted || !_queue.contains(item)) return;
+      setState(() {
+        summary.applyTo(item);
+      });
+    }).whenComplete(() => _featureInspections.remove(item.id));
+    _featureInspections[item.id] = work;
+  }
+
+  Future<void> _waitForPhotoFeatures() async {
+    await _photoFeatures.waitUntilIdle();
+    while (_featureInspections.isNotEmpty) {
+      await Future.wait(_featureInspections.values.toList());
+    }
+  }
+
+  void _changePhotoPolicy(QueueItem item, {PhotographicStyleMode? style, PortraitMode? portrait}) {
+    if (!_canEditQueue) return;
+    setState(() {
+      if (style != null) item.photographicStyleMode = style;
+      if (portrait != null) item.portraitMode = portrait;
+    });
+    // A changed policy invalidates terminal results, not just the global hash.
+    _retryItem(_queue.indexOf(item));
+    _saveCheckpoint();
+  }
+
   /// Number of Motion Photo inspections currently in flight. Conversion
   /// waits for these so per-card policies apply to freshly added items.
   int _motionInspectsInFlight = 0;
@@ -1077,8 +1117,6 @@ class _HomePageState extends State<HomePage> {
     int added = 0;
     int skipped = 0;
     int skippedExisting = 0;
-    int skippedUnsupportedPortrait = 0;
-    final unsupportedPortraitFiles = <String>[];
     String? firstError;
 
     for (var index = 0; index < files.length; index++) {
@@ -1095,17 +1133,6 @@ class _HomePageState extends State<HomePage> {
       );
       if (existing.contains(path)) continue;
 
-      if (_config.applePortrait) {
-        final portraitReason = await _portraitImportRejection(path);
-        if (portraitReason != null) {
-          skippedUnsupportedPortrait++;
-          unsupportedPortraitFiles.add(file.name);
-          debugPrint(
-            '[XDRemux][portrait] rejected ${file.name}: $portraitReason',
-          );
-          continue;
-        }
-      }
 
       try {
         String effectivePath = path;
@@ -1143,6 +1170,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
+        _inspectPhotoFeatures(_queue.last);
         existing.add(effectivePath);
         added++;
       } catch (e) {
@@ -1162,23 +1190,14 @@ class _HomePageState extends State<HomePage> {
       final parts = <String>[];
       if (added > 0) parts.add(t('已添加 $added 个文件', 'Added $added files'));
       if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
-      if (skippedUnsupportedPortrait > 0) {
-        parts.add(
-          t(
-            '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
-            'Skipped $skippedUnsupportedPortrait files without portrait mode support',
-          ),
-        );
-      }
+
       if (skipped > 0) parts.add(t('$skipped 个无法读取', '$skipped unreadable'));
       if (firstError != null) parts.add(firstError);
       _currentFileName = parts.isEmpty
           ? t('未添加新文件', 'No new files added')
           : parts.join(t('，', ', '));
     });
-    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
-      await _showPortraitImportRejection(unsupportedPortraitFiles);
-    }
+
     if (skippedExisting > 0 && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1193,43 +1212,6 @@ class _HomePageState extends State<HomePage> {
           ),
         );
     }
-  }
-
-  Future<String?> _portraitImportRejection(String inputPath) async {
-    // The native diagnostic bridge is currently available on Apple platforms.
-    // Other platforms keep the existing conversion behavior until a portable
-    // Rust diagnostic FFI is exposed.
-    if (!Platform.isMacOS && !Platform.isIOS) return null;
-
-    final report = await XdRemuxService.diagnosePortrait(inputPath);
-    if (report['classification'] == 'missing-rear-depth') {
-      return t('缺少 rear.depth（仅包含前置深度数据）', 'Missing rear.depth (only front depth data present)');
-    }
-    return null;
-  }
-
-  Future<void> _showPortraitImportRejection(List<String> fileNames) async {
-    if (!mounted) return;
-    final shown = fileNames.take(8).join('\n');
-    final more = fileNames.length > 8 ? t('\n还有 ${fileNames.length - 8} 个文件', '\nand ${fileNames.length - 8} more files') : '';
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(t('部分照片不支持 Apple 人像模式', 'Some photos do not support Apple Portrait')),
-        content: Text(
-          t(
-            '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n$shown$more',
-            'These photos lack the rear.depth required for Apple Portrait; skipped:\n\n$shown$more',
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(t('知道了', 'Got it')),
-          ),
-        ],
-      ),
-    );
   }
 
   String? _findOriginalDonorForConvertedFile(String convertedPath) {
@@ -1335,6 +1317,11 @@ class _HomePageState extends State<HomePage> {
     }
 
     for (final item in runnable) {
+      final rejection = item.photoPolicyRejection(_config);
+      if (rejection != null) {
+        issues.add(_PreflightIssue(severity: _PreflightSeverity.blocking,
+          title: t('照片处理策略不可用', 'Photo policy unavailable'), fileName: item.fileName, detail: rejection));
+      }
       final file = File(item.inputPath);
       if (!file.existsSync()) {
         issues.add(
@@ -1399,7 +1386,7 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-    if (_config.applePortrait &&
+    if (runnable.any((item) => item.effectiveApplePortrait(_config)) &&
         _config.backend == ConversionBackend.swift &&
         !_backendCapabilities.swiftPortrait) {
       issues.add(
@@ -1414,6 +1401,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<bool> _runPreflight() async {
+    await _waitForPhotoFeatures();
+    if (!mounted) return false;
     final issues = _collectPreflightIssues();
     if (!mounted) return false;
     setState(() {
@@ -1536,25 +1525,30 @@ class _HomePageState extends State<HomePage> {
     }
     _refreshOutputPaths();
 
-    if (!await _runPreflight()) return;
-    if (!mounted) return;
-
-    // Let in-flight Motion Photo inspections land so per-card policies apply.
-    await _waitForMotionInspections();
-    if (!mounted) return;
-
-    // Android: check battery optimization before starting a batch.
-    // ColorOS/other OEMs freeze the Dart VM in background without this.
-    if (Platform.isAndroid) {
-      await _checkBatteryOptimization();
-      if (!mounted) return;
-    }
-
     setState(() {
-      _preflightIssues.clear();
-      _isProcessing = true;
-      _statusText = t('准备转换...', 'Preparing conversion...');
+      _isPreparingBatch = true;
+      _statusText = t('正在检查照片...', 'Inspecting photos...');
     });
+    try {
+      await _waitForPhotoFeatures();
+      if (!mounted) return;
+      if (!await _runPreflight()) return;
+      if (!mounted) return;
+      await _waitForMotionInspections();
+      if (!mounted) return;
+      // ColorOS freezes background work without this exemption.
+      if (Platform.isAndroid) {
+        await _checkBatteryOptimization();
+        if (!mounted) return;
+      }
+      setState(() {
+        _preflightIssues.clear();
+        _isProcessing = true;
+        _statusText = t('准备转换...', 'Preparing conversion...');
+      });
+    } finally {
+      if (mounted) setState(() => _isPreparingBatch = false);
+    }
 
     // Android: start foreground service so the OS doesn't freeze the
     // conversion isolates when the app goes to background.
@@ -1613,7 +1607,12 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
+    // Shared-file intake may append during an active batch. Never route a
+    // newly appended item before its own detection has landed.
+    await _featureInspections[item.id];
+    if (!mounted || item.status != QueueItemStatus.running) return;
     final runConfig = _config.copy();
+    runConfig.applePortrait = item.effectiveApplePortrait(runConfig);
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
     // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
@@ -1635,10 +1634,21 @@ class _HomePageState extends State<HomePage> {
         ? XdRemuxFFI.progressBegin()
         : 0;
 
+    TemporaryBasePhoto? baseInput;
     try {
+      final rejection = item.photoPolicyRejection(runConfig);
+      if (rejection != null) throw StateError(rejection);
+      var conversionInput = item.inputPath;
+      if (item.photographicStyleMode != PhotographicStyleMode.keepStyle) {
+        final convertBase = item.photographicStyleMode == PhotographicStyleMode.convertBasePhoto;
+        baseInput = await PhotoFeatureService.prepareBasePhoto(item.inputPath, requireUltraHdr: convertBase);
+        if (convertBase) conversionInput = baseInput.path;
+      }
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
+          item.photographicStyleMode == PhotographicStyleMode.keepStyle &&
+          item.portraitMode == PortraitMode.inherit &&
           await XdRemuxService.verifyOutputForBackend(
             runConfig.backend,
             item.inputPath,
@@ -1669,10 +1679,11 @@ class _HomePageState extends State<HomePage> {
       Map<String, dynamic>? result;
       if (runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
+          !runConfig.applePortrait &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
-        result = await _convertOneHardware(item, runConfig);
+        result = await _convertOneHardware(item, runConfig, inputPathOverride: conversionInput);
       }
 
       result ??= (await XdRemuxService.convertWithBackend(
@@ -1680,7 +1691,7 @@ class _HomePageState extends State<HomePage> {
           id: item.id,
           backend: runConfig.backend,
           outputMode: runConfig.outputMode,
-          inputPath: item.inputPath,
+          inputPath: conversionInput,
           outputPath: item.outputPath,
           oppoCompat: effectiveOppoCompatibility.rustValue,
           oppoCameraTail: effectiveOppoCameraTail.rustValue,
@@ -1700,6 +1711,14 @@ class _HomePageState extends State<HomePage> {
         item.errorMessage = t('已取消', 'Cancelled');
       } else if (result['success'] == true) {
         item.status = QueueItemStatus.converted;
+        if (item.photographicStyleMode == PhotographicStyleMode.extractBasePhoto) {
+          final target = _sideOutputPath(item.outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.base.jpg'));
+          await PhotoFeatureService.extractBase(item.inputPath, target);
+          if ((Platform.isAndroid || Platform.isIOS) && runConfig.autoSaveToGallery) {
+            final granted = await FileActionService.hasGalleryPermission();
+            if (granted) await Gal.putImage(target, album: 'XDRemux');
+          }
+        }
         // Motion Photo policy 静帧+视频: after the still converts, export the
         // video stream(s) next to the output. Failures degrade to a note on
         // the card; the converted still is kept either way.
@@ -1789,6 +1808,12 @@ class _HomePageState extends State<HomePage> {
         item.status = QueueItemStatus.failed;
         item.errorMessage = _backendError(runConfig.backend, e.toString());
       }
+    } finally {
+      if (baseInput != null) {
+        try { await baseInput.dispose(); } catch (e) {
+          debugPrint('[XDRemux][style] temporary base cleanup failed: $e');
+        }
+      }
     }
 
     if (item.progressHandle != 0) {
@@ -1810,8 +1835,9 @@ class _HomePageState extends State<HomePage> {
   /// Returns null on any failure so the caller falls back to software encode.
   Future<Map<String, dynamic>?> _convertOneHardware(
     QueueItem item,
-    ConversionConfig runConfig,
-  ) async {
+    ConversionConfig runConfig, {
+    String? inputPathOverride,
+  }) async {
     final handle = item.progressHandle;
     PreparedTilesResult? prepared;
     try {
@@ -1820,7 +1846,7 @@ class _HomePageState extends State<HomePage> {
       // the software path.
       prepared = await Isolate.run(
         () => XdRemuxFFI.prepareTiles(
-          item.inputPath,
+          inputPathOverride ?? item.inputPath,
           oppoCompat: runConfig.outputMode == OutputMode.apple
               ? OppoCompatMode.off.rustValue
               : runConfig.oppoCompatibility.rustValue,
@@ -2002,44 +2028,15 @@ class _HomePageState extends State<HomePage> {
   void _initCheckpoint() {
     final configHash = CheckpointService.computeConfigHash(_config);
 
-    if (_checkpoint != null && _checkpoint!.header.configHash == configHash) {
-      // Resuming: update pending items from current queue, preserve completed
-      final cpItems = _checkpoint!.items;
-      final cpByPath = {for (final ci in cpItems) ci.inputPath: ci};
-
-      for (final qItem in _queue) {
-        if (!cpByPath.containsKey(qItem.inputPath)) {
-          // New item not in checkpoint
-          cpItems.add(
-            CheckpointItem(
-              inputPath: qItem.inputPath,
-              outputPath: qItem.outputPath,
-              status: CheckpointItemStatus.pending,
-              inputSize: _fileSize(qItem.inputPath),
-              inputMtimeMs: _fileMtimeMs(qItem.inputPath),
-              captureModeKey: qItem.captureModeKey,
-              captureModeFolderName: qItem.captureModeFolderName,
-              classificationStatus: qItem.classificationStatus,
-              hdrKind: qItem.hdrKind,
-              family: qItem.family,
-              motionPhoto: qItem.motionPhoto?.toJson(),
-              motionPhotoMode: qItem.motionPhotoMode.name,
-            ),
-          );
-        }
-      }
-    } else {
-      // Fresh start: create new checkpoint from queue
-      _checkpoint = Checkpoint(
-        header: CheckpointHeader(
-          configHash: configHash,
-          totalJobs: _queue.length,
-          startedAt: DateTime.now(),
-          appVersion: _version,
-        ),
-        items: CheckpointService.createItemsFromQueue(_queue),
-      );
-    }
+    _checkpoint = Checkpoint(
+      header: CheckpointHeader(
+        configHash: configHash,
+        totalJobs: _queue.length,
+        startedAt: _checkpoint?.header.startedAt ?? DateTime.now(),
+        appVersion: _version,
+      ),
+      items: CheckpointService.createItemsFromQueue(_queue, previous: _checkpoint?.items ?? const []),
+    );
     _saveCheckpoint();
   }
 
@@ -2073,6 +2070,10 @@ class _HomePageState extends State<HomePage> {
   /// Persist current checkpoint to disk.
   void _saveCheckpoint() {
     if (_checkpoint == null) return;
+    final items = CheckpointService.createItemsFromQueue(_queue, previous: _checkpoint!.items);
+    _checkpoint!.items
+      ..clear()
+      ..addAll(items);
     CheckpointService.save(_checkpoint!);
   }
 
@@ -2150,24 +2151,6 @@ class _HomePageState extends State<HomePage> {
       return t('Swift 后端：$message', 'Swift backend: $message');
     }
     return message;
-  }
-
-  static int _fileSize(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.lengthSync() : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  static int _fileMtimeMs(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.statSync().modified.millisecondsSinceEpoch : 0;
-    } catch (_) {
-      return 0;
-    }
   }
 
   void _clearQueue() {
@@ -2331,8 +2314,6 @@ class _HomePageState extends State<HomePage> {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
-    int skippedUnsupportedPortrait = 0;
-    final unsupportedPortraitFiles = <String>[];
     for (final resolvedPath in paths) {
       if (!isSupportedInputPath(resolvedPath)) {
         ignored++;
@@ -2345,19 +2326,7 @@ class _HomePageState extends State<HomePage> {
         resolvedPath,
       );
       if (existing.contains(path)) continue;
-      if (_config.applePortrait) {
-        final portraitReason = await _portraitImportRejection(path);
-        if (portraitReason != null) {
-          skippedUnsupportedPortrait++;
-          unsupportedPortraitFiles.add(
-            resolvedPath.split(RegExp(r'[/\\]')).last,
-          );
-          debugPrint(
-            '[XDRemux][portrait] rejected $resolvedPath: $portraitReason',
-          );
-          continue;
-        }
-      }
+
       try {
         String effectivePath = path;
         final inputIsConverted = await XdRemuxService.verifyOutput(path);
@@ -2394,6 +2363,7 @@ class _HomePageState extends State<HomePage> {
           ),
         );
         _inspectMotionPhoto(_queue.last);
+        _inspectPhotoFeatures(_queue.last);
         existing.add(effectivePath);
         added++;
       } catch (_) {
@@ -2407,33 +2377,22 @@ class _HomePageState extends State<HomePage> {
     }
     if (added == 0 &&
         ignored == 0 &&
-        skippedExisting == 0 &&
-        skippedUnsupportedPortrait == 0) {
+        skippedExisting == 0) {
       return;
     }
 
     final parts = <String>[];
     if (added > 0) parts.add(t('已$verb $added 个文件', '$verb $added files'));
     if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
-    if (skippedUnsupportedPortrait > 0) {
-      parts.add(
-        t(
-          '跳过 $skippedUnsupportedPortrait 个不支持人像模式的文件',
-          'Skipped $skippedUnsupportedPortrait files without portrait mode support',
-        ),
-      );
-    }
+
     if (ignored > 0) parts.add(t('忽略 $ignored 个非 HEIC', 'Ignored $ignored non-HEIC'));
     final summary = parts.isEmpty
         ? t('未添加新文件', 'No new files added')
         : parts.join(t('，', ', '));
     setState(() => _currentFileName = summary);
-    if (unsupportedPortraitFiles.isNotEmpty && mounted) {
-      await _showPortraitImportRejection(unsupportedPortraitFiles);
-    }
+
     if (ignored > 0 ||
         skippedExisting > 0 ||
-        skippedUnsupportedPortrait > 0 ||
         verb == t('接收', 'Received')) {
       if (!mounted) return;
       final snackText = skippedExisting > 0
@@ -3265,6 +3224,7 @@ class _HomePageState extends State<HomePage> {
         final itemIndex = index - 1;
         final item = _queue[itemIndex];
         return _MobileQueueCard(
+          featureMenu: _photoFeatureMenu(item),
           item: item,
           isSelected: itemIndex == _selectedIndex,
           onTap: () {
@@ -3281,6 +3241,18 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+
+  Widget _photoFeatureMenu(QueueItem item) => SizedBox(
+    width: 32, height: 32,
+    child: PhotoFeatureMenu(
+    item: item,
+    enabled: _canEditQueue,
+    applePortraitAvailable: _backendCapabilities.isAvailable(_config.backend) &&
+        (_config.backend == ConversionBackend.rust || _backendCapabilities.swiftPortrait),
+    onStyleChanged: (mode) => _changePhotoPolicy(item, style: mode),
+    onPortraitChanged: (mode) => _changePhotoPolicy(item, portrait: mode),
+    ),
+  );
 
   Widget _buildPhotoGrid(ThemeData theme) {
     if (_queue.isEmpty) {
@@ -3314,6 +3286,7 @@ class _HomePageState extends State<HomePage> {
           itemCount: _queue.length,
           itemBuilder: (context, index) {
             return _PhotoCard(
+              featureMenu: _photoFeatureMenu(_queue[index]),
               item: _queue[index],
               isSelected: index == _selectedIndex,
               onTap: () {
@@ -3342,7 +3315,9 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _showPhotoDetails(QueueItem item) {
+  Future<void> _showPhotoDetails(QueueItem item) async {
+    await _featureInspections[item.id];
+    if (!mounted) return;
     final details = PhotoDetailsService.inspect(item.inputPath);
     final file = File(item.inputPath);
     final exists = file.existsSync();
@@ -5018,6 +4993,7 @@ class _FeatureChip extends StatelessWidget {
 
 class _MobileQueueCard extends StatelessWidget {
   final QueueItem item;
+  final Widget featureMenu;
   final bool isSelected;
   final VoidCallback onTap;
   final VoidCallback onRetry;
@@ -5026,6 +5002,7 @@ class _MobileQueueCard extends StatelessWidget {
 
   const _MobileQueueCard({
     required this.item,
+    required this.featureMenu,
     required this.isSelected,
     required this.onTap,
     required this.onRetry,
@@ -5151,6 +5128,10 @@ class _MobileQueueCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
+                          if (item.portrait != null)
+                            _InfoChip(label: t('人像·${item.portrait!.apertureLabel}', 'Portrait · ${item.portrait!.apertureLabel}'), color: theme.colorScheme.primary),
+                          if (item.photographicStyle != null)
+                            _InfoChip(label: t('风格·${item.photographicStyle!.styleNameZh}', 'Style · ${item.photographicStyle!.styleNameEn}'), color: theme.colorScheme.secondary),
                           if (item.motionPhoto != null)
                             _InfoChip(
                               label: item.motionPhoto!.isDualStream
@@ -5225,6 +5206,7 @@ class _MobileQueueCard extends StatelessWidget {
                   ),
                 ),
               ),
+              featureMenu,
               if (item.status != QueueItemStatus.running)
                 PopupMenuButton<_MobileQueueAction>(
                   tooltip: t('项目操作', 'Item actions'),
@@ -5419,6 +5401,7 @@ class _PhotoCard extends StatelessWidget {
   static final Map<String, Uint8List?> _thumbCache = {};
 
   final QueueItem item;
+  final Widget featureMenu;
   final bool isSelected;
   final VoidCallback onTap;
   final VoidCallback onRevealInput;
@@ -5430,6 +5413,7 @@ class _PhotoCard extends StatelessWidget {
 
   const _PhotoCard({
     required this.item,
+    required this.featureMenu,
     required this.isSelected,
     required this.onTap,
     required this.onRevealInput,
@@ -5478,7 +5462,7 @@ class _PhotoCard extends StatelessWidget {
                   if (item.hdrKind != null ||
                       (item.captureModeLabel != null &&
                           item.captureModeLabel!.isNotEmpty) ||
-                      item.motionPhoto != null)
+                      item.motionPhoto != null || item.portrait != null || item.photographicStyle != null)
                     Positioned(
                       top: 6,
                       right: 6,
@@ -5500,6 +5484,10 @@ class _PhotoCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: Colors.white,
                             ),
+                          if (item.portrait != null)
+                            _OverlayChip(label: t('人像·${item.portrait!.apertureLabel}', 'Portrait · ${item.portrait!.apertureLabel}'), color: theme.colorScheme.primary),
+                          if (item.photographicStyle != null)
+                            _OverlayChip(label: t('风格·${item.photographicStyle!.styleNameZh}', 'Style · ${item.photographicStyle!.styleNameEn}'), color: theme.colorScheme.secondary),
                           if (item.motionPhoto != null)
                             _OverlayChip(
                               label: item.motionPhoto!.isDualStream
@@ -5615,6 +5603,7 @@ class _PhotoCard extends StatelessWidget {
                       value: item.motionPhotoMode,
                       onChanged: onMotionModeChanged,
                     ),
+                  featureMenu,
                   if (item.isSuccessful)
                     _cardAction(
                       theme,
@@ -6079,6 +6068,97 @@ class _PhotoDetailsContent extends StatelessWidget {
                   ),
                 ],
               ),
+
+              // Photographic Style
+              if (item.photographicStyle != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  icon: Icons.palette_outlined,
+                  title: t('摄影风格 (Photographic Style)', 'Photographic Style'),
+                  children: [
+                    _detailRow(
+                      theme,
+                      t('风格滤镜', 'Style Filter'),
+                      '${item.photographicStyle!.styleNameZh} (${item.photographicStyle!.styleNameEn})',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('底片数据大小', 'Base Photo Size'),
+                      item.photographicStyle!.baseSizeLabel,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('风格强度 / 影调', 'Intensity / Tone'),
+                      '${item.photographicStyle!.intensity}% / ${item.photographicStyle!.tone}',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('转换处理策略', 'Processing Policy'),
+                      item.photographicStyleMode.displayName,
+                    ),
+                  ],
+                ),
+              ],
+
+              // Portrait Depth (人像模式景深与 Apple Portrait)
+              if (item.portrait != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  icon: Icons.portrait_outlined,
+                  title: t('人像与景深 (Portrait Depth)', 'Portrait Depth'),
+                  children: [
+                    _detailRow(
+                      theme,
+                      t('景深数据', 'Depth Data'),
+                      '${t("包含后置景深", "Rear depth present")} (${item.portrait!.resolutionLabel})',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('拍摄光圈', 'Aperture'),
+                      item.portrait!.apertureLabel,
+                    ),
+                    if (item.portrait!.focalLengthPixels != null)
+                      _detailRow(
+                        theme,
+                        t('深度焦距（像素）', 'Depth focal length (pixels)'),
+                        '${item.portrait!.focalLengthPixels!.toStringAsFixed(1)} px',
+                      ),
+                    if (item.portrait!.objectDistance != null)
+                      _detailRow(
+                        theme,
+                        t('物距/主体距离', 'Subject Distance'),
+                        '${(item.portrait!.objectDistance! / 100.0).toStringAsFixed(2)} m (${item.portrait!.objectDistance} cm)',
+                      ),
+                    _detailRow(
+                      theme,
+                      t('深度尺度 / 标定', 'Scale / Calibration'),
+                      '${item.portrait!.scale?.toStringAsPrecision(4) ?? '-'} (${item.portrait!.scaleMode})',
+                    ),
+                    _detailRow(
+                      theme,
+                      t('语义遮罩 (Mattes)', 'Semantic Mattes'),
+                      [
+                        if (item.portrait!.hasPortraitMatte) t('人物主体', 'Portrait'),
+                        if (item.portrait!.hasHairMatte) t('发丝', 'Hair'),
+                        if (item.portrait!.hasPetMatte) t('宠物', 'Pet'),
+                      ].isEmpty
+                          ? t('无', 'None')
+                          : [
+                              if (item.portrait!.hasPortraitMatte) t('人物主体', 'Portrait'),
+                              if (item.portrait!.hasHairMatte) t('发丝', 'Hair'),
+                              if (item.portrait!.hasPetMatte) t('宠物', 'Pet'),
+                            ].join(' / '),
+                    ),
+                    _detailRow(
+                      theme,
+                      t('人像转换策略', 'Portrait Policy'),
+                      item.portraitMode.displayName,
+                    ),
+                  ],
+                ),
+              ],
 
               // Motion Photo
               if (item.motionPhoto != null) ...[

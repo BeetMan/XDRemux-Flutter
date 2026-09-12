@@ -374,8 +374,7 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     };
     let config_data = crate::container::extract_tail_entry(data, "rear.depth.config");
 
-    let decoded = zstd::decode_all(compressed.as_slice())
-        .map_err(|e| format!("rear.depth zstd decompress: {e}"))?;
+    let decoded = decode_depth_bounded(&compressed)?;
     report.insert("decodedBytes".into(), json!(decoded.len()));
     report.insert(
         "resourceLengths".into(),
@@ -459,7 +458,7 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
 
     let decision: ScaleDecision = if quantization_valid && usable_producer_scale(embedded_scale) {
         ScaleDecision::Passthrough(embedded_scale)
-    } else if let Some(scale) = config_data.as_deref().and_then(scale_from_depth_curve) {
+    } else if let Some(scale) = config_data.as_deref().filter(|_| rank_stats.maximum > 0).and_then(scale_from_depth_curve) {
         ScaleDecision::CurveDerived(scale)
     } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
         match cfg.object_distance {
@@ -555,6 +554,47 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     Ok(Value::Object(report))
 }
 
+/// Inspection uses the current diagnostic calibration, never a guessed scale.
+pub(crate) fn inspect_portrait_summary(data: &[u8]) -> Result<Value, String> {
+    let report = portrait_depth_report(data)?;
+    if report["available"] != true { return Ok(json!({"hasPortrait": false})); }
+    let h = &report["header"];
+    let c = &report["config"];
+    let decision = &report["calibration"]["decision"];
+    Ok(json!({
+        "hasPortrait": true,
+        "width": h["width"], "height": h["height"],
+        "scale": decision["scale"], "scaleMode": decision["mode"],
+        "currentFNumber": c["currentFNumber"], "objectDistance": c["objectDistance"],
+        "focalLengthPixels": h["focalLengthPixels"],
+        "hasPortraitMatte": h["portraitPlanePresent"],
+        "hasHairMatte": h["hairPlanePresent"], "hasPetMatte": h["petPlanePresent"],
+    }))
+}
+
+/// Bound both the zstd window and output before allocating resource planes.
+/// Four 16MP planes is ample for camera depth, while limiting hostile inputs.
+fn decode_depth_bounded(compressed: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    const MAX_PIXELS: usize = 16 * 1024 * 1024;
+    let mut decoder = zstd::stream::read::Decoder::new(compressed).map_err(|e| e.to_string())?;
+    decoder.window_log_max(26).map_err(|e| e.to_string())?;
+    let mut header = vec![0; HEADER_SIZE];
+    decoder.read_exact(&mut header).map_err(|e| format!("rear.depth header: {e}"))?;
+    let width = read_u32le(&header, 0).unwrap() as usize;
+    let height = read_u32le(&header, 4).unwrap() as usize;
+    let pixels = width.checked_mul(height).filter(|&n| n > 0 && n <= MAX_PIXELS)
+        .ok_or("rear.depth dimensions exceed inspection limit")?;
+    if width > 16_384 || height > 16_384 { return Err("rear.depth dimensions invalid".into()); }
+    let planes = 1 + [0x24, 0x25, 0x26].iter().filter(|&&i| header[i] != 0).count();
+    let expected = pixels.checked_mul(planes).ok_or("rear.depth plane size overflow")?;
+    let mut body = Vec::new();
+    decoder.take(expected as u64 + 1).read_to_end(&mut body).map_err(|e| format!("rear.depth zstd: {e}"))?;
+    if body.len() != expected { return Err("rear.depth plane length mismatch".into()); }
+    header.extend_from_slice(&body);
+    Ok(header)
+}
+
 /// CLI entry: `portrait-depth <input.heic> [output.json]`.
 pub(crate) fn cmd_portrait_depth(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -575,6 +615,63 @@ pub(crate) fn cmd_portrait_depth(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{portrait_depth_report, usable_producer_scale};
+
+    fn depth_fixture(rank: u8, extra: usize) -> Vec<u8> {
+        let mut data = vec![0; super::HEADER_SIZE + 4 + extra];
+        data[0..4].copy_from_slice(&2u32.to_le_bytes());
+        data[4..8].copy_from_slice(&2u32.to_le_bytes());
+        data[super::HEADER_SIZE..].fill(rank);
+        data
+    }
+
+    fn summary_fixture(depth: &[u8], curve: f32) -> Vec<u8> {
+        let compressed = zstd::encode_all(depth, 1).unwrap();
+        let mut config = vec![0u8; 408];
+        config[0..4].copy_from_slice(&4f32.to_le_bytes());
+        config[38*4..39*4].copy_from_slice(&curve.to_le_bytes());
+        config[292..296].copy_from_slice(&2.8f32.to_le_bytes());
+        crate::container::test_tail(&[("rear.depth", &compressed), ("rear.depth.config", &config)])
+    }
+
+    #[test]
+    fn summary_uses_current_curve_calibration_and_empty_rank_gate() {
+        let data = summary_fixture(&depth_fixture(128, 0), 150.0);
+        let summary = super::inspect_portrait_summary(&data).unwrap();
+        assert_eq!(summary["hasPortrait"], true);
+        assert_eq!(summary["width"], 2);
+        assert_eq!(summary["scaleMode"], "curve-derived");
+        assert!((summary["scale"].as_f64().unwrap() - 2.1/255.0).abs() < 1e-10);
+        assert_eq!(summary["hasPortraitMatte"], false);
+        let empty = summary_fixture(&depth_fixture(0, 0), 150.0);
+        let summary = super::inspect_portrait_summary(&empty).unwrap();
+        assert_eq!(summary["scaleMode"], "unavailable");
+        assert!(summary["scale"].is_null());
+    }
+
+    #[test]
+    fn summary_passes_through_valid_producer_scale() {
+        let mut depth = depth_fixture(128, 0);
+        depth[0x18..0x1c].copy_from_slice(&0.0075f32.to_le_bytes());
+        depth[0x30..0x32].copy_from_slice(&255u16.to_le_bytes());
+        depth[0x32] = 1;
+        let summary = super::inspect_portrait_summary(&summary_fixture(&depth, 150.0)).unwrap();
+        assert_eq!(summary["scaleMode"], "passthrough");
+    }
+
+    #[test]
+    fn depth_inspection_rejects_truncation_bombs_and_missing_mattes() {
+        let mut huge = depth_fixture(128, 0);
+        huge[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        let mut matte = depth_fixture(128, 0);
+        matte[0x25] = 1;
+        for depth in [vec![0u8; 10], huge, matte, depth_fixture(128, 1), depth_fixture(128, 1024*1024)] {
+            assert!(super::inspect_portrait_summary(&summary_fixture(&depth, 150.0)).is_err());
+        }
+        assert!(super::decode_depth_bounded(b"not zstd").is_err());
+        let mut compressed = zstd::encode_all(depth_fixture(128, 0).as_slice(), 1).unwrap();
+        compressed.pop();
+        assert!(super::decode_depth_bounded(&compressed).is_err());
+    }
 
     #[test]
     fn missing_rear_depth_is_reported_without_transforming() {

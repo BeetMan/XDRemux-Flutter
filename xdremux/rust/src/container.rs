@@ -222,12 +222,28 @@ pub fn extract_tail_entry(data: &[u8], name: &str) -> Option<Vec<u8>> {
     let (_ext_start, ext) = find_extension_region(data).ok()?;
     let (entries, json_start, _json_end) = parse_manifest(ext)?;
     let entry = entries.iter().find(|e| e.name == name)?;
-    let start = (json_start as i64 - entry.offset as i64) as usize;
-    let end = start.checked_add(entry.length as usize)?;
-    if end > ext.len() {
-        return None;
+    Some(tail_entry_slice(ext, json_start, entry)?.to_vec())
+}
+
+/// Tail resources must lie entirely before the manifest, never in its JSON.
+pub(crate) fn tail_entry_slice<'a>(ext: &'a [u8], json_start: usize, entry: &ManifestEntry) -> Option<&'a [u8]> {
+    let start = json_start.checked_sub(usize::try_from(entry.offset).ok()?)?;
+    let end = start.checked_add(usize::try_from(entry.length).ok()?)?;
+    if end > json_start { return None; }
+    ext.get(start..end)
+}
+
+#[cfg(test)]
+pub(crate) fn test_tail(resources: &[(&str, &[u8])]) -> Vec<u8> {
+    let total: usize = resources.iter().map(|(_, bytes)| bytes.len()).sum();
+    let mut data = Vec::new();
+    let mut entries = Vec::new();
+    for (name, bytes) in resources {
+        entries.push(serde_json::json!({"name": name, "offset": total - data.len(), "length": bytes.len()}));
+        data.extend_from_slice(bytes);
     }
-    Some(ext[start..end].to_vec())
+    data.extend_from_slice(serde_json::to_string(&entries).unwrap().as_bytes());
+    data
 }
 
 /// List the tail entry names present in the manifest (diagnostics).
@@ -601,7 +617,7 @@ fn is_private_hdr_tail_entry(name: &str) -> bool {
 /// Returns `(ext_start, extension_bytes)` where `ext_start` is the absolute
 /// offset within `data` and `extension_bytes` is a slice of `data` starting
 /// at that offset.
-fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
+pub(crate) fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
     // Try QTI marker first
     if let Ok(ext_start) = find_extension_start(data) {
         return Ok((ext_start, &data[ext_start..]));
@@ -691,7 +707,7 @@ fn find_extension_start(data: &[u8]) -> Result<usize, String> {
 /// Parse JSON manifest from the extension region tail.
 ///
 /// Returns `(entries, json_start_offset, json_end_offset)` or `None`.
-fn parse_manifest(data: &[u8]) -> Option<(Vec<ManifestEntry>, usize, usize)> {
+pub(crate) fn parse_manifest(data: &[u8]) -> Option<(Vec<ManifestEntry>, usize, usize)> {
     let json_start = data.windows(2).rposition(|w| w == b"[{")?;
     let json_end = data[json_start..].iter().position(|&b| b == b']')? + json_start;
 
@@ -701,129 +717,20 @@ fn parse_manifest(data: &[u8]) -> Option<(Vec<ManifestEntry>, usize, usize)> {
     Some((entries, json_start, json_end + 1))
 }
 
-/// Minimal JSON array-of-objects parser for the manifest format.
-///
-/// The manifest is always `[{"name":"...","offset":N,"length":N}, ...]`.
-/// We parse it by hand to avoid a serde_json dependency at this stage.
+/// Validate the entire JSON document before interpreting unsigned ranges.
+/// Reject duplicate names instead of selecting an ambiguous source resource.
 fn parse_manifest_json(json: &str) -> Option<Vec<ManifestEntry>> {
-    let json = json.trim();
-    let inner = json.strip_prefix('[')?.strip_suffix(']')?.trim();
-    if inner.is_empty() {
-        return Some(Vec::new());
-    }
-
-    let mut entries = Vec::new();
-    let mut depth = 0;
-    let mut obj_start = 0;
-
-    for (i, ch) in inner.char_indices() {
-        match ch {
-            '{' => {
-                if depth == 0 {
-                    obj_start = i;
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let obj_str = &inner[obj_start..=i];
-                    if let Some(entry) = parse_one_manifest_entry(obj_str) {
-                        entries.push(entry);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(entries)
-}
-
-fn parse_one_manifest_entry(obj: &str) -> Option<ManifestEntry> {
-    let mut name = None;
-    let mut offset = None;
-    let mut length = None;
-
-    let mut pos = 0;
-    let bytes = obj.as_bytes();
-
-    while pos < bytes.len() {
-        // Skip to next quote — break if no more keys to parse
-        let next = bytes[pos..].iter().position(|&b| b == b'"');
-        if next.is_none() {
-            break;
-        }
-        pos = next.unwrap() + pos;
-        let key_start = pos + 1;
-        let key_end = bytes[key_start..].iter().position(|&b| b == b'"')? + key_start;
-        let key = std::str::from_utf8(&bytes[key_start..key_end]).ok()?;
-        pos = key_end + 1;
-
-        // Skip colon
-        pos = bytes[pos..].iter().position(|&b| b == b':')? + pos + 1;
-
-        // Skip whitespace
-        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
-            pos += 1;
-        }
-
-        match key {
-            "name" => {
-                if bytes[pos] == b'"' {
-                    let val_start = pos + 1;
-                    let val_end = bytes[val_start..].iter().position(|&b| b == b'"')? + val_start;
-                    name = Some(
-                        std::str::from_utf8(&bytes[val_start..val_end])
-                            .ok()?
-                            .to_string(),
-                    );
-                    pos = val_end + 1;
-                }
-            }
-            "offset" | "length" => {
-                let val_end = bytes[pos..]
-                    .iter()
-                    .position(|&b| b == b',' || b == b'}' || b == b']' || b.is_ascii_whitespace())
-                    .unwrap_or(bytes.len() - pos);
-                let val_str = std::str::from_utf8(&bytes[pos..pos + val_end]).ok()?;
-                let val: u64 = val_str.parse().ok()?;
-                if key == "offset" {
-                    offset = Some(val);
-                } else {
-                    length = Some(val);
-                }
-                pos += val_end;
-            }
-            _ => {
-                // Skip unknown values
-                if bytes[pos] == b'"' {
-                    let val_end = bytes[pos + 1..].iter().position(|&b| b == b'"')? + pos + 2;
-                    pos = val_end;
-                } else {
-                    let val_end = bytes[pos..]
-                        .iter()
-                        .position(|&b| b == b',' || b == b'}')
-                        .unwrap_or(bytes.len() - pos);
-                    pos += val_end;
-                }
-            }
-        }
-
-        // Skip trailing comma
-        while pos < bytes.len() && (bytes[pos].is_ascii_whitespace() || bytes[pos] == b',') {
-            pos += 1;
-        }
-    }
-
-    match (name, offset, length) {
-        (Some(n), Some(o), Some(l)) => Some(ManifestEntry {
-            name: n,
-            offset: o,
-            length: l,
-        }),
-        _ => None,
-    }
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let mut names = std::collections::HashSet::new();
+    value.as_array()?.iter().map(|entry| {
+        let name = entry.get("name")?.as_str()?;
+        if !names.insert(name) { return None; }
+        Some(ManifestEntry {
+            name: name.to_owned(),
+            offset: entry.get("offset")?.as_u64()?,
+            length: entry.get("length")?.as_u64()?,
+        })
+    }).collect()
 }
 
 // ---------------------------------------------------------------------------

@@ -256,6 +256,18 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
+  static final _photographicStyleInspect = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_photographic_style_inspect');
+
+  static final _extractBasePhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_extract_base_photo');
+
+  static final _inspectPortrait = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_portrait');
+
   static final _inspectPhotoDetails = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_photo_details');
@@ -564,6 +576,80 @@ class XdRemuxFFI {
       calloc.free(sourcePtr);
       calloc.free(stillPtr);
       calloc.free(outPtr);
+    }
+  }
+
+  /// Inspect a photo for OPPO Photographic Style metadata and embedded un-styled base image.
+  static Map<String, dynamic> photographicStyleInspect(String path) {
+    final pathPtr = path.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _photographicStyleInspect(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{'hasPhotographicStyle': false};
+      }
+      final decoded = jsonDecode(report.toDartString());
+      return decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : {'hasPhotographicStyle': false};
+    } finally {
+      if (report != ffi.nullptr) _freeString(report);
+      calloc.free(pathPtr);
+    }
+  }
+
+  /// Extract the un-styled base photo directly from the container tail and write to [outputPath].
+  static Map<String, dynamic> extractBasePhoto(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _extractBasePhoto(inPtr, outPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust extract base photo returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Malformed report from Rust extract base photo',
+      };
+    } finally {
+      if (report != ffi.nullptr) _freeString(report);
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
+  }
+
+  /// Inspect a photo for OPPO Portrait Depth (rear.depth / rear.depth.config).
+  static Map<String, dynamic> inspectPortrait(String path) {
+    final pathPtr = path.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _inspectPortrait(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{'inspectionUnavailable': true};
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{'inspectionUnavailable': true};
+    } catch (_) {
+      // An older library without this additive API cannot establish absence.
+      return <String, dynamic>{'inspectionUnavailable': true};
+    } finally {
+      if (report != ffi.nullptr) {
+        try {
+          _freeString(report);
+        } catch (_) {}
+      }
+      calloc.free(pathPtr);
     }
   }
 
