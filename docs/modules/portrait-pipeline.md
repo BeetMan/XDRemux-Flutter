@@ -82,7 +82,7 @@ OPPO 的 JPEG 导出带同样的尾部条目，因此与 HEIC 走同一路径。
 - CustomRendered 使用正确的 `0xA401 / SHORT / count=1`，保留 `DigitalZoomRatio (0xA404)`。值 **9** 来自 Swift 参考源码；本次未找到可核对的本地 golden EXIF，也不代表已证明 Photos 的能力开关含义。
 - 水印识别新增严格限定的 `version=1 / hassel_style_1 / 14185 bytes` packed 布局，校验源尺寸、方向、全幅 crop.region、已观察到的零起点和边界；两张 192113/192141 样本内容为 `(0,0,3072,4096)`，外框 `3072×4608`。旧 aligned 对称边框格式仍支持，未知 packed 布局不做任意浮点扫描。
 - 焦点与 disparity/人物/头发平面共享旋转、居中 cover crop、padding 映射；焦点只归一化一次。上述样本半幅 aux 的底部 256 行为零，不覆盖水印。
-- 本修复不改变主图像素来源以外的 HDR 策略、REND 强度。设备验收状态：真机已确认 HDR 正常、人像开关可打开、分层正确、方向正确、光圈调整有虚化；**未实现**「默认开启人像」——实测写 `PortraitScore`/`PortraitScoreIsHigh` 不会改变默认状态，那需要主图本身虚化（与「关闭时显示清晰原图」的取舍），已决定维持默认关闭。
+- 本修复不改变主图像素来源以外的 HDR 策略、REND 强度。设备验收状态：真机已确认 HDR 正常、人像开关可打开、分层正确、光圈调整有虚化；跨图库方向（iOS / OPPO / 鸿蒙）与拍摄 EXIF 保留已在真机验证（对应提交 `d3b07b1`）；**未实现**「默认开启人像」——实测写 `PortraitScore`/`PortraitScoreIsHigh` 不会改变默认状态，那需要主图本身虚化（与「关闭时显示清晰原图」的取舍），已决定维持默认关闭。
 - 回归测试：`cargo test --offline -p xdremux-core --lib`（`portrait_tests.rs`、`styles_scaffold_tests.rs`）。
 
 ## 6. 诊断

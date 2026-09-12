@@ -98,6 +98,8 @@ Windows 和 Android 使用 Rust 跨平台 HEIF 编解码器完成解码、水印
 
 - 支持带后置深度数据（尾部 `rear.depth`）的 OPPO 人像照片，**HEIC 与 JPEG 导出均可**；
 - 转换后的底图取自尾部 `src.image`（Ultra HDR JPEG），是**未虚化、未裁切、不含品牌水印**的相机原始帧；关闭人像效果时看到的就是这张干净原图，开启后由深度实时渲染虚化；
+- 输出方向统一：旋转烘焙进主图像素（`irot`=0），最终 EXIF Orientation 归一为 1，iOS / OPPO / 鸿蒙图库显示方向一致（已真机验证）；
+- 拍摄 EXIF（机型、镜头、时间、曝光、ISO、GPS 等）从原图恢复，不丢失；仅尺寸/ColorSpace 等渲染相关字段随输出更新，旧缩略图不沿用；
 - 深度标定使用 OPPO 写在 `rear.depth.config` 里的**每张照片深度曲线**，光圈拨杆在 Apple 照片中可用（实测 f/1.4 与 f/16 虚化差异明显）；写入的 `SimulatedAperture` 即拍摄时的原始光圈值；
 - 默认**不自动开启**人像效果：实测补写 Apple 原生照片携带的 `PortraitScore` / `PortraitScoreIsHigh` 无法改变默认状态；要默认开启需让主图本身即虚化结果，与「关闭时显示清晰原图」相互冲突，故由用户在照片 App 中手动开启；
 - 缺少 `rear.depth` 的照片自动跳过；不自动 fallback，也不会伪造深度信息；源文件无可用 `src.image` 时回退到 OPPO 主图底图；
