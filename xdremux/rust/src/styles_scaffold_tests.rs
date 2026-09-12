@@ -1,5 +1,68 @@
 use super::*;
 
+#[test]
+fn normalize_primary_orientation_preserves_every_other_byte() {
+    for bo in [Bo(false), Bo(true)] {
+        let absent = exif_fixture(bo);
+        assert_eq!(normalize_primary_orientation(&absent).unwrap(), absent);
+        for typ in [3, 4] {
+            for orientation in 1..=8 {
+                let mut input = absent.clone();
+                // Replace the first IFD0 field with Orientation, leaving the
+                // other directories and opaque payloads untouched.
+                let e = 10 + 8 + 2;
+                bo.put_u16(&mut input[e..e + 2], 0x0112);
+                bo.put_u16(&mut input[e + 2..e + 4], typ);
+                bo.put_u32(&mut input[e + 4..e + 8], 1);
+                if typ == 3 {
+                    bo.put_u16(&mut input[e + 8..e + 10], orientation);
+                } else {
+                    bo.put_u32(&mut input[e + 8..e + 12], orientation as u32);
+                }
+                let mut expected = input.clone();
+                if typ == 3 {
+                    bo.put_u16(&mut expected[e + 8..e + 10], 1);
+                } else {
+                    bo.put_u32(&mut expected[e + 8..e + 12], 1);
+                }
+                let output = normalize_primary_orientation(&input).unwrap();
+                assert_eq!(output, expected);
+                assert_eq!(crate::exif::parse_exif_orientation(&output).unwrap(), crate::exif::ExifOrientation::Normal);
+                assert_eq!(normalize_primary_orientation(&output).unwrap(), output);
+                bo.put_u32(&mut input[e + 4..e + 8], 2);
+                assert!(normalize_primary_orientation(&input).is_err());
+            }
+        }
+    }
+}
+
+#[test]
+fn restore_capture_exif_keeps_capture_gps_and_replaces_render_fields() {
+    for bo in [Bo(false), Bo(true)] {
+        let original = exif_fixture(bo);
+        let mut rendered_color = [0; 2];
+        bo.put_u16(&mut rendered_color, 65535);
+        let rendered = upsert_exif_field(&original, 0xa001, 3, 1, &rendered_color).unwrap();
+        let restored = restore_capture_exif(&original, &rendered, 3072, 4096).unwrap();
+        assert_exif_preserved(&original, &restored);
+        let prefix = exif_prefix_len(&restored).unwrap();
+        let tiff = &restored[prefix..];
+        let (_, ifd0) = tiff_header(tiff).unwrap();
+        assert_eq!(read_ifd(tiff, bo, ifd0).unwrap().1, 0, "no stale thumbnail");
+        let (_, entries, _) = exif_directory(tiff, bo, ifd0).unwrap();
+        for (tag, expected) in [(0xa002, 3072), (0xa003, 4096)] {
+            let e = entries.iter().find(|e| e.tag == tag).unwrap();
+            assert_eq!(bo.u32(entry_bytes(tiff, e).unwrap()), expected);
+        }
+        let color = entries.iter().find(|e| e.tag == 0xa001).unwrap();
+        assert_eq!(bo.u16(entry_bytes(tiff, color).unwrap()), 65535);
+        // Portrait marking after restoration must retain the capture fields.
+        let marked = set_portrait_custom_rendered(&restored).unwrap();
+        let marked = inject_maker_note(&marked, b"Apple test note").unwrap();
+        assert_exif_preserved(&original, &marked);
+    }
+}
+
 fn exif_fixture(bo: Bo) -> Vec<u8> {
     let mut tiff = vec![0; 212];
     tiff[..2].copy_from_slice(if bo.0 { b"MM" } else { b"II" });

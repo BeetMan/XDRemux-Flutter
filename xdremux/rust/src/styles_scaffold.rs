@@ -918,6 +918,78 @@ fn exif_directory(tiff: &[u8], bo: Bo, ifd0: u32) -> Result<(usize, Vec<IfdEntry
     Ok((pointer.value_field_pos, entries, next))
 }
 
+/// Preserve original capture EXIF for an upright, clean src.image output.
+/// Only rendering-dependent fields change; MakerNote is replaced by the portrait
+/// stage afterwards. Never relocate opaque camera/GPS payloads.
+pub(crate) fn restore_capture_exif(
+    original: &[u8], rendered: &[u8], width: u32, height: u32,
+) -> Result<Vec<u8>, String> {
+    let mut output = normalize_primary_orientation(original)?;
+    let prefix = exif_prefix_len(&output)?;
+    let (bo, ifd0) = tiff_header(&output[prefix..]).ok_or("bad TIFF header")?;
+    let (entries, _) = read_ifd(&output[prefix..], bo, ifd0).ok_or("bad IFD0")?;
+    for entry in &entries {
+        let value = match entry.tag { 0x0100 => width, 0x0101 => height, _ => continue };
+        if entry.count != 1 || !matches!(entry.typ, 3 | 4) {
+            return Err("invalid primary EXIF dimension field".into());
+        }
+        // LONG fits both old SHORT dimensions and arbitrary output dimensions.
+        let pos = prefix + entry.value_field_pos;
+        bo.put_u16(&mut output[pos - 6..pos - 4], 4);
+        bo.put_u32(&mut output[pos..pos + 4], value);
+    }
+    // The original IFD1 JPEG may show the watermark/old crop and orientation.
+    // Unlink it rather than copying a stale preview into the clean output.
+    let next = prefix + ifd0 as usize + 2 + entries.len() * 12;
+    bo.put_u32(&mut output[next..next + 4], 0);
+    for (tag, value) in [(0xa002, width), (0xa003, height)] {
+        let mut bytes = [0; 4];
+        bo.put_u32(&mut bytes, value);
+        output = upsert_exif_field(&output, tag, 4, 1, &bytes)?;
+    }
+    // ColorSpace describes the rendered image, not the original watermarked
+    // primary. Keep the base writer's value (or Uncalibrated if absent).
+    let color = if rendered.is_empty() {
+        65535
+    } else {
+        let rp = exif_prefix_len(rendered)?;
+        let rt = &rendered[rp..];
+        let (rb, ri) = tiff_header(rt).ok_or("bad rendered TIFF header")?;
+        exif_directory(rt, rb, ri).ok().and_then(|(_, es, _)| {
+            es.iter().find(|e| e.tag == 0xa001 && e.typ == 3 && e.count == 1)
+                .map(|e| rb.u16(&rt[e.value_field_pos..e.value_field_pos + 2]))
+        }).unwrap_or(65535)
+    };
+    let mut bytes = [0; 2];
+    bo.put_u16(&mut bytes, color);
+    upsert_exif_field(&output, 0xa001, 3, 1, &bytes)
+}
+
+/// Normalize only the primary IFD0 orientation after pixels have been oriented.
+/// Leave thumbnail orientation and all offsets intact. An absent tag is Normal.
+pub(crate) fn normalize_primary_orientation(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let mut output = exif.to_vec();
+    if ifd0 == 0 {
+        return Ok(output);
+    }
+    let (entries, _) = read_ifd(tiff, bo, ifd0).ok_or("bad IFD0")?;
+    for entry in entries.iter().filter(|e| e.tag == 0x0112) {
+        if entry.count != 1 || !matches!(entry.typ, 3 | 4) {
+            return Err("invalid primary EXIF Orientation field".into());
+        }
+        let pos = prefix + entry.value_field_pos;
+        if entry.typ == 3 {
+            bo.put_u16(&mut output[pos..pos + 2], 1);
+        } else {
+            bo.put_u32(&mut output[pos..pos + 4], 1);
+        }
+    }
+    Ok(output)
+}
+
 /// EXIF CustomRendered is SHORT/count 1. Value 9 follows the Swift reference;
 /// its Apple-specific meaning still requires device validation. Append a new
 /// directory when absent, leaving all TIFF payload/thumbnail/GPS offsets intact.

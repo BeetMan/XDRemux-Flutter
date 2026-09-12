@@ -36,7 +36,8 @@ portrait_scaffold / portrait_graft（结构与 styles 管线同构）
 - **`SrcImage`**（默认）：取尾部 `src.image`（Ultra HDR JPEG，含自带 GainMap）。它是**未虚化、未裁切**的相机原始帧，且不含 Hasselblad 水印。
   - 深度/蒙版按 `src.image` 几何**直接等比缩放**，不查水印内容框。
   - GainMap 与主图同源，天然配套；主图与 tmap 尺寸一致，GainMap 为其 0.5×。
-  - `src.image` 的 EXIF orientation **烘焙进主图像素**（主图存成呈现方向并声明 `irot`=0），GainMap 按同一变换旋转。若保留非零 `irot`，Photos 人像编辑器会渲染出黑帧（已在真机复现并修复）。
+  - `src.image` 的 EXIF orientation **烘焙进主图像素**（主图存成呈现方向并声明 `irot`=0），GainMap 按同一变换旋转。最终 EXIF Orientation 归一为 1，避免 OPPO/鸿蒙图库重复旋转。此前样本的非零 `irot` 路径曾出现 Photos 黑帧，不代表所有非零旋转输入都会失败。
+  - 主图/GainMap 转换完成后，从**原始 HEIC 的 Exif item / 原始 JPEG 的 APP1**恢复拍摄 EXIF，不沿用 `src.image` 的精简信息。保留相机、曝光、镜头、时间、GPS 等；尺寸改为实际输出尺寸，ColorSpace 沿用渲染底图（缺失时为 Uncalibrated）。断开原图 IFD1 缩略图，避免旧水印/裁切预览。随后写入 Apple 人像 MakerNote 与 CustomRendered；原厂 MakerNote 不作为有效 MakerNote 保留。原图无 EXIF 时仍沿用底图信息。
   - 典型输出：主图/tmap `3072×4096`，GainMap 与深度/蒙版 `1536×2048`，`irot`=0。
 - **`OppoPrimary`**（回退）：源无可用 `src.image` 时使用 OPPO 主图（已带虚化与品牌水印），深度/蒙版经水印内容框映射。可用环境变量 `XDREMUX_PORTRAIT_OPPO_BASE=1` 强制。
 

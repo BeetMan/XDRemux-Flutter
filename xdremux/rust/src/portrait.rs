@@ -781,6 +781,32 @@ pub enum BaseOrigin {
 
 pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec<u8>, String> {
     let depth = parse_depth(input)?;
+    // Base conversion has already consumed src.image orientation for both
+    // primary and gain map. Restore capture EXIF now, before portrait/Styles
+    // write their Apple-specific fields and timestamp-dependent XMP.
+    let restored_base = if origin == BaseOrigin::SrcImage {
+        let original = if input.starts_with(&[0xff, 0xd8]) {
+            crate::uhdr_jpeg::read_exif_payload(input)?
+        } else {
+            crate::isobmff_write::read_exif_payload(input)?
+        };
+        if let Some(original) = original {
+            let rendered = crate::isobmff_write::read_exif_payload(base)?.unwrap_or_default();
+            let meta = isobmff::parse_source_meta(base)?;
+            let (width, height) = base_primary_dims(&meta)?;
+            let restored = crate::styles_scaffold::restore_capture_exif(
+                &original, &rendered, width, height,
+            )?;
+            let mut output = base.to_vec();
+            crate::isobmff_write::install_exif_payload(&mut output, &restored)?;
+            Some(output)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let base = restored_base.as_deref().unwrap_or(base);
     // Disparity scale selection.
     //
     // `Passthrough` uses the producer's own rank->disparity scale from the
@@ -950,6 +976,7 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
     // ---- graph assembly -----------------------------------------------------
     attach_portrait_graph(
         base,
+        origin,
         disparity_stream,
         disparity_hvcc,
         disparity_xmp,
@@ -985,6 +1012,7 @@ fn base64_encode(data: &[u8]) -> String {
 #[allow(clippy::too_many_arguments)]
 fn attach_portrait_graph(
     base: &[u8],
+    origin: BaseOrigin,
     disparity_stream: Vec<u8>,
     disparity_hvcc: Vec<u8>,
     disparity_xmp: Vec<u8>,
@@ -1197,7 +1225,15 @@ fn attach_portrait_graph(
         Some(id) => {
             let exif_payload =
                 read_item_payload(base, &meta, id).ok_or("Exif payload unreadable")?;
-            Some(patch_exif_portrait_markers(&exif_payload, PORTRAIT_MAKER_NOTE)?)
+            let marked = patch_exif_portrait_markers(&exif_payload, PORTRAIT_MAKER_NOTE)?;
+            // The src.image primary and gain map have already been rotated by
+            // the base writer. Keep source orientation until that stage, then
+            // normalize the final EXIF to agree with upright pixels / irot=0.
+            // Passthrough OPPO primaries retain their original transform.
+            Some(match origin {
+                BaseOrigin::SrcImage => crate::styles_scaffold::normalize_primary_orientation(&marked)?,
+                BaseOrigin::OppoPrimary => marked,
+            })
         }
         None => None,
     };

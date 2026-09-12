@@ -34,6 +34,15 @@ struct Segments {
     exif_tiff: Option<Vec<u8>>,
 }
 
+/// Read the original JPEG's APP1 EXIF independently of Ultra HDR support.
+pub(crate) fn read_exif_payload(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    Ok(walk_segments(data)?.exif_tiff.map(|tiff| {
+        let mut payload = vec![0, 0, 0, 0]; // HEIF TIFF starts after offset field
+        payload.extend(tiff);
+        payload
+    }))
+}
+
 fn walk_segments(data: &[u8]) -> Result<Segments, String> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return Err("not a JPEG file".into());
@@ -600,6 +609,22 @@ pub fn synthesize_source_container(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_jpeg_exif_is_read_without_mpf_or_ultra_hdr() {
+        let tiff = tiff_with_orientation(6);
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let mut jpeg = vec![0xff, 0xd8];
+        jpeg.extend(appseg(0xe1, &app1));
+        jpeg.extend_from_slice(&[0xff, 0xd9]);
+        let payload = read_exif_payload(&jpeg).unwrap().unwrap();
+        assert_eq!(&payload[4..], &tiff);
+        assert_eq!(crate::exif::parse_exif_orientation(&payload).unwrap(),
+            crate::exif::ExifOrientation::Rotate90Clockwise);
+        assert!(read_exif_payload(&[0xff, 0xd8, 0xff, 0xd9]).unwrap().is_none());
+        assert!(read_exif_payload(&[0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff]).is_err());
+    }
 
     fn appseg(marker: u8, payload: &[u8]) -> Vec<u8> {
         let mut v = vec![0xFF, marker];
