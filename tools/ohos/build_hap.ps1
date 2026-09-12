@@ -40,4 +40,10 @@ try {
     if (Test-Path pubspec.lock.mainline.bak) {
         Move-Item pubspec.lock.mainline.bak pubspec.lock -Force
     }
+    # The OHOS pubspec has a different plugin set, so the build rewrites
+    # macos/Flutter/GeneratedPluginRegistrant.swift (it drops the plugins the
+    # OHOS variant does not use). Regenerate it from the mainline pubspec so the
+    # working tree is left clean and a stray `git add -A` cannot commit the
+    # OHOS plugin set.
+    flutter pub get 2>&1 | Out-Null
 }
