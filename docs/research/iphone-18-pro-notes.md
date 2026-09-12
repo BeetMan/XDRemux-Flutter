@@ -54,6 +54,13 @@ semanticskymatte（天空）、semanticskinmatte（皮肤 v1）、hdrgainmap。
 → 用途：人像美颜/分区编辑（磨皮、美白牙齿、唇色、眼镜/纹身分区等）的数据基础。
 这是「新模式」的主要内容载荷。
 
+**编码格式（已解析，IMG_0391 人像）**：
+- 每个部件蒙版 = **768×576、8-bit、HEVC(hvc1) 灰度蒙版**，auxl 引用主图 grid(46)+tmap(144)。
+- 体积都极小（大部分区域为空）：person 5927B 最大，其余 161B~893B（teeth/eyebrows 仅 ~162B）。
+- 对照：旧的 sky/skin/PEM 蒙版是 2016×1512 8-bit；styledeltamap 4096×3072 10-bit；
+  linearthumbnail 1024×768 10-bit；hdrgainmap 2856×2142 8-bit。
+- 即：新部件蒙版是**低分辨率（768×576）的 8-bit 灰度 mask**，按脸部部件各自一张。
+
 ### 3. 新 Photographic Style cast
 编辑件 AAE（SemanticStyle，base64+zlib+JSON，buildNumber 26A396 / macOS）：
 - **BrightPop**（IMG_0841，tone 0.18）
