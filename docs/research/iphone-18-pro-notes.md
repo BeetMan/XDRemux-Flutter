@@ -126,6 +126,38 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
   质感滑杆的映射（磨皮 / 去油光 / 眼下提亮）。
 - [ ] Film Grain Seed 如何驱动颗粒渲染（可复现性验证）。
 
+## 逆向：Photos app / PhotoImaging 框架（本机 macOS 27 + iOS 27 DeviceSupport 符号）
+
+不逆 IPSW，直接读本机 `/System/Applications/Photos.app` + iOS 27 的 PhotoImaging 符号。
+框架二进制在 dyld 共享缓存里（不在盘上独立 dylib）。
+
+### 颗粒（grain）渲染
+- **`PIPhotoGrainHDR`**：HDR 颗粒渲染器，`_blendGrainsHDR(__sample isoImages, float log10iso)`
+  Metal kernel，用一张 **1536×1536 噪声图**，按 **ISO（log10）** 与对比度混合——
+  `float grain = grainImage.r - 0.5; mult = contrast * grain;`。
+- **`PIGrainSeedExpression`**：把 MakerNote 的 `FilmGrainSeed` 求值成可复现种子。
+- 颗粒输入：`grain:<inputAmount / inputISO / inputSeed / inputImage>`。
+- 底层 `CIPhotoGrain` / `PIGrain_v1`（`buildPipeline:...`）。
+
+### 质感（texture）渲染
+- **`PITextureStyleAdjustmentController`**：Photos 编辑侧的质感调整控制器
+  （`canRenderTextureStylesOnComposition:` 决定该照片能否用质感——即是否有 People Data）。
+- 配套：`macStyleCollectionsIncludingTextureStyle:smartStyleRenderingVersion:`
+  （把质感风格并进风格集合）、`_canRenderTextureStyle`。
+
+### 语义风格主管线（neutrino 引擎，沿用既有研究）
+- `PISemanticStyle*` 全家：AdjustmentController / ApplyNode / AutoCalculator / Filter /
+  LearnNode / LinearThumbnailNode / Node / RenderNode / Renderer / SettingsExpressionFunction /
+  ThumbnailApply。
+- 源码路径：`Sources/Photos/workspaces/neutrino/PhotoImaging/...`。
+- `PIParallaxInactiveStyleData`：视差风格数据。
+
+### 关键映射
+`FilmGrainSeed`（拍摄时存的随机种子）→ `PIGrainSeedExpression` → `PIPhotoGrainHDR`
+按 ISO 混合噪声图 → 可复现的胶片颗粒。`texture_styles` item + People Data 块 →
+`PITextureStyleAdjustmentController` → 语义部件蒙版作用域内的质感操作
+（磨皮/去油光/眼下提亮）。
+
 ## 兼容性评估（Rust 核心 vs iPhone 18 Pro 样本）
 - **解析**：31/31 样本能被 `isobmff` 解析器完整解析，无失败。
 - **gain map 校验**：`iso_validate_probe` 认可新结构（grid 5×3、mono gain map、
