@@ -24,6 +24,20 @@
 - `LF` 大概率为 **Light Field（光场）**——待与 Photos 实际行为核对。
 - `MakerNoteVersion = 17`（比旧机型新）。
 
+**语义确认（结构性）**：ImageCaptureType=13 的样本**全部来自主摄**（6.93mm f/1.48），
+且光圈值各不相同——**f/1.5 / f/1.8 / f/2.8 / f/4.0 都有**。对照：
+- ICT=12(Scene) 全是长焦（16.891mm f/2.8，光圈固定 f/2.8）
+- ICT=1(ProRAW) 是超广（2.22mm f/2.2）
+- ICT=11(Manual Focus) 是主摄手动对焦（f/1.5）
+
+旧 iPhone 主摄是**固定光圈**；iPhone 18 Pro 主摄光圈在样张里从 f/1.5 变到 f/4.0，
+证明**可变光圈被实际使用**。这与官方「48MP Fusion 主摄 + 可变光圈（f/1.48–f/4，
+六叶片四档）+ 手动对焦/快门/ISO/白平衡/对焦峰值」一致。
+
+→ 结论：**ImageCaptureType 13 = iPhone 18 Pro 48MP Fusion 可变光圈主摄的静止拍摄**；
+`CaptureType=LF` 是该主摄捕获的 Apple 内部管线代号（公开文档无此名，但结构上
+就是新主摄的普通静止捕获）。
+
 ### 2. 新语义部件蒙版（核心内容）——`tag:apple.com,2026:` 命名空间
 人像照（含人）携带一整套**细粒度部件语义蒙版**（FSINC instance mattes），
 远超旧机型的 sky/skin 两件套：
@@ -95,8 +109,8 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 我们的 `extract_lhdr`（UHDR manifest 分支）对 plain HEIC 正常；动态照片走 `uhdr_jpeg`。
 
 ## 待办 / 下一步
-- [ ] 确认 `CaptureType=LF` / `ImageCaptureType=13` 的语义（与 Photos 实际行为核对——
-  是否光场/重对焦）。
+- [x] 确认 `CaptureType=LF` / `ImageCaptureType=13` 的语义（= 48MP Fusion 可变光圈
+  主摄的静止拍摄；光圈 f/1.5~f/4 在样张中被实际使用）。
 - [ ] 解析新语义部件蒙版的编码（dtype/分辨率/与 tmap 的引用关系）。
 - [ ] BrightPop/TanWarm 的 key1 晶格与既有风格的差异（沿用 universal graft 思路）。
 - [ ] 评估现有 Rust 核心对这些新样本的兼容（转换/回写路径）。
