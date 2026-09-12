@@ -59,6 +59,21 @@ iOS 27 于 9/14 发布。
 a) **`texture_styles` 元数据项**（容器 item，content_type
    `tag:apple.com,2026:photo:metadata:texture_styles`）——质感风格参数载体。
 
+   **基础结构**（已解析）：一个小 bplist，即质感/颗粒特性的「头」：
+   ```json
+   {
+     "Preset": "Standard",           // 捕获时应用的摄影风格（本批评测机全是 Standard）
+     "CaptureType": "LF",            // 捕获分类（见发现 1）
+     "CaptureMode": "Still",
+     "PortType": "PortTypeBack",
+     "HardwareModel": "iPhone 18 Pro",
+     "TextureStylePeopleDataVersion": 3,
+     "FilmGrainSeed": 104             // 颗粒可复现种子（每拍各异；DF 的 IMG_0010 为 0）
+   }
+   ```
+   **每一张 iPhone 18 Pro 照片都带这个项**（31/31 样本全有）。旧 iPhone 样本
+   （iPhone Air / 既有 iOS）**没有**——属 iOS 27（2026 命名空间）新增。
+
 b) **MakerNote PLIST 的「Texture Style Post Processed People Data」**（人像照有，
    `Texture Style People Data Version = 3`）。按 face 分，含：
    - Face ROI / Face Skin ROI / Face ID / Face Yaw·Pitch·Roll（姿态）
