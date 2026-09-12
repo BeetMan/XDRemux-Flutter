@@ -18,17 +18,14 @@ void main() {
     );
   });
 
-  test(
-    'input path filter accepts HEIC/HEIF/JPEG and rejects unrelated files',
-    () {
-      expect(isSupportedInputPath('photo.HEIC'), isTrue);
-      expect(isSupportedInputPath('photo.heif'), isTrue);
-      expect(isSupportedInputPath('photo.jpg'), isTrue);
-      expect(isSupportedInputPath('photo.JPEG'), isTrue);
-      expect(isSupportedInputPath('photo.png'), isFalse);
-      expect(isSupportedInputPath('photo.txt'), isFalse);
-    },
-  );
+  test('input path filter accepts HEIC/HEIF/JPEG and rejects unrelated files', () {
+    expect(isSupportedInputPath('photo.HEIC'), isTrue);
+    expect(isSupportedInputPath('photo.heif'), isTrue);
+    expect(isSupportedInputPath('photo.jpg'), isTrue);
+    expect(isSupportedInputPath('photo.JPEG'), isTrue);
+    expect(isSupportedInputPath('photo.png'), isFalse);
+    expect(isSupportedInputPath('photo.txt'), isFalse);
+  });
 
   testWidgets('XdRemuxApp renders home page', (WidgetTester tester) async {
     await tester.pumpWidget(const XdRemuxApp());
@@ -135,25 +132,24 @@ void main() {
     expect(find.byType(GridView), findsNothing);
   });
 
-  test('Motion Photo policy defaults to skip and persists in config', () {
-    // Default: skip (per 2026-08-27 decision).
+  test('Motion Photo policy defaults to livePhotoPair and persists in config', () {
     final config = ConversionConfig();
-    expect(config.motionPhotoDefaultMode, MotionPhotoMode.skip);
+    expect(config.motionPhotoDefaultMode, MotionPhotoMode.livePhotoPair);
 
     // JSON round-trip preserves a non-default choice.
-    config.motionPhotoDefaultMode = MotionPhotoMode.stillAndVideo;
+    config.motionPhotoDefaultMode = MotionPhotoMode.still;
     final restored = ConversionConfig.fromJson(config.toJson());
-    expect(restored.motionPhotoDefaultMode, MotionPhotoMode.stillAndVideo);
+    expect(restored.motionPhotoDefaultMode, MotionPhotoMode.still);
 
-    // Unknown persisted values fall back to skip.
+    // Unknown persisted values (e.g. legacy 'skip') fall back to livePhotoPair.
     final legacy = ConversionConfig.fromJson(
-      config.toJson()..['motionPhotoDefaultMode'] = 'legacy-value',
+      config.toJson()..['motionPhotoDefaultMode'] = 'skip',
     );
-    expect(legacy.motionPhotoDefaultMode, MotionPhotoMode.skip);
+    expect(legacy.motionPhotoDefaultMode, MotionPhotoMode.livePhotoPair);
 
-    // QueueItem defaults to skip as well.
+    // QueueItem defaults to livePhotoPair as well.
     final item = QueueItem(id: 't', inputPath: '/a.jpg', outputPath: '/b.heic');
-    expect(item.motionPhotoMode, MotionPhotoMode.skip);
+    expect(item.motionPhotoMode, MotionPhotoMode.livePhotoPair);
     expect(item.motionPhoto, isNull);
   });
 
@@ -174,21 +170,32 @@ void main() {
     );
     expect(single.isDualStream, isFalse);
     expect(single.videoSizeLabel, '512KB');
+  });
 
-    final huaweiMotion = QueueItem(
-      id: 'huawei-motion',
-      inputPath: '/motion.heic',
-      outputPath: '/motion-out.heic',
-      status: QueueItemStatus.skippedPolicy,
-      motionPhoto: const MotionPhotoSummary(
-        kind: 'huaweiOpenHarmonyMotionPhoto',
-        stillBytes: 10,
-        videoBytes: 20,
-        streamCount: 1,
-      ),
+  test('findOriginalDonorForConvertedFile resolves converted output to donor', () {
+    final tempDir = Directory.systemTemp.createTempSync('xdremux_donor_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    final donorFile = File('${tempDir.path}${Platform.pathSeparator}IMG_0001.heic');
+    donorFile.writeAsBytesSync([1, 2, 3]);
+
+    final convertedFile = File('${tempDir.path}${Platform.pathSeparator}IMG_0001_iso.heic');
+    convertedFile.writeAsBytesSync([4, 5, 6]);
+
+    final resolved = findOriginalDonorForConvertedFile(convertedFile.path);
+    expect(resolved, equals(donorFile.path));
+
+    final nonExistentDonorFile = File('${tempDir.path}${Platform.pathSeparator}IMG_9999_iso.heic');
+    nonExistentDonorFile.writeAsBytesSync([7, 8, 9]);
+    expect(findOriginalDonorForConvertedFile(nonExistentDonorFile.path), isNull);
+
+    final customDonor = File('${tempDir.path}${Platform.pathSeparator}IMG_0002.jpg');
+    customDonor.writeAsBytesSync([1, 2, 3]);
+    final customConverted = File('${tempDir.path}${Platform.pathSeparator}IMG_0002_custom.heic');
+    customConverted.writeAsBytesSync([4, 5, 6]);
+    expect(
+      findOriginalDonorForConvertedFile(customConverted.path, customSuffix: '_custom'),
+      equals(customDonor.path),
     );
-    expect(huaweiMotion.actionUsesInput, isTrue);
-    huaweiMotion.status = QueueItemStatus.converted;
-    expect(huaweiMotion.actionUsesInput, isFalse);
   });
 }

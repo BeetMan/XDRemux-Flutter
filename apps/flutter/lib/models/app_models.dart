@@ -157,10 +157,7 @@ class BackendCapabilities {
               '当前构建未通过 Swift Core capability 验证；当前版本不会启动 Swift CLI。',
               'This build did not pass the Swift Core capability probe; the Swift CLI is not launched in this version.',
             )
-          : t(
-              'Swift 后端仅支持 macOS/iOS。',
-              'The Swift backend is only available on macOS/iOS.',
-            ),
+          : t('Swift 后端仅支持 macOS/iOS。', 'The Swift backend is only available on macOS/iOS.'),
       swiftAppleFeaturesUnavailableReason: t(
         'Apple 功能仍需 macOS 原生工具链和样例验证；当前版本保持关闭。',
         'Apple features still need the macOS native toolchain and sample validation; disabled in this version.',
@@ -246,40 +243,19 @@ enum OppoCompatMode {
   String get appHelp {
     switch (this) {
       case OppoCompatMode.auto:
-        return t(
-          '根据原图标记自动选择；适合大多数照片。',
-          'Chosen automatically from source markers; suits most photos.',
-        );
+        return t('根据原图标记自动选择；适合大多数照片。', 'Chosen automatically from source markers; suits most photos.');
       case OppoCompatMode.on:
-        return t(
-          '写入 OPPO 兼容标记，优先保证 OPPO 相册识别。',
-          'Writes OPPO-compatible markers to prioritize OPPO Gallery recognition.',
-        );
+        return t('写入 OPPO 兼容标记，优先保证 OPPO 相册识别。', 'Writes OPPO-compatible markers to prioritize OPPO Gallery recognition.');
       case OppoCompatMode.tail:
-        return t(
-          '写入 OPPO 兼容标记，并完整保留相机附加信息。',
-          'Writes OPPO-compatible markers and keeps the full camera extras.',
-        );
+        return t('写入 OPPO 兼容标记，并完整保留相机附加信息。', 'Writes OPPO-compatible markers and keeps the full camera extras.');
       case OppoCompatMode.iso:
-        return t(
-          '移除 OPPO 标记，写入标准 ISO HDR 标记。',
-          'Removes OPPO markers and writes standard ISO HDR markers.',
-        );
+        return t('移除 OPPO 标记，写入标准 ISO HDR 标记。', 'Removes OPPO markers and writes standard ISO HDR markers.');
       case OppoCompatMode.isoNoLocal:
-        return t(
-          '标准 ISO HDR，并移除本地 HDR 标记。',
-          'Standard ISO HDR, and removes the local HDR marker.',
-        );
+        return t('标准 ISO HDR，并移除本地 HDR 标记。', 'Standard ISO HDR, and removes the local HDR marker.');
       case OppoCompatMode.isoGraph:
-        return t(
-          '清除路由标记，但保留原始元数据关系图。',
-          'Clears routing markers but keeps the original metadata relationship graph.',
-        );
+        return t('清除路由标记，但保留原始元数据关系图。', 'Clears routing markers but keeps the original metadata relationship graph.');
       case OppoCompatMode.off:
-        return t(
-          '不修改路由标记；适合 Apple 照片/纯 ISO 输出。',
-          'Does not modify routing markers; suits Apple Photos / pure ISO output.',
-        );
+        return t('不修改路由标记；适合 Apple 照片/纯 ISO 输出。', 'Does not modify routing markers; suits Apple Photos / pure ISO output.');
     }
   }
 
@@ -349,54 +325,27 @@ enum OppoCameraTailMode {
   String get appHelp {
     switch (this) {
       case OppoCameraTailMode.automatic:
-        return t(
-          '兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。',
-          'Fully preserved when compatibility mode is on; private HDR removed for pure ISO output.',
-        );
+        return t('兼容模式开启时完整保留；纯 ISO 输出时移除私有 HDR。', 'Fully preserved when compatibility mode is on; private HDR removed for pure ISO output.');
       case OppoCameraTailMode.off:
-        return t(
-          '不复制 OPPO 相机尾部元数据。',
-          'Does not copy OPPO camera tail metadata.',
-        );
+        return t('不复制 OPPO 相机尾部元数据。', 'Does not copy OPPO camera tail metadata.');
       case OppoCameraTailMode.watermark:
-        return t(
-          '仅保留水印及其辅助元数据。',
-          'Keeps only the watermark and its auxiliary metadata.',
-        );
+        return t('仅保留水印及其辅助元数据。', 'Keeps only the watermark and its auxiliary metadata.');
       case OppoCameraTailMode.compact:
-        return t(
-          '保留水印、人像编辑及必要的 HDR 变换条目。',
-          'Keeps watermark, portrait edits and required HDR transform entries.',
-        );
+        return t('保留水印、人像编辑及必要的 HDR 变换条目。', 'Keeps watermark, portrait edits and required HDR transform entries.');
       case OppoCameraTailMode.preserve:
         return t('原样保留完整相机尾部。', 'Keeps the full camera tail unchanged.');
       case OppoCameraTailMode.preserveWithoutPortrait:
-        return t(
-          '删除景深、分割和人像编辑条目。',
-          'Removes depth, segmentation and portrait edit entries.',
-        );
+        return t('删除景深、分割和人像编辑条目。', 'Removes depth, segmentation and portrait edit entries.');
       case OppoCameraTailMode.preserveWithoutPortraitOrPrivateHdr:
-        return t(
-          '同时删除人像编辑和私有 HDR 条目。',
-          'Removes portrait edits and private HDR entries.',
-        );
+        return t('同时删除人像编辑和私有 HDR 条目。', 'Removes portrait edits and private HDR entries.');
       case OppoCameraTailMode.preserveWithoutPrivateUhdr:
-        return t(
-          '仅删除私有 UHDR gain map 条目。',
-          'Removes only private UHDR gain-map entries.',
-        );
+        return t('仅删除私有 UHDR gain map 条目。', 'Removes only private UHDR gain-map entries.');
       case OppoCameraTailMode.preserveWithoutPrivateHdr:
         return t('删除所有私有 HDR 条目。', 'Removes all private HDR entries.');
       case OppoCameraTailMode.preserveNoUhdr:
-        return t(
-          '保留结构，但中和私有 UHDR 条目名。',
-          'Keeps structure but neutralizes private UHDR entry names.',
-        );
+        return t('保留结构，但中和私有 UHDR 条目名。', 'Keeps structure but neutralizes private UHDR entry names.');
       case OppoCameraTailMode.preserveNoHdr:
-        return t(
-          '保留结构，但中和所有私有 HDR 条目名。',
-          'Keeps structure but neutralizes all private HDR entry names.',
-        );
+        return t('保留结构，但中和所有私有 HDR 条目名。', 'Keeps structure but neutralizes all private HDR entry names.');
     }
   }
 
@@ -545,7 +494,7 @@ class ConversionConfig {
     this.categorizeOutputByMode = false,
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
-    this.motionPhotoDefaultMode = MotionPhotoMode.skip,
+    this.motionPhotoDefaultMode = MotionPhotoMode.livePhotoPair,
   });
 
   /// Persist to SharedPreferences.
@@ -608,7 +557,7 @@ class ConversionConfig {
       hardwareEncode: json['hardwareEncode'] as bool? ?? false,
       motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
         (e) => e.name == json['motionPhotoDefaultMode'],
-        orElse: () => MotionPhotoMode.skip,
+        orElse: () => MotionPhotoMode.livePhotoPair,
       ),
     );
   }
@@ -668,32 +617,27 @@ class ConversionConfig {
 
 /// How a Motion Photo queue item is handled at conversion time.
 enum MotionPhotoMode {
-  /// Do not convert; mark the item as skipped.
-  skip,
+  /// Compose an Apple Live Photo pair: the converted still gains the Apple
+  /// MakerNote content identifier and the video is rewritten as a paired MOV
+  /// (still-image-time marker). Both files land next to the output; import
+  /// them together into Apple Photos to get the Live Photo.
+  livePhotoPair,
 
   /// Convert the still image only (identical to a static photo).
   still,
 
   /// Convert the still image and also export the video stream(s) next to
   /// the converted output.
-  stillAndVideo,
-
-  /// Compose an Apple Live Photo pair: the converted still gains the Apple
-  /// MakerNote content identifier and the video is rewritten as a paired MOV
-  /// (still-image-time marker). Both files land next to the output; import
-  /// them together into Apple Photos to get the Live Photo.
-  livePhotoPair;
+  stillAndVideo;
 
   String get displayName {
     switch (this) {
-      case MotionPhotoMode.skip:
-        return t('跳过', 'Skip');
+      case MotionPhotoMode.livePhotoPair:
+        return t('Live Photo 合成', 'Live Photo');
       case MotionPhotoMode.still:
         return t('仅静帧', 'Still only');
       case MotionPhotoMode.stillAndVideo:
-        return t('静帧+视频', 'Still + video');
-      case MotionPhotoMode.livePhotoPair:
-        return 'Live Photo';
+        return t('拆分静帧 + 视频', 'Split still + video');
     }
   }
 }
@@ -701,28 +645,160 @@ enum MotionPhotoMode {
 /// Parsed Motion Photo summary attached to a queue item.
 class MotionPhotoSummary {
   /// "androidMotionPhotoV1" | "androidHeifMotionPhotoV1" |
-  /// "legacyMicroVideoV1b" | "oppoLivePhoto" |
-  /// "huaweiOpenHarmonyMotionPhoto"
+  /// "legacyMicroVideoV1b" | "oppoLivePhoto"
   final String kind;
   final int stillBytes;
   final int videoBytes;
   final int streamCount;
+
+  // Rich stream & audio details
+  final int? videoWidth;
+  final int? videoHeight;
+  final int? durationMs;
+  final double? fps;
+  final int? frameCount;
+  final String? videoCodec;
+  final bool hasAudio;
+  final String? audioCodec;
+  final int? audioChannels;
+  final int? audioSampleRate;
+  final int? audioDurationMs;
+  final int? presentationTimestampUs;
+  final String? presentationSource;
+  final int? primaryBytes;
+  final int? secondaryBytes;
+  final int? secondaryWidth;
+  final int? secondaryHeight;
+  final double? secondaryFps;
 
   const MotionPhotoSummary({
     required this.kind,
     required this.stillBytes,
     required this.videoBytes,
     required this.streamCount,
+    this.videoWidth,
+    this.videoHeight,
+    this.durationMs,
+    this.fps,
+    this.frameCount,
+    this.videoCodec,
+    this.hasAudio = false,
+    this.audioCodec,
+    this.audioChannels,
+    this.audioSampleRate,
+    this.audioDurationMs,
+    this.presentationTimestampUs,
+    this.presentationSource,
+    this.primaryBytes,
+    this.secondaryBytes,
+    this.secondaryWidth,
+    this.secondaryHeight,
+    this.secondaryFps,
   });
 
   bool get isDualStream => streamCount >= 2;
 
   String get videoSizeLabel {
-    final mb = videoBytes / (1024 * 1024);
-    return mb >= 1
-        ? '${mb.toStringAsFixed(1)}MB'
-        : '${(videoBytes / 1024).round()}KB';
+    final bytes = primaryBytes ?? videoBytes;
+    final mb = bytes / (1024 * 1024);
+    return mb >= 1 ? '${mb.toStringAsFixed(1)}MB' : '${(bytes / 1024).round()}KB';
   }
+
+  String get resolutionLabel {
+    if (videoWidth != null && videoHeight != null && videoWidth! > 0 && videoHeight! > 0) {
+      final is4k = (videoWidth! >= 3840 || videoHeight! >= 3840);
+      final tag = is4k ? ' (4K)' : (videoWidth! >= 1920 || videoHeight! >= 1920 ? ' (1080P)' : '');
+      return '$videoWidth×$videoHeight$tag';
+    }
+    return '';
+  }
+
+  String get durationLabel {
+    if (durationMs != null && durationMs! > 0) {
+      final s = durationMs! / 1000.0;
+      return '${s.toStringAsFixed(2)}s';
+    }
+    return '';
+  }
+
+  String get fpsLabel {
+    if (fps != null && fps! > 0) {
+      return '${fps!.toStringAsFixed(fps! % 1 == 0 ? 0 : 1)} fps';
+    }
+    return '';
+  }
+
+  String get audioLabel {
+    if (!hasAudio) {
+      return t('无音频', 'No audio');
+    }
+    final codec = (audioCodec ?? 'AAC').toUpperCase();
+    final rate = audioSampleRate != null && audioSampleRate! > 0
+        ? ' ${(audioSampleRate! / 1000).toStringAsFixed(audioSampleRate! % 1000 == 0 ? 0 : 1)}kHz'
+        : '';
+    final ch = audioChannels == 1 ? t('单声道', 'Mono') : (audioChannels == 2 ? t('立体声', 'Stereo') : '');
+    return [codec, if (rate.isNotEmpty) rate.trim(), if (ch.isNotEmpty) ch].join(' · ');
+  }
+
+  String get dualStreamSummary {
+    if (!isDualStream) return t('单码流', 'Single stream');
+    final pMb = primaryBytes != null ? (primaryBytes! / (1024 * 1024)).toStringAsFixed(1) : null;
+    final sMb = secondaryBytes != null ? (secondaryBytes! / (1024 * 1024)).toStringAsFixed(1) : null;
+    if (pMb != null && sMb != null) {
+      return t('双码流 (高清主流 ${pMb}MB + 预览代理 ${sMb}MB)', 'Dual stream (Primary ${pMb}MB + Proxy ${sMb}MB)');
+    }
+    return t('双码流 (高清流 + 预览流)', 'Dual stream (High-res + Preview)');
+  }
+
+  Map<String, dynamic> toJson() => {
+    'kind': kind,
+    'stillBytes': stillBytes,
+    'videoBytes': videoBytes,
+    'streamCount': streamCount,
+    'videoWidth': videoWidth,
+    'videoHeight': videoHeight,
+    'durationMs': durationMs,
+    'fps': fps,
+    'frameCount': frameCount,
+    'videoCodec': videoCodec,
+    'hasAudio': hasAudio,
+    'audioCodec': audioCodec,
+    'audioChannels': audioChannels,
+    'audioSampleRate': audioSampleRate,
+    'audioDurationMs': audioDurationMs,
+    'presentationTimestampUs': presentationTimestampUs,
+    'presentationSource': presentationSource,
+    'primaryBytes': primaryBytes,
+    'secondaryBytes': secondaryBytes,
+    'secondaryWidth': secondaryWidth,
+    'secondaryHeight': secondaryHeight,
+    'secondaryFps': secondaryFps,
+  };
+
+  factory MotionPhotoSummary.fromJson(Map<String, dynamic> json) => MotionPhotoSummary(
+    kind: json['kind'] as String? ?? 'unknown',
+    stillBytes: (json['stillBytes'] as num?)?.toInt() ?? 0,
+    videoBytes: (json['videoBytes'] as num?)?.toInt() ?? 0,
+    streamCount: (json['streamCount'] as num?)?.toInt() ?? 1,
+    videoWidth: (json['videoWidth'] as num?)?.toInt(),
+    videoHeight: (json['videoHeight'] as num?)?.toInt(),
+    durationMs: (json['durationMs'] as num?)?.toInt(),
+    fps: (json['fps'] as num?)?.toDouble(),
+    frameCount: (json['frameCount'] as num?)?.toInt(),
+    videoCodec: json['videoCodec'] as String?,
+    hasAudio: json['hasAudio'] as bool? ?? false,
+    audioCodec: json['audioCodec'] as String?,
+    audioChannels: (json['audioChannels'] as num?)?.toInt(),
+    audioSampleRate: (json['audioSampleRate'] as num?)?.toInt(),
+    audioDurationMs: (json['audioDurationMs'] as num?)?.toInt(),
+    presentationTimestampUs: (json['presentationTimestampUs'] as num?)?.toInt(),
+    presentationSource: json['presentationSource'] as String?,
+    primaryBytes: (json['primaryBytes'] as num?)?.toInt(),
+    secondaryBytes: (json['secondaryBytes'] as num?)?.toInt(),
+    secondaryWidth: (json['secondaryWidth'] as num?)?.toInt(),
+    secondaryHeight: (json['secondaryHeight'] as num?)?.toInt(),
+    secondaryFps: (json['secondaryFps'] as num?)?.toDouble(),
+  );
 }
 
 class QueueItem {
@@ -742,20 +818,8 @@ class QueueItem {
   /// "x6" or "x7" family, null when unknown.
   String? family;
 
-  /// Huawei Mate-series HDR HEIC recognized as already compatible with Apple
-  /// Photos. Such originals are informational queue entries and are never
-  /// sent through the OPPO conversion path. A Huawei Motion Photo is kept
-  /// out of this native-HDR-only flag so its motion policy remains usable.
-  bool huaweiHdr;
-  bool huaweiHasXtstyle;
-
-  /// Read-only Huawei portrait resource observations from the Rust HEIF
-  /// inspector. This never enables conversion or writes Huawei-private data.
-  Map<String, dynamic>? huaweiPortrait;
-
   /// Non-null when the input is a Motion Photo (Android V1 / MicroVideo /
-  /// HEIF mpvd / OPPO Live Photo / Huawei OpenHarmony). Filled during or
-  /// immediately after ingest.
+  /// HEIF mpvd / OPPO Live Photo). Filled asynchronously after ingest.
   MotionPhotoSummary? motionPhoto;
 
   /// Per-card handling for Motion Photos. Defaults from the configured
@@ -785,10 +849,7 @@ class QueueItem {
     return switch (p.stage) {
       1 => t('解析元数据…', 'Parsing metadata…'),
       2 => t('解码JPEG…', 'Decoding JPEG…'),
-      3 => t(
-        '编码 HEVC ${p.current}/${p.total}',
-        'Encoding HEVC ${p.current}/${p.total}',
-      ),
+      3 => t('编码 HEVC ${p.current}/${p.total}', 'Encoding HEVC ${p.current}/${p.total}'),
       4 => t('组装输出…', 'Assembling output…'),
       _ => '',
     };
@@ -806,11 +867,8 @@ class QueueItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
-    this.huaweiHdr = false,
-    this.huaweiHasXtstyle = false,
-    this.huaweiPortrait,
     this.motionPhoto,
-    this.motionPhotoMode = MotionPhotoMode.skip,
+    this.motionPhotoMode = MotionPhotoMode.livePhotoPair,
     this.backend = ConversionBackend.rust,
     this.startedAt,
     this.finishedAt,
@@ -841,15 +899,83 @@ class QueueItem {
 
   bool get isSuccessful => status.isSuccessful;
 
-  /// A native Huawei HDR or a Motion Photo skipped by policy has no converted
-  /// output; file actions must target the original input in both cases.
-  bool get actionUsesInput =>
-      huaweiHdr ||
-      (huaweiPortrait != null && status == QueueItemStatus.skippedPolicy) ||
-      (motionPhoto != null && status == QueueItemStatus.skippedPolicy);
-
   Duration? get duration {
     if (startedAt == null || finishedAt == null) return null;
     return finishedAt!.difference(startedAt!);
+  }
+}
+
+/// Parsed photo shooting parameters (EXIF) and HDR GainMap properties.
+class PhotoDetailsModel {
+  final bool success;
+  final String? errorMessage;
+  final String? make;
+  final String? model;
+  final String? dateTime;
+  final String? exposureTime;
+  final String? fNumber;
+  final String? iso;
+  final String? focalLength;
+  final String? focalLength35mm;
+  final String? exposureBias;
+  final int? width;
+  final int? height;
+  final String? hdrKind;
+  final double? edrScale;
+  final double? gainMapMax;
+
+  const PhotoDetailsModel({
+    required this.success,
+    this.errorMessage,
+    this.make,
+    this.model,
+    this.dateTime,
+    this.exposureTime,
+    this.fNumber,
+    this.iso,
+    this.focalLength,
+    this.focalLength35mm,
+    this.exposureBias,
+    this.width,
+    this.height,
+    this.hdrKind,
+    this.edrScale,
+    this.gainMapMax,
+  });
+
+  factory PhotoDetailsModel.fromJson(Map<String, dynamic> json) {
+    return PhotoDetailsModel(
+      success: json['success'] == true,
+      errorMessage: json['errorMessage'] as String?,
+      make: json['make'] as String?,
+      model: json['model'] as String?,
+      dateTime: json['dateTime'] as String?,
+      exposureTime: json['exposureTime'] as String?,
+      fNumber: json['fNumber'] as String?,
+      iso: json['iso'] as String?,
+      focalLength: json['focalLength'] as String?,
+      focalLength35mm: json['focalLength35mm'] as String?,
+      exposureBias: json['exposureBias'] as String?,
+      width: json['width'] as int?,
+      height: json['height'] as int?,
+      hdrKind: json['hdrKind'] as String?,
+      edrScale: (json['edrScale'] as num?)?.toDouble(),
+      gainMapMax: (json['gainMapMax'] as num?)?.toDouble(),
+    );
+  }
+
+  String get focalLengthSummary {
+    if (focalLength != null && focalLength35mm != null) {
+      return '$focalLength (${t('等效', 'equiv.')} $focalLength35mm)';
+    }
+    return focalLength ?? focalLength35mm ?? '';
+  }
+
+  String get dimensionsSummary {
+    if (width != null && height != null) {
+      final mp = (width! * height!) / 1000000.0;
+      return '$width × $height (${mp.toStringAsFixed(1)} MP)';
+    }
+    return '';
   }
 }

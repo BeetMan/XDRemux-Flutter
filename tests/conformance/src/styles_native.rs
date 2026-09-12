@@ -22,7 +22,9 @@
 //! the golden sample (need image decode to compute — blocked on a decoder):
 //!   - "i" gain range, "h" headroom, "6" histogram stats, "c"/"d" LUTs.
 
-use xdremux_core::isobmff::{self, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
+use xdremux_core::isobmff::{
+    self, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta,
+};
 
 use crate::bplist::BplistWriter;
 use crate::scaffold;
@@ -30,9 +32,14 @@ use crate::styles_consts::{DELTA_HVCC_BOX, DELTA_TILE, FIELD_3, FIELD_C, FIELD_D
 use crate::styles_graft::{find_top, top_level_boxes};
 
 const STYLE_DATA_BLOCKS: usize = 864;
-const DELTA_ROWS: u32 = 5;
-const DELTA_COLS: u32 = 6;
 const DELTA_TILE_SIZE: u32 = 512;
+
+fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let scale = 1.0f64.min((max_w as f64 / source_w as f64).min(max_h as f64 / source_h as f64));
+    let w = (((source_w as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    let h = (((source_h as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    (w.min(max_w), h.min(max_h))
+}
 
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
     let scaffolded = scaffold::scaffold(standard)?;
@@ -55,14 +62,24 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         .ok_or("no tmap item")?;
     let (pw, ph) = primary_dims(&meta, primary)?;
 
+    let landscape = pw >= ph;
+    let (delta_rows, delta_cols) = if landscape { (5u32, 6u32) } else { (6u32, 5u32) };
+    let (delta_w, delta_h) = if landscape {
+        fitted_size(pw, ph, 2880, 2560)
+    } else {
+        fitted_size(pw, ph, 2560, 2880)
+    };
+
     // ---- new item ids (clear of grpl/altr group ids) -------------------
     let mut next_id = meta.items.iter().map(|i| i.item_id).max().unwrap_or(1) + 1;
     let max_group = crate::scaffold::max_group_id_pub(base, &meta_hdr).unwrap_or(0);
     if next_id <= max_group {
         next_id = max_group + 1;
     }
-    let delta_tile_ids: Vec<u32> = (0..DELTA_ROWS * DELTA_COLS).map(|i| next_id + i).collect();
-    let delta_grid_id = next_id + DELTA_ROWS * DELTA_COLS;
+    let delta_tile_ids: Vec<u32> = (0..delta_rows * delta_cols)
+        .map(|i| next_id + i)
+        .collect();
+    let delta_grid_id = next_id + delta_rows * delta_cols;
     let linear_id = delta_grid_id + 1;
     let style_meta_id = linear_id + 1;
 
@@ -98,67 +115,47 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // XSTYLES_SKY_STREAM / XSTYLES_SKY_HVCC swap in another (e.g. golden
     // real Vision) matte for Photos-behaviour bisection.
     let (matte_w, matte_h) = ((pw / 2) & !1, (ph / 2) & !1);
-    let env_sky_stream = std::env::var("XSTYLES_SKY_STREAM")
-        .ok()
+    let env_sky_stream = std::env::var("XSTYLES_SKY_STREAM").ok()
         .map(|p| std::fs::read(p).expect("sky stream file"));
-    let env_sky_hvcc = std::env::var("XSTYLES_SKY_HVCC")
-        .ok()
+    let env_sky_hvcc = std::env::var("XSTYLES_SKY_HVCC").ok()
         .map(|p| std::fs::read(p).expect("sky hvcc file"));
     let (sky_stream, sky_hvcc) = if let Ok(raw_path) = std::env::var("XSTYLES_SKY_RAW") {
         // Real matte bitmap (raw gray8, matte_w x matte_h), e.g. SegFormer.
         let raw = std::fs::read(&raw_path).map_err(|e| format!("sky raw: {e}"))?;
         if raw.len() != (matte_w * matte_h) as usize {
             return Err(format!(
-                "sky raw size {} != {}x{}",
-                raw.len(),
-                matte_w,
-                matte_h
+                "sky raw size {} != {}x{}", raw.len(), matte_w, matte_h
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
         let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
             .map_err(|e| format!("sky matte encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("sky matte encode produced no stream")?;
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
             .ok_or("sky hvcC extraction failed")?;
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
-        (
-            xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr),
-            hvcc,
-        )
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
     } else if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
         let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
             .map_err(|e| format!("sky matte encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("sky matte encode produced no stream")?;
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
             .ok_or("sky hvcC extraction failed")?;
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
         let stream = xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr);
-        (
-            env_sky_stream.unwrap_or(stream),
-            env_sky_hvcc.unwrap_or(hvcc),
-        )
+        (env_sky_stream.unwrap_or(stream), env_sky_hvcc.unwrap_or(hvcc))
     } else {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
         let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
             .map_err(|e| format!("sky matte encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("sky matte encode produced no stream")?;
+            .into_iter().next().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
             .ok_or("sky hvcC extraction failed")?;
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
-        (
-            xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr),
-            hvcc,
-        )
+        (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
     };
 
     // Linear thumbnail: real generated preview (fixed 1024×768 landscape
@@ -169,11 +166,9 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // valid.
     const LT_W: u32 = 1024;
     const LT_H: u32 = 768;
-    let env_lt_stream = std::env::var("XSTYLES_LINEAR_STREAM")
-        .ok()
+    let env_lt_stream = std::env::var("XSTYLES_LINEAR_STREAM").ok()
         .map(|p| std::fs::read(p).expect("linear stream file"));
-    let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC")
-        .ok()
+    let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC").ok()
         .map(|p| std::fs::read(p).expect("linear hvcc file"));
     let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
         let black = vec![0u8; (LT_W * LT_H * 3) as usize];
@@ -208,19 +203,15 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
                 // Legacy black placeholder fallback.
                 let black = vec![0u8; (LT_W * LT_H * 3) as usize];
                 let black_refs: Vec<&[u8]> = vec![&black];
-                let stream =
-                    xdremux_core::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
-                        .map_err(|e2| format!("linear thumb encode: {e}; fallback: {e2}"))?
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| format!("linear thumb encode: {e}; no stream"))?;
+                let stream = xdremux_core::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
+                    .map_err(|e2| format!("linear thumb encode: {e}; fallback: {e2}"))?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("linear thumb encode: {e}; no stream"))?;
                 let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 1)
                     .ok_or_else(|| format!("linear thumb encode: {e}; hvcC extraction failed"))?;
                 let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
-                (
-                    xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr),
-                    hvcc,
-                )
+                (xdremux_core::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
             }
         }
     };
@@ -276,26 +267,18 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let pixi_mono_idx = find_prop("pixi", &|raw| raw == isobmff::PIXI_MONO8_BOX)
         .unwrap_or_else(|| add_prop(isobmff::PIXI_MONO8_BOX.to_vec()));
     let ispe512_idx = find_prop("ispe", &|raw| {
-        raw.len() >= 20
-            && &raw[12..16] == &512u32.to_be_bytes()
-            && &raw[16..20] == &512u32.to_be_bytes()
+        raw.len() >= 20 && &raw[12..16] == &512u32.to_be_bytes() && &raw[16..20] == &512u32.to_be_bytes()
     })
     .unwrap_or_else(|| add_prop(isobmff::make_ispe_box(512, 512)));
 
-    // Delta grid dims: 0.703× primary (golden ratio at 4096×3512).
-    let delta_w = ((pw as u64 * 2880 + 2048) / 4096) as u32;
-    let delta_h = ((ph as u64 * 2470 + 1756) / 3512) as u32;
+    // Delta grid dims: fitted to 2880×2560 landscape or 2560×2880 portrait.
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
     let ispe_lt_idx = add_prop(isobmff::make_ispe_box(LT_W, LT_H));
-    let auxc_lt_idx = add_prop(make_auxc_box(
-        b"tag:apple.com,2023:photo:aux:linearthumbnail",
-    ));
+    let auxc_lt_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:linearthumbnail"));
     let hvcc_lt_idx = add_prop(isobmff::make_box(b"hvcC", &linear_hvcc));
     let ispe_sky_idx = add_prop(isobmff::make_ispe_box(matte_w, matte_h));
-    let auxc_sky_idx = add_prop(make_auxc_box(
-        b"urn:com:apple:photo:2020:aux:semanticskymatte",
-    ));
+    let auxc_sky_idx = add_prop(make_auxc_box(b"urn:com:apple:photo:2020:aux:semanticskymatte"));
     let hvcc_sky_idx = add_prop(isobmff::make_box(b"hvcC", &sky_hvcc));
     let hvcc_delta_idx = add_prop(DELTA_HVCC_BOX.to_vec());
 
@@ -306,11 +289,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     for id in &delta_tile_ids {
         ipma_entries.push(IpmaEntry {
             item_id: *id,
-            associations: vec![
-                (ispe512_idx, true),
-                (colr_idx, true),
-                (hvcc_delta_idx, true),
-            ],
+            associations: vec![(ispe512_idx, true), (colr_idx, true), (hvcc_delta_idx, true)],
         });
     }
     let mut delta_grid_assocs = vec![
@@ -405,7 +384,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // ---- payloads ----------------------------------------------------------
     let std_idat = crate::styles_graft::idat_payload(base, &meta_hdr).unwrap_or_default();
     // grid item payload = compact ImageGrid (8 bytes, no box header).
-    let mut grid_payload = vec![0u8, 0, (DELTA_ROWS - 1) as u8, (DELTA_COLS - 1) as u8];
+    let mut grid_payload = vec![0u8, 0, (delta_rows - 1) as u8, (delta_cols - 1) as u8];
     grid_payload.extend_from_slice(&(delta_w as u16).to_be_bytes());
     grid_payload.extend_from_slice(&(delta_h as u16).to_be_bytes());
 

@@ -4,12 +4,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let input = CString::new(args[1].as_str()).unwrap();
     let output = CString::new(args[2].as_str()).unwrap();
+    let portrait = args.get(3).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
     let cfg = xdremux_core::ConvertConfig {
         oppo_compat: 2,        // on
         oppo_camera_tail: 3,   // preserve
         strict_tmap: 0,
         apple_photographic_styles: 0,
-        apple_portrait: 0,
+        apple_portrait: portrait,
     };
     let r = xdremux_core::xdremux_convert(input.as_ptr(), output.as_ptr(), &cfg);
     let msg = unsafe {

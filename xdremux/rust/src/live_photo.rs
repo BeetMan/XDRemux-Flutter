@@ -738,10 +738,14 @@ pub fn resolve_still_time(
     let pts = sample_pts_seconds(moov, track)?;
     let duration_seconds = movie_dur as f64 / movie_ts as f64;
     if let Some(us) = requested_timestamp_us {
-        let requested = us as f64 / 1_000_000.0;
-        if requested < 0.0 || requested > duration_seconds {
+        let requested = (us as f64 / 1_000_000.0).max(0.0);
+        let requested = if requested > duration_seconds && requested <= duration_seconds + 0.5 {
+            duration_seconds
+        } else if requested > duration_seconds {
             return Err("Motion Photo still timestamp lies outside the video".into());
-        }
+        } else {
+            requested
+        };
         return pts
             .iter()
             .copied()
@@ -896,6 +900,7 @@ fn metadata_sample(transform: Option<[f64; 9]>, dimensions: Option<(f32, f32)>) 
 #[allow(clippy::too_many_arguments)]
 fn metadata_track(
     track_id: u32,
+    video_track_id: u32,
     movie_timescale: u32,
     still_time_seconds: f64,
     chunk_offset: u64,
@@ -1026,10 +1031,15 @@ fn metadata_track(
         full_box(b"stco", 0, 0, &p)
     };
 
+    let mut cdsc_payload = Vec::new();
+    cdsc_payload.extend_from_slice(&video_track_id.to_be_bytes());
+    let cdsc = make_box(b"cdsc", &cdsc_payload);
+    let tref = make_box(b"tref", &cdsc);
+
     let stbl = make_box(b"stbl", &[stsd, stts, stsc, stsz, chunk].concat());
     let minf = make_box(b"minf", &[gmhd, data_handler, dinf, stbl].concat());
     let mdia = make_box(b"mdia", &[mdhd, media_handler, minf].concat());
-    (make_box(b"trak", &[tkhd, edts, mdia].concat()), sample)
+    (make_box(b"trak", &[tkhd, tref, edts, mdia].concat()), sample)
 }
 
 fn movie_metadata(content_identifier: &str) -> Result<Vec<u8>, String> {
@@ -1122,6 +1132,11 @@ pub fn write_live_photo_movie(
         .into_iter()
         .filter(|b| &b.kind == b"trak")
         .collect();
+    let video_track_id = tracks
+        .iter()
+        .find(|t| handler_type(original_moov, t).map(|h| &h == b"vide").unwrap_or(false))
+        .and_then(|t| track_id(original_moov, t).ok())
+        .unwrap_or(1);
     let new_track_id = tracks
         .iter()
         .map(|t| track_id(original_moov, t))
@@ -1148,6 +1163,7 @@ pub fn write_live_photo_movie(
     let marker_payload_offset = source.len() as u64 + 8;
     let (metadata_track_bytes, marker_sample) = metadata_track(
         new_track_id,
+        video_track_id,
         movie_ts,
         still_time_seconds,
         marker_payload_offset,
@@ -1495,17 +1511,30 @@ pub fn read_still_content_identifier(still_heic: &[u8]) -> Option<String> {
         if !note.starts_with(b"Apple iOS\0\0\x01") {
             return None;
         }
+        let note_le = note.get(12..14) == Some(b"II");
+        let note_u16v = |t: &[u8], o: usize| -> Option<u16> {
+            let b: [u8; 2] = t.get(o..o + 2)?.try_into().ok()?;
+            Some(if note_le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+        };
+        let note_u32v = |t: &[u8], o: usize| -> Option<usize> {
+            let b: [u8; 4] = t.get(o..o + 4)?.try_into().ok()?;
+            Some(if note_le {
+                u32::from_le_bytes(b) as usize
+            } else {
+                u32::from_be_bytes(b) as usize
+            })
+        };
         // MakerNote IFD: count u16 at 14, entries at 16, values relative to
         // the note start.
-        let cn = u16v(note, 14)? as usize;
+        let cn = note_u16v(note, 14)? as usize;
         let mut pos = 16usize;
         for _ in 0..cn {
             if pos + 12 > note.len() {
                 return None;
             }
-            let tag = u16v(note, pos)?;
-            let vcnt = u32v(note, pos + 4)?;
-            let voff = u32v(note, pos + 8)?;
+            let tag = note_u16v(note, pos)?;
+            let vcnt = note_u32v(note, pos + 4)?;
+            let voff = note_u32v(note, pos + 8)?;
             if tag == 0x0011 && vcnt >= 36 {
                 let v = note.get(voff..voff + vcnt)?;
                 let s = String::from_utf8_lossy(&v[..vcnt.min(36)]).trim().to_string();

@@ -105,6 +105,19 @@ impl ExifOrientation {
         }
     }
 
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::Normal => 1,
+            Self::FlipHorizontal => 2,
+            Self::Rotate180 => 3,
+            Self::FlipVertical => 4,
+            Self::Transpose => 5,
+            Self::Rotate90Clockwise => 6,
+            Self::Transverse => 7,
+            Self::Rotate90CounterClockwise => 8,
+        }
+    }
+
     /// HEIF `irot` stores counter-clockwise quarter turns. Mirror-only EXIF
     /// orientations cannot be expressed by `irot`, so they use zero turns.
     pub const fn irot_quarter_turns_ccw(self) -> u8 {
@@ -156,7 +169,7 @@ pub fn read_heif_exif_orientation(
         .find(|entry| entry.item_id == exif_item.item_id)
         .ok_or_else(|| format!("Exif item {} has no iloc entry", exif_item.item_id))?;
     let exif_blob = read_heif_item_payload(data, entry, idat)?;
-    parse_heif_exif_orientation(&exif_blob)
+    parse_exif_orientation(&exif_blob)
 }
 
 fn read_heif_item_payload(
@@ -197,7 +210,12 @@ fn read_heif_item_payload(
     Ok(payload)
 }
 
-fn parse_heif_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, String> {
+/// Read the EXIF orientation from an Exif payload.
+///
+/// Accepts either a bare TIFF payload (the bytes after the `Exif\0\0` JPEG
+/// APP1 prefix) or a HEIF Exif item body whose leading 4-byte field points at
+/// the TIFF header.
+pub fn parse_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, String> {
     let tiff = if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
         exif_blob
     } else {
@@ -477,7 +495,9 @@ pub fn find_exif_iloc_entry<'a>(
     iloc_entries: &'a [IlocEntry],
 ) -> Option<&'a IlocEntry> {
     let exif_id = items.iter().find(|item| item.itype == "Exif")?.item_id;
-    iloc_entries.iter().find(|entry| entry.item_id == exif_id)
+    iloc_entries
+        .iter()
+        .find(|entry| entry.item_id == exif_id)
 }
 
 /// Apply the OPPO UserComment patch to the source mdat payload, confined to
@@ -521,8 +541,7 @@ pub fn apply_oppo_usercomment_patch(
 
     // TIFF byte-order marker sits after the 4-byte Exif-to-TIFF offset field
     // ("Exif\0\0"). Swift reads that field as a BE u32; OPPO files use 6.
-    let tiff_offset =
-        u32::from_be_bytes(exif_payload[0..4].try_into().expect("4-byte field")) as usize;
+    let tiff_offset = u32::from_be_bytes(exif_payload[0..4].try_into().expect("4-byte field")) as usize;
     let tiff_start = 4 + tiff_offset;
     if tiff_start < 4 || tiff_start + 8 > exif_payload.len() {
         return None;
@@ -618,9 +637,8 @@ pub fn apply_oppo_usercomment_patch(
     let (digits_start, digits_end, replacement) = adjust_oppo_usercomment(tag, mode)?;
 
     // Rebuild the value: bytes before prefix + prefix + new digits + trailing.
-    let mut rebuilt = Vec::with_capacity(
-        new_value.len() + replacement.len().saturating_sub(digits_end - digits_start),
-    );
+    let mut rebuilt =
+        Vec::with_capacity(new_value.len() + replacement.len().saturating_sub(digits_end - digits_start));
     rebuilt.extend_from_slice(&new_value[..tag.offset]);
     rebuilt.extend_from_slice(&new_value[tag.offset..digits_start]);
     rebuilt.extend_from_slice(&replacement);
@@ -760,7 +778,7 @@ mod tests {
     fn heif_exif_orientation_reads_ifd0_tag() {
         let blob = heif_exif_blob(Some(6));
         assert_eq!(
-            parse_heif_exif_orientation(&blob).unwrap(),
+            parse_exif_orientation(&blob).unwrap(),
             ExifOrientation::Rotate90Clockwise
         );
     }
@@ -768,7 +786,7 @@ mod tests {
     #[test]
     fn heif_exif_orientation_defaults_when_tag_is_absent() {
         assert_eq!(
-            parse_heif_exif_orientation(&heif_exif_blob(None)).unwrap(),
+            parse_exif_orientation(&heif_exif_blob(None)).unwrap(),
             ExifOrientation::Normal
         );
     }
@@ -779,7 +797,7 @@ mod tests {
     fn heif_exif_orientation_clamps_out_of_range_values_to_normal() {
         for value in [0u16, 9, 255, u16::MAX] {
             assert_eq!(
-                parse_heif_exif_orientation(&heif_exif_blob(Some(value))).unwrap(),
+                parse_exif_orientation(&heif_exif_blob(Some(value))).unwrap(),
                 ExifOrientation::Normal,
                 "EXIF orientation {value} must clamp to Normal"
             );
@@ -956,11 +974,7 @@ mod tests {
         let trailing = b"TAIL-DATA";
         let trailing_start = payload.len();
         payload.extend_from_slice(trailing);
-        assert_eq!(
-            uc_entry_slot + 4 + 21,
-            trailing_start,
-            "value is 21 bytes after the offset field"
-        );
+        assert_eq!(uc_entry_slot + 4 + 21, trailing_start, "value is 21 bytes after the offset field");
 
         let extent_off = 100u64;
         let mut mdat = vec![0u8; extent_off as usize];
@@ -999,7 +1013,7 @@ mod tests {
     }
 
     /// Locate the TIFF byte-order marker in an Exif item payload (which may be
-    /// bare TIFF or "offset + Exif\0\0" prefixed), matching `parse_heif_exif_orientation`.
+    /// bare TIFF or "offset + Exif\0\0" prefixed), matching `parse_exif_orientation`.
     fn tiff_start_of(exif_blob: &[u8]) -> usize {
         if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
             return 0;

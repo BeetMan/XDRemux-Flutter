@@ -562,7 +562,7 @@ class XdRemuxService {
       hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? false,
       motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyMotionPhotoDefaultMode),
-        orElse: () => MotionPhotoMode.skip,
+        orElse: () => MotionPhotoMode.livePhotoPair,
       ),
     );
   }

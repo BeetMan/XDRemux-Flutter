@@ -25,6 +25,10 @@
 //!     settings (the golden scaffold re-encodes; content is identical 8-bit
 //!     SDR, so we keep the passthrough bitstreams).
 
+#[cfg(test)]
+#[path = "styles_scaffold_tests.rs"]
+mod tests;
+
 use crate::isobmff::{self, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
 
 use crate::styles_graft::{find_top, idat_payload, top_level_boxes};
@@ -157,7 +161,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let matte_xmp = build_matte_xmp();
 
     // ---- 4. Exif rewrite: inject Apple MakerNote ------------------------
-    let maker_note = build_maker_note();
+    let maker_note = compose_styles_maker_note(&exif_payload)?;
     let new_exif_payload = inject_maker_note(&exif_payload, &maker_note)
         .map_err(|e| format!("Exif MakerNote injection: {e}"))?;
 
@@ -588,6 +592,113 @@ fn build_maker_note() -> Vec<u8> {
     out
 }
 
+/// Apple offsets are relative to the note, not the enclosing TIFF. The common
+/// portrait template already has both Styles fields: keep that note byte-exact.
+fn compose_styles_maker_note(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let styles = build_maker_note();
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let (_, entries, _) = exif_directory(tiff, bo, ifd0)?;
+    let Some(entry) = entries.iter().find(|e| e.tag == 0x927c) else {
+        return Ok(styles);
+    };
+    let note = entry_bytes(tiff, entry).ok_or("invalid MakerNote bounds/type")?;
+    if !note.starts_with(b"Apple iOS") {
+        return Ok(styles);
+    }
+    merge_styles_note(note, &styles)
+}
+
+fn merge_styles_note(note: &[u8], styles: &[u8]) -> Result<Vec<u8>, String> {
+    if note.get(..12) != Some(b"Apple iOS\0\0\x01") {
+        return Err("unsupported Apple MakerNote header".into());
+    }
+    let bo = match note.get(12..14) {
+        Some(b"MM") => Bo(true),
+        Some(b"II") => Bo(false),
+        _ => return Err("invalid Apple MakerNote byte order".into()),
+    };
+    let (entries, next) = read_ifd(note, bo, 14).ok_or("invalid Apple MakerNote IFD")?;
+    if next != 0 {
+        return Err("unsupported Apple MakerNote IFD chain".into());
+    }
+    let old_end = 16 + entries.len() * 12 + 4;
+    for (i, entry) in entries.iter().enumerate() {
+        if entries[..i].iter().any(|e| e.tag == entry.tag)
+            || entry_bytes(note, entry).is_none()
+            || entry.payload_offset.is_some_and(|offset| (offset as usize) < old_end)
+        {
+            return Err("invalid Apple MakerNote entry/bounds".into());
+        }
+    }
+    let (required, _) = read_ifd(styles, Bo(true), 14).ok_or("invalid Styles template")?;
+    if let Some(uuid) = entries.iter().find(|e| e.tag == 43) {
+        let bytes = entry_bytes(note, uuid).unwrap();
+        if uuid.typ != 2 || bytes.len() != 37 || bytes[36] != 0 {
+            return Err("invalid Apple photo UUID".into());
+        }
+    }
+    let complete = required.iter().all(|r| entries.iter().any(|e| {
+        e.tag == r.tag && e.typ == r.typ
+            && (r.tag == 43 || entry_bytes(note, e) == entry_bytes(styles, r))
+    }));
+    if complete {
+        return Ok(note.to_vec());
+    }
+    let missing = required.iter().filter(|r| !entries.iter().any(|e| e.tag == r.tag)).count();
+    let shift = missing * 12;
+    if shift != 0 && entries.iter().any(|e| e.typ == 7 && e.payload_offset.is_some() && e.tag != 84) {
+        return Err("cannot expand Apple MakerNote with unknown out-of-line UNDEFINED payload".into());
+    }
+    let count = u16::try_from(entries.len() + missing).map_err(|_| "too many MakerNote entries")?;
+    // Only incomplete notes expand the fixed-position directory. Relocate typed
+    // fields and the demonstrated self-relative tag84 plist, not opaque blobs.
+    let mut out = note.to_vec();
+    if shift != 0 {
+        out.splice(old_end..old_end, vec![0; shift]);
+    }
+    let mut records: Vec<(u16, [u8; 12])> = Vec::new();
+    for entry in &entries {
+        let mut record: [u8; 12] = note[entry.value_field_pos - 8..entry.value_field_pos + 4].try_into().unwrap();
+        if let Some(offset) = entry.payload_offset {
+            bo.put_u32(&mut record[8..12], offset.checked_add(shift as u32).ok_or("MakerNote offset overflow")?);
+        }
+        records.push((entry.tag, record));
+    }
+    for required_entry in &required {
+        let existing = entries.iter().find(|e| e.tag == required_entry.tag);
+        // A valid existing photo UUID belongs to the photo, not this stage.
+        if required_entry.tag == 43 && existing.is_some() {
+            continue;
+        }
+        let payload = entry_bytes(styles, required_entry).ok_or("invalid Styles payload")?;
+        if let Some(e) = existing {
+            if e.typ == required_entry.typ && entry_bytes(note, e) == Some(payload) {
+                continue;
+            }
+        }
+        let mut record = [0u8; 12];
+        bo.put_u16(&mut record[..2], required_entry.tag);
+        bo.put_u16(&mut record[2..4], required_entry.typ);
+        bo.put_u32(&mut record[4..8], required_entry.count);
+        bo.put_u32(&mut record[8..12], u32::try_from(out.len()).map_err(|_| "MakerNote too large")?);
+        out.extend_from_slice(payload);
+        if let Some(r) = records.iter_mut().find(|r| r.0 == required_entry.tag) {
+            r.1 = record;
+        } else {
+            records.push((required_entry.tag, record));
+        }
+    }
+    records.sort_by_key(|r| r.0);
+    bo.put_u16(&mut out[14..16], count);
+    for (i, (_, record)) in records.iter().enumerate() {
+        out[16 + i * 12..28 + i * 12].copy_from_slice(record);
+    }
+    out[16 + records.len() * 12..20 + records.len() * 12].fill(0);
+    Ok(out)
+}
+
 fn uuid_v4_upper() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     // xorshift seeded from time + pid; good enough for a photo UUID.
@@ -631,14 +742,7 @@ fn exif_datetime(exif: &[u8]) -> Option<(String, String)> {
 
 /// Exif item payload → TIFF bytes (skip the 4-byte offset prefix + "Exif\0\0").
 fn tiff_slice(exif: &[u8]) -> Option<Vec<u8>> {
-    if exif.len() < 12 {
-        return None;
-    }
-    let off = u32::from_be_bytes([exif[0], exif[1], exif[2], exif[3]]) as usize;
-    let start = 4 + off;
-    if start + 8 > exif.len() {
-        return None;
-    }
+    let start = exif_prefix_len(exif).ok()?;
     Some(exif[start..].to_vec())
 }
 
@@ -699,7 +803,10 @@ fn type_size(t: u16) -> Option<u64> {
         1 | 2 | 6 | 7 => Some(1),
         3 | 8 => Some(2),
         4 | 9 | 11 => Some(4),
-        5 | 10 | 12 => Some(8),
+        5 | 10 | 12 | 16 | 17 => Some(8),
+        // IFD/IFD8 directory pointers require recursive offset relocation.
+        // They are not ordinary numeric payloads supported by this writer.
+        13 | 18 => None,
         _ => None,
     }
 }
@@ -716,12 +823,13 @@ struct IfdEntry {
 
 fn read_ifd(tiff: &[u8], bo: Bo, ifd_off: u32) -> Option<(Vec<IfdEntry>, u32)> {
     let base = ifd_off as usize;
-    if base + 2 > tiff.len() {
+    let entries_start = base.checked_add(2)?;
+    if entries_start > tiff.len() {
         return None;
     }
-    let count = bo.u16(&tiff[base..base + 2]) as usize;
-    let entries_start = base + 2;
-    if entries_start + count * 12 + 4 > tiff.len() {
+    let count = bo.u16(&tiff[base..entries_start]) as usize;
+    let directory_end = entries_start.checked_add(count.checked_mul(12)?)?.checked_add(4)?;
+    if directory_end > tiff.len() {
         return None;
     }
     let mut entries = Vec::with_capacity(count);
@@ -786,133 +894,197 @@ fn find_exif_ascii_tag(tiff: &[u8], bo: Bo, ifd0: u32, tag: u16) -> Option<Strin
     find_ascii_tag(tiff, bo, exif_ifd, tag)
 }
 
-/// Insert the Apple MakerNote (tag 0x927c) into the ExifIFD of an Exif item
-/// payload, fixing every offset that points past the insertion point.
+fn exif_prefix_len(exif: &[u8]) -> Result<usize, String> {
+    let offset = u32::from_be_bytes(exif.get(..4).ok_or("Exif item too short")?.try_into().unwrap());
+    let prefix = 4usize.checked_add(offset as usize).ok_or("Exif offset overflow")?;
+    if exif.get(prefix..).filter(|t| t.len() >= 8).is_none() {
+        return Err("Exif TIFF offset out of bounds".into());
+    }
+    Ok(prefix)
+}
+
+fn entry_bytes<'a>(data: &'a [u8], entry: &IfdEntry) -> Option<&'a [u8]> {
+    let len = usize::try_from(type_size(entry.typ)?.checked_mul(entry.count as u64)?).ok()?;
+    let start = entry.payload_offset.map(|v| v as usize).unwrap_or(entry.value_field_pos);
+    data.get(start..start.checked_add(len)?)
+}
+
+fn exif_directory(tiff: &[u8], bo: Bo, ifd0: u32) -> Result<(usize, Vec<IfdEntry>, u32), String> {
+    let (entries, _) = read_ifd(tiff, bo, ifd0).ok_or("bad IFD0")?;
+    let pointer = entries.iter().find(|e| e.tag == 0x8769 && e.typ == 4 && e.count == 1)
+        .ok_or("no valid ExifIFD pointer")?;
+    let offset = bo.u32(&tiff[pointer.value_field_pos..pointer.value_field_pos + 4]);
+    let (entries, next) = read_ifd(tiff, bo, offset).ok_or("bad ExifIFD")?;
+    Ok((pointer.value_field_pos, entries, next))
+}
+
+/// Preserve original capture EXIF for an upright, clean src.image output.
+/// Only rendering-dependent fields change; MakerNote is replaced by the portrait
+/// stage afterwards. Never relocate opaque camera/GPS payloads.
+pub(crate) fn restore_capture_exif(
+    original: &[u8], rendered: &[u8], width: u32, height: u32,
+) -> Result<Vec<u8>, String> {
+    let mut output = normalize_primary_orientation(original)?;
+    let prefix = exif_prefix_len(&output)?;
+    let (bo, ifd0) = tiff_header(&output[prefix..]).ok_or("bad TIFF header")?;
+    let (entries, _) = read_ifd(&output[prefix..], bo, ifd0).ok_or("bad IFD0")?;
+    for entry in &entries {
+        let value = match entry.tag { 0x0100 => width, 0x0101 => height, _ => continue };
+        if entry.count != 1 || !matches!(entry.typ, 3 | 4) {
+            return Err("invalid primary EXIF dimension field".into());
+        }
+        // LONG fits both old SHORT dimensions and arbitrary output dimensions.
+        let pos = prefix + entry.value_field_pos;
+        bo.put_u16(&mut output[pos - 6..pos - 4], 4);
+        bo.put_u32(&mut output[pos..pos + 4], value);
+    }
+    // The original IFD1 JPEG may show the watermark/old crop and orientation.
+    // Unlink it rather than copying a stale preview into the clean output.
+    let next = prefix + ifd0 as usize + 2 + entries.len() * 12;
+    bo.put_u32(&mut output[next..next + 4], 0);
+    for (tag, value) in [(0xa002, width), (0xa003, height)] {
+        let mut bytes = [0; 4];
+        bo.put_u32(&mut bytes, value);
+        output = upsert_exif_field(&output, tag, 4, 1, &bytes)?;
+    }
+    // ColorSpace describes the rendered image, not the original watermarked
+    // primary. Keep the base writer's value (or Uncalibrated if absent).
+    let color = if rendered.is_empty() {
+        65535
+    } else {
+        let rp = exif_prefix_len(rendered)?;
+        let rt = &rendered[rp..];
+        let (rb, ri) = tiff_header(rt).ok_or("bad rendered TIFF header")?;
+        exif_directory(rt, rb, ri).ok().and_then(|(_, es, _)| {
+            es.iter().find(|e| e.tag == 0xa001 && e.typ == 3 && e.count == 1)
+                .map(|e| rb.u16(&rt[e.value_field_pos..e.value_field_pos + 2]))
+        }).unwrap_or(65535)
+    };
+    let mut bytes = [0; 2];
+    bo.put_u16(&mut bytes, color);
+    upsert_exif_field(&output, 0xa001, 3, 1, &bytes)
+}
+
+/// Normalize only the primary IFD0 orientation after pixels have been oriented.
+/// Leave thumbnail orientation and all offsets intact. An absent tag is Normal.
+pub(crate) fn normalize_primary_orientation(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let mut output = exif.to_vec();
+    if ifd0 == 0 {
+        return Ok(output);
+    }
+    let (entries, _) = read_ifd(tiff, bo, ifd0).ok_or("bad IFD0")?;
+    for entry in entries.iter().filter(|e| e.tag == 0x0112) {
+        if entry.count != 1 || !matches!(entry.typ, 3 | 4) {
+            return Err("invalid primary EXIF Orientation field".into());
+        }
+        let pos = prefix + entry.value_field_pos;
+        if entry.typ == 3 {
+            bo.put_u16(&mut output[pos..pos + 2], 1);
+        } else {
+            bo.put_u32(&mut output[pos..pos + 4], 1);
+        }
+    }
+    Ok(output)
+}
+
+/// EXIF CustomRendered is SHORT/count 1. Value 9 follows the Swift reference;
+/// its Apple-specific meaning still requires device validation. Append a new
+/// directory when absent, leaving all TIFF payload/thumbnail/GPS offsets intact.
+pub(crate) fn set_portrait_custom_rendered(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let (bo, _) = tiff_header(&exif[prefix..]).ok_or("bad TIFF header")?;
+    let mut value = [0; 2];
+    bo.put_u16(&mut value, 9);
+    upsert_exif_field(exif, 0xa401, 3, 1, &value)
+}
+
+/// Append payloads/directories rather than shifting TIFF data: MakerNotes,
+/// thumbnails, GPS and other IFDs keep their original offset bases.
 pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
-    let prefix_len = 4 + u32::from_be_bytes([exif[0], exif[1], exif[2], exif[3]]) as usize;
-    if exif.len() < prefix_len + 8 {
-        return Err("Exif item too short".into());
+    let count = u32::try_from(maker_note.len()).map_err(|_| "MakerNote too large")?;
+    let exif = rename_extra_maker_notes(exif)?;
+    upsert_exif_field(&exif, 0x927c, 7, count, maker_note)
+}
+
+/// Rename surplus `0x927c` Exif entries to unused tags (`0x927d`, `0x927e`, ...).
+/// Huawei cameras (e.g. Mate 70 Pro) can emit up to four `0x927c` entries;
+/// `upsert_exif_field` rejects duplicates, and Apple's ImageIO would otherwise
+/// overwrite the Apple MakerNote with a later vendor entry.
+fn rename_extra_maker_notes(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let (_, entries, _) = exif_directory(tiff, bo, ifd0)?;
+    let maker_notes: Vec<&IfdEntry> = entries.iter().filter(|e| e.tag == 0x927c).collect();
+    if maker_notes.len() <= 1 {
+        return Ok(exif.to_vec());
     }
-    let tiff = exif[prefix_len..].to_vec();
-    let (bo, ifd0_off) = tiff_header(&tiff).ok_or("bad TIFF header")?;
-
-    let (ifd0_entries, _) = read_ifd(&tiff, bo, ifd0_off).ok_or("bad IFD0")?;
-    let exif_ifd_off = ifd0_entries
-        .iter()
-        .find(|e| e.tag == 0x8769)
-        .map(|e| bo.u32(&tiff[e.value_field_pos..e.value_field_pos + 4]))
-        .ok_or("no ExifIFD pointer")?;
-    let (exif_entries, _) = read_ifd(&tiff, bo, exif_ifd_off).ok_or("bad ExifIFD")?;
-    let existing_mns: Vec<_> = exif_entries.iter().filter(|e| e.tag == 0x927c).collect();
-    if !existing_mns.is_empty() {
-        let first = existing_mns[0];
-        // The source camera's own MakerNote (e.g. OPPO's JSON blob or Huawei's MakerNote)
-        // — replace it with the Apple MakerNote: patch the first entry in place and append
-        // the new payload at the end of the TIFF (old bytes become dead space).
-        // No insertion, so no offset fixups are needed.
-        let mut patched = tiff.clone();
-        let mn_off = patched.len() as u32;
-        let vp = first.value_field_pos;
-        bo.put_u16(&mut patched[vp - 6..vp - 4], 7); // type = undefined
-        bo.put_u32(&mut patched[vp - 4..vp], maker_note.len() as u32);
-        bo.put_u32(&mut patched[vp..vp + 4], mn_off);
-        patched.extend_from_slice(maker_note);
-
-        // Rename any duplicate 0x927c entries (e.g. Huawei Mate 70 Pro writes up to 4
-        // separate 0x927c entries) to unused tags (0x927d, 0x927e, ...) so that standard
-        // Exif parsers like Apple's ImageIO do not overwrite the Apple MakerNote.
-        let mut extra_tag = 0x927du16;
-        for dup in &existing_mns[1..] {
-            let tag_pos = dup.value_field_pos - 8;
-            bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
-            extra_tag += 1;
+    let used: Vec<u16> = entries.iter().map(|e| e.tag).collect();
+    let mut patched = tiff.to_vec();
+    let mut extra_tag = 0x927du16;
+    for dup in &maker_notes[1..] {
+        while used.contains(&extra_tag) {
+            extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
         }
-
-        let mut result = exif[..prefix_len].to_vec();
-        result.extend_from_slice(&patched);
-        return Ok(result);
+        let tag_pos = dup.value_field_pos - 8;
+        bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
+        extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
     }
+    let mut out = exif[..prefix].to_vec();
+    out.extend_from_slice(&patched);
+    Ok(out)
+}
 
-    // Insertion point: inside ExifIFD, at the sorted position for 0x927c.
-    let insert_entry_idx = exif_entries
-        .iter()
-        .position(|e| e.tag > 0x927c)
-        .unwrap_or(exif_entries.len());
-    let insert_pos = exif_ifd_off as usize + 2 + insert_entry_idx * 12;
-
-    // MakerNote goes at the end of the (shifted) TIFF.
-    let maker_note_off = tiff.len() as u32 + 12; // +12 for the inserted entry
-
-    // Build the new entry bytes.
-    let mut new_entry = vec![0u8; 12];
-    bo.put_u16(&mut new_entry[0..2], 0x927c);
-    bo.put_u16(&mut new_entry[2..4], 7); // undefined
-    bo.put_u32(&mut new_entry[4..8], maker_note.len() as u32);
-    bo.put_u32(&mut new_entry[8..12], maker_note_off);
-
-    // Collect all IFD offsets to fix. IFD0 + ExifIFD + GPS IFD + IFD1 chain.
-    let mut ifd_offsets = vec![ifd0_off, exif_ifd_off];
-    if let Some(gps) = ifd0_entries.iter().find(|e| e.tag == 0x8825) {
-        ifd_offsets.push(bo.u32(&tiff[gps.value_field_pos..gps.value_field_pos + 4]));
-    }
-    let (_, ifd1_off) = read_ifd(&tiff, bo, ifd0_off).unwrap();
-    if ifd1_off != 0 {
-        ifd_offsets.push(ifd1_off);
-    }
-
-    let mut patched = tiff.clone();
-
-    // 1. Bump ExifIFD entry count.
-    let cnt_pos = exif_ifd_off as usize;
-    let old_count = bo.u16(&patched[cnt_pos..cnt_pos + 2]);
-    bo.put_u16(&mut patched[cnt_pos..cnt_pos + 2], old_count + 1);
-
-    // 2. Fix every offset >= insert_pos by +12.
-    let shift_after = insert_pos as u32;
-    for &ioff in &ifd_offsets {
-        let (entries, next_pos) = match read_ifd(&tiff, bo, ioff) {
-            Some(v) => v,
-            None => continue,
-        };
-        for e in &entries {
-            // Pointer tags (IFD offsets stored in the value field).
-            if matches!(e.tag, 0x8769 | 0x8825 | 0x014a) && e.typ == 4 {
-                let v = bo.u32(&tiff[e.value_field_pos..e.value_field_pos + 4]);
-                if v >= shift_after {
-                    bo.put_u32(
-                        &mut patched[e.value_field_pos..e.value_field_pos + 4],
-                        v + 12,
-                    );
-                }
-                continue;
-            }
-            if let Some(po) = e.payload_offset {
-                if po >= shift_after {
-                    bo.put_u32(
-                        &mut patched[e.value_field_pos..e.value_field_pos + 4],
-                        po + 12,
-                    );
-                }
-            }
-        }
-        // next-IFD pointer.
-        let np = ioff as usize + 2 + entries.len() * 12;
-        if next_pos >= shift_after && next_pos != 0 {
-            bo.put_u32(&mut patched[np..np + 4], next_pos + 12);
+fn upsert_exif_field(exif: &[u8], tag: u16, typ: u16, count: u32, value: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let (pointer, entries, next) = exif_directory(tiff, bo, ifd0)?;
+    for (i, e) in entries.iter().enumerate() {
+        if entry_bytes(tiff, e).is_none() || entries[..i].iter().any(|previous| previous.tag == e.tag) {
+            return Err("invalid Exif entry bounds/type/duplicate".into());
         }
     }
-
-    // 3. Splice: patched[..insert_pos] + new_entry + patched[insert_pos..] + maker_note.
-    let mut out = Vec::with_capacity(patched.len() + 12 + maker_note.len());
-    out.extend_from_slice(&patched[..insert_pos]);
-    out.extend_from_slice(&new_entry);
-    out.extend_from_slice(&patched[insert_pos..]);
-    out.extend_from_slice(maker_note);
-
-    // Reassemble the Exif item payload with its original prefix.
-    let mut result = exif[..prefix_len].to_vec();
-    result.extend_from_slice(&out);
-    Ok(result)
+    let mut patched = tiff.to_vec();
+    let mut record = [0u8; 12];
+    bo.put_u16(&mut record[..2], tag);
+    bo.put_u16(&mut record[2..4], typ);
+    bo.put_u32(&mut record[4..8], count);
+    if value.len() <= 4 {
+        record[8..8 + value.len()].copy_from_slice(value);
+    } else {
+        if patched.len() % 2 != 0 { patched.push(0); }
+        let offset = u32::try_from(patched.len()).map_err(|_| "TIFF too large")?;
+        bo.put_u32(&mut record[8..12], offset);
+        patched.extend_from_slice(value);
+    }
+    if let Some(e) = entries.iter().find(|e| e.tag == tag) {
+        patched[e.value_field_pos - 8..e.value_field_pos + 4].copy_from_slice(&record);
+    } else {
+        let count = u16::try_from(entries.len() + 1).map_err(|_| "too many Exif entries")?;
+        if patched.len() % 2 != 0 { patched.push(0); }
+        let offset = u32::try_from(patched.len()).map_err(|_| "TIFF too large")?;
+        bo.put_u32(&mut patched[pointer..pointer + 4], offset);
+        let mut records: Vec<(u16, [u8; 12])> = entries.iter().map(|e| {
+            (e.tag, tiff[e.value_field_pos - 8..e.value_field_pos + 4].try_into().unwrap())
+        }).collect();
+        records.push((tag, record));
+        records.sort_by_key(|r| r.0);
+        let mut directory = vec![0; 2 + records.len() * 12 + 4];
+        bo.put_u16(&mut directory[..2], count);
+        for (i, (_, record)) in records.iter().enumerate() {
+            directory[2 + i * 12..14 + i * 12].copy_from_slice(record);
+        }
+        let end = directory.len();
+        bo.put_u32(&mut directory[end - 4..], next);
+        patched.extend_from_slice(&directory);
+    }
+    let mut out = exif[..prefix].to_vec();
+    out.extend_from_slice(&patched);
+    Ok(out)
 }
 
 /// pub(crate) accessor for styles_native.

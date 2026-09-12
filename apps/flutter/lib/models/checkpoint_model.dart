@@ -23,19 +23,18 @@ class CheckpointHeader {
   });
 
   Map<String, dynamic> toJson() => {
-    'type': 'header',
-    'configHash': configHash,
-    'totalJobs': totalJobs,
-    'startedAt': startedAt.toIso8601String(),
-    'appVersion': appVersion,
-  };
+        'type': 'header',
+        'configHash': configHash,
+        'totalJobs': totalJobs,
+        'startedAt': startedAt.toIso8601String(),
+        'appVersion': appVersion,
+      };
 
   factory CheckpointHeader.fromJson(Map<String, dynamic> json) {
     return CheckpointHeader(
       configHash: json['configHash'] as String? ?? '',
       totalJobs: json['totalJobs'] as int? ?? 0,
-      startedAt:
-          DateTime.tryParse(json['startedAt'] as String? ?? '') ??
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? '') ??
           DateTime.now(),
       appVersion: json['appVersion'] as String? ?? '',
     );
@@ -83,9 +82,6 @@ class CheckpointItem {
   final String? classificationStatus;
   final String? hdrKind;
   final String? family;
-  final bool huaweiHdr;
-  final bool huaweiHasXtstyle;
-  final Map<String, dynamic>? huaweiPortrait;
 
   /// Motion Photo detection result (null when not a Motion Photo) and the
   /// per-card handling mode, so restore reproduces the exact queue state.
@@ -105,35 +101,29 @@ class CheckpointItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
-    this.huaweiHdr = false,
-    this.huaweiHasXtstyle = false,
-    this.huaweiPortrait,
     this.motionPhoto,
-    this.motionPhotoMode = 'skip',
+    this.motionPhotoMode = 'livePhotoPair',
   });
 
   Map<String, dynamic> toJson() => {
-    'type': 'item',
-    'inputPath': inputPath,
-    'outputPath': outputPath,
-    'status': status.wire,
-    'inputSize': inputSize,
-    'inputMtimeMs': inputMtimeMs,
-    if (error != null) 'error': error,
-    if (finishedAt != null) 'finishedAt': finishedAt!.toIso8601String(),
-    if (captureModeKey != null) 'captureModeKey': captureModeKey,
-    if (captureModeFolderName != null)
-      'captureModeFolderName': captureModeFolderName,
-    if (classificationStatus != null)
-      'classificationStatus': classificationStatus,
-    if (hdrKind != null) 'hdrKind': hdrKind,
-    if (family != null) 'family': family,
-    if (huaweiHdr) 'huaweiHdr': true,
-    if (huaweiHasXtstyle) 'huaweiHasXtstyle': true,
-    if (huaweiPortrait != null) 'huaweiPortrait': huaweiPortrait,
-    if (motionPhoto != null) 'motionPhoto': motionPhoto,
-    'motionPhotoMode': motionPhotoMode,
-  };
+        'type': 'item',
+        'inputPath': inputPath,
+        'outputPath': outputPath,
+        'status': status.wire,
+        'inputSize': inputSize,
+        'inputMtimeMs': inputMtimeMs,
+        if (error != null) 'error': error,
+        if (finishedAt != null) 'finishedAt': finishedAt!.toIso8601String(),
+        if (captureModeKey != null) 'captureModeKey': captureModeKey,
+        if (captureModeFolderName != null)
+          'captureModeFolderName': captureModeFolderName,
+        if (classificationStatus != null)
+          'classificationStatus': classificationStatus,
+        if (hdrKind != null) 'hdrKind': hdrKind,
+        if (family != null) 'family': family,
+        if (motionPhoto != null) 'motionPhoto': motionPhoto,
+        'motionPhotoMode': motionPhotoMode,
+      };
 
   factory CheckpointItem.fromJson(Map<String, dynamic> json) {
     return CheckpointItem(
@@ -151,23 +141,18 @@ class CheckpointItem {
       classificationStatus: json['classificationStatus'] as String?,
       hdrKind: json['hdrKind'] as String?,
       family: json['family'] as String?,
-      huaweiHdr: json['huaweiHdr'] as bool? ?? false,
-      huaweiHasXtstyle: json['huaweiHasXtstyle'] as bool? ?? false,
-      huaweiPortrait: json['huaweiPortrait'] != null
-          ? Map<String, dynamic>.from(json['huaweiPortrait'] as Map)
-          : null,
-      motionPhoto: json['motionPhoto'] != null
-          ? Map<String, dynamic>.from(json['motionPhoto'] as Map)
-          : null,
-      motionPhotoMode: json['motionPhotoMode'] as String? ?? 'skip',
+      motionPhoto:
+          json['motionPhoto'] != null
+              ? Map<String, dynamic>.from(json['motionPhoto'] as Map)
+              : null,
+      motionPhotoMode: json['motionPhotoMode'] as String? ?? 'livePhotoPair',
     );
   }
 
   /// Whether this item represents a successfully completed conversion.
   bool get isDone =>
       status == CheckpointItemStatus.converted ||
-      status == CheckpointItemStatus.skippedExisting ||
-      status == CheckpointItemStatus.skippedPolicy;
+      status == CheckpointItemStatus.skippedExisting;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,10 +177,7 @@ class Checkpoint {
 
   /// Parse from JSONL string.
   static Checkpoint? fromJsonl(String content) {
-    final lines = content
-        .split('\n')
-        .where((l) => l.trim().isNotEmpty)
-        .toList();
+    final lines = content.split('\n').where((l) => l.trim().isNotEmpty).toList();
     if (lines.isEmpty) return null;
 
     try {
@@ -229,7 +211,9 @@ class Checkpoint {
       items.where((i) => i.status == CheckpointItemStatus.pending).length;
 
   /// Whether all items are done with zero failures.
-  bool get allSuccess => items.isNotEmpty && items.every((i) => i.isDone);
+  bool get allSuccess =>
+      items.isNotEmpty &&
+      items.every((i) => i.isDone);
 
   /// Whether the checkpoint has any failures.
   bool get hasFailures => failedCount > 0;

@@ -28,10 +28,12 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
+import 'widgets/photo_details_section.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -45,15 +47,58 @@ bool isSupportedInputPath(String path) {
       lower.endsWith('.jpeg');
 }
 
+/// When a user picks a previously converted output file (e.g. `foo_iso.heic`),
+/// attempts to locate the original donor source photo in the same directory
+/// so re-conversion with different settings can succeed cleanly.
+String? findOriginalDonorForConvertedFile(
+  String convertedPath, {
+  String? customSuffix,
+}) {
+  try {
+    final file = File(convertedPath);
+    final parent = file.parent;
+    final name = file.uri.pathSegments.last;
+    final dot = name.lastIndexOf('.');
+    final ext = dot > 0 ? name.substring(dot) : '';
+    final stem = dot > 0 ? name.substring(0, dot) : name;
+
+    final suffixes = <String>[
+      if (customSuffix != null && customSuffix.isNotEmpty) customSuffix,
+      '_iso',
+      '_apple',
+      '_v2',
+      '_hdr',
+    ];
+    final candidates = <String>[];
+    for (final s in suffixes) {
+      if (s.isNotEmpty && stem.endsWith(s)) {
+        final baseStem = stem.substring(0, stem.length - s.length);
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem$ext');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.heic');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.HEIC');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.jpg');
+        candidates.add('${parent.path}${Platform.pathSeparator}$baseStem.jpeg');
+      }
+    }
+    for (final cand in candidates) {
+      if (File(cand).existsSync() && cand != convertedPath) {
+        return cand;
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 /// Picked file carrier that works across file_picker v12 (PlatformFile is
 /// abstract now) and our own photo-picker bridges.
 /// [readBytes] loads lazily to avoid marshalling multi-MB HEICs eagerly.
-typedef PickedItem = ({
-  String name,
-  String? path,
-  Uri? uri,
-  Future<Uint8List> Function()? readBytes,
-});
+typedef PickedItem =
+    ({
+      String name,
+      String? path,
+      Uri? uri,
+      Future<Uint8List> Function()? readBytes,
+    });
 
 void main() {
   runApp(const XdRemuxApp());
@@ -161,6 +206,7 @@ class XdRemuxApp extends StatelessWidget {
 
 enum _QueueMenuAction {
   retryFailed,
+  reconvertAll,
   clearCompleted,
   saveAllToGallery,
   minimizeToTray,
@@ -251,12 +297,7 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 10),
-        content: Text(
-          t(
-            '发现新版本 ${update.releaseName}',
-            'New version available: ${update.releaseName}',
-          ),
-        ),
+        content: Text(t('发现新版本 ${update.releaseName}', 'New version available: ${update.releaseName}')),
         action: SnackBarAction(
           label: t('去下载', 'Download'),
           onPressed: () => launchUrl(
@@ -372,7 +413,7 @@ class _HomePageState extends State<HomePage> {
       final mpJson = cpItem.motionPhoto;
       final mpMode = MotionPhotoMode.values.firstWhere(
         (e) => e.name == cpItem.motionPhotoMode,
-        orElse: () => MotionPhotoMode.skip,
+        orElse: () => MotionPhotoMode.livePhotoPair,
       );
 
       final restoredItem = QueueItem(
@@ -391,17 +432,10 @@ class _HomePageState extends State<HomePage> {
         classificationStatus: cpItem.classificationStatus,
         hdrKind: cpItem.hdrKind,
         family: cpItem.family,
-        huaweiHdr: cpItem.huaweiHdr,
-        huaweiHasXtstyle: cpItem.huaweiHasXtstyle,
-        huaweiPortrait: cpItem.huaweiPortrait,
-        motionPhoto: mpJson == null
-            ? null
-            : MotionPhotoSummary(
-                kind: mpJson['kind'] as String? ?? 'unknown',
-                stillBytes: (mpJson['stillBytes'] as num?)?.toInt() ?? 0,
-                videoBytes: (mpJson['videoBytes'] as num?)?.toInt() ?? 0,
-                streamCount: (mpJson['streamCount'] as num?)?.toInt() ?? 1,
-              ),
+        motionPhoto:
+            mpJson == null
+                ? null
+                : MotionPhotoSummary.fromJson(mpJson),
         motionPhotoMode: mpMode,
       );
       // Live Photo pairing provenance: a converted pair is only complete
@@ -418,17 +452,17 @@ class _HomePageState extends State<HomePage> {
         var pairOk = false;
         if (File(movPath).existsSync()) {
           try {
-            pairOk = XdRemuxFFI.livePhotoPairValid(cpItem.outputPath, movPath);
+            pairOk = XdRemuxFFI.livePhotoPairValid(
+              cpItem.outputPath,
+              movPath,
+            );
           } catch (_) {
             pairOk = false;
           }
         }
         if (!pairOk) {
           restoredItem.status = QueueItemStatus.failed;
-          restoredItem.errorMessage = t(
-            '配对 MOV 缺失或与静帧不匹配，请重新转换',
-            'Paired MOV missing or mismatched with the still; please convert again',
-          );
+          restoredItem.errorMessage = t('配对 MOV 缺失或与静帧不匹配，请重新转换', 'Paired MOV missing or mismatched with the still; please convert again');
         }
       }
       _queue.add(restoredItem);
@@ -447,19 +481,9 @@ class _HomePageState extends State<HomePage> {
         ),
       );
       if (restored == 0 && unavailable > 0) {
-        message.write(
-          t(
-            '；临时源文件已失效，请重新选择',
-            '; temporary source files are gone, please re-select',
-          ),
-        );
+        message.write(t('；临时源文件已失效，请重新选择', '; temporary source files are gone, please re-select'));
       } else if (unavailable > 0) {
-        message.write(
-          t(
-            '；$unavailable 个源文件不可用，已跳过',
-            '; $unavailable source files unavailable, skipped',
-          ),
-        );
+        message.write(t('；$unavailable 个源文件不可用，已跳过', '; $unavailable source files unavailable, skipped'));
       }
       _currentFileName = message.toString();
     });
@@ -495,22 +519,17 @@ class _HomePageState extends State<HomePage> {
         context: context,
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.battery_saver),
-          title: Text(
-            t(
-              '后台转换需要关闭电池限制',
-              'Background conversion needs battery optimization off',
-            ),
-          ),
+          title: Text(t('后台转换需要关闭电池限制', 'Background conversion needs battery optimization off')),
           content: Text(
             t(
               '切换到后台时，系统会冻结应用以省电，导致转换暂停。\n\n'
-                  '需要完成两步设置：\n'
-                  '1. 允许"忽略电池优化"（系统对话框）\n'
-                  '2. 在"耗电行为控制"中设为"允许后台运行"（OPPO/一加/realme）',
+              '需要完成两步设置：\n'
+              '1. 允许"忽略电池优化"（系统对话框）\n'
+              '2. 在"耗电行为控制"中设为"允许后台运行"（OPPO/一加/realme）',
               'When the app goes to the background, the system may freeze it to save power, pausing conversion.\n\n'
-                  'Two steps are required:\n'
-                  '1. Allow "Ignore battery optimizations" (system dialog)\n'
-                  '2. Set "Allow background activity" under "Power consumption behavior" (OPPO/OnePlus/realme)',
+              'Two steps are required:\n'
+              '1. Allow "Ignore battery optimizations" (system dialog)\n'
+              '2. Set "Allow background activity" under "Power consumption behavior" (OPPO/OnePlus/realme)',
             ),
           ),
           actions: [
@@ -582,9 +601,8 @@ class _HomePageState extends State<HomePage> {
   Future<String?> _resolveOhosSharedUri(String uri) async {
     if (uri.isEmpty) return null;
     try {
-      return await _ohosShareChannel.invokeMethod<String>('readSharedFile', {
-        'uri': uri,
-      });
+      return await _ohosShareChannel
+          .invokeMethod<String>('readSharedFile', {'uri': uri});
     } catch (e) {
       debugPrint('[XDRemux][share] ohos uri resolve failed: $e ($uri)');
       return null;
@@ -626,11 +644,7 @@ class _HomePageState extends State<HomePage> {
         debugPrint('[XDRemux][share] cannot read $filePath: $e');
       }
     }
-    await _enqueuePaths(
-      paths,
-      verb: t('接收', 'Received'),
-      ignored: ignored + unreadable,
-    );
+    await _enqueuePaths(paths, verb: t('接收', 'Received'), ignored: ignored + unreadable);
   }
 
   @override
@@ -677,9 +691,8 @@ class _HomePageState extends State<HomePage> {
       .where((item) => item.status == QueueItemStatus.skippedExisting)
       .length;
 
-  int get _skippedPolicyCount => _queue
-      .where((item) => item.status == QueueItemStatus.skippedPolicy)
-      .length;
+  int get _skippedPolicyCount =>
+      _queue.where((item) => item.status == QueueItemStatus.skippedPolicy).length;
 
   int get _skippedCount => _skippedExistingCount + _skippedPolicyCount;
 
@@ -788,8 +801,8 @@ class _HomePageState extends State<HomePage> {
       // file_picker v12: `identifier` retired; the content/file URI is in
       // `uri` (identifier semantics were content:// on Android).
       final uri = file.uri;
-      final identifier =
-          uri != null && (uri.scheme == 'content' || uri.scheme == 'file')
+      final identifier = uri != null &&
+              (uri.scheme == 'content' || uri.scheme == 'file')
           ? uri.toString()
           : null;
       if (identifier != null &&
@@ -926,23 +939,13 @@ class _HomePageState extends State<HomePage> {
               ListTile(
                 leading: const Icon(Icons.photo_library_outlined),
                 title: Text(t('从相册选择', 'Choose from Photos')),
-                subtitle: Text(
-                  t(
-                    '保留原始 HEIC、HDR 和深度数据',
-                    'Keep original HEIC, HDR and depth data',
-                  ),
-                ),
+                subtitle: Text(t('保留原始 HEIC、HDR 和深度数据', 'Keep original HEIC, HDR and depth data')),
                 onTap: () => Navigator.pop(ctx, _ImportSource.photos),
               ),
               ListTile(
                 leading: const Icon(Icons.folder_open_outlined),
                 title: Text(t('从文件选择', 'Choose from files')),
-                subtitle: Text(
-                  t(
-                    '打开“文件”App 或 iCloud Drive',
-                    'Open the Files app or iCloud Drive',
-                  ),
-                ),
+                subtitle: Text(t('打开“文件”App 或 iCloud Drive', 'Open the Files app or iCloud Drive')),
                 onTap: () => Navigator.pop(ctx, _ImportSource.files),
               ),
             ],
@@ -963,8 +966,12 @@ class _HomePageState extends State<HomePage> {
       // OHOS: PhotoViewPicker bridge with API-26 HEIC-original declaration
       // (preferredCompatibleMode=CURRENT); iOS uses the photo-picker channel.
       final rawPaths = PlatformX.isOhos
-          ? await _ohosGalleryChannel.invokeMethod<List<dynamic>>('pickImages')
-          : await _photoPickerChannel.invokeMethod<List<dynamic>>('pickPhotos');
+          ? await _ohosGalleryChannel.invokeMethod<List<dynamic>>(
+              'pickImages',
+            )
+          : await _photoPickerChannel.invokeMethod<List<dynamic>>(
+              'pickPhotos',
+            );
       final paths = (rawPaths ?? []).whereType<String>().toList();
       if (paths.isEmpty) return;
       final files = paths
@@ -981,14 +988,7 @@ class _HomePageState extends State<HomePage> {
     } on PlatformException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              t(
-                '无法打开相册：${e.message ?? e.code}',
-                'Cannot open Photos: ${e.message ?? e.code}',
-              ),
-            ),
-          ),
+          SnackBar(content: Text(t('无法打开相册：${e.message ?? e.code}', 'Cannot open Photos: ${e.message ?? e.code}'))),
         );
       }
     }
@@ -1012,9 +1012,7 @@ class _HomePageState extends State<HomePage> {
 
     if (picked.isEmpty) {
       debugPrint('[XDRemux][file_picker] picker returned nothing');
-      if (mounted) {
-        setState(() => _currentFileName = t('未选择文件', 'No file selected'));
-      }
+      if (mounted) setState(() => _currentFileName = t('未选择文件', 'No file selected'));
       return;
     }
     final files = picked
@@ -1067,14 +1065,7 @@ class _HomePageState extends State<HomePage> {
     required String source,
   }) async {
     if (files.isEmpty) {
-      if (mounted) {
-        setState(
-          () => _currentFileName = t(
-            '文件选择器未返回文件',
-            'File picker returned no files',
-          ),
-        );
-      }
+      if (mounted) setState(() => _currentFileName = t('文件选择器未返回文件', 'File picker returned no files'));
       return;
     }
     debugPrint(
@@ -1087,7 +1078,6 @@ class _HomePageState extends State<HomePage> {
     int skipped = 0;
     int skippedExisting = 0;
     int skippedUnsupportedPortrait = 0;
-    int skippedHuaweiHdr = 0;
     final unsupportedPortraitFiles = <String>[];
     String? firstError;
 
@@ -1118,84 +1108,42 @@ class _HomePageState extends State<HomePage> {
       }
 
       try {
-        final classification = await XdRemuxService.classify(path);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          resolvedPath,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        if (_config.skipExisting) {
-          final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint(
-            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
-          );
-          if (inputIsConverted) {
+        String effectivePath = path;
+        final inputIsConverted = await XdRemuxService.verifyOutput(path);
+        if (inputIsConverted) {
+          final donor = _findOriginalDonorForConvertedFile(path);
+          if (donor != null && !existing.contains(donor)) {
+            debugPrint(
+              '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
+            );
+            effectivePath = donor;
+          } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
-        final huaweiReport =
-            path.toLowerCase().endsWith('.heic') ||
-                path.toLowerCase().endsWith('.heif')
-            ? await XdRemuxService.inspectHuawei(path)
-            : const <String, dynamic>{};
-        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
-        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
-            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
-            : null;
-        // Huawei Motion Photos contain an Apple-compatible HDR still, but
-        // they must not be classified as native-HDR-only queue entries. Run
-        // the Motion Photo probe before deciding the policy status so the
-        // user can choose still/video or Live Photo handling.
-        MotionPhotoSummary? initialMotionPhoto;
-        if (reportedHuaweiHdr) {
-          initialMotionPhoto = await MotionPhotoService.inspect(path);
-        }
-        final huaweiHdr = reportedHuaweiHdr && initialMotionPhoto == null;
-        final huaweiPortraitInspectOnly =
-            huaweiPortrait != null && initialMotionPhoto == null;
-        final huaweiNoConversion = huaweiHdr || huaweiPortraitInspectOnly;
-        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
-        if (huaweiHdr) skippedHuaweiHdr++;
+        final classification = await XdRemuxService.classify(effectivePath);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          effectivePath,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
         _queue.add(
           QueueItem(
             id: _makeId(),
-            inputPath: path,
+            inputPath: effectivePath,
             outputPath: outputPath,
-            status: huaweiNoConversion
-                ? QueueItemStatus.skippedPolicy
-                : QueueItemStatus.pending,
-            errorMessage: huaweiNoConversion
-                ? (huaweiPortraitInspectOnly
-                      ? t(
-                          '华为人像资源仅支持只读诊断，当前不进行转换',
-                          'Huawei portrait resources are inspect-only; conversion is currently disabled',
-                        )
-                      : t(
-                          '华为 HDR 原图可直接在 Apple 照片显示，无需转换',
-                          'The Huawei HDR original already displays HDR in Apple Photos; no conversion needed',
-                        ))
-                : null,
-            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
-            huaweiHdr: huaweiHdr,
-            huaweiHasXtstyle: huaweiHasXtstyle,
-            huaweiPortrait: huaweiPortrait,
-            motionPhoto: initialMotionPhoto,
-            motionPhotoMode: initialMotionPhoto == null
-                ? MotionPhotoMode.skip
-                : _config.motionPhotoDefaultMode,
           ),
         );
-        if (initialMotionPhoto == null && !reportedHuaweiHdr) {
-          _inspectMotionPhoto(_queue.last);
-        }
-        existing.add(path);
+        _inspectMotionPhoto(_queue.last);
+        existing.add(effectivePath);
         added++;
       } catch (e) {
         firstError ??= '$e';
@@ -1213,22 +1161,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       final parts = <String>[];
       if (added > 0) parts.add(t('已添加 $added 个文件', 'Added $added files'));
-      if (skippedExisting > 0) {
-        parts.add(
-          t(
-            '跳过 $skippedExisting 个已转换',
-            'Skipped $skippedExisting already converted',
-          ),
-        );
-      }
-      if (skippedHuaweiHdr > 0) {
-        parts.add(
-          t(
-            '$skippedHuaweiHdr 个华为 HDR 原图无需转换',
-            '$skippedHuaweiHdr Huawei HDR originals need no conversion',
-          ),
-        );
-      }
+      if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
       if (skippedUnsupportedPortrait > 0) {
         parts.add(
           t(
@@ -1246,20 +1179,6 @@ class _HomePageState extends State<HomePage> {
     if (unsupportedPortraitFiles.isNotEmpty && mounted) {
       await _showPortraitImportRejection(unsupportedPortraitFiles);
     }
-    if (skippedHuaweiHdr > 0 && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              t(
-                '$skippedHuaweiHdr 个华为 HDR 原图已保留，Apple 照片可直接显示，无需转换',
-                '$skippedHuaweiHdr Huawei HDR originals were kept; Apple Photos can display them directly, no conversion needed',
-              ),
-            ),
-          ),
-        );
-    }
     if (skippedExisting > 0 && mounted) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1267,8 +1186,8 @@ class _HomePageState extends State<HomePage> {
           SnackBar(
             content: Text(
               t(
-                '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过',
-                '$skippedExisting files are already converted HDR photos; skipped',
+                '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
+                '$skippedExisting files are already converted HDR photos (choose original photo to apply new settings)',
               ),
             ),
           ),
@@ -1284,10 +1203,7 @@ class _HomePageState extends State<HomePage> {
 
     final report = await XdRemuxService.diagnosePortrait(inputPath);
     if (report['classification'] == 'missing-rear-depth') {
-      return t(
-        '缺少 rear.depth（仅包含前置深度数据）',
-        'Missing rear.depth (only front depth data present)',
-      );
+      return t('缺少 rear.depth（仅包含前置深度数据）', 'Missing rear.depth (only front depth data present)');
     }
     return null;
   }
@@ -1295,18 +1211,11 @@ class _HomePageState extends State<HomePage> {
   Future<void> _showPortraitImportRejection(List<String> fileNames) async {
     if (!mounted) return;
     final shown = fileNames.take(8).join('\n');
-    final more = fileNames.length > 8
-        ? t(
-            '\n还有 ${fileNames.length - 8} 个文件',
-            '\nand ${fileNames.length - 8} more files',
-          )
-        : '';
+    final more = fileNames.length > 8 ? t('\n还有 ${fileNames.length - 8} 个文件', '\nand ${fileNames.length - 8} more files') : '';
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-          t('部分照片不支持 Apple 人像模式', 'Some photos do not support Apple Portrait'),
-        ),
+        title: Text(t('部分照片不支持 Apple 人像模式', 'Some photos do not support Apple Portrait')),
         content: Text(
           t(
             '这些照片没有后置人像所需的 rear.depth，已跳过：\n\n$shown$more',
@@ -1320,6 +1229,13 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  String? _findOriginalDonorForConvertedFile(String convertedPath) {
+    return findOriginalDonorForConvertedFile(
+      convertedPath,
+      customSuffix: _config.fileNameSuffix,
     );
   }
 
@@ -1371,11 +1287,12 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _refreshOutputPaths() {
+  void _refreshOutputPaths({bool refreshAll = false}) {
     _preflightIssues.clear();
     for (int i = 0; i < _queue.length; i++) {
       final item = _queue[i];
-      if (item.status == QueueItemStatus.pending ||
+      if (refreshAll ||
+          item.status == QueueItemStatus.pending ||
           item.status == QueueItemStatus.failed ||
           item.status == QueueItemStatus.cancelled) {
         item.outputPath = _config.outputPathFor(
@@ -1411,10 +1328,7 @@ class _HomePageState extends State<HomePage> {
         _PreflightIssue(
           severity: _PreflightSeverity.blocking,
           title: t('没有待处理文件', 'No pending files'),
-          detail: t(
-            '请先添加照片，或重试失败项目。',
-            'Add photos first, or retry failed items.',
-          ),
+          detail: t('请先添加照片，或重试失败项目。', 'Add photos first, or retry failed items.'),
         ),
       );
       return issues;
@@ -1428,10 +1342,7 @@ class _HomePageState extends State<HomePage> {
             severity: _PreflightSeverity.blocking,
             title: t('输入文件不可用', 'Input file unavailable'),
             fileName: item.fileName,
-            detail: t(
-              '文件不存在或临时源已失效。请重新添加该文件。',
-              'File does not exist or the temporary source is gone. Re-add the file.',
-            ),
+            detail: t('文件不存在或临时源已失效。请重新添加该文件。', 'File does not exist or the temporary source is gone. Re-add the file.'),
           ),
         );
         continue;
@@ -1442,10 +1353,7 @@ class _HomePageState extends State<HomePage> {
             severity: _PreflightSeverity.blocking,
             title: t('输入格式不支持', 'Unsupported input format'),
             fileName: item.fileName,
-            detail: t(
-              '仅支持 HEIC / HEIF 文件。',
-              'Only HEIC / HEIF files are supported.',
-            ),
+            detail: t('仅支持 HEIC / HEIF 文件。', 'Only HEIC / HEIF files are supported.'),
           ),
         );
       }
@@ -1465,10 +1373,7 @@ class _HomePageState extends State<HomePage> {
             severity: _PreflightSeverity.warning,
             title: t('将覆盖已有输出', 'Will overwrite existing output'),
             fileName: item.fileName,
-            detail: t(
-              '输出文件已存在，继续后会覆盖它。',
-              'The output file already exists and will be overwritten.',
-            ),
+            detail: t('输出文件已存在，继续后会覆盖它。', 'The output file already exists and will be overwritten.'),
           ),
         );
       }
@@ -1490,10 +1395,7 @@ class _HomePageState extends State<HomePage> {
         _PreflightIssue(
           severity: _PreflightSeverity.blocking,
           title: t('Apple 照片摄影风格不可用', 'Apple Photographic Styles unavailable'),
-          detail: t(
-            '当前平台 capability 未就绪。',
-            'Platform capability is not ready.',
-          ),
+          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
         ),
       );
     }
@@ -1504,10 +1406,7 @@ class _HomePageState extends State<HomePage> {
         _PreflightIssue(
           severity: _PreflightSeverity.blocking,
           title: t('Apple 人像模式不可用', 'Apple Portrait unavailable'),
-          detail: t(
-            '当前平台 capability 未就绪。',
-            'Platform capability is not ready.',
-          ),
+          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
         ),
       );
     }
@@ -1682,20 +1581,6 @@ class _HomePageState extends State<HomePage> {
         if (_queue[cursor].status == QueueItemStatus.pending &&
             !_queue[cursor].outputPlanStatus.blocksConversion) {
           final idx = cursor;
-          final item = _queue[idx];
-          // Motion Photo policy: cards set to 跳过 never enter conversion.
-          if (item.motionPhoto != null &&
-              item.motionPhotoMode == MotionPhotoMode.skip) {
-            item.status = QueueItemStatus.skippedPolicy;
-            item.errorMessage = t(
-              '动态照片已按策略跳过',
-              'Motion photo skipped by policy',
-            );
-            item.finishedAt = DateTime.now();
-            _updateCheckpointForItem(item);
-            cursor++;
-            continue;
-          }
           _queue[idx].status = QueueItemStatus.running;
           _queue[idx].startedAt = DateTime.now();
           _queue[idx].errorMessage = null;
@@ -1842,10 +1727,7 @@ class _HomePageState extends State<HomePage> {
                   );
                 }
               } else {
-                item.errorMessage = t(
-                  '视频已导出到输出目录（未授予相册权限）',
-                  'Video exported to output directory (gallery permission not granted)',
-                );
+                item.errorMessage = t('视频已导出到输出目录（未授予相册权限）', 'Video exported to output directory (gallery permission not granted)');
               }
             }
           } catch (e) {
@@ -1889,10 +1771,7 @@ class _HomePageState extends State<HomePage> {
               }
             }
           } catch (e) {
-            item.errorMessage = t(
-              'Live Photo 合成失败: $e',
-              'Live Photo composition failed: $e',
-            );
+            item.errorMessage = t('Live Photo 合成失败: $e', 'Live Photo composition failed: $e');
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
         }
@@ -2077,21 +1956,11 @@ class _HomePageState extends State<HomePage> {
         final runningText = running.isEmpty
             ? ''
             : ' — ${running.join(', ')}${running.length < _queue.where((i) => i.status == QueueItemStatus.running).length ? '…' : ''}';
-        ForegroundService.updateProgress(
-          t(
-            '$done/$_totalFiles 完成$runningText',
-            '$done/$_totalFiles done$runningText',
-          ),
-        );
+        ForegroundService.updateProgress(t('$done/$_totalFiles 完成$runningText', '$done/$_totalFiles done$runningText'));
         // Keep the Windows tray tooltip in sync so the batch stays
         // observable while the window is hidden.
         if (Platform.isWindows && TrayService.isHidden) {
-          TrayService.setToolTip(
-            t(
-              'XDRemux — $done/$_totalFiles 完成',
-              'XDRemux — $done/$_totalFiles done',
-            ),
-          );
+          TrayService.setToolTip(t('XDRemux — $done/$_totalFiles 完成', 'XDRemux — $done/$_totalFiles done'));
         }
       } catch (_) {}
     });
@@ -2145,9 +2014,7 @@ class _HomePageState extends State<HomePage> {
             CheckpointItem(
               inputPath: qItem.inputPath,
               outputPath: qItem.outputPath,
-              status: qItem.status == QueueItemStatus.skippedPolicy
-                  ? CheckpointItemStatus.skippedPolicy
-                  : CheckpointItemStatus.pending,
+              status: CheckpointItemStatus.pending,
               inputSize: _fileSize(qItem.inputPath),
               inputMtimeMs: _fileMtimeMs(qItem.inputPath),
               captureModeKey: qItem.captureModeKey,
@@ -2155,17 +2022,7 @@ class _HomePageState extends State<HomePage> {
               classificationStatus: qItem.classificationStatus,
               hdrKind: qItem.hdrKind,
               family: qItem.family,
-              huaweiHdr: qItem.huaweiHdr,
-              huaweiHasXtstyle: qItem.huaweiHasXtstyle,
-              huaweiPortrait: qItem.huaweiPortrait,
-              motionPhoto: qItem.motionPhoto == null
-                  ? null
-                  : {
-                      'kind': qItem.motionPhoto!.kind,
-                      'stillBytes': qItem.motionPhoto!.stillBytes,
-                      'videoBytes': qItem.motionPhoto!.videoBytes,
-                      'streamCount': qItem.motionPhoto!.streamCount,
-                    },
+              motionPhoto: qItem.motionPhoto?.toJson(),
               motionPhotoMode: qItem.motionPhotoMode.name,
             ),
           );
@@ -2225,11 +2082,9 @@ class _HomePageState extends State<HomePage> {
     if (_checkpoint == null) return;
 
     if (_failedCount == 0) {
-      // All success — remove checkpoint and release private picker copies.
-      final completedCheckpoint = _checkpoint!;
-      unawaited(
-        CheckpointService.cleanupMaterializedInputs(completedCheckpoint),
-      );
+      // All success — delete checkpoint record so relaunch starts fresh,
+      // but retain materialized input copies in case user re-converts items
+      // still residing in the active queue.
       unawaited(CheckpointService.delete());
       _checkpoint = null;
     } else {
@@ -2243,25 +2098,13 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         final unsupported = _failedUnsupportedCount;
         final failedDetail = unsupported > 0 && unsupported < _failedCount
-            ? t(
-                '失败 $_failedCount（其中 $unsupported 个格式不支持）',
-                'Failed $_failedCount ($unsupported unsupported format)',
-              )
+            ? t('失败 $_failedCount（其中 $unsupported 个格式不支持）', 'Failed $_failedCount ($unsupported unsupported format)')
             : t('失败 $_failedCount', 'Failed $_failedCount');
         _statusText = _failedCount > 0
-            ? t(
-                '完成：成功 $_convertedCount，跳过 $_skippedCount，$failedDetail',
-                'Done: $_convertedCount succeeded, $_skippedCount skipped, $failedDetail',
-              )
+            ? t('完成：成功 $_convertedCount，跳过 $_skippedCount，$failedDetail', 'Done: $_convertedCount succeeded, $_skippedCount skipped, $failedDetail')
             : _skippedPolicyCount > 0
-            ? t(
-                '完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过',
-                'Done: $_convertedCount succeeded, $_skippedPolicyCount skipped by policy',
-              )
-            : t(
-                '全部完成：$_convertedCount 个文件',
-                'All done: $_convertedCount files',
-              );
+            ? t('完成：成功 $_convertedCount，$_skippedPolicyCount 个按策略跳过', 'Done: $_convertedCount succeeded, $_skippedPolicyCount skipped by policy')
+            : t('全部完成：$_convertedCount 个文件', 'All done: $_convertedCount files');
       });
     }
     if (done > 0) {
@@ -2272,9 +2115,7 @@ class _HomePageState extends State<HomePage> {
         failedUnsupported: _failedUnsupportedCount,
       );
       if (mounted) {
-        final outcome = _failedCount > 0
-            ? t('完成（有失败）', 'Done (with failures)')
-            : t('完成', 'Done');
+        final outcome = _failedCount > 0 ? t('完成（有失败）', 'Done (with failures)') : t('完成', 'Done');
         final summary = t(
           '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个',
           '${_config.backend.appTitle}: $outcome, $_convertedCount succeeded',
@@ -2343,18 +2184,23 @@ class _HomePageState extends State<HomePage> {
     if (oldCheckpoint != null) {
       unawaited(CheckpointService.cleanupMaterializedInputs(oldCheckpoint));
     }
+    unawaited(CheckpointService.cleanupAllMaterializedInputs());
     unawaited(CheckpointService.delete());
   }
 
   void _clearCompleted() {
     if (!_canEditQueue) return;
+    final removedPaths = <String>{};
     setState(() {
-      _queue.removeWhere(
-        (item) =>
-            item.status == QueueItemStatus.converted ||
+      _queue.removeWhere((item) {
+        final matches = item.status == QueueItemStatus.converted ||
             item.status == QueueItemStatus.skippedExisting ||
-            item.status == QueueItemStatus.skippedPolicy,
-      );
+            item.status == QueueItemStatus.skippedPolicy;
+        if (matches) {
+          removedPaths.add(item.inputPath);
+        }
+        return matches;
+      });
       if (_selectedIndex != null && _selectedIndex! >= _queue.length) {
         _selectedIndex = _queue.isEmpty ? null : _queue.length - 1;
       }
@@ -2362,6 +2208,12 @@ class _HomePageState extends State<HomePage> {
         _statusText = t('就绪', 'Ready');
       }
     });
+    final remainingPaths = _queue.map((i) => i.inputPath).toSet();
+    for (final path in removedPaths) {
+      if (!remainingPaths.contains(path)) {
+        unawaited(CheckpointService.cleanupSingleMaterializedInput(path));
+      }
+    }
   }
 
   void _retryFailed() {
@@ -2379,8 +2231,35 @@ class _HomePageState extends State<HomePage> {
     if (hadFailed) _refreshOutputPaths();
   }
 
+  void _reconvertAll() {
+    if (!_canEditQueue) return;
+    setState(() {
+      for (int i = 0; i < _queue.length; i++) {
+        final item = _queue[i];
+        if (item.status.isTerminal) {
+          item.status = QueueItemStatus.pending;
+          item.errorMessage = null;
+          item.startedAt = null;
+          item.finishedAt = null;
+          item.progress = null;
+          item.outputPath = _config.outputPathFor(
+            item.inputPath,
+            fallbackDir: _androidOutputDir,
+            captureModeFolderName: item.captureModeFolderName,
+          );
+          item.outputPlanStatus = File(item.outputPath).existsSync()
+              ? OutputPlanStatus.willOverwriteExisting
+              : OutputPlanStatus.ready;
+        }
+      }
+    });
+    _validateOutputPlans();
+    _updateStatusText();
+  }
+
   void _removeItem(int index) {
     if (!_canEditQueue) return;
+    final removed = _queue[index];
     setState(() {
       _queue.removeAt(index);
       if (_selectedIndex != null) {
@@ -2392,6 +2271,10 @@ class _HomePageState extends State<HomePage> {
         _statusText = t('就绪', 'Ready');
       }
     });
+    final remainingPaths = _queue.map((i) => i.inputPath).toSet();
+    if (!remainingPaths.contains(removed.inputPath)) {
+      unawaited(CheckpointService.cleanupSingleMaterializedInput(removed.inputPath));
+    }
   }
 
   void _openOrganizePage() {
@@ -2449,7 +2332,6 @@ class _HomePageState extends State<HomePage> {
     int added = 0;
     int skippedExisting = 0;
     int skippedUnsupportedPortrait = 0;
-    int skippedHuaweiHdr = 0;
     final unsupportedPortraitFiles = <String>[];
     for (final resolvedPath in paths) {
       if (!isSupportedInputPath(resolvedPath)) {
@@ -2477,85 +2359,42 @@ class _HomePageState extends State<HomePage> {
         }
       }
       try {
-        final classification = await XdRemuxService.classify(path);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          resolvedPath,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        // Skip files that are already converted ISO HDR outputs —
-        // re-converting produces a broken nested gain map.
-        if (_config.skipExisting) {
-          final inputIsConverted = await XdRemuxService.verifyOutput(path);
-          debugPrint(
-            '[XDRemux][skip] input=$path verifyOutput=$inputIsConverted',
-          );
-          if (inputIsConverted) {
+        String effectivePath = path;
+        final inputIsConverted = await XdRemuxService.verifyOutput(path);
+        if (inputIsConverted) {
+          final donor = _findOriginalDonorForConvertedFile(path);
+          if (donor != null && !existing.contains(donor)) {
+            debugPrint(
+              '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
+            );
+            effectivePath = donor;
+          } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
-        final huaweiReport =
-            path.toLowerCase().endsWith('.heic') ||
-                path.toLowerCase().endsWith('.heif')
-            ? await XdRemuxService.inspectHuawei(path)
-            : const <String, dynamic>{};
-        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
-        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
-            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
-            : null;
-        // Do not let a Huawei Motion Photo become a native-HDR-only item:
-        // its still is Apple-compatible, but the appended video has its own
-        // selectable Motion Photo policy.
-        MotionPhotoSummary? initialMotionPhoto;
-        if (reportedHuaweiHdr) {
-          initialMotionPhoto = await MotionPhotoService.inspect(path);
-        }
-        final huaweiHdr = reportedHuaweiHdr && initialMotionPhoto == null;
-        final huaweiPortraitInspectOnly =
-            huaweiPortrait != null && initialMotionPhoto == null;
-        final huaweiNoConversion = huaweiHdr || huaweiPortraitInspectOnly;
-        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
-        if (huaweiHdr) skippedHuaweiHdr++;
+        final classification = await XdRemuxService.classify(effectivePath);
+        final folderName = classification['folderName'] as String?;
+        final outputPath = _config.outputPathFor(
+          effectivePath,
+          fallbackDir: _androidOutputDir,
+          captureModeFolderName: folderName,
+        );
         _queue.add(
           QueueItem(
             id: _makeId(),
-            inputPath: path,
+            inputPath: effectivePath,
             outputPath: outputPath,
-            status: huaweiNoConversion
-                ? QueueItemStatus.skippedPolicy
-                : QueueItemStatus.pending,
-            errorMessage: huaweiNoConversion
-                ? (huaweiPortraitInspectOnly
-                      ? t(
-                          '华为人像资源仅支持只读诊断，当前不进行转换',
-                          'Huawei portrait resources are inspect-only; conversion is currently disabled',
-                        )
-                      : t(
-                          '华为 HDR 原图可直接在 Apple 照片显示，无需转换',
-                          'The Huawei HDR original already displays HDR in Apple Photos; no conversion needed',
-                        ))
-                : null,
-            outputPlanStatus: _computeOutputPlan(path, outputPath),
+            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
             captureModeKey: classification['modeKey'] as String?,
             captureModeFolderName: folderName,
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
-            huaweiHdr: huaweiHdr,
-            huaweiHasXtstyle: huaweiHasXtstyle,
-            huaweiPortrait: huaweiPortrait,
-            motionPhoto: initialMotionPhoto,
-            motionPhotoMode: initialMotionPhoto == null
-                ? MotionPhotoMode.skip
-                : _config.motionPhotoDefaultMode,
           ),
         );
-        if (initialMotionPhoto == null && !reportedHuaweiHdr) {
-          _inspectMotionPhoto(_queue.last);
-        }
-        existing.add(path);
+        _inspectMotionPhoto(_queue.last);
+        existing.add(effectivePath);
         added++;
       } catch (_) {
         // Keep the intake responsive even if metadata classification fails.
@@ -2575,22 +2414,7 @@ class _HomePageState extends State<HomePage> {
 
     final parts = <String>[];
     if (added > 0) parts.add(t('已$verb $added 个文件', '$verb $added files'));
-    if (skippedExisting > 0) {
-      parts.add(
-        t(
-          '跳过 $skippedExisting 个已转换',
-          'Skipped $skippedExisting already converted',
-        ),
-      );
-    }
-    if (skippedHuaweiHdr > 0) {
-      parts.add(
-        t(
-          '$skippedHuaweiHdr 个华为 HDR 原图无需转换',
-          '$skippedHuaweiHdr Huawei HDR originals need no conversion',
-        ),
-      );
-    }
+    if (skippedExisting > 0) parts.add(t('跳过 $skippedExisting 个已转换', 'Skipped $skippedExisting already converted'));
     if (skippedUnsupportedPortrait > 0) {
       parts.add(
         t(
@@ -2599,29 +2423,13 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-    if (ignored > 0) {
-      parts.add(t('忽略 $ignored 个非 HEIC', 'Ignored $ignored non-HEIC'));
-    }
+    if (ignored > 0) parts.add(t('忽略 $ignored 个非 HEIC', 'Ignored $ignored non-HEIC'));
     final summary = parts.isEmpty
         ? t('未添加新文件', 'No new files added')
         : parts.join(t('，', ', '));
     setState(() => _currentFileName = summary);
     if (unsupportedPortraitFiles.isNotEmpty && mounted) {
       await _showPortraitImportRejection(unsupportedPortraitFiles);
-    }
-    if (skippedHuaweiHdr > 0 && mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              t(
-                '$skippedHuaweiHdr 个华为 HDR 原图已保留，Apple 照片可直接显示，无需转换',
-                '$skippedHuaweiHdr Huawei HDR originals were kept; Apple Photos can display them directly, no conversion needed',
-              ),
-            ),
-          ),
-        );
     }
     if (ignored > 0 ||
         skippedExisting > 0 ||
@@ -2630,8 +2438,8 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       final snackText = skippedExisting > 0
           ? t(
-              '$skippedExisting 个文件已是转换后的 HDR 照片，已跳过',
-              '$skippedExisting files are already converted HDR photos; skipped',
+              '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
+              '$skippedExisting files are already converted HDR photos (choose original photo to apply new settings)',
             )
           : summary;
       ScaffoldMessenger.of(context)
@@ -2651,7 +2459,7 @@ class _HomePageState extends State<HomePage> {
     final dot = name.lastIndexOf('.');
     final stem = dot > 0 ? name.substring(0, dot) : name;
     final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 2; ; i++) {
+    for (var i = 2;; i++) {
       final candidate = '$dir${Platform.pathSeparator}$stem $i$ext';
       if (!File(candidate).existsSync()) return candidate;
     }
@@ -2682,7 +2490,7 @@ class _HomePageState extends State<HomePage> {
 
   void _revealOutputs() {
     final outputs = _queue
-        .where((item) => item.isSuccessful && !item.actionUsesInput)
+        .where((item) => item.isSuccessful)
         .map((item) => item.outputPath)
         .toList();
     if (outputs.isEmpty) return;
@@ -2702,10 +2510,7 @@ class _HomePageState extends State<HomePage> {
     if (result == null || !mounted) return;
     final (saved, failed) = result;
     final msg = failed > 0
-        ? t(
-            '已保存 $saved 个到相册，$failed 个失败',
-            'Saved $saved to gallery, $failed failed',
-          )
+        ? t('已保存 $saved 个到相册，$failed 个失败', 'Saved $saved to gallery, $failed failed')
         : t('已保存 $saved 个到相册', 'Saved $saved to gallery');
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
@@ -2725,11 +2530,9 @@ class _HomePageState extends State<HomePage> {
       final granted = await FileActionService.requestGalleryPermission();
       if (!granted) {
         if (showDeniedHint && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(t('未获得存储权限', 'Storage permission not granted')),
-            ),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
         }
         return null;
       }
@@ -2768,23 +2571,10 @@ class _HomePageState extends State<HomePage> {
     return 'Pictures/$album';
   }
 
-  /// Show Huawei portrait resources as a structural, read-only diagnostic.
-  /// The report is captured at import time and this dialog never starts a
-  /// conversion or writes any Huawei-private item.
-  Future<void> _showHuaweiPortraitDiagnostics(QueueItem item) async {
-    final report = item.huaweiPortrait;
-    if (report == null || !mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => _HuaweiPortraitDiagnosticsDialog(report: report),
-    );
-  }
-
   /// Presents output actions and only starts the native action after the
   /// bottom-sheet route has fully returned. Presenting UIKit while this route
   /// is still dismissing is rejected on iOS.
   Future<void> _showOutputActions(QueueItem item) async {
-    final actionPath = item.actionUsesInput ? item.inputPath : item.outputPath;
     final action = await showModalBottomSheet<_OutputAction>(
       context: context,
       useSafeArea: true,
@@ -2797,18 +2587,7 @@ class _HomePageState extends State<HomePage> {
                 ListTile(
                   leading: const Icon(Icons.photo_library),
                   title: Text(t('保存到相册', 'Save to gallery')),
-                  subtitle: Text(
-                    item.actionUsesInput
-                        ? (item.huaweiHdr
-                              ? t('原始华为 HDR 文件', 'Original Huawei HDR file')
-                              : item.huaweiPortrait != null
-                              ? t(
-                                  '原始华为人像 HEIC',
-                                  'Original Huawei portrait HEIC',
-                                )
-                              : t('原始动态照片', 'Original Motion Photo'))
-                        : _galleryAlbumSubtitle(item),
-                  ),
+                  subtitle: Text(_galleryAlbumSubtitle(item)),
                   onTap: () => Navigator.pop(ctx, _OutputAction.save),
                 ),
               ListTile(
@@ -2822,6 +2601,26 @@ class _HomePageState extends State<HomePage> {
                 subtitle: Text(t('用系统图库打开', 'Open with system gallery')),
                 onTap: () => Navigator.pop(ctx, _OutputAction.open),
               ),
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(t('照片详情', 'Photo details')),
+                subtitle: Text(
+                  t('查看 EXIF、HDR 及实况参数', 'View EXIF, HDR, and live photo parameters'),
+                ),
+                onTap: () => Navigator.pop(ctx, _OutputAction.details),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.refresh),
+                title: Text(t('重新转换', 'Re-convert')),
+                subtitle: Text(
+                  t(
+                    '按当前设置重新转换并覆盖旧输出',
+                    'Re-convert with current settings and overwrite',
+                  ),
+                ),
+                onTap: () => Navigator.pop(ctx, _OutputAction.reconvert),
+              ),
             ],
           ),
         );
@@ -2834,38 +2633,37 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     switch (action) {
+      case _OutputAction.details:
+        _showPhotoDetails(item);
       case _OutputAction.save:
         final hasAccess = await FileActionService.hasGalleryPermission();
         if (!hasAccess) {
           final granted = await FileActionService.requestGalleryPermission();
           if (!granted) {
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(t('未获得存储权限', 'Storage permission not granted')),
-                ),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
             }
             return;
           }
         }
         final ok = await FileActionService.saveToGallery(
-          actionPath,
-          album: item.actionUsesInput ? null : _galleryAlbum(item),
+          item.outputPath,
+          album: _galleryAlbum(item),
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                ok ? t('已保存到相册', 'Saved to gallery') : t('保存失败', 'Save failed'),
-              ),
-            ),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(ok ? t('已保存到相册', 'Saved to gallery') : t('保存失败', 'Save failed'))));
         }
       case _OutputAction.share:
-        await FileActionService.shareFile(actionPath);
+        await FileActionService.shareFile(item.outputPath);
       case _OutputAction.open:
-        await FileActionService.openFile(actionPath);
+        await FileActionService.openFile(item.outputPath);
+      case _OutputAction.reconvert:
+        final index = _queue.indexOf(item);
+        if (index >= 0) _retryItem(index);
     }
   }
 
@@ -2991,6 +2789,8 @@ class _HomePageState extends State<HomePage> {
         switch (action) {
           case _QueueMenuAction.retryFailed:
             _retryFailed();
+          case _QueueMenuAction.reconvertAll:
+            _reconvertAll();
           case _QueueMenuAction.clearCompleted:
             _clearCompleted();
           case _QueueMenuAction.saveAllToGallery:
@@ -3006,8 +2806,17 @@ class _HomePageState extends State<HomePage> {
           value: _QueueMenuAction.retryFailed,
           enabled: _canEditQueue && _failedCount > 0,
           child: ListTile(
-            leading: Icon(Icons.refresh),
+            leading: const Icon(Icons.refresh),
             title: Text(t('重试失败项', 'Retry failed')),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem(
+          value: _QueueMenuAction.reconvertAll,
+          enabled: _canEditQueue && (_convertedCount + _skippedCount) > 0,
+          child: ListTile(
+            leading: const Icon(Icons.replay),
+            title: Text(t('全部重新转换', 'Re-convert all')),
             contentPadding: EdgeInsets.zero,
           ),
         ),
@@ -3054,9 +2863,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildMobileActionBar(ThemeData theme) {
-    final primaryLabel = _isProcessing
-        ? t('取消转换', 'Cancel conversion')
-        : t('开始转换', 'Start conversion');
+    final primaryLabel = _isProcessing ? t('取消转换', 'Cancel conversion') : t('开始转换', 'Start conversion');
     final primaryIcon = _isProcessing
         ? Icons.stop_circle_outlined
         : Icons.play_arrow;
@@ -3117,18 +2924,11 @@ class _HomePageState extends State<HomePage> {
       final file = File('screenshots/windows_main.png');
       await file.writeAsBytes(byteData.buffer.asUint8List());
       if (mounted) {
-        setState(
-          () => _currentFileName = t(
-            '截图已保存: ${file.path}',
-            'Screenshot saved: ${file.path}',
-          ),
-        );
+        setState(() => _currentFileName = t('截图已保存: ${file.path}', 'Screenshot saved: ${file.path}'));
       }
     } catch (e) {
       if (mounted) {
-        setState(
-          () => _currentFileName = t('截图失败: $e', 'Screenshot failed: $e'),
-        );
+        setState(() => _currentFileName = t('截图失败: $e', 'Screenshot failed: $e'));
       }
     }
   }
@@ -3227,10 +3027,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 16),
                 const Icon(Icons.schedule, size: 14),
                 const SizedBox(width: 4),
-                Text(
-                  t('待处理 $_pendingCount', 'Pending $_pendingCount'),
-                  style: theme.textTheme.labelSmall,
-                ),
+                Text(t('待处理 $_pendingCount', 'Pending $_pendingCount'), style: theme.textTheme.labelSmall),
                 const SizedBox(width: 16),
                 if (_currentFileName.isNotEmpty) ...[
                   Flexible(
@@ -3297,10 +3094,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   SizedBox(height: compact ? 20 : 24),
                   Text(
-                    t(
-                      '让 ProXDR HEIC 更容易分享',
-                      'Make ProXDR HEIC easier to share',
-                    ),
+                    t('让 ProXDR HEIC 更容易分享', 'Make ProXDR HEIC easier to share'),
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -3309,14 +3103,8 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(height: 10),
                   Text(
                     isAndroid
-                        ? t(
-                            '选择 OPPO / OnePlus / realme 的 HEIC，转换为通用 HDR 格式。',
-                            'Choose OPPO / OnePlus / realme HEICs to convert to a universal HDR format.',
-                          )
-                        : t(
-                            '拖拽 HEIC 到窗口，或选择文件后转换为通用 HDR 格式。',
-                            'Drop HEICs into the window, or pick files to convert to a universal HDR format.',
-                          ),
+                        ? t('选择 OPPO / OnePlus / realme 的 HEIC，转换为通用 HDR 格式。', 'Choose OPPO / OnePlus / realme HEICs to convert to a universal HDR format.')
+                        : t('拖拽 HEIC 到窗口，或选择文件后转换为通用 HDR 格式。', 'Drop HEICs into the window, or pick files to convert to a universal HDR format.'),
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       height: 1.45,
@@ -3356,10 +3144,7 @@ class _HomePageState extends State<HomePage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _FeatureChip(
-                        icon: Icons.shield_outlined,
-                        label: t('本地处理', 'On-device'),
-                      ),
+                      _FeatureChip(icon: Icons.shield_outlined, label: t('本地处理', 'On-device')),
                       _FeatureChip(
                         icon: Icons.hdr_on_outlined,
                         label: t('保留 HDR', 'Preserve HDR'),
@@ -3431,9 +3216,12 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             if (!_isProcessing && blocking > 0)
-              TextButton(
-                onPressed: _runPreflight,
-                child: Text(t('检查', 'Check')),
+              TextButton(onPressed: _runPreflight, child: Text(t('检查', 'Check'))),
+            if (!_isProcessing && done && _totalFiles > 0)
+              TextButton.icon(
+                icon: const Icon(Icons.replay, size: 16),
+                label: Text(t('重新转换全部', 'Re-convert all')),
+                onPressed: _reconvertAll,
               ),
           ],
         ),
@@ -3485,7 +3273,6 @@ class _HomePageState extends State<HomePage> {
           },
           onRetry: () => _retryItem(itemIndex),
           onRemove: () => _removeItem(itemIndex),
-          onHuaweiPortrait: () => _showHuaweiPortraitDiagnostics(item),
           onMotionModeChanged: (mode) {
             if (mode == null) return;
             setState(() => item.motionPhotoMode = mode);
@@ -3538,26 +3325,67 @@ class _HomePageState extends State<HomePage> {
                 if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
                   _showOutputActions(_queue[index]);
                 } else {
-                  _revealInExplorer(
-                    _queue[index].actionUsesInput
-                        ? _queue[index].inputPath
-                        : _queue[index].outputPath,
-                  );
+                  _revealInExplorer(_queue[index].outputPath);
                 }
               },
               onRetry: () => _retryItem(index),
               onRemove: () => _removeItem(index),
-              onHuaweiPortrait: () =>
-                  _showHuaweiPortraitDiagnostics(_queue[index]),
               onMotionModeChanged: (mode) {
                 if (mode == null) return;
                 setState(() => _queue[index].motionPhotoMode = mode);
               },
+              onDetails: () => _showPhotoDetails(_queue[index]),
             );
           },
         );
       },
     );
+  }
+
+  void _showPhotoDetails(QueueItem item) {
+    final details = PhotoDetailsService.inspect(item.inputPath);
+    final file = File(item.inputPath);
+    final exists = file.existsSync();
+    final fileSizeMb = exists
+        ? (file.lengthSync() / (1024 * 1024)).toStringAsFixed(2)
+        : '-';
+
+    final isNarrow = MediaQuery.of(context).size.width < 640;
+    if (isNarrow) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (ctx) => ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: _PhotoDetailsContent(
+            item: item,
+            details: details,
+            fileSizeMb: fileSizeMb,
+            isBottomSheet: true,
+          ),
+        ),
+      );
+    } else {
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 580, maxHeight: 720),
+            child: _PhotoDetailsContent(
+              item: item,
+              details: details,
+              fileSizeMb: fileSizeMb,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void _showItemFailure(QueueItem item) {
@@ -3592,9 +3420,7 @@ class _HomePageState extends State<HomePage> {
             ),
             Text(item.fileName, maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 12),
-            SelectableText(
-              item.errorMessage ?? t('未提供错误信息', 'No error message provided'),
-            ),
+            SelectableText(item.errorMessage ?? t('未提供错误信息', 'No error message provided')),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -3608,38 +3434,108 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
             ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.info_outline),
+                label: Text(t('照片详情', 'Photo details')),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showPhotoDetails(item);
+                },
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
+  Future<void> _showPendingActions(QueueItem item) async {
+    final action = await showModalBottomSheet<_PendingItemAction>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: Text(t('照片详情', 'Photo details')),
+                subtitle: Text(
+                  t('查看 EXIF、HDR 及实况参数', 'View EXIF, HDR, and live photo parameters'),
+                ),
+                onTap: () => Navigator.pop(ctx, _PendingItemAction.details),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: Text(t('移出队列', 'Remove from queue')),
+                onTap: () => Navigator.pop(ctx, _PendingItemAction.remove),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (!mounted) return;
+
+    switch (action) {
+      case _PendingItemAction.details:
+        _showPhotoDetails(item);
+      case _PendingItemAction.remove:
+        final index = _queue.indexOf(item);
+        if (index >= 0) _removeItem(index);
+    }
+  }
+
   /// Tap behavior per item status:
-  /// - Completed → output actions (save/share/open)
-  /// - Failed/cancelled → error details; retry is explicit
-  /// - Pending/running → select only
+  /// - Completed → output actions (save/share/open/details)
+  /// - Failed/cancelled → error details & photo details; retry is explicit
+  /// - Pending → photo details & remove actions
+  /// - Running → select only
   void _handleItemTap(QueueItem item) {
-    final actionPath = item.actionUsesInput ? item.inputPath : item.outputPath;
     if (item.isSuccessful) {
       if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
         _showOutputActions(item);
       } else {
-        _revealInExplorer(actionPath);
+        _revealInExplorer(item.outputPath);
       }
     } else if (item.status == QueueItemStatus.failed ||
         item.status == QueueItemStatus.cancelled) {
       _showItemFailure(item);
+    } else if (item.status == QueueItemStatus.pending) {
+      if (Platform.isAndroid || Platform.isIOS) {
+        _showPendingActions(item);
+      }
     }
   }
 
   void _retryItem(int index) {
     if (index < 0 || index >= _queue.length) return;
     setState(() {
-      _queue[index].status = QueueItemStatus.pending;
-      _queue[index].errorMessage = null;
-      _queue[index].startedAt = null;
-      _queue[index].finishedAt = null;
+      final item = _queue[index];
+      item.status = QueueItemStatus.pending;
+      item.errorMessage = null;
+      item.startedAt = null;
+      item.finishedAt = null;
+      item.progress = null;
+      item.outputPath = _config.outputPathFor(
+        item.inputPath,
+        fallbackDir: _androidOutputDir,
+        captureModeFolderName: item.captureModeFolderName,
+      );
+      item.outputPlanStatus = File(item.outputPath).existsSync()
+          ? OutputPlanStatus.willOverwriteExisting
+          : OutputPlanStatus.ready;
     });
+    _validateOutputPlans();
+    _updateStatusText();
   }
 
   Widget _buildFooter(ThemeData theme) {
@@ -3668,17 +3564,13 @@ class _HomePageState extends State<HomePage> {
           const Spacer(),
           TextButton.icon(
             icon: const Icon(Icons.refresh, size: 16),
-            label: narrow
-                ? const SizedBox.shrink()
-                : Text(t('重试失败', 'Retry failed')),
+            label: narrow ? const SizedBox.shrink() : Text(t('重试失败', 'Retry failed')),
             onPressed: _canEditQueue && _failedCount > 0 ? _retryFailed : null,
           ),
           const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.checklist, size: 16),
-            label: narrow
-                ? const SizedBox.shrink()
-                : Text(t('清除已完成', 'Clear completed')),
+            label: narrow ? const SizedBox.shrink() : Text(t('清除已完成', 'Clear completed')),
             onPressed: _canEditQueue && (_convertedCount + _skippedCount) > 0
                 ? _clearCompleted
                 : null,
@@ -3686,9 +3578,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 4),
           TextButton.icon(
             icon: const Icon(Icons.folder_open, size: 16),
-            label: narrow
-                ? const SizedBox.shrink()
-                : Text(t('打开输出目录', 'Open output directory')),
+            label: narrow ? const SizedBox.shrink() : Text(t('打开输出目录', 'Open output directory')),
             onPressed: _queue.any((item) => item.isSuccessful)
                 ? _revealOutputs
                 : null,
@@ -3709,7 +3599,7 @@ class _HomePageState extends State<HomePage> {
         config: _config,
         onChanged: () {
           _scheduleConfigSave();
-          _refreshOutputPaths();
+          _refreshOutputPaths(refreshAll: true);
         },
       ),
     );
@@ -3924,27 +3814,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         SnackBar(
           content: Text(
             success
-                ? t(
-                    '${_cfg.outputMode.appTitle} 输出已生成：${File(output).uri.pathSegments.last}',
-                    '${_cfg.outputMode.appTitle} output generated: ${File(output).uri.pathSegments.last}',
-                  )
-                : (result['errorMessage']?.toString() ??
-                      t(
-                        '回传照片输出验证失败',
-                        'Returned-photo output verification failed',
-                      )),
+                ? t('${_cfg.outputMode.appTitle} 输出已生成：${File(output).uri.pathSegments.last}', '${_cfg.outputMode.appTitle} output generated: ${File(output).uri.pathSegments.last}')
+                : (result['errorMessage']?.toString() ?? t('回传照片输出验证失败', 'Returned-photo output verification failed')),
           ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            t('回传照片回写失败：$error', 'Returned-photo writeback failed: $error'),
-          ),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(t('回传照片回写失败：$error', 'Returned-photo writeback failed: $error'))));
     } finally {
       if (mounted) setState(() => _writebackRunning = false);
     }
@@ -3967,22 +3846,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     };
 
     final content = StringBuffer()
-      ..writeln(
-        t(
-          '设备：${result?['manufacturer']} ${result?['model']}',
-          'Device: ${result?['manufacturer']} ${result?['model']}',
-        ),
-      )
-      ..writeln(
-        t('系统：SDK ${result?['sdkInt']}', 'System: SDK ${result?['sdkInt']}'),
-      )
+      ..writeln(t('设备：${result?['manufacturer']} ${result?['model']}', 'Device: ${result?['manufacturer']} ${result?['model']}'))
+      ..writeln(t('系统：SDK ${result?['sdkInt']}', 'System: SDK ${result?['sdkInt']}'))
       ..writeln(t('芯片：${result?['chipset']}', 'Chipset: ${result?['chipset']}'))
       ..writeln('')
       ..writeln(t('HEVC 编码器：', 'HEVC encoders:'))
       ..writeln(
-        encoders.isEmpty
-            ? t('  (无)', '  (none)')
-            : encoders.map((e) => '  $e').join('\n'),
+        encoders.isEmpty ? t('  (无)', '  (none)') : encoders.map((e) => '  $e').join('\n'),
       )
       ..writeln('')
       ..writeln(t('支持颜色格式：', 'Supported color formats:'))
@@ -3992,12 +3862,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             : colorFormats.map((f) => '  ${colorNames(f as int)}').join('\n'),
       )
       ..writeln('')
-      ..writeln(
-        t('4:2:0 flexible 配置：$config420', '4:2:0 flexible config: $config420'),
-      )
-      ..writeln(
-        t('4:4:4 flexible 配置：$config444', '4:4:4 flexible config: $config444'),
-      );
+      ..writeln(t('4:2:0 flexible 配置：$config420', '4:2:0 flexible config: $config420'))
+      ..writeln(t('4:4:4 flexible 配置：$config444', '4:4:4 flexible config: $config444'));
 
     showDialog<void>(
       context: context,
@@ -4011,9 +3877,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: content.toString()));
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(t('已复制到剪贴板', 'Copied to clipboard'))),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(t('已复制到剪贴板', 'Copied to clipboard'))));
             },
             child: Text(t('复制', 'Copy')),
           ),
@@ -4413,11 +4279,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                       ),
                                     )
                                   : const Icon(Icons.output),
-                              label: Text(
-                                _writebackRunning
-                                    ? t('处理中…', 'Processing…')
-                                    : t('生成输出', 'Generate output'),
-                              ),
+                              label: Text(_writebackRunning ? t('处理中…', 'Processing…') : t('生成输出', 'Generate output')),
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -4442,8 +4304,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         children: [
                           Expanded(
                             child: Text(
-                              _cfg.outputDirectory ??
-                                  t('使用源文件目录', 'Use source directory'),
+                              _cfg.outputDirectory ?? t('使用源文件目录', 'Use source directory'),
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: _cfg.outputDirectory == null
                                     ? theme.colorScheme.onSurfaceVariant
@@ -4477,21 +4338,12 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       title: Text(
                         (Platform.isAndroid || Platform.isIOS)
                             ? t('按拍摄模式分相册', 'Group into albums by capture mode')
-                            : t(
-                                '按拍摄模式分目录输出',
-                                'Output into capture-mode subdirectories',
-                              ),
+                            : t('按拍摄模式分目录输出', 'Output into capture-mode subdirectories'),
                       ),
                       subtitle: Text(
                         (Platform.isAndroid || Platform.isIOS)
-                            ? t(
-                                '保存到图库时按“大师模式 / 人像 / 夜景”等分相册。',
-                                'When saving to the gallery, group into albums like “Master mode / Portrait / Night”.',
-                              )
-                            : t(
-                                '将已识别的照片写入“大师模式 / 人像 / 夜景”等子目录。',
-                                'Write recognized photos into subdirectories like “Master mode / Portrait / Night”.',
-                              ),
+                            ? t('保存到图库时按“大师模式 / 人像 / 夜景”等分相册。', 'When saving to the gallery, group into albums like “Master mode / Portrait / Night”.')
+                            : t('将已识别的照片写入“大师模式 / 人像 / 夜景”等子目录。', 'Write recognized photos into subdirectories like “Master mode / Portrait / Night”.'),
                       ),
                       value: _cfg.categorizeOutputByMode,
                       onChanged: (value) {
@@ -4515,12 +4367,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           color: theme.colorScheme.error,
                         ),
                       ),
-                      subtitle: Text(
-                        t(
-                          '一般保持默认；只在排查相册兼容性时修改',
-                          'Keep defaults normally; change only when troubleshooting gallery compatibility',
-                        ),
-                      ),
+                      subtitle: Text(t('一般保持默认；只在排查相册兼容性时修改', 'Keep defaults normally; change only when troubleshooting gallery compatibility')),
                       leading: Icon(
                         Icons.tune,
                         size: 20,
@@ -4528,10 +4375,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                       children: [
                         const SizedBox(height: 8),
-                        Text(
-                          t('输入照片类型', 'Input photo type'),
-                          style: theme.textTheme.titleSmall,
-                        ),
+                        Text(t('输入照片类型', 'Input photo type'), style: theme.textTheme.titleSmall),
                         const SizedBox(height: 4),
                         SegmentedButton<Family>(
                           segments: Family.values
@@ -4550,10 +4394,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          t(
-                            '自动检测 X6/X7；不确定时保持“自动”。',
-                            'Auto-detect X6/X7; keep “Auto” when unsure.',
-                          ),
+                          t('自动检测 X6/X7；不确定时保持“自动”。', 'Auto-detect X6/X7; keep “Auto” when unsure.'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -4562,10 +4403,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         DropdownButtonFormField<OppoCompatMode>(
                           initialValue: _cfg.oppoCompatibility,
                           decoration: InputDecoration(
-                            labelText: t(
-                              'OPPO 兼容模式',
-                              'OPPO compatibility mode',
-                            ),
+                            labelText: t('OPPO 兼容模式', 'OPPO compatibility mode'),
                             border: const OutlineInputBorder(),
                           ),
                           items: OppoCompatMode.values
@@ -4602,10 +4440,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         DropdownButtonFormField<OppoCameraTailMode>(
                           initialValue: _cfg.oppoCameraTail,
                           decoration: InputDecoration(
-                            labelText: t(
-                              '保留 OPPO 相机附加信息',
-                              'Keep OPPO camera extras',
-                            ),
+                            labelText: t('保留 OPPO 相机附加信息', 'Keep OPPO camera extras'),
                             border: const OutlineInputBorder(),
                           ),
                           items: OppoCameraTailMode.values
@@ -4637,17 +4472,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         const SizedBox(height: 20),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            t(
-                              '严格 ISO 兼容（高级）',
-                              'Strict ISO compliance (advanced)',
-                            ),
-                          ),
+                          title: Text(t('严格 ISO 兼容（高级）', 'Strict ISO compliance (advanced)')),
                           subtitle: Text(
-                            t(
-                              '仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。',
-                              'Only for strict ISO 21496-1 testing; keep off for normal use — it may reduce gallery compatibility.',
-                            ),
+                            t('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。', 'Only for strict ISO 21496-1 testing; keep off for normal use — it may reduce gallery compatibility.'),
                           ),
                           value: _cfg.strictTmap,
                           onChanged: (value) {
@@ -4665,8 +4492,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       title: Text(t('跳过已有有效输出', 'Skip existing valid output')),
                       subtitle: Text(
                         t(
-                          '如果输出文件已包含 ISO gain map 则跳过。',
-                          'Skip when the output already contains an ISO gain map.',
+                          '批量处理时跳过已包含有效 ISO gain map 的输出；手动重新转换不受影响。',
+                          'Skip files with valid ISO gain maps during batch processing; manual re-conversion always applies.',
                         ),
                       ),
                       value: _cfg.skipExisting,
@@ -4685,15 +4512,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(t('动态照片默认策略', 'Default Motion Photo policy'), style: theme.textTheme.bodyLarge),
                               Text(
-                                t('动态照片默认策略', 'Default Motion Photo policy'),
-                                style: theme.textTheme.bodyLarge,
-                              ),
-                              Text(
-                                t(
-                                  '新加入的动态照片按此策略处理，可在卡片上逐张修改。',
-                                  'Newly added motion photos use this policy; you can change it per card.',
-                                ),
+                                t('新加入的动态照片按此策略处理，可在卡片上逐张修改。', 'Newly added motion photos use this policy; you can change it per card.'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -4724,10 +4545,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // Concurrency
                     Row(
                       children: [
-                        Text(
-                          t('最大并行数', 'Max concurrency'),
-                          style: theme.textTheme.bodyLarge,
-                        ),
+                        Text(t('最大并行数', 'Max concurrency'), style: theme.textTheme.bodyLarge),
                         const Spacer(),
                         IconButton(
                           icon: const Icon(Icons.remove),
@@ -4777,10 +4595,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     const SizedBox(height: 4),
                     if (!Platform.isAndroid && !Platform.isIOS)
                       Text(
-                        t(
-                          '设置输出目录后，后缀将被忽略。',
-                          'The suffix is ignored once an output directory is set.',
-                        ),
+                        t('设置输出目录后，后缀将被忽略。', 'The suffix is ignored once an output directory is set.'),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -4791,17 +4606,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          t(
-                            '转换完成后自动保存到图库',
-                            'Auto-save to gallery after conversion',
-                          ),
-                        ),
+                        title: Text(t('转换完成后自动保存到图库', 'Auto-save to gallery after conversion')),
                         subtitle: Text(
-                          t(
-                            '批量转换结束后自动存入相册（遵循分相册设置）。',
-                            'Automatically save to the gallery when a batch finishes (respects album grouping).',
-                          ),
+                          t('批量转换结束后自动存入相册（遵循分相册设置）。', 'Automatically save to the gallery when a batch finishes (respects album grouping).'),
                           style: theme.textTheme.bodySmall,
                         ),
                         value: _cfg.autoSaveToGallery,
@@ -4828,14 +4635,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             title: Text(t('保留位置信息', 'Preserve location data')),
                             subtitle: Text(
                               granted
-                                  ? t(
-                                      '「所有文件访问」已授予，转换保留 GPS',
-                                      'All files access granted; conversion preserves GPS',
-                                    )
-                                  : t(
-                                      '授予后可保留照片 GPS 位置',
-                                      'Grant to preserve photo GPS location',
-                                    ),
+                                  ? t('「所有文件访问」已授予，转换保留 GPS', 'All files access granted; conversion preserves GPS')
+                                  : t('授予后可保留照片 GPS 位置', 'Grant to preserve photo GPS location'),
                               style: theme.textTheme.bodySmall,
                             ),
                             trailing: granted
@@ -4854,14 +4655,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 SnackBar(
                                   content: Text(
                                     ok
-                                        ? t(
-                                            '已授予「所有文件访问」，转换将保留 GPS',
-                                            'All files access granted; conversion will preserve GPS',
-                                          )
-                                        : t(
-                                            '未授予权限，转换将丢失 GPS 位置',
-                                            'Permission not granted; conversion will lose GPS location',
-                                          ),
+                                        ? t('已授予「所有文件访问」，转换将保留 GPS', 'All files access granted; conversion will preserve GPS')
+                                        : t('未授予权限，转换将丢失 GPS 位置', 'Permission not granted; conversion will lose GPS location'),
                                   ),
                                   duration: const Duration(seconds: 2),
                                 ),
@@ -4880,10 +4675,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         leading: const Icon(Icons.battery_saver),
                         title: Text(t('后台转换', 'Background conversion')),
                         subtitle: Text(
-                          t(
-                            '设置耗电行为控制以保持后台转换',
-                            'Configure power behavior to keep background conversion running',
-                          ),
+                          t('设置耗电行为控制以保持后台转换', 'Configure power behavior to keep background conversion running'),
                           style: theme.textTheme.bodySmall,
                         ),
                         trailing: const Icon(Icons.open_in_new, size: 18),
@@ -4954,10 +4746,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         leading: const Icon(Icons.speed),
                         title: Text(t('硬件编码检测', 'Hardware encoder detection')),
                         subtitle: Text(
-                          t(
-                            '检测 MediaCodec HEVC 编码器对 4:4:4 的支持（开发用）',
-                            'Detect MediaCodec HEVC encoder 4:4:4 support (dev)',
-                          ),
+                          t('检测 MediaCodec HEVC 编码器对 4:4:4 的支持（开发用）', 'Detect MediaCodec HEVC encoder 4:4:4 support (dev)'),
                           style: theme.textTheme.bodySmall,
                         ),
                         trailing: const Icon(Icons.open_in_new, size: 18),
@@ -4975,12 +4764,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             showDialog<void>(
                               context: context,
                               builder: (ctx) => AlertDialog(
-                                title: Text(
-                                  t(
-                                    '硬件编码检测失败',
-                                    'Hardware encoder detection failed',
-                                  ),
-                                ),
+                                title: Text(t('硬件编码检测失败', 'Hardware encoder detection failed')),
                                 content: Text('$e'),
                                 actions: [
                                   TextButton(
@@ -5006,10 +4790,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         leading: const Icon(Icons.folder_open),
                         title: Text(t('打开输出目录', 'Open output directory')),
                         subtitle: Text(
-                          t(
-                            '在「文件」App 中查看已转换的照片',
-                            'View converted photos in the Files app',
-                          ),
+                          t('在「文件」App 中查看已转换的照片', 'View converted photos in the Files app'),
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         onTap: () => launchUrl(Uri.parse('shareddocuments://')),
@@ -5119,12 +4900,7 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.warning_amber),
         title: Text(t('清除输出目录？', 'Clear output directory?')),
-        content: Text(
-          t(
-            '输出目录中的已转换文件将被删除，此操作不可撤销。',
-            'Converted files in the output directory will be deleted; this cannot be undone.',
-          ),
-        ),
+        content: Text(t('输出目录中的已转换文件将被删除，此操作不可撤销。', 'Converted files in the output directory will be deleted; this cannot be undone.')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -5176,10 +4952,7 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
           title: Text(t('清除文件缓存', 'Clear file cache')),
           subtitle: Text(
             _cacheSize > 0
-                ? t(
-                    '已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）',
-                    'Cached ${_formatSize(_cacheSize)} (file picker temp copies)',
-                  )
+                ? t('已缓存 ${_formatSize(_cacheSize)}（文件选择器临时副本）', 'Cached ${_formatSize(_cacheSize)} (file picker temp copies)')
                 : t('无缓存文件', 'No cached files'),
             style: theme.textTheme.bodySmall,
           ),
@@ -5196,10 +4969,7 @@ class _CacheManagementTileState extends State<_CacheManagementTile> {
           title: Text(t('清除输出目录', 'Clear output directory')),
           subtitle: Text(
             _outputSize > 0
-                ? t(
-                    '已转换文件共 ${_formatSize(_outputSize)}',
-                    'Converted files total ${_formatSize(_outputSize)}',
-                  )
+                ? t('已转换文件共 ${_formatSize(_outputSize)}', 'Converted files total ${_formatSize(_outputSize)}')
                 : t('输出目录为空', 'Output directory is empty'),
             style: theme.textTheme.bodySmall,
           ),
@@ -5252,7 +5022,6 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
-  final VoidCallback onHuaweiPortrait;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
 
   const _MobileQueueCard({
@@ -5261,7 +5030,6 @@ class _MobileQueueCard extends StatelessWidget {
     required this.onTap,
     required this.onRetry,
     required this.onRemove,
-    required this.onHuaweiPortrait,
     required this.onMotionModeChanged,
   });
 
@@ -5278,32 +5046,21 @@ class _MobileQueueCard extends StatelessWidget {
   }
 
   String get _supportingText {
-    if (item.huaweiPortrait != null) {
-      return t(
-        '华为人像资源已识别；当前仅提供只读诊断，不进行转换',
-        'Huawei portrait resources detected; inspect-only, conversion is disabled',
-      );
-    }
-    if (item.huaweiHdr) {
-      return t(
-        '华为 HDR 原图可直接在 Apple 照片显示，无需转换',
-        'Huawei HDR original can display directly in Apple Photos; no conversion needed',
-      );
-    }
-    if (item.status == QueueItemStatus.skippedPolicy) {
-      return item.errorMessage ??
-          t('动态照片已按策略跳过', 'Motion photo skipped by policy');
-    }
     if (item.status == QueueItemStatus.running) {
-      return item.progressLabel.isEmpty
-          ? t('正在准备转换…', 'Preparing conversion…')
-          : item.progressLabel;
+      return item.progressLabel.isEmpty ? t('正在准备转换…', 'Preparing conversion…') : item.progressLabel;
     }
     if (item.status == QueueItemStatus.failed) {
-      return item.errorMessage ??
-          t('转换未完成，轻触查看详情。', 'Conversion incomplete; tap for details.');
+      return item.errorMessage ?? t('转换未完成，轻触查看详情。', 'Conversion incomplete; tap for details.');
     }
-    if (item.isSuccessful) return item.outputPlanStatus.displayName;
+    if (item.status == QueueItemStatus.converted) {
+      return item.classificationLabel.isNotEmpty
+          ? item.classificationLabel
+          : t('转换完成', 'Converted');
+    }
+    if (item.status == QueueItemStatus.skippedExisting ||
+        item.status == QueueItemStatus.skippedPolicy) {
+      return item.outputPlanStatus.displayName;
+    }
     return item.outputPlanStatus.blocksConversion
         ? item.outputPlanStatus.displayName
         : item.classificationLabel;
@@ -5368,13 +5125,7 @@ class _MobileQueueCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           _MobileStatusPill(
-                            label:
-                                item.huaweiHdr ||
-                                    (item.huaweiPortrait != null &&
-                                        item.status ==
-                                            QueueItemStatus.skippedPolicy)
-                                ? t('无需转换', 'No conversion')
-                                : item.status.displayName,
+                            label: item.status.displayName,
                             color: statusColor,
                           ),
                         ],
@@ -5400,28 +5151,13 @@ class _MobileQueueCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
-                          if (item.huaweiHdr ||
-                              item.motionPhoto?.kind ==
-                                  'huaweiOpenHarmonyMotionPhoto')
-                            _InfoChip(
-                              label: t('华为 HDR', 'Huawei HDR'),
-                              color: theme.colorScheme.tertiary,
-                            ),
-                          if (item.huaweiHasXtstyle)
-                            _InfoChip(
-                              label: t('含 XMAGE 色彩', 'XMAGE color'),
-                              color: theme.colorScheme.secondary,
-                            ),
-                          if (item.huaweiPortrait != null)
-                            _InfoChip(
-                              label: t('华为人像·只读', 'Huawei portrait · inspect'),
-                              color: theme.colorScheme.tertiary,
-                            ),
                           if (item.motionPhoto != null)
                             _InfoChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -5435,10 +5171,9 @@ class _MobileQueueCard extends StatelessWidget {
                           child: Row(
                             children: [
                               Text(
-                                t(
-                                  '视频 ${item.motionPhoto!.videoSizeLabel}',
-                                  'Video ${item.motionPhoto!.videoSizeLabel}',
-                                ),
+                                item.motionPhoto!.resolutionLabel.isNotEmpty
+                                    ? t('实况 ${item.motionPhoto!.resolutionLabel}', 'Live ${item.motionPhoto!.resolutionLabel}')
+                                    : t('实况 ${item.motionPhoto!.videoSizeLabel}', 'Live ${item.motionPhoto!.videoSizeLabel}'),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
@@ -5462,25 +5197,6 @@ class _MobileQueueCard extends StatelessWidget {
                               : theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      if (item.huaweiPortrait != null)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: onHuaweiPortrait,
-                            icon: const Icon(
-                              Icons.analytics_outlined,
-                              size: 15,
-                            ),
-                            label: Text(t('查看结构诊断', 'View structure report')),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 2,
-                              ),
-                              minimumSize: const Size(0, 28),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                        ),
                       // Per-file progress bar for the running item. Constrained to
                       // the column width so it never overflows the card.
                       if (item.status == QueueItemStatus.running) ...[
@@ -5509,10 +5225,7 @@ class _MobileQueueCard extends StatelessWidget {
                   ),
                 ),
               ),
-              // Queue management is separate from completed-output actions.
-              // Completed items use the card tap for save/share/open and are
-              // removed by the global "清除已完成" action instead.
-              if (!item.isSuccessful && item.status != QueueItemStatus.running)
+              if (item.status != QueueItemStatus.running)
                 PopupMenuButton<_MobileQueueAction>(
                   tooltip: t('项目操作', 'Item actions'),
                   icon: const Icon(Icons.more_vert),
@@ -5525,19 +5238,23 @@ class _MobileQueueCard extends StatelessWidget {
                     }
                   },
                   itemBuilder: (context) => [
-                    if (canRetry)
+                    if (canRetry || item.isSuccessful)
                       PopupMenuItem(
                         value: _MobileQueueAction.retry,
                         child: ListTile(
-                          leading: Icon(Icons.refresh),
-                          title: Text(t('重新尝试', 'Retry')),
+                          leading: const Icon(Icons.refresh),
+                          title: Text(
+                            item.isSuccessful
+                                ? t('重新转换', 'Re-convert')
+                                : t('重新尝试', 'Retry'),
+                          ),
                           contentPadding: EdgeInsets.zero,
                         ),
                       ),
                     PopupMenuItem(
                       value: _MobileQueueAction.remove,
                       child: ListTile(
-                        leading: Icon(Icons.delete_outline),
+                        leading: const Icon(Icons.delete_outline),
                         title: Text(t('移出队列', 'Remove from queue')),
                         contentPadding: EdgeInsets.zero,
                       ),
@@ -5552,236 +5269,11 @@ class _MobileQueueCard extends StatelessWidget {
   }
 }
 
-class _HuaweiPortraitDiagnosticsDialog extends StatelessWidget {
-  final Map<String, dynamic> report;
-
-  const _HuaweiPortraitDiagnosticsDialog({required this.report});
-
-  String _value(String key, [String fallback = '—']) {
-    final value = report[key];
-    if (value == null || value.toString().isEmpty) return fallback;
-    return value.toString();
-  }
-
-  String _dimensions(String key) {
-    final value = report[key];
-    if (value is Map) {
-      final width = value['width'];
-      final height = value['height'];
-      if (width != null && height != null) return '$width × $height';
-    }
-    return '—';
-  }
-
-  String _list(String key) {
-    final value = report[key];
-    if (value is List && value.isNotEmpty) {
-      return value.map((entry) => entry.toString()).join(', ');
-    }
-    return '—';
-  }
-
-  String _bytes(String key) {
-    final value = report[key];
-    if (value is! num) return '—';
-    final bytes = value.toInt();
-    if (bytes < 1024 * 1024) return '$bytes B';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB ($bytes B)';
-  }
-
-  Widget _row(BuildContext context, String label, String value) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 180,
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _section(BuildContext context, String title, List<Widget> rows) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          ...rows,
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isSafe = report['safeToTransform'] == true;
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(Icons.center_focus_strong, color: theme.colorScheme.tertiary),
-          const SizedBox(width: 8),
-          Expanded(child: Text(t('华为人像诊断', 'Huawei portrait diagnostics'))),
-        ],
-      ),
-      content: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 640,
-          maxHeight: MediaQuery.sizeOf(context).height * .68,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  isSafe
-                      ? t(
-                          '当前报告未标记为安全转换。',
-                          'The report does not mark this resource safe to transform.',
-                        )
-                      : t(
-                          '只读诊断：暂不写入 Apple 人像景深图，也不会改写原始华为 HEIC。',
-                          'Read-only: Apple Portrait depth output is disabled and the original Huawei HEIC is not rewritten.',
-                        ),
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-              _section(context, t('分类', 'Classification'), [
-                _row(
-                  context,
-                  t('结构分类', 'Classification'),
-                  _value('classification'),
-                ),
-                _row(
-                  context,
-                  t('建议动作', 'Recommended action'),
-                  _value('recommendedAction'),
-                ),
-                _row(
-                  context,
-                  t('主图 item', 'Primary item'),
-                  _value('primaryItemId'),
-                ),
-              ]),
-              _section(context, 'edof / auxl / auxC', [
-                _row(
-                  context,
-                  t('edof item', 'edof item'),
-                  _value('edofItemId'),
-                ),
-                _row(
-                  context,
-                  t('edof 尺寸', 'edof dimensions'),
-                  _dimensions('edofDimensions'),
-                ),
-                _row(
-                  context,
-                  t('edof tile 数', 'edof tile count'),
-                  _value('edofTileCount'),
-                ),
-                _row(
-                  context,
-                  t('edof tile item', 'edof tile items'),
-                  _list('edofTileItemIds'),
-                ),
-                _row(context, 'auxC', _list('edofAuxiliaryTypes')),
-                _row(context, 'auxl → item', _list('edofAuxlTargets')),
-                _row(
-                  context,
-                  t('auxl 指向主图', 'auxl targets primary'),
-                  _value('edofAuxlToPrimary'),
-                ),
-              ]),
-              _section(context, 'RfDataB / cdsc', [
-                _row(context, 'RfDataB item', _value('rfDataBItemId')),
-                _row(context, t('数据大小', 'Data size'), _bytes('rfDataBBytes')),
-                _row(context, 'cdsc → item', _list('rfDataBCdscTargets')),
-                _row(
-                  context,
-                  t('观察到的标记', 'Observed tag'),
-                  _value('rfDataBObservedMagic'),
-                ),
-                _row(
-                  context,
-                  t('观察 header / plane 偏移', 'Observed header / plane offset'),
-                  '${_value('rfDataBObservedHeaderBytes')} / ${_value('rfDataBObservedPlaneOffset')}',
-                ),
-                _row(
-                  context,
-                  t('观察平面尺寸', 'Observed plane dimensions'),
-                  _dimensions('rfDataBObservedPlaneDimensions'),
-                ),
-                _row(
-                  context,
-                  t('观察 sample 字节数', 'Observed sample bytes'),
-                  _value('rfDataBObservedSampleBytes'),
-                ),
-                _row(
-                  context,
-                  t('观察平面大小', 'Observed plane bytes'),
-                  _bytes('rfDataBObservedPlaneBytes'),
-                ),
-                _row(
-                  context,
-                  t('平面完整', 'Plane complete'),
-                  _value('rfDataBObservedPlaneComplete'),
-                ),
-                _row(
-                  context,
-                  t('剩余数据', 'Remaining data'),
-                  _bytes('rfDataBObservedRemainingBytes'),
-                ),
-              ]),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(t('关闭', 'Close')),
-        ),
-      ],
-    );
-  }
-}
-
 enum _ImportSource { photos, files }
 
-enum _OutputAction { save, share, open }
+enum _OutputAction { save, share, open, details, reconvert }
+
+enum _PendingItemAction { details, remove }
 
 enum _MobileQueueAction { retry, remove }
 
@@ -5813,7 +5305,7 @@ class _MobileStatusPill extends StatelessWidget {
 
 /// Small non-interactive chip for the queue card metadata row
 /// (LHDR/UHDR, X6/X7, capture mode).
-/// Compact per-card Motion Photo policy menu (跳过 / 仅静帧 / 静帧+视频).
+/// Compact per-card Motion Photo policy menu (Live Photo 合成 / 仅静帧 / 拆分静帧 + 视频).
 class _MotionModeMenu extends StatelessWidget {
   final MotionPhotoMode value;
   final ValueChanged<MotionPhotoMode?> onChanged;
@@ -5933,8 +5425,8 @@ class _PhotoCard extends StatelessWidget {
   final VoidCallback onRevealOutput;
   final VoidCallback onRetry;
   final VoidCallback onRemove;
-  final VoidCallback onHuaweiPortrait;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
+  final VoidCallback onDetails;
 
   const _PhotoCard({
     required this.item,
@@ -5944,8 +5436,8 @@ class _PhotoCard extends StatelessWidget {
     required this.onRevealOutput,
     required this.onRetry,
     required this.onRemove,
-    required this.onHuaweiPortrait,
     required this.onMotionModeChanged,
+    required this.onDetails,
   });
 
   @override
@@ -5955,9 +5447,7 @@ class _PhotoCard extends StatelessWidget {
     final isRunning = status == QueueItemStatus.running;
     final isDone = status == QueueItemStatus.converted;
     final isFailed = status == QueueItemStatus.failed;
-    final isSkipped =
-        status == QueueItemStatus.skippedExisting ||
-        status == QueueItemStatus.skippedPolicy;
+    final isSkipped = status == QueueItemStatus.skippedExisting;
 
     return GestureDetector(
       onTap: onTap,
@@ -5985,13 +5475,10 @@ class _PhotoCard extends StatelessWidget {
                   // Format chips: HDR kind (LHDR/UHDR) + capture mode.
                   // Same set as the mobile queue card (family intentionally
                   // omitted — see the queue card comment).
-                  if (item.huaweiHdr ||
-                      item.huaweiHasXtstyle ||
-                      item.huaweiPortrait != null ||
-                      item.motionPhoto != null ||
-                      item.hdrKind != null ||
+                  if (item.hdrKind != null ||
                       (item.captureModeLabel != null &&
-                          item.captureModeLabel!.isNotEmpty))
+                          item.captureModeLabel!.isNotEmpty) ||
+                      item.motionPhoto != null)
                     Positioned(
                       top: 6,
                       right: 6,
@@ -6013,28 +5500,13 @@ class _PhotoCard extends StatelessWidget {
                               label: item.captureModeLabel!,
                               color: Colors.white,
                             ),
-                          if (item.huaweiHdr ||
-                              item.motionPhoto?.kind ==
-                                  'huaweiOpenHarmonyMotionPhoto')
-                            _OverlayChip(
-                              label: t('华为 HDR', 'Huawei HDR'),
-                              color: Colors.white,
-                            ),
-                          if (item.huaweiHasXtstyle)
-                            _OverlayChip(
-                              label: t('含 XMAGE 色彩', 'XMAGE color'),
-                              color: Colors.white,
-                            ),
-                          if (item.huaweiPortrait != null)
-                            _OverlayChip(
-                              label: t('华为人像·只读', 'Huawei portrait · inspect'),
-                              color: Colors.white,
-                            ),
                           if (item.motionPhoto != null)
                             _OverlayChip(
                               label: item.motionPhoto!.isDualStream
-                                  ? t('动态·双码流', 'Motion · dual stream')
-                                  : t('动态', 'Motion'),
+                                  ? t('实况·双码流', 'Live · dual stream')
+                                  : (item.motionPhoto!.resolutionLabel.isNotEmpty
+                                      ? t('实况·${item.motionPhoto!.resolutionLabel}', 'Live · ${item.motionPhoto!.resolutionLabel}')
+                                      : t('实况', 'Live')),
                               color: theme.colorScheme.tertiary,
                             ),
                         ],
@@ -6104,9 +5576,7 @@ class _PhotoCard extends StatelessWidget {
                       bottom: 6,
                       child: _OverlayBadge(
                         icon: Icons.skip_next,
-                        label: item.huaweiHdr || item.huaweiPortrait != null
-                            ? t('无需转换', 'No conversion needed')
-                            : t('已跳过', 'Skipped'),
+                        label: t('已跳过', 'Skipped'),
                         color: Colors.grey,
                       ),
                     ),
@@ -6145,17 +5615,36 @@ class _PhotoCard extends StatelessWidget {
                       value: item.motionPhotoMode,
                       onChanged: onMotionModeChanged,
                     ),
-                  if (item.huaweiPortrait != null)
+                  if (item.isSuccessful)
                     _cardAction(
                       theme,
-                      Icons.analytics_outlined,
-                      onHuaweiPortrait,
+                      Icons.check_circle,
+                      onRevealOutput,
+                      tooltip: t('查看输出', 'View output'),
                     ),
-                  if (item.isSuccessful)
-                    _cardAction(theme, Icons.check_circle, onRevealOutput),
-                  if (isFailed || status == QueueItemStatus.cancelled)
-                    _cardAction(theme, Icons.refresh, onRetry),
-                  _cardAction(theme, Icons.close, onRemove),
+                  if (isFailed ||
+                      status == QueueItemStatus.cancelled ||
+                      item.isSuccessful)
+                    _cardAction(
+                      theme,
+                      Icons.refresh,
+                      onRetry,
+                      tooltip: item.isSuccessful
+                          ? t('按当前设置重新转换', 'Re-convert with current settings')
+                          : t('重新尝试', 'Retry'),
+                    ),
+                  _cardAction(
+                    theme,
+                    Icons.info_outline,
+                    onDetails,
+                    tooltip: t('照片详情', 'Photo details'),
+                  ),
+                  _cardAction(
+                    theme,
+                    Icons.close,
+                    onRemove,
+                    tooltip: t('移出队列', 'Remove from queue'),
+                  ),
                 ],
               ),
             ),
@@ -6165,8 +5654,13 @@ class _PhotoCard extends StatelessWidget {
     );
   }
 
-  Widget _cardAction(ThemeData theme, IconData icon, VoidCallback onTap) {
-    return InkWell(
+  Widget _cardAction(
+    ThemeData theme,
+    IconData icon,
+    VoidCallback onTap, {
+    String? tooltip,
+  }) {
+    final button = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Padding(
@@ -6174,6 +5668,7 @@ class _PhotoCard extends StatelessWidget {
         child: Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
       ),
     );
+    return tooltip != null ? Tooltip(message: tooltip, child: button) : button;
   }
 }
 
@@ -6394,10 +5889,7 @@ class _ResumeCheckpointDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            t(
-              '上次转换开始于 $timeStr，共 $total 个文件：',
-              'Last conversion started at $timeStr, $total files:',
-            ),
+            t('上次转换开始于 $timeStr，共 $total 个文件：', 'Last conversion started at $timeStr, $total files:'),
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
@@ -6405,21 +5897,14 @@ class _ResumeCheckpointDialog extends StatelessWidget {
             children: [
               _cpStat(t('已完成', 'Completed'), completed, Colors.green),
               const SizedBox(width: 12),
-              _cpStat(
-                t('失败', 'Failed'),
-                failed,
-                failed > 0 ? Colors.red : Colors.grey,
-              ),
+              _cpStat(t('失败', 'Failed'), failed, failed > 0 ? Colors.red : Colors.grey),
               const SizedBox(width: 12),
               _cpStat(t('待处理', 'Pending'), pending, Colors.orange),
             ],
           ),
           const SizedBox(height: 12),
           Text(
-            t(
-              '是否恢复并继续转换未完成的文件？',
-              'Resume and continue converting unfinished files?',
-            ),
+            t('是否恢复并继续转换未完成的文件？', 'Resume and continue converting unfinished files?'),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -6454,6 +5939,409 @@ class _ResumeCheckpointDialog extends StatelessWidget {
           color: color,
           fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+  }
+}
+
+class _PhotoDetailsContent extends StatelessWidget {
+  final QueueItem item;
+  final PhotoDetailsModel details;
+  final String fileSizeMb;
+  final bool isBottomSheet;
+
+  const _PhotoDetailsContent({
+    required this.item,
+    required this.details,
+    required this.fileSizeMb,
+    this.isBottomSheet = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (isBottomSheet)
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withAlpha(80),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        // Title Bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, color: colorScheme.primary, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  t('照片详情', 'Photo Details'),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: t('关闭', 'Close'),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Scrollable body
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            children: [
+              // Error banner if any
+              if (!details.success && details.errorMessage != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withAlpha(20),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withAlpha(50)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, size: 18, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          t('EXIF 解析提示: ${details.errorMessage}', 'EXIF parse note: ${details.errorMessage}'),
+                          style: const TextStyle(color: Colors.red, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // File basic summary
+              _buildFileSummaryCard(theme),
+              const SizedBox(height: 12),
+
+              // EXIF / Shooting parameters
+              _buildSection(
+                theme,
+                icon: Icons.camera_alt_outlined,
+                title: t('拍摄参数 (EXIF)', 'Shooting Parameters (EXIF)'),
+                children: [
+                  _detailRow(theme, t('设备机型', 'Camera Model'), details.model ?? details.make ?? '-'),
+                  _detailRow(theme, t('镜头光圈', 'Aperture'), details.fNumber ?? '-'),
+                  _detailRow(theme, t('快门速度', 'Shutter Speed'), details.exposureTime ?? '-'),
+                  _detailRow(theme, t('感光度 (ISO)', 'ISO'), details.iso ?? '-'),
+                  _detailRow(theme, t('焦距', 'Focal Length'), details.focalLengthSummary.isNotEmpty ? details.focalLengthSummary : '-'),
+                  _detailRow(theme, t('曝光补偿', 'Exposure Bias'), details.exposureBias ?? '-'),
+                  _detailRow(theme, t('拍摄时间', 'Capture Time'), details.dateTime ?? '-'),
+                  _detailRow(theme, t('图像分辨率', 'Resolution'), details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : '-'),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // HDR & Dynamic Range
+              _buildSection(
+                theme,
+                icon: Icons.hdr_on_outlined,
+                title: t('HDR & 动态范围', 'HDR & Dynamic Range'),
+                children: [
+                  _detailRow(
+                    theme,
+                    t('HDR 格式', 'HDR Format'),
+                    details.hdrKind != null
+                        ? 'ProXDR (${details.hdrKind!.toUpperCase()})'
+                        : (item.hdrKind != null ? 'ProXDR (${item.hdrKind!.toUpperCase()})' : t('无 (SDR)', 'None (SDR)')),
+                  ),
+                  _detailRow(
+                    theme,
+                    t('EDR 亮度倍率', 'EDR Headroom'),
+                    details.edrScale != null ? '${details.edrScale!.toStringAsFixed(2)}x' : '-',
+                  ),
+                  _detailRow(
+                    theme,
+                    t('最大增益 (GainMap Max)', 'GainMap Max'),
+                    details.gainMapMax != null ? '+${details.gainMapMax!.toStringAsFixed(2)} EV' : '-',
+                  ),
+                ],
+              ),
+
+              // Motion Photo
+              if (item.motionPhoto != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  icon: Icons.motion_photos_on_outlined,
+                  title: t('实况照片 (Live / Motion Photo)', 'Live / Motion Photo'),
+                  children: [
+                    if (item.motionPhoto!.resolutionLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频流分辨率', 'Video Resolution'),
+                        item.motionPhoto!.resolutionLabel,
+                      ),
+                    if (item.motionPhoto!.durationLabel.isNotEmpty)
+                      _detailRow(
+                        theme,
+                        t('视频时长', 'Duration'),
+                        '${item.motionPhoto!.durationLabel}${item.motionPhoto!.frameCount != null ? " (${item.motionPhoto!.frameCount} 帧)" : ""}',
+                      ),
+                    if (item.motionPhoto!.fpsLabel.isNotEmpty || item.motionPhoto!.videoCodec != null)
+                      _detailRow(
+                        theme,
+                        t('编码与帧率', 'Codec & Frame Rate'),
+                        [
+                          if (item.motionPhoto!.videoCodec != null)
+                            item.motionPhoto!.videoCodec!.toUpperCase() == 'HVC1' ? 'HEVC (H.265)' : item.motionPhoto!.videoCodec!.toUpperCase(),
+                          if (item.motionPhoto!.fpsLabel.isNotEmpty) item.motionPhoto!.fpsLabel,
+                        ].join(' / '),
+                      ),
+                    _detailRow(
+                      theme,
+                      t('音频轨道', 'Audio Track'),
+                      item.motionPhoto!.audioLabel,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('码流架构', 'Stream Architecture'),
+                      item.motionPhoto!.dualStreamSummary,
+                    ),
+                    _detailRow(
+                      theme,
+                      t('数据大小', 'Video Track Size'),
+                      item.motionPhoto!.videoSizeLabel,
+                    ),
+                    if (item.motionPhoto!.presentationTimestampUs != null)
+                      _detailRow(
+                        theme,
+                        t('封面静帧时间点', 'Still Image Time'),
+                        '${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s (${item.motionPhoto!.presentationTimestampUs} µs)',
+                      ),
+                    _detailRow(theme, t('封装格式', 'Container Format'), item.motionPhoto!.kind),
+                    _detailRow(
+                      theme,
+                      t('转换处理策略', 'Processing Policy'),
+                      item.motionPhotoMode.displayName,
+                    ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 12),
+              // Path section
+              _buildSection(
+                theme,
+                icon: Icons.folder_outlined,
+                title: t('文件与路径', 'Files & Paths'),
+                children: [
+                  _detailRow(theme, t('输入路径', 'Input Path'), item.inputPath, selectable: true),
+                  _detailRow(theme, t('输出路径', 'Output Path'), item.outputPath, selectable: true),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Footer buttons
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.copy, size: 16),
+                label: Text(t('复制全部信息', 'Copy Details')),
+                onPressed: () => _copyDetailsToClipboard(context),
+              ),
+              const SizedBox(width: 10),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(t('关闭', 'Close')),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFileSummaryCard(ThemeData theme) {
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              item.fileName,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _chip(theme, '$fileSizeMb MB'),
+                if (details.hdrKind != null || item.hdrKind != null)
+                  _chip(
+                    theme,
+                    'ProXDR (${(details.hdrKind ?? item.hdrKind!).toUpperCase()})',
+                    color: Colors.orange,
+                  ),
+                if (item.motionPhoto != null)
+                  _chip(theme, t('实况照片', 'Live Photo'), color: Colors.blue),
+                _chip(theme, item.status.displayName, color: _statusColor(item.status)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(QueueItemStatus status) {
+    return switch (status) {
+      QueueItemStatus.pending => Colors.grey,
+      QueueItemStatus.running => Colors.blue,
+      QueueItemStatus.converted => Colors.green,
+      QueueItemStatus.skippedExisting => Colors.teal,
+      QueueItemStatus.skippedPolicy => Colors.teal,
+      QueueItemStatus.failed => Colors.red,
+      QueueItemStatus.cancelled => Colors.orange,
+    };
+  }
+
+  Widget _chip(ThemeData theme, String label, {Color? color}) {
+    final c = color ?? theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.withAlpha(24),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: c.withAlpha(48)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: c,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    required List<Widget> children,
+  }) {
+    return PhotoDetailsSection(icon: icon, title: title, children: children);
+  }
+
+  Widget _detailRow(ThemeData theme, String label, String value, {bool selectable = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: selectable
+                ? SelectableText(
+                    value,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  )
+                : Text(
+                    value,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _copyDetailsToClipboard(BuildContext context) {
+    final buffer = StringBuffer();
+    buffer.writeln('【${item.fileName}】');
+    buffer.writeln('文件大小: $fileSizeMb MB');
+    buffer.writeln('--- 拍摄参数 (EXIF) ---');
+    buffer.writeln('设备机型: ${details.model ?? details.make ?? "-"}');
+    buffer.writeln('镜头光圈: ${details.fNumber ?? "-"}');
+    buffer.writeln('快门速度: ${details.exposureTime ?? "-"}');
+    buffer.writeln('感光度 (ISO): ${details.iso ?? "-"}');
+    buffer.writeln('焦距: ${details.focalLengthSummary.isNotEmpty ? details.focalLengthSummary : "-"}');
+    buffer.writeln('曝光补偿: ${details.exposureBias ?? "-"}');
+    buffer.writeln('拍摄时间: ${details.dateTime ?? "-"}');
+    buffer.writeln('图像分辨率: ${details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : "-"}');
+    buffer.writeln('--- HDR & 动态范围 ---');
+    buffer.writeln('HDR 格式: ${details.hdrKind?.toUpperCase() ?? item.hdrKind?.toUpperCase() ?? "None"}');
+    if (details.edrScale != null) {
+      buffer.writeln('EDR Headroom: ${details.edrScale!.toStringAsFixed(2)}x');
+    }
+    if (details.gainMapMax != null) {
+      buffer.writeln('GainMap Max: +${details.gainMapMax!.toStringAsFixed(2)} EV');
+    }
+    if (item.motionPhoto != null) {
+      buffer.writeln('--- 实况/动态照片 ---');
+      if (item.motionPhoto!.resolutionLabel.isNotEmpty) {
+        buffer.writeln('视频分辨率: ${item.motionPhoto!.resolutionLabel}');
+      }
+      if (item.motionPhoto!.durationLabel.isNotEmpty) {
+        buffer.writeln('视频时长: ${item.motionPhoto!.durationLabel} (${item.motionPhoto!.fpsLabel})');
+      }
+      buffer.writeln('音频轨道: ${item.motionPhoto!.audioLabel}');
+      buffer.writeln('码流架构: ${item.motionPhoto!.dualStreamSummary}');
+      buffer.writeln('视频流大小: ${item.motionPhoto!.videoSizeLabel}');
+      if (item.motionPhoto!.presentationTimestampUs != null) {
+        buffer.writeln('封面帧时间: ${(item.motionPhoto!.presentationTimestampUs! / 1000000.0).toStringAsFixed(3)}s');
+      }
+      buffer.writeln('封装格式: ${item.motionPhoto!.kind}');
+      buffer.writeln('处理策略: ${item.motionPhotoMode.displayName}');
+    }
+    buffer.writeln('--- 路径 ---');
+    buffer.writeln('输入路径: ${item.inputPath}');
+    buffer.writeln('输出路径: ${item.outputPath}');
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(t('已复制照片详情到剪贴板', 'Copied photo details to clipboard')),
+        duration: const Duration(seconds: 2),
       ),
     );
   }

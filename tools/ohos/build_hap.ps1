@@ -40,4 +40,14 @@ try {
     if (Test-Path pubspec.lock.mainline.bak) {
         Move-Item pubspec.lock.mainline.bak pubspec.lock -Force
     }
+    # The OHOS pubspec has a different plugin set, so the build rewrites
+    # macos/Flutter/GeneratedPluginRegistrant.swift (it drops the plugins the
+    # OHOS variant does not use). Restore the tracked version with git: running
+    # `flutter pub get` here is not reliable because this script puts the OHOS
+    # Flutter SDK first on PATH and its bundled Dart version can differ from
+    # what the mainline pubspec requires.
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        git -C $repoRoot checkout -- apps/flutter/macos/Flutter/GeneratedPluginRegistrant.swift 2>$null
+    }
 }

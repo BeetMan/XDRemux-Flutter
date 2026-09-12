@@ -59,8 +59,7 @@ pub(crate) fn read_u32le(d: &[u8], off: usize) -> Option<u32> {
         .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 pub(crate) fn read_u16le(d: &[u8], off: usize) -> Option<u16> {
-    d.get(off..off + 2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    d.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]))
 }
 pub(crate) fn read_i32le(d: &[u8], off: usize) -> Option<i32> {
     d.get(off..off + 4)
@@ -132,8 +131,8 @@ pub(crate) fn parse_config(data: Option<&[u8]>) -> Option<ConfigSummary> {
     let canvas_height = read_i32le(data, 8)?;
     let focus_x = read_i32le(data, 12)?;
     let focus_y = read_i32le(data, 16)?;
-    let current_f_number =
-        read_f32le(data, 292).filter(|v| v.is_finite() && (1.0..=64.0).contains(v));
+    let current_f_number = read_f32le(data, 292)
+        .filter(|v| v.is_finite() && (1.0..=64.0).contains(v));
     let object_distance = read_i32le(data, 296).filter(|&v| v > 0);
     let focus_roi_type = read_i32le(data, 404);
     Some(ConfigSummary {
@@ -172,6 +171,10 @@ pub(crate) enum ScaleDecision {
     /// Zero-quantization variant: embedded scale unusable; use the p50
     /// physical formula derived from the focus window.
     CalibratedP50(f64),
+    /// Per-photo depth curve from `rear.depth.config` mapped onto the
+    /// observed Apple disparity span. Preferred over the physical
+    /// reconstruction whenever the curve is present.
+    CurveDerived(f64),
     /// Cannot calibrate (missing config / distance / focus data).
     Unavailable(String),
 }
@@ -180,7 +183,7 @@ impl ScaleDecision {
     /// The chosen scale value, when available.
     pub(crate) fn scale(&self) -> Option<f64> {
         match self {
-            Self::Passthrough(v) | Self::CalibratedP50(v) => Some(*v),
+            Self::Passthrough(v) | Self::CalibratedP50(v) | Self::CurveDerived(v) => Some(*v),
             Self::Unavailable(_) => None,
         }
     }
@@ -197,12 +200,99 @@ impl ScaleDecision {
                 "scale": s,
                 "rationale": "zero-quantization depth; focal*baseline/(disparity*distance) at the median focus-window rank",
             }),
+            Self::CurveDerived(s) => json!({
+                "mode": "curve-derived",
+                "scale": s,
+                "rationale": "per-photo rear.depth.config blur-strength curve maximum mapped onto the observed Apple absolute disparity span",
+            }),
             Self::Unavailable(reason) => json!({
                 "mode": "unavailable",
                 "reason": reason,
             }),
         }
     }
+}
+
+/// Smallest producer rank->disparity scale treated as usable.
+///
+/// Derivations other than a real float land here: OPPO stores the header scale
+/// as `f32::from_bits` over the same 4 bytes as the raw uint32, so a producer
+/// that writes an integer (observed `rawScaleUInt32 = 14`) reads back as a
+/// denormal-ish `1.96e-44`. `is_finite() && > 0.0` accepts that and the whole
+/// disparity span collapses to ~0, which Photos renders as "no depth at all".
+pub(crate) const MIN_USABLE_SCALE: f64 = 1e-6;
+
+/// A producer scale is only usable when it is finite and meaningfully non-zero.
+pub(crate) fn usable_producer_scale(scale: f64) -> bool {
+    scale.is_finite() && scale > MIN_USABLE_SCALE
+}
+
+/// Full-scale value of the OPPO per-photo blur-strength curve, observed as the
+/// maximum across Find X8 Ultra and Find X10 samples (one X10 sample read 145).
+pub(crate) const CURVE_FULL_SCALE: f64 = 150.0;
+
+/// Apple's observed absolute disparity span for a typical portrait scene.
+/// Measured on iPhone Air references: 2.127 on a 26mm wide scene, 1.546-1.898
+/// at 52mm, 0.411-0.421 at the cropped 78mm setting.
+pub(crate) const APPLE_REFERENCE_SPAN: f64 = 2.1;
+
+/// The per-photo depth-scale indicator OPPO writes into `rear.depth.config`.
+///
+/// Layout (identical across every OPPO sample examined, both devices):
+///   float 0       = version (4.0)
+///   floats 1..4   = canvas width/height then focus x/y (u32 bit patterns)
+///   floats 5..26  = supported simulated apertures (16, 14, .. 1.4)
+///   floats 38..58 = per-aperture blur strength, increasing as the aperture
+///                   opens
+///
+/// The curve maximum is a clean absolute-scale indicator, verified by the
+/// parent across two devices and three lenses:
+///   - it is byte-identical across aperture edits of the same photo (one photo
+///     exported at f/16, f/9, f/6.3 and f/1.4 produced the same curve while the
+///     depth payload hashes also matched), so it encodes depth, not rendering;
+///   - it scales with the lens focal length (705 -> 50, 1468 -> 84, 1941 -> 145,
+///     2063 -> 150), the behaviour expected of an absolute disparity scale.
+///
+/// This matters because the `focal*baseline/(disparity*distance)` reconstruction
+/// disagrees with the producer's own scale by 1.8x..45x and drifts with the
+/// shooting distance, while this value comes from the phone itself.
+pub(crate) fn depth_curve_max(config: &[u8]) -> Option<f64> {
+    const CURVE_START: usize = 38;
+    const CURVE_END: usize = 59; // exclusive
+    if config.len() < CURVE_END * 4 {
+        return None;
+    }
+    let mut max = 0.0f64;
+    for i in CURVE_START..CURVE_END {
+        let b = &config[i * 4..i * 4 + 4];
+        let v = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
+        if v.is_finite() && v > max {
+            max = v;
+        }
+    }
+    (max > 0.0).then_some(max)
+}
+
+/// Observed envelope for the derived span. Apple reference portraits measure
+/// 0.41..2.13, so a curve claiming far outside that range is untrusted.
+pub(crate) const MIN_REFERENCE_SPAN: f64 = 0.3;
+pub(crate) const MAX_REFERENCE_SPAN: f64 = 2.4;
+
+/// Map the per-photo curve maximum onto the absolute disparity span Apple
+/// expects, returned as a `rank -> disparity` scale (span = 255 * scale).
+pub(crate) fn scale_from_depth_curve(config: &[u8]) -> Option<f64> {
+    // Only trust the documented layout: version 1.0..=4.0 at float 0, which is
+    // what `parse_config` validates. A different layout would make floats
+    // 38..=58 meaningless.
+    let version = f32::from_le_bytes(config.get(0..4)?.try_into().ok()?);
+    if !(1.0..=4.0).contains(&version) {
+        return None;
+    }
+    let max = depth_curve_max(config)?;
+    let span = ((max / CURVE_FULL_SCALE) * APPLE_REFERENCE_SPAN)
+        .clamp(MIN_REFERENCE_SPAN, MAX_REFERENCE_SPAN);
+    let scale = span / 255.0;
+    (scale.is_finite() && scale > 0.0).then_some(scale)
 }
 
 /// Physical scale formula shared by the diagnostic candidates and the p50
@@ -272,16 +362,14 @@ pub(crate) fn percentile(sorted: &[u8], fraction: f64) -> f64 {
 pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     let names = crate::container::tail_entry_names(data);
     let mut report = Map::new();
-    report.insert(
-        "schema".into(),
-        json!("xdremux-portrait-depth-diagnostic-v1"),
-    );
+    report.insert("schema".into(), json!("xdremux-portrait-depth-diagnostic-v1"));
     report.insert("available".into(), json!(false));
     report.insert("safeToTransform".into(), json!(false));
     report.insert("classification".into(), json!("missing-rear-depth"));
     report.insert("resources".into(), json!(names));
 
-    let Some(compressed) = crate::container::extract_tail_entry(data, "rear.depth") else {
+    let Some(compressed) = crate::container::extract_tail_entry(data, "rear.depth")
+    else {
         return Ok(Value::Object(report));
     };
     let config_data = crate::container::extract_tail_entry(data, "rear.depth.config");
@@ -322,8 +410,8 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     let portrait_present = decoded[0x25] != 0;
     let pet_present = decoded[0x26] != 0;
 
-    let rank_stats =
-        plane_stats(&decoded, HEADER_SIZE, plane_size).ok_or("rank plane truncated")?;
+    let rank_stats = plane_stats(&decoded, HEADER_SIZE, plane_size)
+        .ok_or("rank plane truncated")?;
 
     // ---- planes ------------------------------------------------------------
     let mut planes = Map::new();
@@ -345,7 +433,8 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     // ---- classification + calibration decision -----------------------------
     let quantization_valid =
         disparity_maximum > disparity_minimum && (1..=2).contains(&exponentiation);
-    let zero_quantization = disparity_minimum == 0 && disparity_maximum == 0 && exponentiation == 0;
+    let zero_quantization =
+        disparity_minimum == 0 && disparity_maximum == 0 && exponentiation == 0;
     let classification = if zero_quantization && rank_stats.maximum > 0 {
         "rear-v4-zero-quantization"
     } else if quantization_valid {
@@ -358,8 +447,8 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     // The focus point lives in full-res source-image coordinates; the config
     // canvas is a small preview space, so read the real dims from src.image
     // (falling back to the canvas when src.image is absent).
-    let src_dims =
-        crate::container::extract_tail_entry(data, "src.image").and_then(|b| image_dimensions(&b));
+    let src_dims = crate::container::extract_tail_entry(data, "src.image")
+        .and_then(|b| image_dimensions(&b));
     let source_dims = src_dims
         .or_else(|| {
             config
@@ -368,48 +457,44 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
         })
         .unwrap_or((0, 0));
 
-    let decision: ScaleDecision =
-        if quantization_valid && embedded_scale.is_finite() && embedded_scale > 0.0 {
-            ScaleDecision::Passthrough(embedded_scale)
-        } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
-            match cfg.object_distance {
-                Some(dist) if dist > 0 && focal_length > 0.0 && stereo_baseline > 0.0 => {
-                    match focus_window_ranks(&decoded, width, height, cfg, source_dims) {
-                        Some(ranks) => {
-                            let p50 = percentile(&ranks, 0.50);
-                            let scale = scale_for_rank(
-                                p50,
-                                rank_stats.maximum as u32,
-                                focal_length,
-                                stereo_baseline,
-                                dist as f64,
-                            );
-                            if scale.is_finite() && scale > 0.0 {
-                                ScaleDecision::CalibratedP50(scale)
-                            } else {
-                                ScaleDecision::Unavailable(
-                                    "p50 formula produced non-finite scale".into(),
-                                )
-                            }
+    let decision: ScaleDecision = if quantization_valid && usable_producer_scale(embedded_scale) {
+        ScaleDecision::Passthrough(embedded_scale)
+    } else if let Some(scale) = config_data.as_deref().and_then(scale_from_depth_curve) {
+        ScaleDecision::CurveDerived(scale)
+    } else if let (Some(cfg), true) = (&config, rank_stats.maximum > 0) {
+        match cfg.object_distance {
+            Some(dist) if dist > 0 && focal_length > 0.0 && stereo_baseline > 0.0 => {
+                match focus_window_ranks(&decoded, width, height, cfg, source_dims) {
+                    Some(ranks) => {
+                        let p50 = percentile(&ranks, 0.50);
+                        let scale = scale_for_rank(
+                            p50,
+                            rank_stats.maximum as u32,
+                            focal_length,
+                            stereo_baseline,
+                            dist as f64,
+                        );
+                        if scale.is_finite() && scale > 0.0 {
+                            ScaleDecision::CalibratedP50(scale)
+                        } else {
+                            ScaleDecision::Unavailable("p50 formula produced non-finite scale".into())
                         }
-                        None => ScaleDecision::Unavailable("focus window out of range".into()),
                     }
+                    None => ScaleDecision::Unavailable("focus window out of range".into()),
                 }
-                _ => ScaleDecision::Unavailable(
-                    "missing objectDistance/focalLength/stereoBaseline".into(),
-                ),
             }
-        } else {
-            ScaleDecision::Unavailable("no config or empty rank plane".into())
-        };
+            _ => ScaleDecision::Unavailable(
+                "missing objectDistance/focalLength/stereoBaseline".into(),
+            ),
+        }
+    } else {
+        ScaleDecision::Unavailable("no config or empty rank plane".into())
+    };
 
     // Diagnostic candidates (kept for parity with the Swift report).
     let mut calibration = Map::new();
     calibration.insert("classification".into(), json!(classification));
-    calibration.insert(
-        "producerQuantizationValid".into(),
-        json!(quantization_valid),
-    );
+    calibration.insert("producerQuantizationValid".into(), json!(quantization_valid));
     calibration.insert("safeToTransform".into(), json!(quantization_valid));
     calibration.insert(
         "rankScaleInterpretations".into(),
@@ -442,12 +527,9 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     }
 
     report.insert("available".into(), json!(true));
-    report.insert(
-        "sourceImage".into(),
-        src_dims
-            .map(|(w, h)| json!({"width": w, "height": h}))
-            .unwrap_or(Value::Null),
-    );
+    report.insert("sourceImage".into(), src_dims
+        .map(|(w, h)| json!({"width": w, "height": h}))
+        .unwrap_or(Value::Null));
     report.insert("safeToTransform".into(), json!(quantization_valid));
     report.insert("classification".into(), json!(classification));
     report.insert(
@@ -468,10 +550,7 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
         }),
     );
     report.insert("planes".into(), Value::Object(planes));
-    report.insert(
-        "config".into(),
-        config.as_ref().map(|c| c.json()).unwrap_or(Value::Null),
-    );
+    report.insert("config".into(), config.as_ref().map(|c| c.json()).unwrap_or(Value::Null));
     report.insert("calibration".into(), Value::Object(calibration));
     Ok(Value::Object(report))
 }
@@ -495,7 +574,7 @@ pub(crate) fn cmd_portrait_depth(args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::portrait_depth_report;
+    use super::{portrait_depth_report, usable_producer_scale};
 
     #[test]
     fn missing_rear_depth_is_reported_without_transforming() {
@@ -503,5 +582,20 @@ mod tests {
         assert_eq!(report["classification"], "missing-rear-depth");
         assert_eq!(report["safeToTransform"], false);
         assert_eq!(report["available"], false);
+    }
+
+    #[test]
+    fn producer_scale_must_be_finite_and_meaningfully_nonzero() {
+        // Real producer scales (Find X8 Ultra passthrough, 0.0075..0.0102).
+        assert!(usable_producer_scale(0.0075));
+        assert!(usable_producer_scale(1e-6 + f64::EPSILON));
+        // rawScaleUInt32 = 14 reinterpreted as f32: accepted before, but it
+        // collapses the disparity span to ~0 and Photos then ignores depth.
+        assert!(!usable_producer_scale(f32::from_bits(14) as f64));
+        assert!(!usable_producer_scale(0.0));
+        assert!(!usable_producer_scale(1e-6));
+        assert!(!usable_producer_scale(-0.0075));
+        assert!(!usable_producer_scale(f64::NAN));
+        assert!(!usable_producer_scale(f64::INFINITY));
     }
 }

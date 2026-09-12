@@ -30,9 +30,14 @@ use crate::styles_graft::{find_top, top_level_boxes};
 use crate::styles_scaffold;
 
 const STYLE_DATA_BLOCKS: usize = 864;
-const DELTA_ROWS: u32 = 5;
-const DELTA_COLS: u32 = 6;
 const DELTA_TILE_SIZE: u32 = 512;
+
+fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let scale = 1.0f64.min((max_w as f64 / source_w as f64).min(max_h as f64 / source_h as f64));
+    let w = (((source_w as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    let h = (((source_h as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
+    (w.min(max_w), h.min(max_h))
+}
 
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
     let scaffolded = styles_scaffold::scaffold(standard)?;
@@ -54,6 +59,16 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         .map(|i| i.item_id)
         .ok_or("no tmap item")?;
     let (pw, ph) = primary_dims(&meta, primary)?;
+
+    // Apple Photographic Styles: 5x6 grid for landscape, 6x5 for portrait.
+    // Each tile is 512x512. Total 30 tiles fully covering fitted dims.
+    let landscape = pw >= ph;
+    let (delta_rows, delta_cols) = if landscape { (5u32, 6u32) } else { (6u32, 5u32) };
+    let (delta_w, delta_h) = if landscape {
+        fitted_size(pw, ph, 2880, 2560)
+    } else {
+        fitted_size(pw, ph, 2560, 2880)
+    };
 
     // ---- existing sky matte detection (dedup) --------------------------
     // The scaffold stage already emits a zero sky matte + XMP sidecar;
@@ -86,8 +101,8 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     if next_id <= max_group {
         next_id = max_group + 1;
     }
-    let delta_tile_ids: Vec<u32> = (0..DELTA_ROWS * DELTA_COLS).map(|i| next_id + i).collect();
-    let delta_grid_id = next_id + DELTA_ROWS * DELTA_COLS;
+    let delta_tile_ids: Vec<u32> = (0..delta_rows * delta_cols).map(|i| next_id + i).collect();
+    let delta_grid_id = next_id + delta_rows * delta_cols;
     let linear_id = delta_grid_id + 1;
     let style_meta_id = linear_id + 1;
     let (sky_id, sky_mime_id, add_sky_items) = match existing_sky {
@@ -172,19 +187,11 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC")
         .ok()
         .map(|p| std::fs::read(p).expect("linear hvcc file"));
-    let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
-        let black = vec![0u8; (LT_W * LT_H * 3) as usize];
-        let black_refs: Vec<&[u8]> = vec![&black];
-        let stream = crate::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
-            .map_err(|e| format!("linear thumb encode: {e}"))?
-            .into_iter()
-            .next()
-            .ok_or("linear thumb encode produced no stream")?;
-        let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
-            .ok_or("linear hvcC extraction failed")?;
+    let (linear_stream, linear_hvcc, dynamic_light_maps) = if let Some(stream) = env_lt_stream {
+        let hvcc = env_lt_hvcc.ok_or("XDREMUX_LT_STREAM requires XDREMUX_LT_HVCC")?;
         let idr = crate::hevc::drop_parameter_nals(&stream);
         let stream = crate::hevc::hevc_byte_stream_to_length_prefixed(&idr);
-        (env_lt_stream.unwrap_or(stream), env_lt_hvcc.unwrap_or(hvcc))
+        (stream, hvcc, None)
     } else {
         let primary_irot_turns = meta
             .ipma_entries
@@ -199,8 +206,20 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             })
             .and_then(|p| isobmff::irot_quarter_turns(&p.raw).ok())
             .unwrap_or(0) as u32;
-        match crate::linear_thumbnail::generate_linear_thumbnail(base, primary_irot_turns) {
-            Ok(pair) => pair,
+        let orientation = crate::exif::read_heif_exif_orientation(
+            base,
+            &meta.items,
+            &meta.iloc_entries,
+            None,
+        )
+        .map(|o| o.to_u16())
+        .unwrap_or(1);
+        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps(
+            base,
+            primary_irot_turns,
+            orientation,
+        ) {
+            Ok(out) => (out.stream, out.hvcc, Some((out.light_c, out.light_d))),
             Err(e) => {
                 // Legacy black placeholder fallback.
                 let black = vec![0u8; (LT_W * LT_H * 3) as usize];
@@ -213,13 +232,18 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
                 let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
                     .ok_or_else(|| format!("linear thumb encode: {e}; hvcC extraction failed"))?;
                 let idr = crate::hevc::drop_parameter_nals(&stream);
-                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
+                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc, None)
             }
         }
     };
 
     // ---- style metadata bplist ------------------------------------------
-    let bplist = build_style_metadata();
+    let mut style_state = StyleStateOverride::identity();
+    if let Some((c, d)) = dynamic_light_maps {
+        style_state.light_c = c;
+        style_state.light_d = d;
+    }
+    let bplist = build_style_metadata_with(&style_state);
 
     // ---- iinf ------------------------------------------------------------
     let mut new_infes: Vec<Vec<u8>> = meta.items.iter().map(|i| i.raw_infe.clone()).collect();
@@ -275,9 +299,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     })
     .unwrap_or_else(|| add_prop(isobmff::make_ispe_box(512, 512)));
 
-    // Delta grid dims: 0.703× primary (golden ratio at 4096×3512).
-    let delta_w = ((pw as u64 * 2880 + 2048) / 4096) as u32;
-    let delta_h = ((ph as u64 * 2470 + 1756) / 3512) as u32;
+    // Delta grid dims: fitted to 2880×2560 landscape or 2560×2880 portrait.
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
     let ispe_lt_idx = add_prop(isobmff::make_ispe_box(LT_W, LT_H));
@@ -396,7 +418,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // ---- payloads ----------------------------------------------------------
     let std_idat = crate::styles_graft::idat_payload(base, &meta_hdr).unwrap_or_default();
     // grid item payload = compact ImageGrid (8 bytes, no box header).
-    let mut grid_payload = vec![0u8, 0, (DELTA_ROWS - 1) as u8, (DELTA_COLS - 1) as u8];
+    let mut grid_payload = vec![0u8, 0, (delta_rows - 1) as u8, (delta_cols - 1) as u8];
     grid_payload.extend_from_slice(&(delta_w as u16).to_be_bytes());
     grid_payload.extend_from_slice(&(delta_h as u16).to_be_bytes());
 
@@ -474,7 +496,11 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         placeholder_iloc.retain(|e| e.item_id != sky_id);
     }
     let mut new_item_ids: Vec<u32> = delta_tile_ids.clone();
-    new_item_ids.extend([delta_grid_id, linear_id, style_meta_id]);
+    new_item_ids.extend([
+        delta_grid_id,
+        linear_id,
+        style_meta_id,
+    ]);
     // The sky placeholder must exist in BOTH paths so the placeholder iloc
     // matches the final iloc entry set (two-pass meta size stability).
     new_item_ids.push(sky_id);
@@ -595,7 +621,7 @@ fn identity_style_data() -> Vec<u8> {
     out
 }
 
-fn build_style_metadata() -> Vec<u8> {
+pub fn build_style_metadata() -> Vec<u8> {
     build_style_metadata_with(&StyleStateOverride::identity())
 }
 
@@ -752,7 +778,10 @@ fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
 /// Scene statistics ("6"). Identity path: person/skin segment histograms are
 /// legitimately zero; ToneMappedImage/LinearImage carry reference values from
 /// the golden sample (per-photo computation needs a decoder — TODO).
-fn build_stats_dict(w: &mut BplistWriter, overrides: Option<&[(&'static str, [f64; 9])]>) -> usize {
+fn build_stats_dict(
+    w: &mut BplistWriter,
+    overrides: Option<&[(&'static str, [f64; 9])]>,
+) -> usize {
     let zero_stats = |w: &mut BplistWriter| -> usize {
         let entries = [
             ("highKey", 1.0f64),
@@ -912,10 +941,13 @@ fn make_xmp_infe(item_id: u32) -> Vec<u8> {
 /// model). Finds the `styleMetadata` URI item and rewrites its payload in
 /// place; the container geometry stays valid because replace_item_payload
 /// re-points the iloc extent to the appended payload.
-pub fn replace_style_metadata(heic: &[u8], state: &StyleStateOverride) -> Result<Vec<u8>, String> {
+pub fn replace_style_metadata(
+    heic: &[u8],
+    state: &StyleStateOverride,
+) -> Result<Vec<u8>, String> {
     let mut output = heic.to_vec();
-    let parsed =
-        crate::isobmff::parse_source_meta(&output).map_err(|e| format!("meta parse: {e}"))?;
+    let parsed = crate::isobmff::parse_source_meta(&output)
+        .map_err(|e| format!("meta parse: {e}"))?;
     let item_id = parsed
         .items
         .iter()
@@ -923,11 +955,38 @@ pub fn replace_style_metadata(heic: &[u8], state: &StyleStateOverride) -> Result
         .map(|i| i.item_id)
         .ok_or("no styleMetadata item in input")?;
     let plist = build_style_metadata_with(state);
-    crate::isobmff_write::replace_item_payload(&mut output, item_id, None, &plist)?;
+    crate::isobmff_write::replace_item_payload(
+        &mut output,
+        item_id,
+        None,
+        &plist,
+    )?;
     Ok(output)
 }
 
 /// Debug helper: expose the parameterized plist builder for tooling.
 pub fn debug_build(state: &StyleStateOverride) -> Vec<u8> {
     build_style_metadata_with(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fitted_size_landscape_matches_golden() {
+        let (w, h) = fitted_size(4096, 3512, 2880, 2560);
+        assert_eq!((w, h), (2880, 2470));
+    }
+
+    #[test]
+    fn fitted_size_portrait_covers_height() {
+        let (w, h) = fitted_size(3072, 4096, 2560, 2880);
+        assert_eq!((w, h), (2160, 2880));
+        let (rows, cols) = if 3072 >= 4096 { (5u32, 6u32) } else { (6u32, 5u32) };
+        assert_eq!(rows, 6);
+        assert_eq!(cols, 5);
+        assert!(rows * 512 >= h);
+        assert!(cols * 512 >= w);
+    }
 }

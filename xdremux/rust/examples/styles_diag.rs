@@ -19,10 +19,7 @@ fn main() {
     // Meta structure
     match xdremux_core::isobmff::parse_source_meta(&data) {
         Ok(meta) => {
-            println!(
-                "primary_id={} pitm_version={}",
-                meta.primary_id, meta.pitm_version
-            );
+            println!("primary_id={} pitm_version={}", meta.primary_id, meta.pitm_version);
             println!("items:");
             for item in &meta.items {
                 let extent: u64 = meta
@@ -43,38 +40,31 @@ fn main() {
             }
             println!("props:");
             for p in &meta.props {
-                println!("  idx={} type={} len={}", p.index, p.ptype, p.raw.len());
+                println!(
+                    "  idx={} type={} len={}",
+                    p.index,
+                    p.ptype,
+                    p.raw.len()
+                );
             }
 
-            // ipma associations for key items + anything carrying auxC
-            let key_items = [
-                10081u32, 10108, 10136, 10173, 10140, 10174, 10176, 10109, 10137,
-            ];
+            // ipma associations
             println!("ipma associations:");
             for e in &meta.ipma_entries {
-                let has_auxc = e.associations.iter().any(|&(idx, _)| {
-                    meta.props
-                        .iter()
-                        .find(|p| p.index == idx)
-                        .map(|p| p.ptype == "auxC")
-                        .unwrap_or(false)
-                });
-                if key_items.contains(&e.item_id) || has_auxc {
-                    let desc: Vec<String> = e
-                        .associations
-                        .iter()
-                        .map(|&(idx, essential)| {
-                            let ptype = meta
-                                .props
-                                .iter()
-                                .find(|p| p.index == idx)
-                                .map(|p| p.ptype.clone())
-                                .unwrap_or_else(|| "?".to_string());
-                            format!("{idx}:{ptype}{}", if essential { "!" } else { "" })
-                        })
-                        .collect();
-                    println!("  item {} -> [{}]", e.item_id, desc.join(", "));
-                }
+                let desc: Vec<String> = e
+                    .associations
+                    .iter()
+                    .map(|&(idx, essential)| {
+                        let ptype = meta
+                            .props
+                            .iter()
+                            .find(|p| p.index == idx)
+                            .map(|p| p.ptype.clone())
+                            .unwrap_or_else(|| "?".to_string());
+                        format!("{idx}:{ptype}{}", if essential { "!" } else { "" })
+                    })
+                    .collect();
+                println!("  item {} -> [{}]", e.item_id, desc.join(", "));
             }
 
             // ispe values
@@ -84,6 +74,8 @@ fn main() {
                     if let Ok((w, h)) = xdremux_core::isobmff::ispe_dimensions(&p.raw) {
                         println!("  idx={} {}x{}", p.index, w, h);
                     }
+                } else if p.ptype == "irot" {
+                    println!("  idx={} irot raw={:02x?}", p.index, p.raw);
                 }
             }
 
@@ -111,12 +103,15 @@ fn main() {
                 Some(out)
             };
             println!("grids:");
-            for gid in [10081u32, 10108, 10136, 10173] {
-                if let Some(entry) = meta.iloc_entries.iter().find(|e| e.item_id == gid) {
-                    println!("  grid {} extents={:?}", gid, entry.extents);
-                }
-                if let Some(g) = read_item(gid) {
-                    println!("  grid {} payload={:02x?}", gid, g);
+            for item in &meta.items {
+                if item.itype == "grid" {
+                    let gid = item.item_id;
+                    if let Some(entry) = meta.iloc_entries.iter().find(|e| e.item_id == gid) {
+                        println!("  grid {} extents={:?}", gid, entry.extents);
+                    }
+                    if let Some(g) = read_item(gid) {
+                        println!("  grid {} payload={:02x?}", gid, g);
+                    }
                 }
             }
         }
@@ -126,10 +121,7 @@ fn main() {
     // OPPO tail entries
     let tails = xdremux_core::container::tail_entry_names(&data);
     println!("tail entries: {:?}", tails);
-    println!(
-        "has_watermark_entries={}",
-        xdremux_core::container::has_watermark_entries(&data)
-    );
+    println!("has_watermark_entries={}", xdremux_core::container::has_watermark_entries(&data));
 
     // heif-oxide decode test
     match heif_oxide::decode_bytes(&data) {
@@ -201,11 +193,7 @@ fn png_chunk(out: &mut Vec<u8>, ctype: &[u8; 4], payload: &[u8]) {
     for &b in ctype.iter().chain(payload.iter()) {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xedb8_8320
-            } else {
-                crc >> 1
-            };
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
         }
     }
     out.extend_from_slice(&(!crc).to_be_bytes());

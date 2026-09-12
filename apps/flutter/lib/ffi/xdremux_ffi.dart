@@ -204,29 +204,21 @@ class XdRemuxFFI {
     throw StateError('Could not locate $name in cwd or known build dirs.');
   }
 
-  static final _version = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(),
-        ffi.Pointer<Utf8> Function()
-      >('xdremux_version');
+  static final _version = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(),
+      ffi.Pointer<Utf8> Function()>('xdremux_version');
 
-  static final _freeString = _lib
-      .lookupFunction<
-        ffi.Void Function(ffi.Pointer<Utf8>),
-        void Function(ffi.Pointer<Utf8>)
-      >('xdremux_free_string');
+  static final _freeString = _lib.lookupFunction<
+      ffi.Void Function(ffi.Pointer<Utf8>),
+      void Function(ffi.Pointer<Utf8>)>('xdremux_free_string');
 
-  static final _diagnosePortrait = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)
-      >('xdremux_diagnose_portrait');
+  static final _diagnosePortrait = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_diagnose_portrait');
 
-  static final _inspect = _lib
-      .lookupFunction<
-        ConversionResult Function(ffi.Pointer<Utf8>),
-        ConversionResult Function(ffi.Pointer<Utf8>)
-      >('xdremux_inspect');
+  static final _inspect = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<Utf8>),
+      ConversionResult Function(ffi.Pointer<Utf8>)>('xdremux_inspect');
 
   static final _huaweiInspect = _lib
       .lookupFunction<
@@ -234,201 +226,111 @@ class XdRemuxFFI {
         ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)
       >('xdremux_huawei_inspect');
 
-  static final _classify = _lib
-      .lookupFunction<
-        ClassificationResult Function(ffi.Pointer<Utf8>),
-        ClassificationResult Function(ffi.Pointer<Utf8>)
-      >('xdremux_classify');
+  static final _classify = _lib.lookupFunction<
+      ClassificationResult Function(ffi.Pointer<Utf8>),
+      ClassificationResult Function(ffi.Pointer<Utf8>)>('xdremux_classify');
 
-  static final _convert = _lib
-      .lookupFunction<
-        ConversionResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-        ),
-        ConversionResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-        )
-      >('xdremux_convert');
+  static final _convert = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>),
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>)>('xdremux_convert');
 
-  static final _convertWithProgress = _lib
-      .lookupFunction<
-        ConversionResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-          ffi.Uint32,
-        ),
-        ConversionResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-          int,
-        )
-      >('xdremux_convert_with_progress');
+  static final _convertWithProgress = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, ffi.Uint32),
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, int)>('xdremux_convert_with_progress');
 
-  static final _progressBegin = _lib
-      .lookupFunction<ffi.Uint32 Function(), int Function()>(
-        'xdremux_progress_begin',
-      );
+  static final _progressBegin = _lib.lookupFunction<
+      ffi.Uint32 Function(),
+      int Function()>('xdremux_progress_begin');
 
-  static final _progressEnd = _lib
-      .lookupFunction<ffi.Void Function(ffi.Uint32), void Function(int)>(
-        'xdremux_progress_end',
-      );
+  static final _progressEnd = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32),
+      void Function(int)>('xdremux_progress_end');
 
-  static final _readProgressFor = _lib
-      .lookupFunction<
-        ffi.Void Function(ffi.Uint32, ffi.Pointer<ffi.Uint32>),
-        void Function(int, ffi.Pointer<ffi.Uint32>)
-      >('xdremux_read_progress_for');
+  static final _readProgressFor = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32, ffi.Pointer<ffi.Uint32>),
+      void Function(int, ffi.Pointer<ffi.Uint32>)>('xdremux_read_progress_for');
 
-  static final _verifyOutput = _lib
-      .lookupFunction<
-        ffi.Bool Function(ffi.Pointer<Utf8>),
-        bool Function(ffi.Pointer<Utf8>)
-      >('xdremux_verify_output');
+  static final _verifyOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_output');
 
-  static final _motionPhotoInspect = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)
-      >('xdremux_motion_photo_inspect');
+  static final _motionPhotoInspect = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_motion_photo_inspect');
 
-  static final _motionPhotoSplit = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
-        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)
-      >('xdremux_motion_photo_split');
+  static final _motionPhotoSplit = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_motion_photo_split');
 
-  static final _livePhotoPairValid = _lib
-      .lookupFunction<
-        ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
-        int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)
-      >('xdremux_live_photo_pair_valid');
+  static final _inspectPhotoDetails = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_photo_details');
 
-  static final _makeLivePhoto = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-        ),
-        ffi.Pointer<Utf8> Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-        )
-      >('xdremux_make_live_photo');
+  static final _livePhotoPairValid = _lib.lookupFunction<
+      ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
 
-  static final _verifyStylesOutput = _lib
-      .lookupFunction<
-        ffi.Bool Function(ffi.Pointer<Utf8>),
-        bool Function(ffi.Pointer<Utf8>)
-      >('xdremux_verify_styles_output');
+  static final _makeLivePhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      )>('xdremux_make_live_photo');
 
-  static final _verifyPortraitOutput = _lib
-      .lookupFunction<
-        ffi.Bool Function(ffi.Pointer<Utf8>),
-        bool Function(ffi.Pointer<Utf8>)
-      >('xdremux_verify_portrait_output');
+  static final _verifyStylesOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_styles_output');
 
-  static final _writebackReturnedPhoto = _lib
-      .lookupFunction<
-        ffi.Pointer<Utf8> Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Uint8,
-          ffi.Uint8,
-        ),
-        ffi.Pointer<Utf8> Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<Utf8>,
-          int,
-          int,
-        )
-      >('xdremux_writeback_returned_photo');
+  static final _verifyPortraitOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_portrait_output');
 
-  static final _freeResult = _lib
-      .lookupFunction<
-        ffi.Void Function(ConversionResult),
-        void Function(ConversionResult)
-      >('xdremux_free_result');
+  static final _writebackReturnedPhoto = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>, ffi.Uint8, ffi.Uint8),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
+          ffi.Pointer<Utf8>, int, int)>('xdremux_writeback_returned_photo');
 
-  static final _freeClassificationResult = _lib
-      .lookupFunction<
-        ffi.Void Function(ClassificationResult),
-        void Function(ClassificationResult)
-      >('xdremux_free_classification_result');
+  static final _freeResult = _lib.lookupFunction<
+      ffi.Void Function(ConversionResult),
+      void Function(ConversionResult)>('xdremux_free_result');
 
-  static final _readProgress = _lib
-      .lookupFunction<
-        ffi.Void Function(ffi.Pointer<ffi.Uint32>),
-        void Function(ffi.Pointer<ffi.Uint32>)
-      >('xdremux_read_progress');
+  static final _freeClassificationResult = _lib.lookupFunction<
+      ffi.Void Function(ClassificationResult),
+      void Function(ClassificationResult)>('xdremux_free_classification_result');
 
-  static final _extractThumbnail = _lib
-      .lookupFunction<
-        ThumbnailResult Function(ffi.Pointer<Utf8>),
-        ThumbnailResult Function(ffi.Pointer<Utf8>)
-      >('xdremux_extract_thumbnail');
+  static final _readProgress = _lib.lookupFunction<
+      ffi.Void Function(ffi.Pointer<ffi.Uint32>),
+      void Function(ffi.Pointer<ffi.Uint32>)>('xdremux_read_progress');
 
-  static final _freeThumbnail = _lib
-      .lookupFunction<
-        ffi.Void Function(ThumbnailResult),
-        void Function(ThumbnailResult)
-      >('xdremux_free_thumbnail');
+  static final _extractThumbnail = _lib.lookupFunction<
+      ThumbnailResult Function(ffi.Pointer<Utf8>),
+      ThumbnailResult Function(ffi.Pointer<Utf8>)>('xdremux_extract_thumbnail');
 
-  static final _prepareTiles = _lib
-      .lookupFunction<
-        PreparedTilesResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-          ffi.Uint32,
-        ),
-        PreparedTilesResult Function(
-          ffi.Pointer<Utf8>,
-          ffi.Pointer<ConvertConfig>,
-          int,
-        )
-      >('xdremux_prepare_tiles');
+  static final _freeThumbnail = _lib.lookupFunction<
+      ffi.Void Function(ThumbnailResult),
+      void Function(ThumbnailResult)>('xdremux_free_thumbnail');
 
-  static final _freePrepared = _lib
-      .lookupFunction<
-        ffi.Void Function(PreparedTilesResult),
-        void Function(PreparedTilesResult)
-      >('xdremux_free_prepared');
+  static final _prepareTiles = _lib.lookupFunction<
+      PreparedTilesResult Function(ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, ffi.Uint32),
+      PreparedTilesResult Function(ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, int)>('xdremux_prepare_tiles');
 
-  static final _assembleTiles = _lib
-      .lookupFunction<
-        ConversionResult Function(
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-          ffi.Pointer<ffi.IntPtr>,
-          ffi.IntPtr,
-          ffi.Pointer<Utf8>,
-          ffi.Uint32,
-        ),
-        ConversionResult Function(
-          ffi.Pointer<ffi.Void>,
-          ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
-          ffi.Pointer<ffi.IntPtr>,
-          int,
-          ffi.Pointer<Utf8>,
-          int,
-        )
-      >('xdremux_assemble_tiles');
+  static final _freePrepared = _lib.lookupFunction<
+      ffi.Void Function(PreparedTilesResult),
+      void Function(PreparedTilesResult)>('xdremux_free_prepared');
 
-  static final _progressReport = _lib
-      .lookupFunction<
-        ffi.Void Function(ffi.Uint32, ffi.Uint32, ffi.Uint32),
-        void Function(int, int, int)
-      >('xdremux_progress_report');
+  static final _assembleTiles = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.IntPtr>, ffi.IntPtr, ffi.Pointer<Utf8>, ffi.Uint32),
+      ConversionResult Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Pointer<ffi.Uint8>>, ffi.Pointer<ffi.IntPtr>, int, ffi.Pointer<Utf8>, int)>('xdremux_assemble_tiles');
+
+  static final _progressReport = _lib.lookupFunction<
+      ffi.Void Function(ffi.Uint32, ffi.Uint32, ffi.Uint32),
+      void Function(int, int, int)>('xdremux_progress_report');
 
   /// Returns the Rust core version string (e.g. "0.1.1").
   static String version() {
@@ -488,36 +390,6 @@ class XdRemuxFFI {
     } finally {
       calloc.free(input);
     }
-  }
-
-  /// Inspect a Huawei HEIC without decoding or rewriting it.
-  static Map<String, dynamic> inspectHuawei(String inputPath) {
-    final input = inputPath.toNativeUtf8();
-    try {
-      final report = _huaweiInspect(input);
-      try {
-        if (report == ffi.nullptr) {
-          return <String, dynamic>{
-            'schema': 'xdremux-huawei-heic-v1',
-            'status': 'null-report',
-            'isHuaweiHdr': false,
-          };
-        }
-        final decoded = jsonDecode(report.toDartString());
-        if (decoded is Map) {
-          return decoded.map((key, value) => MapEntry(key.toString(), value));
-        }
-      } finally {
-        if (report != ffi.nullptr) _freeString(report);
-      }
-    } finally {
-      calloc.free(input);
-    }
-    return <String, dynamic>{
-      'schema': 'xdremux-huawei-heic-v1',
-      'status': 'invalid-report',
-      'isHuaweiHdr': false,
-    };
   }
 
   /// Convert a single file. Returns a [ConversionResult] that the caller must free.
@@ -640,6 +512,36 @@ class XdRemuxFFI {
     }
   }
 
+  /// Inspect a Huawei HEIC without decoding or rewriting it.
+  static Map<String, dynamic> inspectHuawei(String inputPath) {
+    final input = inputPath.toNativeUtf8();
+    try {
+      final report = _huaweiInspect(input);
+      try {
+        if (report == ffi.nullptr) {
+          return <String, dynamic>{
+            'schema': 'xdremux-huawei-heic-v1',
+            'status': 'null-report',
+            'isHuaweiHdr': false,
+          };
+        }
+        final decoded = jsonDecode(report.toDartString());
+        if (decoded is Map) {
+          return decoded.map((key, value) => MapEntry(key.toString(), value));
+        }
+      } finally {
+        if (report != ffi.nullptr) _freeString(report);
+      }
+    } finally {
+      calloc.free(input);
+    }
+    return <String, dynamic>{
+      'schema': 'xdremux-huawei-heic-v1',
+      'status': 'invalid-report',
+      'isHuaweiHdr': false,
+    };
+  }
+
   /// Split a Motion Photo into still image + video files under [outDir].
   /// OPPO dual-stream files also yield a `primaryVideoPath` (high quality).
   static Map<String, dynamic> motionPhotoSplit(String path, String outDir) {
@@ -698,6 +600,30 @@ class XdRemuxFFI {
       calloc.free(sourcePtr);
       calloc.free(stillPtr);
       calloc.free(outPtr);
+    }
+  }
+
+  /// Inspect detailed EXIF and HDR GainMap properties of a photo.
+  static Map<String, dynamic> inspectPhotoDetails(String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      final report = _inspectPhotoDetails(pathPtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust inspect photo details returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Malformed report from Rust inspect photo details',
+      };
+    } finally {
+      calloc.free(pathPtr);
     }
   }
 

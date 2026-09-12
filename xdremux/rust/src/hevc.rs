@@ -264,11 +264,7 @@ fn x265_encode_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<V
             ((width + 1) / 2) as i32,
         )
     } else {
-        (
-            vec![128u8; plane_size],
-            vec![128u8; plane_size],
-            width as i32,
-        )
+        (vec![128u8; plane_size], vec![128u8; plane_size], width as i32)
     };
 
     unsafe {
@@ -459,11 +455,7 @@ unsafe fn setup_pic_planes(
             (false, true) => rgb_to_yuv444_limited601(pixels, width, height),
             (false, false) => rgb_to_yuv444(pixels, width, height),
         };
-        let stride = if use_420 {
-            ((width + 1) / 2) as i32
-        } else {
-            width as i32
-        };
+        let stride = if use_420 { ((width + 1) / 2) as i32 } else { width as i32 };
         (y, u, v, stride)
     } else {
         // gray: Y = pixels, U/V = 128 (full-res for 4:4:4, half-res for 4:2:0)
@@ -472,17 +464,9 @@ unsafe fn setup_pic_planes(
         let (u_plane, v_plane, stride) = if use_420 {
             let cw = ((width + 1) / 2) as usize;
             let ch = ((height + 1) / 2) as usize;
-            (
-                vec![128u8; cw * ch],
-                vec![128u8; cw * ch],
-                ((width + 1) / 2) as i32,
-            )
+            (vec![128u8; cw * ch], vec![128u8; cw * ch], ((width + 1) / 2) as i32)
         } else {
-            (
-                vec![128u8; plane_size],
-                vec![128u8; plane_size],
-                width as i32,
-            )
+            (vec![128u8; plane_size], vec![128u8; plane_size], width as i32)
         };
         (y_plane, u_plane, v_plane, stride)
     };
@@ -509,10 +493,7 @@ unsafe fn open_encoder(
     pixel_bytes: usize,
     use_420: bool,
     oppo_sdr: bool,
-) -> std::io::Result<(
-    *mut crate::x265_ffi::x265_param,
-    *mut crate::x265_ffi::x265_encoder,
-)> {
+) -> std::io::Result<(*mut crate::x265_ffi::x265_param, *mut crate::x265_ffi::x265_encoder)> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
 
@@ -527,11 +508,7 @@ unsafe fn open_encoder(
     // (measured on a Kirin device); fast is ~2-3x quicker at CRF14 with no
     // visible quality delta. Gain maps keep ultrafast, styles keep medium.
     let preset = CString::new(if is_rgb {
-        if oppo_sdr {
-            "fast"
-        } else {
-            "medium"
-        }
+        if oppo_sdr { "fast" } else { "medium" }
     } else {
         "ultrafast"
     })
@@ -541,20 +518,16 @@ unsafe fn open_encoder(
         return Err(io_err("x265_param_default_preset failed"));
     }
 
-    set_param(
-        param,
-        "input-csp",
-        if use_420 {
-            "i420"
-        } else if !is_rgb {
-            // ISO 21496-1 gain maps are monochrome. Encoding gray through i444
-            // produces a 4:4:4 "pseudo-color" stream that standard decoders
-            // (e.g. Android's gain-map path) refuse to treat as a gain map.
-            "i400"
-        } else {
-            "i444"
-        },
-    );
+    set_param(param, "input-csp", if use_420 {
+        "i420"
+    } else if !is_rgb {
+        // ISO 21496-1 gain maps are monochrome. Encoding gray through i444
+        // produces a 4:4:4 "pseudo-color" stream that standard decoders
+        // (e.g. Android's gain-map path) refuse to treat as a gain map.
+        "i400"
+    } else {
+        "i444"
+    });
     xdremux_param_set_basic(param, width as i32, height as i32, 8, 1);
     set_param(param, "fps", "1");
     set_param(param, "crf", if is_rgb { "14" } else { "18" });
@@ -568,17 +541,17 @@ unsafe fn open_encoder(
     set_param(param, "repeat-headers", "0");
     set_param(param, "keyint", "1");
     let prof = CString::new(if use_420 {
-        // Single-frame gain-map tiles: Main Still Picture, matching the
-        // Swift/ImageIO reference. "main" emits a Main-profile SPS that
-        // hvcC extraction then mislabels, which ImageIO rejects.
-        "mainstillpicture"
-    } else if !is_rgb {
-        // Monochrome gain map: Rext/Monochrome profile.
-        "main444-8"
-    } else {
-        "main444-8"
-    })
-    .unwrap();
+            // Single-frame gain-map tiles: Main Still Picture, matching the
+            // Swift/ImageIO reference. "main" emits a Main-profile SPS that
+            // hvcC extraction then mislabels, which ImageIO rejects.
+            "mainstillpicture"
+        } else if !is_rgb {
+            // Monochrome gain map: Rext/Monochrome profile.
+            "main444-8"
+        } else {
+            "main444-8"
+        })
+        .unwrap();
     x265_param_apply_profile(param, prof.as_ptr());
     // Batch path: keep per-frame WPP row parallelism (default thread pool)
     // but disable B-frames / lookahead so frames are emitted strictly in
@@ -604,10 +577,7 @@ unsafe fn open_encoder(
         set_param(param, "aq-mode", "1");
     }
 
-    xlog(&format!(
-        "x265 opening {}x{} (rgb={})",
-        width, height, is_rgb
-    ));
+    xlog(&format!("x265 opening {}x{} (rgb={})", width, height, is_rgb));
     let encoder = x265_encoder_open_216(param);
     if encoder.is_null() {
         xlog("encoder open FAILED");
@@ -681,16 +651,8 @@ fn x265_encode_tiles_inner(
         unsafe {
             let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr)?;
             let pic = x265_picture_alloc();
-            let (y, u, v, _stride) = setup_pic_planes(
-                pic,
-                param,
-                tile,
-                width,
-                height,
-                pixel_bytes,
-                use_420,
-                oppo_sdr,
-            );
+            let (y, u, v, _stride) =
+                setup_pic_planes(pic, param, tile, width, height, pixel_bytes, use_420, oppo_sdr);
             let pic_out = x265_picture_alloc();
             let mut nals: *mut x265_nal = std::ptr::null_mut();
             let mut nal_count: u32 = 0;
@@ -805,9 +767,15 @@ pub fn drop_parameter_nals(data: &[u8]) -> Vec<u8> {
             pos += 1;
             continue;
         };
-        let nal_end = if let Some(next) = data[nal_start..].windows(4).position(|w| w == nal_4b) {
+        let nal_end = if let Some(next) = data[nal_start..]
+            .windows(4)
+            .position(|w| w == nal_4b)
+        {
             nal_start + next
-        } else if let Some(next) = data[nal_start..].windows(3).position(|w| w == nal_3b) {
+        } else if let Some(next) = data[nal_start..]
+            .windows(3)
+            .position(|w| w == nal_3b)
+        {
             nal_start + next
         } else {
             data.len()
@@ -846,13 +814,7 @@ unsafe fn do_encode(
     }
 
     // Flush (pass null input to get any buffered output)
-    let ret = x265_encoder_encode(
-        encoder,
-        &mut nals,
-        &mut nal_count,
-        std::ptr::null_mut(),
-        pic_out,
-    );
+    let ret = x265_encoder_encode(encoder, &mut nals, &mut nal_count, std::ptr::null_mut(), pic_out);
     if ret > 0 {
         append_nals(&mut output, nals, nal_count);
     }
@@ -877,15 +839,16 @@ unsafe fn append_nals(output: &mut Vec<u8>, nals: *mut crate::x265_ffi::x265_nal
 
 /// Set a param by name/value strings (with logging on failure).
 #[cfg(not(xdremux_ffmpeg_fallback))]
-unsafe fn set_param(param: *mut crate::x265_ffi::x265_param, name: &str, value: &str) {
+unsafe fn set_param(
+    param: *mut crate::x265_ffi::x265_param,
+    name: &str,
+    value: &str,
+) {
     let n = std::ffi::CString::new(name).unwrap();
     let v = std::ffi::CString::new(value).unwrap();
     let ret = crate::x265_ffi::x265_param_parse(param, n.as_ptr(), v.as_ptr());
     if ret != 0 {
-        xlog(&format!(
-            "param_parse FAILED: {}={} ret={}",
-            name, value, ret
-        ));
+        xlog(&format!("param_parse FAILED: {}={} ret={}", name, value, ret));
     }
 }
 
@@ -899,12 +862,7 @@ fn io_err(msg: &str) -> std::io::Error {
 // ===========================================================================
 
 #[cfg(xdremux_ffmpeg_fallback)]
-fn encode_raw_tile(
-    pixels: &[u8],
-    pix_fmt_in: &str,
-    width: u32,
-    height: u32,
-) -> std::io::Result<Vec<u8>> {
+fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     let pix_fmt_out = match pix_fmt_in {
         "gray" => "yuv444p",
         "rgb24" => "yuv444p",
@@ -923,53 +881,33 @@ fn encode_raw_tile(
         "range=full:colormatrix=bt709:colorprim=bt709:transfer=bt709:psy-rd=0:aq-mode=1"
     };
 
-    let preset = if pix_fmt_in == "gray" {
-        "ultrafast"
-    } else {
-        "medium"
-    };
+    let preset = if pix_fmt_in == "gray" { "ultrafast" } else { "medium" };
 
     let ffmpeg = resolve_exe("ffmpeg");
     let mut cmd = Command::new(&ffmpeg);
     cmd.args([
         "-y",
-        "-f",
-        "rawvideo",
-        "-pixel_format",
-        pix_fmt_in,
-        "-video_size",
-        &format!("{}x{}", width, height),
-        "-framerate",
-        "1",
-        "-i",
-        "pipe:0",
-        "-c:v",
-        "libx265",
-        "-preset",
-        preset,
-        "-crf",
-        &crf.to_string(),
+        "-f", "rawvideo",
+        "-pixel_format", pix_fmt_in,
+        "-video_size", &format!("{}x{}", width, height),
+        "-framerate", "1",
+        "-i", "pipe:0",
+        "-c:v", "libx265",
+        "-preset", preset,
+        "-crf", &crf.to_string(),
     ]);
     cmd.args(["-profile:v", "main444-8"]);
     cmd.args([
-        "-colorspace",
-        "bt709",
-        "-color_primaries",
-        "bt709",
-        "-color_trc",
-        "bt709",
-        "-color_range",
-        "2",
+        "-colorspace", "bt709",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-color_range", "2",
     ]);
     cmd.args([
-        "-x265-params",
-        x265_params,
-        "-pix_fmt",
-        pix_fmt_out,
-        "-frames:v",
-        "1",
-        "-f",
-        "hevc",
+        "-x265-params", x265_params,
+        "-pix_fmt", pix_fmt_out,
+        "-frames:v", "1",
+        "-f", "hevc",
         "pipe:1",
     ]);
 
@@ -977,9 +915,7 @@ fn encode_raw_tile(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
     let mut child = cmd.spawn()?;
 
     let mut stdin = child.stdin.take().unwrap();
@@ -1028,9 +964,7 @@ fn resolve_exe(name: &str) -> PathBuf {
     let mut cmd = std::process::Command::new(which_cmd);
     cmd.arg(name).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
     if let Ok(output) = cmd.output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if let Some(line) = stdout.lines().next() {
@@ -1074,9 +1008,15 @@ pub fn hevc_byte_stream_to_length_prefixed(data: &[u8]) -> Vec<u8> {
             continue;
         };
 
-        let nal_end = if let Some(next) = data[nal_start..].windows(4).position(|w| w == nal_4b) {
+        let nal_end = if let Some(next) = data[nal_start..]
+            .windows(4)
+            .position(|w| w == nal_4b)
+        {
             nal_start + next
-        } else if let Some(next) = data[nal_start..].windows(3).position(|w| w == nal_3b) {
+        } else if let Some(next) = data[nal_start..]
+            .windows(3)
+            .position(|w| w == nal_3b)
+        {
             nal_start + next
         } else {
             data.len()
@@ -1145,10 +1085,7 @@ fn sps_ptl(sps: &[u8]) -> Option<(u8, u32, u8)> {
         return None;
     }
     // HEVC NAL header is 2 bytes (forbidden_bit + type + layer_id + tid_plus1).
-    let mut br = BitReader {
-        data: &rbsp[2..],
-        pos: 0,
-    };
+    let mut br = BitReader { data: &rbsp[2..], pos: 0 };
     br.read(4); // sps_video_parameter_set_id
     br.read(3); // sps_max_sub_layers_minus1
     br.read(1); // sps_temporal_id_nesting_flag
@@ -1168,10 +1105,7 @@ fn vps_ptl(vps: &[u8]) -> Option<(u8, u32, u8)> {
         return None;
     }
     // VPS NAL header is also 2 bytes.
-    let mut br = BitReader {
-        data: &rbsp[2..],
-        pos: 0,
-    };
+    let mut br = BitReader { data: &rbsp[2..], pos: 0 };
     br.read(4); // vps_video_parameter_set_id
     br.read(1); // vps_base_layer_internal_flag
     br.read(1); // vps_base_layer_available_flag
@@ -1218,11 +1152,7 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
     let bit_depth_chroma: u8 = 8;
 
     for i in 0..nal_positions.len() {
-        let start_code_len = if hevc_data[nal_positions[i]..].starts_with(nal_4b) {
-            4
-        } else {
-            3
-        };
+        let start_code_len = if hevc_data[nal_positions[i]..].starts_with(nal_4b) { 4 } else { 3 };
         let nal_data_start = nal_positions[i] + start_code_len;
         let nal_data_end = if i + 1 < nal_positions.len() {
             nal_positions[i + 1]
@@ -1239,15 +1169,9 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
         let payload = &hevc_data[nal_data_start..nal_data_end];
 
         match nal_type {
-            32 => {
-                vps_nal = Some(payload);
-            }
-            33 => {
-                sps_nal = Some(payload);
-            }
-            34 => {
-                pps_nal = Some(payload);
-            }
+            32 => { vps_nal = Some(payload); }
+            33 => { sps_nal = Some(payload); }
+            34 => { pps_nal = Some(payload); }
             _ => {}
         }
     }
@@ -1321,30 +1245,18 @@ mod tests {
         let mut pixels = vec![0u8; (w * h) as usize];
         for y in 0..h {
             for x in 0..w {
-                pixels[(y * w + x) as usize] = ((x as f32 / (w - 1) as f32) * 128.0
-                    + (y as f32 / (h - 1) as f32) * 127.0)
-                    as u8;
+                pixels[(y * w + x) as usize] =
+                    ((x as f32 / (w - 1) as f32) * 128.0 + (y as f32 / (h - 1) as f32) * 127.0) as u8;
             }
         }
 
         let hevc = encode_hevc_tile_gray(&pixels, w, h).expect("encode_hevc_tile_gray failed");
-        assert!(
-            hevc.len() > 100,
-            "HEVC must be >100 bytes (got {})",
-            hevc.len()
-        );
+        assert!(hevc.len() > 100, "HEVC must be >100 bytes (got {})", hevc.len());
 
-        let nal_count = hevc
-            .windows(4)
-            .filter(|w| *w == b"\x00\x00\x00\x01")
-            .count();
+        let nal_count = hevc.windows(4).filter(|w| *w == b"\x00\x00\x00\x01").count();
         assert!(nal_count >= 2, "at least VPS+SPS/PPS NAL units expected");
 
-        eprintln!(
-            "✓ hevc_tile_gray_512: {} bytes, {} NALs",
-            hevc.len(),
-            nal_count
-        );
+        eprintln!("✓ hevc_tile_gray_512: {} bytes, {} NALs", hevc.len(), nal_count);
     }
 
     #[test]
@@ -1386,7 +1298,8 @@ mod tests {
         let tiles: Vec<Vec<u8>> = (0..4).map(|s| make(s)).collect();
         let refs: Vec<&[u8]> = tiles.iter().map(|t| t.as_slice()).collect();
 
-        let streams = x265_encode_tiles(&refs, w, h, 1, false).expect("batch encode failed");
+        let streams =
+            x265_encode_tiles(&refs, w, h, 1, false).expect("batch encode failed");
         assert_eq!(streams.len(), 4, "one stream per tile");
 
         for (i, s) in streams.iter().enumerate() {
@@ -1394,14 +1307,9 @@ mod tests {
                 let mut pos = 0;
                 let mut types = Vec::new();
                 while pos < s.len() {
-                    let sc = if s[pos..].starts_with(&[0, 0, 0, 1]) {
-                        4
-                    } else if pos + 3 <= s.len() && s[pos..].starts_with(&[0, 0, 1]) {
-                        3
-                    } else {
-                        pos += 1;
-                        continue;
-                    };
+                    let sc = if s[pos..].starts_with(&[0, 0, 0, 1]) { 4 }
+                        else if pos + 3 <= s.len() && s[pos..].starts_with(&[0, 0, 1]) { 3 }
+                        else { pos += 1; continue };
                     let start = pos + sc;
                     if start < s.len() {
                         types.push((s[start] >> 1) & 0x3f);
@@ -1418,18 +1326,9 @@ mod tests {
             if cfg!(xdremux_ffmpeg_fallback) {
                 // The ffmpeg fallback encodes tiles independently, so every
                 // tile is self-contained with its own parameter sets.
-                assert!(
-                    nal_types.contains(&32),
-                    "tile {i} missing VPS: {nal_types:?}"
-                );
-                assert!(
-                    nal_types.contains(&33),
-                    "tile {i} missing SPS: {nal_types:?}"
-                );
-                assert!(
-                    nal_types.contains(&34),
-                    "tile {i} missing PPS: {nal_types:?}"
-                );
+                assert!(nal_types.contains(&32), "tile {i} missing VPS: {nal_types:?}");
+                assert!(nal_types.contains(&33), "tile {i} missing SPS: {nal_types:?}");
+                assert!(nal_types.contains(&34), "tile {i} missing PPS: {nal_types:?}");
             } else if i == 0 {
                 assert!(nal_types.contains(&32), "tile 0 missing VPS: {nal_types:?}");
                 assert!(nal_types.contains(&33), "tile 0 missing SPS: {nal_types:?}");
@@ -1438,18 +1337,9 @@ mod tests {
                 let hvcc = extract_hvcc_config(s).expect("hvcC from tile 0");
                 assert!(!hvcc.is_empty(), "tile 0 hvcC empty");
             } else {
-                assert!(
-                    !nal_types.contains(&32),
-                    "tile {i} has embedded VPS: {nal_types:?}"
-                );
-                assert!(
-                    !nal_types.contains(&33),
-                    "tile {i} has embedded SPS: {nal_types:?}"
-                );
-                assert!(
-                    !nal_types.contains(&34),
-                    "tile {i} has embedded PPS: {nal_types:?}"
-                );
+                assert!(!nal_types.contains(&32), "tile {i} has embedded VPS: {nal_types:?}");
+                assert!(!nal_types.contains(&33), "tile {i} has embedded SPS: {nal_types:?}");
+                assert!(!nal_types.contains(&34), "tile {i} has embedded PPS: {nal_types:?}");
             }
         }
         eprintln!("✓ batch_encode_matches_single_tile_headers: tile0 params + pure-IDR rest");

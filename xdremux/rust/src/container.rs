@@ -352,10 +352,7 @@ pub fn disable_apple_filter_recipe(data: &mut [u8]) -> usize {
     {
         let start = offset + relative;
         let mut cursor = start + FILTER_KEY.len();
-        while data
-            .get(cursor)
-            .is_some_and(|byte| byte.is_ascii_whitespace())
-        {
+        while data.get(cursor).is_some_and(|byte| byte.is_ascii_whitespace()) {
             cursor += 1;
         }
         if data.get(cursor) == Some(&b':') {
@@ -385,10 +382,10 @@ pub fn watermark_canvas_rect(
     image_width: u32,
     image_height: u32,
 ) -> Result<(u32, u32, u32, u32), String> {
-    let watermark =
-        extract_tail_entry(data, "watermark").ok_or("OPPO watermark payload is missing")?;
-    let config =
-        extract_tail_entry(data, "watermark.config").ok_or("OPPO watermark config is missing")?;
+    let watermark = extract_tail_entry(data, "watermark")
+        .ok_or("OPPO watermark payload is missing")?;
+    let config = extract_tail_entry(data, "watermark.config")
+        .ok_or("OPPO watermark config is missing")?;
     if config.len() < 20 || watermark.len() < 24 {
         return Err("OPPO watermark payload or config is truncated".into());
     }
@@ -423,10 +420,10 @@ pub fn watermark_overlay_rect(
     image_width: u32,
     image_height: u32,
 ) -> Result<(u32, u32, u32, u32), String> {
-    let watermark =
-        extract_tail_entry(data, "watermark").ok_or("OPPO watermark payload is missing")?;
-    let config =
-        extract_tail_entry(data, "watermark.config").ok_or("OPPO watermark config is missing")?;
+    let watermark = extract_tail_entry(data, "watermark")
+        .ok_or("OPPO watermark payload is missing")?;
+    let config = extract_tail_entry(data, "watermark.config")
+        .ok_or("OPPO watermark config is missing")?;
     if config.len() < 20 || watermark.len() < 24 {
         return Err("OPPO watermark payload or config is truncated".into());
     }
@@ -611,7 +608,10 @@ fn find_extension_region(data: &[u8]) -> Result<(usize, &[u8]), String> {
     }
 
     // No QTI marker — locate container header by scanning backward
-    let footer_pos = data.windows(6).position(|w| w == b"\x00jxrsq");
+    let footer_pos = data
+        .windows(6)
+        .rposition(|w| w == b"\x00jxrsq")
+        .or_else(|| data.windows(5).rposition(|w| w == b"\x00jxrs"));
 
     if let Some(footer_pos) = footer_pos {
         let scan_start = footer_pos.saturating_sub(8192);
@@ -1044,7 +1044,7 @@ mod tests {
         // compressed data produces when the whole file is scanned.
         let mut floats = [0.0f32; 36];
         floats[2] = 144.0; // sentinel hit
-                           // f0, f5, f18, f19, f29 all left at garbage defaults
+        // f0, f5, f18, f19, f29 all left at garbage defaults
         assert!(!plausible_lhdr_meta(&floats));
         assert!(score_lhdr_meta(&floats) < MIN_FLOAT144_SCORE);
 
@@ -1105,6 +1105,25 @@ mod tests {
         valid.extend_from_slice(b"QTI Debug");
         valid.extend_from_slice(&[0xAAu8; 100]);
         assert_eq!(find_extension_start(&valid).unwrap(), 60);
+    }
+
+    #[test]
+    fn find_extension_region_recognizes_jxrs_and_jxrsq() {
+        let tail_jxrs = make_manifest_tail(&[("test.entry", b"hello")]);
+        let mut file_jxrs = Vec::new();
+        file_jxrs.extend_from_slice(&[0u8; 32]);
+        file_jxrs.extend_from_slice(&tail_jxrs);
+        assert!(extract_tail_entry(&file_jxrs, "test.entry").is_some());
+
+        // Also verify jxrsq footer variant
+        let mut tail_jxrsq = tail_jxrs.clone();
+        // Replace "jxrs" with "jxrsq"
+        let pos = tail_jxrsq.windows(5).rposition(|w| w == b"\x00jxrs").unwrap();
+        tail_jxrsq.insert(pos + 5, b'q');
+        let mut file_jxrsq = Vec::new();
+        file_jxrsq.extend_from_slice(&[0u8; 32]);
+        file_jxrsq.extend_from_slice(&tail_jxrsq);
+        assert!(extract_tail_entry(&file_jxrsq, "test.entry").is_some());
     }
 
     fn make_manifest_tail(entries: &[(&str, &[u8])]) -> Vec<u8> {

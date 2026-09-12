@@ -207,7 +207,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn load_fixture(spec: &FixtureSpec) -> (Vec<u8>, MotionPhotoAsset) {
     let dir = fixtures_dir().expect("fixtures directory must exist");
     let path = dir.join(spec.filename);
-    let data = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let data = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     assert_eq!(
         sha256_hex(&data),
         spec.sha256,
@@ -267,9 +268,7 @@ fn reencoded_fixture_variants_are_byte_identical() {
     // Upstream ships R002_/R003_ re-encode variants whose bytes are identical
     // to the base HEIF fixtures (same SHA256 in the manifest). Guard against
     // upstream changing that assumption silently.
-    let Some(dir) = require_fixtures() else {
-        return;
-    };
+    let Some(dir) = require_fixtures() else { return };
     for (variant, base) in [
         ("R002_20260312_135609..heic", "20260312_135609..heic"),
         ("R003_20260312_135610..heic", "20260312_135610..heic"),
@@ -331,9 +330,7 @@ fn android_heif_motion_photo_fixtures() {
 
 #[test]
 fn jpeg_gain_map_presence_matches_spec() {
-    let Some(dir) = require_fixtures() else {
-        return;
-    };
+    let Some(dir) = require_fixtures() else { return };
     for spec in FIXTURES.iter().filter(|s| s.filename.ends_with(".jpg")) {
         let data = std::fs::read(dir.join(spec.filename)).unwrap();
         // uhdr_jpeg::parse returns Ok(None) when there is no MPF gain-map

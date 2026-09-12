@@ -14,7 +14,7 @@ fn main() {
     let source_bytes = std::fs::read(input_path).expect("failed to read source HEIC");
 
     println!("Running Huawei -> Apple Portrait remux...");
-    let result_bytes = xdremux_core::portrait::run_huawei_portrait(&source_bytes)
+    let result_bytes = xdremux_core::run_huawei_portrait(&source_bytes)
         .expect("Huawei portrait remux failed");
 
     std::fs::write(output_path, &result_bytes).expect("failed to write output HEIC");

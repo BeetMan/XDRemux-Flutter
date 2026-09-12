@@ -1,4 +1,16 @@
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 {
+        let still = std::fs::read(&args[1]).expect("read still");
+        let mov = std::fs::read(&args[2]).expect("read mov");
+        let still_cid = xdremux_core::live_photo::read_still_content_identifier(&still);
+        let mov_cid = xdremux_core::live_photo::read_movie_content_identifier(&mov);
+        let valid = xdremux_core::live_photo::existing_pair_is_valid(&still, &mov);
+        println!("Still CID:  {:?}", still_cid);
+        println!("Mov CID:    {:?}", mov_cid);
+        println!("Pair valid: {}", valid);
+        return;
+    }
     let source = std::fs::read("/Users/beet/Downloads/动态照片/大师 3x.jpg").unwrap();
     let still = std::fs::read("/tmp/lp-final3/大师 3x_iso.heic").unwrap();
     let asset = xdremux_core::motion_photo::parse_motion_photo(&source).unwrap().unwrap();

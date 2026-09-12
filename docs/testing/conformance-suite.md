@@ -22,6 +22,8 @@
 
 内部模块：`convert` / `scaffold` / `styles_native` / `styles_graft` / `portrait` / `portrait_depth` / `seg` / `bplist` / `json` --与 Rust 核心同名模块一一对应的对拍逻辑，另有 `*_consts.rs` 共享常量。
 
+> **人像镜像已停用**：`tests/conformance/src/portrait.rs` 是曲线标定之前的实现快照，与 `xdremux-core` 已经不一致（缺每张照片深度曲线标定、`stretch_to_span` 映射，以及无法在镜像中复现的 `BaseOrigin` 底图选择）。该模块的 `portrait` 子命令现在**直接报错拒绝执行**，避免产出与真实管线不同、却又被当作对拍基准的结果；同一 crate 的 `portrait_depth.rs` 诊断则是同步的，两者混用会产生误导。人像转换请走核心库或应用。
+
 ## 3. 金样语料（golden corpus）
 
 `tools/golden_corpus.sh <sample-dir> <out-dir>` 从本地样本目录再生成参照输出：
