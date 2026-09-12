@@ -47,6 +47,34 @@ semanticskymatte（天空）、semanticskinmatte（皮肤 v1）、hdrgainmap。
 - Standard（IMG_3265）
 → BrightPop / TanWarm 在我们既有 `cast-to-key1-study.md` 里已记录，属同一条线。
 
+### 4. ⭐ Photographic Styles 3 —— 质感（texture）+ 颗粒（grain）
+
+**官方佐证**（网络确认）：iPhone 18 Pro / iOS 27 推出 **Photographic Styles 3**，
+在原有色调（cast/tone/color）基础上新增**质感（texture）**和**颗粒（grain）**控制；
+官方口径「可同时调节色彩与肤质质感」，基于新 48MP 相机管线；Pro 档位可手动细调。
+iOS 27 于 9/14 发布。
+
+**数据载荷**（在样张里找到）：
+
+a) **`texture_styles` 元数据项**（容器 item，content_type
+   `tag:apple.com,2026:photo:metadata:texture_styles`）——质感风格参数载体。
+
+b) **MakerNote PLIST 的「Texture Style Post Processed People Data」**（人像照有，
+   `Texture Style People Data Version = 3`）。按 face 分，含：
+   - Face ROI / Face Skin ROI / Face ID / Face Yaw·Pitch·Roll（姿态）
+   - **Face Landmarks**（几十个特征点 X/Y/Error）
+   - 三个质感操作的 Image Stats：
+     - **Mattify**（HighlightsToMaskRatio、AverageFaceColor、SkipPerson）
+     - **Skin Smoothing Standalone**（SkinSmoothAverageFaceColour、FaceRoughness、SkipPerson）
+     - **Under Eye Brightening**（左右眼 AverageColor、LumaVariance、IsBiModal、FaceID）
+   - Instance Mask Reference Key（如 `FSINCInstanceMask9`）——指向语义部件蒙版
+
+c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可复现种子。
+
+→ 「质感」= 按人脸/部件的磨皮、去油光、眼下提亮的分区参数 + 引用语义蒙版；
+「颗粒」= 可复现的胶片颗粒种子。语义部件蒙版（发现 2）是这些质感操作的作用域。
+三者合起来就是 Photographic Styles 3 的完整数据。
+
 ## 容器结构（与现有一致）
 瓦片化 HEIC：主图 grid + 深度 grid + 语义 grid + tmap；Exif + 若干 mime/uri 元数据项。
 我们的 `extract_lhdr`（UHDR manifest 分支）对 plain HEIC 正常；动态照片走 `uhdr_jpeg`。
@@ -57,3 +85,7 @@ semanticskymatte（天空）、semanticskinmatte（皮肤 v1）、hdrgainmap。
 - [ ] 解析新语义部件蒙版的编码（dtype/分辨率/与 tmap 的引用关系）。
 - [ ] BrightPop/TanWarm 的 key1 晶格与既有风格的差异（沿用 universal graft 思路）。
 - [ ] 评估现有 Rust 核心对这些新样本的兼容（转换/回写路径）。
+- [ ] 解析 `texture_styles` 元数据项的结构（质感参数的具体布局）。
+- [ ] 「Texture Style Post Processed People Data」各 Image Stats 的语义与 Photos
+  质感滑杆的映射（磨皮 / 去油光 / 眼下提亮）。
+- [ ] Film Grain Seed 如何驱动颗粒渲染（可复现性验证）。
