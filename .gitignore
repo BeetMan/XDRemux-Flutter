@@ -99,6 +99,11 @@ tools/*
 !tools/installer/
 # Research corpus generator (Apple-features Rust port reference outputs).
 !tools/golden_corpus.sh
+# Harmony native packaging helper is source; its staged libraries stay ignored
+# by apps/harmony/.gitignore.
+!tools/ohos/
+tools/ohos/*
+!tools/ohos/prepare_harmony_native.ps1
 
 # Recreatable
 final-output/

@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：规划，尚未开始实现。开始开发需另行确认。
+状态：2026-09-12 用户授权开始准备与实施，由主 Agent 规划和验收，Luna Max 子 Agent 具体执行；当前推进 P0。
 基线：v0.4.0 / `b9531ee`；开发分支：`feat/harmony-native`。
 
 ## 1. 目标与范围
@@ -112,4 +112,63 @@ N-API 负责类型与生命周期转换，不承载另一套转换算法。
 - 后台能力与相册写入权限的实际可用性。
 - 发行渠道和签名流程；本计划不等于上架许可。
 
-本次只新增计划文档并建立分支，不增加依赖、下载模型、创建应用工程或启动开发。
+以上为建分支时的原始规划。2026-09-12 起按以下执行安排推进。
+
+## 7. 当前执行安排（2026-09-12）
+
+- 分工：主 Agent 维护计划、审查接口和验收证据；`gpt-5.6-luna` / `max` 子 Agent 实施。
+- 当前批次仅 P0：原生工程、版本读取、分类、文件选择并物化到沙箱，以及 unsigned HAP 构建验证。
+- 原生 bundle ID 采用 `io.github.beetman.xdremux.native`，区别于 Flutter 的 `io.github.beetman.xdremux`；本地测试签名必须匹配新应用标识。
+- `xdremux_version` 返回字符串复制后调用 `xdremux_free_string`；`xdremux_classify` 按值返回的 `ClassificationResult` 必须按 Rust `repr(C)` 布局接收，并由 `xdremux_free_classification_result` 按值释放，不逐个手工释放成员。
+- URI 授权读取及实际字节复制完成后，才允许向 Rust 传沙箱路径。复制失败清理半成品；异步调用结束前保留文件。
+- 核心只使用现有 `xdremux/rust/build_ohos.sh` 产物；核对依赖、来源及哈希。无法证实来源的旧库不认定为当前源码的验证证据。
+- DevEco 本地签名用于设备测试；交付发布包仍为 unsigned HAP。不发布、不提交签名凭据。
+
+P0 验收分别记录，禁止混淆：
+1. 静态检查：ABI 字段与偏移、所有权释放、异步线程边界、URI 物化流程。
+2. 构建检查：生成新鲜 unsigned HAP，核对 bundle ID、版本及打包的核心库。
+3. 运行检查：实际读取版本，分类已知样本，重复调用及错误路径无崩溃；泄漏结论必须有相应测量。
+4. 设备签名或环境阻塞时明确列出未完成项，不能以编译通过宣告 P0 全部完成。
+
+P0 审查后按原有 P1–P4 顺序推进；本批次不提前扩展转换参数、完整队列、后台或实况功能。
+
+### 下一批次拆分（尚未派发）
+
+- P1a 详情与转换桥接：`xdremux_inspect_photo_details` 的字符串由 `xdremux_free_string` 释放；`ConversionResult` 由 `xdremux_free_result` 按值释放；`ConvertConfig` 按当前源码的五个 `u8` 字段快照。
+- P1b 进度及输出事务：使用独立 handle 调用 `xdremux_convert_with_progress`，完成并停止轮询后才释放 handle；`xdremux_read_progress_for` 实际写入三个 `u32`（stage/current/total），以源码为准。转换输出与输入分离，导出完成另行确认。
+- P1c 验收：真实 HEIC/JPEG 样本完整闭环、原图哈希不变、无效文件与不可写目标错误可见、运行时 UI 可交互。先验证这些，再进入 P2 队列扩展。
+
+### P0 当前结果（2026-09-13）
+
+- Luna Max 已建立 `apps/harmony`，实现版本/分类异步 N-API、arm64 ABI 布局断言、对应 Rust free 函数释放及系统文件选择导入。
+- 主 Agent 已完成本批次代码审查；异常边界、N-API 结果检查与复制失败清理已修正。导入使用源 URI 打开 FD，再通过 `copyFile` 复制到沙箱，finally 关闭 FD；已复核最终构建。
+- DevEco CLI 构建成功，unsigned HAP 内确认独立 bundle ID、版本 `0.4.0` / code `40000`、API 18 兼容/目标声明，以及核心库、桥接库、C++ 运行库；实际编译 SDK 为 `26.0.0.105`。
+- 首次自动部署曾被 DevEco CLI 拒绝：新 bundle 未配置测试签名，unsigned HAP 无法直接安装到真实设备。之后用户手动安装并完成了下述基础冒烟；不要把首次阻塞当作当前无法运行。
+- 仍待完成：真实文件导入字节一致性、连续调用与内存行为、错误分支及最低系统兼容性。基础版本/分类调用已验证，但不宣告 P0 全部通过。
+- 未修改 Rust 转换算法或现有 Flutter 应用，未提交 Git、未发布。
+- 最终构建日志：`C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/build-debug-4.log`。产物 `entry-default-unsigned.hap` 位于同目录，4,737,626 字节，SHA-256 `998910CAF249356D8C7FCBA1D4C9FDDE3CFEC13327CFEE8786F55BDA878BE0B1`。
+- 库链路核验：现有 target 产物、暂存库、未剥离中间库 SHA-256 均为 `D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`；工具链剥离后的库与 HAP 内库均为 `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`。记录见同目录 `core-provenance.txt`。这确认复用及打包链路，不单独证明既有核心产物的原始源码提交。
+
+### 用户手动安装后的真机检查（2026-09-13 00:26–00:27）
+
+- 用户已手动安装、打开原生应用；Pura X View / API 26 通过 USB 连接可见。本次未安装或替换手机应用。
+- 页面显示 `xdremux 0.4.0` / `Core version loaded`，确认实际库加载、N-API 版本调用和结果回传成功。截图：外部日志目录 `device-current.jpeg`。
+- 用户通过系统文件选择器选择测试图片后，页面显示沙箱 `files/inputs/*.photo` 路径、`Classification complete: categorized`、`modeKey: portrait`、`folderName: 人像`。确认单次物化与分类链路成功；截图：`device-classified.jpeg`。
+- 00:28 点击一次“Classify the sandbox copy again”，同一路径仍返回 categorized/portrait，页面正常响应；截图 `device-repeat.jpeg`。这只是一次重复冒烟，不是压力或泄漏测试。
+- 发现分类结果行未指定字体颜色，在系统深色主题与固定浅色背景组合下出现白色文字；Luna Max 已为结果行指定 `#18202A` 并构建通过。修复包为外部日志目录 `entry-default-unsigned-colorfix.hap`，SHA-256 `D15738F4886BEC1ED1B74F9503196D3846D680BFF992D44D12F4CB2EF3EAC6FE`。未覆盖手机当前安装，修复版视觉效果待安装后验证。
+- bundle 范围运行日志中观察到 Ability 启动及文件选择成功；本次采集未返回 crash/fatal 条目，未见 xdremux 核心/桥接失败。存在系统窗口与 picker 清理等框架警告，不能把无日志当作无泄漏结论。摘要 `runtime-summary-usb.txt`，颜色修复构建日志 `build-colorfix.log`。
+- 本次用户手动安装已解除该设备的启动验证阻塞，不代表仓库已配置本地签名。原始文件与沙箱副本哈希、连续重复调用/内存测量、错误分支和最低系统兼容性仍待验证。
+
+### 当日收工状态（2026-09-13）
+
+- 用户明确确认已安装最新版（上述 colorfix 包），并要求今天到此为止。安装情况为用户报告，本轮不再操作手机或复测修复版视觉效果。
+- 当前为 P0 基础冒烟已通过、完整验收未完成；P1 转换/详情/导出、P2 队列及后续系统集成都尚未实施。
+- 代码和文档保留在 `feat/harmony-native` 工作区，未提交、未发布。新增 `apps/harmony/` 与 `tools/ohos/prepare_harmony_native.ps1` 仍未跟踪；`.gitignore` 和本计划已修改。
+- 下次先确认最新包文字可读性并补齐 P0 验收，再按“下一批次拆分”推进 P1。保持主 Agent 规划/审查、Luna Max 具体实施的分工。
+- 今天仅保存交接状态后停止，不启动新的开发、构建、设备测试或后台任务。
+
+### 云端同步（2026-09-13）
+
+- 收工记录后用户追加要求将进度推到云端。本次提交包含原生工程、核心库暂存脚本、忽略规则和本计划；上述“未提交/未跟踪”为提交前收工快照。
+- 同步目标：`origin/feat/harmony-native`。最新状态仍为用户已安装颜色修复版、P0 基础冒烟通过，完整验收与 P1 尚待继续。
+- HAP、共享库、日志、截图与签名资料保留本地；本计划已包含下次接续所需状态。通用本地交接 `current-handoff.md` 继续遵循仓库现有忽略规则。

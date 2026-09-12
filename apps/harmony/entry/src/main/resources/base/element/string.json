@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Native XDRemux P0 bridge"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Classify photos with the native XDRemux core"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "XDRemux Native"
+    }
+  ]
+}
