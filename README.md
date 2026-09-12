@@ -84,6 +84,19 @@ Windows 和 Android 使用 Rust 跨平台 HEIF 编解码器完成解码、水印
 
 ---
 
+## 实况照片（Live Photo / Motion Photo）
+
+v0.4.0 新增。导入 OPPO / Android 的 Motion Photo 后：
+
+- **自动识别**双码流结构（Android V1 / legacy MicroVideo / HEIF mpvd / OPPO LPEX），拆出静帧与视频；
+- **默认合成 Live Photo**：生成 HEIC + MOV 配对，可直接导入 Apple 照片播放实况与声音；也可选择仅静帧或拆分静帧 + 视频；
+- 生成的元数据轨道符合 Apple Live Photo timed metadata 规范（`tref` → `cdsc`）；
+- 照片详情面板可检视实况照片的双码流规格、时长与音轨信息。
+
+iPhone 上的实况播放与声音需按机型验收；普通照片不受影响。
+
+---
+
 ## Apple 摄影风格与人像模式
 
 > 两项功能仍属于实验性能力。目标是输出可以在 Apple 照片中继续编辑的文件，不承诺与 Apple 原生结果逐像素等价。
@@ -188,6 +201,8 @@ iOS 支持从相册、文件和分享扩展导入 HEIC；Apple 摄影风格、�
 
 - 多文件队列与并行转换；
 - 转换进度和失败重试；
+- 实况照片合成与 Motion Photo 识别；
+- 照片详情检视（EXIF / HDR / 实况结构）；
 - 按拍摄模式分目录或分相册输出；
 - 自动更新检查；
 - 批量完成通知；
