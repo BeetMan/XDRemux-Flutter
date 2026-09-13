@@ -166,6 +166,15 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
   （`canRenderTextureStylesOnComposition:` 决定该照片能否用质感——即是否有 People Data）。
 - 配套：`macStyleCollectionsIncludingTextureStyle:smartStyleRenderingVersion:`
   （把质感风格并进风格集合）、`_canRenderTextureStyle`。
+- **质感操作 kernel（PhotoImaging，已抠出）**：`definition(image, blur, intensity)`
+  → `clarityNew(s, b, intensity)`，非锐化蒙版式细节增强：
+  ```
+  dl = sl + (sl - bl) * intensity        // 细节 = 原图亮度 + (原图-模糊)亮度 × 强度
+  mult = 1.571*(dl/sl - 1); mult = mult/(1+|mult|); mult += 1   // 软削波
+  s.rgb *= clamp(mult, 1-0.5|intensity|, 1+|intensity|)
+  ```
+  作用于语义部件蒙版限定的皮肤/人脸区域。People Data 里的 Mattify / SkinSmoothing /
+  UnderEyeBrightening 统计量提供分区参数（平均色、粗糙度、眼部颜色/方差）。
 
 ### 语义风格主管线（neutrino 引擎，沿用既有研究）
 - `PISemanticStyle*` 全家：AdjustmentController / ApplyNode / AutoCalculator / Filter /
