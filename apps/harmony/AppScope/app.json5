@@ -2,7 +2,7 @@
   "app": {
     "bundleName": "io.github.beetman.xdremux.native",
     "vendor": "BeetMan",
-    "versionCode": 40000,
+    "versionCode": 40001,
     "versionName": "0.4.0",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
