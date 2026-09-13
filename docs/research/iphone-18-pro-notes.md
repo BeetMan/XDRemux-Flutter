@@ -176,6 +176,13 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
   作用于语义部件蒙版限定的皮肤/人脸区域。People Data 里的 Mattify / SkinSmoothing /
   UnderEyeBrightening 统计量提供分区参数（平均色、粗糙度、眼部颜色/方差）。
 
+- **风格渲染引擎（NeutrinoCore）**：`NUStyleEngine` + `NUStyleTransfer` 管线：
+  - `NUSemanticStyleProperties`（cast/tone/texture/grain 属性集）
+  - `NUStyleTransferLearnNode`（`_evaluateImage:` 从 People Data + 图像学风格）
+  - `NUStyleTransferApplyNode`（应用风格，`initWithInput:thumbnail:target:settings:`）
+  → 质感操作由风格引擎的 Style Transfer（学习→应用）驱动，`textureStyleProperties`
+  是质感参数载体。
+
 ### 语义风格主管线（neutrino 引擎，沿用既有研究）
 - `PISemanticStyle*` 全家：AdjustmentController / ApplyNode / AutoCalculator / Filter /
   LearnNode / LinearThumbnailNode / Node / RenderNode / Renderer / SettingsExpressionFunction /
