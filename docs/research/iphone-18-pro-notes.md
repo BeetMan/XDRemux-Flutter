@@ -91,6 +91,14 @@ semanticskymatte（天空）、semanticskinmatte（皮肤 v1）、hdrgainmap。
 官方口径「可同时调节色彩与肤质质感」，基于新 48MP 相机管线；Pro 档位可手动细调。
 iOS 27 于 9/14 发布。
 
+**UI 结构**（实测截图确认）：质感（texture）区有 **4 个质感选项**：
+**标准 / 柔肤 / 光晕 / 胶片**，各配一个**强度**滑杆（0–100）；另有独立的**颗粒**开关。
+- **柔肤** → People Data 的 Skin Smoothing Standalone（脸部平均色 + 皮肤粗糙度）
+- **光晕** → 发光/柔焦效果（halation 一类）
+- **胶片** → 胶片质感，**实测还含 halation**（胶片乳剂散射的高光红光晕）
+- **强度** → 质感强度 → `definition/clarityNew` kernel 的 `intensity`
+- **颗粒开关** → `FilmGrainSeed` + `PIPhotoGrainHDR` 的 `inputAmount`（on/off）
+
 **数据载荷**（在样张里找到）：
 
 a) **`texture_styles` 元数据项**（容器 item，content_type
