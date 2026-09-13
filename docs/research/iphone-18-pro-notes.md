@@ -132,12 +132,34 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 框架二进制在 dyld 共享缓存里（不在盘上独立 dylib）。
 
 ### 颗粒（grain）渲染
-- **`PIPhotoGrainHDR`**：HDR 颗粒渲染器，`_blendGrainsHDR(__sample isoImages, float log10iso)`
-  Metal kernel，用一张 **1536×1536 噪声图**，按 **ISO（log10）** 与对比度混合——
-  `float grain = grainImage.r - 0.5; mult = contrast * grain;`。
-- **`PIGrainSeedExpression`**：把 MakerNote 的 `FilmGrainSeed` 求值成可复现种子。
-- 颗粒输入：`grain:<inputAmount / inputISO / inputSeed / inputImage>`。
-- 底层 `CIPhotoGrain` / `PIGrain_v1`（`buildPipeline:...`）。
+- **`PIPhotoGrainHDR`**：HDR 颗粒渲染器，用一张 **1536×1536 噪声图**（`generateNoiseImage`，
+  width==512*3 / height==512*3），由 `PIGrainSeedExpression` 把 `FilmGrainSeed` 求值为种子。
+- **完整内核**（从符号抠出）：
+
+  `_blendGrainsHDR(isoImages, log10iso)` —— 按 ISO 分档混合颗粒强度（10/50/400/3200）：
+  ```
+  mix10_50    = mix(c.r, c.g, log10iso*1.43067655809 - 1.43067655809)
+  mix50_400   = mix(c.g, c.b, log10iso*1.10730936496 - 1.88128539659)
+  mix400_3200 = mix(c.b, c.a, log10iso*1.10730936496 - 2.88128539659)
+  v = compare(log10iso-1.699, mix10_50, compare(log10iso-2.602, mix50_400, mix400_3200))
+  ```
+  → 高 ISO 颗粒更重（log10(50)≈1.699、log10(400)≈2.602 是切换点）。
+
+  `_grainBlendAndMixHDR(img, grainImage, contrast, mixAmount)` —— 按亮度加权混入颗粒：
+  ```
+  luminance = clamp(dot(rgb, 0.333), 0, 1)
+  gamma = 4.01 - 2.0*luminance
+  rgb = sign(rgb)*pow(abs(rgb), 1.0/gamma)      // 转线性
+  grain = grainImage.r - 0.5
+  rgb += max(luminance, 0.5) * (contrast*grain) * (1.0-luminance)  // 阴影/中间调颗粒多
+  rgb = sign(rgb)*pow(abs(rgb), gamma)          // 转回
+  rgb = min(rgb, 12.0)                          // HDR 上限
+  return mix(img, rgb, mixAmount)               // mixAmount = 颗粒滑杆量
+  ```
+  → 颗粒加权 = `max(luminance,0.5) * (1-luminance)`（暗部/中间调多、高光少）。
+
+  `_grainGenCombineHDR(r,g,b,a)` = `vec4(r.x,g.x,b.x,a.x)`（4 个噪声通道合成一张）。
+- 颗粒输入参数：`grain:<inputAmount / inputISO / inputSeed / inputImage>`。
 
 ### 质感（texture）渲染
 - **`PITextureStyleAdjustmentController`**：Photos 编辑侧的质感调整控制器
