@@ -1,8 +1,25 @@
-# iPhone 18 Pro（iOS 27）新模式初探
+# iPhone 18 Pro（iOS 27）新模式研究
 
 > 分支 `research/iphone-next`（仅本地，不推云端）。样张：`~/Desktop/iPhone 18 Pro/`
 > （Apple 官方评测样张，Etretat/France，摄影师 Myrthe Geisbers，© 2026）。
-> 方法：不逆 IPSW，直接读样张 EXIF/MakerNote/容器结构 + 本机 Photos 已支持佐证。
+> 方法：不逆 IPSW，直接读样张 EXIF/MakerNote/容器结构 + 本机 Photos/PhotoImaging 逆向佐证。
+
+## TL;DR
+
+**iPhone 18 Pro 的新模式 = Photographic Styles 3（质感 texture + 颗粒 grain）**，
+叠加在原有色调（cast/tone/color）之上。三件事已全部在二进制层面理清：
+
+1. **新捕获分类**：`CaptureType=LF` + `ImageCaptureType=13`（超 exiftool 已知表）=
+   48MP Fusion **可变光圈主摄**的静止拍摄（样张光圈 f/1.5~f/4 各异，可变光圈在用）。
+2. **拍摄时存的数据**：`texture_styles` item（Preset/CaptureType/FilmGrainSeed 的小 bplist 头）
+   + 人像照的「Texture Style Post Processed People Data」（磨皮/去油光/眼下提亮统计
+   + 人脸特征点）+ `FilmGrainSeed` + **新语义部件蒙版**（2026 命名空间，鼻/唇/牙/眉/耳/
+   皮肤/眼镜/纹身/手，768×576 8-bit HEVC 灰度 mask）。
+3. **编辑时怎么渲染**：颗粒 → `PIPhotoGrainHDR`（1536×1536 种子噪声 → ISO 分档 →
+   亮度加权混入）；质感 → NeutrinoCore `NUStyleEngine`/`NUStyleTransfer`（从 People Data
+   学风格）+ `definition/clarityNew` 细节增强 kernel（语义蒙版作用域内）。
+
+现有 Rust 核心对 31/31 新样本解析/gain-map 校验无障碍。
 
 ## 样张集合
 
@@ -21,7 +38,6 @@
   11=ManualFocus / 12=Scene。**13 超出已知表，是 iPhone 18 Pro 的新捕获类型**。
 - 对照：长焦样本是 `CaptureType=DF` + `ImageCaptureType=12(Scene)`；超广 ProRAW 是
   `WYSIWYG` + `1(ProRAW)`；手动对焦是 `DigitalFlash` + `11(Manual Focus)`。
-- `LF` 大概率为 **Light Field（光场）**——待与 Photos 实际行为核对。
 - `MakerNoteVersion = 17`（比旧机型新）。
 
 **语义确认（结构性）**：ImageCaptureType=13 的样本**全部来自主摄**（6.93mm f/1.48），
@@ -118,13 +134,16 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 ## 待办 / 下一步
 - [x] 确认 `CaptureType=LF` / `ImageCaptureType=13` 的语义（= 48MP Fusion 可变光圈
   主摄的静止拍摄；光圈 f/1.5~f/4 在样张中被实际使用）。
-- [x] 解析新语义部件蒙版的编码（dtype/分辨率/与 tmap 的引用关系）。
-- [ ] BrightPop/TanWarm 的 key1 晶格与既有风格的差异（沿用 universal graft 思路）。
-- [x] 评估现有 Rust 核心对这些新样本的兼容（转换/回写路径）。
-- [x] 解析 `texture_styles` 元数据项的结构（质感参数的具体布局）。
-- [ ] 「Texture Style Post Processed People Data」各 Image Stats 的语义与 Photos
-  质感滑杆的映射（磨皮 / 去油光 / 眼下提亮）。
-- [ ] Film Grain Seed 如何驱动颗粒渲染（可复现性验证）。
+- [x] 解析新语义部件蒙版的编码（768×576、8-bit、HEVC 灰度 mask，auxl 引用主图+tmap）。
+- [x] 评估现有 Rust 核心对这些新样本的兼容（31/31 解析 + gain-map 校验通过）。
+- [x] 解析 `texture_styles` 元数据项的结构（小 bplist 头）。
+- [x] 定位颗粒渲染（`PIPhotoGrainHDR` 全套 kernel：generateNoise → _blendGrainsHDR
+  → _grainBlendAndMixHDR → _grainGenCombineHDR）。
+- [x] 定位质感渲染（NeutrinoCore `NUStyleEngine`/`NUStyleTransfer` + PhotoImaging
+  `definition/clarityNew` 细节 kernel）。
+- [ ] 「Texture Style Post Processed People Data」各 Image Stats 到质感滑杆的精确
+  数值映射（需反汇编抠 Learn 节点拟合逻辑，工作量大，暂搁）。
+- [ ] BrightPop/TanWarm 的 key1 晶格（受阻：见「key1 晶格差异」节）。
 
 ## 逆向：Photos app / PhotoImaging 框架（本机 macOS 27 + iOS 27 DeviceSupport 符号）
 
