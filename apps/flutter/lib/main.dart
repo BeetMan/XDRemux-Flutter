@@ -4164,7 +4164,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            '摄影功能 3（质感 + 颗粒）',
+                            '摄影风格 3（质感 + 颗粒）',
                             'Photographic Styles 3 (texture + grain)',
                           ),
                         ),
