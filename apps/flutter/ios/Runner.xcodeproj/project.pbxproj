@@ -647,7 +647,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/Runner/Frameworks",
 				);
-				OTHER_LDFLAGS = "$(inherited)";
+				OTHER_LDFLAGS = "$(inherited) -Wl,-u,_xdremux_inject_texture_styles -Wl,-u,_xdremux_inject_semantic_mattes";
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.beetman.xdremux;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -841,7 +841,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/Runner/Frameworks",
 				);
-				OTHER_LDFLAGS = "$(inherited)";
+				OTHER_LDFLAGS = "$(inherited) -Wl,-u,_xdremux_inject_texture_styles -Wl,-u,_xdremux_inject_semantic_mattes";
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.beetman.xdremux;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
@@ -872,7 +872,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/Runner/Frameworks",
 				);
-				OTHER_LDFLAGS = "$(inherited)";
+				OTHER_LDFLAGS = "$(inherited) -Wl,-u,_xdremux_inject_texture_styles -Wl,-u,_xdremux_inject_semantic_mattes";
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.beetman.xdremux;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
