@@ -191,17 +191,30 @@ pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, St
     };
 
     // Rebuild iloc: bump construction=0 extents by delta; append new entry.
+    // The payload is placed INSIDE mdat (native Apple captures keep the
+    // texture_styles item data within mdat; a trailing extent after mdat is
+    // rejected by Photos and leaves the style editor "unavailable").
+    let mdat = top
+        .iter()
+        .find(|b| b.btype == *b"mdat")
+        .ok_or("mdat box not found")?;
+    let mdat_end = mdat.box_start + mdat.size;
     let iloc_entries = isobmff::parse_iloc(data, iloc)?;
     // New entry serialized size (version 1 layout: id(2)+cm(2)+dr(2)+base(0)+count(2)+off(4)+len(4)).
     let new_entry_size = 2 + 2 + 2 + 0 + 2 + 4 + 4;
     let delta_total = d_iinf + d_iref + new_entry_size as i64;
-    let payload_abs = (data.len() as i64 + delta_total) as u64;
+    let payload_abs = (mdat_end as i64 + delta_total) as u64;
 
     let mut new_iloc_entries: Vec<isobmff::IlocEntry> = Vec::with_capacity(iloc_entries.len() + 1);
     for mut e in iloc_entries {
         for ext in e.extents.iter_mut() {
             if (e.construction_method & 0xF) == 0 {
-                ext.0 = (ext.0 as i64 + delta_total) as u64;
+                // Extents inside mdat only shift by the meta growth; extents
+                // past mdat (trailing boxes) additionally clear room for the
+                // payload inserted inside mdat.
+                let past_mdat = (ext.0 as i64) >= mdat_end as i64;
+                let shift = delta_total + if past_mdat { payload.len() as i64 } else { 0 };
+                ext.0 = (ext.0 as i64 + shift) as u64;
             }
         }
         new_iloc_entries.push(e);
@@ -236,10 +249,26 @@ pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, St
     }
     let new_meta = make_box(b"meta", &new_meta_body);
 
-    let mut out = Vec::with_capacity(data.len() + delta_total as usize + payload.len());
+    // Patch the mdat size so the payload lands inside it.
+    let mut mdat_bytes = data[mdat.box_start..mdat_end].to_vec();
+    let declared = u32::from_be_bytes([mdat_bytes[0], mdat_bytes[1], mdat_bytes[2], mdat_bytes[3]]);
+    let grown = mdat.size as u64 + payload.len() as u64;
+    if declared == 1 {
+        mdat_bytes[8..16].copy_from_slice(&grown.to_be_bytes());
+    } else {
+        if grown > u32::MAX as u64 {
+            return Err("mdat growth exceeds 32-bit size".into());
+        }
+        mdat_bytes[0..4].copy_from_slice(&(grown as u32).to_be_bytes());
+    }
+
+    let mut out =
+        Vec::with_capacity(data.len() + delta_total as usize + payload.len());
     out.extend_from_slice(&data[..meta_box.box_start]);
     out.extend_from_slice(&new_meta);
-    out.extend_from_slice(&data[meta_box.box_start + meta_box.size as usize..]);
+    out.extend_from_slice(&data[meta_box.box_start + meta_box.size as usize..mdat.box_start]);
+    out.extend_from_slice(&mdat_bytes);
     out.extend_from_slice(&payload);
+    out.extend_from_slice(&data[mdat_end..]);
     Ok(out)
 }
