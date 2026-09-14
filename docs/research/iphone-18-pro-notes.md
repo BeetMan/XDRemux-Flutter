@@ -269,6 +269,23 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 - 结论：现有 Rust 核心读/校验新格式无障碍；转换/回写路径不受影响
   （这些样本是目标格式参考，非 OPPO 输入）。
 
+## 写出 Standard PS3 输出（已验证可行）
+
+按「② Standard 版」路线做了写出验证：往我方 OPPO→Apple 转换产物（`/tmp/photo1_iso.heic`）
+注入一个 Standard `texture_styles` 项（`/tmp/inject_ts3.py`，按上游 native Standard contract
+构造 bplist）：
+
+- 注入项：`uri metadata` 项，content_type = `tag:apple.com,2026:photo:metadata:texture_styles`，
+  item_name=`metadata`，cdsc 引用主图，payload 是 Standard textureInfo bplist
+  （Preset=Standard / CaptureType=LF / CaptureMode=Still / HardwareModel=iPhone 18 Pro /
+  PeopleDataVersion=3 / FilmGrainSeed=104）。
+- 重建 iinf/iloc/iref 并同步调绝对 iloc 偏移（construction=1 的 idat 项不平移）。
+- 结果：`iso_validate_probe` 通过（7×11 grid gain-map 结构完好），我方解析器正确读出
+  texture_styles 项。
+- → **写出合法 Standard PS3 文件的路径已打通**（`isobmff_write` 现有工具 + 该注入逻辑即可）。
+
+剩下设备侧确认：此文件在 Photos 里是否出现质感/颗粒编辑入口（需真机/模拟器开 Photos 验证）。
+
 ## key1 晶格差异（受阻说明）
 样张全是 `Preset=Standard`（拍摄时无风格）；BrightPop/TanWarm 是 Photos 里**编辑**
 加的（AAE 里有 cast/tone/intensity 输入参数），编辑后的 IMG_E 被展平（无可编辑 key1）。
