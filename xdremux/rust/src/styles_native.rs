@@ -951,7 +951,12 @@ pub fn replace_style_metadata(
     let item_id = parsed
         .items
         .iter()
-        .find(|i| i.raw_infe.windows(13).any(|w| w == b"styleMetadata"))
+        .find(|i| {
+            i.raw_infe.windows(13).any(|w| w == b"styleMetadata")
+                || i.raw_infe
+                    .windows(40)
+                    .any(|w| w == b"tag:apple.com,2023:photo:metadata:styles")
+        })
         .map(|i| i.item_id)
         .ok_or("no styleMetadata item in input")?;
     let plist = build_style_metadata_with(state);
