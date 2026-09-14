@@ -233,7 +233,8 @@ class RustConversionBackend implements ConversionBackendAdapter {
     }
 
     // Photographic Styles 3: post-process the output to carry a Standard
-    // texture_styles item so Photos offers texture/grain editing on it.
+    // texture_styles item plus the 12 semantic part-matte placeholders so
+    // Photos offers texture/grain editing on it.
     if (request.applePhotographicStyles3) {
       final injected = XdRemuxFFI.injectTextureStyles(
         request.outputPath,
@@ -244,6 +245,16 @@ class RustConversionBackend implements ConversionBackendAdapter {
         return result.copyWith(
           success: false,
           errorMessage: t('PS3 texture_styles 注入失败', 'PS3 texture_styles injection failed'),
+        );
+      }
+      final mattes = XdRemuxFFI.injectSemanticMattes(
+        request.outputPath,
+        request.outputPath,
+      );
+      if (!mattes) {
+        return result.copyWith(
+          success: false,
+          errorMessage: t('PS3 语义分区 matte 注入失败', 'PS3 semantic matte injection failed'),
         );
       }
     }

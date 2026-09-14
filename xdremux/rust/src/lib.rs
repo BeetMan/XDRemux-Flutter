@@ -396,6 +396,27 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
     }
 }
 
+/// Inject the 12 zero-content 2026 semantic part-matte items into an
+/// existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn xdremux_inject_semantic_mattes(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> u8 {
+    let result = (|| -> Option<()> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path)?;
+        let output = read(output_path)?;
+        let data = std::fs::read(input).ok()?;
+        let patched = semantic_mattes::inject_semantic_mattes(&data).ok()?;
+        std::fs::write(output, patched).ok()?;
+        Some(())
+    })();
+    if result.is_some() { 1 } else { 0 }
+}
+
 /// Frees a string previously returned by `xdremux_version`.
 #[no_mangle]
 pub extern "C" fn xdremux_free_string(s: *mut c_char) {

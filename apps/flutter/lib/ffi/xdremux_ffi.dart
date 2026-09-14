@@ -270,6 +270,12 @@ class XdRemuxFFI {
         'xdremux_inject_texture_styles',
       );
 
+  static final _injectSemanticMattes = _lib.lookupFunction<
+      ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+      int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>(
+        'xdremux_inject_semantic_mattes',
+      );
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -619,6 +625,21 @@ class XdRemuxFFI {
     final b = outputPath.toNativeUtf8();
     try {
       return _injectTextureStyles(a, b, grainSeed) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      calloc.free(a);
+      calloc.free(b);
+    }
+  }
+
+  /// Inject the 12 zero-content 2026 semantic part-matte items. Returns true
+  /// on success.
+  static bool injectSemanticMattes(String inputPath, String outputPath) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    try {
+      return _injectSemanticMattes(a, b) != 0;
     } catch (_) {
       return false;
     } finally {
