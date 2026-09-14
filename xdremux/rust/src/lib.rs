@@ -24,6 +24,7 @@ pub mod progress;
 // separate native Rust path until the Photos conformance surface is stable.
 pub mod styles_bplist;
 pub mod texture_styles;
+pub mod semantic_mattes;
 mod styles_consts;
 mod styles_graft;
 pub mod styles_native;
