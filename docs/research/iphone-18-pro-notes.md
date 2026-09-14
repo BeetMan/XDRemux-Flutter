@@ -139,6 +139,44 @@ c) **`Film Grain Seed`**（MakerNote，如 113 / 104）——颗粒效果的可�
 瓦片化 HEIC：主图 grid + 深度 grid + 语义 grid + tmap；Exif + 若干 mime/uri 元数据项。
 我们的 `extract_lhdr`（UHDR manifest 分支）对 plain HEIC 正常；动态照片走 `uhdr_jpeg`。
 
+## 上游 corroboration（21Z121Z1/XDRemux 的 ps3-* / photographic-styles-3-* 分支）
+上游对同主题做了更深入的运行时逆向（method swizzle 注入探针 + 数值 contract 校验），
+与本笔记互相印证并补全了关键数值契约：
+
+**texture_styles item（textureInfo）结构**（上游 `texture_style_native_standard_contract.json`，
+与本笔记样张解析**完全一致**）：
+```json
+{ "Preset":"Standard", "CaptureType":"LF", "CaptureMode":"Still",
+  "PortType":"PortTypeBack", "HardwareModel":"iPhone 18 Pro",
+  "TextureStylePeopleDataVersion":3, "FilmGrainSeed":… }
+```
+- 必填键：`Version / HardwareModel / PortType / CaptureMode / CaptureType`
+  （NeutrinoCore 缺这些会拒绝）。
+- 可选键：`FilmGrainSeed / TextureStylePeopleDataVersion /
+  TextureStylePostProcessedPeopleData / TextureStyleFaceAttitudeMetadata`。
+- HardwareModel 可为营销名 `iPhone 18 Pro` 或型号 `iPhone19,2` / `iPhone19,3`。
+- `texture_styles` 是独立的 2026 元数据项，不在 2023 SemanticStyle payload 里。
+
+**MakerNote tag 84（质感风格记录，嵌在 EXIF MakerNote 里）**——上游
+`texture_style_tag84_v5_numeric_contract.json`：
+- key `8` = preset，key `9` = intensity（f32），key `10` = grain（f32），
+  key `11` = originalInsteadOfReversibility（bool），key `12` = renderingVersion。
+- key `0..7` 是 info 字段（Version/HardwareModel/PortType/CaptureMode/CaptureType 等的数值编码）。
+
+**preset 映射表**（tag84 key 8 → 质感风格）：
+`1=Standard（标准） 2=Soft（柔肤） 3=Studio 4=Filmic（胶片） 5=Glowy（光晕）`。
+→ UI 4 选项（标准/柔肤/光晕/胶片）对应 1/2/5/4；Studio(3) 是另一档。
+
+**Photos 编辑侧（AAE）键**：`preset / intensity / grainIntensity`。
+
+**运行时逆向**（上游 `learnnode_coefficient_probe.m`）：用 method swizzle 钩
+`NUStyleTransferNode` 私有 ABI，运行时捕获 LearnNode 的 key1 系数输出——解决本笔记
+「key1 拿不到」的路子（在跑 iOS 27 的设备上对风格做一次编辑即可抓到）。
+
+**FSINC（语义部件蒙版生成网络）**：上游 `ps3-semantic-12role-runner` /
+`ps3-fsinc-beta6-probe` 分支在逆 FSINC Core ML 模型（MIL/sparse ops、模型 lowering），
+`Models/ReverseKey1Ensemble.mlpackage` 是相关工作。语义部件蒙版由 FSINC 网络在采集时生成。
+
 ## 待办 / 下一步
 - [x] 确认 `CaptureType=LF` / `ImageCaptureType=13` 的语义（= 48MP Fusion 可变光圈
   主摄的静止拍摄；光圈 f/1.5~f/4 在样张中被实际使用）。
