@@ -4,7 +4,7 @@
 
 **一帧影像，动用两台手机。**
 
-Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、Android 和 iOS。
+Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、Android、iOS 和 HarmonyOS。
 转换目标不是只得到一个“能亮起来的 HDR”，而是根据照片后续在哪里管理，分别保留 ColorOS 可编辑性，或接入 Apple 照片的摄影风格与人像模式流程。
 
 [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) ·
@@ -24,6 +24,7 @@ Rust 核心转换引擎 + Flutter 跨平台界面，支持 Windows、macOS、And
 | macOS | `XDRemux-macOS-*.dmg` | ✅ 推荐 | 拖拽到 Applications；首次可能需右键打开 |
 | Android | `XDRemux-Android-*.apk` | ✅ 推荐 | SAF 文件导入、保存图库、分享和后台转换 |
 | iOS | `XDRemux-iOS-*-unsigned.ipa` | ⚠️ 侧载 | 未签名 IPA，需要自行签名安装 |
+| HarmonyOS | `XDRemux-HarmonyOS-*-unsigned.hap` | ⚠️ 侧载 | 未签名 HAP，需用 DevEco Studio 签名或本地调试安装 |
 | Linux | — | 未提供 | Flutter Linux 目标尚未创建 |
 
 ---
@@ -83,6 +84,19 @@ Windows 和 Android 使用 Rust 跨平台 HEIF 编解码器完成解码、水印
 
 ---
 
+## 实况照片（Live Photo / Motion Photo）
+
+v0.4.0 新增。导入 OPPO / Android 的 Motion Photo 后：
+
+- **自动识别**双码流结构（Android V1 / legacy MicroVideo / HEIF mpvd / OPPO LPEX），拆出静帧与视频；
+- **默认合成 Live Photo**：生成 HEIC + MOV 配对，可直接导入 Apple 照片播放实况与声音；也可选择仅静帧或拆分静帧 + 视频；
+- 生成的元数据轨道符合 Apple Live Photo timed metadata 规范（`tref` → `cdsc`）；
+- 照片详情面板可检视实况照片的双码流规格、时长与音轨信息。
+
+iPhone 上的实况播放与声音需按机型验收；普通照片不受影响。
+
+---
+
 ## Apple 摄影风格与人像模式
 
 > 两项功能仍属于实验性能力。目标是输出可以在 Apple 照片中继续编辑的文件，不承诺与 Apple 原生结果逐像素等价。
@@ -117,6 +131,7 @@ Windows 和 Android 使用 Rust 跨平台 HEIF 编解码器完成解码、水印
 | Android | ✅ | ✅ | ✅ | ✅ | SAF、分享导入、MediaStore、后台转换 |
 | macOS | ✅ | ✅ | ✅ | ✅ | ImageIO 原生路径；可选 Swift 后端 |
 | iOS | ✅ | ✅ 实验 | ✅ 实验 | ✅ 实验 | unsigned IPA，自签侧载；部分能力需真机验证 |
+| HarmonyOS | ✅ | ✅ | ✅ | ✅ | unsigned HAP，DevEco 签名侧载；已真机验证转换/人像/方向/EXIF |
 
 ---
 
@@ -158,6 +173,12 @@ Release 提供 unsigned IPA，需要自行签名安装：
 
 iOS 支持从相册、文件和分享扩展导入 HEIC；Apple 摄影风格、人像模式和 OPPO 写回仍以真机验证结果为准。
 
+### HarmonyOS
+
+1. 下载 `XDRemux-HarmonyOS-*-unsigned.hap`；
+2. 用 DevEco Studio 签名后安装，或在设备开发者选项中允许调试安装；
+3. 支持系统文件选择器导入与转换；转换核心与输出结构已在鸿蒙真机验证（含人像、HDR、方向与 EXIF）。
+
 ---
 
 ## 高级功能
@@ -180,6 +201,8 @@ iOS 支持从相册、文件和分享扩展导入 HEIC；Apple 摄影风格、�
 
 - 多文件队列与并行转换；
 - 转换进度和失败重试；
+- 实况照片合成与 Motion Photo 识别；
+- 照片详情检视（EXIF / HDR / 实况结构）；
 - 按拍摄模式分目录或分相册输出；
 - 自动更新检查；
 - 批量完成通知；
@@ -285,6 +308,7 @@ python3 tests/conformance/driver.py \
 - 人像模式要求照片包含后置深度数据；
 - OPPO 图库对 OPPO 兼容文件进一步编辑后，HDR gain map 可能丢失；
 - iOS 未走 App Store 或 TestFlight，需要自行签名；
+- HarmonyOS HAP 未签名，需要 DevEco Studio 侧载，未上架应用市场；
 - Linux 桌面目标尚未创建。
 
 ---
