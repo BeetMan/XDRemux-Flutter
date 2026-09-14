@@ -2,6 +2,21 @@ import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import xdremuxNative from 'libentry.so';
 import {
+  DEFAULT_SETTINGS,
+  NativeSettings,
+  OPPO_CAMERA_TAIL_OPTIONS,
+  OPPO_COMPAT_OPTIONS,
+  SettingsOption,
+  SettingsOutputMode,
+  cameraTailLabel,
+  cloneSettings,
+  compatLabel,
+  modeLabel,
+  normalizeSettings,
+  settingsEqual
+} from '../settings/SettingsModel';
+import { SettingsLoadResult, SettingsStore } from '../settings/SettingsStore';
+import {
   NativeClassificationResult,
   NativeConversionResult,
   NativeConvertConfig,
@@ -27,7 +42,19 @@ interface NativeError {
 struct Index {
   @State private coreVersion: string = '加载中…';
   @State private operationStatus: string = '准备就绪';
-  @State private outputMode: string = 'oppo';
+  @State private settingsLoaded: boolean = false;
+  @State private settingsLoading: boolean = true;
+  @State private settingsSaving: boolean = false;
+  @State private settingsOpen: boolean = false;
+  @State private settingsWarning: string = '';
+  @State private settingsError: string = '';
+  @State private committedSettingsView: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
+  @State private draftOutputMode: SettingsOutputMode = 'oppo';
+  @State private draftOppoCompat: number = DEFAULT_SETTINGS.oppoCompat;
+  @State private draftOppoCameraTail: number = DEFAULT_SETTINGS.oppoCameraTail;
+  @State private draftStrictTmap: boolean = DEFAULT_SETTINGS.strictTmap;
+  @State private draftApplePhotographicStyles: boolean = DEFAULT_SETTINGS.applePhotographicStyles;
+  @State private draftApplePortrait: boolean = DEFAULT_SETTINGS.applePortrait;
   @State private queueItems: Array<QueueItem> = [];
   @State private selectedItemId: string = '';
   @State private queueRunning: boolean = false;
@@ -36,12 +63,15 @@ struct Index {
   @State private pageBusy: boolean = false;
 
   private queueController: QueueController | undefined = undefined;
+  private readonly settingsStore: SettingsStore = new SettingsStore();
+  private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   private inputSerial: number = 0;
   private outputSerial: number = 0;
 
   aboutToAppear(): void {
     this.attachQueueSession();
     this.refreshVersion();
+    this.loadSettings();
   }
 
   onPageShow(): void {
@@ -57,6 +87,202 @@ struct Index {
 
   aboutToDisappear(): void {
     this.detachQueueSession();
+  }
+
+  private async loadSettings(): Promise<void> {
+    this.settingsLoading = true;
+    this.settingsLoaded = false;
+    this.settingsWarning = '';
+    this.settingsError = '';
+    try {
+      const context = this.getUIContext().getHostContext();
+      if (context === undefined) {
+        throw new Error('应用上下文不可用');
+      }
+      const loaded: SettingsLoadResult = await this.settingsStore.load(context);
+      this.committedSettings = cloneSettings(loaded.values);
+      this.committedSettingsView = cloneSettings(loaded.values);
+      this.applyDraft(this.committedSettings);
+      this.settingsWarning = loaded.warning;
+      this.settingsLoaded = true;
+      this.operationStatus = loaded.warning.length > 0
+        ? loaded.warning
+        : '设置已加载；运行中的项目使用各自的设置快照';
+    } catch (error) {
+      this.settingsError = '设置加载失败：' + this.errorMessage(error);
+      this.operationStatus = this.settingsError + '；请重试';
+    } finally {
+      this.settingsLoading = false;
+    }
+  }
+
+  private applyDraft(values: NativeSettings): void {
+    const snapshot: NativeSettings = cloneSettings(values);
+    this.draftOutputMode = snapshot.outputMode;
+    this.draftOppoCompat = snapshot.oppoCompat;
+    this.draftOppoCameraTail = snapshot.oppoCameraTail;
+    this.draftStrictTmap = snapshot.strictTmap;
+    this.draftApplePhotographicStyles = snapshot.applePhotographicStyles;
+    this.draftApplePortrait = snapshot.applePortrait;
+  }
+
+  private draftSettings(): NativeSettings {
+    return {
+      outputMode: this.draftOutputMode,
+      oppoCompat: this.draftOppoCompat,
+      oppoCameraTail: this.draftOppoCameraTail,
+      strictTmap: this.draftStrictTmap,
+      applePhotographicStyles: this.draftApplePhotographicStyles,
+      applePortrait: this.draftApplePortrait
+    };
+  }
+
+  private settingsDirty(): boolean {
+    try {
+      return !settingsEqual(normalizeSettings(this.draftSettings()), this.committedSettings);
+    } catch (error) {
+      return true;
+    }
+  }
+
+  private async saveSettings(): Promise<void> {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    let snapshot: NativeSettings;
+    try {
+      snapshot = normalizeSettings(this.draftSettings());
+    } catch (error) {
+      this.settingsError = '设置无效：' + this.errorMessage(error);
+      return;
+    }
+    this.settingsSaving = true;
+    this.settingsError = '';
+    try {
+      await this.settingsStore.save(snapshot);
+      this.committedSettings = cloneSettings(snapshot);
+      this.committedSettingsView = cloneSettings(snapshot);
+      this.applyDraft(snapshot);
+      this.settingsWarning = '';
+      this.operationStatus = '设置已保存；后续项目将使用新设置，运行中项目不变';
+      this.settingsOpen = false;
+    } catch (error) {
+      // Keep the draft visible and retryable. The store rolls its process
+      // cache back to the previous durable record when flush fails.
+      this.settingsError = '设置保存失败：' + this.errorMessage(error);
+      this.operationStatus = this.settingsError + '；草稿仍保留，可重试保存';
+    } finally {
+      this.settingsSaving = false;
+    }
+  }
+
+  private cancelSettings(): void {
+    if (this.settingsSaving) {
+      return;
+    }
+    this.applyDraft(this.committedSettings);
+    this.settingsError = '';
+    this.settingsOpen = false;
+    this.operationStatus = '已取消未保存设置';
+  }
+
+  private restoreDefaultSettings(): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.applyDraft(DEFAULT_SETTINGS);
+    this.settingsError = '';
+    this.operationStatus = '已恢复默认设置草稿；点击保存后才会生效';
+  }
+
+  private openSettings(): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.settingsOpen = true;
+    this.settingsError = '';
+  }
+
+  private setDraftOutputMode(mode: SettingsOutputMode): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftOutputMode = mode;
+    if (mode === 'apple') {
+      this.draftOppoCompat = 0;
+      this.draftOppoCameraTail = 0;
+    } else {
+      this.draftApplePhotographicStyles = false;
+      this.draftApplePortrait = false;
+      if (this.draftOppoCompat === 0) {
+        this.draftOppoCompat = DEFAULT_SETTINGS.oppoCompat;
+      }
+      if (this.draftOppoCameraTail === 0) {
+        this.draftOppoCameraTail = DEFAULT_SETTINGS.oppoCameraTail;
+      }
+    }
+    this.settingsError = '';
+  }
+
+  private setDraftCompat(value: number): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftOppoCompat = value;
+    this.draftOutputMode = 'oppo';
+    if (value !== 0) {
+      this.draftApplePhotographicStyles = false;
+      this.draftApplePortrait = false;
+    } else if (this.draftApplePhotographicStyles || this.draftApplePortrait) {
+      this.draftOutputMode = 'apple';
+      this.draftOppoCameraTail = 0;
+    }
+    this.settingsError = '';
+  }
+
+  private setDraftCameraTail(value: number): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftOppoCameraTail = value;
+    this.draftOutputMode = 'oppo';
+    this.draftApplePhotographicStyles = false;
+    this.draftApplePortrait = false;
+    this.settingsError = '';
+  }
+
+  private setDraftAppleStyles(enabled: boolean): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftApplePhotographicStyles = enabled;
+    if (enabled) {
+      this.draftOutputMode = 'apple';
+      this.draftOppoCompat = 0;
+      this.draftOppoCameraTail = 0;
+    }
+    this.settingsError = '';
+  }
+
+  private setDraftApplePortrait(enabled: boolean): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftApplePortrait = enabled;
+    if (enabled) {
+      this.draftOutputMode = 'apple';
+      this.draftOppoCompat = 0;
+      this.draftOppoCameraTail = 0;
+    }
+    this.settingsError = '';
+  }
+
+  private setDraftStrict(enabled: boolean): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftStrictTmap = enabled;
+    this.settingsError = '';
   }
 
   private attachQueueSession(): void {
@@ -110,7 +336,27 @@ struct Index {
   private selectedItemRequired(): QueueItem {
     const item: QueueItem | undefined = this.selectedItem();
     if (item === undefined) {
-      throw new Error('当前项目不可用');
+      // The details builder can be evaluated during the frame in which the
+      // last item is removed. Return a safe empty value instead of throwing
+      // while the parent conditional is being reconciled.
+      return {
+        id: '',
+        revision: 0,
+        displayName: '',
+        sourceUri: '',
+        inputPath: '',
+        status: 'failed',
+        attemptStatus: 'idle',
+        externalBusy: false,
+        progress: { stage: 0, current: 0, total: 0 },
+        exportedUri: '',
+        errorMessage: '',
+        lastAttemptModeKey: '',
+        lastAttemptModeLabel: '',
+        cleanupStatus: 'none',
+        cleanupErrorMessage: '',
+        ownedPaths: []
+      };
     }
     return item;
   }
@@ -130,7 +376,10 @@ struct Index {
   }
 
   private async chooseAndImport(): Promise<void> {
-    if (this.pageBusy || this.queueRunning) {
+    if (!this.settingsLoaded || this.pageBusy || this.queueRunning) {
+      if (!this.settingsLoaded) {
+        this.operationStatus = '设置尚未加载完成，暂不能加入队列';
+      }
       return;
     }
     this.pageBusy = true;
@@ -263,7 +512,10 @@ struct Index {
   }
 
   private async startQueue(): Promise<void> {
-    if (this.pageBusy) {
+    if (!this.settingsLoaded || this.pageBusy) {
+      if (!this.settingsLoaded) {
+        this.operationStatus = '设置尚未加载完成，暂不能开始队列';
+      }
       return;
     }
     const controller: QueueController = this.getController();
@@ -470,30 +722,48 @@ struct Index {
   }
 
   private modeSnapshot(): QueueModeSnapshot {
-    if (this.outputMode === 'apple') {
-      return {
-        modeKey: 'apple',
-        modeLabel: 'Apple 标准',
-        config: {
-          oppoCompat: 0,
-          oppoCameraTail: 0,
-          strictTmap: 0,
-          applePhotographicStyles: 0,
-          applePortrait: 0
-        }
-      };
-    }
+    const settings: NativeSettings = normalizeSettings(cloneSettings(this.committedSettings));
     return {
-      modeKey: 'oppo',
-      modeLabel: 'OPPO 兼容',
+      modeKey: settings.outputMode,
+      modeLabel: modeLabel(settings),
       config: {
-        oppoCompat: 2,
-        oppoCameraTail: 255,
-        strictTmap: 0,
-        applePhotographicStyles: 0,
-        applePortrait: 0
+        oppoCompat: settings.oppoCompat,
+        oppoCameraTail: settings.oppoCameraTail,
+        strictTmap: settings.strictTmap ? 1 : 0,
+        applePhotographicStyles: settings.applePhotographicStyles ? 1 : 0,
+        applePortrait: settings.applePortrait ? 1 : 0
       }
     };
+  }
+
+  private savedSettingsSummary(): string {
+    try {
+      return modeLabel(this.committedSettingsView);
+    } catch (error) {
+      return '设置无效';
+    }
+  }
+
+  private compatIndex(value: number): number {
+    const index: number = OPPO_COMPAT_OPTIONS.findIndex(
+      (option: SettingsOption): boolean => option.value === value
+    );
+    return index < 0 ? 0 : index;
+  }
+
+  private cameraTailIndex(value: number): number {
+    const index: number = OPPO_CAMERA_TAIL_OPTIONS.findIndex(
+      (option: SettingsOption): boolean => option.value === value
+    );
+    return index < 0 ? 0 : index;
+  }
+
+  private draftSettingsLabel(): string {
+    try {
+      return modeLabel(normalizeSettings(this.draftSettings()));
+    } catch (error) {
+      return '设置无效';
+    }
   }
 
   private async cleanupQueueItem(item: QueueItem): Promise<void> {
@@ -672,7 +942,233 @@ struct Index {
   }
 
   @Builder
-  private selectedDetails(item: QueueItem): void {
+  private settingsPanel(): void {
+    Column() {
+      Row() {
+        Text('转换设置草稿')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18202A')
+          .layoutWeight(1);
+        Button('取消')
+          .fontSize(13)
+          .fontColor('#18202A')
+          .backgroundColor('#DDE5EE')
+          .enabled(!this.settingsSaving)
+          .onClick(() => {
+            this.cancelSettings();
+          });
+      }
+      .width('100%');
+      Text('先编辑草稿，再点击保存；保存失败时草稿会保留。运行中的项目继续使用开始时的完整快照。')
+        .fontSize(13)
+        .fontColor('#52606D')
+        .width('100%')
+        .margin({ top: 6, bottom: 12 });
+
+      Text('输出模式')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#18202A')
+        .width('100%');
+      Row() {
+        Button('OPPO 兼容')
+          .fontSize(15)
+          .fontColor(this.draftOutputMode === 'oppo' ? '#FFFFFF' : '#18202A')
+          .backgroundColor(this.draftOutputMode === 'oppo' ? '#2E6BD6' : '#DDE5EE')
+          .layoutWeight(1)
+          .height(44)
+          .enabled(!this.settingsSaving)
+          .onClick(() => {
+            this.setDraftOutputMode('oppo');
+          });
+        Button('Apple 标准')
+          .fontSize(15)
+          .fontColor(this.draftOutputMode === 'apple' ? '#FFFFFF' : '#18202A')
+          .backgroundColor(this.draftOutputMode === 'apple' ? '#2E6BD6' : '#DDE5EE')
+          .layoutWeight(1)
+          .height(44)
+          .margin({ left: 8 })
+          .enabled(!this.settingsSaving)
+          .onClick(() => {
+            this.setDraftOutputMode('apple');
+          });
+      }
+      .width('100%')
+      .margin({ top: 8, bottom: 12 });
+
+      if (this.draftOutputMode === 'oppo') {
+        Text('OPPO 兼容模式')
+          .fontSize(15)
+          .fontColor('#18202A')
+          .width('100%')
+          .margin({ top: 4 });
+        Select(OPPO_COMPAT_OPTIONS.map((option: SettingsOption): SelectOption => {
+          return { value: option.label };
+        }))
+          .selected(this.compatIndex(this.draftOppoCompat))
+          .value(compatLabel(this.draftOppoCompat))
+          .fontColor('#18202A')
+          .optionFont({ size: 14, weight: FontWeight.Regular })
+          .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+          .width('100%')
+          .margin({ top: 6 })
+          .enabled(!this.settingsSaving)
+          .onSelect((index: number, text?: string): void => {
+            if (index >= 0 && index < OPPO_COMPAT_OPTIONS.length) {
+              this.setDraftCompat(OPPO_COMPAT_OPTIONS[index].value);
+            }
+          });
+        Text('说明：' + (OPPO_COMPAT_OPTIONS[this.compatIndex(this.draftOppoCompat)]?.help ?? ''))
+          .fontSize(12)
+          .fontColor('#52606D')
+          .width('100%')
+          .margin({ top: 4 });
+
+        Text('保留 OPPO 相机附加信息')
+          .fontSize(15)
+          .fontColor('#18202A')
+          .width('100%')
+          .margin({ top: 12 });
+        Select(OPPO_CAMERA_TAIL_OPTIONS.map((option: SettingsOption): SelectOption => {
+          return { value: option.label };
+        }))
+          .selected(this.cameraTailIndex(this.draftOppoCameraTail))
+          .value(cameraTailLabel(this.draftOppoCameraTail))
+          .fontColor('#18202A')
+          .optionFont({ size: 14, weight: FontWeight.Regular })
+          .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+          .width('100%')
+          .margin({ top: 6 })
+          .enabled(!this.settingsSaving)
+          .onSelect((index: number, text?: string): void => {
+            if (index >= 0 && index < OPPO_CAMERA_TAIL_OPTIONS.length) {
+              this.setDraftCameraTail(OPPO_CAMERA_TAIL_OPTIONS[index].value);
+            }
+          });
+        Text('说明：' + (OPPO_CAMERA_TAIL_OPTIONS[this.cameraTailIndex(this.draftOppoCameraTail)]?.help ?? ''))
+          .fontSize(12)
+          .fontColor('#52606D')
+          .width('100%')
+          .margin({ top: 4 });
+      } else {
+        Text('Apple 标准会关闭 OPPO 路由和相机附加信息；下面的 Apple 选项写入可继续编辑的数据。')
+          .fontSize(13)
+          .fontColor('#52606D')
+          .width('100%')
+          .margin({ top: 4, bottom: 4 });
+      }
+
+      Text('Apple 照片功能（实验性）')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#18202A')
+        .width('100%')
+        .margin({ top: 14 });
+      Text('开启后自动使用 Apple 标准输出；这里写入可继续调节的数据，不会把风格直接烘焙进照片。人像选项写入可编辑人像数据，需要源照片具备可用景深信息。')
+        .fontSize(12)
+        .fontColor('#52606D')
+        .width('100%')
+        .margin({ top: 4, bottom: 4 });
+      Row() {
+        Text('摄影风格数据')
+          .fontSize(14)
+          .fontColor('#18202A')
+          .layoutWeight(1);
+        Toggle({ type: ToggleType.Switch, isOn: this.draftApplePhotographicStyles })
+          .selectedColor('#2E6BD6')
+          .switchPointColor('#FFFFFF')
+          .enabled(!this.settingsSaving)
+          .onChange((isOn: boolean): void => {
+            this.setDraftAppleStyles(isOn);
+          });
+      }
+      .width('100%')
+      .margin({ top: 4 });
+      Row() {
+        Text('人像数据')
+          .fontSize(14)
+          .fontColor('#18202A')
+          .layoutWeight(1);
+        Toggle({ type: ToggleType.Switch, isOn: this.draftApplePortrait })
+          .selectedColor('#2E6BD6')
+          .switchPointColor('#FFFFFF')
+          .enabled(!this.settingsSaving)
+          .onChange((isOn: boolean): void => {
+            this.setDraftApplePortrait(isOn);
+          });
+      }
+      .width('100%')
+      .margin({ top: 4 });
+      Row() {
+        Text('严格 ISO 兼容（高级）')
+          .fontSize(14)
+          .fontColor('#18202A')
+          .layoutWeight(1);
+        Toggle({ type: ToggleType.Switch, isOn: this.draftStrictTmap })
+          .selectedColor('#2E6BD6')
+          .switchPointColor('#FFFFFF')
+          .enabled(!this.settingsSaving)
+          .onChange((isOn: boolean): void => {
+            this.setDraftStrict(isOn);
+          });
+      }
+      .width('100%')
+      .margin({ top: 4 });
+      Text('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。')
+        .fontSize(12)
+        .fontColor('#52606D')
+        .width('100%')
+        .margin({ top: 3 });
+
+      Text('草稿摘要：' + this.draftSettingsLabel())
+        .fontSize(13)
+        .fontColor('#18202A')
+        .width('100%')
+        .margin({ top: 12 });
+      if (this.settingsError.length > 0) {
+        Text(this.settingsError)
+          .fontSize(13)
+          .fontColor('#B3261E')
+          .width('100%')
+          .margin({ top: 6 });
+      }
+      Row() {
+        Button('恢复默认（需保存）')
+          .fontSize(13)
+          .fontColor('#18202A')
+          .backgroundColor('#DDE5EE')
+          .layoutWeight(1)
+          .height(44)
+          .enabled(!this.settingsSaving)
+          .onClick(() => {
+            this.restoreDefaultSettings();
+          });
+        Button(this.settingsSaving ? '保存中…' : '保存并返回')
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#16845B')
+          .layoutWeight(1)
+          .height(44)
+          .margin({ left: 8 })
+          .enabled(!this.settingsSaving && (this.settingsDirty() || this.settingsWarning.length > 0))
+          .onClick(() => {
+            this.saveSettings();
+          });
+      }
+      .width('100%')
+      .margin({ top: 14 });
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(14)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(12)
+    .margin({ top: 8, bottom: 14 });
+  }
+
+  @Builder
+  private selectedDetails(): void {
 
             Column() {
               Text('当前项目详情')
@@ -681,112 +1177,112 @@ struct Index {
                 .fontColor('#18202A')
                 .width('100%')
                 .margin({ bottom: 8 });
-              Text('项目 ID：' + item.id + ' · 文件：' + item.displayName)
+              Text('项目 ID：' + this.selectedItemRequired().id + ' · 文件：' + this.selectedItemRequired().displayName)
                 .fontSize(14)
                 .fontColor('#18202A')
                 .width('100%');
-              Text('源 URI：' + this.display(item.sourceUri))
+              Text('源 URI：' + this.display(this.selectedItemRequired().sourceUri))
                 .fontSize(12)
                 .fontColor('#52606D')
                 .width('100%')
                 .margin({ top: 4 });
-              Text('沙盒输入：' + this.display(item.inputPath))
+              Text('沙盒输入：' + this.display(this.selectedItemRequired().inputPath))
                 .fontSize(12)
                 .fontColor('#18202A')
                 .width('100%')
                 .margin({ top: 4, bottom: 10 });
 
-              if (item.details !== undefined) {
+              if (this.selectedItemRequired().details !== undefined) {
                 Text('照片详情')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#18202A')
                   .width('100%')
                   .margin({ bottom: 6 });
-                Text('厂商：' + this.display(item.details.make) + ' · 型号：' +
-                  this.display(item.details.model))
+                Text('厂商：' + this.display(this.selectedItemRequired().details?.make) + ' · 型号：' +
+                  this.display(this.selectedItemRequired().details?.model))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('时间：' + this.display(item.details.dateTime))
+                Text('时间：' + this.display(this.selectedItemRequired().details?.dateTime))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('曝光：' + this.display(item.details.exposureTime) + ' · 光圈：' +
-                  this.display(item.details.fNumber) + ' · ISO：' + this.display(item.details.iso))
+                Text('曝光：' + this.display(this.selectedItemRequired().details?.exposureTime) + ' · 光圈：' +
+                  this.display(this.selectedItemRequired().details?.fNumber) + ' · ISO：' + this.display(this.selectedItemRequired().details?.iso))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('焦距：' + this.display(item.details.focalLength) + ' · 35mm：' +
-                  this.display(item.details.focalLength35mm) + ' · 曝光补偿：' +
-                  this.display(item.details.exposureBias))
+                Text('焦距：' + this.display(this.selectedItemRequired().details?.focalLength) + ' · 35mm：' +
+                  this.display(this.selectedItemRequired().details?.focalLength35mm) + ' · 曝光补偿：' +
+                  this.display(this.selectedItemRequired().details?.exposureBias))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('尺寸：' + this.displayNumber(item.details.width) + ' × ' +
-                  this.displayNumber(item.details.height) + ' · HDR：' +
-                  this.display(item.details.hdrKind))
+                Text('尺寸：' + this.displayNumber(this.selectedItemRequired().details?.width) + ' × ' +
+                  this.displayNumber(this.selectedItemRequired().details?.height) + ' · HDR：' +
+                  this.display(this.selectedItemRequired().details?.hdrKind))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%')
                   .margin({ bottom: 10 });
               }
 
-              if (item.classification !== undefined) {
+              if (this.selectedItemRequired().classification !== undefined) {
                 Text('分类结果')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#18202A')
                   .width('100%')
                   .margin({ bottom: 6 });
-                Text('状态：' + this.display(item.classification.status))
+                Text('状态：' + this.display(this.selectedItemRequired().classification?.status))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('模式：' + this.display(item.classification.modeKey) +
-                  ' · 目录：' + this.display(item.classification.folderName))
+                Text('模式：' + this.display(this.selectedItemRequired().classification?.modeKey) +
+                  ' · 目录：' + this.display(this.selectedItemRequired().classification?.folderName))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('HDR：' + this.display(item.classification.hdrKind) + ' · 家族：' +
-                  this.display(item.classification.family))
+                Text('HDR：' + this.display(this.selectedItemRequired().classification?.hdrKind) + ' · 家族：' +
+                  this.display(this.selectedItemRequired().classification?.family))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('标签：' + String(item.classification.hasTagFlags) + ' · 标志：' +
-                  this.displayBigInt(item.classification.tagFlags) + ' · 未知：' +
-                  this.displayBigInt(item.classification.unknownFlags))
+                Text('标签：' + String(this.selectedItemRequired().classification?.hasTagFlags) + ' · 标志：' +
+                  this.displayBigInt(this.selectedItemRequired().classification?.tagFlags) + ' · 未知：' +
+                  this.displayBigInt(this.selectedItemRequired().classification?.unknownFlags))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%')
                   .margin({ bottom: 10 });
               }
 
-              if (item.result !== undefined) {
-                Text('上次成功结果：' + item.result.modeLabel)
+              if (this.selectedItemRequired().result !== undefined) {
+                Text('上次成功结果：' + this.selectedItemRequired().result?.modeLabel)
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
                   .fontColor('#18202A')
                   .width('100%')
                   .margin({ bottom: 6 });
-                Text('结果路径：' + item.result.outputPath)
+                Text('结果路径：' + this.selectedItemRequired().result?.outputPath)
                   .fontSize(12)
                   .fontColor('#18202A')
                   .width('100%');
-                Text('核心模式：' + this.display(item.result.conversion.mode) +
-                  ' · 家族：' + this.display(item.result.conversion.family))
+                Text('核心模式：' + this.display(this.selectedItemRequired().result?.conversion.mode) +
+                  ' · 家族：' + this.display(this.selectedItemRequired().result?.conversion.family))
                   .fontSize(14)
                   .fontColor('#18202A')
                   .width('100%');
-                if (item.attemptStatus === 'failed' && item.errorMessage.length > 0) {
-                  Text('最新重转换失败；上次成功结果仍保留：' + item.errorMessage)
+                if (this.selectedItemRequired().attemptStatus === 'failed' && this.selectedItemRequired().errorMessage.length > 0) {
+                  Text('最新重转换失败；上次成功结果仍保留：' + this.selectedItemRequired().errorMessage)
                     .fontSize(13)
                     .fontColor('#B3261E')
                     .width('100%')
                     .margin({ top: 4 });
                 }
-                if (item.exportedUri.length > 0) {
-                  Text('已导出：' + item.exportedUri)
+                if (this.selectedItemRequired().exportedUri.length > 0) {
+                  Text('已导出：' + this.selectedItemRequired().exportedUri)
                     .fontSize(12)
                     .fontColor('#16845B')
                     .width('100%')
@@ -801,7 +1297,7 @@ struct Index {
                   .backgroundColor('#DDE5EE')
                   .layoutWeight(1)
                   .height(44)
-                  .enabled(!this.pageBusy && !item.externalBusy && item.status === 'failed')
+                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status === 'failed')
                   .onClick(() => {
                     this.retrySelected();
                   });
@@ -812,7 +1308,7 @@ struct Index {
                   .layoutWeight(1)
                   .height(44)
                   .margin({ left: 8 })
-                  .enabled(!this.pageBusy && !item.externalBusy && item.status === 'succeeded')
+                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status === 'succeeded')
                   .onClick(() => {
                     this.reconvertSelected();
                   });
@@ -823,7 +1319,7 @@ struct Index {
                   .layoutWeight(1)
                   .height(44)
                   .margin({ left: 8 })
-                  .enabled(!this.pageBusy && !item.externalBusy && item.status !== 'running')
+                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status !== 'running')
                   .onClick(() => {
                     this.removeSelected();
                   });
@@ -837,8 +1333,8 @@ struct Index {
                 .width('100%')
                 .height(48)
                 .margin({ top: 10 })
-                .enabled(!this.pageBusy && !item.externalBusy && item.status !== 'running' &&
-                  item.cleanupStatus !== 'failed' && item.result !== undefined)
+                .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status !== 'running' &&
+                  this.selectedItemRequired().cleanupStatus !== 'failed' && this.selectedItemRequired().result !== undefined)
                 .onClick(() => {
                   this.exportSelected();
                 });
@@ -882,37 +1378,55 @@ struct Index {
           .borderRadius(14)
           .margin({ bottom: 14 });
 
-          Text('输出模式（每个项目在实际开始时获取设置快照）')
+          Text('输出设置（每个项目在实际开始时获取已保存设置快照）')
             .fontSize(14)
             .fontColor('#52606D')
             .width('100%');
           Row() {
-            Button('OPPO 兼容')
-              .fontSize(16)
-              .fontColor(this.outputMode === 'oppo' ? '#FFFFFF' : '#18202A')
-              .backgroundColor(this.outputMode === 'oppo' ? '#2E6BD6' : '#DDE5EE')
-              .layoutWeight(1)
-              .height(46)
-              .enabled(!this.pageBusy)
+            Text(this.settingsLoaded ? this.savedSettingsSummary() :
+              (this.settingsLoading ? '设置加载中…' : '设置不可用'))
+              .fontSize(15)
+              .fontColor('#18202A')
+              .layoutWeight(1);
+            Button('打开设置')
+              .fontSize(14)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#2E6BD6')
+              .enabled(this.settingsLoaded && !this.settingsSaving)
               .onClick(() => {
-                this.outputMode = 'oppo';
-                this.operationStatus = '已选择 OPPO 兼容模式';
-              });
-            Button('Apple 标准')
-              .fontSize(16)
-              .fontColor(this.outputMode === 'apple' ? '#FFFFFF' : '#18202A')
-              .backgroundColor(this.outputMode === 'apple' ? '#2E6BD6' : '#DDE5EE')
-              .layoutWeight(1)
-              .height(46)
-              .margin({ left: 10 })
-              .enabled(!this.pageBusy)
-              .onClick(() => {
-                this.outputMode = 'apple';
-                this.operationStatus = '已选择 Apple 标准模式';
+                this.openSettings();
               });
           }
           .width('100%')
-          .margin({ top: 8, bottom: 12 });
+          .margin({ top: 8, bottom: 8 });
+          if (this.settingsWarning.length > 0) {
+            Text(this.settingsWarning)
+              .fontSize(12)
+              .fontColor('#A15C00')
+              .width('100%')
+              .margin({ bottom: 6 });
+          }
+          if (this.settingsError.length > 0 && !this.settingsOpen) {
+            Text(this.settingsError)
+              .fontSize(13)
+              .fontColor('#B3261E')
+              .width('100%')
+              .margin({ bottom: 6 });
+          }
+          if (!this.settingsLoaded && !this.settingsLoading) {
+            Button('重试加载设置')
+              .fontSize(14)
+              .fontColor('#18202A')
+              .backgroundColor('#DDE5EE')
+              .width('100%')
+              .height(42)
+              .onClick(() => {
+                this.loadSettings();
+              });
+          }
+          if (this.settingsOpen) {
+            this.settingsPanel();
+          }
 
           Button('选择多个照片并加入队列')
             .fontSize(17)
@@ -1022,7 +1536,7 @@ struct Index {
           }
 
           if (this.selectedItem() !== undefined) {
-            this.selectedDetails(this.selectedItemRequired());
+            this.selectedDetails();
           }
         }
         .alignItems(HorizontalAlign.Start)
