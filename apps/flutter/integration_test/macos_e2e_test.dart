@@ -53,9 +53,9 @@ void main() {
     }
 
     // Home renders. (The desktop layout has no 'add files' Text — it is a
-    // toolbar tooltip — so launch is asserted via the locale-independent
-    // app title instead.)
-    expect(find.text('XDRemux'), findsOneWidget);
+    // toolbar tooltip — so launch is asserted via the app-bar title, which is
+    // 'XDRemux' plus a version suffix on wide layouts.)
+    expect(find.textContaining('XDRemux'), findsWidgets);
 
     // Simulate the native window dropping files: the app registered a handler
     // on 'xdremux/drop'; deliver the platform message as if from macOS.
