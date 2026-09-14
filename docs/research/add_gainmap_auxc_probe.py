@@ -45,7 +45,8 @@ for i in range(count):
         body+=iid.to_bytes(2,'big')+bytes([n+1])+assocs+bytes([new_index])
     else:
         body+=data[id_start:q]
-new_ipma=bytearray((8+len(body)).to_bytes(4,'big')+b'ipma'+data[pM+8:cnt_off+4]+body)
+new_ipma=bytearray((0).to_bytes(4,'big')+b'ipma'+data[pM+8:cnt_off+4]+body)
+new_ipma[:4]=len(new_ipma).to_bytes(4,'big')
 new_ipco=bytearray((8+(sC-8)+len(auxc)).to_bytes(4,'big')+b'ipco'+data[pC+hC:pC+sC]+auxc)
 new_iprp=bytearray((8).to_bytes(4,'big')+b'iprp')
 for t,p,s,h in boxes(data,pI+hI,pI+sI):
