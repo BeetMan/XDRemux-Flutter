@@ -163,6 +163,10 @@ class RustConversionBackend implements ConversionBackendAdapter {
     final effectiveOppoCameraTail = request.outputMode == OutputMode.apple
         ? 0
         : request.oppoCameraTail;
+    // Photographic Styles 3 builds on the 2023 styles item (the actual
+    // style-editing UI driver), so emit it whenever PS3 output is requested.
+    final effectiveStyles =
+        request.applePhotographicStyles || request.applePhotographicStyles3;
     final result = await Isolate.run(() {
       final ffiResult = request.progressHandle != 0
           ? XdRemuxFFI.convertWithProgress(
@@ -172,7 +176,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
-              applePhotographicStyles: request.applePhotographicStyles,
+              applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
             )
           : XdRemuxFFI.convert(
@@ -181,7 +185,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
-              applePhotographicStyles: request.applePhotographicStyles,
+              applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
             );
       try {

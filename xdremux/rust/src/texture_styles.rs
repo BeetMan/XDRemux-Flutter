@@ -151,18 +151,34 @@ pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, St
     let new_iinf = make_box(b"iinf", &new_iinf_body);
     let d_iinf = new_iinf.len() as i64 - iinf.size as i64;
 
-    // Rebuild iref: append cdsc entry (next_id -> primary_id).
+    // Rebuild iref: append cdsc entry. Native Apple captures reference the
+    // primary grid AND the tmap item (texture_styles applies to the composed
+    // grid + its tile map), so mirror that contract when a tmap exists.
+    let tmap_id = parsed.items.iter().find(|i| i.itype == "tmap").map(|i| i.item_id);
+    let mut to_ids: Vec<u32> = vec![primary_id];
+    if let Some(tid) = tmap_id {
+        if tid != primary_id {
+            to_ids.push(tid);
+        }
+    }
     let mut d_iref: i64 = 0;
     let new_iref = if let Some(iref_box) = iref {
         let mut body = data[iref_box.data_start..(iref_box.box_start + iref_box.size)].to_vec();
         let id_size_4 = body[0] >= 1;
-        let id_bytes: &[u8] = if id_size_4 { &next_id.to_be_bytes() } else { &(next_id as u16).to_be_bytes() };
-        let pid_bytes: &[u8] = if id_size_4 { &primary_id.to_be_bytes() } else { &(primary_id as u16).to_be_bytes() };
+        let write_id = |v: u32| {
+            if id_size_4 {
+                v.to_be_bytes().to_vec()
+            } else {
+                (v as u16).to_be_bytes().to_vec()
+            }
+        };
         let mut cdsc = Vec::new();
         let mut cdsc_payload = Vec::new();
-        cdsc_payload.extend_from_slice(id_bytes);
-        cdsc_payload.extend_from_slice(&1u16.to_be_bytes()); // to_count = 1
-        cdsc_payload.extend_from_slice(pid_bytes);
+        cdsc_payload.extend_from_slice(&write_id(next_id));
+        cdsc_payload.extend_from_slice(&(to_ids.len() as u16).to_be_bytes());
+        for id in &to_ids {
+            cdsc_payload.extend_from_slice(&write_id(*id));
+        }
         cdsc.extend_from_slice(&((8 + cdsc_payload.len()) as u32).to_be_bytes());
         cdsc.extend_from_slice(b"cdsc");
         cdsc.extend_from_slice(&cdsc_payload);
