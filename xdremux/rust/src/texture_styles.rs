@@ -14,7 +14,7 @@ use crate::styles_bplist::BplistWriter;
 pub const TEXTURE_STYLES_URI: &str = "tag:apple.com,2026:photo:metadata:texture_styles";
 
 /// Build the Standard textureInfo bplist payload.
-fn texture_info_payload(grain_seed: u64) -> Vec<u8> {
+pub fn texture_info_payload(grain_seed: u64) -> Vec<u8> {
     let mut w = BplistWriter::new();
     let k_preset = w.add_str("Preset");
     let v_preset = w.add_str("Standard");
