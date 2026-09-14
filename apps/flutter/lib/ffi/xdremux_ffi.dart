@@ -264,6 +264,12 @@ class XdRemuxFFI {
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
 
+  static final _injectTextureStyles = _lib.lookupFunction<
+      ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Uint64),
+      int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int)>(
+        'xdremux_inject_texture_styles',
+      );
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -598,6 +604,21 @@ class XdRemuxFFI {
     final b = movPath.toNativeUtf8();
     try {
       return _livePhotoPairValid(a, b) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      calloc.free(a);
+      calloc.free(b);
+    }
+  }
+
+  /// Post-process a converted HEIC to carry a Standard Photographic Styles 3
+  /// `texture_styles` item. Returns true on success.
+  static bool injectTextureStyles(String inputPath, String outputPath, int grainSeed) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    try {
+      return _injectTextureStyles(a, b, grainSeed) != 0;
     } catch (_) {
       return false;
     } finally {

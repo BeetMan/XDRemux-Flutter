@@ -19,6 +19,7 @@ class ConversionRequest {
   final bool strictTmap;
   final bool applePhotographicStyles;
   final bool applePortrait;
+  final bool applePhotographicStyles3;
   final AppleWatermarkPolicy appleWatermarkPolicy;
   final int progressHandle;
 
@@ -33,6 +34,7 @@ class ConversionRequest {
     required this.strictTmap,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
+    this.applePhotographicStyles3 = false,
     this.appleWatermarkPolicy = AppleWatermarkPolicy.preserve,
     this.progressHandle = 0,
   });
@@ -225,7 +227,31 @@ class RustConversionBackend implements ConversionBackendAdapter {
             : t('Rust 输出验证失败', 'Rust output verification failed'),
       );
     }
+
+    // Photographic Styles 3: post-process the output to carry a Standard
+    // texture_styles item so Photos offers texture/grain editing on it.
+    if (request.applePhotographicStyles3) {
+      final injected = XdRemuxFFI.injectTextureStyles(
+        request.outputPath,
+        request.outputPath,
+        _grainSeedFor(request.inputPath),
+      );
+      if (!injected) {
+        return result.copyWith(
+          success: false,
+          errorMessage: t('PS3 texture_styles 注入失败', 'PS3 texture_styles injection failed'),
+        );
+      }
+    }
     return result.copyWith(outputValid: true);
+  }
+
+  int _grainSeedFor(String inputPath) {
+    var h = 0;
+    for (final c in inputPath.codeUnits) {
+      h = (h * 31 + c) & 0x7fffffff;
+    }
+    return h;
   }
 
   @override

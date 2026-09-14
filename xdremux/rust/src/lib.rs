@@ -23,6 +23,7 @@ pub mod progress;
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
 // separate native Rust path until the Photos conformance surface is stable.
 pub mod styles_bplist;
+pub mod texture_styles;
 mod styles_consts;
 mod styles_graft;
 pub mod styles_native;
@@ -402,6 +403,28 @@ pub extern "C" fn xdremux_free_string(s: *mut c_char) {
             drop(CString::from_raw(s));
         }
     }
+}
+
+/// Inject a Standard Photographic Styles 3 `texture_styles` item into an
+/// existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn xdremux_inject_texture_styles(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+) -> u8 {
+    let result = (|| -> Option<()> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path)?;
+        let output = read(output_path)?;
+        let data = std::fs::read(input).ok()?;
+        let patched = texture_styles::inject_texture_styles(&data, grain_seed).ok()?;
+        std::fs::write(output, patched).ok()?;
+        Some(())
+    })();
+    if result.is_some() { 1 } else { 0 }
 }
 
 /// Return a portable JSON diagnostic for Apple Portrait input eligibility.

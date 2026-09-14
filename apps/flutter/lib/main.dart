@@ -1687,6 +1687,7 @@ class _HomePageState extends State<HomePage> {
           strictTmap: runConfig.strictTmap,
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
+          applePhotographicStyles3: runConfig.applePhotographicStyles3,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
@@ -3723,6 +3724,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
     widget.config.strictTmap = _cfg.strictTmap;
     widget.config.applePhotographicStyles = _cfg.applePhotographicStyles;
+    widget.config.applePhotographicStyles3 = _cfg.applePhotographicStyles3;
     widget.config.applePortrait = _cfg.applePortrait;
     widget.config.skipExisting = _cfg.skipExisting;
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
@@ -4148,6 +4150,34 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         onChanged: (value) {
                           setState(() {
                             _cfg.applePhotographicStyles = value;
+                            if (value) {
+                              _cfg.outputMode = OutputMode.apple;
+                              _cfg.oppoCompatibility = OppoCompatMode.off;
+                              _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                              _cfg.hardwareEncode = false;
+                            }
+                          });
+                          _emit();
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          _t(
+                            '摄影功能 3（质感 + 颗粒）',
+                            'Photographic Styles 3 (texture + grain)',
+                          ),
+                        ),
+                        subtitle: Text(
+                          _t(
+                            '输出携带 Standard texture_styles 元数据，可在 Apple 照片中调节质感/颗粒；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            'Output carries a Standard texture_styles item so Apple Photos offers texture/grain editing; selects Apple Standard output and disables GPU encoding.',
+                          ),
+                        ),
+                        value: _cfg.applePhotographicStyles3,
+                        onChanged: (value) {
+                          setState(() {
+                            _cfg.applePhotographicStyles3 = value;
                             if (value) {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
