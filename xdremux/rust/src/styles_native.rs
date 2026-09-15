@@ -693,7 +693,7 @@ impl StyleStateOverride {
     }
 }
 
-pub(crate) fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
+pub fn build_style_metadata_with(state: &StyleStateOverride) -> Vec<u8> {
     let mut w = BplistWriter::new();
 
     // Golden field order: 0, f, 1, j, g, 4, i, 6, c, k, h, 2, 5, 3, e, 7, d
