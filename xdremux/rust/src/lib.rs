@@ -4,6 +4,7 @@
 
 pub mod categorize;
 pub mod container;
+pub mod container_build;
 pub mod edr;
 pub mod exif;
 pub mod live_photo;
