@@ -114,6 +114,7 @@ fn read_tiff_ifd(tiff: &[u8], be: bool, off: usize) -> Option<TiffIfd> {
 
 fn tiff_entry_value<'a>(
     tiff: &'a [u8],
+    be: bool,
     typ: u16,
     count: u32,
     value_field: &'a [u8; 4],
@@ -123,7 +124,11 @@ fn tiff_entry_value<'a>(
     if len <= 4 {
         Some(&value_field[..len])
     } else {
-        let off = u32::from_be_bytes(*value_field) as usize;
+        let off = if be {
+            u32::from_be_bytes(*value_field) as usize
+        } else {
+            u32::from_le_bytes(*value_field) as usize
+        };
         tiff.get(off..off.checked_add(len)?)
     }
 }
@@ -229,7 +234,7 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         if *t == 0x8769 {
             wr_u32(&mut rec, be, exif_new_off);
         } else {
-            let value = tiff_entry_value(tiff, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
+            let value = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
             if value.len() <= 4 {
                 let mut field = [0u8; 4];
                 field[..value.len()].copy_from_slice(&value);
@@ -255,7 +260,7 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
             wr_u16(&mut rec, be, *t);
             wr_u16(&mut rec, be, *ty);
             wr_u32(&mut rec, be, *c);
-            let value = tiff_entry_value(tiff, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
+            let value = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
             if value.len() <= 4 {
                 let mut field = [0u8; 4];
                 field[..value.len()].copy_from_slice(&value);
