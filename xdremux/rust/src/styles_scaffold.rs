@@ -594,7 +594,7 @@ fn build_maker_note() -> Vec<u8> {
 
 /// Apple offsets are relative to the note, not the enclosing TIFF. The common
 /// portrait template already has both Styles fields: keep that note byte-exact.
-fn compose_styles_maker_note(exif: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn compose_styles_maker_note(exif: &[u8]) -> Result<Vec<u8>, String> {
     let styles = build_maker_note();
     let prefix = exif_prefix_len(exif)?;
     let tiff = &exif[prefix..];

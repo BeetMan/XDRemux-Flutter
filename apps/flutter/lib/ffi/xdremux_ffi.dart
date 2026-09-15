@@ -276,6 +276,12 @@ class XdRemuxFFI {
         'xdremux_inject_semantic_mattes',
       );
 
+  static final _attachStyles = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Uint64),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int)>(
+        'xdremux_attach_styles',
+      );
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -642,6 +648,27 @@ class XdRemuxFFI {
       return _injectSemanticMattes(a, b) != 0;
     } catch (_) {
       return false;
+    } finally {
+      calloc.free(a);
+      calloc.free(b);
+    }
+  }
+
+  /// Styles attach for non-OPPO HEIC inputs. Returns
+  /// {status: attached|already-complete|error, added: [...], message?}.
+  static Map<String, dynamic> attachStyles(
+    String inputPath,
+    String outputPath, {
+    int grainSeed = 104,
+  }) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    try {
+      final ptr = _attachStyles(a, b, grainSeed);
+      final json = ptr.toDartString();
+      return jsonDecode(json) as Map<String, dynamic>;
+    } catch (_) {
+      return {'status': 'error', 'message': 'attach styles FFI failed'};
     } finally {
       calloc.free(a);
       calloc.free(b);

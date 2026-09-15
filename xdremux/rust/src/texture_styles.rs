@@ -64,24 +64,25 @@ fn item_ispe(meta: &isobmff::ParsedMeta, item_id: u32) -> Option<(u32, u32)> {
     })
 }
 
-fn make_uri_metadata_infe(item_id: u32) -> Vec<u8> {
+fn make_uri_metadata_infe(item_id: u32, uri: &str) -> Vec<u8> {
     // version=2, flags=1, item_id(u16), protection_index(u16), item_type="uri ",
-    // item_name="metadata\0", content_type=TEXTURE_STYLES_URI\0
+    // item_name="metadata\0", content_type=<uri>\0
     let mut payload = vec![2u8, 0, 0, 1];
     payload.extend_from_slice(&(item_id as u16).to_be_bytes());
     payload.extend_from_slice(&0u16.to_be_bytes());
     payload.extend_from_slice(b"uri ");
     payload.extend_from_slice(b"metadata\0");
-    payload.extend_from_slice(TEXTURE_STYLES_URI.as_bytes());
+    payload.extend_from_slice(uri.as_bytes());
     payload.push(0);
     make_box(b"infe", &payload)
 }
 
-/// Inject a Standard texture_styles item into `data` (an XDRemux converted
-/// HEIC). Rebuilds iinf/iloc/iref and shifts absolute (construction=0) iloc
-/// extents by the meta growth; idat (construction=1) extents stay relative.
-/// Returns the patched file bytes.
-pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, String> {
+/// Inject a `uri metadata` item with the given URI and payload into `data`.
+pub fn inject_uri_metadata_item(
+    data: &[u8],
+    uri: &str,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
     let top = isobmff::parse_boxes(data, 0, data.len());
     let meta_box = top
         .iter()
@@ -139,8 +140,7 @@ pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, St
     let entry_count_pos = iinf.data_start + 4;
     let count_size = if iinf_version == 0 { 2 } else { 4 };
 
-    let payload = texture_info_payload(grain_seed);
-    let new_infe = make_uri_metadata_infe(next_id);
+    let new_infe = make_uri_metadata_infe(next_id, uri);
 
     // Rebuild iinf body: version/flags + (count+1) + existing infe boxes + new infe.
     let mut new_iinf_body = data[iinf.data_start..iinf.data_start + 4].to_vec();
@@ -271,4 +271,13 @@ pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, St
     out.extend_from_slice(&payload);
     out.extend_from_slice(&data[mdat_end..]);
     Ok(out)
+}
+
+/// Inject a Standard texture_styles item into `data` (an XDRemux converted
+/// HEIC). Rebuilds iinf/iloc/iref and shifts absolute (construction=0) iloc
+/// extents by the meta growth; idat (construction=1) extents stay relative.
+/// Returns the patched file bytes.
+pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, String> {
+    let payload = texture_info_payload(grain_seed);
+    inject_uri_metadata_item(data, TEXTURE_STYLES_URI, &payload)
 }

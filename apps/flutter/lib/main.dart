@@ -1668,6 +1668,36 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
+      // Styles-attach path: PS3 on + non-OPPO input (no capture-mode
+      // UserComment) skips the ProXDR conversion and grafts the styles
+      // contract onto the existing container instead.
+      if (runConfig.backend == ConversionBackend.rust &&
+          runConfig.applePhotographicStyles3) {
+        final cls = await XdRemuxService.classify(item.inputPath);
+        final isOppo = (cls['mode'] as String?)?.isNotEmpty == true;
+        if (!isOppo) {
+          final report = XdRemuxFFI.attachStyles(
+            item.inputPath,
+            item.outputPath,
+            grainSeed: item.inputPath.hashCode & 0x7fffffff,
+          );
+          if (report['status'] == 'error') {
+            item.status = QueueItemStatus.failed;
+            item.errorMessage = t(
+              '风格附加失败：${report['message']}',
+              'Style attach failed: ${report['message']}',
+            );
+            if (mounted) setState(() {});
+            return;
+          }
+          item.status = QueueItemStatus.converted;
+          item.errorMessage = null;
+          if (mounted) setState(() {});
+          _updateCheckpointForItem(item);
+          return;
+        }
+      }
+
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.

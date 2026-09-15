@@ -25,6 +25,7 @@ pub mod progress;
 pub mod styles_bplist;
 pub mod texture_styles;
 pub mod semantic_mattes;
+pub mod styles_attach;
 mod styles_consts;
 mod styles_graft;
 pub mod styles_native;
@@ -415,6 +416,46 @@ pub extern "C" fn xdremux_inject_semantic_mattes(
         Some(())
     })();
     if result.is_some() { 1 } else { 0 }
+}
+
+/// Styles attach — bring the styles + PS3 contract to any HEIC input
+/// (non-OPPO photos). Returns a JSON status string:
+/// {"status":"attached"|"already-complete","added":[...]} or
+/// {"status":"error","message":"..."}.
+#[no_mangle]
+pub extern "C" fn xdremux_attach_styles(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+) -> *mut c_char {
+    let result = (|| -> Result<String, String> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path).ok_or("bad input path")?;
+        let output = read(output_path).ok_or("bad output path")?;
+        let data = std::fs::read(input).map_err(|e| format!("read: {e}"))?;
+        let (patched, report) = styles_attach::attach_styles(&data, grain_seed)?;
+        std::fs::write(output, patched).map_err(|e| format!("write: {e}"))?;
+        let added = report
+            .added
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(format!(
+            "{{\"status\":\"{}\",\"added\":[{}]}}",
+            report.status, added
+        ))
+    })();
+    let json = match result {
+        Ok(json) => json,
+        Err(message) => {
+            let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{{\"status\":\"error\",\"message\":\"{escaped}\"}}")
+        }
+    };
+    CString::new(json).map(|s| s.into_raw()).unwrap_or_else(|_| std::ptr::null_mut())
 }
 
 /// Frees a string previously returned by `xdremux_version`.

@@ -108,8 +108,7 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
         .items
         .iter()
         .find(|i| i.itype == "tmap")
-        .map(|i| i.item_id)
-        .ok_or("no tmap item")?;
+        .map(|i| i.item_id);
 
     // ---- 1. Encode the shared black matte ------------------------------
     let (matte_stream, matte_hvcc) = black_matte()?;
@@ -242,9 +241,15 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
         for &id in &matte_ids {
             let mut auxl = Vec::new();
             auxl.extend_from_slice(&(id as u16).to_be_bytes());
-            auxl.extend_from_slice(&2u16.to_be_bytes());
-            auxl.extend_from_slice(&(primary_id as u16).to_be_bytes());
-            auxl.extend_from_slice(&(tmap_id as u16).to_be_bytes());
+            // SDR captures have no tmap; the auxl degrades to [primary].
+            let targets: Vec<u32> = match tmap_id {
+                Some(tid) if tid != primary_id => vec![primary_id, tid],
+                _ => vec![primary_id],
+            };
+            auxl.extend_from_slice(&(targets.len() as u16).to_be_bytes());
+            for t in &targets {
+                auxl.extend_from_slice(&(*t as u16).to_be_bytes());
+            }
             new_body.extend_from_slice(&make_box(b"auxl", &auxl));
         }
         let b = make_box(b"iref", &new_body);
