@@ -143,7 +143,7 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32) -> Result<GridContai
         make_box(b"iinf", &body)
     };
     let iref = {
-        let mut payload: Vec<u8> = vec![0u8]; // ver 0
+        let mut payload: Vec<u8> = vec![0u8, 0, 0, 0]; // version 0 + flags 0
         let mut dimg: Vec<u8> = Vec::new();
         dimg.extend_from_slice(&1u16.to_be_bytes());
         dimg.extend_from_slice(&(tile_count as u16).to_be_bytes());
@@ -170,7 +170,15 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32) -> Result<GridContai
     let ispe_tile = isobmff::make_ispe_box(TILE, TILE);
     let pixi = isobmff::PIXI_RGB8_BOX;
     // ipco: 1=ispe_grid, 2=ispe_tile, 3=pixi, 4=colr
-    let ipco_payload: Vec<u8> = [ispe_grid.as_slice(), ispe_tile.as_slice(), pixi, colr.as_slice()].concat();
+    let hvcc_box = make_box(b"hvcC", &hvcc);
+    // ipco: 1=ispe_grid, 2=hvcC, 3=ispe_tile, 4=pixi, 5=colr
+    let ipco_payload: Vec<u8> = [
+        ispe_grid.as_slice(),
+        hvcc_box.as_slice(),
+        ispe_tile.as_slice(),
+        pixi,
+        colr.as_slice(),
+    ].concat();
     let ipco = make_box(b"ipco", &ipco_payload);
     let mut ipma_payload = vec![0u8, 0, 0, 0];
     ipma_payload.extend_from_slice(&(2 + tile_count as u32).to_be_bytes());
@@ -259,6 +267,8 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32) -> Result<GridContai
     // pass 2: real iloc
     let iloc = mk_iloc(grid_abs, &tile_abs, exif_abs);
     let meta = mk_meta(&iloc);
+    eprintln!("DBG meta_size={} actual={} iloc_size={} iloc_actual={} grid_payload={}",
+        meta_size, meta.len(), iloc_size, iloc.len(), grid_payload.len());
 
     // ---- mdat ----
     let mut mdat: Vec<u8> = Vec::new();
