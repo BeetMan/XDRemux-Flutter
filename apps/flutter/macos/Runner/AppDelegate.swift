@@ -95,6 +95,19 @@ class AppDelegate: FlutterAppDelegate {
       switch call.method {
       case "getCapabilities":
         result(XDRemuxSwiftBackend.capabilities())
+      case "encodeHEIC":
+        guard let args = call.arguments as? [String: Any],
+              let inputPath = args["inputPath"] as? String,
+              let outputPath = args["outputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid encodeHEIC args", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let ok = HeicThumbnailRenderer.encodeHEIC(from: inputPath, to: outputPath)
+          DispatchQueue.main.async {
+            result(["ok": ok, "path": outputPath])
+          }
+        }
       case "convert":
         guard let args = call.arguments as? [String: Any],
               let requestID = args["requestId"] as? String,

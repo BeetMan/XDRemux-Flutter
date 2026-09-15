@@ -1,4 +1,6 @@
 import Flutter
+import ImageIO
+import UniformTypeIdentifiers
 import PhotosUI
 import UniformTypeIdentifiers
 import UIKit
@@ -297,6 +299,30 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       switch call.method {
       case "getCapabilities":
         result(XDremuxSwiftBackendIOS.capabilities())
+      case "encodeHEIC":
+        guard let args = call.arguments as? [String: Any],
+              let inputPath = args["inputPath"] as? String,
+              let outputPath = args["outputPath"] as? String else {
+          result(FlutterError(code: "bad_args", message: "invalid encodeHEIC args", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let url = URL(fileURLWithPath: inputPath)
+          var ok = false
+          if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+             let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) {
+            let out = URL(fileURLWithPath: outputPath)
+            if let dest = CGImageDestinationCreateWithURL(
+                out as CFURL, "public.heic" as CFString, 1, nil) {
+              let props: [CFString: Any] = [
+                kCGImageDestinationLossyCompressionQuality: 0.95,
+              ]
+              CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+              ok = CGImageDestinationFinalize(dest)
+            }
+          }
+          DispatchQueue.main.async { result(["ok": ok, "path": outputPath]) }
+        }
       case "convert":
         guard let args = call.arguments as? [String: Any],
               let requestID = args["requestId"] as? String,

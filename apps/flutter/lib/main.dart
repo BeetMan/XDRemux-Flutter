@@ -1674,14 +1674,30 @@ class _HomePageState extends State<HomePage> {
 
       // Styles-attach path: PS3 on + non-OPPO input (no capture-mode
       // UserComment) skips the ProXDR conversion and grafts the styles
-      // contract onto the existing container instead.
+      // contract onto the existing container instead. OPPO-classified inputs
+      // try the full conversion first; OPPO SDR photos (no LHDR gain map)
+      // fall back to attach on conversion failure.
+      var oppoAttachFallback = false;
       if (runConfig.backend == ConversionBackend.rust &&
           runConfig.applePhotographicStyles3) {
         final cls = await XdRemuxService.classify(item.inputPath);
         final isOppo = (cls['mode'] as String?)?.isNotEmpty == true;
+        oppoAttachFallback = isOppo;
         if (!isOppo) {
+          // Phase 2a: platform-encode to a native Apple HEIC container first
+          // (the contract attach is verified on Apple-written containers);
+          // foreign containers (Huawei etc.) are re-encoded through ImageIO.
+          var attachSource = item.inputPath;
+          if (Platform.isMacOS || Platform.isIOS) {
+            final pre = '${item.outputPath}.pre.heic';
+            final heic = await SwiftConversionBackend.encodeHEIC(
+              item.inputPath,
+              pre,
+            );
+            if (heic != null) attachSource = heic;
+          }
           final report = XdRemuxFFI.attachStyles(
-            item.inputPath,
+            attachSource,
             item.outputPath,
             grainSeed: item.inputPath.hashCode & 0x7fffffff,
           );
@@ -1731,6 +1747,26 @@ class _HomePageState extends State<HomePage> {
           progressHandle: item.progressHandle,
         ),
       )).toMap();
+
+      // OPPO-classified but non-ProXDR (SDR, no LHDR gain map): conversion
+      // fails; fall back to the styles-attach path when PS3 is on.
+      if (oppoAttachFallback &&
+          runConfig.applePhotographicStyles3 &&
+          result['success'] != true &&
+          result['cancelled'] != true) {
+        final report = XdRemuxFFI.attachStyles(
+          item.inputPath,
+          item.outputPath,
+          grainSeed: item.inputPath.hashCode & 0x7fffffff,
+        );
+        if (report['status'] != 'error') {
+          result = {
+            'success': true,
+            'attach': true,
+            'added': report['added'],
+          };
+        }
+      }
 
       final cancelled =
           item.status == QueueItemStatus.cancelled ||
