@@ -413,14 +413,20 @@ pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachRep
     }
 
     if !has_styles {
-        // Non-Apple capture: inject the styles item with the identity state,
-        // then make the file look like an Apple capture to Photos (maker note).
+        // Non-Apple capture: inject the styles item with the identity state.
         let payload = build_style_metadata_with(&StyleStateOverride::identity());
         out = inject_uri_metadata_item(&out, STYLES_URI, &payload)?;
-        if merge_maker_note(&mut out)? {
-            added.push("maker-note");
-        }
         added.push("styles");
+        // Maker-note merge: only when the source has no MakerNote entry at
+        // all (clean add — verified on device). In-place replacement of
+        // existing notes (native camera or vendor) produced files that
+        // crash Photos; those inputs need the full re-encode path instead.
+        let has_mn = merge_maker_note(&mut out)?;
+        if has_mn {
+            added.push("maker-note");
+        } else {
+            added.push("maker-note-skipped");
+        }
     }
     if !has_texture {
         let payload = texture_info_payload(grain_seed);
