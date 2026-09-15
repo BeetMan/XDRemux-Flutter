@@ -210,6 +210,8 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
     } else {
         exif_entries.push((0x927c, 7, note.len() as u32, [0; 4], Some(note.to_vec())));
     }
+    // drop any additional MakerNote entries (vendors write duplicates)
+    exif_entries.retain(|e| e.0 != 0x927c || e.4.is_some());
 
     // layout: header(8) + IFD0 + chain... + ExifIFD + data
     let ifd0_block = 2 + ifd0.entries.len() * 12 + 4;
@@ -237,7 +239,9 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         if *t == 0x8769 {
             wr_u32(&mut rec, be, exif_new_off);
         } else {
-            let value = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
+            let Some(value) = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()) else {
+                continue; // unreadable entry (exotic type / OOB): drop entirely
+            };
             if value.len() <= 4 {
                 let mut field = [0u8; 4];
                 field[..value.len()].copy_from_slice(&value);
@@ -263,7 +267,9 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
             wr_u16(&mut rec, be, *t);
             wr_u16(&mut rec, be, *ty);
             wr_u32(&mut rec, be, *c);
-            let value = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default();
+            let Some(value) = tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()) else {
+                continue; // unreadable entry (exotic type / OOB): drop entirely
+            };
             if value.len() <= 4 {
                 let mut field = [0u8; 4];
                 field[..value.len()].copy_from_slice(&value);
@@ -299,7 +305,10 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         wr_u32(&mut rec, be, *c);
         let value = match override_value {
             Some(v) => v.clone(),
-            None => tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default(),
+            None => match tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()) {
+                Some(v) => v,
+                None => continue, // unreadable entry: drop entirely
+            },
         };
         if value.len() <= 4 {
             let mut field = [0u8; 4];
@@ -346,12 +355,7 @@ fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
     }
 
     let note = compose_styles_maker_note(&payload)?;
-    // Two proven steps: (1) drop the existing MakerNote entry entirely
-    // (removes native camera signatures / ContentIdentifier), then
-    // (2) append the fresh note with the scaffold's proven TIFF appender
-    // (the same code path OPPO conversions use, verified on device).
-    let stripped = upsert_maker_note_in_tiff(&payload, b"")?;
-    let merged = crate::styles_scaffold::inject_maker_note(&stripped, &note)?;
+    let merged = upsert_maker_note_in_tiff(&payload, &note)?;
     if merged != payload {
         replace_item_payload(data, exif_id, None, &merged)?;
     }
