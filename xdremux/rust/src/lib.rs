@@ -29,7 +29,7 @@ pub mod styles_attach;
 mod styles_consts;
 mod styles_graft;
 pub mod styles_native;
-mod styles_scaffold;
+pub mod styles_scaffold;
 
 // R5 native Rust Portrait graph writer, ported from the conformance research
 // implementation. It produces an Apple-editable depth graph from OPPO rear.depth.

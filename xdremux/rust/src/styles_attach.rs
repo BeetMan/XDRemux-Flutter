@@ -47,8 +47,12 @@ fn item_payload_bytes(data: &[u8], parsed: &isobmff::ParsedMeta, item_id: u32) -
     let loc = parsed.iloc_entries.iter().find(|e| e.item_id == item_id)?;
     match loc.construction_method & 0xF {
         0 => {
-            let (off, len) = *loc.extents.first()?;
-            Some(data.get(off as usize..(off + len) as usize)?.to_vec())
+            // Multi-extent items (e.g. Huawei Exif) concatenate in order.
+            let mut blob = Vec::new();
+            for &(off, len) in &loc.extents {
+                blob.extend_from_slice(data.get(off as usize..(off + len) as usize)?);
+            }
+            Some(blob)
         }
         1 => {
             let top = isobmff::parse_boxes(data, 0, data.len());
@@ -64,7 +68,7 @@ fn item_payload_bytes(data: &[u8], parsed: &isobmff::ParsedMeta, item_id: u32) -
     }
 }
 
-const EXIF_TYPE_SIZES: [usize; 12] = [0, 1, 1, 2, 4, 8, 1, 0, 0, 4, 8, 0];
+const EXIF_TYPE_SIZES: [usize; 13] = [0, 1, 1, 2, 4, 8, 1, 1, 0, 4, 8, 4, 8]; // TIFF: 7=UNDEFINED(1B/ct), 11=FLOAT(4), 12=DOUBLE(8)
 
 struct TiffIfd {
     entries: Vec<(u16, u16, u32, [u8; 4])>, // (tag, typ, count, value_field)
@@ -151,6 +155,7 @@ fn wr_u32(out: &mut Vec<u8>, be: bool, v: u32) {
 
 /// Insert or update the MakerNote (0x927c) entry in the Exif TIFF with
 /// `note`, rebuilding the TIFF (IFD0 + chained IFDs + ExifIFD + data area).
+/// `note` may be empty to REMOVE the MakerNote entry entirely.
 fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>, String> {
     let prefix = 10usize; // 4-byte length word + "Exif\0\0"
     if exif_payload.len() < prefix + 8 {
@@ -192,20 +197,18 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         chain.push(ifd);
     }
 
-    // ExifIFD entries with the MakerNote upserted
-    let mut exif_entries: Vec<(u16, u16, u32, Vec<u8>)> = exif_ifd
+    // ExifIFD entries; the MakerNote entry gets an explicit value override
+    // (Some(note)), everything else reads its value from the source TIFF.
+    let mut exif_entries: Vec<(u16, u16, u32, [u8; 4], Option<Vec<u8>>)> = exif_ifd
         .entries
         .iter()
-        .map(|(t, ty, c, vf)| (*t, *ty, *c, vf.to_vec()))
+        .map(|(t, ty, c, vf)| (*t, *ty, *c, *vf, None))
         .collect();
-    if note.is_empty() {
-        // empty note => remove the MakerNote entry entirely
-        exif_entries.retain(|e| e.0 != 0x927c);
-    } else if let Some(e) = exif_entries.iter_mut().find(|e| e.0 == 0x927c) {
+    if let Some(e) = exif_entries.iter_mut().find(|e| e.0 == 0x927c) {
         e.2 = note.len() as u32;
-        e.3 = note.to_vec();
+        e.4 = Some(note.to_vec());
     } else {
-        exif_entries.push((0x927c, 7, note.len() as u32, note.to_vec()));
+        exif_entries.push((0x927c, 7, note.len() as u32, [0; 4], Some(note.to_vec())));
     }
 
     // layout: header(8) + IFD0 + chain... + ExifIFD + data
@@ -224,7 +227,7 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
     let mut data_area: Vec<u8> = Vec::new();
     out.extend_from_slice(&tiff[..8]); // endian + magic + IFD0 offset
 
-    // IFD0 (ExifIFD pointer re-pointed to the new ExifIFD offset)
+    // IFD0 (ExifIFD pointer re-pointed)
     wr_u16(&mut out, be, ifd0.entries.len() as u16);
     for (t, ty, c, vf) in &ifd0.entries {
         let mut rec: Vec<u8> = Vec::new();
@@ -249,7 +252,7 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         }
         out.extend_from_slice(&rec);
     }
-    out.extend_from_slice(&0u32.to_be_bytes()); // IFD0 next → chain[0], patched below
+    out.extend_from_slice(&0u32.to_be_bytes()); // IFD0 next
 
     let mut chain_ptrs: Vec<usize> = Vec::new();
     for ifd in &chain {
@@ -289,18 +292,22 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
 
     // ExifIFD
     wr_u16(&mut out, be, exif_entries.len() as u16);
-    for (t, ty, c, value) in &exif_entries {
+    for (t, ty, c, vf, override_value) in &exif_entries {
         let mut rec: Vec<u8> = Vec::new();
         wr_u16(&mut rec, be, *t);
         wr_u16(&mut rec, be, *ty);
         wr_u32(&mut rec, be, *c);
+        let value = match override_value {
+            Some(v) => v.clone(),
+            None => tiff_entry_value(tiff, be, *ty, *c, vf).map(|s| s.to_vec()).unwrap_or_default(),
+        };
         if value.len() <= 4 {
             let mut field = [0u8; 4];
-            field[..value.len()].copy_from_slice(value);
+            field[..value.len()].copy_from_slice(&value);
             rec.extend_from_slice(&field);
         } else {
             wr_u32(&mut rec, be, (data_start + data_area.len()) as u32);
-            data_area.extend_from_slice(value);
+            data_area.extend_from_slice(&value);
             if data_area.len() % 2 == 1 {
                 data_area.push(0);
             }
@@ -313,25 +320,6 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
     let mut payload: Vec<u8> = exif_payload[..prefix].to_vec();
     payload.extend_from_slice(&out);
     Ok(payload)
-}
-
-/// Remove the MakerNote entry entirely (empty 0x927c). Used before attaching
-/// when the source carries a native camera maker note whose signature would
-/// gate the style editor.
-pub fn strip_makernote(data: &mut Vec<u8>) -> Result<(), String> {
-    let parsed = isobmff::parse_source_meta(data)?;
-    let exif_id = parsed
-        .items
-        .iter()
-        .find(|i| i.itype == "Exif")
-        .map(|i| i.item_id)
-        .ok_or("no Exif item")?;
-    let payload = item_payload_bytes(data, &parsed, exif_id).ok_or("unreadable Exif payload")?;
-    let stripped = upsert_maker_note_in_tiff(&payload, b"")?;
-    if stripped != payload {
-        replace_item_payload(data, exif_id, None, &stripped)?;
-    }
-    Ok(())
 }
 
 fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
@@ -358,7 +346,12 @@ fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
     }
 
     let note = compose_styles_maker_note(&payload)?;
-    let merged = upsert_maker_note_in_tiff(&payload, &note)?;
+    // Two proven steps: (1) drop the existing MakerNote entry entirely
+    // (removes native camera signatures / ContentIdentifier), then
+    // (2) append the fresh note with the scaffold's proven TIFF appender
+    // (the same code path OPPO conversions use, verified on device).
+    let stripped = upsert_maker_note_in_tiff(&payload, b"")?;
+    let merged = crate::styles_scaffold::inject_maker_note(&stripped, &note)?;
     if merged != payload {
         replace_item_payload(data, exif_id, None, &merged)?;
     }
@@ -442,4 +435,27 @@ pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachRep
             added,
         },
     ))
+}
+
+/// Probe alias for the TIFF maker-note upsert.
+pub fn upsert_for_probe(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>, String> {
+    upsert_maker_note_in_tiff(exif_payload, note)
+}
+
+/// Remove the MakerNote entry entirely (used before attaching when the source
+/// carries a native camera maker note whose signature gates the editor).
+pub fn strip_makernote(data: &mut Vec<u8>) -> Result<(), String> {
+    let parsed = isobmff::parse_source_meta(data)?;
+    let exif_id = parsed
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .map(|i| i.item_id)
+        .ok_or("no Exif item")?;
+    let payload = item_payload_bytes(data, &parsed, exif_id).ok_or("unreadable Exif payload")?;
+    let stripped = upsert_maker_note_in_tiff(&payload, b"")?;
+    if stripped != payload {
+        replace_item_payload(data, exif_id, None, &stripped)?;
+    }
+    Ok(())
 }

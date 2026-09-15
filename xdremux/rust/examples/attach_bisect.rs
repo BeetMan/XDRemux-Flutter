@@ -55,25 +55,42 @@ fn main() -> Result<(), String> {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 4 { return Err("usage: attach_bisect <in> <out> <mode> [spoof-model]".into()); }
     let data = std::fs::read(&a[1]).map_err(|e| format!("read: {e}"))?;
+    // mode: letters s/t/m (styles/texture/mattes) + optional n (Apple maker
+    // note upsert) + optional -stripnote prefix.
     let mode = a[3].as_str();
     let mut out = data.clone();
+    if mode == "stripnote" {
+        // strip the native maker note only (no injections)
+        strip_makernote(&mut out)?;
+        std::fs::write(&a[2], out).map_err(|e| format!("write: {e}"))?;
+        println!("OK {} -> {} (stripnote)", a[1], a[2]);
+        return Ok(());
+    }
     if mode.ends_with("-stripnote") {
         strip_makernote(&mut out)?;
     }
     let base_mode = mode.strip_suffix("-stripnote").unwrap_or(mode);
-    if base_mode == "texture" || base_mode == "all" {
+    if base_mode.contains('t') {
         let p = texture_info_payload(104);
         out = inject_uri_metadata_item(&out, TEXTURE_STYLES_URI, &p)?;
     }
-    if base_mode == "styles" || base_mode == "all" {
+    if base_mode.contains('s') {
         let p = build_style_metadata_with(&StyleStateOverride::identity());
         out = inject_uri_metadata_item(&out, STYLES_URI, &p)?;
     }
-    if base_mode == "mattes" || base_mode == "all" {
+    if base_mode.contains('n') {
+        let parsed = xdremux_core::isobmff::parse_source_meta(&out).map_err(|e| e.to_string())?;
+        let exif_id = parsed.items.iter().find(|i| i.itype == "Exif").map(|i| i.item_id).ok_or("no exif")?;
+        let payload = exif_payload_of(&out, exif_id).ok_or("no exif payload")?;
+        let note = xdremux_core::styles_scaffold::compose_styles_maker_note(&payload)?;
+        let merged = xdremux_core::styles_attach::upsert_for_probe(&payload, &note)?;
+        if merged != payload { replace_item_payload(&mut out, exif_id, None, &merged)?; }
+    }
+    if base_mode.contains('m') {
         out = inject_semantic_mattes(&out)?;
     }
     if a.len() > 4 && a[4] == "spoof" {
-        let parsed = xdremux_core::isobmff::parse_source_meta(&out).ok()?;
+        let parsed = xdremux_core::isobmff::parse_source_meta(&out).map_err(|e| e.to_string())?;
         let exif_id = parsed.items.iter().find(|i| i.itype == "Exif").map(|i| i.item_id).ok_or("no exif")?;
         let payload = exif_payload_of(&out, exif_id).ok_or("no exif payload")?;
         let patched = spoof_model(&payload, b"iPhone 18 Pro")?;
