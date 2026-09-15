@@ -2,9 +2,7 @@
 //! (primary grid + hvc1 tile items + shared hvcC/ispe + Exif item), matching
 //! the structure the styles pipeline (styles_native / PS3 attach) expects.
 //!
-//! This is the foundation of the full re-encode path (Phase 2a): any input
-//! (JPEG, foreign HEIC — decoded Dart-side) is rebuilt into a container in
-//! our proven format, after which the styles contract attaches cleanly.
+//! Two-pass: build meta with placeholder iloc offsets, measure, then patch.
 
 use crate::hevc::{
     drop_parameter_nals, extract_hvcc_config_with_chroma, hevc_byte_stream_to_length_prefixed,
@@ -22,62 +20,8 @@ fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     out
 }
 
-fn make_ftyp() -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(b"heic");
-    payload.extend_from_slice(&0u32.to_be_bytes());
-    for b in [b"mif1", b"heic", b"miaf"] {
-        payload.extend_from_slice(b);
-    }
-    make_box(b"ftyp", &payload)
-}
-
-fn make_hdlr() -> Vec<u8> {
-    let mut payload = vec![0u8; 4];
-    payload.extend_from_slice(&0u32.to_be_bytes());
-    payload.extend_from_slice(b"pict");
-    payload.extend_from_slice(&[0u8; 12]);
-    payload.push(0);
-    make_box(b"hdlr", &payload)
-}
-
-fn make_pitm(primary: u16) -> Vec<u8> {
-    let mut payload = vec![0u8, 0, 0, 0];
-    payload.extend_from_slice(&primary.to_be_bytes());
-    make_box(b"pitm", &payload)
-}
-
-fn make_colr_sdr() -> Vec<u8> {
-    let mut payload = Vec::new();
-    payload.extend_from_slice(b"nclx");
-    payload.extend_from_slice(&1u16.to_be_bytes());
-    payload.extend_from_slice(&13u16.to_be_bytes());
-    payload.extend_from_slice(&6u16.to_be_bytes());
-    payload.push(0x00);
-    make_box(b"colr", &payload)
-}
-
-/// Minimal Exif item payload: [u32=6]["Exif\0\0"][TIFF: IFD0 → empty ExifIFD].
-pub fn make_exif_payload() -> Vec<u8> {
-    let mut p: Vec<u8> = 6u32.to_be_bytes().to_vec();
-    p.extend_from_slice(b"Exif\0\0");
-    let mut tiff: Vec<u8> = Vec::new();
-    tiff.extend_from_slice(b"MM\0*\0\0\0\x08");
-    tiff.extend_from_slice(&1u16.to_be_bytes());
-    tiff.extend_from_slice(&0x8769u16.to_be_bytes());
-    tiff.extend_from_slice(&4u16.to_be_bytes());
-    tiff.extend_from_slice(&1u32.to_be_bytes());
-    tiff.extend_from_slice(&26u32.to_be_bytes());
-    tiff.extend_from_slice(&0u32.to_be_bytes());
-    tiff.extend_from_slice(&0u16.to_be_bytes());
-    tiff.extend_from_slice(&0u32.to_be_bytes());
-    p.extend_from_slice(&tiff);
-    p
-}
-
 pub struct GridContainer {
     pub data: Vec<u8>,
-    pub tile_streams: Vec<Vec<u8>>, // length-prefixed hvc1 tile data (for re-use)
     pub cols: u32,
     pub rows: u32,
     pub width: u32,
@@ -85,16 +29,14 @@ pub struct GridContainer {
 }
 
 /// Build a tiled HEIC from an RGB frame (3 bytes/px, row-major).
-/// Tiles are `TILE`-square; the image is zero-padded to tile multiples and
-/// the grid's output dimensions crop back to the true size.
-pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32, with_exif: bool) -> Result<GridContainer, String> {
+pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32) -> Result<GridContainer, String> {
     let cols = (width + TILE - 1) / TILE;
     let rows = (height + TILE - 1) / TILE;
     let padded_w = cols * TILE;
     let padded_h = rows * TILE;
     let tile_count = (cols * rows) as usize;
 
-    // pad RGB to padded_w × padded_h
+    // pad RGB
     let mut padded = vec![0u8; (padded_w * padded_h * 3) as usize];
     for y in 0..height as usize {
         let src = y * width as usize * 3;
@@ -102,7 +44,7 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32, with_exif: bool) -> 
         padded[dst..dst + width as usize * 3].copy_from_slice(&rgb[src..src + width as usize * 3]);
     }
 
-    // ---- encode tiles ----------------------------------------------------
+    // encode tiles
     let mut tile_encoded: Vec<Vec<u8>> = Vec::with_capacity(tile_count);
     let mut hvcc: Vec<u8> = Vec::new();
     for r in 0..rows {
@@ -129,105 +71,55 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32, with_exif: bool) -> 
         }
     }
 
-    // ---- item ids ----------------------------------------------------------
-    // 1 = grid (primary), 2 = Exif, 3.. = tiles
-    let first_tile_id: u32 = 3;
-    let tile_ids: Vec<u32> = (0..tile_count as u32).map(|i| first_tile_id + i).collect();
-    let exif_id: u16 = 2;
+    // item ids: 1=grid(primary), 2=Exif, 3..=tiles
+    let exif_id: u32 = 2;
+    let first_tile: u32 = 3;
+    let tile_ids: Vec<u32> = (0..tile_count as u32).map(|i| first_tile + i).collect();
 
-    // ---- ipco (shared props for tiles + grid props) ------------------------
-    // tile props: hvcC(1), ispe(TILE,TILE)(2), pixi(3)
-    // grid props: ispe(w,h)(4), colr(5), pixi(6)
-    let hvcc_box = make_box(b"hvcC", &hvcc);
-    let ispe_tile = isobmff::make_ispe_box(TILE, TILE);
-    let ispe_grid = isobmff::make_ispe_box(width, height);
-    let colr = make_colr_sdr();
-    let mut ipco_payload: Vec<u8> = Vec::new();
-    let mut idx = 0u32;
-    let mut push_prop = |raw: &[u8], idx: &mut u32, ipco_payload: &mut Vec<u8>| -> u32 {
-        let this = *idx;
-        *idx += 1;
-        ipco_payload.extend_from_slice(raw);
-        this
-    };
-    let hvcc_idx = push_prop(&hvcc_box, &mut idx, &mut ipco_payload);
-    let ispe_tile_idx = push_prop(&ispe_tile, &mut idx, &mut ipco_payload);
-    let pixi_idx = push_prop(isobmff::PIXI_RGB8_BOX, &mut idx, &mut ipco_payload);
-    let ispe_grid_idx = push_prop(&ispe_grid, &mut idx, &mut ipco_payload);
-    let colr_idx = push_prop(&colr, &mut idx, &mut ipco_payload);
-    let pixi_grid_idx = push_prop(isobmff::PIXI_RGB8_BOX, &mut idx, &mut ipco_payload);
-    let ipco = make_box(b"ipco", &ipco_payload);
-
-    // ---- ipma --------------------------------------------------------------
-    // item 1 (grid): ispe_grid(essential), colr, pixi_grid
-    // item 2 (Exif): none
-    // tiles: hvcC(essential), ispe_tile(essential), pixi
-    let mut ipma_payload = vec![0u8, 0, 0, 0]; // ver0, flags0
-    ipma_payload.extend_from_slice(&(2 + tile_count as u32).to_be_bytes());
-    // grid
-    ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(
-        1,
-        &[(ispe_grid_idx, true), (colr_idx, false), (pixi_grid_idx, false)],
-        0,
-    ));
-    // Exif: no associations — emit an entry with 0 assocs? spec allows count 0.
-    ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(exif_id as u32, &[], 0));
-    // tiles
-    for &id in &tile_ids {
-        ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(
-            id,
-            &[(hvcc_idx, true), (ispe_tile_idx, true), (pixi_idx, false)],
-            0,
-        ));
-    }
-    let ipma = make_box(b"ipma", &ipma_payload);
-    let iprp = make_box(b"iprp", &[ipco, ipma].concat());
-
-    // ---- iinf --------------------------------------------------------------
-    let mut iinf_body = vec![0u8, 0, 0, 0];
-    let item_total = (if with_exif { 2u32 } else { 1u32 }) + tile_count as u32;
-    iinf_body.extend_from_slice(&(item_total).to_be_bytes()[..2]);
-    iinf_body.extend_from_slice(&isobmff::make_infe_box(1, "grid", 0));
-    if with_exif {
-        iinf_body.extend_from_slice(&isobmff::make_infe_box(exif_id as u32, "Exif", 1));
-    }
-    for &id in &tile_ids {
-        iinf_body.extend_from_slice(&isobmff::make_infe_box(id as u32, "hvc1", 1)); // hidden tile
-    }
-    let iinf = make_box(b"iinf", &iinf_body);
-
-    // ---- grid item payload -------------------------------------------------
-    // version(1)=0, flags(3)=0, rows_minus1(1), cols_minus1(1),
-    // output_width(4), output_height(4)
+    // grid payload
     let mut grid_payload: Vec<u8> = vec![0u8, 0, 0, 0];
     grid_payload.push((rows - 1) as u8);
     grid_payload.push((cols - 1) as u8);
     grid_payload.extend_from_slice(&width.to_be_bytes());
     grid_payload.extend_from_slice(&height.to_be_bytes());
 
-    // ---- iref: dimg grid→tiles + cdsc Exif→grid -----------------------------
-    let mut iref_payload: Vec<u8> = vec![0u8]; // version 0
-    {
-        let mut dimg: Vec<u8> = Vec::new();
-        dimg.extend_from_slice(&1u16.to_be_bytes()); // from = grid
-        dimg.extend_from_slice(&(tile_count as u16).to_be_bytes());
-        for &id in &tile_ids {
-            dimg.extend_from_slice(&(id as u16).to_be_bytes());
-        }
-        iref_payload.extend_from_slice(&make_box(b"dimg", &dimg));
+    // mdat content: [grid_payload][tile0]...[tileN][exif_payload]
+    let mut rel: usize = 0; // offsets relative to mdat content start
+    let grid_rel = rel;
+    rel += grid_payload.len();
+    let mut tile_rels: Vec<usize> = Vec::with_capacity(tile_count);
+    for t in &tile_encoded {
+        tile_rels.push(rel);
+        rel += t.len();
     }
-    if with_exif {
-        let mut cdsc: Vec<u8> = Vec::new();
-        cdsc.extend_from_slice(&(exif_id as u16).to_be_bytes());
-        cdsc.extend_from_slice(&1u16.to_be_bytes());
-        cdsc.extend_from_slice(&1u16.to_be_bytes()); // to = grid (primary)
-        iref_payload.extend_from_slice(&make_box(b"cdsc", &cdsc));
-    }
-    let iref = make_box(b"iref", &iref_payload);
+    let exif_rel = rel;
+    let exif_payload = {
+        let mut p: Vec<u8> = 6u32.to_be_bytes().to_vec();
+        p.extend_from_slice(b"Exif\0\0");
+        let mut tiff: Vec<u8> = Vec::new();
+        tiff.extend_from_slice(b"MM\0*\0\0\0\x08");
+        tiff.extend_from_slice(&1u16.to_be_bytes());
+        tiff.extend_from_slice(&0x8769u16.to_be_bytes());
+        tiff.extend_from_slice(&4u16.to_be_bytes());
+        tiff.extend_from_slice(&1u32.to_be_bytes());
+        tiff.extend_from_slice(&26u32.to_be_bytes());
+        tiff.extend_from_slice(&0u32.to_be_bytes());
+        tiff.extend_from_slice(&0u16.to_be_bytes());
+        tiff.extend_from_slice(&0u32.to_be_bytes());
+        p.extend_from_slice(&tiff);
+        p
+    };
+    let mdat_content_len = rel + exif_payload.len();
 
-    // ---- static meta children -------------------------------------------------
-    let hdlr = make_hdlr();
-    let pitm = make_pitm(1);
+    // ---- meta children (iloc built last with real offsets) ----
+    let hdlr = {
+        let mut p = vec![0u8; 4];
+        p.extend_from_slice(&0u32.to_be_bytes());
+        p.extend_from_slice(b"pict");
+        p.extend_from_slice(&[0u8; 12]);
+        p.push(0);
+        make_box(b"hdlr", &p)
+    };
     let dinf = {
         let mut dref: Vec<u8> = vec![0u8, 0, 0, 0];
         dref.extend_from_slice(&1u32.to_be_bytes());
@@ -235,85 +127,143 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32, with_exif: bool) -> 
         dref.extend_from_slice(&make_box(b"url ", &url));
         make_box(b"dinf", &[make_box(b"dref", &dref)].concat())
     };
+    let pitm = {
+        let mut p = vec![0u8, 0, 0, 0];
+        p.extend_from_slice(&1u16.to_be_bytes());
+        make_box(b"pitm", &p)
+    };
+    let iinf = {
+        let mut body = vec![0u8, 0, 0, 0];
+        body.extend_from_slice(&(2 + tile_count as u32).to_be_bytes()[..2]);
+        body.extend_from_slice(&isobmff::make_infe_box(1, "grid", 0));
+        body.extend_from_slice(&isobmff::make_infe_box(exif_id, "Exif", 1));
+        for &id in &tile_ids {
+            body.extend_from_slice(&isobmff::make_infe_box(id, "hvc1", 1));
+        }
+        make_box(b"iinf", &body)
+    };
+    let iref = {
+        let mut payload: Vec<u8> = vec![0u8]; // ver 0
+        let mut dimg: Vec<u8> = Vec::new();
+        dimg.extend_from_slice(&1u16.to_be_bytes());
+        dimg.extend_from_slice(&(tile_count as u16).to_be_bytes());
+        for &id in &tile_ids {
+            dimg.extend_from_slice(&(id as u16).to_be_bytes());
+        }
+        payload.extend_from_slice(&make_box(b"dimg", &dimg));
+        let mut cdsc: Vec<u8> = Vec::new();
+        cdsc.extend_from_slice(&(exif_id as u16).to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        cdsc.extend_from_slice(&1u16.to_be_bytes());
+        payload.extend_from_slice(&make_box(b"cdsc", &cdsc));
+        make_box(b"iref", &payload)
+    };
+    let colr = {
+        let mut p = b"nclx".to_vec();
+        p.extend_from_slice(&1u16.to_be_bytes());
+        p.extend_from_slice(&13u16.to_be_bytes());
+        p.extend_from_slice(&6u16.to_be_bytes());
+        p.push(0x00);
+        make_box(b"colr", &p)
+    };
+    let ispe_grid = isobmff::make_ispe_box(width, height);
+    let ispe_tile = isobmff::make_ispe_box(TILE, TILE);
+    let pixi = isobmff::PIXI_RGB8_BOX;
+    // ipco: 1=ispe_grid, 2=ispe_tile, 3=pixi, 4=colr
+    let ipco_payload: Vec<u8> = [ispe_grid.as_slice(), ispe_tile.as_slice(), pixi, colr.as_slice()].concat();
+    let ipco = make_box(b"ipco", &ipco_payload);
+    let mut ipma_payload = vec![0u8, 0, 0, 0];
+    ipma_payload.extend_from_slice(&(2 + tile_count as u32).to_be_bytes());
+    // ImageIO pattern: ALL items share ALL properties
+    let all_assocs: Vec<(u32, bool)> = vec![
+        (1, true),  // ispe_grid
+        (2, true),  // hvcC
+        (3, true),  // ispe_tile
+        (4, false), // pixi
+        (5, false), // colr
+    ];
+    ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(1, &all_assocs, 0));
+    ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(exif_id, &all_assocs, 0));
+    for &id in &tile_ids {
+        ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(id, &all_assocs, 0));
+    }
+    let ipma = make_box(b"ipma", &ipma_payload);
+    let idat = make_box(b"idat", &[]);
 
-    // ---- layout --------------------------------------------------------------
-    let ftyp = make_ftyp();
-    let ftyp_len = ftyp.len();
-    let exif_payload = make_exif_payload();
+    // ---- two-pass layout ----
+    // mdat content: grid_payload | tile_encoded[0..n] | exif_payload
+    // iloc entry offsets = absolute file offsets into mdat
+    // meta children order: hdlr, dinf, pitm, iinf, iref, iprp, idat, iloc
+    let iloc_size = 8 + 4 + 2 + 2 + (2 + tile_count) * 16;
+    let iprp = make_box(b"iprp", &[ipco.as_slice(), ipma.as_slice()].concat());
+    let mk_meta = |iloc_box: &Vec<u8>| -> Vec<u8> {
+        let mut body = vec![0u8, 0, 0, 0];
+        body.extend_from_slice(&hdlr);
+        body.extend_from_slice(&dinf);
+        body.extend_from_slice(&pitm);
+        body.extend_from_slice(&iinf);
+        body.extend_from_slice(&iref);
+        body.extend_from_slice(&iprp);
+        body.extend_from_slice(&idat);
+        body.extend_from_slice(iloc_box);
+        make_box(b"meta", &body)
+    };
 
-    let grid_item_len = 8 + grid_payload.len();
-    let tiles_data_len: usize = tile_encoded.iter().map(|t| t.len()).sum();
-    let iloc_box = 8 + 4 + 2 + 2 + (2 + tile_count as usize) * 16;
-    let meta_size = 8
-        + 4
-        + hdlr.len()
-        + pitm.len()
-        + iinf.len()
-        + iref.len()
-        + iprp.len()
-        + iloc_box;
+    // grid_payload is at mdat content start
+    let grid_payload_len = grid_payload.len();
+    let mk_iloc = |grid_abs: usize, tile_abs: &[usize], exif_abs: usize| -> Vec<u8> {
+        let mut p: Vec<u8> = vec![1u8, 0, 0, 0, 0x44, 0x00];
+        p.extend_from_slice(&(2 + tile_count as u16).to_be_bytes());
+        // grid
+        p.extend_from_slice(&1u16.to_be_bytes());
+        p.extend_from_slice(&0u16.to_be_bytes());
+        p.extend_from_slice(&0u16.to_be_bytes());
+        p.extend_from_slice(&1u16.to_be_bytes());
+        p.extend_from_slice(&(grid_abs as u32).to_be_bytes());
+        p.extend_from_slice(&(grid_payload_len as u32).to_be_bytes());
+        // Exif
+        p.extend_from_slice(&(exif_id as u16).to_be_bytes());
+        p.extend_from_slice(&0u16.to_be_bytes());
+        p.extend_from_slice(&0u16.to_be_bytes());
+        p.extend_from_slice(&1u16.to_be_bytes());
+        p.extend_from_slice(&(exif_abs as u32).to_be_bytes());
+        p.extend_from_slice(&(exif_payload.len() as u32).to_be_bytes());
+        // tiles
+        for (i, t) in tile_encoded.iter().enumerate() {
+            p.extend_from_slice(&(tile_ids[i] as u16).to_be_bytes());
+            p.extend_from_slice(&0u16.to_be_bytes());
+            p.extend_from_slice(&0u16.to_be_bytes());
+            p.extend_from_slice(&1u16.to_be_bytes());
+            p.extend_from_slice(&(tile_abs[i] as u32).to_be_bytes());
+            p.extend_from_slice(&(t.len() as u32).to_be_bytes());
+        }
+        make_box(b"iloc", &p)
+    };
+
+    // pass 1: meta with dummy iloc offsets → measure size
+    let iloc_p1 = mk_iloc(0, &[0usize; 40], 0);
+    let meta_p1 = mk_meta(&iloc_p1);
+    let ftyp_len = 28usize; // fixed: 4+4+4+4+4+4+4 = 28
+    let meta_size = meta_p1.len();
     let mdat_off = ftyp_len + meta_size;
-    let mdat_hdr = 8usize;
-    let grid_off = mdat_off + mdat_hdr;
-    let mut cur = grid_off + grid_item_len;
-    let mut tile_offs: Vec<u32> = Vec::with_capacity(tile_count);
+    let mdat_content = mdat_off + 8; // after mdat header
+    let grid_abs = mdat_content;
+    let mut tile_abs: Vec<usize> = Vec::with_capacity(tile_count);
+    let mut cur = grid_abs + grid_payload_len;
     for t in &tile_encoded {
-        tile_offs.push(cur as u32);
+        tile_abs.push(cur);
         cur += t.len();
     }
-    let exif_off = cur as u32;
-    cur += exif_payload.len();
-    let _ = cur;
+    let exif_abs = cur;
 
-    // ---- iloc ------------------------------------------------------------------
-    // entries: grid(cm0), Exif(cm0), tiles(cm0) — each 1 extent
-    let entry_count = 2 + tile_count as u16;
-    let mut iloc_payload: Vec<u8> = vec![1u8, 0, 0, 0, 0x44, 0x00];
-    iloc_payload.extend_from_slice(&entry_count.to_be_bytes());
-    // grid
-    iloc_payload.extend_from_slice(&1u16.to_be_bytes());
-    iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-    iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-    iloc_payload.extend_from_slice(&1u16.to_be_bytes());
-    iloc_payload.extend_from_slice(&(grid_off as u32).to_be_bytes());
-    iloc_payload.extend_from_slice(&(grid_item_len as u32).to_be_bytes());
-    // Exif
-    if with_exif {
-        iloc_payload.extend_from_slice(&(exif_id as u16).to_be_bytes());
-        iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&1u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&(exif_off).to_be_bytes());
-        iloc_payload.extend_from_slice(&(exif_payload.len() as u32).to_be_bytes());
-    }
-    // tiles
-    for (i, t) in tile_encoded.iter().enumerate() {
-        iloc_payload.extend_from_slice(&(tile_ids[i] as u16).to_be_bytes());
-        iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&0u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&1u16.to_be_bytes());
-        iloc_payload.extend_from_slice(&(tile_offs[i]).to_be_bytes());
-        iloc_payload.extend_from_slice(&(t.len() as u32).to_be_bytes());
-    }
-    let iloc = make_box(b"iloc", &iloc_payload);
+    // pass 2: real iloc
+    let iloc = mk_iloc(grid_abs, &tile_abs, exif_abs);
+    let meta = mk_meta(&iloc);
 
-    // ---- meta --------------------------------------------------------------------
-    let mut meta_body: Vec<u8> = vec![0u8, 0, 0, 0];
-    meta_body.extend_from_slice(&hdlr);
-    meta_body.extend_from_slice(&dinf);
-    meta_body.extend_from_slice(&pitm);
-    meta_body.extend_from_slice(&iinf);
-    meta_body.extend_from_slice(&iref);
-    meta_body.extend_from_slice(&iprp);
-    meta_body.extend_from_slice(&iloc);
-    let meta = make_box(b"meta", &meta_body);
-
-    // ---- mdat ----------------------------------------------------------------------
+    // ---- mdat ----
     let mut mdat: Vec<u8> = Vec::new();
-    let mdat_content = grid_payload.len()
-        + tiles_data_len
-        + exif_payload.len();
-    mdat.extend_from_slice(&((mdat_hdr + mdat_content) as u32).to_be_bytes());
+    let mdat_size = 8 + mdat_content_len;
+    mdat.extend_from_slice(&(mdat_size as u32).to_be_bytes());
     mdat.extend_from_slice(b"mdat");
     mdat.extend_from_slice(&grid_payload);
     for t in &tile_encoded {
@@ -321,15 +271,23 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32, with_exif: bool) -> 
     }
     mdat.extend_from_slice(&exif_payload);
 
-    // ---- assemble ---------------------------------------------------------------------
-    let mut out: Vec<u8> = Vec::with_capacity(ftyp_len + meta.len() + mdat.len());
+    // ---- ftyp ----
+    let mut ftyp_payload: Vec<u8> = Vec::new();
+    ftyp_payload.extend_from_slice(b"heic");
+    ftyp_payload.extend_from_slice(&0u32.to_be_bytes());
+    for b in [b"mif1", b"heic", b"miaf"] {
+        ftyp_payload.extend_from_slice(b);
+    }
+    let ftyp = make_box(b"ftyp", &ftyp_payload);
+
+    // ---- assemble ----
+    let mut out: Vec<u8> = Vec::with_capacity(ftyp.len() + meta.len() + mdat.len());
     out.extend_from_slice(&ftyp);
     out.extend_from_slice(&meta);
     out.extend_from_slice(&mdat);
 
     Ok(GridContainer {
         data: out,
-        tile_streams: tile_encoded,
         cols,
         rows,
         width,

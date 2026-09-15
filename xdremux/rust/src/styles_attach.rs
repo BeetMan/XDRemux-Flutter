@@ -339,8 +339,11 @@ fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
         .items
         .iter()
         .find(|i| i.itype == "Exif")
-        .map(|i| i.item_id)
-        .ok_or("no Exif item — cannot attach Apple maker note")?;
+        .map(|i| i.item_id);
+    let Some(exif_id) = exif_id else {
+        // No Exif item in the source: nothing to merge into.
+        return Ok(false);
+    };
     let payload = item_payload_bytes(data, &parsed, exif_id).ok_or("unreadable Exif payload")?;
 
     // If an Apple-format maker note is already present (native captures,

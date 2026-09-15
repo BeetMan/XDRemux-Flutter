@@ -10,8 +10,7 @@ fn main() -> Result<(), String> {
     let jpeg = std::fs::read(&a[1]).map_err(|e| format!("read: {e}"))?;
     let (rgb, w, h) = decode_jpeg_to_rgb(&jpeg).map_err(|e| format!("jpeg decode: {e}"))?;
     println!("decoded {}x{}", w, h);
-    let with_exif = std::env::var("NO_EXIF").is_err();
-    let built = build_heic_grid(&rgb, w, h, with_exif)?;
+    let built = build_heic_grid(&rgb, w, h)?;
     std::fs::write(&a[2], &built.data).map_err(|e| format!("write: {e}"))?;
     println!(
         "OK {} -> {} (grid {}x{}, {} tiles)",
