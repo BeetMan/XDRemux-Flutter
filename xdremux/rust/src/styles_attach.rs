@@ -307,7 +307,7 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
     Ok(payload)
 }
 
-fn merge_maker_note(data: &mut Vec<u8>) -> Result<(), String> {
+fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
     // Re-parse: callers may have injected items (shifting iloc offsets) before
     // this merge, so a stale parse would read the wrong extents.
     let parsed = isobmff::parse_source_meta(data)?;
@@ -318,12 +318,53 @@ fn merge_maker_note(data: &mut Vec<u8>) -> Result<(), String> {
         .map(|i| i.item_id)
         .ok_or("no Exif item — cannot attach Apple maker note")?;
     let payload = item_payload_bytes(data, &parsed, exif_id).ok_or("unreadable Exif payload")?;
+
+    // If an Apple-format maker note is already present (native captures,
+    // Apple-edited exports, previous attaches), leave it untouched: it is
+    // complete for Photos' purposes and expanding it is not always possible
+    // (unknown out-of-line UNDEFINED blobs).
+    if let Some(tiff_off) = find_makernote_offset(&payload) {
+        let starts_apple = payload[tiff_off..].starts_with(b"Apple iOS");
+        if starts_apple {
+            return Ok(false);
+        }
+    }
+
     let note = compose_styles_maker_note(&payload)?;
     let merged = upsert_maker_note_in_tiff(&payload, &note)?;
     if merged != payload {
         replace_item_payload(data, exif_id, None, &merged)?;
     }
-    Ok(())
+    Ok(true)
+}
+
+/// Offset (within the Exif payload) of the MakerNote entry data, if any.
+fn find_makernote_offset(exif_payload: &[u8]) -> Option<usize> {
+    let prefix = 10usize;
+    let tiff = &exif_payload[prefix..];
+    let be = tiff[0] == b'M';
+    let rd_u16 = |b: &[u8]| {
+        if be {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        }
+    };
+    let rd_u32 = |b: &[u8]| {
+        if be {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let ifd0_off = rd_u32(&tiff[4..8]) as usize;
+    let ifd0 = read_tiff_ifd(tiff, be, ifd0_off)?;
+    let exif_ptr = ifd0.entries.iter().find(|e| e.0 == 0x8769)?;
+    let exif_off = rd_u32(&exif_ptr.3) as usize;
+    let exif_ifd = read_tiff_ifd(tiff, be, exif_off)?;
+    let mn = exif_ifd.entries.iter().find(|e| e.0 == 0x927c)?;
+    let off = rd_u32(&mn.3) as usize;
+    Some(prefix + off)
 }
 
 /// Attach the styles contract to `data`. Returns the patched bytes and a
@@ -352,9 +393,10 @@ pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachRep
         // then make the file look like an Apple capture to Photos (maker note).
         let payload = build_style_metadata_with(&StyleStateOverride::identity());
         out = inject_uri_metadata_item(&out, STYLES_URI, &payload)?;
-        merge_maker_note(&mut out)?;
+        if merge_maker_note(&mut out)? {
+            added.push("maker-note");
+        }
         added.push("styles");
-        added.push("maker-note");
     }
     if !has_texture {
         let payload = texture_info_payload(grain_seed);
