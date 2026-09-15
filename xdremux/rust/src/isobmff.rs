@@ -324,17 +324,16 @@ pub fn make_mime_infe_box(item_id: u32, flags: u32) -> Vec<u8> {
 
 /// Build the iloc box (always version 1, 4-byte offsets, 4-byte lengths).
 pub fn make_iloc_box(entries: &[IlocEntry]) -> Vec<u8> {
-    // version=1, flags=0, offset_size=4, length_size=4, base_offset_size=4,
-    // index_size=0. A 4-byte base field is emitted per entry (zero: the
-    // parsed offsets already fold the source base in) so the rebuilt iloc
-    // byte-size matches sources that declare base_offset_size=4 (Huawei).
-    let mut payload = vec![1u8, 0, 0, 0, 0x44, 0x40];
+    // version=1, flags=0, offset_size=4, length_size=4, base_offset_size=0,
+    // index_size=0. The parsed offsets already fold any base_offset in, so
+    // writing them with base_offset_size=0 preserves the data positions
+    // while keeping the rebuilt iloc compact.
+    let mut payload = vec![1u8, 0, 0, 0, 0x44, 0x00];
     write_u16be(entries.len() as u16, &mut payload);
     for entry in entries {
         write_u16be(entry.item_id as u16, &mut payload);
         write_u16be(entry.construction_method, &mut payload);
         write_u16be(entry.data_reference_index, &mut payload);
-        write_u32be(0u32, &mut payload); // base_offset (folded into extents)
         write_u16be(entry.extents.len() as u16, &mut payload);
         for &(offset, length) in &entry.extents {
             write_u32be(offset as u32, &mut payload);
