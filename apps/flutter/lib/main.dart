@@ -1620,8 +1620,12 @@ class _HomePageState extends State<HomePage> {
     // Keep the pairing pure: no styleMetadata in the paired still.
     if (item.motionPhoto != null &&
         item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
-      runConfig.applePhotographicStyles = false;
-      runConfig.applePhotographicStyles3 = false;
+      // PS3 contract (styles + texture + mattes) is now allowed on paired
+      // stills — re-test of the 2026-09-02 "style+pair fails to load" finding
+      // with the full matte contract. Old-styles-only pairs stay pure.
+      if (!runConfig.applePhotographicStyles3) {
+        runConfig.applePhotographicStyles = false;
+      }
     }
     // PS3 injection is Rust-only.
     if (runConfig.backend != ConversionBackend.rust) {
