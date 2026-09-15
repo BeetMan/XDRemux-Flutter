@@ -185,12 +185,7 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
     // Serialize ver0/flags0 (u16 ids, 1-byte assocs). New entries: ispe,
     // pixi, auxC(essential), hvcC(essential) — mirrors the native matte.
     let ipma_ver = data[ipma.data_start];
-    let ipma_flags = data[ipma.data_start + 3];
-    if ipma_ver != 0 || ipma_flags != 0 {
-        return Err(format!(
-            "unsupported ipma ver={ipma_ver} flags={ipma_flags}"
-        ));
-    }
+    let mut ipma_flags = data[ipma.data_start + 3];
     let mut entries = parsed.ipma_entries.clone();
     for (i, &id) in matte_ids.iter().enumerate() {
         entries.push(isobmff::IpmaEntry {
@@ -203,13 +198,18 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
             ],
         });
     }
-    let mut new_ipma_payload: Vec<u8> = vec![0u8, 0, 0, 0]; // version + flags
+    // 1-byte associations cap the property index at 127; upgrade to 2-byte
+    // associations when the new auxC indexes exceed that.
+    if auxc_idxs.iter().any(|i| *i > 127) {
+        ipma_flags |= 2;
+    }
+    let mut new_ipma_payload: Vec<u8> = vec![ipma_ver, 0, 0, ipma_flags];
     new_ipma_payload.extend_from_slice(&(entries.len() as u32).to_be_bytes());
     for e in &entries {
         new_ipma_payload.extend_from_slice(&isobmff::make_ipma_entry(
             e.item_id,
             &e.associations,
-            0,
+            ipma_flags as u32,
         ));
     }
     let new_ipma = make_box(b"ipma", &new_ipma_payload);
@@ -261,46 +261,44 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
 
     // ---- 7. iloc rebuild (shift cm0, append 12 entries) -------------------
     let iloc_entries = isobmff::parse_iloc(data, iloc)?;
-    let new_entry_size = 2 + 2 + 2 + 0 + 2 + 4 + 4;
-    let delta_total = d_iinf + d_iprp + d_iref + new_entry_size as i64 * n as i64;
     let mdat = top
         .iter()
         .find(|b| b.btype == *b"mdat")
         .ok_or("mdat box not found")?;
     let mdat_end = mdat.box_start + mdat.size;
-    let payload_abs = (mdat_end as i64 + delta_total) as u64;
-
-    let mut new_iloc_entries: Vec<isobmff::IlocEntry> = Vec::with_capacity(iloc_entries.len() + n);
-    for mut e in iloc_entries {
-        for ext in e.extents.iter_mut() {
-            if (e.construction_method & 0xF) == 0 {
-                let past_mdat = (ext.0 as i64) >= mdat_end as i64;
-                let shift = delta_total
-                    + if past_mdat { (matte_stream.len() * n) as i64 } else { 0 };
-                ext.0 = (ext.0 as i64 + shift) as u64;
+    let payload_len = (matte_stream.len() * n) as i64;
+    // Two-pass: measure iloc growth (base fields + 12 new entries) before
+    // computing the matte payload offsets.
+    let build_entries = |delta_total: i64, payload_abs: u64| -> Vec<isobmff::IlocEntry> {
+        let mut v: Vec<isobmff::IlocEntry> = Vec::with_capacity(iloc_entries.len() + n);
+        for mut e in iloc_entries.clone() {
+            for ext in e.extents.iter_mut() {
+                if (e.construction_method & 0xF) == 0 {
+                    let past_mdat = (ext.0 as i64) >= mdat_end as i64;
+                    let shift = delta_total + if past_mdat { payload_len } else { 0 };
+                    ext.0 = (ext.0 as i64 + shift) as u64;
+                }
             }
+            v.push(e);
         }
-        new_iloc_entries.push(e);
-    }
-    for (i, &id) in matte_ids.iter().enumerate() {
-        new_iloc_entries.push(isobmff::IlocEntry {
-            item_id: id,
-            construction_method: 0,
-            data_reference_index: 0,
-            extents: vec![(
-                payload_abs + (i as u64) * matte_stream.len() as u64,
-                matte_stream.len() as u64,
-            )],
-        });
-    }
-    let new_iloc = isobmff::make_iloc_box(&new_iloc_entries);
-    let d_iloc = new_iloc.len() as i64 - iloc.size as i64;
-    if d_iinf + d_iprp + d_iref + d_iloc != delta_total {
-        return Err(format!(
-            "delta mismatch: iinf {d_iinf} iprp {d_iprp} iref {d_iref} iloc {d_iloc} vs entries {}",
-            new_entry_size as i64 * n as i64
-        ));
-    }
+        for (i, &id) in matte_ids.iter().enumerate() {
+            v.push(isobmff::IlocEntry {
+                item_id: id,
+                construction_method: 0,
+                data_reference_index: 0,
+                extents: vec![(
+                    payload_abs + (i as u64) * matte_stream.len() as u64,
+                    matte_stream.len() as u64,
+                )],
+            });
+        }
+        v
+    };
+    let probe = isobmff::make_iloc_box(&build_entries(d_iinf + d_iprp + d_iref, 0));
+    let d_iloc = probe.len() as i64 - iloc.size as i64;
+    let delta_total = d_iinf + d_iprp + d_iref + d_iloc;
+    let payload_abs = (mdat_end as i64 + delta_total) as u64;
+    let new_iloc = isobmff::make_iloc_box(&build_entries(delta_total, payload_abs));
 
     // ---- 8. Assemble -------------------------------------------------------
     let mut new_meta_body = data[meta_box.data_start..content_start].to_vec();

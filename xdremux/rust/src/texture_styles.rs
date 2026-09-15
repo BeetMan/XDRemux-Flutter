@@ -200,39 +200,35 @@ pub fn inject_uri_metadata_item(
         .ok_or("mdat box not found")?;
     let mdat_end = mdat.box_start + mdat.size;
     let iloc_entries = isobmff::parse_iloc(data, iloc)?;
-    // New entry serialized size (version 1 layout: id(2)+cm(2)+dr(2)+base(0)+count(2)+off(4)+len(4)).
-    let new_entry_size = 2 + 2 + 2 + 0 + 2 + 4 + 4;
-    let delta_total = d_iinf + d_iref + new_entry_size as i64;
-    let payload_abs = (mdat_end as i64 + delta_total) as u64;
-
-    let mut new_iloc_entries: Vec<isobmff::IlocEntry> = Vec::with_capacity(iloc_entries.len() + 1);
-    for mut e in iloc_entries {
-        for ext in e.extents.iter_mut() {
-            if (e.construction_method & 0xF) == 0 {
-                // Extents inside mdat only shift by the meta growth; extents
-                // past mdat (trailing boxes) additionally clear room for the
-                // payload inserted inside mdat.
-                let past_mdat = (ext.0 as i64) >= mdat_end as i64;
-                let shift = delta_total + if past_mdat { payload.len() as i64 } else { 0 };
-                ext.0 = (ext.0 as i64 + shift) as u64;
+    // Two-pass: the iloc growth (4-byte base fields on every entry + the new
+    // entry) must be known before the new entry's payload offset can be
+    // computed. Sizes are identical across passes, so pass 1 measures.
+    let payload_len = payload.len() as i64;
+    let build_entries = |delta_total: i64, payload_abs: u64| -> Vec<isobmff::IlocEntry> {
+        let mut v: Vec<isobmff::IlocEntry> = Vec::with_capacity(iloc_entries.len() + 1);
+        for mut e in iloc_entries.clone() {
+            for ext in e.extents.iter_mut() {
+                if (e.construction_method & 0xF) == 0 {
+                    let past_mdat = (ext.0 as i64) >= mdat_end as i64;
+                    let shift = delta_total + if past_mdat { payload_len } else { 0 };
+                    ext.0 = (ext.0 as i64 + shift) as u64;
+                }
             }
+            v.push(e);
         }
-        new_iloc_entries.push(e);
-    }
-    new_iloc_entries.push(isobmff::IlocEntry {
-        item_id: next_id,
-        construction_method: 0,
-        data_reference_index: 0,
-        extents: vec![(payload_abs, payload.len() as u64)],
-    });
-    let new_iloc = isobmff::make_iloc_box(&new_iloc_entries);
-    let d_iloc = new_iloc.len() as i64 - iloc.size as i64;
-
-    if d_iinf + d_iref + d_iloc != delta_total {
-        return Err(format!(
-            "delta mismatch: iinf {d_iinf} iloc {d_iloc} iref {d_iref} vs entry {new_entry_size}"
-        ));
-    }
+        v.push(isobmff::IlocEntry {
+            item_id: next_id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(payload_abs, payload.len() as u64)],
+        });
+        v
+    };
+    let probe = isobmff::make_iloc_box(&build_entries(d_iinf + d_iref, 0));
+    let d_iloc = probe.len() as i64 - iloc.size as i64;
+    let delta_total = d_iinf + d_iref + d_iloc;
+    let payload_abs = (mdat_end as i64 + delta_total) as u64;
+    let new_iloc = isobmff::make_iloc_box(&build_entries(delta_total, payload_abs));
 
     // Rebuild meta with the new children.
     let mut new_meta_body = data[meta_box.data_start..content_start].to_vec();

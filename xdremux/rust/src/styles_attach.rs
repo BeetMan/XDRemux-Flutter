@@ -193,7 +193,10 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
         .iter()
         .map(|(t, ty, c, vf)| (*t, *ty, *c, vf.to_vec()))
         .collect();
-    if let Some(e) = exif_entries.iter_mut().find(|e| e.0 == 0x927c) {
+    if note.is_empty() {
+        // empty note => remove the MakerNote entry entirely
+        exif_entries.retain(|e| e.0 != 0x927c);
+    } else if let Some(e) = exif_entries.iter_mut().find(|e| e.0 == 0x927c) {
         e.2 = note.len() as u32;
         e.3 = note.to_vec();
     } else {
@@ -305,6 +308,25 @@ fn upsert_maker_note_in_tiff(exif_payload: &[u8], note: &[u8]) -> Result<Vec<u8>
     let mut payload: Vec<u8> = exif_payload[..prefix].to_vec();
     payload.extend_from_slice(&out);
     Ok(payload)
+}
+
+/// Remove the MakerNote entry entirely (empty 0x927c). Used before attaching
+/// when the source carries a native camera maker note whose signature would
+/// gate the style editor.
+pub fn strip_makernote(data: &mut Vec<u8>) -> Result<(), String> {
+    let parsed = isobmff::parse_source_meta(data)?;
+    let exif_id = parsed
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .map(|i| i.item_id)
+        .ok_or("no Exif item")?;
+    let payload = item_payload_bytes(data, &parsed, exif_id).ok_or("unreadable Exif payload")?;
+    let stripped = upsert_maker_note_in_tiff(&payload, b"")?;
+    if stripped != payload {
+        replace_item_payload(data, exif_id, None, &stripped)?;
+    }
+    Ok(())
 }
 
 fn merge_maker_note(data: &mut Vec<u8>) -> Result<bool, String> {
