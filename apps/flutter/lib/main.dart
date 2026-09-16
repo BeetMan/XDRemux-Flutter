@@ -1683,8 +1683,13 @@ class _HomePageState extends State<HomePage> {
       int? sdrWidth;
       int? sdrHeight;
       var sdrInput = false;
-      if (runConfig.backend == ConversionBackend.rust &&
-          runConfig.applePhotographicStyles3) {
+      // Any Apple Styles output needs the styles scaffold, so both the plain
+      // 2023 styles and PS3 route non-ProXDR inputs through the SDR entry
+      // point — otherwise they hit the ProXDR extractor and fail with
+      // "failed to locate lhdr metadata".
+      final wantsStyles =
+          runConfig.applePhotographicStyles || runConfig.applePhotographicStyles3;
+      if (runConfig.backend == ConversionBackend.rust && wantsStyles) {
         final cls = await XdRemuxService.classify(item.inputPath);
         final isOppo = (cls['mode'] as String?)?.isNotEmpty == true;
         oppoAttachFallback = isOppo;
@@ -1693,8 +1698,8 @@ class _HomePageState extends State<HomePage> {
           if (decoded == null) {
             item.status = QueueItemStatus.failed;
             item.errorMessage = t(
-              '无法解码此图片，摄影风格 3 需要可解码的图像',
-              'Cannot decode this image; Photographic Styles 3 needs a decodable photo',
+              '无法解码此图片，摄影风格需要可解码的图像',
+              'Cannot decode this image; Photographic Styles needs a decodable photo',
             );
             if (mounted) setState(() {});
             return;
@@ -1740,23 +1745,35 @@ class _HomePageState extends State<HomePage> {
         ),
       )).toMap();
 
-      // OPPO-classified but non-ProXDR (SDR, no LHDR gain map): conversion
-      // fails; fall back to the styles-attach path when PS3 is on.
+      // OPPO-classified but non-ProXDR (SDR, no LHDR gain map): there is no
+      // gain map to convert, so re-run through the SDR entry point rather than
+      // grafting items onto a container Photos would reject.
       if (oppoAttachFallback &&
-          runConfig.applePhotographicStyles3 &&
+          wantsStyles &&
+          !sdrInput &&
           result['success'] != true &&
           result['cancelled'] != true) {
-        final report = XdRemuxFFI.attachStyles(
-          item.inputPath,
-          item.outputPath,
-          grainSeed: item.inputPath.hashCode & 0x7fffffff,
-        );
-        if (report['status'] != 'error') {
-          result = {
-            'success': true,
-            'attach': true,
-            'added': report['added'],
-          };
+        final decoded = await decodeImageToRgba(item.inputPath);
+        if (decoded != null) {
+          result = (await XdRemuxService.convertWithBackend(
+            ConversionRequest(
+              id: item.id,
+              backend: runConfig.backend,
+              outputMode: runConfig.outputMode,
+              inputPath: item.inputPath,
+              outputPath: item.outputPath,
+              oppoCompat: effectiveOppoCompatibility.rustValue,
+              oppoCameraTail: effectiveOppoCameraTail.rustValue,
+              strictTmap: runConfig.strictTmap,
+              applePhotographicStyles: runConfig.applePhotographicStyles,
+              applePhotographicStyles3: runConfig.applePhotographicStyles3,
+              sdrInput: true,
+              sdrRgba: decoded.rgba,
+              sdrWidth: decoded.width,
+              sdrHeight: decoded.height,
+              progressHandle: item.progressHandle,
+            ),
+          )).toMap();
         }
       }
 
