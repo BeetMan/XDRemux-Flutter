@@ -307,25 +307,6 @@ class RustConversionBackend implements ConversionBackendAdapter {
 class SwiftConversionBackend implements ConversionBackendAdapter {
   static const MethodChannel _channel = MethodChannel('xdremux/swift-backend');
 
-  /// Re-encode any ImageIO-readable image as a native Apple HEIC container
-  /// (macOS/iOS). The styles-attach path is verified on Apple-written
-  /// containers; foreign containers are re-encoded through the platform
-  /// first. Returns the output path on success, null on failure.
-  static Future<String?> encodeHEIC(String inputPath, String outputPath) async {
-    try {
-      final r = await _channel.invokeMethod<Object?>('encodeHEIC', {
-        'inputPath': inputPath,
-        'outputPath': outputPath,
-      });
-      if (r is Map<Object?, Object?>) {
-        final ok = r['ok'];
-        if (ok == true) return outputPath;
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
   static const EventChannel _progressChannel = EventChannel(
     'xdremux/swift-backend/progress',
   );

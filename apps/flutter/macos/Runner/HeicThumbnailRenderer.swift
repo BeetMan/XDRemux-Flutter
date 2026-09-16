@@ -95,26 +95,3 @@ enum HeicThumbnailRenderer {
         return data as Data
     }
 }
-
-/// Re-encode any ImageIO-readable image as a native Apple HEIC container.
-/// Used by the styles-attach path: the contract injection is verified on
-/// Apple-written containers; foreign containers are re-encoded first.
-static func encodeHEIC(from inputPath: String, to outputPath: String) -> Bool {
-    let url = URL(fileURLWithPath: inputPath)
-    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
-        return false
-    }
-    let out = URL(fileURLWithPath: outputPath)
-    guard let dest = CGImageDestinationCreateWithURL(
-        out as CFURL, UTType.heic.identifier as CFString, 1, nil) else {
-        return false
-    }
-    let props: [CFString: Any] = [
-        kCGImageDestinationLossyCompressionQuality: 0.95,
-    ]
-    // Copy the image AND its metadata (Exif/GPS/maker) from the source so the
-    // re-encoded HEIC keeps an Exif item for the styles-attach path.
-    CGImageDestinationAddImageFromSource(dest, src, 0, props as CFDictionary)
-    return CGImageDestinationFinalize(dest)
-}
