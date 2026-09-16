@@ -113,6 +113,8 @@ static func encodeHEIC(from inputPath: String, to outputPath: String) -> Bool {
     let props: [CFString: Any] = [
         kCGImageDestinationLossyCompressionQuality: 0.95,
     ]
-    CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+    // Copy the image AND its metadata (Exif/GPS/maker) from the source so the
+    // re-encoded HEIC keeps an Exif item for the styles-attach path.
+    CGImageDestinationAddImageFromSource(dest, src, 0, props as CFDictionary)
     return CGImageDestinationFinalize(dest)
 }

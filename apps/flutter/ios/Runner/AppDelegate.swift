@@ -317,7 +317,7 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
               let props: [CFString: Any] = [
                 kCGImageDestinationLossyCompressionQuality: 0.95,
               ]
-              CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+              CGImageDestinationAddImageFromSource(dest, src, 0, props as CFDictionary)
               ok = CGImageDestinationFinalize(dest)
             }
           }
