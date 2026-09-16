@@ -1672,44 +1672,10 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Photographic Styles 3 routing. OPPO ProXDR inputs convert normally
-      // (gain map + styles scaffold come from the conversion). Non-ProXDR
-      // inputs take the SDR entry point: the platform codec decodes the file
-      // to pixels and Rust rebuilds a standard container around them, so the
-      // same scaffold is generated instead of grafting items onto a foreign
-      // container (which Photos rejects).
-      var oppoAttachFallback = false;
-      Uint8List? sdrRgba;
-      int? sdrWidth;
-      int? sdrHeight;
-      var sdrInput = false;
-      // Any Apple Styles output needs the styles scaffold, so both the plain
-      // 2023 styles and PS3 route non-ProXDR inputs through the SDR entry
-      // point — otherwise they hit the ProXDR extractor and fail with
-      // "failed to locate lhdr metadata".
-      final wantsStyles =
-          runConfig.applePhotographicStyles || runConfig.applePhotographicStyles3;
-      if (runConfig.backend == ConversionBackend.rust && wantsStyles) {
-        final cls = await XdRemuxService.classify(item.inputPath);
-        final isOppo = (cls['mode'] as String?)?.isNotEmpty == true;
-        oppoAttachFallback = isOppo;
-        if (!isOppo) {
-          final decoded = await decodeImageToRgba(item.inputPath);
-          if (decoded == null) {
-            item.status = QueueItemStatus.failed;
-            item.errorMessage = t(
-              '无法解码此图片，摄影风格需要可解码的图像',
-              'Cannot decode this image; Photographic Styles needs a decodable photo',
-            );
-            if (mounted) setState(() {});
-            return;
-          }
-          sdrInput = true;
-          sdrRgba = decoded.rgba;
-          sdrWidth = decoded.width;
-          sdrHeight = decoded.height;
-        }
-      }
+      // Photographic Styles need the styles scaffold, which only the
+      // conversion pipeline generates. Non-ProXDR inputs are decoded and
+      // rebuilt into a standard container inside Rust (see sdr_source.rs), so
+      // no input special-casing is needed here.
 
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
@@ -1737,45 +1703,9 @@ class _HomePageState extends State<HomePage> {
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
           applePhotographicStyles3: runConfig.applePhotographicStyles3,
-          sdrInput: sdrInput,
-          sdrRgba: sdrRgba,
-          sdrWidth: sdrWidth,
-          sdrHeight: sdrHeight,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
-
-      // OPPO-classified but non-ProXDR (SDR, no LHDR gain map): there is no
-      // gain map to convert, so re-run through the SDR entry point rather than
-      // grafting items onto a container Photos would reject.
-      if (oppoAttachFallback &&
-          wantsStyles &&
-          !sdrInput &&
-          result['success'] != true &&
-          result['cancelled'] != true) {
-        final decoded = await decodeImageToRgba(item.inputPath);
-        if (decoded != null) {
-          result = (await XdRemuxService.convertWithBackend(
-            ConversionRequest(
-              id: item.id,
-              backend: runConfig.backend,
-              outputMode: runConfig.outputMode,
-              inputPath: item.inputPath,
-              outputPath: item.outputPath,
-              oppoCompat: effectiveOppoCompatibility.rustValue,
-              oppoCameraTail: effectiveOppoCameraTail.rustValue,
-              strictTmap: runConfig.strictTmap,
-              applePhotographicStyles: runConfig.applePhotographicStyles,
-              applePhotographicStyles3: runConfig.applePhotographicStyles3,
-              sdrInput: true,
-              sdrRgba: decoded.rgba,
-              sdrWidth: decoded.width,
-              sdrHeight: decoded.height,
-              progressHandle: item.progressHandle,
-            ),
-          )).toMap();
-        }
-      }
 
       final cancelled =
           item.status == QueueItemStatus.cancelled ||

@@ -34,6 +34,13 @@ struct Segments {
     exif_tiff: Option<Vec<u8>>,
 }
 
+/// The JPEG's APP1 Exif as a bare TIFF, regardless of Ultra HDR support —
+/// malformed or gain-map-less JPEGs still carry capture metadata worth keeping
+/// when they are rebuilt as an SDR styles source.
+pub fn extract_exif_tiff(data: &[u8]) -> Option<Vec<u8>> {
+    walk_segments(data).ok()?.exif_tiff
+}
+
 /// Read the original JPEG's APP1 EXIF independently of Ultra HDR support.
 pub(crate) fn read_exif_payload(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
     Ok(walk_segments(data)?.exif_tiff.map(|tiff| {
