@@ -22,6 +22,26 @@ use crate::texture_styles::{inject_uri_metadata_item, texture_info_payload, TEXT
 pub const STYLES_URI: &str = "tag:apple.com,2023:photo:metadata:styles";
 pub const MATTE_MARK_URN: &str = "tag:apple.com,2026:photo:aux:semanticnosematte";
 
+/// Drop the source MakerNote from a bare TIFF so the styles scaffold can
+/// compose a fresh, complete Apple note.
+///
+/// Sources otherwise fail the Exif rewrite in one of two ways: a foreign note
+/// (Huawei writes `0x927c` twice, which the upsert rejects as a duplicate) or
+/// a partial Apple note carrying an opaque out-of-line UNDEFINED payload that
+/// the expander cannot relocate.
+pub fn strip_note_from_tiff(tiff: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(tiff.len() + 10);
+    payload.extend_from_slice(&6u32.to_be_bytes());
+    payload.extend_from_slice(b"Exif\0\0");
+    payload.extend_from_slice(tiff);
+    match upsert_maker_note_in_tiff(&payload, b"") {
+        Ok(stripped) if stripped.len() > 10 && &stripped[4..10] == b"Exif\0\0" => {
+            stripped[10..].to_vec()
+        }
+        _ => tiff.to_vec(),
+    }
+}
+
 /// TIFF payload of a container's Exif item, with the `Exif\0\0` preamble
 /// stripped. Full re-encodes carry this forward so the output keeps the
 /// original capture metadata (date, GPS, camera).
@@ -29,13 +49,14 @@ pub fn extract_exif_tiff(data: &[u8]) -> Option<Vec<u8>> {
     let parsed = isobmff::parse_source_meta(data).ok()?;
     let item = parsed.items.iter().find(|i| i.itype == "Exif")?;
     let payload = item_payload_bytes(data, &parsed, item.item_id)?;
-    if payload.len() > 10 && &payload[4..10] == b"Exif\0\0" {
-        return Some(payload[10..].to_vec());
-    }
-    if payload.len() > 6 && &payload[..6] == b"Exif\0\0" {
-        return Some(payload[6..].to_vec());
-    }
-    Some(payload)
+    let tiff = if payload.len() > 10 && &payload[4..10] == b"Exif\0\0" {
+        &payload[10..]
+    } else if payload.len() > 6 && &payload[..6] == b"Exif\0\0" {
+        &payload[6..]
+    } else {
+        &payload[..]
+    };
+    Some(strip_note_from_tiff(tiff))
 }
 
 #[derive(Debug, Clone, PartialEq)]

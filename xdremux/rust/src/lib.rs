@@ -1065,10 +1065,19 @@ fn xdremux_convert_sdr_rgba_impl(
         if let Ok(p) = unsafe { CStr::from_ptr(input_path) }.to_str() {
             if let Ok(bytes) = std::fs::read(p) {
                 exif_tiff = if bytes.starts_with(&[0xFF, 0xD8]) {
-                    uhdr_jpeg::parse(&bytes).ok().flatten().and_then(|i| i.exif_tiff)
+                    uhdr_jpeg::parse(&bytes)
+                        .ok()
+                        .flatten()
+                        .and_then(|i| i.exif_tiff)
+                        .map(|t| crate::styles_attach::strip_note_from_tiff(&t))
                 } else {
                     crate::styles_attach::extract_exif_tiff(&bytes)
                 };
+                // The platform codec already applied the source orientation to
+                // the pixels, so the carried Exif must not ask for it again.
+                if let Some(tiff) = exif_tiff.as_mut() {
+                    crate::exif::normalize_tiff_orientation(tiff);
+                }
             }
         }
     }

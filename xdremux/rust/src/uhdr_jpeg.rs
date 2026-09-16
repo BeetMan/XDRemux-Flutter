@@ -773,9 +773,26 @@ mod tests {
     }
 
     #[test]
-    fn plain_jpeg_returns_none() {
+    fn plain_jpeg_synthesizes_an_identity_gain_map() {
+        // Non-ProXDR inputs still need to reach the styles pipeline, so a
+        // plain JPEG yields an identity gain map (gain 1.0, no boost) rather
+        // than `None`. This is what lets any photo go through the conversion
+        // and pick up the full styles scaffold.
         let data = tiny_jpeg(0x33, 256);
-        assert!(parse(&data).expect("ok").is_none());
+        let info = parse(&data).expect("ok").expect("identity gain map");
+        assert_eq!(info.gainmap_jpeg, IDENTITY_GAINMAP_JPEG);
+        assert_eq!(info.meta_floats, neutral_meta_floats());
+        // Identity: no ratio above 1.0 on either side of the tone map.
+        assert_eq!(&info.meta_floats[0..3], &[1.0, 1.0, 1.0]);
+        assert_eq!(&info.meta_floats[4..7], &[1.0, 1.0, 1.0]);
+        assert_eq!(info.meta_floats[19], 0.0);
+    }
+
+    #[test]
+    fn non_jpeg_returns_none() {
+        // Only JPEG streams take the Ultra HDR route; containers are handled
+        // elsewhere.
+        assert!(parse(b"\x00\x00\x00\x18ftypheic").expect("ok").is_none());
     }
 
     /// A real, decodable 16x8 RGB baseline JPEG (Pillow, quality 85). The
