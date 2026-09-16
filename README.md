@@ -114,11 +114,28 @@ iPhone 上的实况播放与声音需按机型验收；普通照片不受影响�
   `texture_styles` 元数据与 12 个语义分区 matte，在 Apple 照片（iOS 26/27）中解锁
   **质感 / 胶片颗粒 / 光晕** 编辑；
 - 与普通摄影风格为依赖式互斥：开启摄影风格 3 自动连带普通摄影风格（原生契约要求两项共存）；
-- **任意 HEIC/HEIF 输入均可附加**摄影风格契约（不再限定 OPPO ProXDR 输入）：非 Apple
-  照片自动补齐风格状态、Apple maker note 与分区 matte；Apple 原生照片只补缺失部分，
-  不覆盖原生风格状态；Live Photo 配对静帧同样支持；
-- 已知限制：分区 matte 为纯黑占位，柔肤暂无效果（后续接入真实分割）；
-- 与 OPPO ProXDR 转换的关系：OPPO 输入走完整 HDR 转换管线，其它输入走秒级附加路径。
+- **任意照片输入均可输出摄影风格**（v0.4.2 起）：非 OPPO ProXDR 的照片不再「附加元数据到
+  原容器」（Photos 会拒绝缺 scaffold 的容器），而是**在 Rust 中重编码为完整容器**——解码
+  → 重建标准容器 → 生成完整 styles scaffold（`styledeltamap` / `linearthumbnail` /
+  `semanticmattes` / styles 项）→ 注入契约。因此**普通摄影风格与摄影风格 3 都在任意照片上可用**；
+- 解码全部在 Rust 内完成（HEIC/HEIF、JPEG、PNG），**不依赖任何平台编解码器，
+  各平台行为一致**；拍摄 EXIF（机型、时间、GPS 等）从原图恢复，方向归一化后不再二次旋转；
+- 已知限制：
+  - **HEVC 4:4:4 / 4:2:2 输入暂不支持**（iPhone 截图等，见下）；
+  - 非 OPPO 照片本身携带的 HDR 增益图不参与提升，输出为 SDR + 风格；
+  - 分区 matte 为纯黑占位，柔肤暂无效果（后续接入真实分割）；
+- 与 OPPO ProXDR 转换的关系：OPPO 输入走完整 HDR 转换管线（保留增益图），其它输入走
+  SDR 重建路径（恒等增益图，不做 HDR 提升）。
+
+### 已知局限
+
+- **iPhone 截图的 HEIC（HEVC Rext 4:4:4 10-bit）暂不能作为输入**——内置的纯 Rust
+  解码器（`heif-oxide` / `rust_h265`）目前只支持 4:2:0。相机照片通常为 4:2:0，不受影响。
+  后续计划：接入支持 4:2:0/4:2:2/4:4:4 的解码器，或按平台回退到系统解码器
+  （见 [docs/plans/sdr-decode-platform-coverage.md](docs/plans/sdr-decode-platform-coverage.md)）；
+- 非 OPPO 照片若自带 HDR 增益图，转换后会丢失 HDR（输出 SDR + 摄影风格）；
+- 摄影风格 3 的柔肤仍为占位（无真实皮肤分割）；
+- 非 Standard 风格（如「鲜艳」「暖色」）的部分调节参数尚未支持。
 
 ### Apple 人像模式
 
