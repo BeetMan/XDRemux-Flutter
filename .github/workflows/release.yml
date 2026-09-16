@@ -294,7 +294,9 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        # Pinned: v3 runs `sdkmanager tools` on new runner images where
+        # cmdline-tools 16 removed that package (00306053-style failure).
+        uses: android-actions/setup-android@v4.0.1
 
       - name: Install Android SDK and NDK
         shell: bash
