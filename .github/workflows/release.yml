@@ -302,6 +302,9 @@ jobs:
       - name: Install Android SDK and NDK
         shell: bash
         run: |
+          # The preinstalled SDK is not on PATH (setup-android was removed,
+          # see above), so use its cmdline-tools explicitly.
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "platforms;android-36" \
             "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
