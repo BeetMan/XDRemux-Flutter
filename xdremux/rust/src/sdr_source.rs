@@ -108,7 +108,88 @@ fn decode_png(data: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
 /// input that carries no ProXDR gain map, so the regular UHDR conversion path
 /// runs unchanged. The gain map is an identity (no boost) so an SDR source is
 /// not promoted to HDR.
-pub fn synthesize_sdr_source(data: &[u8]) -> Result<(Vec<u8>, ExtractedLhdr), String> {
+/// "YYYY:MM:DD HH:MM:SS" (Exif's DateTime form) for a filesystem timestamp,
+/// via Howard Hinnant's civil-from-days.
+pub fn exif_datetime_from_system(t: std::time::SystemTime) -> String {
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}:{:02}:{:02} {:02}:{:02}:{:02}",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Minimal Exif TIFF for sources that carry none (PNG, stripped JPEG).
+///
+/// The styles scaffold needs an Exif item: it patches the ExifIFD to inject the
+/// Apple MakerNote and reads DateTimeOriginal for the XMP dates. A bare IFD0
+/// with an ExifIFD pointer (holding DateTimeOriginal) is enough.
+fn minimal_exif_tiff(datetime: &str) -> Vec<u8> {
+    let mut dt = datetime.as_bytes().to_vec();
+    dt.truncate(19);
+    dt.resize(20, 0); // NUL-terminated ASCII
+
+    // header(8) | IFD0(2 + 2*12 + 4) | ExifIFD(2 + 12 + 4) | DateTime x2
+    let ifd0 = 8usize;
+    let exif_ifd = ifd0 + 2 + 2 * 12 + 4;
+    let date_off = exif_ifd + 2 + 12 + 4;
+    let original_off = date_off + 20;
+
+    let mut out = Vec::with_capacity(original_off + 20);
+    out.extend_from_slice(b"II");
+    out.extend_from_slice(&42u16.to_le_bytes());
+    out.extend_from_slice(&(ifd0 as u32).to_le_bytes());
+
+    // IFD0 entries ascend by tag: 0x0132 DateTime, then 0x8769 ExifIFD.
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&0x0132u16.to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&20u32.to_le_bytes());
+    out.extend_from_slice(&(date_off as u32).to_le_bytes());
+    out.extend_from_slice(&0x8769u16.to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&(exif_ifd as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&0x9003u16.to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&20u32.to_le_bytes());
+    out.extend_from_slice(&(original_off as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    out.extend_from_slice(&dt);
+    out.extend_from_slice(&dt);
+    debug_assert_eq!(out.len(), original_off + 20);
+    out
+}
+
+/// `fallback_datetime` ("YYYY:MM:DD HH:MM:SS") is used when the source carries
+/// no Exif at all, so the result is not stamped 1970.
+pub fn synthesize_sdr_source(
+    data: &[u8],
+    fallback_datetime: Option<&str>,
+) -> Result<(Vec<u8>, ExtractedLhdr), String> {
     let (mut rgb, mut w, mut h, oriented) = decode_to_rgb(data)?;
 
     // Exif is read independently of Ultra HDR support: a vendor JPEG with an
@@ -142,10 +223,16 @@ pub fn synthesize_sdr_source(data: &[u8]) -> Result<(Vec<u8>, ExtractedLhdr), St
         w = rw;
         h = rh;
     }
-    // The stored pixels are in presentation orientation either way.
-    if let Some(tiff) = exif_tiff.as_mut() {
-        exif::normalize_tiff_orientation(tiff);
-    }
+    // Every source needs an Exif item for the scaffold, even one that shipped
+    // without any: synthesize the minimum instead of failing downstream with
+    // "no Exif item".
+    let exif_tiff = Some(match exif_tiff {
+        Some(mut tiff) => {
+            exif::normalize_tiff_orientation(&mut tiff);
+            tiff
+        }
+        None => minimal_exif_tiff(fallback_datetime.unwrap_or("1970:01:01 00:00:00")),
+    });
 
     let container =
         uhdr_jpeg::synthesize_source_container_from_rgb(&rgb, w, h, exif_tiff, true)?;
@@ -158,4 +245,43 @@ pub fn synthesize_sdr_source(data: &[u8]) -> Result<(Vec<u8>, ExtractedLhdr), St
         manifest_entries: None,
     };
     Ok((container, extracted))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same envelope `synthesize_source_container_from_rgb` writes: a 4-byte
+    /// offset (6, landing past "Exif\0\0") then the TIFF.
+    fn prefixed(tiff: &[u8]) -> Vec<u8> {
+        let mut payload = 6u32.to_be_bytes().to_vec();
+        payload.extend_from_slice(b"Exif\0\0");
+        payload.extend_from_slice(tiff);
+        payload
+    }
+
+    /// A source without Exif (PNG, stripped JPEG) must still satisfy the
+    /// styles scaffold: it patches the ExifIFD to inject the Apple MakerNote
+    /// and would otherwise fail with "no Exif item".
+    #[test]
+    fn minimal_exif_satisfies_the_styles_scaffold() {
+        let tiff = minimal_exif_tiff("2026:01:02 03:04:05");
+        assert!(crate::exif::parse_exif_orientation(&tiff).is_ok());
+        let payload = prefixed(&tiff);
+        let note = crate::styles_scaffold::compose_styles_maker_note(&payload)
+            .expect("minimal Exif must yield a note");
+        assert!(note.starts_with(b"Apple iOS"), "fresh template expected");
+        let injected = crate::styles_scaffold::inject_maker_note(&payload, &note)
+            .expect("minimal Exif must accept the note");
+        assert!(injected.len() > payload.len());
+        // DateTimeOriginal must survive so the XMP dates are not 1970.
+        let text = String::from_utf8_lossy(&injected);
+        assert!(text.contains("2026:01:02 03:04:05"));
+    }
+
+    #[test]
+    fn system_time_formats_as_exif_datetime() {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_767_225_600);
+        assert_eq!(exif_datetime_from_system(t), "2026:01:01 00:00:00");
+    }
 }

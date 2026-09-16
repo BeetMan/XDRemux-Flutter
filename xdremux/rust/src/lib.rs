@@ -1059,8 +1059,18 @@ pub extern "C" fn xdremux_convert_with_progress(
 fn sdr_fallback(
     source: &[u8],
     wants_styles: bool,
+    input_path: &str,
 ) -> Option<Result<(Vec<u8>, container::ExtractedLhdr), String>> {
-    wants_styles.then(|| sdr_source::synthesize_sdr_source(source))
+    if !wants_styles {
+        return None;
+    }
+    // Sources without Exif inherit the file's timestamp so the output is not
+    // stamped 1970.
+    let datetime = std::fs::metadata(input_path)
+        .and_then(|m| m.modified())
+        .map(sdr_source::exif_datetime_from_system)
+        .ok();
+    Some(sdr_source::synthesize_sdr_source(source, datetime.as_deref()))
 }
 
 fn xdremux_convert_impl(
@@ -1202,52 +1212,73 @@ fn xdremux_convert_impl(
         source = synth;
         extracted
     } else if source.starts_with(&[0xFF, 0xD8]) {
-        match uhdr_jpeg::parse(&source) {
-            Ok(Some(info)) => {
-                // Primary image in HEIF must always be 4:2:0 (Main profile) so that
-                // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser libraries
-                // (heif-oxide) can decode it properly without black-screening.
-                let use_420 = true;
-                let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return ConversionResult {
-                            success: false,
-                            mode: ptr::null_mut(),
-                            family: ptr::null_mut(),
-                            edr_scale: 0.0,
-                            gain_map_max: 0.0,
-                            error_message: CString::new(format!("Ultra HDR JPEG container synthesis: {e}"))
-                                .unwrap()
-                                .into_raw(),
-                        };
-                    }
-                };
-                source = synth;
-                container::ExtractedLhdr {
-                    mode: "uhdr".into(),
-                    meta_bytes: Vec::new(),
-                    meta_floats: info.meta_floats,
-                    mask_data: None,
-                    gainmap_data: Some(info.gainmap_jpeg),
-                    manifest_entries: None,
+        // A real Ultra HDR JPEG keeps its own gain map. Everything else — a
+        // plain SDR JPEG, or one whose MPF/hdrgm metadata is malformed — is
+        // the same non-ProXDR case as a foreign container and goes through the
+        // shared SDR synthesis, so the Exif and orientation handling can never
+        // disagree between the two entry conditions.
+        let real_gain_map = matches!(
+            uhdr_jpeg::parse(&source),
+            Ok(Some(ref info)) if info.gainmap_jpeg != uhdr_jpeg::IDENTITY_GAINMAP_JPEG
+        );
+        if real_gain_map {
+            let info = match uhdr_jpeg::parse(&source) {
+                Ok(Some(info)) => info,
+                _ => unreachable!("checked above"),
+            };
+            // Primary image in HEIF must always be 4:2:0 (Main profile) so that
+            // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser
+            // libraries (heif-oxide) can decode it properly without
+            // black-screening.
+            let use_420 = true;
+            let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(format!(
+                            "Ultra HDR JPEG container synthesis: {e}"
+                        ))
+                        .unwrap()
+                        .into_raw(),
+                    };
                 }
+            };
+            source = synth;
+            container::ExtractedLhdr {
+                mode: "uhdr".into(),
+                meta_bytes: Vec::new(),
+                meta_floats: info.meta_floats,
+                mask_data: None,
+                gainmap_data: Some(info.gainmap_jpeg),
+                manifest_entries: None,
             }
-            Ok(None) | Err(_) => {
-                // Not a usable Ultra HDR JPEG: either no MPF gain map or a
-                // malformed one (some vendors ship an MPF without the hdrgm
-                // XMP). With styles requested this is still a valid SDR source,
-                // so rebuild it in Rust rather than refusing; otherwise the
-                // original reason stands.
-                if let Some(Ok((synth, extracted))) =
-                    sdr_fallback(&source, apple_photographic_styles)
-                {
+        } else {
+            match sdr_fallback(&source, apple_photographic_styles, input) {
+                Some(Ok((synth, extracted))) => {
                     source = synth;
                     extracted
-                } else {
+                }
+                Some(Err(e)) => {
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(format!("SDR styles source: {e}"))
+                            .unwrap()
+                            .into_raw(),
+                    };
+                }
+                None => {
                     let reason = match uhdr_jpeg::parse(&source) {
                         Err(e) => format!("Ultra HDR JPEG parse: {e}"),
-                        Ok(_) => "JPEG input requires an Ultra HDR gain map (MPF); plain JPEG is not supported".to_string(),
+                        _ => "JPEG input requires an Ultra HDR gain map (MPF); plain JPEG is not supported".to_string(),
                     };
                     return ConversionResult {
                         success: false,
@@ -1270,7 +1301,7 @@ fn xdremux_convert_impl(
                 // — so decode the image in Rust and rebuild one around it
                 // instead of failing. Without styles there is nothing to do for
                 // a foreign SDR photo, so the original error stands.
-                match sdr_fallback(&source, apple_photographic_styles) {
+                match sdr_fallback(&source, apple_photographic_styles, input) {
                     Some(Ok((synth, extracted))) => {
                         source = synth;
                         extracted
