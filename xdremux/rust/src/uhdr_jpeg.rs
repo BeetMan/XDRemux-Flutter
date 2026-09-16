@@ -313,7 +313,7 @@ fn hdrgm_to_meta_floats(h: &Hdrgm) -> Result<Vec<f32>, String> {
 /// with an MPF gain map (plain JPEGs, HEICs, etc.).
 /// Minimal 1×1 gray JPEG used as an identity gain map for SDR inputs
 /// (gain 1.0 = no HDR boost, the pipeline treats it as base = HDR).
-const IDENTITY_GAINMAP_JPEG: &[u8] = &[
+pub const IDENTITY_GAINMAP_JPEG: &[u8] = &[
     0xFF,0xD8,0xFF,0xE0,0x00,0x10,0x4A,0x46,0x49,0x46,0x00,0x01,0x01,0x00,0x00,0x01,
     0x00,0x01,0x00,0x00,0xFF,0xDB,0x00,0x43,0x00,0x03,0x02,0x02,0x03,0x02,0x02,0x03,
     0x02,0x02,0x03,0x03,0x03,0x03,0x04,0x03,0x03,0x04,0x05,0x08,0x05,0x05,0x04,0x04,
@@ -338,7 +338,7 @@ const IDENTITY_GAINMAP_JPEG: &[u8] = &[
 ];
 
 /// Neutral 20-float metadata for an identity gain map (gain 1.0, no boost).
-fn neutral_meta_floats() -> Vec<f32> {
+pub fn neutral_meta_floats() -> Vec<f32> {
     let eps = 1.0 / 64.0;
     vec![
         1.0, 1.0, 1.0,  // ratio_min
@@ -420,6 +420,22 @@ pub fn synthesize_source_container(
         orientation,
     )
     .map_err(|e| format!("Ultra HDR base JPEG orientation failed: {e}"))?;
+    synthesize_source_container_from_rgb(&rgb, width, height, info.exif_tiff.clone(), use_420)
+}
+
+/// Build the same standard HEIC source container from pixels a caller already
+/// decoded (and already rotated into presentation orientation). Used for
+/// non-ProXDR inputs — the platform codec decodes any format to RGBA, the
+/// caller drops alpha, and this produces the container the styles pipeline
+/// expects (`tmap` + gain grid come later from the normal conversion path).
+pub fn synthesize_source_container_from_rgb(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    exif_tiff: Option<Vec<u8>>,
+    use_420: bool,
+) -> Result<Vec<u8>, String> {
+    let rgb = rgb.to_vec();
     let cols = width.div_ceil(TILE_SIZE).max(1);
     let rows = height.div_ceil(TILE_SIZE).max(1);
     let total_tiles = (cols * rows) as usize;
@@ -468,8 +484,7 @@ pub fn synthesize_source_container(
     // ---- ids ----
     let grid_id: u32 = 1;
     let first_tile_id: u32 = 2;
-    let exif_id: Option<u32> = info
-        .exif_tiff
+    let exif_id: Option<u32> = exif_tiff
         .as_ref()
         .map(|_| first_tile_id + total_tiles as u32);
 
@@ -563,7 +578,7 @@ pub fn synthesize_source_container(
     // ---- Exif payload (Apple-native convention: 4-byte offset value 6 +
     // "Exif\0\0" + TIFF, so libheif/ImageIO land on the TIFF header —
     // a bare value-4 prefix makes libheif skip 8 bytes and fail) ----
-    let exif_payload: Option<Vec<u8>> = info.exif_tiff.as_ref().map(|tiff| {
+    let exif_payload: Option<Vec<u8>> = exif_tiff.as_ref().map(|tiff| {
         let mut p = Vec::with_capacity(tiff.len() + 10);
         p.extend_from_slice(&6u32.to_be_bytes());
         p.extend_from_slice(b"Exif\0\0");

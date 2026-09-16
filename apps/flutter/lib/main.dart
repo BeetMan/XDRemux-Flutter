@@ -1672,49 +1672,37 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Styles-attach path: PS3 on + non-OPPO input (no capture-mode
-      // UserComment) skips the ProXDR conversion and grafts the styles
-      // contract onto the existing container instead. OPPO-classified inputs
-      // try the full conversion first; OPPO SDR photos (no LHDR gain map)
-      // fall back to attach on conversion failure.
+      // Photographic Styles 3 routing. OPPO ProXDR inputs convert normally
+      // (gain map + styles scaffold come from the conversion). Non-ProXDR
+      // inputs take the SDR entry point: the platform codec decodes the file
+      // to pixels and Rust rebuilds a standard container around them, so the
+      // same scaffold is generated instead of grafting items onto a foreign
+      // container (which Photos rejects).
       var oppoAttachFallback = false;
+      Uint8List? sdrRgba;
+      int? sdrWidth;
+      int? sdrHeight;
+      var sdrInput = false;
       if (runConfig.backend == ConversionBackend.rust &&
           runConfig.applePhotographicStyles3) {
         final cls = await XdRemuxService.classify(item.inputPath);
         final isOppo = (cls['mode'] as String?)?.isNotEmpty == true;
         oppoAttachFallback = isOppo;
         if (!isOppo) {
-          // Phase 2a: platform-encode to a native Apple HEIC container first
-          // (the contract attach is verified on Apple-written containers);
-          // foreign containers (Huawei etc.) are re-encoded through ImageIO.
-          var attachSource = item.inputPath;
-          if (Platform.isMacOS || Platform.isIOS) {
-            final pre = '${item.outputPath}.pre.heic';
-            final heic = await SwiftConversionBackend.encodeHEIC(
-              item.inputPath,
-              pre,
-            );
-            if (heic != null) attachSource = heic;
-          }
-          final report = XdRemuxFFI.attachStyles(
-            attachSource,
-            item.outputPath,
-            grainSeed: item.inputPath.hashCode & 0x7fffffff,
-          );
-          if (report['status'] == 'error') {
+          final decoded = await decodeImageToRgba(item.inputPath);
+          if (decoded == null) {
             item.status = QueueItemStatus.failed;
             item.errorMessage = t(
-              '风格附加失败：${report['message']}',
-              'Style attach failed: ${report['message']}',
+              '无法解码此图片，摄影风格 3 需要可解码的图像',
+              'Cannot decode this image; Photographic Styles 3 needs a decodable photo',
             );
             if (mounted) setState(() {});
             return;
           }
-          item.status = QueueItemStatus.converted;
-          item.errorMessage = null;
-          if (mounted) setState(() {});
-          _updateCheckpointForItem(item);
-          return;
+          sdrInput = true;
+          sdrRgba = decoded.rgba;
+          sdrWidth = decoded.width;
+          sdrHeight = decoded.height;
         }
       }
 
@@ -1744,6 +1732,10 @@ class _HomePageState extends State<HomePage> {
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
           applePhotographicStyles3: runConfig.applePhotographicStyles3,
+          sdrInput: sdrInput,
+          sdrRgba: sdrRgba,
+          sdrWidth: sdrWidth,
+          sdrHeight: sdrHeight,
           progressHandle: item.progressHandle,
         ),
       )).toMap();

@@ -232,6 +232,17 @@ class XdRemuxFFI {
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, ffi.Uint32),
       ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>, int)>('xdremux_convert_with_progress');
 
+  static final _convertSdrRgba = _lib.lookupFunction<
+      ConversionResult Function(ffi.Pointer<Utf8>, ffi.Pointer<ffi.Uint8>, ffi.Uint32,
+          ffi.Uint32, ffi.Pointer<Utf8>, ffi.Pointer<ConvertConfig>),
+      ConversionResult Function(
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ffi.Uint8>,
+          int,
+          int,
+          ffi.Pointer<Utf8>,
+          ffi.Pointer<ConvertConfig>)>('xdremux_convert_sdr_rgba');
+
   static final _progressBegin = _lib.lookupFunction<
       ffi.Uint32 Function(),
       int Function()>('xdremux_progress_begin');
@@ -656,6 +667,44 @@ class XdRemuxFFI {
 
   /// Styles attach for non-OPPO HEIC inputs. Returns
   /// {status: attached|already-complete|error, added: [...], message?}.
+  /// Convert a non-ProXDR input from pixels the platform codec decoded.
+  ///
+  /// `rgba` is tightly packed `width * height * 4` and is only read for the
+  /// duration of the call; `inputPath` is used solely to carry the original
+  /// Exif forward into the output.
+  static ConversionResult convertSdrRgba(
+    String inputPath,
+    Uint8List rgba,
+    int width,
+    int height,
+    String outputPath, {
+    int oppoCompat = 0,
+    int oppoCameraTail = 0,
+    bool strictTmap = false,
+    bool applePhotographicStyles = false,
+    bool applePortrait = false,
+  }) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    final cfg = calloc<ConvertConfig>();
+    final buf = calloc<ffi.Uint8>(rgba.length);
+    try {
+      buf.asTypedList(rgba.length).setAll(0, rgba);
+      cfg.ref
+        ..oppoCompat = oppoCompat
+        ..oppoCameraTail = oppoCameraTail
+        ..strictTmap = strictTmap ? 1 : 0
+        ..applePhotographicStyles = applePhotographicStyles ? 1 : 0
+        ..applePortrait = applePortrait ? 1 : 0;
+      return _convertSdrRgba(a, buf, width, height, b, cfg);
+    } finally {
+      calloc.free(a);
+      calloc.free(b);
+      calloc.free(cfg);
+      calloc.free(buf);
+    }
+  }
+
   static Map<String, dynamic> attachStyles(
     String inputPath,
     String outputPath, {

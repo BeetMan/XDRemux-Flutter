@@ -1007,6 +1007,98 @@ pub extern "C" fn xdremux_inspect(input_path: *const c_char) -> ConversionResult
 /// Allocate a progress handle and bind it to the calling thread. The UI calls
 /// this on the main isolate, passes the handle to the worker, then polls with
 /// [xdremux_read_progress_for]. Release with [xdremux_progress_end].
+/// Convert a non-ProXDR input whose pixels the caller already decoded.
+///
+/// The platform image codec decodes any format (HEIC, JPEG, PNG, …) to RGBA;
+/// the caller drops alpha (stride = `width * 4`) and this synthesizes the same
+/// standard HEIC container the OPPO path produces — including an identity gain
+/// map, so `tmap` + gain grid appear and the styles scaffold can run — then
+/// runs the unchanged conversion pipeline.
+///
+/// `input_path` is only read to carry the original Exif forward when it holds
+/// one; it is never used as image data.
+#[no_mangle]
+pub extern "C" fn xdremux_convert_sdr_rgba(
+    input_path: *const c_char,
+    rgba: *const u8,
+    width: u32,
+    height: u32,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+) -> ConversionResult {
+    progress::begin_progress();
+    let result = xdremux_convert_sdr_rgba_impl(input_path, rgba, width, height, output_path, config);
+    progress::end_progress();
+    result
+}
+
+fn xdremux_convert_sdr_rgba_impl(
+    input_path: *const c_char,
+    rgba: *const u8,
+    width: u32,
+    height: u32,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+) -> ConversionResult {
+    let fail = |message: String| ConversionResult {
+        success: false,
+        mode: ptr::null_mut(),
+        family: ptr::null_mut(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: CString::new(message).unwrap().into_raw(),
+    };
+    if rgba.is_null() || width == 0 || height == 0 {
+        return fail("SDR convert: empty pixel buffer".into());
+    }
+    let pixels = (width as usize) * (height as usize) * 4;
+    let rgba = unsafe { std::slice::from_raw_parts(rgba, pixels) };
+    // RGBA -> RGB (the container stores 3-byte pixels).
+    let mut rgb = Vec::with_capacity((width as usize) * (height as usize) * 3);
+    for px in rgba.chunks_exact(4) {
+        rgb.extend_from_slice(&px[..3]);
+    }
+
+    // Carry the original capture metadata forward when the source is readable.
+    let mut exif_tiff: Option<Vec<u8>> = None;
+    if !input_path.is_null() {
+        if let Ok(p) = unsafe { CStr::from_ptr(input_path) }.to_str() {
+            if let Ok(bytes) = std::fs::read(p) {
+                exif_tiff = if bytes.starts_with(&[0xFF, 0xD8]) {
+                    uhdr_jpeg::parse(&bytes).ok().flatten().and_then(|i| i.exif_tiff)
+                } else {
+                    crate::styles_attach::extract_exif_tiff(&bytes)
+                };
+            }
+        }
+    }
+
+    let container = match uhdr_jpeg::synthesize_source_container_from_rgb(
+        &rgb,
+        width,
+        height,
+        exif_tiff,
+        true,
+    ) {
+        Ok(c) => c,
+        Err(e) => return fail(format!("SDR source container: {e}")),
+    };
+    let extracted = container::ExtractedLhdr {
+        mode: "uhdr".into(),
+        meta_bytes: Vec::new(),
+        meta_floats: uhdr_jpeg::neutral_meta_floats(),
+        mask_data: None,
+        gainmap_data: Some(uhdr_jpeg::IDENTITY_GAINMAP_JPEG.to_vec()),
+        manifest_entries: None,
+    };
+    xdremux_convert_impl_inner(
+        input_path,
+        output_path,
+        config,
+        Some((container, extracted)),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn xdremux_progress_begin() -> u32 {
     progress::begin_progress()
@@ -1054,6 +1146,19 @@ fn xdremux_convert_impl(
     input_path: *const c_char,
     output_path: *const c_char,
     config: *const ConvertConfig,
+) -> ConversionResult {
+    xdremux_convert_impl_inner(input_path, output_path, config, None)
+}
+
+/// Convert with an optional pre-decoded source. Non-ProXDR inputs are decoded
+/// by the platform codec (see `xdremux_convert_sdr_rgba`); the caller supplies
+/// the synthesized standard container plus its gain-map descriptor so the
+/// regular UHDR path runs unchanged.
+fn xdremux_convert_impl_inner(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+    predecoded: Option<(Vec<u8>, container::ExtractedLhdr)>,
 ) -> ConversionResult {
     let (
         oppo_compat,
@@ -1136,31 +1241,36 @@ fn xdremux_convert_impl(
 
     // 1. Read source HEIC bytes before parsing. This permits a clear rejection
     // for already-lossy ISO inputs instead of attempting an invalid promotion.
-    let source = match std::fs::read(input) {
-        Ok(d) => d,
-        Err(e) => {
+    let source = match &predecoded {
+        Some((synth, _)) => synth.clone(),
+        None => match std::fs::read(input) {
+            Ok(d) => d,
+            Err(e) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!("cannot read input: {e}"))
+                        .unwrap()
+                        .into_raw(),
+                };
+            }
+        },
+    };
+
+    if predecoded.is_none() {
+        if let Err(error) = reject_lossy_gainmap_promotion(&source, oppo_compat) {
             return ConversionResult {
                 success: false,
                 mode: ptr::null_mut(),
                 family: ptr::null_mut(),
                 edr_scale: 0.0,
                 gain_map_max: 0.0,
-                error_message: CString::new(format!("cannot read input: {e}"))
-                    .unwrap()
-                    .into_raw(),
+                error_message: CString::new(error).unwrap().into_raw(),
             };
         }
-    };
-
-    if let Err(error) = reject_lossy_gainmap_promotion(&source, oppo_compat) {
-        return ConversionResult {
-            success: false,
-            mode: ptr::null_mut(),
-            family: ptr::null_mut(),
-            edr_scale: 0.0,
-            gain_map_max: 0.0,
-            error_message: CString::new(error).unwrap().into_raw(),
-        };
     }
 
     // 2. Extract source metadata from the already-read bytes. Ultra HDR
@@ -1175,7 +1285,7 @@ fn xdremux_convert_impl(
     // usable one falls through to the unchanged paths below.
     let raw_source = source;
     let mut source = raw_source.clone();
-    let src_image_base = if apple_portrait {
+    let src_image_base = if apple_portrait && predecoded.is_none() {
         portrait_src_image_base(&source)
     } else {
         None
@@ -1185,7 +1295,10 @@ fn xdremux_convert_impl(
     } else {
         portrait::BaseOrigin::OppoPrimary
     };
-    let extracted = if let Some((synth, extracted)) = src_image_base {
+    let extracted = if let Some((synth, extracted)) = predecoded {
+        source = synth;
+        extracted
+    } else if let Some((synth, extracted)) = src_image_base {
         source = synth;
         extracted
     } else if source.starts_with(&[0xFF, 0xD8]) {

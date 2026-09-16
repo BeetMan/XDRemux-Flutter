@@ -1,11 +1,42 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
+import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 
 import '../ffi/xdremux_ffi.dart';
 import '../models/app_models.dart';
 import '../l10n/l10n.dart';
+
+/// Decode any image format the platform codec understands (HEIC, JPEG, PNG,
+/// …) into tightly packed RGBA. This is what lets non-ProXDR photos reach the
+/// Rust pipeline without a per-platform native bridge: Skia/ImageIO/MediaCodec
+/// supply the decoder, Rust rebuilds the container and the styles contract.
+Future<({Uint8List rgba, int width, int height})?> decodeImageToRgba(
+  String path,
+) async {
+  try {
+    final bytes = await File(path).readAsBytes();
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (data == null) return null;
+      return (
+        rgba: data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        width: image.width,
+        height: image.height,
+      );
+    } finally {
+      image.dispose();
+      codec.dispose();
+    }
+  } catch (_) {
+    return null;
+  }
+}
 
 /// One conversion request shared by all backend implementations.
 class ConversionRequest {
@@ -20,6 +51,16 @@ class ConversionRequest {
   final bool applePhotographicStyles;
   final bool applePortrait;
   final bool applePhotographicStyles3;
+  /// Input is not ProXDR (no OPPO/Ultra HDR gain map). With Photographic
+  /// Styles 3 the backend decodes it through the platform codec and runs the
+  /// SDR entry point, which synthesizes the standard container itself.
+  final bool sdrInput;
+  /// Pixels the platform codec decoded for [sdrInput] requests. Decoding runs
+  /// on the main isolate (`ui.Image` is not sendable); only the resulting
+  /// byte buffer crosses into the conversion isolate.
+  final Uint8List? sdrRgba;
+  final int? sdrWidth;
+  final int? sdrHeight;
   final AppleWatermarkPolicy appleWatermarkPolicy;
   final int progressHandle;
 
@@ -35,6 +76,10 @@ class ConversionRequest {
     this.applePhotographicStyles = false,
     this.applePortrait = false,
     this.applePhotographicStyles3 = false,
+    this.sdrInput = false,
+    this.sdrRgba,
+    this.sdrWidth,
+    this.sdrHeight,
     this.appleWatermarkPolicy = AppleWatermarkPolicy.preserve,
     this.progressHandle = 0,
   });
@@ -168,7 +213,19 @@ class RustConversionBackend implements ConversionBackendAdapter {
     final effectiveStyles =
         request.applePhotographicStyles || request.applePhotographicStyles3;
     final result = await Isolate.run(() {
-      final ffiResult = request.progressHandle != 0
+      final ffiResult = request.sdrInput
+          ? XdRemuxFFI.convertSdrRgba(
+              request.inputPath,
+              request.sdrRgba!,
+              request.sdrWidth!,
+              request.sdrHeight!,
+              request.outputPath,
+              oppoCompat: effectiveOppoCompat,
+              oppoCameraTail: effectiveOppoCameraTail,
+              strictTmap: request.strictTmap,
+              applePhotographicStyles: effectiveStyles,
+            )
+          : request.progressHandle != 0
           ? XdRemuxFFI.convertWithProgress(
               request.inputPath,
               request.outputPath,
@@ -216,8 +273,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
       request.outputPath,
       applePhotographicStyles: request.applePhotographicStyles,
       applePortrait: request.applePortrait,
-    );
-    if (!outputValid) {
+    );    if (!outputValid) {
       return result.copyWith(
         success: false,
         outputValid: false,

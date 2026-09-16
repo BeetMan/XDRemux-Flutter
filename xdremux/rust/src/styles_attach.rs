@@ -22,6 +22,22 @@ use crate::texture_styles::{inject_uri_metadata_item, texture_info_payload, TEXT
 pub const STYLES_URI: &str = "tag:apple.com,2023:photo:metadata:styles";
 pub const MATTE_MARK_URN: &str = "tag:apple.com,2026:photo:aux:semanticnosematte";
 
+/// TIFF payload of a container's Exif item, with the `Exif\0\0` preamble
+/// stripped. Full re-encodes carry this forward so the output keeps the
+/// original capture metadata (date, GPS, camera).
+pub fn extract_exif_tiff(data: &[u8]) -> Option<Vec<u8>> {
+    let parsed = isobmff::parse_source_meta(data).ok()?;
+    let item = parsed.items.iter().find(|i| i.itype == "Exif")?;
+    let payload = item_payload_bytes(data, &parsed, item.item_id)?;
+    if payload.len() > 10 && &payload[4..10] == b"Exif\0\0" {
+        return Some(payload[10..].to_vec());
+    }
+    if payload.len() > 6 && &payload[..6] == b"Exif\0\0" {
+        return Some(payload[6..].to_vec());
+    }
+    Some(payload)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachReport {
     /// "attached" | "already-complete"
