@@ -293,10 +293,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        # Pinned: v3 runs `sdkmanager tools` on new runner images where
-        # cmdline-tools 16 removed that package (00306053-style failure).
-        uses: android-actions/setup-android@v4.0.1
+      # android-actions/setup-android is skipped on purpose: on current runner
+      # images it installs cmdline-tools 20.0 and then runs `sdkmanager tools`,
+      # a package removed from the SDK repository, and fails unconditionally.
+      # The preinstalled SDK's sdkmanager already handles the explicit
+      # package installs below.
 
       - name: Install Android SDK and NDK
         shell: bash
