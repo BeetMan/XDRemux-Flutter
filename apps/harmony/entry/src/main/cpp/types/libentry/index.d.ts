@@ -55,6 +55,7 @@ export interface Progress {
 export const version: () => Promise<string>;
 export const classify: (path: string) => Promise<ClassificationResult>;
 export const inspect: (path: string) => Promise<string>;
+export const motionInspect: (path: string) => Promise<string>;
 export const convert: (
   inputPath: string,
   outputPath: string,

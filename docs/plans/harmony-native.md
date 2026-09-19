@@ -1,7 +1,7 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-14 用户确认 code40003 所选图片导出可用，现授权开发设置页；主 Agent 规划和验收，Luna Max 子 Agent 具体执行。当前范围与验证边界见 §9–§11。
-当前基线：`b8341a6` 加 code40003 未提交修复；原始计划基线 v0.4.0 / `b9531ee`。开发分支：`feat/harmony-native`。
+状态：2026-09-19 code40007 Motion Photo 按需识别与信息展示已完成主机验证和 unsigned 构建，详情见 §14。code40004 设置和 code40005 队列恢复保留待真机验收状态；主 Agent 规划审查，Luna Max 实施。
+当前基线：`e30721b`（含 code40004 设置）。开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
 
@@ -271,3 +271,73 @@ P0 补充检查（本批并行进行）：
 - DevEco CLI 最终构建成功，`git diff --check` 通过。修正过 Preferences 上下文类型导致的首次编译错误；日志已保留。
 - HAP：外部 `harmony-native/p2-settings/entry-default-unsigned-code40004.hap`，4,972,132 字节，SHA-256 `291784E5383DAC191C120D937B63C1D769B654FF1A9658DEE1C5B1C5915792F5`。父 Agent 从 HAP 独立读取元数据确认 bundle `io.github.beetman.xdremux.native`、0.4.0 / 40004、兼容/目标 API18、compile SDK26.0.0.105；包内核心哈希仍 `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`。
 - 新版尚未签名、安装或运行，未提交/推送。本地签名后按外部 `p2-settings/DEVICE_CHECKLIST.md` 复测设置保存/取消、重启保留、运行中保存不改当前任务、Apple 功能和导出回归。队列重启恢复与跨会话清理仍未实现。
+
+## 12. P2 队列恢复与沙箱清理（2026-09-16）
+
+- 用户无暇真机验证但明确授权继续；不等待重复确认，也不把设置/异常场景记为已验收。使用 `e30721b` 的新 worktree，保留原 main 工作区。
+- 队列记录持久化：保存稳定 ID、输入、结果与当次模式摘要、文件归属、任务状态。bigint 用字符串编码并严格解码；启动先校验 schema、重复 ID、路径边界和文件存在性。中断项不自动重跑，明确等待用户重试/继续；缺失结果不可显示为有效可导出。
+- 关键状态与文件分配/发布变更保存；250ms 进度不逐帧落盘。必要状态持久化失败应显错并停止后续任务，不能悄悄继续到无法恢复的状态。
+- 提供沙箱文件占用与清理未被任务引用文件入口。删除范围限独立应用自有 inputs/outputs，严格验证路径；不删除源 URI、系统导出文件或其他任务文件。存在转换、导入、导出、恢复或保存操作时禁止清理；损坏恢复数据不得触发自动清理或静默覆盖。
+- 删除与持久化考虑部分失败和中断，保留明确错误及重试入口；当前结果和输入仍归相应任务所有。已存在无队列记录的旧版沙箱文件仅作为可显式清理的孤儿文件。
+- 测试覆盖记录往返/非法数据、ID 冲突、文件缺失、中断恢复、持久化失败、删除隔离和活动任务清理保护。保留设置与导出回归，DevEco CLI unsigned 构建 code40005，不自动签名安装、提交或推送。
+- `.so` 固定复用此前暂存产物：原目录 `apps/harmony/entry/libs/arm64-v8a/libxdremux_core.so`，未剥离 hash `D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`；原 main 的 target 核心已变化，本批不采用。新 worktree 通过既有 prepare_harmony_native.ps1 显式 CorePath 暂存，不重新构建 Rust。
+- 产物/日志保留外部 `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/p2-recovery/`。
+
+### 本批实现与主机验证
+
+- 已接入启动恢复、关键状态串行保存、读写失败重试、损坏记录备份后新建空队列，以及输入/输出占用和显式未引用产物清理。恢复完成并成功保存校正状态之前禁用文件操作；中断任务不自动继续。
+- 保存失败会锁存错误、停止后续调度并保留内存中的成功结果；重试保存成功后方可继续。删除意图先落盘，再清理归属文件，最后删除记录；部分失败保留可重试删除记录。导出图片成功但记录失败有独立提示。
+- 路径清理校验直接父目录及叶子，拒绝符号链接、越界、重复归属和临时结果冒充成功；清理期间锁住文件操作，保留所有当前任务引用。损坏记录不会触发自动清理。
+- 父 Agent 独立运行五份主机测试全部通过：settings_model_test.mjs、p2_queue_controller_test.mjs、p2_queue_controller_persistence_test.mjs、queue_persistence_test.mjs、queue_sandbox_test.mjs。覆盖保存错误锁存/显式重试、结果保留、删除前保存、进度不逐帧写入、恢复等待旧写入，以及 bigint/schema/路径/文件缺失/部分删除等。证据为外部 p2-recovery/parent-*.log。
+- 这些是生产控制器与模型使用 IO/执行替身的主机测试，不代表真实 Harmony FileIO、ArkUI 或 Rust 转换的设备验证。code40004 设置和本批恢复/清理真机验收均保持待办。
+- DevEco CLI 最终构建成功（build-p2-recovery-final2.log）；编译中修正了平台 TextEncoder 导入和适配器语法，失败日志保留。git diff --check 通过。unsigned HAP 为 p2-recovery/entry-default-unsigned-code40005-p2-recovery.hap，5,142,596 字节，SHA-256 E5470CB6D1C75E373310406AD78CB020A40060C74A3C9ECA76459D2AAABCA9DF。
+- 父 Agent 独立读取 HAP：bundle io.github.beetman.xdremux.native，versionName 0.4.0 / code40005，兼容/目标 API18、compile SDK26.0.0.105；核心 3,243,576 字节 / hash659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7，与旧验证核心一致。Rust/C++ 未修改，原 main 工作区状态仍仅未跟踪 apps/harmony/。
+- 本批未签名、安装、运行设备、提交或推送。后续真机验收按外部 p2-recovery/DEVICE_CHECKLIST.md；开发下一批可规划批量导出，后台与实况仍另行分阶段处理。
+
+## 13. P3 首批：批量导出（2026-09-18 启动，2026-09-19 完成构建）
+
+- 在 feat/harmony-native worktree 的既有 code40005 未提交修改上继续，保留所有恢复和清理实现。工作目录仍为 C:/Users/Beet/Documents/XDRemux-Harmony-Native；不写原 main 工作区。
+- 本批只扩展已有图片结果批量导出；系统选择器一次授权、逐项串行写入、逐项结果与最终摘要。实施前通过 devecocli docs 核实 API18 多文件保存、返回 URI 对应关系和平台限制。
+- 固定本批任务/结果/命名快照，排除运行、清理失败和被文件操作占用项。未导出结果优先；失败重转换保留的有效旧输出允许导出，不能把当前失败误报为新结果成功。
+- 所有返回 URI 在写入前验证数量与唯一性，保护源文件、沙箱文件与非空既有目标；重名使用唯一导出名。单项写入失败可继续后项，取消和停止后续有明确统计。文件写入关闭成功与队列状态保存成功分别报告，持久化失败立即停止后续且保留结果。
+- 选择器和批量期间锁住相冲突的转换/导入/删除/清理；停止只阻止后续，当前文件自然完成。批次不自动在重启后继续，不承诺后台能力；需要处理选择器生命周期而非误判为主动离开。
+- 主机测试覆盖快照/顺序、双启动、取消/停止、URI 数量与重复、写入失败隔离、保存失败保留、锁释放和计数。保留现有五套回归，devecocli 构建 code40006 unsigned。
+- 不改 Rust/C++/签名；继续使用已有暂存核心（HAP 剥离 hash659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7）。不自动安装、提交或推送。产物/日志放外部 harmony-native/p3-batch-export/；旧版及本版真机验收仍待办。
+
+### P3 批量导出实现说明
+
+- 以唯一 ASCII 文件名和 URI 解码后的叶名匹配目标，不依赖保存选择器返回顺序。数量、重复、未知文件名或源/沙箱路径冲突在任何写入前拒绝；平台自动改名而无法准确对应时提示使用单项导出。
+- 单项和批量共用注入式文件复制逻辑：目标仅以 WRITE_ONLY 打开，已有非空内容拒绝写入；校验输入/复制后大小并关闭 FD 后才计作已写入。系统在 API18 预创建空文件，失败或停止可能留下空/部分目标，应用不会自动删除系统目标文件。
+- BatchExportEntry 区分物理复制完成和队列记录保存，后者失败保留已写入事实并停止后续。批次只在当前前台会话执行；重启保留成功转换和记录，但不自动重跑批次。图片写入与队列 JSON 不构成跨系统原子事务，进程恰在两者之间退出时，需要核对目标，未记录的已写入图片可能再次被导出。
+- 批量 external 锁预校验全部 ID 后一次变更/保存；解除锁也统一保存。导出中的成功转换在重启恢复时保留成功状态和结果，只有缺失/不安全结果、转换中断或清理中断按相应失败处理。
+- picker 引起的暂时隐藏不会立即停止批次；返回后等待 onPageShow 才写入，真实离开/销毁页面停止后续，正在写入项自然收尾。UI 刷新异常不跳过文件复制后的记录保存。
+
+### P3 主机验证与构建结果（2026-09-19）
+
+- 父 Agent 独立运行七份测试通过：原有设置、队列、队列持久化、恢复记录、沙箱五份，加 batch_export_edge_test.mjs 和 p3_batch_export_test.mjs。覆盖 URI 乱序/编码/数量/重复/全队列保护、批量锁原子性与单次保存、复制串行/失败隔离、停止、已写入但记录失败、UI 回调异常隔离、成功结果中断恢复、共享 FD 复制及关闭。主机证据为外部 p3-batch-export/parent-*.log。
+- devecocli 最终构建通过（build-p3-final.log），git diff --check 通过。首次编译发现并修复了 ArkTS 内联对象类型限制；失败日志保留。
+- unsigned HAP：p3-batch-export/entry-default-unsigned-code40006-p3-batch-export.hap，5,216,822 字节，SHA256 1B46028F3BAAC3448D588630FD7BFBA29FEBDE046E9367B98436B5289D7317D2。
+- 父从交付 HAP 独立核对：bundle io.github.beetman.xdremux.native，0.4.0/code40006，兼容/目标 API18，compile SDK26.0.0.105。包内 Rust 核心 3,243,576 字节，hash659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7，与原验证核心一致。证据 parent-artifact-verification.json。
+- 未签名、安装、执行设备验证、提交或推送。真实 picker 多文件返回/改名、前后台时序、ArkUI 状态和实际用户目录写入仍按 DEVICE_CHECKLIST.md 待验收；host IO 替身测试不覆盖平台实现。原 main 工作区仍仅有未跟踪 apps/harmony/，未受本批修改。
+
+- 独立 Luna 只读复核生命周期、全批锁释放、picker 先返回后 onPageShow、销毁中断与新批次刷新，未发现新增确定性问题；该审查不替代真实设备事件时序验证。
+
+## 14. P3 小批：Motion Photo 识别与信息展示（2026-09-19，构建完成）
+
+- 用户要求下一步“先推进一部分”，本批只做按需识别当前任务的沙箱输入及展示结果，不做拆分、视频写出、Live Photo配对、系统相册或后台。
+- 继续原生worktree/feat/harmony-native，保留40005/40006未提交修改；Luna Max实现，父规划审查和独立验证。
+- 核验现有.so的xdremux_motion_photo_inspect导出；仅新增既有ABI的异步N-API桥接，返回char*通过xdremux_free_string恰当释放，复用核心互斥和异常/Promise资源回收。Rust源和.so保持不变，绝不传picker URI。
+- 按需按钮操作，不在每项导入时额外全文件读取；使用已物化inputPath和文件操作锁，禁止与转换、导入、导出、清理冲突。错误独立于转换状态，保留成功结果。缓存只在当前会话、绑定任务ID和inputPath，切换选中/重新导入不能串项，重启需重新识别。
+- 显示未检测、检测中、未识别出支持的Motion Photo结构、已识别实况和识别失败。false且含errorMessage属于错误，不可当作普通图。可选音频信息缺省属于未知，不得当作无音频；无证据时不宣称图库Live Photo兼容。
+- 展示来源类型、静态/视频字节范围或大小、可用的视频尺寸/时长/帧率/音频信息。严格校验对象、布尔/字符串类型、有限安全整数、区间及实际沙箱文件大小；超JS整数精度拒绝而非舍入。未知来源保留可读原值，媒体扩展字段缺省兼容旧核心。
+- 新模型边界测试与异步状态/缓存隔离审查，加既有七套回归、devecocli unsigned40007构建。产物/日志外部harmony-native/p3-motion-inspect/；未签名安装、提交或推送。识别与既有功能真机验收继续待办。
+### Motion Photo 实现与验证结果
+
+- 已实现异步 motionInspect、按需按钮、会话缓存和信息展示。仅读取已物化且经沙箱校验的输入；external 锁阻止冲突文件操作，结束释放并保存。返回只更新对应任务和输入的缓存，切换选中不会串项；识别错误保留转换状态和结果。
+- N-API 在既有核心互斥下调用 xdremux_motion_photo_inspect，使用 RustStringDeleter/xdremux_free_string 释放返回字符串。父核对现有核心确有该导出，未重建或替换 Rust。
+- 父独立运行九份主机测试全部通过：既有七份加 p3_motion_photo_model_test.mjs、motion_inspect_edge_test.mjs。覆盖真实 JSON 字段、普通/错误报告、未知来源、缺省音频、区间/文件大小、safe integer、u32/u16、零值/null、双流字节限制。缓存隔离、异步锁及 ArkUI 刷新仅完成代码审查；这些测试不替代 N-API 实际运行或设备时序验证。
+- devecocli 最终构建成功，证据 build-motion-final.log；git diff --check 通过。交付 p3-motion-inspect/entry-default-unsigned-code40007-p3-motion-inspect.hap，5,272,818 字节，SHA256 60D5C0EE5A312FAA81A9B4D97271C3F1CEF4C82C1390941A3CAEED8ECD95B4F6。
+- 父独立核对 HAP：bundle io.github.beetman.xdremux.native，0.4.0/code40007，兼容/目标 API18。包内 Rust 核心 3,243,576 字节，SHA256 659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7，与此前产物一致。证据 parent-artifact-verification.json、parent-core-symbols.log、parent-*.log。
+- 未签名、安装、设备运行、提交或推送；原 main 工作区仍仅有未跟踪 apps/harmony/。按本批 DEVICE_CHECKLIST.md 后续本地签名验收，40004–40006 待验项继续保留。下一开发小批可推进 Motion Photo 拆分，实况配对与系统相册仍另行分阶段处理。
+
+- 用户已确认 code40007 的基础流程可用；该反馈只覆盖基础功能，不代表异常分支、边界、缓存/生命周期或设备兼容性已全部验收。

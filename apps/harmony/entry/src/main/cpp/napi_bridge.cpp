@@ -51,6 +51,7 @@ void xdremux_free_string(char *value);
 XdremuxClassificationResult xdremux_classify(const char *input_path);
 void xdremux_free_classification_result(XdremuxClassificationResult result);
 char *xdremux_inspect_photo_details(const char *input_path);
+char *xdremux_motion_photo_inspect(const char *input_path);
 XdremuxConversionResult xdremux_convert_with_progress(
     const char *input_path,
     const char *output_path,
@@ -145,6 +146,7 @@ struct AsyncContext {
         VERSION,
         CLASSIFY,
         INSPECT,
+        MOTION_INSPECT,
         CONVERT,
     };
 
@@ -155,6 +157,7 @@ struct AsyncContext {
     std::string output_path;
     std::string version;
     std::string details_json;
+    std::string motion_json;
     ClassificationCopy classification;
     ConversionCopy conversion;
     XdremuxConvertConfig config{};
@@ -220,6 +223,16 @@ void execute_operation(napi_env, void *data)
                 return;
             }
             context->details_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::MOTION_INSPECT: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_motion_photo_inspect(context->input_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_motion_photo_inspect returned a null report");
+                return;
+            }
+            context->motion_json.assign(value.get());
             return;
         }
         case AsyncContext::Operation::CLASSIFY: {
@@ -414,6 +427,13 @@ void complete_operation(napi_env env, napi_status status, void *data)
         } else {
             reject_with_message(env, context->deferred, "unable to create photo details result");
         }
+    } else if (context->operation == AsyncContext::Operation::MOTION_INSPECT) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->motion_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Motion Photo result");
+        }
     } else {
         napi_status result_status = napi_ok;
         napi_value result = nullptr;
@@ -597,6 +617,35 @@ napi_value inspect(napi_env env, napi_callback_info info)
     return queue_operation(env, context);
 }
 
+napi_value motion_inspect(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "motionInspect(path) requires one filesystem path");
+        return nullptr;
+    }
+
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::MOTION_INSPECT;
+    try {
+        if (!read_local_path(env, args[0], context->input_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "motionInspect(path) requires a local filesystem path");
+            return nullptr;
+        }
+    } catch (...) {
+        delete context;
+        napi_throw_error(env, nullptr, "unable to read Motion Photo path");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
 napi_value convert(napi_env env, napi_callback_info info)
 {
     size_t argc = 4;
@@ -718,6 +767,7 @@ napi_value initialize(napi_env env, napi_value exports)
         {"version", nullptr, version, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"classify", nullptr, classify, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"inspect", nullptr, inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"motionInspect", nullptr, motion_inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"convert", nullptr, convert, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressBegin", nullptr, progress_begin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressRead", nullptr, progress_read, nullptr, nullptr, nullptr, napi_default, nullptr},

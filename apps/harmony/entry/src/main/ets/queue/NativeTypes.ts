@@ -51,3 +51,41 @@ export interface NativeProgress {
   current: number;
   total: number;
 }
+
+/** JSON string returned by xdremux_motion_photo_inspect is parsed and
+ * range-checked by MotionPhotoModel before these fields are displayed. */
+export interface NativeMotionPhotoItem {
+  mime: string;
+  semantic: string;
+  length: number;
+  padding: number;
+}
+
+export interface NativeMotionPhotoReport {
+  isMotionPhoto: boolean;
+  sourceKind: string;
+  stillStart: number;
+  stillEnd: number;
+  videoStart: number;
+  videoEnd: number;
+  isDualStream?: boolean;
+  items: Array<NativeMotionPhotoItem>;
+  presentationTimestampUs?: number;
+  presentationSource?: string;
+  videoWidth?: number;
+  videoHeight?: number;
+  durationMs?: number;
+  fps?: number;
+  frameCount?: number;
+  videoCodec?: string;
+  hasAudio?: boolean;
+  audioCodec?: string;
+  audioChannels?: number;
+  audioSampleRate?: number;
+  audioDurationMs?: number;
+  primaryBytes?: number;
+  secondaryBytes?: number;
+  secondaryWidth?: number;
+  secondaryHeight?: number;
+  secondaryFps?: number;
+}
