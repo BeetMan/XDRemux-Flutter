@@ -341,3 +341,10 @@ P0 补充检查（本批并行进行）：
 - 未签名、安装、设备运行、提交或推送；原 main 工作区仍仅有未跟踪 apps/harmony/。按本批 DEVICE_CHECKLIST.md 后续本地签名验收，40004–40006 待验项继续保留。下一开发小批可推进 Motion Photo 拆分，实况配对与系统相册仍另行分阶段处理。
 
 - 用户已确认 code40007 的基础流程可用；该反馈只覆盖基础功能，不代表异常分支、边界、缓存/生命周期或设备兼容性已全部验收。
+
+## 15. 与 origin/main 同步（2026-09-19）
+
+- 在 checkpoint `82bbd04` 提交 40005–40007 鸿蒙实现后，以 `--no-ff` 合并已 fetch 的 `origin/main` `747ad8ffd4e59ecc7ea2c65feb068bb989d1f692`，合并提交为 `e65c970`。未改动原 main 工作区、未推送、未签名或安装。
+- 主线源码已同步，包含新的 SDR 摄影风格路径、PS3 texture/grain 与 semantic mattes、Exif 方向修复等 Rust 工作；本批没有重建或替换鸿蒙 staged `.so`。继续使用未剥离 hash `D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`、HAP 内已验证 hash `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`，因此这些主线新 Rust 功能尚未进入 Harmony HAP。
+- 用户确认 code40007 基础工作流可用；该反馈不等同于全部错误分支、边界、缓存/生命周期和设备兼容性验收。
+- 合并后九份 Node 主机测试全部通过，日志为外部 `harmony-native/main-sync/tests-main-sync.log`；`devecocli build --product default --build-mode debug` unsigned 构建成功，日志为 `main-sync/build-main-sync.log`。HAP 已复制为 `main-sync/entry-default-unsigned-main-sync.hap`，大小 5,272,818 字节、SHA-256 `6665482C7D6BCE6BFC10B788C0DBDFA4F7C2756CDCC1CBB86D84C9E7893907B9`，包内核心 hash 与旧验证值一致。未安装或运行设备。

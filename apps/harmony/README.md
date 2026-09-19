@@ -28,6 +28,16 @@ devecocli run --module entry --device <device-serial>
 
 P3 device verification should select several real files, including one known-invalid input, and check that valid items continue when one item fails. Check start/resume, stop-after-current, retry, reconvert after changing the global mode, per-item progress, details, single export, and multi-file export. For batch export, verify shuffled picker URI order maps by the unique requested filename, one failed target does not block later targets, stop-after-current leaves later items canceled, and a journal failure reports physical writes separately from queue state. Select a converted item and request Motion Photo information on demand; check an ordinary photo, a supported Motion Photo, and an unreadable/invalid input, then switch items and confirm each result stays with its photo. The displayed ranges and optional video/audio details must remain readable. Compare source bytes with the materialized sandbox file before conversion. Confirm a failed reconversion still labels and exports its previous successful sandbox result. The settings checklist should change each supported option, save, reopen the panel, and restart the app to confirm persistence; then verify a running conversion keeps its start-time snapshot while a later item uses the newly saved settings. A signed-device P3 run is not part of the unsigned build evidence.
 
+## Source main synchronization
+
+This worktree merged `origin/main` at `747ad8ffd4e59ecc7ea2c65feb068bb989d1f692` in merge commit `e65c970` after checkpoint `82bbd04`. The source tree therefore contains the newer mainline Rust work, including the SDR photographic-style path, PS3 texture/grain and semantic-matte work, and EXIF orientation fixes.
+
+The Harmony HAP still uses the previously verified staged core (`D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`, packaged hash `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`). The core was intentionally not rebuilt or replaced during this source synchronization, so the new mainline Rust features are not included in the Harmony HAP. Updating those native features requires a separate explicit `build_ohos.sh` core build and a new HAP.
+
+The post-merge unsigned build was copied to `C:\\Users\\Beet\\Documents\\XDRemux-Flutter-logs\\harmony-native\\main-sync\\entry-default-unsigned-main-sync.hap` (5,272,818 bytes, SHA-256 `6665482C7D6BCE6BFC10B788C0DBDFA4F7C2756CDCC1CBB86D84C9E7893907B9`). The build and nine-test evidence are in the same directory; the packaged core hash remains `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`.
+
+The user has confirmed the code40007 basic workflow works; that confirmation does not cover every error branch, boundary, cache/lifecycle path, or device compatibility case.
+
 ## Queue behavior and lifecycle
 
 The queue journal is `filesDir/queue.json`; writes go to a sibling `.tmp`, verify the complete UTF-8 byte count, flush and close, then atomically rename the temporary record. Progress ticks stay in memory, while item creation, input ownership, attempt state, result publication, export state, deletion intent, and record deletion are checkpointed. A write failure is latched, stops later scheduling and maintenance, and must be explicitly retried before the queue can continue.
