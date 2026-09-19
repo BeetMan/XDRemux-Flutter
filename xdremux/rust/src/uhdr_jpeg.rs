@@ -34,6 +34,13 @@ struct Segments {
     exif_tiff: Option<Vec<u8>>,
 }
 
+/// The JPEG's APP1 Exif as a bare TIFF, regardless of Ultra HDR support —
+/// malformed or gain-map-less JPEGs still carry capture metadata worth keeping
+/// when they are rebuilt as an SDR styles source.
+pub fn extract_exif_tiff(data: &[u8]) -> Option<Vec<u8>> {
+    walk_segments(data).ok()?.exif_tiff
+}
+
 /// Read the original JPEG's APP1 EXIF independently of Ultra HDR support.
 pub(crate) fn read_exif_payload(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
     Ok(walk_segments(data)?.exif_tiff.map(|tiff| {
@@ -311,13 +318,62 @@ fn hdrgm_to_meta_floats(h: &Hdrgm) -> Result<Vec<f32>, String> {
 
 /// Parse an Ultra HDR JPEG. Returns Ok(None) for files that are not JPEGs
 /// with an MPF gain map (plain JPEGs, HEICs, etc.).
+/// Minimal 1×1 gray JPEG used as an identity gain map for SDR inputs
+/// (gain 1.0 = no HDR boost, the pipeline treats it as base = HDR).
+pub const IDENTITY_GAINMAP_JPEG: &[u8] = &[
+    0xFF,0xD8,0xFF,0xE0,0x00,0x10,0x4A,0x46,0x49,0x46,0x00,0x01,0x01,0x00,0x00,0x01,
+    0x00,0x01,0x00,0x00,0xFF,0xDB,0x00,0x43,0x00,0x03,0x02,0x02,0x03,0x02,0x02,0x03,
+    0x02,0x02,0x03,0x03,0x03,0x03,0x04,0x03,0x03,0x04,0x05,0x08,0x05,0x05,0x04,0x04,
+    0x05,0x0A,0x07,0x07,0x06,0x08,0x0C,0x0A,0x0C,0x0C,0x0B,0x0A,0x0B,0x0B,0x0D,0x0E,
+    0x12,0x10,0x0D,0x0E,0x11,0x0E,0x0B,0x0B,0x10,0x16,0x10,0x11,0x13,0x14,0x15,0x15,
+    0x15,0x0C,0x0F,0x17,0x18,0x16,0x14,0x18,0x12,0x14,0x15,0x14,0xFF,0xC0,0x00,0x0B,
+    0x08,0x00,0x01,0x00,0x01,0x01,0x01,0x11,0x00,0xFF,0xC4,0x00,0x1F,0x00,0x00,0x01,
+    0x05,0x01,0x01,0x01,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,
+    0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0B,0xFF,0xC4,0x00,0xB5,0x10,0x00,
+    0x02,0x01,0x03,0x03,0x02,0x04,0x03,0x05,0x05,0x04,0x04,0x00,0x00,0x01,0x7D,0x01,
+    0x02,0x03,0x00,0x04,0x11,0x05,0x12,0x21,0x31,0x41,0x06,0x13,0x51,0x61,0x07,0x22,
+    0x71,0x14,0x32,0x81,0x91,0xA1,0x08,0x23,0x42,0xB1,0xC1,0x15,0x52,0xD1,0xF0,0x24,
+    0x33,0x62,0x72,0x82,0x09,0x0A,0x16,0x17,0x18,0x19,0x1A,0x25,0x26,0x27,0x28,0x29,
+    0x2A,0x34,0x35,0x36,0x37,0x38,0x39,0x3A,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0x4A,
+    0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6A,
+    0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x83,0x84,0x85,0x86,0x87,0x88,0x89,0x8A,
+    0x92,0x93,0x94,0x95,0x96,0x97,0x98,0x99,0x9A,0xA2,0xA3,0xA4,0xA5,0xA6,0xA7,0xA8,
+    0xA9,0xAA,0xB2,0xB3,0xB4,0xB5,0xB6,0xB7,0xB8,0xB9,0xBA,0xC2,0xC3,0xC4,0xC5,0xC6,
+    0xC7,0xC8,0xC9,0xCA,0xD2,0xD3,0xD4,0xD5,0xD6,0xD7,0xD8,0xD9,0xDA,0xE1,0xE2,0xE3,
+    0xE4,0xE5,0xE6,0xE7,0xE8,0xE9,0xEA,0xF1,0xF2,0xF3,0xF4,0xF5,0xF6,0xF7,0xF8,0xF9,
+    0xFA,0xFF,0xDA,0x00,0x08,0x01,0x01,0x00,0x00,0x3F,0x00,0x2B,0xFF,0xD9,
+];
+
+/// Neutral 20-float metadata for an identity gain map (gain 1.0, no boost).
+pub fn neutral_meta_floats() -> Vec<f32> {
+    let eps = 1.0 / 64.0;
+    vec![
+        1.0, 1.0, 1.0,  // ratio_min
+        0.0,             // pad
+        1.0, 1.0, 1.0,  // ratio_max
+        1.0, 1.0, 1.0,  // gamma
+        eps, eps, eps,   // eps_sdr
+        eps, eps, eps,   // eps_hdr
+        1.0,             // drs
+        1.0,             // drh
+        1.0,             // scale
+        0.0,             // base_is_hdr
+    ]
+}
+
 pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return Ok(None);
     }
     let segments = walk_segments(data)?;
     let Some(tiff_pos) = segments.mpf_tiff_file_pos else {
-        return Ok(None);
+        // Plain SDR JPEG (no Ultra HDR gain map): synthesize an identity
+        // gain map so the standard pipeline can process it.
+        return Ok(Some(UhdrJpeg {
+            gainmap_jpeg: IDENTITY_GAINMAP_JPEG.to_vec(),
+            meta_floats: neutral_meta_floats(),
+            exif_tiff: segments.exif_tiff,
+        }));
     };
     let gainmap = extract_gainmap_jpeg(data, tiff_pos, segments.mpf_tiff_len)?;
     // Per the Ultra HDR spec the hdrgm tone-map metadata lives in the gain
@@ -371,6 +427,22 @@ pub fn synthesize_source_container(
         orientation,
     )
     .map_err(|e| format!("Ultra HDR base JPEG orientation failed: {e}"))?;
+    synthesize_source_container_from_rgb(&rgb, width, height, info.exif_tiff.clone(), use_420)
+}
+
+/// Build the same standard HEIC source container from pixels a caller already
+/// decoded (and already rotated into presentation orientation). Used for
+/// non-ProXDR inputs — the platform codec decodes any format to RGBA, the
+/// caller drops alpha, and this produces the container the styles pipeline
+/// expects (`tmap` + gain grid come later from the normal conversion path).
+pub fn synthesize_source_container_from_rgb(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    exif_tiff: Option<Vec<u8>>,
+    use_420: bool,
+) -> Result<Vec<u8>, String> {
+    let rgb = rgb.to_vec();
     let cols = width.div_ceil(TILE_SIZE).max(1);
     let rows = height.div_ceil(TILE_SIZE).max(1);
     let total_tiles = (cols * rows) as usize;
@@ -419,8 +491,7 @@ pub fn synthesize_source_container(
     // ---- ids ----
     let grid_id: u32 = 1;
     let first_tile_id: u32 = 2;
-    let exif_id: Option<u32> = info
-        .exif_tiff
+    let exif_id: Option<u32> = exif_tiff
         .as_ref()
         .map(|_| first_tile_id + total_tiles as u32);
 
@@ -514,7 +585,7 @@ pub fn synthesize_source_container(
     // ---- Exif payload (Apple-native convention: 4-byte offset value 6 +
     // "Exif\0\0" + TIFF, so libheif/ImageIO land on the TIFF header —
     // a bare value-4 prefix makes libheif skip 8 bytes and fail) ----
-    let exif_payload: Option<Vec<u8>> = info.exif_tiff.as_ref().map(|tiff| {
+    let exif_payload: Option<Vec<u8>> = exif_tiff.as_ref().map(|tiff| {
         let mut p = Vec::with_capacity(tiff.len() + 10);
         p.extend_from_slice(&6u32.to_be_bytes());
         p.extend_from_slice(b"Exif\0\0");
@@ -709,9 +780,26 @@ mod tests {
     }
 
     #[test]
-    fn plain_jpeg_returns_none() {
+    fn plain_jpeg_synthesizes_an_identity_gain_map() {
+        // Non-ProXDR inputs still need to reach the styles pipeline, so a
+        // plain JPEG yields an identity gain map (gain 1.0, no boost) rather
+        // than `None`. This is what lets any photo go through the conversion
+        // and pick up the full styles scaffold.
         let data = tiny_jpeg(0x33, 256);
-        assert!(parse(&data).expect("ok").is_none());
+        let info = parse(&data).expect("ok").expect("identity gain map");
+        assert_eq!(info.gainmap_jpeg, IDENTITY_GAINMAP_JPEG);
+        assert_eq!(info.meta_floats, neutral_meta_floats());
+        // Identity: no ratio above 1.0 on either side of the tone map.
+        assert_eq!(&info.meta_floats[0..3], &[1.0, 1.0, 1.0]);
+        assert_eq!(&info.meta_floats[4..7], &[1.0, 1.0, 1.0]);
+        assert_eq!(info.meta_floats[19], 0.0);
+    }
+
+    #[test]
+    fn non_jpeg_returns_none() {
+        // Only JPEG streams take the Ultra HDR route; containers are handled
+        // elsewhere.
+        assert!(parse(b"\x00\x00\x00\x18ftypheic").expect("ok").is_none());
     }
 
     /// A real, decodable 16x8 RGB baseline JPEG (Pillow, quality 85). The

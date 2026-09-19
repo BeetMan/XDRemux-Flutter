@@ -324,7 +324,10 @@ pub fn make_mime_infe_box(item_id: u32, flags: u32) -> Vec<u8> {
 
 /// Build the iloc box (always version 1, 4-byte offsets, 4-byte lengths).
 pub fn make_iloc_box(entries: &[IlocEntry]) -> Vec<u8> {
-    // version=1, flags=0, offset_size=4, length_size=4, base_offset_size=0, index_size=0
+    // version=1, flags=0, offset_size=4, length_size=4, base_offset_size=0,
+    // index_size=0. The parsed offsets already fold any base_offset in, so
+    // writing them with base_offset_size=0 preserves the data positions
+    // while keeping the rebuilt iloc compact.
     let mut payload = vec![1u8, 0, 0, 0, 0x44, 0x00];
     write_u16be(entries.len() as u16, &mut payload);
     for entry in entries {
@@ -625,8 +628,11 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         // Parse item_id (width depends on version and type)
         let item_id: u32 = if v >= 2 {
             if p + 8 <= data.len() {
-                let type_at_u16 = std::str::from_utf8(&data[p + 4..p + 8]).unwrap_or("");
-                if ["hvc1", "grid", "Exif", "mime", "tmap", "jpeg", "uri "].contains(&type_at_u16) {
+                // A u16 item id places the 4cc item_type at p+4; a u32 id (v3)
+                // places it at p+8. Distinguish by printability of the type
+                // bytes (covers vendor types like Huawei's "it35").
+                let printable = data[p + 4..p + 8].iter().all(|b| (0x20..=0x7e).contains(b));
+                if printable {
                     p += 2;
                     read_u16be(data, p - 2) as u32
                 } else {

@@ -4,6 +4,7 @@
 
 pub mod categorize;
 pub mod container;
+pub mod container_build;
 pub mod edr;
 pub mod exif;
 pub mod live_photo;
@@ -19,14 +20,18 @@ pub mod isobmff_write;
 pub mod jpeg_decode;
 pub mod linear_thumbnail;
 pub mod progress;
+pub mod sdr_source;
 
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
 // separate native Rust path until the Photos conformance surface is stable.
 pub mod styles_bplist;
+pub mod texture_styles;
+pub mod semantic_mattes;
+pub mod styles_attach;
 mod styles_consts;
 mod styles_graft;
 pub mod styles_native;
-mod styles_scaffold;
+pub mod styles_scaffold;
 
 // R5 native Rust Portrait graph writer, ported from the conformance research
 // implementation. It produces an Apple-editable depth graph from OPPO rear.depth.
@@ -394,6 +399,67 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
     }
 }
 
+/// Inject the 12 zero-content 2026 semantic part-matte items into an
+/// existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn xdremux_inject_semantic_mattes(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> u8 {
+    let result = (|| -> Option<()> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path)?;
+        let output = read(output_path)?;
+        let data = std::fs::read(input).ok()?;
+        let patched = semantic_mattes::inject_semantic_mattes(&data).ok()?;
+        std::fs::write(output, patched).ok()?;
+        Some(())
+    })();
+    if result.is_some() { 1 } else { 0 }
+}
+
+/// Styles attach — bring the styles + PS3 contract to any HEIC input
+/// (non-OPPO photos). Returns a JSON status string:
+/// {"status":"attached"|"already-complete","added":[...]} or
+/// {"status":"error","message":"..."}.
+#[no_mangle]
+pub extern "C" fn xdremux_attach_styles(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+) -> *mut c_char {
+    let result = (|| -> Result<String, String> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path).ok_or("bad input path")?;
+        let output = read(output_path).ok_or("bad output path")?;
+        let data = std::fs::read(input).map_err(|e| format!("read: {e}"))?;
+        let (patched, report) = styles_attach::attach_styles(&data, grain_seed)?;
+        std::fs::write(output, patched).map_err(|e| format!("write: {e}"))?;
+        let added = report
+            .added
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(format!(
+            "{{\"status\":\"{}\",\"added\":[{}]}}",
+            report.status, added
+        ))
+    })();
+    let json = match result {
+        Ok(json) => json,
+        Err(message) => {
+            let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{{\"status\":\"error\",\"message\":\"{escaped}\"}}")
+        }
+    };
+    CString::new(json).map(|s| s.into_raw()).unwrap_or_else(|_| std::ptr::null_mut())
+}
+
 /// Frees a string previously returned by `xdremux_version`.
 #[no_mangle]
 pub extern "C" fn xdremux_free_string(s: *mut c_char) {
@@ -402,6 +468,28 @@ pub extern "C" fn xdremux_free_string(s: *mut c_char) {
             drop(CString::from_raw(s));
         }
     }
+}
+
+/// Inject a Standard Photographic Styles 3 `texture_styles` item into an
+/// existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub extern "C" fn xdremux_inject_texture_styles(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+) -> u8 {
+    let result = (|| -> Option<()> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path)?;
+        let output = read(output_path)?;
+        let data = std::fs::read(input).ok()?;
+        let patched = texture_styles::inject_texture_styles(&data, grain_seed).ok()?;
+        std::fs::write(output, patched).ok()?;
+        Some(())
+    })();
+    if result.is_some() { 1 } else { 0 }
 }
 
 /// Return a portable JSON diagnostic for Apple Portrait input eligibility.
@@ -963,6 +1051,28 @@ pub extern "C" fn xdremux_convert_with_progress(
     result
 }
 
+/// SDR source synthesis, gated on Apple Photographic Styles being requested.
+///
+/// The styles scaffold needs a standard container; a non-ProXDR input has to be
+/// decoded and rebuilt into one. Returns `None` when styles are off — a plain
+/// SDR photo then has nothing to convert and the caller reports its own error.
+fn sdr_fallback(
+    source: &[u8],
+    wants_styles: bool,
+    input_path: &str,
+) -> Option<Result<(Vec<u8>, container::ExtractedLhdr), String>> {
+    if !wants_styles {
+        return None;
+    }
+    // Sources without Exif inherit the file's timestamp so the output is not
+    // stamped 1970.
+    let datetime = std::fs::metadata(input_path)
+        .and_then(|m| m.modified())
+        .map(sdr_source::exif_datetime_from_system)
+        .ok();
+    Some(sdr_source::synthesize_sdr_source(source, datetime.as_deref()))
+}
+
 fn xdremux_convert_impl(
     input_path: *const c_char,
     output_path: *const c_char,
@@ -1102,76 +1212,125 @@ fn xdremux_convert_impl(
         source = synth;
         extracted
     } else if source.starts_with(&[0xFF, 0xD8]) {
-        match uhdr_jpeg::parse(&source) {
-            Ok(Some(info)) => {
-                // Primary image in HEIF must always be 4:2:0 (Main profile) so that
-                // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser libraries
-                // (heif-oxide) can decode it properly without black-screening.
-                let use_420 = true;
-                let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return ConversionResult {
-                            success: false,
-                            mode: ptr::null_mut(),
-                            family: ptr::null_mut(),
-                            edr_scale: 0.0,
-                            gain_map_max: 0.0,
-                            error_message: CString::new(format!("Ultra HDR JPEG container synthesis: {e}"))
-                                .unwrap()
-                                .into_raw(),
-                        };
-                    }
-                };
-                source = synth;
-                container::ExtractedLhdr {
-                    mode: "uhdr".into(),
-                    meta_bytes: Vec::new(),
-                    meta_floats: info.meta_floats,
-                    mask_data: None,
-                    gainmap_data: Some(info.gainmap_jpeg),
-                    manifest_entries: None,
-                }
-            }
-            Ok(None) => {
-                return ConversionResult {
-                    success: false,
-                    mode: ptr::null_mut(),
-                    family: ptr::null_mut(),
-                    edr_scale: 0.0,
-                    gain_map_max: 0.0,
-                    error_message: CString::new(
-                        "JPEG input requires an Ultra HDR gain map (MPF); plain JPEG is not supported",
-                    )
-                    .unwrap()
-                    .into_raw(),
-                };
-            }
-            Err(e) => {
-                return ConversionResult {
-                    success: false,
-                    mode: ptr::null_mut(),
-                    family: ptr::null_mut(),
-                    edr_scale: 0.0,
-                    gain_map_max: 0.0,
-                    error_message: CString::new(format!("Ultra HDR JPEG parse: {e}"))
+        // A real Ultra HDR JPEG keeps its own gain map. Everything else — a
+        // plain SDR JPEG, or one whose MPF/hdrgm metadata is malformed — is
+        // the same non-ProXDR case as a foreign container and goes through the
+        // shared SDR synthesis, so the Exif and orientation handling can never
+        // disagree between the two entry conditions.
+        let real_gain_map = matches!(
+            uhdr_jpeg::parse(&source),
+            Ok(Some(ref info)) if info.gainmap_jpeg != uhdr_jpeg::IDENTITY_GAINMAP_JPEG
+        );
+        if real_gain_map {
+            let info = match uhdr_jpeg::parse(&source) {
+                Ok(Some(info)) => info,
+                _ => unreachable!("checked above"),
+            };
+            // Primary image in HEIF must always be 4:2:0 (Main profile) so that
+            // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser
+            // libraries (heif-oxide) can decode it properly without
+            // black-screening.
+            let use_420 = true;
+            let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(format!(
+                            "Ultra HDR JPEG container synthesis: {e}"
+                        ))
                         .unwrap()
                         .into_raw(),
-                };
+                    };
+                }
+            };
+            source = synth;
+            container::ExtractedLhdr {
+                mode: "uhdr".into(),
+                meta_bytes: Vec::new(),
+                meta_floats: info.meta_floats,
+                mask_data: None,
+                gainmap_data: Some(info.gainmap_jpeg),
+                manifest_entries: None,
+            }
+        } else {
+            match sdr_fallback(&source, apple_photographic_styles, input) {
+                Some(Ok((synth, extracted))) => {
+                    source = synth;
+                    extracted
+                }
+                Some(Err(e)) => {
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(format!("SDR styles source: {e}"))
+                            .unwrap()
+                            .into_raw(),
+                    };
+                }
+                None => {
+                    let reason = match uhdr_jpeg::parse(&source) {
+                        Err(e) => format!("Ultra HDR JPEG parse: {e}"),
+                        _ => "JPEG input requires an Ultra HDR gain map (MPF); plain JPEG is not supported".to_string(),
+                    };
+                    return ConversionResult {
+                        success: false,
+                        mode: ptr::null_mut(),
+                        family: ptr::null_mut(),
+                        edr_scale: 0.0,
+                        gain_map_max: 0.0,
+                        error_message: CString::new(reason).unwrap().into_raw(),
+                    };
+                }
             }
         }
     } else {
         match container::extract_lhdr_from_bytes(&source) {
             Ok(e) => e,
             Err(e) => {
-                return ConversionResult {
-                    success: false,
-                    mode: ptr::null_mut(),
-                    family: ptr::null_mut(),
-                    edr_scale: 0.0,
-                    gain_map_max: 0.0,
-                    error_message: CString::new(e).unwrap().into_raw(),
-                };
+                // Not a ProXDR container: there is no gain map to convert. When
+                // Apple Photographic Styles are requested we still need the
+                // styles scaffold, and the scaffold needs a standard container
+                // — so decode the image in Rust and rebuild one around it
+                // instead of failing. Without styles there is nothing to do for
+                // a foreign SDR photo, so the original error stands.
+                match sdr_fallback(&source, apple_photographic_styles, input) {
+                    Some(Ok((synth, extracted))) => {
+                        source = synth;
+                        extracted
+                    }
+                    Some(Err(sdr_err)) => {
+                        return ConversionResult {
+                            success: false,
+                            mode: ptr::null_mut(),
+                            family: ptr::null_mut(),
+                            edr_scale: 0.0,
+                            gain_map_max: 0.0,
+                            error_message: CString::new(format!(
+                                "{e} (SDR styles source: {sdr_err})"
+                            ))
+                            .unwrap()
+                            .into_raw(),
+                        };
+                    }
+                    None => {
+                        return ConversionResult {
+                            success: false,
+                            mode: ptr::null_mut(),
+                            family: ptr::null_mut(),
+                            edr_scale: 0.0,
+                            gain_map_max: 0.0,
+                            error_message: CString::new(e).unwrap().into_raw(),
+                        };
+                    }
+                }
             }
         }
     };

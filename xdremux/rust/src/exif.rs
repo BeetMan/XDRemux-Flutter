@@ -215,6 +215,73 @@ fn read_heif_item_payload(
 /// Accepts either a bare TIFF payload (the bytes after the `Exif\0\0` JPEG
 /// APP1 prefix) or a HEIF Exif item body whose leading 4-byte field points at
 /// the TIFF header.
+/// Force the TIFF's IFD0 Orientation tag to 1 (Normal), in place.
+///
+/// Platform codecs (Flutter/Skia, ImageIO, MediaCodec) already rotate pixels
+/// into presentation orientation while decoding, so a carried-forward Exif
+/// that still says "Rotate 90 CW" makes viewers rotate a second time. Returns
+/// whether an Orientation tag was actually rewritten.
+pub fn normalize_tiff_orientation(tiff: &mut [u8]) -> bool {
+    let Some((be, ifd0)) = tiff_ifd0_offset(tiff) else {
+        return false;
+    };
+    let Some(count) = read_u16(tiff, ifd0, be) else {
+        return false;
+    };
+    for i in 0..count as usize {
+        let entry = ifd0 + 2 + i * 12;
+        if entry + 12 > tiff.len() {
+            return false;
+        }
+        if read_u16(tiff, entry, be) != Some(0x0112) {
+            continue;
+        }
+        // Orientation is a SHORT with count 1: its value lives in the first
+        // two bytes of the entry's value field.
+        match be {
+            true => tiff[entry + 8..entry + 10].copy_from_slice(&1u16.to_be_bytes()),
+            false => tiff[entry + 8..entry + 10].copy_from_slice(&1u16.to_le_bytes()),
+        }
+        return true;
+    }
+    false
+}
+
+fn tiff_ifd0_offset(tiff: &[u8]) -> Option<(bool, usize)> {
+    if tiff.len() < 8 {
+        return None;
+    }
+    let be = match &tiff[0..2] {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+    let magic = read_u16(tiff, 2, be)?;
+    if magic != 42 {
+        return None;
+    }
+    let off = read_u32(tiff, 4, be)? as usize;
+    (off + 2 <= tiff.len()).then_some((be, off))
+}
+
+fn read_u16(buf: &[u8], at: usize, be: bool) -> Option<u16> {
+    let bytes: [u8; 2] = buf.get(at..at + 2)?.try_into().ok()?;
+    Some(if be {
+        u16::from_be_bytes(bytes)
+    } else {
+        u16::from_le_bytes(bytes)
+    })
+}
+
+fn read_u32(buf: &[u8], at: usize, be: bool) -> Option<u32> {
+    let bytes: [u8; 4] = buf.get(at..at + 4)?.try_into().ok()?;
+    Some(if be {
+        u32::from_be_bytes(bytes)
+    } else {
+        u32::from_le_bytes(bytes)
+    })
+}
+
 pub fn parse_exif_orientation(exif_blob: &[u8]) -> Result<ExifOrientation, String> {
     let tiff = if exif_blob.starts_with(b"II") || exif_blob.starts_with(b"MM") {
         exif_blob

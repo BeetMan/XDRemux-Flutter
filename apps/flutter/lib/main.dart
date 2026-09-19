@@ -1620,7 +1620,16 @@ class _HomePageState extends State<HomePage> {
     // Keep the pairing pure: no styleMetadata in the paired still.
     if (item.motionPhoto != null &&
         item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
-      runConfig.applePhotographicStyles = false;
+      // PS3 contract (styles + texture + mattes) is now allowed on paired
+      // stills — re-test of the 2026-09-02 "style+pair fails to load" finding
+      // with the full matte contract. Old-styles-only pairs stay pure.
+      if (!runConfig.applePhotographicStyles3) {
+        runConfig.applePhotographicStyles = false;
+      }
+    }
+    // PS3 injection is Rust-only.
+    if (runConfig.backend != ConversionBackend.rust) {
+      runConfig.applePhotographicStyles3 = false;
     }
     final effectiveOppoCompatibility = runConfig.outputMode == OutputMode.apple
         ? OppoCompatMode.off
@@ -1663,12 +1672,18 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
+      // Photographic Styles need the styles scaffold, which only the
+      // conversion pipeline generates. Non-ProXDR inputs are decoded and
+      // rebuilt into a standard container inside Rust (see sdr_source.rs), so
+      // no input special-casing is needed here.
+
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
       Map<String, dynamic>? result;
       if (runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
+          !runConfig.applePhotographicStyles3 &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
@@ -1687,6 +1702,7 @@ class _HomePageState extends State<HomePage> {
           strictTmap: runConfig.strictTmap,
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
+          applePhotographicStyles3: runConfig.applePhotographicStyles3,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
@@ -3723,6 +3739,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
     widget.config.strictTmap = _cfg.strictTmap;
     widget.config.applePhotographicStyles = _cfg.applePhotographicStyles;
+    widget.config.applePhotographicStyles3 = _cfg.applePhotographicStyles3;
     widget.config.applePortrait = _cfg.applePortrait;
     widget.config.skipExisting = _cfg.skipExisting;
     widget.config.maxConcurrentJobs = _cfg.maxConcurrentJobs;
@@ -3743,6 +3760,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         _cfg.oppoCameraTail = OppoCameraTailMode.off;
       } else {
         _cfg.applePhotographicStyles = false;
+        _cfg.applePhotographicStyles3 = false;
         _cfg.applePortrait = false;
         if (_cfg.oppoCompatibility == OppoCompatMode.off) {
           _cfg.oppoCompatibility = OppoCompatMode.on;
@@ -4042,6 +4060,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             if (backend != ConversionBackend.swift) {
                               _cfg.applePhotographicStyles = false;
                               _cfg.applePortrait = false;
+                            } else {
+                              // PS3 injection is Rust-only.
+                              _cfg.applePhotographicStyles3 = false;
                             }
                           });
                           _emit();
@@ -4139,13 +4160,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ),
                         ),
                         subtitle: Text(
-                          _t(
-                            '使用 Rust 生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                            'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
-                          ),
+                          _cfg.applePhotographicStyles3
+                              ? _t(
+                                  '已包含在摄影风格 3 中；如需单独调整，请先关闭摄影风格 3。',
+                                  'Included in Photographic Styles 3; turn that off to change this.',
+                                )
+                              : _t(
+                                 '使用 Rust 生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                 'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                               ),
                         ),
                         value: _cfg.applePhotographicStyles,
-                        onChanged: (value) {
+                        onChanged: _cfg.applePhotographicStyles3
+                            ? null
+                            : (value) {
                           setState(() {
                             _cfg.applePhotographicStyles = value;
                             if (value) {
@@ -4153,6 +4181,38 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _cfg.oppoCompatibility = OppoCompatMode.off;
                               _cfg.oppoCameraTail = OppoCameraTailMode.off;
                               _cfg.hardwareEncode = false;
+                            }
+                          });
+                          _emit();
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          _t(
+                            '摄影风格 3（质感 + 颗粒）',
+                            'Photographic Styles 3 (texture + grain)',
+                          ),
+                        ),
+                        subtitle: Text(
+                          _t(
+                            '输出携带 Standard texture_styles 元数据，可在 Apple 照片中调节质感/颗粒；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            'Output carries a Standard texture_styles item so Apple Photos offers texture/grain editing; selects Apple Standard output and disables GPU encoding.',
+                          ),
+                        ),
+                        value: _cfg.applePhotographicStyles3,
+                        onChanged: (value) {
+                          setState(() {
+                            _cfg.applePhotographicStyles3 = value;
+                            if (value) {
+                              _cfg.outputMode = OutputMode.apple;
+                              _cfg.oppoCompatibility = OppoCompatMode.off;
+                              _cfg.oppoCameraTail = OppoCameraTailMode.off;
+                              _cfg.hardwareEncode = false;
+                              // PS3 output carries the 2023 styles item too;
+                              // the plain-styles toggle becomes implied.
+                              _cfg.applePhotographicStyles = true;
+                              _cfg.backend = ConversionBackend.rust;
                             }
                           });
                           _emit();
@@ -4423,6 +4483,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                     _cfg.oppoCompatibility = mode;
                                     if (mode != OppoCompatMode.off) {
                                       _cfg.applePhotographicStyles = false;
+                                      _cfg.applePhotographicStyles3 = false;
                                       _cfg.applePortrait = false;
                                     }
                                   });

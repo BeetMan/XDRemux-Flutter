@@ -594,7 +594,7 @@ fn build_maker_note() -> Vec<u8> {
 
 /// Apple offsets are relative to the note, not the enclosing TIFF. The common
 /// portrait template already has both Styles fields: keep that note byte-exact.
-fn compose_styles_maker_note(exif: &[u8]) -> Result<Vec<u8>, String> {
+pub fn compose_styles_maker_note(exif: &[u8]) -> Result<Vec<u8>, String> {
     let styles = build_maker_note();
     let prefix = exif_prefix_len(exif)?;
     let tiff = &exif[prefix..];
@@ -1014,8 +1014,16 @@ fn upsert_exif_field(exif: &[u8], tag: u16, typ: u16, count: u32, value: &[u8]) 
     let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
     let (pointer, entries, next) = exif_directory(tiff, bo, ifd0)?;
     for (i, e) in entries.iter().enumerate() {
-        if entry_bytes(tiff, e).is_none() || entries[..i].iter().any(|previous| previous.tag == e.tag) {
-            return Err("invalid Exif entry bounds/type/duplicate".into());
+        if entry_bytes(tiff, e).is_none() {
+            return Err(format!(
+                "invalid Exif entry: tag {:#06x} type {} count {} value_field {:?} (entry_bytes unreadable, tiff len {})",
+                e.tag, e.typ, e.count, &tiff[e.value_field_pos..e.value_field_pos + 4], tiff.len()
+            ));
+        }
+        if entries[..i].iter().any(|previous| previous.tag == e.tag) {
+            return Err(format!(
+                "duplicate Exif tag {:#06x} (entry {})", e.tag, i
+            ));
         }
     }
     let mut patched = tiff.to_vec();

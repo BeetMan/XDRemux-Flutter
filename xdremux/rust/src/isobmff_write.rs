@@ -775,7 +775,7 @@ fn parse_source_structure(
 /// tightly strided pixel raster. Input rows may be padded; the returned raster
 /// is tightly packed. Used for both gain maps and the Ultra HDR primary tiles
 /// (`uhdr_jpeg::synthesize_source_container`).
-pub(crate) fn orient_gainmap_pixels(
+pub fn orient_gainmap_pixels(
     pixels: &[u8],
     width: u32,
     height: u32,
