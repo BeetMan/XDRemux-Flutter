@@ -55,9 +55,27 @@ EXIF：`Make=OPPO Model=OPPO Find N3 Lens=OPPO Find N3 back camera`
 - x6（Find N3）与 x7（Find X8 Ultra）两条分支都跑通了转换
 - Exif 保留（机型/镜头/时间）
 
-### 未验证（需要真机）
-- **Find N3 相册里 ProXDR 效果是否保留** —— 这是 HDR 转换的核心验收点
-- 跨品牌互操作（把转换产物在 iPhone 上看）
+### ✅ 真机验证通过（2026-09-25，Find N3 / PHN110 / Android 16）
+
+**4 张全部显示 HDR 徽标且有效果** —— 含两个核心验收点：
+
+| 文件 | 验证 |
+|---|---|
+| `original-221713.heic`（LHDR ProXDR）| HDR 徽标 ✓ |
+| `converted-221713.heic`（我们转换后）| **HDR 徽标 ✓ 有效果 ✓** |
+| `original-221623.jpg`（Ultra HDR JPEG）| HDR 徽标 ✓ |
+| `converted-221623-from-jpg.heic`（我们转换后）| **HDR 徽标 ✓ 有效果 ✓** |
+
+意义：**首次在 OPPO 自己的相册里验证 ProXDR 转换效果**（此前只在 iPhone 上看过）。
+OPPO 相册认我们的输出为 HDR —— 说明 ISO 21496 增益图写法、tmap、元数据
+全部符合 OPPO 的读取预期。
+
+验证方法（可复现）：`adb push` → `content call --uri content://media
+--method scan_volume --arg external_primary` 强制扫描（新 Android 上
+MEDIA_SCANNER_SCAN_FILE broadcast 已失效）→ OPPO 相册对比原图/转换图。
+
+### 未验证
+- 跨品牌互操作（转换产物在 iPhone 上看）
 - 摄影风格在 SDR 那 4 张上实机可用性
 
 ## 后续
