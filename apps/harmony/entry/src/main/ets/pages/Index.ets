@@ -1,5 +1,6 @@
-import { uiMaterial } from '@kit.ArkUI';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
+import { HdsTabs, hdsMaterial } from '@kit.UIDesignKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import {
@@ -123,7 +124,6 @@ struct Index {
   @State private settingsLoaded: boolean = false;
   @State private settingsLoading: boolean = true;
   @State private settingsSaving: boolean = false;
-  @State private settingsOpen: boolean = false;
   @State private settingsWarning: string = '';
   @State private settingsError: string = '';
   @State private committedSettingsView: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
@@ -331,7 +331,6 @@ struct Index {
       this.applyDraft(snapshot);
       this.settingsWarning = '';
       this.operationStatus = '设置已保存；后续项目将使用新设置，运行中项目不变';
-      this.settingsOpen = false;
     } catch (error) {
       // Keep the draft visible and retryable. The store rolls its process
       // cache back to the previous durable record when flush fails.
@@ -348,7 +347,6 @@ struct Index {
     }
     this.applyDraft(this.committedSettings);
     this.settingsError = '';
-    this.settingsOpen = false;
     this.operationStatus = '已取消未保存设置';
   }
 
@@ -361,12 +359,11 @@ struct Index {
     this.operationStatus = '已恢复默认设置草稿；点击保存后才会生效';
   }
 
-  private openSettings(): void {
-    if (!this.settingsLoaded || this.settingsSaving) {
-      return;
+  private onMainTabChange(index: number): void {
+    this.mainTabIndex = index;
+    if (index === 2 && this.settingsLoaded && !this.settingsSaving) {
+      this.settingsError = '';
     }
-    this.settingsOpen = true;
-    this.settingsError = '';
   }
 
   private setDraftOutputMode(mode: SettingsOutputMode): void {
@@ -2608,11 +2605,11 @@ struct Index {
           Text('XDRemux')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#52657D');
+            .fontColor($r('sys.color.font_secondary'));
           Text('图库')
             .fontSize(28)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .margin({ top: 2 });
         }
         .alignItems(HorizontalAlign.Start)
@@ -2623,14 +2620,12 @@ struct Index {
 
       Text('使用系统图库 · 仅在选择后读取，不申请整库照片权限')
         .fontSize(13)
-        .fontColor('#64748B')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ bottom: 8 });
 
       Button('API 26 原格式选择（保留 HEIC 原片）')
         .fontSize(14)
-        .fontColor('#244D88')
-        .backgroundColor('#DCEAFF')
         .height(42)
         .width('100%')
         .enabled(!this.galleryImporting && !this.galleryOriginalPickerActive)
@@ -2641,7 +2636,7 @@ struct Index {
 
       Text('原图模式保留 HEIC；JPEG 照片仍按 JPEG 读取。下方图库用于对照')
         .fontSize(11)
-        .fontColor('#64748B')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ bottom: 8 });
 
@@ -2672,7 +2667,7 @@ struct Index {
           Text('图片信息')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .layoutWeight(1);
           if (this.galleryImporting) {
             LoadingProgress()
@@ -2692,11 +2687,11 @@ struct Index {
           Row() {
             Text('格式  ' + this.galleryFormatLabel())
               .fontSize(13)
-              .fontColor('#26384F')
+              .fontColor($r('sys.color.font_primary'))
               .layoutWeight(1);
             Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0))
               .fontSize(13)
-              .fontColor('#52606D');
+              .fontColor($r('sys.color.font_secondary'));
           }
           .width('100%')
           .margin({ top: 8 });
@@ -2706,21 +2701,21 @@ struct Index {
               ? ' · ' + this.galleryClassification.modeKey
               : ''))
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 5 });
 
           Text('相机  ' + this.display(this.galleryDetails.make) + ' ' +
             this.display(this.galleryDetails.model) + ' · ISO ' + this.display(this.galleryDetails.iso))
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 3 });
         }
         if (this.gallerySandboxPath.length > 0) {
           Text('沙箱副本  ' + String(this.galleryCopiedBytes) + ' B')
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 5 });
         }
@@ -2728,7 +2723,7 @@ struct Index {
       .alignItems(HorizontalAlign.Start)
       .width('100%')
       .padding(14)
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('sys.color.background_secondary'))
       .borderRadius(16)
       .margin({ top: 10 });
     }
@@ -2736,7 +2731,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .padding({ left: 20, right: 20, top: 18, bottom: 84 })
-    .backgroundColor('#F2F6FB');
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
@@ -2745,8 +2740,6 @@ struct Index {
       Row() {
         Button('返回图库')
           .fontSize(14)
-          .fontColor('#244D88')
-          .backgroundColor('#DCEAFF')
           .height(40)
           .onClick((): void => {
             this.clearGallerySelection('选择一张照片查看详情');
@@ -2754,7 +2747,7 @@ struct Index {
         Text('照片详情')
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .margin({ left: 12 });
       }
       .width('100%')
@@ -2774,13 +2767,13 @@ struct Index {
           }
           Text(this.galleryImporting ? '正在读取所选照片…' : this.galleryStatus)
             .fontSize(14)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .margin({ left: 10 });
         }
         .width('100%')
         .height(150)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#E8EDF3')
+        .backgroundColor($r('sys.color.background_tertiary'))
         .borderRadius(18);
       }
 
@@ -2789,12 +2782,12 @@ struct Index {
           Row() {
             Text('当前格式')
               .fontSize(14)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .layoutWeight(1);
             Text(this.galleryFormatLabel())
               .fontSize(15)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#18202A');
+              .fontColor($r('sys.color.font_primary'));
           }
           .width('100%');
 
@@ -2802,31 +2795,31 @@ struct Index {
             Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0) +
               ' · ' + this.display(this.galleryDetails.hdrKind))
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 5 });
 
             Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
               .fontSize(13)
-              .fontColor('#26384F')
+              .fontColor($r('sys.color.font_primary'))
               .width('100%')
               .margin({ top: 11 });
             Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 5 });
             Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
               this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 5 });
             Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
               this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
               this.display(this.galleryDetails.exposureBias))
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 5 });
 
@@ -2835,7 +2828,7 @@ struct Index {
                 ? ' · ' + this.galleryClassification.modeKey
                 : ''))
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 8 });
           }
@@ -2843,32 +2836,30 @@ struct Index {
           if (this.gallerySandboxPath.length > 0) {
             Text('沙箱副本已校验 · ' + String(this.galleryCopiedBytes) + ' B')
               .fontSize(12)
-              .fontColor('#64748B')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 7 });
           }
 
-          Divider().color('#DCE3EB').margin({ top: 14, bottom: 12 });
+          Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
           Text('转换方式')
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%');
           Text('当前设置：' + (this.settingsLoaded ? this.savedSettingsSummary() : '设置加载中…'))
             .fontSize(14)
-            .fontColor('#26384F')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%')
             .margin({ top: 6 });
           Text('可选 OPPO 兼容或 Apple 标准输出。转换会生成新图片并保留原图；导出时通过系统选择保存位置。')
             .fontSize(12)
-            .fontColor('#64748B')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 4, bottom: 10 });
           Row() {
             Button(this.galleryQueuePreparing ? '正在准备队列…' : '按当前设置转换')
               .fontSize(14)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#1F5FBF')
               .layoutWeight(1)
               .height(46)
               .enabled(!this.galleryQueuePreparing && !this.galleryImporting && !this.pageBusy &&
@@ -2879,14 +2870,11 @@ struct Index {
               });
             Button('转换设置')
               .fontSize(14)
-              .fontColor('#244D88')
-              .backgroundColor('#DCEAFF')
               .height(46)
               .margin({ left: 8 })
               .enabled(this.settingsLoaded && !this.settingsSaving)
               .onClick((): void => {
-                this.mainTabIndex = 1;
-                this.openSettings();
+                this.mainTabIndex = 2;
               });
           }
           .width('100%');
@@ -2900,7 +2888,7 @@ struct Index {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
         .padding(16)
-        .backgroundColor('#FFFFFF')
+        .backgroundColor($r('sys.color.background_secondary'))
         .borderRadius(16)
         .margin({ top: 10, bottom: 10 });
       }
@@ -2911,7 +2899,7 @@ struct Index {
     .height('100%')
     .width('100%')
     .padding({ left: 20, right: 20, top: 18, bottom: 84 })
-    .backgroundColor('#F2F6FB');
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   private async ensureDirectory(path: string): Promise<void> {
@@ -3078,16 +3066,16 @@ struct Index {
       Text('Motion Photo（按需识别）')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18202A')
+        .fontColor($r('sys.color.font_primary'))
         .width('100%')
         .margin({ top: 14, bottom: 6 });
       Text('识别和拆分只使用当前项目的沙盒输入；结果绑定当前项目并保留在本次运行，重启后可重新识别和拆分。')
         .fontSize(12)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%');
       Text('当前输入：' + this.display(this.motionInspection.inputPath))
         .fontSize(12)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ top: 4 });
       Text(motionPhotoStateLabel(this.motionInspection.state) + '：' + this.motionInspection.message)
@@ -3100,7 +3088,7 @@ struct Index {
           (this.motionInspection.report.isDualStream ? '是' : '否') + ' · 条目：' +
           String(this.motionInspection.report.items.length))
           .fontSize(13)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 6 });
         Text('静态范围：' + String(this.motionInspection.report.stillStart) + '–' +
@@ -3108,14 +3096,14 @@ struct Index {
           String(this.motionInspection.report.videoStart) + '–' +
           String(this.motionInspection.report.videoEnd))
           .fontSize(13)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%');
         if (this.motionInspection.report.primaryBytes !== undefined ||
           this.motionInspection.report.secondaryBytes !== undefined) {
           Text('视频字节：主 ' + this.displayNumber(this.motionInspection.report.primaryBytes) +
             ' · 副 ' + this.displayNumber(this.motionInspection.report.secondaryBytes))
             .fontSize(13)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%');
         }
         Text('视频：' + this.displayNumber(this.motionInspection.report.videoWidth) + ' × ' +
@@ -3123,14 +3111,14 @@ struct Index {
           this.displayNumber(this.motionInspection.report.durationMs) + ' · FPS：' +
           this.displayNumber(this.motionInspection.report.fps))
           .fontSize(13)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%');
         Text('编码：' + this.display(this.motionInspection.report.videoCodec) + ' · ' +
           '音频：' + this.motionAudioLabel(this.motionInspection.report.hasAudio) +
           (this.motionInspection.report.audioCodec !== undefined
             ? ' · ' + this.motionInspection.report.audioCodec : ''))
           .fontSize(13)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%');
         if (this.motionInspection.report.secondaryWidth !== undefined ||
           this.motionInspection.report.secondaryHeight !== undefined ||
@@ -3139,13 +3127,11 @@ struct Index {
             this.displayNumber(this.motionInspection.report.secondaryHeight) + ' · FPS：' +
             this.displayNumber(this.motionInspection.report.secondaryFps))
             .fontSize(13)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%');
         }
         Button(this.motionSplitButtonLabel())
           .fontSize(14)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#16845B')
           .width('100%')
           .height(44)
           .margin({ top: 8 })
@@ -3159,14 +3145,14 @@ struct Index {
         if (this.motionSplitResult !== undefined) {
           Text('已拆分资源：')
             .fontSize(13)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%')
             .margin({ top: 8 });
           if (this.motionSplitAsset('still') !== undefined) {
             Row() {
               Text(this.motionSplitAssetDescription('still'))
                 .fontSize(12)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .layoutWeight(1);
               Button('导出')
                 .fontSize(12)
@@ -3181,7 +3167,7 @@ struct Index {
             Row() {
               Text(this.motionSplitAssetDescription('video'))
                 .fontSize(12)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .layoutWeight(1);
               Button('导出')
                 .fontSize(12)
@@ -3196,7 +3182,7 @@ struct Index {
             Row() {
               Text(this.motionSplitAssetDescription('primary'))
                 .fontSize(12)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .layoutWeight(1);
               Button('导出')
                 .fontSize(12)
@@ -3210,7 +3196,7 @@ struct Index {
           if (this.motionSplitResult.cleanupWarning.length > 0) {
             Text('临时输入清理提示：' + this.motionSplitResult.cleanupWarning)
               .fontSize(12)
-              .fontColor('#B3261E')
+              .fontColor($r('sys.color.ohos_id_color_alert'))
               .width('100%')
               .margin({ top: 4 });
           }
@@ -3218,19 +3204,17 @@ struct Index {
         Text('Live Photo 配对')
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 12, bottom: 4 });
         Text(this.canMakeLivePhotoPair()
           ? '来源已绑定：当前 Motion Photo 原图 + 同一原图对应的 Apple HEIC 转换结果。'
           : '请先将当前 Motion Photo 原图转换为 Apple HEIC；旧转换记录缺少来源绑定时需重新转换。')
           .fontSize(12)
-          .fontColor('#52606D')
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%');
         Button(this.livePhotoPairButtonLabel())
           .fontSize(14)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#7B4ACB')
           .width('100%')
           .height(44)
           .margin({ top: 8 })
@@ -3248,26 +3232,24 @@ struct Index {
             this.livePhotoPairResult.movPath.substring(this.livePhotoPairResult.movPath.lastIndexOf('/') + 1) +
             ' (' + String(this.livePhotoPairResult.movSize) + ' 字节)')
             .fontSize(12)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%')
             .margin({ top: 6 });
           Text('标识：' + this.livePhotoPairResult.contentIdentifier +
             ' · Rust 已确认 HEIC/MOV 标识匹配；尚未验证系统图库导入或 Apple Photos 播放。')
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 4 });
           if (this.livePhotoPairResult.cleanupWarning.length > 0) {
             Text('临时输入清理提示：' + this.livePhotoPairResult.cleanupWarning + '；文件仍归当前队列项目管理。')
               .fontSize(12)
-              .fontColor('#B3261E')
+              .fontColor($r('sys.color.ohos_id_color_alert'))
               .width('100%')
               .margin({ top: 4 });
           }
           Button(this.livePhotoPairExporting ? '正在导出 HEIC + MOV…' : '成对导出 HEIC + MOV')
             .fontSize(14)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#315EAF')
             .width('100%')
             .height(44)
             .margin({ top: 8 })
@@ -3280,7 +3262,7 @@ struct Index {
           if (this.livePhotoPairExportEntries.length > 0) {
             Text(this.livePhotoExportSummaryText())
               .fontSize(13)
-              .fontColor('#18202A')
+              .fontColor($r('sys.color.font_primary'))
               .width('100%')
               .margin({ top: 6 });
             ForEach(this.livePhotoPairExportEntries, (entry: LivePhotoExportEntry) => {
@@ -3296,8 +3278,6 @@ struct Index {
       }
       Button(this.motionInspectButtonLabel())
         .fontSize(14)
-        .fontColor('#FFFFFF')
-        .backgroundColor('#6B4BB8')
         .width('100%')
         .height(44)
         .margin({ top: 8 })
@@ -3312,7 +3292,7 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(12)
-    .backgroundColor('#F1EDFF')
+    .backgroundColor($r('sys.color.background_secondary'))
     .borderRadius(10)
     .margin({ top: 10 });
   }
@@ -3321,15 +3301,13 @@ struct Index {
   private settingsPanel(): void {
     Column() {
       Row() {
-        Text('转换设置草稿')
+        Text('转换设置')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
-        Button('取消')
+        Button('放弃更改')
           .fontSize(13)
-          .fontColor('#18202A')
-          .backgroundColor('#DDE5EE')
           .enabled(!this.settingsSaving)
           .onClick(() => {
             this.cancelSettings();
@@ -3338,34 +3316,58 @@ struct Index {
       .width('100%');
       Text('先编辑草稿，再点击保存；保存失败时草稿会保留。运行中的项目继续使用开始时的完整快照。')
         .fontSize(13)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ top: 6, bottom: 12 });
 
       Text('输出模式')
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18202A')
+        .fontColor($r('sys.color.font_primary'))
         .width('100%');
       Row() {
-        Button('OPPO 兼容')
-          .fontSize(15)
-          .fontColor(this.draftOutputMode === 'oppo' ? '#FFFFFF' : '#18202A')
-          .backgroundColor(this.draftOutputMode === 'oppo' ? '#2E6BD6' : '#DDE5EE')
+        Row() {
+          Radio({ value: 'oppo', group: 'xdremux-output-mode' })
+            .checked(this.draftOutputMode === 'oppo')
+            .enabled(!this.settingsSaving)
+            .onChange((checked: boolean): void => {
+              if (checked) {
+                this.setDraftOutputMode('oppo');
+              }
+            });
+          Text('OPPO 兼容')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .margin({ left: 8 })
+            .onClick(() => {
+              this.setDraftOutputMode('oppo');
+            });
+        }
           .layoutWeight(1)
           .height(44)
-          .enabled(!this.settingsSaving)
           .onClick(() => {
             this.setDraftOutputMode('oppo');
           });
-        Button('Apple 标准')
-          .fontSize(15)
-          .fontColor(this.draftOutputMode === 'apple' ? '#FFFFFF' : '#18202A')
-          .backgroundColor(this.draftOutputMode === 'apple' ? '#2E6BD6' : '#DDE5EE')
+        Row() {
+          Radio({ value: 'apple', group: 'xdremux-output-mode' })
+            .checked(this.draftOutputMode === 'apple')
+            .enabled(!this.settingsSaving)
+            .onChange((checked: boolean): void => {
+              if (checked) {
+                this.setDraftOutputMode('apple');
+              }
+            });
+          Text('Apple 标准')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .margin({ left: 8 })
+            .onClick(() => {
+              this.setDraftOutputMode('apple');
+            });
+        }
           .layoutWeight(1)
           .height(44)
           .margin({ left: 8 })
-          .enabled(!this.settingsSaving)
           .onClick(() => {
             this.setDraftOutputMode('apple');
           });
@@ -3376,7 +3378,7 @@ struct Index {
       if (this.draftOutputMode === 'oppo') {
         Text('OPPO 兼容模式')
           .fontSize(15)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 4 });
         Select(OPPO_COMPAT_OPTIONS.map((option: SettingsOption): SelectOption => {
@@ -3384,7 +3386,7 @@ struct Index {
         }))
           .selected(this.compatIndex(this.draftOppoCompat))
           .value(compatLabel(this.draftOppoCompat))
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .optionFont({ size: 14, weight: FontWeight.Regular })
           .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
           .width('100%')
@@ -3397,13 +3399,13 @@ struct Index {
           });
         Text('说明：' + (OPPO_COMPAT_OPTIONS[this.compatIndex(this.draftOppoCompat)]?.help ?? ''))
           .fontSize(12)
-          .fontColor('#52606D')
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .margin({ top: 4 });
 
         Text('保留 OPPO 相机附加信息')
           .fontSize(15)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 12 });
         Select(OPPO_CAMERA_TAIL_OPTIONS.map((option: SettingsOption): SelectOption => {
@@ -3411,7 +3413,7 @@ struct Index {
         }))
           .selected(this.cameraTailIndex(this.draftOppoCameraTail))
           .value(cameraTailLabel(this.draftOppoCameraTail))
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .optionFont({ size: 14, weight: FontWeight.Regular })
           .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
           .width('100%')
@@ -3424,13 +3426,13 @@ struct Index {
           });
         Text('说明：' + (OPPO_CAMERA_TAIL_OPTIONS[this.cameraTailIndex(this.draftOppoCameraTail)]?.help ?? ''))
           .fontSize(12)
-          .fontColor('#52606D')
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .margin({ top: 4 });
       } else {
         Text('Apple 标准会关闭 OPPO 路由和相机附加信息；下面的 Apple 选项写入可继续编辑的数据。')
           .fontSize(13)
-          .fontColor('#52606D')
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .margin({ top: 4, bottom: 4 });
       }
@@ -3438,22 +3440,20 @@ struct Index {
       Text('Apple 照片功能（实验性）')
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#18202A')
+        .fontColor($r('sys.color.font_primary'))
         .width('100%')
         .margin({ top: 14 });
       Text('开启后自动使用 Apple 标准输出；这里写入可继续调节的数据，不会把风格直接烘焙进照片。人像选项写入可编辑人像数据，需要源照片具备可用景深信息。')
         .fontSize(12)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ top: 4, bottom: 4 });
       Row() {
         Text('摄影风格数据')
           .fontSize(14)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
         Toggle({ type: ToggleType.Switch, isOn: this.draftApplePhotographicStyles })
-          .selectedColor('#2E6BD6')
-          .switchPointColor('#FFFFFF')
           .enabled(!this.settingsSaving && !this.draftApplePhotographicStyles3)
           .onChange((isOn: boolean): void => {
             this.setDraftAppleStyles(isOn);
@@ -3464,11 +3464,9 @@ struct Index {
       Row() {
         Text('摄影风格 3（质感 + 颗粒）')
           .fontSize(14)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
         Toggle({ type: ToggleType.Switch, isOn: this.draftApplePhotographicStyles3 })
-          .selectedColor('#2E6BD6')
-          .switchPointColor('#FFFFFF')
           .enabled(!this.settingsSaving)
           .onChange((isOn: boolean): void => {
             this.setDraftAppleStyles3(isOn);
@@ -3478,17 +3476,15 @@ struct Index {
       .margin({ top: 4 });
       Text('开启后自动使用 Apple 输出并启用基础摄影风格，用于支持设备上的质感与颗粒编辑；部分图片格式可能无法转换。')
         .fontSize(12)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ top: 3 });
       Row() {
         Text('人像数据')
           .fontSize(14)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
         Toggle({ type: ToggleType.Switch, isOn: this.draftApplePortrait })
-          .selectedColor('#2E6BD6')
-          .switchPointColor('#FFFFFF')
           .enabled(!this.settingsSaving)
           .onChange((isOn: boolean): void => {
             this.setDraftApplePortrait(isOn);
@@ -3499,11 +3495,9 @@ struct Index {
       Row() {
         Text('严格 ISO 兼容（高级）')
           .fontSize(14)
-          .fontColor('#18202A')
+          .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
         Toggle({ type: ToggleType.Switch, isOn: this.draftStrictTmap })
-          .selectedColor('#2E6BD6')
-          .switchPointColor('#FFFFFF')
           .enabled(!this.settingsSaving)
           .onChange((isOn: boolean): void => {
             this.setDraftStrict(isOn);
@@ -3513,37 +3507,33 @@ struct Index {
       .margin({ top: 4 });
       Text('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。')
         .fontSize(12)
-        .fontColor('#52606D')
+        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
         .margin({ top: 3 });
 
       Text('草稿摘要：' + this.draftSettingsLabel())
         .fontSize(13)
-        .fontColor('#18202A')
+        .fontColor($r('sys.color.font_primary'))
         .width('100%')
         .margin({ top: 12 });
       if (this.settingsError.length > 0) {
         Text(this.settingsError)
           .fontSize(13)
-          .fontColor('#B3261E')
+          .fontColor($r('sys.color.ohos_id_color_alert'))
           .width('100%')
           .margin({ top: 6 });
       }
       Row() {
-        Button('恢复默认（需保存）')
+        Button('恢复默认')
           .fontSize(13)
-          .fontColor('#18202A')
-          .backgroundColor('#DDE5EE')
           .layoutWeight(1)
           .height(44)
           .enabled(!this.settingsSaving)
           .onClick(() => {
             this.restoreDefaultSettings();
           });
-        Button(this.settingsSaving ? '保存中…' : '保存并返回')
+        Button(this.settingsSaving ? '保存中…' : '保存设置')
           .fontSize(14)
-          .fontColor('#FFFFFF')
-          .backgroundColor('#16845B')
           .layoutWeight(1)
           .height(44)
           .margin({ left: 8 })
@@ -3558,7 +3548,7 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('sys.color.background_secondary'))
     .borderRadius(12)
     .margin({ top: 8, bottom: 14 });
   }
@@ -3570,21 +3560,21 @@ struct Index {
               Text('当前项目详情')
                 .fontSize(18)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .width('100%')
                 .margin({ bottom: 8 });
               Text('项目 ID：' + this.selectedItemRequired().id + ' · 文件：' + this.selectedItemRequired().displayName)
                 .fontSize(14)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .width('100%');
               Text('源 URI：' + this.display(this.selectedItemRequired().sourceUri))
                 .fontSize(12)
-                .fontColor('#52606D')
+                .fontColor($r('sys.color.font_secondary'))
                 .width('100%')
                 .margin({ top: 4 });
               Text('沙盒输入：' + this.display(this.selectedItemRequired().inputPath))
                 .fontSize(12)
-                .fontColor('#18202A')
+                .fontColor($r('sys.color.font_primary'))
                 .width('100%')
                 .margin({ top: 4, bottom: 10 });
 
@@ -3592,34 +3582,34 @@ struct Index {
                 Text('照片详情')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%')
                   .margin({ bottom: 6 });
                 Text('厂商：' + this.display(this.selectedItemRequired().details?.make) + ' · 型号：' +
                   this.display(this.selectedItemRequired().details?.model))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('时间：' + this.display(this.selectedItemRequired().details?.dateTime))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('曝光：' + this.display(this.selectedItemRequired().details?.exposureTime) + ' · 光圈：' +
                   this.display(this.selectedItemRequired().details?.fNumber) + ' · ISO：' + this.display(this.selectedItemRequired().details?.iso))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('焦距：' + this.display(this.selectedItemRequired().details?.focalLength) + ' · 35mm：' +
                   this.display(this.selectedItemRequired().details?.focalLength35mm) + ' · 曝光补偿：' +
                   this.display(this.selectedItemRequired().details?.exposureBias))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('尺寸：' + this.displayNumber(this.selectedItemRequired().details?.width) + ' × ' +
                   this.displayNumber(this.selectedItemRequired().details?.height) + ' · HDR：' +
                   this.display(this.selectedItemRequired().details?.hdrKind))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%')
                   .margin({ bottom: 10 });
               }
@@ -3628,28 +3618,28 @@ struct Index {
                 Text('分类结果')
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%')
                   .margin({ bottom: 6 });
                 Text('状态：' + this.display(this.selectedItemRequired().classification?.status))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('模式：' + this.display(this.selectedItemRequired().classification?.modeKey) +
                   ' · 目录：' + this.display(this.selectedItemRequired().classification?.folderName))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('HDR：' + this.display(this.selectedItemRequired().classification?.hdrKind) + ' · 家族：' +
                   this.display(this.selectedItemRequired().classification?.family))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('标签：' + String(this.selectedItemRequired().classification?.hasTagFlags) + ' · 标志：' +
                   this.displayBigInt(this.selectedItemRequired().classification?.tagFlags) + ' · 未知：' +
                   this.displayBigInt(this.selectedItemRequired().classification?.unknownFlags))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%')
                   .margin({ bottom: 10 });
               }
@@ -3658,29 +3648,29 @@ struct Index {
                 Text('上次成功结果：' + this.selectedItemRequired().result?.modeLabel)
                   .fontSize(16)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%')
                   .margin({ bottom: 6 });
                 Text('结果路径：' + this.selectedItemRequired().result?.outputPath)
                   .fontSize(12)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 Text('核心模式：' + this.display(this.selectedItemRequired().result?.conversion.mode) +
                   ' · 家族：' + this.display(this.selectedItemRequired().result?.conversion.family))
                   .fontSize(14)
-                  .fontColor('#18202A')
+                  .fontColor($r('sys.color.font_primary'))
                   .width('100%');
                 if (this.selectedItemRequired().attemptStatus === 'failed' && this.selectedItemRequired().errorMessage.length > 0) {
                   Text('最新重转换失败；上次成功结果仍保留：' + this.selectedItemRequired().errorMessage)
                     .fontSize(13)
-                    .fontColor('#B3261E')
+                    .fontColor($r('sys.color.ohos_id_color_alert'))
                     .width('100%')
                     .margin({ top: 4 });
                 }
                 if (this.selectedItemRequired().exportedUri.length > 0) {
                   Text('已导出：' + this.selectedItemRequired().exportedUri)
                     .fontSize(12)
-                    .fontColor('#16845B')
+                    .fontColor($r('sys.color.ohos_id_color_connected'))
                     .width('100%')
                     .margin({ top: 4 });
                 }
@@ -3691,8 +3681,6 @@ struct Index {
               Row() {
                 Button(this.selectedShareRequiresReselection() ? '需重新选择图片' : '重试失败项目')
                   .fontSize(14)
-                  .fontColor('#18202A')
-                  .backgroundColor('#DDE5EE')
                   .layoutWeight(1)
                   .height(44)
                   .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy &&
@@ -3702,8 +3690,6 @@ struct Index {
                   });
                 Button('重新转换')
                   .fontSize(14)
-                  .fontColor('#18202A')
-                  .backgroundColor('#DDE5EE')
                   .layoutWeight(1)
                   .height(44)
                   .margin({ left: 8 })
@@ -3713,8 +3699,8 @@ struct Index {
                   });
                 Button('删除项目')
                   .fontSize(14)
-                  .fontColor('#FFFFFF')
-                  .backgroundColor('#B3261E')
+                  .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                  .backgroundColor($r('sys.color.ohos_id_color_alert'))
                   .layoutWeight(1)
                   .height(44)
                   .margin({ left: 8 })
@@ -3727,8 +3713,6 @@ struct Index {
               .margin({ top: 12 });
               Button('导出上次成功结果')
                 .fontSize(15)
-                .fontColor('#FFFFFF')
-                .backgroundColor('#1F5FBF')
                 .width('100%')
                 .height(48)
                 .margin({ top: 10 })
@@ -3741,9 +3725,87 @@ struct Index {
             .alignItems(HorizontalAlign.Start)
             .width('100%')
             .padding(14)
-            .backgroundColor('#FFFFFF')
+            .backgroundColor($r('sys.color.background_secondary'))
             .borderRadius(12)
             .margin({ top: 8, bottom: 18 });
+  }
+
+  @Builder
+  private settingsPage() {
+    Column() {
+      Scroll() {
+        Column() {
+          Text('设置')
+            .fontSize(30)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%');
+          Text('调整输出格式与转换时保留的照片信息')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 4, bottom: 14 });
+
+          Row() {
+            Text('Rust 核心')
+              .fontSize(13)
+              .fontColor($r('sys.color.font_secondary'))
+              .layoutWeight(1);
+            Text('xdremux ' + this.coreVersion)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_primary'));
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(14)
+          .margin({ bottom: 10 });
+
+          if (this.settingsWarning.length > 0) {
+            Text(this.settingsWarning)
+              .fontSize(13)
+              .fontColor($r('sys.color.ohos_id_color_warning'))
+              .width('100%')
+              .margin({ bottom: 8 });
+          }
+
+          if (this.settingsLoaded) {
+            this.settingsPanel();
+          } else if (this.settingsLoading) {
+            Text('正在读取已保存设置…')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .padding(16)
+              .backgroundColor($r('sys.color.background_secondary'))
+              .borderRadius(14);
+          } else {
+            if (this.settingsError.length > 0) {
+              Text(this.settingsError)
+                .fontSize(13)
+                .fontColor($r('sys.color.ohos_id_color_alert'))
+                .width('100%')
+                .margin({ bottom: 8 });
+            }
+            Button('重试加载设置')
+              .width('100%')
+              .height(44)
+              .onClick(() => {
+                this.loadSettings();
+              });
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 24, bottom: 108 });
+      }
+      .layoutWeight(1)
+      .width('100%');
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
@@ -3751,16 +3813,18 @@ struct Index {
     Column() {
       Text(mark)
         .fontSize(18)
-        .fontColor(this.mainTabIndex === index ? '#245EA8' : '#758397');
+        .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
+          $r('sys.color.font_secondary'));
       Text(label)
         .fontSize(11)
         .fontWeight(this.mainTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.mainTabIndex === index ? '#245EA8' : '#758397');
+        .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
+          $r('sys.color.font_secondary'));
     }
     .justifyContent(FlexAlign.Center)
     .width('100%')
     .height('100%')
-    .backgroundColor(this.mainTabIndex === index ? '#E5F1FF' : '#00000000')
+    .backgroundColor(this.mainTabIndex === index ? $r('sys.color.background_tertiary') : Color.Transparent)
     .borderRadius(22)
     .margin({ left: 5, right: 5, top: 4, bottom: 4 });
   }
@@ -3770,87 +3834,20 @@ struct Index {
     Column() {
         Scroll() {
         Column() {
-          Text('XDRemux 原生版')
+          Text('转换队列')
             .fontSize(30)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .margin({ bottom: 6 });
-          Text('P3 · 多文件队列与批量导出（当前会话，前台运行）')
+          Text('批量处理照片，查看进度并导出结果')
             .fontSize(15)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .margin({ bottom: 18 });
-
-          Column() {
-            Text('Rust 核心')
-              .fontSize(14)
-              .fontColor('#52606D');
-            Text('xdremux ' + this.coreVersion)
-              .fontSize(22)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#18202A')
-              .margin({ top: 4 });
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(18)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(14)
-          .margin({ bottom: 14 });
-
-          Text('输出设置（每个项目在实际开始时获取已保存设置快照）')
-            .fontSize(14)
-            .fontColor('#52606D')
-            .width('100%');
-          Row() {
-            Text(this.settingsLoaded ? this.savedSettingsSummary() :
-              (this.settingsLoading ? '设置加载中…' : '设置不可用'))
-              .fontSize(15)
-              .fontColor('#18202A')
-              .layoutWeight(1);
-            Button('打开设置')
-              .fontSize(14)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#2E6BD6')
-              .enabled(this.settingsLoaded && !this.settingsSaving)
-              .onClick(() => {
-                this.openSettings();
-              });
-          }
-          .width('100%')
-          .margin({ top: 8, bottom: 8 });
-          if (this.settingsWarning.length > 0) {
-            Text(this.settingsWarning)
-              .fontSize(12)
-              .fontColor('#A15C00')
-              .width('100%')
-              .margin({ bottom: 6 });
-          }
-          if (this.settingsError.length > 0 && !this.settingsOpen) {
-            Text(this.settingsError)
-              .fontSize(13)
-              .fontColor('#B3261E')
-              .width('100%')
-              .margin({ bottom: 6 });
-          }
-          if (!this.settingsLoaded && !this.settingsLoading) {
-            Button('重试加载设置')
-              .fontSize(14)
-              .fontColor('#18202A')
-              .backgroundColor('#DDE5EE')
-              .width('100%')
-              .height(42)
-              .onClick(() => {
-                this.loadSettings();
-              });
-          }
-          if (this.settingsOpen) {
-            this.settingsPanel();
-          }
 
           if (this.queueLoading) {
             Text('正在校验并恢复队列记录…')
               .fontSize(13)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ top: 8, bottom: 8 });
           }
@@ -3858,14 +3855,14 @@ struct Index {
             Text(this.queueWarning.length > 0 ? this.queueWarning :
               '队列记录无法安全读取；不会自动删除或覆盖原记录。')
               .fontSize(13)
-              .fontColor('#A15C00')
+              .fontColor($r('sys.color.ohos_id_color_warning'))
               .width('100%')
               .margin({ top: 8, bottom: 6 });
             Row() {
               Button('备份并新建空队列')
                 .fontSize(14)
-                .fontColor('#FFFFFF')
-                .backgroundColor('#A15C00')
+                .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                .backgroundColor($r('sys.color.ohos_id_color_warning'))
                 .layoutWeight(1)
                 .height(44)
                 .enabled(!this.pageBusy && !this.queueLoading && !this.cleanupRunning)
@@ -3874,8 +3871,6 @@ struct Index {
                 });
               Button('重试读取')
                 .fontSize(14)
-                .fontColor('#18202A')
-                .backgroundColor('#DDE5EE')
                 .layoutWeight(1)
                 .height(44)
                 .margin({ left: 8 })
@@ -3891,13 +3886,11 @@ struct Index {
           if (this.queueError.length > 0 && !this.queueRecoveryRequired) {
             Text(this.queueError)
               .fontSize(13)
-              .fontColor('#B3261E')
+              .fontColor($r('sys.color.ohos_id_color_alert'))
               .width('100%')
               .margin({ top: 6, bottom: 6 });
             Button('重试保存队列记录')
               .fontSize(14)
-              .fontColor('#18202A')
-              .backgroundColor('#DDE5EE')
               .width('100%')
               .height(42)
               .enabled(this.queueLoaded && !this.queueLoading && !this.queueRunning &&
@@ -3909,13 +3902,11 @@ struct Index {
 
           Text(this.cacheUsage)
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ top: 8 });
           Button(this.cleanupRunning ? '清理沙盒中…' : '清理未引用沙盒文件')
             .fontSize(13)
-            .fontColor('#18202A')
-            .backgroundColor('#DDE5EE')
             .width('100%')
             .height(42)
             .enabled(this.queueLoaded && this.queueReady && !this.queueRecoveryRequired &&
@@ -3926,14 +3917,12 @@ struct Index {
             });
           Text('清理只处理本应用 inputs/outputs 中未被队列引用的产物；导出的系统文件和原始 URI 不会删除。')
             .fontSize(12)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ bottom: 8 });
 
           Button(this.photoImportButtonLabel())
             .fontSize(17)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#1F5FBF')
             .width('100%')
             .height(52)
             .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
@@ -3946,8 +3935,6 @@ struct Index {
           Row() {
             Button(this.queueRunning ? '处理中…' : '开始 / 继续队列')
               .fontSize(16)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#16845B')
               .layoutWeight(1)
               .height(48)
               .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
@@ -3958,8 +3945,6 @@ struct Index {
               });
             Button('停止（当前完成后）')
               .fontSize(15)
-              .fontColor('#18202A')
-              .backgroundColor('#DDE5EE')
               .layoutWeight(1)
               .height(48)
               .margin({ left: 10 })
@@ -3974,8 +3959,6 @@ struct Index {
           Row() {
             Button(this.batchExportRunning ? '批量导出中…' : '批量导出未导出结果')
               .fontSize(15)
-              .fontColor('#FFFFFF')
-              .backgroundColor('#2E6BD6')
               .layoutWeight(1)
               .height(46)
               .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
@@ -3987,8 +3970,6 @@ struct Index {
               });
             Button('停止后续批量导出')
               .fontSize(14)
-              .fontColor('#18202A')
-              .backgroundColor('#DDE5EE')
               .layoutWeight(1)
               .height(46)
               .margin({ left: 10 })
@@ -4003,12 +3984,12 @@ struct Index {
           if (this.batchExportEntries.length > 0) {
             Text(this.batchExportSummaryText())
               .fontSize(13)
-              .fontColor('#18202A')
+              .fontColor($r('sys.color.font_primary'))
               .width('100%')
               .margin({ top: 8, bottom: 6 });
             Text('系统可能会先创建空目标文件；写入失败时不会自动删除用户选择的位置，沙盒结果仍可重试导出。')
               .fontSize(11)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%')
               .margin({ bottom: 6 });
             ForEach(this.batchExportEntries, (entry: BatchExportEntry) => {
@@ -4016,7 +3997,7 @@ struct Index {
                 Row() {
                   Text(entry.displayName)
                     .fontSize(14)
-                    .fontColor('#18202A')
+                    .fontColor($r('sys.color.font_primary'))
                     .layoutWeight(1);
                   Text(this.batchExportStatusLabel(entry))
                     .fontSize(12)
@@ -4025,13 +4006,13 @@ struct Index {
                 }
                 Text(entry.fileName)
                   .fontSize(11)
-                  .fontColor('#52606D')
+                  .fontColor($r('sys.color.font_secondary'))
                   .width('100%')
                   .margin({ top: 3 });
                 if (entry.errorMessage.length > 0) {
                   Text(entry.errorMessage)
                     .fontSize(11)
-                    .fontColor('#B3261E')
+                    .fontColor($r('sys.color.ohos_id_color_alert'))
                     .width('100%')
                     .margin({ top: 3 });
                 }
@@ -4039,7 +4020,7 @@ struct Index {
               .alignItems(HorizontalAlign.Start)
               .width('100%')
               .padding(10)
-              .backgroundColor('#FFFFFF')
+              .backgroundColor($r('sys.color.background_secondary'))
               .borderRadius(8)
               .margin({ bottom: 6 });
             }, (entry: BatchExportEntry) => entry.id + '-' + entry.fileName + '-' + entry.status + '-' +
@@ -4048,26 +4029,26 @@ struct Index {
 
           Text(this.operationStatus)
             .fontSize(15)
-            .fontColor('#18202A')
+            .fontColor($r('sys.color.font_primary'))
             .width('100%')
             .margin({ top: 14, bottom: 8 });
           Text('队列项目：' + String(this.queueItems.length) +
             ' · 关键状态会保存；重启后需手动继续，转换仅在前台运行')
             .fontSize(13)
-            .fontColor('#52606D')
+            .fontColor($r('sys.color.font_secondary'))
             .width('100%')
             .margin({ bottom: 10 });
 
           if (this.queueItems.length === 0) {
             Text('尚未加入照片')
               .fontSize(16)
-              .fontColor('#52606D')
+              .fontColor($r('sys.color.font_secondary'))
               .width('100%');
           } else {
             Text('项目列表（点击项目查看详情）')
               .fontSize(18)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#18202A')
+              .fontColor($r('sys.color.font_primary'))
               .width('100%')
               .margin({ bottom: 8 });
             ForEach(this.queueItems, (item: QueueItem) => {
@@ -4075,7 +4056,7 @@ struct Index {
                 Column() {
                   Text(item.displayName)
                     .fontSize(15)
-                    .fontColor('#18202A')
+                    .fontColor($r('sys.color.font_primary'))
                     .width('100%');
                   Text(this.statusLabel(item) +
                     (item.lastAttemptModeLabel.length > 0 ? ' · ' + item.lastAttemptModeLabel : ''))
@@ -4087,14 +4068,14 @@ struct Index {
                     Text(this.progressStageLabel(item.progress.stage) + '：' +
                       String(item.progress.current) + ' / ' + String(item.progress.total))
                       .fontSize(12)
-                      .fontColor('#52606D')
+                      .fontColor($r('sys.color.font_secondary'))
                       .width('100%')
                       .margin({ top: 3 });
                   }
                   if (item.errorMessage.length > 0) {
                     Text(item.errorMessage)
                       .fontSize(12)
-                      .fontColor('#B3261E')
+                      .fontColor($r('sys.color.ohos_id_color_alert'))
                       .width('100%')
                       .margin({ top: 3 });
                   }
@@ -4103,11 +4084,11 @@ struct Index {
                 .layoutWeight(1);
                 Text(item.id === this.activeItemId ? '当前' : (item.id === this.selectedItemId ? '已选' : ''))
                   .fontSize(13)
-                  .fontColor('#2E6BD6');
+                  .fontColor($r('sys.color.ohos_id_color_activated'));
               }
               .width('100%')
               .padding(12)
-              .backgroundColor(item.id === this.selectedItemId ? '#E7F0FF' : '#FFFFFF')
+              .backgroundColor(item.id === this.selectedItemId ? $r('sys.color.background_tertiary') : $r('sys.color.background_secondary'))
               .borderRadius(10)
               .margin({ bottom: 8 })
               .onClick(() => {
@@ -4129,48 +4110,61 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F4F7FA');
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: '26.0.0' })
   @Builder
   private immersiveTabs() {
-        Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
-          TabContent() {
-            if (this.galleryDetailVisible) {
-              this.galleryDetailPage();
-            } else {
-              this.galleryPrototypePage();
-            }
-          }
-          .tabBar(this.mainTabBarItem(0, '\u25A6', '\u56FE\u5E93'))
-
-          TabContent() {
-            this.queuePage();
-          }
-          .tabBar(this.mainTabBarItem(1, '\u2637', '\u961F\u5217'))
+    HdsTabs({ index: this.mainTabIndex }) {
+      TabContent() {
+        if (this.galleryDetailVisible) {
+          this.galleryDetailPage();
+        } else {
+          this.galleryPrototypePage();
         }
-        .barMode(BarMode.Fixed)
-        .barHeight(64)
-        .barOverlap(true)
-        .scrollable(false)
-        .onChange((index: number) => {
-          this.mainTabIndex = index;
-        })
-        .barFloatingStyle({
-          barBottomMargin: 8,
-          adaptToHandedness: true,
-          systemMaterial: new uiMaterial.ImmersiveMaterial({
-            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-            applyShadow: true,
-            interactive: true,
-            lightEffect: { color: Color.White }
-          })
-        })
-        .expandSafeArea([SafeAreaType.SYSTEM])
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#F4F7FA');
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
+      }, '图库'))
+
+      TabContent() {
+        this.queuePage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
+      }, '队列'))
+
+      TabContent() {
+        this.settingsPage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
+      }, '设置'))
+    }
+    .barPosition(BarPosition.End)
+    .vertical(false)
+    .barMode(BarMode.Fixed)
+    .barOverlap(true)
+    .scrollable(false)
+    .onChange((index: number) => {
+      this.onMainTabChange(index);
+    })
+    .barFloatingStyle({
+      barBottomMargin: 8,
+      adaptToHandedness: true,
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      }
+    })
+    .expandSafeArea([SafeAreaType.SYSTEM])
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
@@ -4189,17 +4183,22 @@ struct Index {
         this.queuePage();
       }
       .tabBar(this.mainTabBarItem(1, '\u2637', '\u961F\u5217'))
+
+      TabContent() {
+        this.settingsPage();
+      }
+      .tabBar(this.mainTabBarItem(2, '\u2699', '\u8BBE\u7F6E'))
     }
     .barMode(BarMode.Fixed)
     .barHeight(64)
     .scrollable(false)
     .onChange((index: number) => {
-      this.mainTabIndex = index;
+      this.onMainTabChange(index);
     })
     .expandSafeArea([SafeAreaType.SYSTEM])
     .width('100%')
     .height('100%')
-    .backgroundColor('#F4F7FA');
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   build() {
