@@ -1,0 +1,50 @@
+name: Harmony native host regressions
+
+on:
+  push:
+    paths:
+      - 'apps/harmony/**'
+      - '.github/workflows/harmony-native-ci.yml'
+  pull_request:
+    paths:
+      - 'apps/harmony/**'
+      - '.github/workflows/harmony-native-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  host-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run deterministic Harmony model and queue regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in apps/harmony/tests/*.mjs; do
+            echo "Running ${test_file}"
+            node --experimental-strip-types "${test_file}"
+          done
+
+      - name: Verify HAP inspection tool
+        run: python -m unittest apps.harmony.tests.hap_verifier_test
+
+      - name: Run C++ PS3 pipeline helper regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -Wall -Wextra -Werror \
+            apps/harmony/tests/ps3_pipeline_test.cpp \
+            -o "${RUNNER_TEMP}/ps3-pipeline-test"
+          "${RUNNER_TEMP}/ps3-pipeline-test"

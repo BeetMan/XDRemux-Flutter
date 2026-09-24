@@ -51,6 +51,7 @@ export interface PersistedResult {
   outputPath: string;
   modeKey: string;
   modeLabel: string;
+  sourceInputPath?: string;
   conversion: PersistedConversion;
 }
 
@@ -58,6 +59,8 @@ export interface PersistedQueueItem {
   id: string;
   displayName: string;
   sourceUri: string;
+  sourceKind?: 'share';
+  sourceToken?: string;
   inputPath: string;
   status: QueueItemStatus;
   attemptStatus: QueueAttemptStatus;
@@ -310,17 +313,25 @@ function encodeResult(result: QueueResult): PersistedResult {
     result.outputPath.includes('.apple-features-base-')) {
     throw new Error('result.outputPath 不能是临时输出路径');
   }
-  return {
+  const encoded: PersistedResult = {
     outputPath: result.outputPath,
     modeKey: result.modeKey,
     modeLabel: result.modeLabel,
     conversion: encodeConversion(result.conversion)
   };
+  if (result.sourceInputPath !== undefined) {
+    if (result.sourceInputPath.length === 0 || result.sourceInputPath.includes('\u0000')) {
+      throw new Error('result.sourceInputPath 无效');
+    }
+    encoded.sourceInputPath = result.sourceInputPath;
+  }
+  return encoded;
 }
 
 function decodeResult(value: Object | undefined): QueueResult {
   if (!isRecord(value)) throw new Error('result 必须是对象');
-  const raw = value as { outputPath?: Object; modeKey?: Object; modeLabel?: Object; conversion?: Object };
+  const raw = value as { outputPath?: Object; modeKey?: Object; modeLabel?: Object; sourceInputPath?: Object;
+    conversion?: Object };
   const outputPath: string = requiredString(raw.outputPath, 'result.outputPath');
   const modeKey: string = requiredString(raw.modeKey, 'result.modeKey');
   if (modeKey !== 'oppo' && modeKey !== 'apple') {
@@ -329,12 +340,16 @@ function decodeResult(value: Object | undefined): QueueResult {
   if (outputPath.endsWith('.tmp') || outputPath.includes('.apple-features-base-')) {
     throw new Error('result.outputPath 不能是临时输出路径');
   }
-  return {
+  const decoded: QueueResult = {
     outputPath: outputPath,
     modeKey: modeKey,
     modeLabel: requiredString(raw.modeLabel, 'result.modeLabel', true),
     conversion: decodeConversion(raw.conversion)
   };
+  if (raw.sourceInputPath !== undefined) {
+    decoded.sourceInputPath = requiredString(raw.sourceInputPath, 'result.sourceInputPath');
+  }
+  return decoded;
 }
 
 function statusValue(value: Object | undefined, field: string): QueueItemStatus {
@@ -379,6 +394,9 @@ function encodeItem(item: QueueItem): PersistedQueueItem {
     if (item.inputPath.length > 0 && item.result.outputPath === item.inputPath) {
       throw new Error('结果路径不能与输入路径相同');
     }
+    if (item.result.sourceInputPath !== undefined && !pathSet.has(item.result.sourceInputPath)) {
+      throw new Error('结果来源路径不在任务归属列表');
+    }
   }
   const encoded: PersistedQueueItem = {
     id: item.id,
@@ -401,6 +419,13 @@ function encodeItem(item: QueueItem): PersistedQueueItem {
     cleanupErrorMessage: item.cleanupErrorMessage,
     ownedPaths: ownedPaths
   };
+  if (item.sourceKind === 'share') encoded.sourceKind = 'share';
+  if (item.sourceToken !== undefined) {
+    if (item.sourceKind !== 'share' || !/^share-[1-9][0-9]*$/.test(item.sourceToken)) {
+      throw new Error('sourceToken 无效');
+    }
+    encoded.sourceToken = item.sourceToken;
+  }
   if (item.details !== undefined) encoded.details = cloneDetails(item.details);
   if (item.classification !== undefined) encoded.classification = encodeClassification(item.classification);
   if (item.result !== undefined) encoded.result = encodeResult(item.result);
@@ -409,7 +434,9 @@ function encodeItem(item: QueueItem): PersistedQueueItem {
 
 function decodeItem(value: Object | undefined, index: number): QueueItem {
   if (!isRecord(value)) throw new Error('items[' + String(index) + '] 必须是对象');
-  const raw = value as { id?: Object; displayName?: Object; sourceUri?: Object; inputPath?: Object; status?: Object;
+  const raw = value as { id?: Object; displayName?: Object; sourceUri?: Object; sourceKind?: Object;
+    sourceToken?: Object;
+    inputPath?: Object; status?: Object;
     attemptStatus?: Object; externalBusy?: Object; details?: Object; classification?: Object; progress?: Object;
     result?: Object; exportedUri?: Object; errorMessage?: Object; lastAttemptModeKey?: Object;
     lastAttemptModeLabel?: Object; cleanupStatus?: Object; cleanupErrorMessage?: Object; ownedPaths?: Object };
@@ -426,6 +453,9 @@ function decodeItem(value: Object | undefined, index: number): QueueItem {
     ownedPaths.push(path);
   }
   const inputPath: string = requiredString(raw.inputPath, 'inputPath', true);
+  if (raw.sourceKind !== undefined && raw.sourceKind !== 'share') throw new Error('sourceKind 无效');
+  if (raw.sourceToken !== undefined && (raw.sourceKind !== 'share' || typeof raw.sourceToken !== 'string' ||
+    !/^share-[1-9][0-9]*$/.test(raw.sourceToken))) throw new Error('sourceToken 无效');
   if (inputPath.length > 0 && !ownSet.has(inputPath)) throw new Error('输入路径不在 ownedPaths');
   const progressValue: Object | undefined = raw.progress;
   if (!isRecord(progressValue)) throw new Error('progress 必须是对象');
@@ -436,12 +466,17 @@ function decodeItem(value: Object | undefined, index: number): QueueItem {
     if (inputPath.length > 0 && result.outputPath === inputPath) {
       throw new Error('结果路径不能与输入路径相同');
     }
+    if (result.sourceInputPath !== undefined && !ownSet.has(result.sourceInputPath)) {
+      throw new Error('结果来源路径不在 ownedPaths');
+    }
   }
   const item: QueueItem = {
     id: id,
     revision: 0,
     displayName: requiredString(raw.displayName, 'displayName', true),
     sourceUri: requiredString(raw.sourceUri, 'sourceUri'),
+    sourceKind: raw.sourceKind === 'share' ? 'share' : undefined,
+    sourceToken: raw.sourceToken as string | undefined,
     inputPath: inputPath,
     status: statusValue(raw.status, 'status'),
     attemptStatus: attemptStatusValue(raw.attemptStatus),
@@ -566,6 +601,7 @@ function restoreItem(item: QueueItem, probe: QueuePathProbe, warnings: Array<str
       outputPath: item.result.outputPath,
       modeKey: item.result.modeKey,
       modeLabel: item.result.modeLabel,
+      sourceInputPath: item.result.sourceInputPath,
       conversion: { ...item.result.conversion }
     };
   }

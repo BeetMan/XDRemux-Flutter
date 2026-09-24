@@ -15,6 +15,7 @@ export interface NativeSettings {
   oppoCameraTail: number;
   strictTmap: boolean;
   applePhotographicStyles: boolean;
+  applePhotographicStyles3: boolean;
   applePortrait: boolean;
 }
 
@@ -36,6 +37,8 @@ export interface SettingsRecord {
   oppoCameraTail: number;
   strictTmap: boolean;
   applePhotographicStyles: boolean;
+  /** Added without changing schema 1; old Preferences may omit this field. */
+  applePhotographicStyles3?: boolean;
   applePortrait: boolean;
 }
 
@@ -47,6 +50,7 @@ export const DEFAULT_SETTINGS: NativeSettings = {
   oppoCameraTail: 255,
   strictTmap: false,
   applePhotographicStyles: false,
+  applePhotographicStyles3: false,
   applePortrait: false
 };
 
@@ -81,6 +85,7 @@ export function cloneSettings(values: NativeSettings): NativeSettings {
     oppoCameraTail: values.oppoCameraTail,
     strictTmap: values.strictTmap,
     applePhotographicStyles: values.applePhotographicStyles,
+    applePhotographicStyles3: values.applePhotographicStyles3,
     applePortrait: values.applePortrait
   };
 }
@@ -116,17 +121,25 @@ export function normalizeSettings(values: NativeSettings): NativeSettings {
   }
   if (typeof normalized.strictTmap !== 'boolean' ||
     typeof normalized.applePhotographicStyles !== 'boolean' ||
+    typeof normalized.applePhotographicStyles3 !== 'boolean' ||
     typeof normalized.applePortrait !== 'boolean') {
     throw new Error('布尔设置无效');
   }
 
   if (normalized.outputMode === 'apple' ||
-    normalized.applePhotographicStyles || normalized.applePortrait) {
+    normalized.applePhotographicStyles || normalized.applePhotographicStyles3 ||
+    normalized.applePortrait) {
     normalized.outputMode = 'apple';
     normalized.oppoCompat = 0;
     normalized.oppoCameraTail = 0;
+    // Photographic Styles 3 is an extension of the 2023 styles graph. Keep
+    // the base graph enabled even when an old draft omitted it.
+    if (normalized.applePhotographicStyles3) {
+      normalized.applePhotographicStyles = true;
+    }
   } else {
     normalized.applePhotographicStyles = false;
+    normalized.applePhotographicStyles3 = false;
     normalized.applePortrait = false;
   }
   return normalized;
@@ -141,6 +154,7 @@ export function settingsToRecord(values: NativeSettings): SettingsRecord {
     oppoCameraTail: normalized.oppoCameraTail,
     strictTmap: normalized.strictTmap,
     applePhotographicStyles: normalized.applePhotographicStyles,
+    applePhotographicStyles3: normalized.applePhotographicStyles3,
     applePortrait: normalized.applePortrait
   };
 }
@@ -189,6 +203,8 @@ export function decodeSettingsJson(raw: string): SettingsDecodeResult {
   }
   if (typeof record.strictTmap !== 'boolean' ||
     typeof record.applePhotographicStyles !== 'boolean' ||
+    (record.applePhotographicStyles3 !== undefined &&
+      typeof record.applePhotographicStyles3 !== 'boolean') ||
     typeof record.applePortrait !== 'boolean') {
     return invalidStoredSettings('布尔值错误');
   }
@@ -199,6 +215,9 @@ export function decodeSettingsJson(raw: string): SettingsDecodeResult {
       oppoCameraTail: record.oppoCameraTail,
       strictTmap: record.strictTmap,
       applePhotographicStyles: record.applePhotographicStyles,
+      // Schema 1 records written before PS3 did not have this key. Treating
+      // the missing field as false is the only migration needed.
+      applePhotographicStyles3: record.applePhotographicStyles3 ?? false,
       applePortrait: record.applePortrait
     });
     return { values: values, warning: '' };
@@ -213,6 +232,7 @@ export function settingsEqual(left: NativeSettings, right: NativeSettings): bool
     left.oppoCameraTail === right.oppoCameraTail &&
     left.strictTmap === right.strictTmap &&
     left.applePhotographicStyles === right.applePhotographicStyles &&
+    left.applePhotographicStyles3 === right.applePhotographicStyles3 &&
     left.applePortrait === right.applePortrait;
 }
 
@@ -237,6 +257,9 @@ export function modeLabel(values: NativeSettings): string {
     labels.push('Apple 标准');
     if (normalized.applePhotographicStyles) {
       labels.push('摄影风格');
+    }
+    if (normalized.applePhotographicStyles3) {
+      labels.push('摄影风格 3');
     }
     if (normalized.applePortrait) {
       labels.push('人像数据');

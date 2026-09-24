@@ -46,6 +46,12 @@ export interface ConvertConfig {
   applePortrait: number;
 }
 
+/** Bridge-only options; these do not change Rust's five-byte ConvertConfig. */
+export interface ConvertOptions {
+  applePhotographicStyles3?: boolean;
+  grainSeed?: number;
+}
+
 export interface Progress {
   stage: number;
   current: number;
@@ -56,11 +62,15 @@ export const version: () => Promise<string>;
 export const classify: (path: string) => Promise<ClassificationResult>;
 export const inspect: (path: string) => Promise<string>;
 export const motionInspect: (path: string) => Promise<string>;
+export const motionSplit: (path: string, outputDirectory: string) => Promise<string>;
+export const livePhotoMake: (sourcePath: string, stillPath: string, outputDirectory: string) => Promise<string>;
+export const livePhotoPairValid: (stillPath: string, movPath: string) => Promise<boolean>;
 export const convert: (
   inputPath: string,
   outputPath: string,
   config: ConvertConfig,
-  progressHandle: number
+  progressHandle: number,
+  options?: ConvertOptions
 ) => Promise<ConversionResult>;
 export const progressBegin: () => number;
 export const progressRead: (handle: number) => Progress;

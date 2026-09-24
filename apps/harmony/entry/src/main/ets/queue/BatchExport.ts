@@ -88,7 +88,7 @@ function appendFileUriPathAlias(aliases: Array<string>, value: string): void {
   }
 }
 
-function uriAliases(value: string): Array<string> {
+export function uriAliases(value: string): Array<string> {
   const aliases: Array<string> = [];
   appendAlias(aliases, value);
   appendFileUriPathAlias(aliases, value);
@@ -101,6 +101,30 @@ function uriAliases(value: string): Array<string> {
     // the raw alias only so the error remains about the picker result.
   }
   return aliases;
+}
+
+/** Reject a document target that aliases any source or app-owned sandbox path.
+ * URI decoding is checked in both directions because picker providers may
+ * return encoded file URIs while queue paths stay plain filesystem paths. */
+export function assertSafeExportDestination(
+  destinationUri: string,
+  protectedPaths: Array<string>
+): void {
+  if (typeof destinationUri !== 'string' || destinationUri.length === 0 || destinationUri.trim() !== destinationUri) {
+    throw new Error('导出位置 URI 无效');
+  }
+  const targetAliases: Array<string> = uriAliases(destinationUri);
+  const protectedAliases: Set<string> = new Set<string>();
+  for (const path of protectedPaths) {
+    for (const alias of uriAliases(path)) {
+      protectedAliases.add(alias);
+    }
+  }
+  for (const alias of targetAliases) {
+    if (protectedAliases.has(alias)) {
+      throw new Error('导出位置不能是原始输入或应用沙盒文件');
+    }
+  }
 }
 
 /** Return the decoded final path segment of a picker URI. */

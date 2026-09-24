@@ -19,6 +19,7 @@ const assertDefaults = () => {
     oppoCameraTail: 255,
     strictTmap: false,
     applePhotographicStyles: false,
+    applePhotographicStyles3: false,
     applePortrait: false
   });
   assert.deepEqual(OPPO_COMPAT_OPTIONS.map((option) => option.value), [1, 2, 3, 4, 5, 6, 0]);
@@ -41,6 +42,24 @@ const assertModeTransitions = () => {
   assert.equal(appleFeatures.outputMode, 'apple');
   assert.equal(appleFeatures.strictTmap, true);
   assert.equal(modeLabel(appleFeatures), 'Apple 标准 · 摄影风格 · 人像数据 · 严格 ISO');
+
+  const styles3 = normalizeSettings({
+    ...DEFAULT_SETTINGS,
+    outputMode: 'oppo',
+    oppoCompat: 2,
+    oppoCameraTail: 255,
+    applePhotographicStyles: false,
+    applePhotographicStyles3: true
+  });
+  assert.deepEqual(styles3, {
+    ...DEFAULT_SETTINGS,
+    outputMode: 'apple',
+    oppoCompat: 0,
+    oppoCameraTail: 0,
+    applePhotographicStyles: true,
+    applePhotographicStyles3: true
+  });
+  assert.equal(modeLabel(styles3), 'Apple 标准 · 摄影风格 · 摄影风格 3');
 
   const explicitOff = normalizeSettings({ ...DEFAULT_SETTINGS, oppoCompat: 0, oppoCameraTail: 9 });
   assert.equal(explicitOff.outputMode, 'oppo');
@@ -81,6 +100,33 @@ const assertStorageValidation = () => {
     applePortrait: false
   }));
   assert.match(wrongType.warning, /布尔值错误/);
+  const legacy = decodeSettingsJson(JSON.stringify({
+    schema: 1,
+    outputMode: 'oppo',
+    oppoCompat: 2,
+    oppoCameraTail: 255,
+    strictTmap: false,
+    applePhotographicStyles: false,
+    applePortrait: false
+  }));
+  assert.equal(legacy.warning, '');
+  assert.equal(legacy.values.applePhotographicStyles3, false);
+  const invalidStyles3 = decodeSettingsJson(JSON.stringify({
+    schema: 1,
+    outputMode: 'apple',
+    oppoCompat: 0,
+    oppoCameraTail: 0,
+    strictTmap: false,
+    applePhotographicStyles: true,
+    applePhotographicStyles3: 'yes',
+    applePortrait: false
+  }));
+  assert.match(invalidStyles3.warning, /布尔值错误/);
+  const persistedStyles3 = JSON.parse(serializeSettings(normalizeSettings({
+    ...DEFAULT_SETTINGS,
+    applePhotographicStyles3: true
+  })));
+  assert.equal(persistedStyles3.applePhotographicStyles3, true);
   const wrongSchema = decodeSettingsJson(JSON.stringify({
     schema: 2,
     outputMode: 'oppo',

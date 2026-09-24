@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-19 code40007 Motion Photo 按需识别与信息展示已完成主机验证和 unsigned 构建，详情见 §14。code40004 设置和 code40005 队列恢复保留待真机验收状态；主 Agent 规划审查，Luna Max 实施。
+状态：2026-09-24 code40011 系统分享图片接入已完成主机验证、unsigned 构建与 HAP 核验，详情见 §19；P4 的构建文档、host CI、HAP verifier 和 API18 后台能力审计已完成，详情见 §20。跨端一致性、图库/Apple Photos、分享生命周期、前后台、低存储/低内存等设备验收仍待用户可用设备验证；不能视为通过。更早版 code40004/40005/40007 的历史验收状态保留在各节。
 当前基线：`e30721b`（含 code40004 设置）。开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
@@ -348,3 +348,117 @@ P0 补充检查（本批并行进行）：
 - 主线源码已同步，包含新的 SDR 摄影风格路径、PS3 texture/grain 与 semantic mattes、Exif 方向修复等 Rust 工作；本批没有重建或替换鸿蒙 staged `.so`。继续使用未剥离 hash `D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`、HAP 内已验证 hash `659C9B4DCBFF511615C5A151A227C0C336F06876061AD9F8777D8B915FD8BBF7`，因此这些主线新 Rust 功能尚未进入 Harmony HAP。
 - 用户确认 code40007 基础工作流可用；该反馈不等同于全部错误分支、边界、缓存/生命周期和设备兼容性验收。
 - 合并后九份 Node 主机测试全部通过，日志为外部 `harmony-native/main-sync/tests-main-sync.log`；`devecocli build --product default --build-mode debug` unsigned 构建成功，日志为 `main-sync/build-main-sync.log`。HAP 已复制为 `main-sync/entry-default-unsigned-main-sync.hap`，大小 5,272,818 字节、SHA-256 `6665482C7D6BCE6BFC10B788C0DBDFA4F7C2756CDCC1CBB86D84C9E7893907B9`，包内核心 hash 与旧验证值一致。未安装或运行设备。
+
+## 16. 摄影风格 3 接入（code40008，构建完成）
+
+- 用户授权更新接入并继续；在 c307a05/feat/harmony-native 上实施，主 Agent 规划审查，Luna Max 分别负责鸿蒙接入和 Rust 核心构建。
+- 使用已合并 main 的 Rust 0.4.2，严格沿用 xdremux/rust/build_ohos.sh 与 prepare_harmony_native.ps1；备份旧验证核心，记录新核心来源、哈希及导出。先核验 version/classify 基础 ABI，再验证 PS3 新导出；导出符号核验不能替代设备运行冒烟。
+- 设置新增摄影风格 3，默认关闭，旧设置缺失字段按 false 迁移；新字段错误类型拒绝。开启自动使用 Apple 输出及有效基础摄影风格，切 OPPO 关闭 Apple 功能。草稿取消、事务保存、每项执行快照与结果标签包含 PS3。
+- 不扩展 Rust 五字节 ConvertConfig。桥接单独传 PS3 选项，异步转换后按顺序写 texture_styles 和 semantic mattes；整个流水线复用核心锁，只操作已物化输入和任务临时输出。任一步失败不发布新结果，保留上次成功结果；C 结果使用相应 free 函数释放。
+- 复用已有结构验证检查输出；实际纹理/颗粒编辑需 Apple 照片验证。继承主线已知解码限制，特别是 4:4:4 10-bit HEIC，不承诺所有图片支持，也不把空语义 matte 描述成真实人像分割。
+- 验证旧记录迁移、配置依赖、快照、后处理顺序/失败与已有九份回归；使用 devecocli 构建 unsigned 0.4.2/code40008。日志及包外置 harmony-native/p3-styles3，不自动签名、安装、提交或推送。
+
+### 新核心构建记录
+
+- Rust 源码版本 0.4.2，基线 c307a05，依现有 build_ohos.sh 经 Git Bash 构建成功；使用既有 prepare_harmony_native.ps1 暂存。新核心 4,321,800 字节，SHA256 B994FB28E379C8C43B40BB952B7276EF75E38E5D40DC38DCC8E579C9F81CA63D。target 与 staged 一致，旧 D2C6... 核心备份于外部 p3-styles3/old-libxdremux_core.so。
+- x265 4.2 本地 vendor 源复制自原工作区的只读来源，复用既有构建补丁，不修改原 main；来源、版本、SDK 和工具链记录见 core-manifest.json。build_ohos.log 保存成功增量复跑；首次完整编译在子 Agent 会话输出中，未保留独立完整日志。
+- Rust 主机测试 178 passed、2 ignored；父独立核验 version/classify、PS3 注入、结构校验及对应 free 导出。devecocli device list 当前无设备，因此未运行新核心 version/classify 冒烟；不能将主机测试或导出表核验视为运行验证。
+### 接入与交付结果
+
+- 已实现 PS3 草稿设置、旧 schema1 缺字段按 false 读取、严格布尔校验及保存；开启 PS3 自动 Apple+基础摄影风格，切 OPPO/选择 OPPO 兼容或尾部清除所有 Apple 功能。运行快照和结果标签记录 PS3，修改设置不影响正在执行项。
+- N-API 使用独立 options 对象传 PS3 和稳定种子，Rust ConvertConfig 仍五 u8。原生入口强制 PS3 的基础 styles/Apple 配置，在既有互斥锁内顺序完成转换、texture、mattes、styles/portrait 结构校验；转换结果 guard 在后处理前释放。任一步失败拒绝 Promise，由现有临时文件清理路径处理，保留旧成功结果。
+- 父独立运行十份 Node 测试通过（既有九份加 p3_styles3_model_test），并使用 MSVC 编译执行生产 ps3_pipeline.h 的 C++ 测试通过：全部成功、texture/mattes/styles/portrait 各失败短路、PS3 关闭仅验证 styles、全部关闭。另有 Luna 只读 ABI/锁/释放/发布路径审查，无确定缺陷。这些替身测试不是 OHOS N-API 或 Apple 编辑效果运行验证。
+- devecocli unsigned 构建成功，git diff --check 通过。最终 HAP：p3-styles3/entry-default-unsigned-code40008-p3-styles3.hap，5,448,800 字节，SHA256 FE8F31DB6C151A73F794124061B49BC216F7BDA03EDB0F4E08FD43BA54994F67。
+- 父从 HAP 核对 bundle io.github.beetman.xdremux.native，0.4.2/code40008/API18；包内核心 3,405,600 字节，SHA256 A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B，与新 staged 核心经 llvm-strip --strip-all 的独立结果一致。桥接已导入 PS3 注入及验证符号。
+- 证据在外部 p3-styles3：build.log、parent-node-tests.log、parent-cpp-test.log/cmd、parent-hap-verification.json、parent-core-verification.json、parent-bridge-symbols.log。未签名、安装、设备运行、提交或推送；原 main 工作区状态未变。后续按 DEVICE_CHECKLIST.md 先验新核心 version/classify，再验转换导出和 Apple 照片编辑。
+
+## 17. Motion Photo 拆分与单资源导出（code40009，2026-09-21 完成收尾）
+
+- 用户要求继续下一步，回到 Motion Photo 小批：识别后拆分静态图与视频，允许分别通过系统保存选择器导出；双流报告有 primaryVideoPath 时额外显示主视频。本批不做 Live Photo 配对、系统相册集成或批量拆分。
+- 保留 code40008 未提交修改，继续复用已构建 Rust0.4.2/B994 核心。新增异步 N-API 包装已有 xdremux_motion_photo_split，复用核心互斥和 xdremux_free_string；不改 Rust 算法、不重新构建核心。
+- Rust 根据输入 stem 在指定目录写固定文件名，可能在失败前已写部分文件。每次分配唯一任务归属的临时输入副本和对应输出候选，预先登记 ownedPaths 并保存成功后再写文件；核验目标不存在，禁止覆盖任何已有转换/拆分结果。维持现有 inputs/outputs 平铺路径策略，不放开任意子目录或递归删除。
+- 严格解析报告 success/路径和 Motion Photo 范围；只接受本次预期输出路径，lstat 验证文件类型、正大小及范围长度。成功后才发布 session 拆分结果；错误与转换状态分离，保留旧成功拆分和转换结果。本次部分产物按预登记路径清理，不信任报告里的任意路径。
+- 缓存绑定任务 ID 和原 inputPath；切换选中时不串项，重启需重新识别/拆分，文件归属仍通过现有队列记录保存以支持任务删除。每次操作保持 external/pageBusy 锁，禁止与转换、导入、导出、删除、清理冲突。
+- 静态图/视频/主视频使用正确扩展名和类型，复用安全 FD 复制与目标路径保护；拆分资源导出不改转换结果 exportedUri。系统取消、失败和部分写入应有准确提示。
+- Luna Max 实施，另一 Luna Max 核对 Rust 契约并补独立边界测试；父审查锁、文件归属、失败路径和制品。保留现有十份 Node 与 C++ 测试，新增拆分模型/路径/异常验证，devecocli unsigned code40009/0.4.2，产物外置 p3-motion-split。未自动签名安装提交推送；40008 真机验证仍待办。
+### 拆分实现与交付结果
+
+- 已接入异步 motionSplit，Rust 返回字符串经 xdremux_free_string 释放；复用互斥锁、新核心保持不变。UI 识别后允许拆分并分别导出静态图、完整视频及报告存在时的主视频。会话结果按任务/输入隔离；拆分或导出失败不改变成功转换结果及其导出标志。
+- 生产编排通过可注入 IO 实现预检、整组归属登记/持久化、物理复制、Rust 拆分、实际文件/报告核验与清理。候选必须全部不存在，路径与命名逐项一致；已有路径或保存失败时零写入、零删除。失败只清理本次产物，旧拆分仍可用。成功尽力清除临时输入，清理失败保留归属和警告。
+- 导出前重新检查资源类型/大小，使用正确后缀和共享 FD 复制；目标 URI 编码别名不得指向任一任务源或沙箱归属路径。系统取消和多目标异常明确反馈，结束释放文件操作锁。
+- 父独立十二份 Node 测试通过；独立 Luna 补充 motion_split_edge_test 覆盖坏报告、MIME/路径、长度、primary、预检冲突、保存失败、部分写出和清理失败。父追加复跑了整组归属冲突不得部分登记的测试，通过；原 C++ PS3 helper 可执行回归 exit0。首次 Node 回归曾发现新增导入缺少 .ts，已修正并全套通过。
+- devecocli unsigned 构建成功（build-first.log）；源码未在成功构建后改变，仅补测试与文档。HAP：p3-motion-split/entry-default-unsigned-code40009-p3-motion-split.hap，5,537,354 字节，SHA256 A80165677C2F709E29FEC1E6FAAA91EA1AEA4D7F6CCE33C3BE0955C7240A76CA。
+- 父独立核对 bundle io.github.beetman.xdremux.native、0.4.2/code40009/API18，包内核心 3,405,600 字节 / A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B，与 code40008 一致；桥接导入 split/free_string。证据 parent-hap-verification.json、parent-bridge-symbols.log、parent-node-final.log、parent-ownership-final.log、parent-cpp-test.log。
+- 未签名安装、运行设备、提交或推送；code40008 与本批真机验收均待办，按外部 DEVICE_CHECKLIST.md 检查实际拆分、媒体可读性、picker/前后台/缓存时序。下一候选为 Live Photo 配对，但应独立规划配对身份、MOV 元数据和成对导出，不能把拆分成功等同图库实况兼容。
+
+## 18. Live Photo 配对生成与成对文件导出（code40010，2026-09-24 完成构建）
+
+- 用户暂无时间测试但明确授权继续。保留 code40008/40009 未提交改动，复用已构建 Rust0.4.2/B994 核心；Luna Max 实施，父规划审查和独立验证。
+- 输入限定为已识别 Motion Photo 的当前沙箱原图，以及该原图对应的有效 Apple 转换结果。既有 setPrepared 可能替换输入并保留旧结果，因此新增结果来源信息，旧记录缺少来源仍允许正常导出，配对需重新转换；不将不同来源原图和静态图混配。
+- 调用已有 xdremux_make_live_photo(source,still,outDir) 和 xdremux_live_photo_pair_valid(still,mov)，异步 N-API、核心锁及 free_string 保持一致。每次唯一 scratch 输入与 flat HEIC/MOV 候选，预检不存在、全队列归属冲突检查、先登记持久化后物理复制/写出；JSON 只允许精确预期路径、非空文件和合法标识，pairValid 成功后才发布。失败只清理本次，保留旧配对/转换。
+- 会话缓存绑定任务 ID、原图 inputPath、成功 Apple result.outputPath；重新导入/新转换结果使缓存失效。文件继续由 ownedPaths 持久化管理，不自动重启配对。
+- 一次保存选择器导出同 stem 的 HEIC+MOV，按返回 URI 文件名映射而非数组位置；数量/重复/源路径别名在写入前拒绝。串行复制，明确每文件成功/失败与部分成功；不删除系统目标、不改 converted result.exportedUri、不声称两个文件原子写入。
+- 界面明确提供配对文件，系统图库导入和 Apple 实际 Live Photo 播放仍待验。原生 pairValid 仅检查两个文件内标识一致，不能代替完整格式或编辑兼容验证。
+- 验证来源迁移/缓存绑定、路径和坏报告、预检/持久化失败零写入、部分写出清理、pairValid失败、成对URI乱序及部分成功，并保留十二份Node和Cpp回归；devecocli unsigned40010/0.4.2，外部p3-live-photo。不自动签名安装提交推送，前两版真机待办保留。
+
+### 当前实现与验证状态（2026-09-24）
+
+- QueueResult 新增可选 sourceInputPath。控制器仅在转换成功时记录当次实际输入；旧快照仍能读取且既有输出保持导出能力。若 setPrepared 换了当前输入，旧结果来源不会跟随修改，Live Photo 配对入口因此要求重新转换。
+- 已实现 LivePhotoPairModel 与 QueueSandbox 预检/路径计划：唯一 scratch 原图副本及同 stem HEIC/MOV 候选全部预检、登记、持久化后才开始写入。报告要求精确候选路径、非空普通文件与 UUID v4 形状标识，再通过 Rust pairValid；成功后清理 scratch，失败仅清理本次分配路径。
+- C++ N-API 已新增异步 livePhotoMake/livePhotoPairValid，持有现有核心互斥锁；JSON 字符串采用现有 RustStringDeleter 调用 xdremux_free_string；pairValid 只在 ArkTS 已检查两个候选为安全非空文件后调用。继续复用 B994 staged .so，不改 Rust、不重建 Rust 核心。
+- UI 配对缓存使用 task ID、当前 inputPath 和 Apple result.outputPath 三元绑定，新输入/新成功转换使旧配对缓存失效；配对输出仍为 ownedPaths 项，不跨重启自动恢复。单个系统保存选择器用精确 HEIC/MOV 文件名按 URI leaf 重新关联后先验证完整目标集，再串行复制；一项失败不抑制另一项，页面逐项显示成功/失败。未改转换输出 exportedUri。
+- 新增 p3_live_photo_pair_test.mjs，覆盖源绑定与旧记录迁移、候选冲突、先登记持久化后写入、持久化失败无文件写、损坏报告、pairValid 失败、失败清理范围、URI 乱序映射、目标别名拒绝及部分成功。全量 13 份 Node 主机回归及 C++ PS3 helper 回归通过，日志保存在外部 `harmony-native/p3-live-photo/parent-node-final.log` 和 `parent-cpp-test.log`。
+- 首轮 ArkTS 构建发现并修复两个对象展开、状态字段拼写和清理回调返回类型问题。最终 `devecocli build --product default --build-mode debug` 成功；日志为外部 `p3-live-photo/build-final.log`，无签名配置因此跳过签名。unsigned HAP 为 `p3-live-photo/entry-default-unsigned-code40010-p3-live-photo.hap`，5,636,835 字节，SHA-256 `8ADAE2D6540500726C09E891897AE4032CEE2DF12504A2CAD21B962653A1B42B`。
+- 独立读取 HAP 确认 bundle `io.github.beetman.xdremux.native`、versionName 0.4.2 / code40010、API18；包内 Rust 核心 3,405,600 字节 / SHA-256 `A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B`，与 code40009 HAP 一致。打包输入 staged 核心 hash `B994FB28E379C8C43B40BB952B7276EF75E38E5D40DC38DCC8E579C9F81CA63D`，未重新构建 Rust。
+- 未签名安装、设备运行、提交或推送；code40008/40009 与本批真机验收保持待办。外部 `p3-live-photo/DEVICE_CHECKLIST.md` 记录配对格式、双 URI 导出、部分失败、图库与 Apple Photos 实测步骤。
+
+## 19. 接收系统分享图片并加入队列（code40011，2026-09-24）
+
+- 当前 P3 目标是在保留旧队列和独立 bundle ID 的基础上，让图库/文件管理器等系统 Share Kit 来源可直接把图片送入原生 Harmony app。只处理带文件 URI 的 HEIC/HEIF/JPEG 图片记录；不处理文本、链接或其他媒体，并限制每批最多 15 张。
+- 按官方本地 Harmony 文档使用 UIAbility `onCreate` / `onNewWant` 和 `systemShare.getSharedData(want)`；API18 提供 launch reason 时只接受 `ReasonMessage_SystemShare`。Manifest 声明 `ohos.want.action.sendData` 与文件图片 UTD，忽略非图片记录，重复 Want 引用在进程内有界去重。
+- 分享临时 URI 在权限有效期内先物理复制到 `filesDir/inputs/share-<id>.<ext>`；Rust details/classify 只接收完成并验证过的沙箱普通文件。独立 inbox 原子记录在写入前分配目标路径，复制碰撞绝不删除已有文件；中断或错误保留可见失败状态和可安全清理的本次归属。
+- 队列 journal 持久化 queue item 和 share 输入归属之后，才移除 inbox 项。启动时按 source token 或沙箱输入路径协调重复交接；队列持久化失败时 inbox 仍保留。share 路径纳入队列持久化/恢复/删除所有权，待交接 inbox 路径受孤儿清理保护。
+- 临时分享权限失效时不再允许 QueueController 重试旧 URI，queue preparation 同样在物化前拦截无本地输入的 share 项。UI 明确进入单张重新选择流程，选中的图片替换当前失败队列项并在完成物化后清除外部 URI；同一任务身份恢复后才可开始转换。
+- 本批 versionCode 为 40011、versionName 保持 0.4.2；bundle `io.github.beetman.xdremux.native` 继续区别于 Flutter 版。沿用 staged Rust `.so`，不调用 `build_ohos.sh` 重建核心。DevEco 输出保持 unsigned，设备测试另由 DevEco 本地配置签名；本批不签名、安装或推送。
+- 新增分享过滤、Want 去重、inbox 结构和路径/队列交接测试，并检查未提交 queue item 不会在 journal 失败后使 inbox 丢失。主机测试、unsigned DevEco 构建和 HAP 信息核验结果见本节更新记录；设备分享/权限到期/批量/前后台实测仍待完成。
+
+### 实现与验证结果
+
+- 已实现 UIAbility 冷启动和已存在 Ability 的 Share Kit 接收、图片记录过滤、上限及重复 Want 防护。收件箱先持久化目标，再用临时 URI 立即复制到 inputs；校验实际沙箱文件后才调用 Rust inspect/classify。Rust 收到的始终是 app-owned path。
+- 队列持久化成功后才移除 inbox 记录。启动恢复按 token/path 协调崩溃窗口；已匹配队列项仍再次 await durable checkpoint，持久化错误时不丢 inbox。队列 orphan cleanup 引用待交接 share 路径，删除任务时由现有 ownedPaths 规则清理。碰撞预检失败不会移除既有目标。
+- 无本地副本的失败 share 项不会重试旧 URI：QueueController 拒绝 retry，queue prepare 在 URI 物化前也拒绝；顶部重新选择按钮打开单选 picker 并替换原队列项。成功后 sourceUri 被改为沙箱路径。新增回归覆盖旧 URI 未进入 prepare、原任务 ID 保持不变并使用新沙箱输入成功执行。
+- 所有 14 份 Node `.mjs` 主机测试通过，新增 `share_import_model_test.mjs` 覆盖过滤、重复 Want、inbox 路径与 ID、队列提交先于 inbox 删除、失败重选和 orphan 保护；5 份 HAP verifier 单元测试也通过。证据：外部 `p3-share-import/node-tests-p3-share-import-final.log`。
+- `devecocli build --product default --build-mode debug` unsigned 构建成功，日志为外部 `p3-share-import/build-p3-share-import-final.log`。未配置签名 profile，DevEco 跳过签名。复制 HAP：`entry-default-unsigned-code40011-p3-share-import.hap`，5,724,470 字节，SHA-256 `77263D2B4981107C3C9CF588C1249F1A60414B2474C07196CC4E2F71C48028E0`。
+- 独立 HAP 校验确认 bundle `io.github.beetman.xdremux.native`、versionName `0.4.2` / code `40011`、compatible API 18、unsigned 且无签名项；包内核心 3,405,600 字节，SHA-256 `A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B`，与现有 staged Rust 核心制品一致。校验 JSON 在外部 `p3-share-import/hap-verification-p3-share-import.json`。
+- 2026-09-25 用户启用 DevEco 本地自动调试签名后，`devecocli run --module entry --device 192.168.31.242:40813` 构建成功，已安装并启动 `io.github.beetman.xdremux.native/EntryAbility`，CLI Smoke 为 PASS。签名测试 HAP 外置 `p3-share-import/entry-default-signed-code40011-device-test.hap`，5,951,998 字节，SHA-256 `2A756188344846128C1D320A66729222A20F62407A3FDC9CF447391D06C27CF4`；unsigned 发布候选仍保留且未覆盖。设备记录见 `p3-share-import/device-install-smoke.txt`。
+- 2026-09-25 在 Pura X View 上追加 `devecocli ui` 基础自动检查：界面显示 Rust 核心 `xdremux 0.4.2`；既有恢复队列记录中的 HEIC 输入位于应用私有 `files/inputs` 路径，照片详情可读，分类返回 `missing-user-comment`（Rust 有效分类状态），旧转换结果显示 Apple 标准/摄影风格 3、UHDR/x7，并保留已导出 URI。设置面板可打开并取消；对无未导出结果的队列触发批量导出后，显示“没有可批量导出的未导出结果”，未打开 picker、未写入文件。截图和记录见外部 `p3-share-import/device-basic-smoke-final.png`、`device-basic-smoke.txt`。
+- 基础设备检查只读检查了已存在的完成记录，没有重新导入、重新转换或再次写图库文件，因此不能视为新鲜端到端转换/导出验收；图库/文件管理器 Share Kit 冷/热启动、15 张边界、权限过期后同任务重选及旧队列共存仍待设备回归。当前重跑 14 份 Node `.mjs` 和 5 份 HAP verifier Python 测试全部通过，日志见外部 `p3-share-import/device-test-host-regressions.log`。未提交或推送。
+
+## 20. P4 构建与后台能力审计（2026-09-24，文档/host 自动化完成）
+
+### 已完成
+
+- 新增 `apps/harmony/BUILDING.md`，记录从现有 `xdremux/rust/build_ohos.sh` 产物暂存、DevEco unsigned HAP 构建、外部保存证据和包校验的流程；不把 host CI 误称为 HAP 构建，也不签名/安装。
+- 新增 `.github/workflows/harmony-native-ci.yml`，在 Ubuntu/Node 24/Python 3.12 运行全部 Node `.mjs` 回归、HAP verifier unittest，以及 C++ PS3 pipeline helper；实际本地 14 份 Node、5 份 Python 单测和 C++ helper 均已通过。DevEco ArkTS/HAP build 仍须本地 SDK。
+- 新增 `apps/harmony/tools/verify_harmony_hap.py` 与单测，校验 HAP 内 bundle 与 Flutter bundle 不同、version/API、必要 arm64 库、recognized signature entries 和包内 Rust core SHA-256。code40011 unsigned HAP 已经 verifier 实测通过。
+- 用官方本地 `devecocli docs` 审计 API18 后台能力。BackgroundTaskManager 基础长时任务接口首批自 API9 支持，但官方简介仅允许规范场景；长时“特殊场景媒体处理”模式及 `SUBMODE_MEDIA_PROCESS_NORMAL_NOTIFICATION` 从 API22 起。短时任务只适用于保存状态等短操作，且有配额；后台进程仍可能因系统资源被终止。因此最低兼容 API18 不具备本应用长耗时照片转换可用的媒体处理长时任务类型，本应用保持前台转换、保存队列状态，不申请不匹配的后台类型，也不承诺锁屏/切后台后持续工作。参考本地文档 `Background Tasks Kit简介/background-task-overview`、`Background Tasks Kit接入规范/bgtask-design-formula`、`@ohos.resourceschedule.backgroundTaskManager` API 参考；审计摘要在外部 `p3-share-import/api18-background-capability-audit.txt`。
+
+### 设备验收仍待完成
+
+- P4 尚未整体验收或发布。需要使用 DevEco 本地签名在真实 API18+ 设备验证冷/热启动 Share Kit 路径、图库与文件管理器分享、重复 Want、最大批次、授权过期后原任务重选、旧队列共存和失败清理。
+- 跨端需使用相同 HEIC/JPEG 输入与同配置，对比 Harmony/Flutter/Rust 输出的容器结构、EXIF、主图/增益图/辅助图尺寸与方向；在 OPPO/Harmony/iOS 图库检查旋转方向，在 Apple Photos 检查 HDR、人像光圈、摄影风格 3 和 Live Photo 配对实际展示/播放。HAP verifier 通过不代表媒体效果通过。
+- 还需实测前后台切换与锁屏时转换的暂停/恢复提示和队列保留，以及大图、低内存、存储不足、权限拒绝、导出中断、重名和重试。CI/文档/模型回归不替代设备或图库验收；只有这些验收完成且已知限制记录后，才能考虑发布批准。
+
+## 21. API 26 外观改版准备与 bundle ID 调整（2026-09-25）
+
+- 用户决定将原生 Harmony UI 改为图库式主界面，并以 HarmonyOS 7 / API 26 和沉浸光感为设计基线。已查阅华为官方沉浸光感、Tabs、性能优化与 API 26 升级文档；沉浸材质限制在指定组件区域，避免整页及照片网格大面积使用。
+- 新工作区 bundle ID 改为 `io.github.beetman.xdremux.arkui`，继续与 Flutter `io.github.beetman.xdremux` 区分。code40011 历史签名 HAP 与已安装应用仍是 `.native`；新 ID 是独立应用身份，不自动迁移其数据。新 ID 真机签名需由 DevEco 生成匹配的本地 profile，发布包仍 unsigned。
+- 已更新 AppScope bundle、HAP verifier 默认值与单测、当前构建说明。历史 HAP 记录保留旧 ID；新 ID 真机签名仍需匹配的 DevEco 本地 profile，发布包仍 unsigned。
+- build profile 的目标 SDK 已升级到 `26.0.0`，兼容 SDK 暂留 `5.1.0(18)`。API 26 编译/打包通过；API 18 设备兼容性需继续回归。
+
+### 图库可行性原型
+
+- 主界面先切到基础图库验证页，内嵌系统 `PhotoPickerComponent`，仅显示图片并限制单选；原队列功能可从“队列”入口返回。未申请 `READ_IMAGEVIDEO` 等整库权限。
+- 用户选择后只读打开 picker URI，并先物理复制到 `cache/gallery-prototype/`；校验沙箱副本大小后才传入 Rust `inspect` 与 `classify`，展示 MIME、像素尺寸、相机信息、核心分类与副本大小。没有将 picker URI 直接传给 Rust。
+- Rust 调用复用现有 N-API 包装；`xdremux_version` 的字符串与 `xdremux_classify` 的结构体通过对应 free 函数释放。
+- API 26 ArkTS 编译与 HAP 打包成功，未签名 HAP 的 bundle、版本、兼容 API、arm64 核心库及无签名项校验通过。签名步骤因现有本地 profile 与 `.arkui` bundle 不匹配而失败，所以尚未安装到真机；图库实际授权、URI 读取和图片展示仍待匹配的新 profile 完成设备验证。

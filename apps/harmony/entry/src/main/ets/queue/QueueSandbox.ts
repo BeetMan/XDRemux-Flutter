@@ -94,10 +94,16 @@ export class SandboxPathPolicy {
     const kind: SandboxPathKind = this.kindOf(path);
     const name: string = this.leaf(path);
     if (kind === 'input') {
-      return name.startsWith('input-') && !name.endsWith('.tmp');
+      return (name.startsWith('input-') && !name.endsWith('.tmp')) ||
+        /^share-[1-9][0-9]*\.(heic|heif|jpg|jpeg)$/.test(name);
     }
     return (name.startsWith('xdremux-') &&
       (name.endsWith('.heic') || name.endsWith('.heic.tmp'))) ||
+      (name.startsWith('input-') && name.includes('-live-') &&
+        (name.endsWith('.heic') || name.endsWith('.mov'))) ||
+      (name.startsWith('input-') &&
+        (name.endsWith('.still.jpg') || name.endsWith('.still.heic') ||
+          name.endsWith('.video.mp4') || name.endsWith('.primary.mp4'))) ||
       (name.includes('.apple-features-base-') && name.endsWith('.heic'));
   }
 

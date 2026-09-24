@@ -1,5 +1,13 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
+import {
+  ClickType,
+  ItemInfo,
+  PhotoPickerComponent,
+  PickerController,
+  PickerOptions,
+  photoAccessHelper
+} from '@kit.MediaLibraryKit';
 import xdremuxNative from 'libentry.so';
 import {
   DEFAULT_SETTINGS,
@@ -35,6 +43,9 @@ import { copyBatchOutput } from '../queue/BatchExportCopy';
 import type { BatchExportFileIo, BatchExportFileStat } from '../queue/BatchExportCopy';
 import { HarmonyQueueSandbox } from '../queue/HarmonyQueueSandbox';
 import { HarmonyQueueStorage } from '../queue/HarmonyQueueStorage';
+import { HarmonyShareInbox, getHarmonyShareInbox } from '../queue/HarmonyShareInbox';
+import { persistQueueBeforeInboxRemoval } from '../queue/ShareImportModel';
+import type { ShareInboxItem } from '../queue/ShareImportModel';
 import { QueuePersistenceError, QueueStateStore, emptyQueueSnapshot, restoreQueueSnapshot } from '../queue/QueuePersistence';
 import {
   BatchExportEntry,
@@ -57,10 +68,49 @@ import {
   parseMotionPhotoJson
 } from '../queue/MotionPhotoModel';
 import type { MotionPhotoInspection } from '../queue/MotionPhotoModel';
+import {
+  buildMotionSplitPathPlan,
+  runMotionSplitPipeline
+} from '../queue/MotionPhotoSplitModel';
+import type {
+  MotionPhotoSplitAsset,
+  MotionPhotoSplitResult,
+  MotionSplitFileStat,
+  MotionSplitPathPlan
+} from '../queue/MotionPhotoSplitModel';
+import {
+  buildLivePhotoPairPathPlan,
+  runLivePhotoPairPipeline
+} from '../queue/LivePhotoPairModel';
+import type {
+  LivePhotoFileStat,
+  LivePhotoPairPathPlan,
+  LivePhotoPairResult
+} from '../queue/LivePhotoPairModel';
+import {
+  attachLivePhotoExportTargets,
+  buildLivePhotoExportPlan,
+  runLivePhotoPairExport,
+  summarizeLivePhotoExport
+} from '../queue/LivePhotoPairExport';
+import type { LivePhotoExportEntry } from '../queue/LivePhotoPairExport';
+import { ps3OptionsFor } from '../queue/Ps3Model';
 
 interface NativeError {
   message?: string;
   code?: number;
+}
+
+class GalleryHeicCompatibleCapability implements photoAccessHelper.AssetCompatibleCapability {
+  supportedHighResolution: boolean = true;
+  supportedMimeType: Array<string> = ['image/heic'];
+}
+
+class GalleryOriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
+  // CURRENT is 1 in API 26. Keep the value numeric so older API runtimes can
+  // ignore this extension field without resolving the API-26 enum at startup.
+  preferredCompatibleMode: number = 1;
+  assetCompatibleCapability: GalleryHeicCompatibleCapability = new GalleryHeicCompatibleCapability();
 }
 
 @Entry
@@ -80,6 +130,7 @@ struct Index {
   @State private draftOppoCameraTail: number = DEFAULT_SETTINGS.oppoCameraTail;
   @State private draftStrictTmap: boolean = DEFAULT_SETTINGS.strictTmap;
   @State private draftApplePhotographicStyles: boolean = DEFAULT_SETTINGS.applePhotographicStyles;
+  @State private draftApplePhotographicStyles3: boolean = DEFAULT_SETTINGS.applePhotographicStyles3;
   @State private draftApplePortrait: boolean = DEFAULT_SETTINGS.applePortrait;
   @State private queueItems: Array<QueueItem> = [];
   @State private selectedItemId: string = '';
@@ -102,10 +153,31 @@ struct Index {
   @State private motionInspectionItemId: string = '';
   @State private motionInspecting: boolean = false;
   @State private motionInspectingItemId: string = '';
+  @State private motionSplitResult: MotionPhotoSplitResult | undefined = undefined;
+  @State private motionSplitting: boolean = false;
+  @State private motionSplittingItemId: string = '';
+  @State private livePhotoPairing: boolean = false;
+  @State private livePhotoPairExporting: boolean = false;
+  @State private livePhotoPairResult: LivePhotoPairResult | undefined = undefined;
+  @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
+  @State private galleryPrototypeVisible: boolean = true;
+  @State private galleryImporting: boolean = false;
+  @State private galleryOriginalPickerActive: boolean = false;
+  @State private galleryStatus: string = '选择一张图片，验证图库授权、沙箱复制和 Rust 识别';
+  @State private galleryMimeType: string = '';
+  @State private gallerySandboxPath: string = '';
+  @State private galleryCopiedBytes: number = 0;
+  @State private galleryDetails: NativePhotoDetails | undefined = undefined;
+  @State private galleryClassification: NativeClassificationResult | undefined = undefined;
+  @State private galleryPickerController: PickerController = new PickerController();
 
   private queueController: QueueController | undefined = undefined;
   private queueStore: QueueStateStore | undefined = undefined;
   private queueSandbox: HarmonyQueueSandbox | undefined = undefined;
+  private shareInbox: HarmonyShareInbox | undefined = undefined;
+  private shareInboxUnsubscribe: (() => void) | undefined = undefined;
+  private shareDrainInFlight: boolean = false;
+  private shareDrainWakePending: boolean = false;
   private pageVisible: boolean = false;
   private queueRestoreStarted: boolean = false;
   private queueRestoreInFlight: boolean = false;
@@ -113,14 +185,26 @@ struct Index {
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   private inputSerial: number = 0;
   private outputSerial: number = 0;
+  private motionSplitSerial: number = 0;
+  private livePhotoPairSerial: number = 0;
   private batchExportSerial: number = 0;
+  private galleryImportSerial: number = 0;
   private batchPickerActive: boolean = false;
   private batchPageShowWaiters: Array<(visible: boolean) => void> = [];
+  private readonly galleryPickerOptions: PickerOptions = new PickerOptions();
   private readonly motionInspectionCache: Map<string, MotionPhotoInspection> =
     new Map<string, MotionPhotoInspection>();
+  private readonly motionSplitCache: Map<string, MotionPhotoSplitResult> =
+    new Map<string, MotionPhotoSplitResult>();
+  private readonly livePhotoPairCache: Map<string, LivePhotoPairResult> = new Map<string, LivePhotoPairResult>();
+  private livePhotoPairExportKey: string = '';
+  private livePhotoPairItemId: string = '';
 
   aboutToAppear(): void {
     this.pageVisible = true;
+    this.galleryPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    this.galleryPickerOptions.maxSelectNumber = 1;
+    this.galleryPickerOptions.checkBoxColor = '#4B86F4';
     this.refreshVersion();
     this.loadSettings();
     this.restoreQueueSession();
@@ -131,7 +215,9 @@ struct Index {
     // requires an explicit Start/Resume click so no later native work starts
     // silently after a foreground transition.
     this.pageVisible = true;
+    this.attachShareInbox();
     this.attachQueueSession();
+    this.requestShareInboxDrain();
     this.resolveBatchPageShowWaiters(!this.batchExportStopRequested);
   }
 
@@ -158,6 +244,7 @@ struct Index {
       this.batchExportStopRequested = true;
     }
     this.resolveBatchPageShowWaiters(false);
+    this.detachShareInbox();
     this.detachQueueSession();
   }
 
@@ -195,6 +282,7 @@ struct Index {
     this.draftOppoCameraTail = snapshot.oppoCameraTail;
     this.draftStrictTmap = snapshot.strictTmap;
     this.draftApplePhotographicStyles = snapshot.applePhotographicStyles;
+    this.draftApplePhotographicStyles3 = snapshot.applePhotographicStyles3;
     this.draftApplePortrait = snapshot.applePortrait;
   }
 
@@ -205,6 +293,7 @@ struct Index {
       oppoCameraTail: this.draftOppoCameraTail,
       strictTmap: this.draftStrictTmap,
       applePhotographicStyles: this.draftApplePhotographicStyles,
+      applePhotographicStyles3: this.draftApplePhotographicStyles3,
       applePortrait: this.draftApplePortrait
     };
   }
@@ -285,6 +374,7 @@ struct Index {
       this.draftOppoCameraTail = 0;
     } else {
       this.draftApplePhotographicStyles = false;
+      this.draftApplePhotographicStyles3 = false;
       this.draftApplePortrait = false;
       if (this.draftOppoCompat === 0) {
         this.draftOppoCompat = DEFAULT_SETTINGS.oppoCompat;
@@ -304,8 +394,10 @@ struct Index {
     this.draftOutputMode = 'oppo';
     if (value !== 0) {
       this.draftApplePhotographicStyles = false;
+      this.draftApplePhotographicStyles3 = false;
       this.draftApplePortrait = false;
-    } else if (this.draftApplePhotographicStyles || this.draftApplePortrait) {
+    } else if (this.draftApplePhotographicStyles || this.draftApplePhotographicStyles3 ||
+      this.draftApplePortrait) {
       this.draftOutputMode = 'apple';
       this.draftOppoCameraTail = 0;
     }
@@ -319,6 +411,7 @@ struct Index {
     this.draftOppoCameraTail = value;
     this.draftOutputMode = 'oppo';
     this.draftApplePhotographicStyles = false;
+    this.draftApplePhotographicStyles3 = false;
     this.draftApplePortrait = false;
     this.settingsError = '';
   }
@@ -328,10 +421,29 @@ struct Index {
       return;
     }
     this.draftApplePhotographicStyles = enabled;
+    // PS3 depends on the 2023 styles graph. Keeping the base toggle on avoids
+    // a draft that visually disagrees with the normalized native snapshot.
+    if (!enabled && this.draftApplePhotographicStyles3) {
+      this.draftApplePhotographicStyles = true;
+    }
     if (enabled) {
       this.draftOutputMode = 'apple';
       this.draftOppoCompat = 0;
       this.draftOppoCameraTail = 0;
+    }
+    this.settingsError = '';
+  }
+
+  private setDraftAppleStyles3(enabled: boolean): void {
+    if (!this.settingsLoaded || this.settingsSaving) {
+      return;
+    }
+    this.draftApplePhotographicStyles3 = enabled;
+    if (enabled) {
+      this.draftOutputMode = 'apple';
+      this.draftOppoCompat = 0;
+      this.draftOppoCameraTail = 0;
+      this.draftApplePhotographicStyles = true;
     }
     this.settingsError = '';
   }
@@ -377,6 +489,9 @@ struct Index {
         throw new Error('应用上下文不可用');
       }
       const root: string = context.filesDir;
+      this.shareInbox = getHarmonyShareInbox(root);
+      this.attachShareInbox();
+      this.shareDrainWakePending = true;
       this.queueStore = new QueueStateStore(root, new HarmonyQueueStorage());
       this.queueSandbox = new HarmonyQueueSandbox(root);
       const loaded: QueueStoreLoadResult = await this.queueStore.load();
@@ -439,6 +554,7 @@ struct Index {
       } else if (this.queueError.length === 0) {
         this.operationStatus = '队列已恢复；重启会保留项目，转换仍需前台手动开始';
       }
+      if (this.queueReady) this.shareDrainWakePending = true;
       this.queueRestoreStarted = true;
     } catch (error) {
       this.queueLoaded = false;
@@ -477,6 +593,7 @@ struct Index {
       this.queueRestoreStarted = true;
       this.queueWarning = '原队列记录已备份：' + backups.join('、') + '；已新建空队列';
       this.queueError = '';
+      this.shareDrainWakePending = true;
       this.attachQueueSession();
       this.operationStatus = '已安全备份损坏记录并新建空队列';
       await this.refreshCacheUsage();
@@ -556,6 +673,11 @@ struct Index {
           referenced.add(path);
         }
       }
+      if (this.shareInbox !== undefined) {
+        for (const incoming of await this.shareInbox.pending()) {
+          if (incoming.inputPath.length > 0) referenced.add(incoming.inputPath);
+        }
+      }
       const report = await sandbox.cleanupOrphans(referenced, this.queueHasBlockingOperation(controller));
       this.operationStatus = '已清理未引用沙盒文件：' + String(report.deletedPaths.length) +
         ' 个，共 ' + String(report.deletedBytes) + ' 字节';
@@ -577,6 +699,140 @@ struct Index {
     const controller: QueueController = this.queueController;
     controller.attach((): void => this.syncQueue());
     this.syncQueue();
+  }
+
+  private attachShareInbox(): void {
+    if (this.shareInbox === undefined || this.shareInboxUnsubscribe !== undefined) return;
+    this.shareInboxUnsubscribe = this.shareInbox.subscribe((): void => this.requestShareInboxDrain());
+  }
+
+  private detachShareInbox(): void {
+    if (this.shareInboxUnsubscribe !== undefined) {
+      this.shareInboxUnsubscribe();
+      this.shareInboxUnsubscribe = undefined;
+    }
+  }
+
+  private requestShareInboxDrain(): void {
+    this.shareDrainWakePending = true;
+    this.scheduleShareInboxDrain();
+  }
+
+  private scheduleShareInboxDrain(): void {
+    const controller: QueueController | undefined = this.queueController;
+    if (!this.shareDrainWakePending || this.shareInbox === undefined || !this.pageVisible ||
+      !this.queueLoaded || !this.queueReady || this.queueRecoveryRequired || this.queueLoading ||
+      this.pageBusy || this.queueRunning || this.cleanupRunning || this.batchExportRunning ||
+      this.settingsSaving || (controller !== undefined && controller.hasPersistenceError) ||
+      this.shareDrainInFlight) {
+      return;
+    }
+    this.shareDrainWakePending = false;
+    void this.drainShareInbox();
+  }
+
+  private async drainShareInbox(): Promise<void> {
+    const inbox: HarmonyShareInbox | undefined = this.shareInbox;
+    if (inbox === undefined || this.shareDrainInFlight || !this.queueReady || this.queueRecoveryRequired) {
+      this.shareDrainWakePending = true;
+      return;
+    }
+    this.shareDrainInFlight = true;
+    this.pageBusy = true;
+    try {
+      const controller: QueueController = this.getController();
+      const incomingItems: Array<ShareInboxItem> = await inbox.pending();
+      let imported: number = 0;
+      let failed: number = 0;
+      for (const incoming of incomingItems) {
+        const alreadyQueued: QueueItem | undefined = controller.items().find((item: QueueItem): boolean =>
+          item.sourceToken === incoming.id ||
+          (incoming.inputPath.length > 0 && item.inputPath === incoming.inputPath));
+        if (alreadyQueued !== undefined) {
+          // The queue journal wins after a crash between its commit and inbox
+          // removal. The file is already queue-owned, so forget metadata only.
+          // Re-check durable queue ownership before dropping the inbox row;
+          // an in-memory item after a failed journal write is not a handoff.
+          await persistQueueBeforeInboxRemoval(
+            async (): Promise<void> => controller.persist(),
+            async (): Promise<void> => inbox.remove(incoming.id)
+          );
+          continue;
+        }
+        const ready: boolean = incoming.status === 'ready' && incoming.inputPath.length > 0;
+        const queued: QueueItem = controller.add({
+          displayName: incoming.displayName,
+          // Once copied, the owned sandbox path is the durable source identity;
+          // only failed copies retain the temporary external share URI for retry.
+          sourceUri: ready ? incoming.inputPath : incoming.sourceUri,
+          sourceKind: 'share',
+          sourceToken: incoming.id,
+          inputPath: ready ? incoming.inputPath : undefined
+        });
+        if (this.selectedItemId.length === 0) this.selectQueueItem(queued.id);
+        controller.beginExternal(queued.id);
+        try {
+          if (!ready && incoming.inputPath.length > 0) {
+            controller.registerOwnedPath(queued.id, incoming.inputPath);
+          }
+          // Persist queue ownership before Rust inspection or removing the
+          // inbox row. Failed queue saves leave the staged copy retryable.
+          try {
+            await persistQueueBeforeInboxRemoval(
+              async (): Promise<void> => controller.persist(),
+              async (): Promise<void> => inbox.remove(incoming.id)
+            );
+          } catch (error) {
+            if (controller.hasPersistenceError || error instanceof QueuePersistenceError) {
+              throw new Error(this.errorMessage(error));
+            }
+            // A later startup reconciles by sourceToken/path without unlinking.
+          }
+          if (!ready) {
+            controller.markPreparationFailed(queued.id, incoming.errorMessage.length > 0
+              ? incoming.errorMessage
+              : '分享导入未完成，请重新分享图片或在应用内重新选择照片。');
+            failed += 1;
+          } else {
+            const detailsJson: string = await xdremuxNative.inspect(incoming.inputPath);
+            const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+            if (!details.success) throw new Error(this.display(details.errorMessage));
+            const classification: NativeClassificationResult =
+              await xdremuxNative.classify(incoming.inputPath) as NativeClassificationResult;
+            controller.setPrepared(queued.id, incoming.inputPath, details, classification);
+            imported += 1;
+          }
+          await controller.persist();
+        } catch (error) {
+          if (controller.hasPersistenceError || error instanceof QueuePersistenceError) {
+            throw new Error(this.errorMessage(error));
+          }
+          controller.markPreparationFailed(queued.id, this.errorMessage(error));
+          failed += 1;
+          await controller.persist();
+        } finally {
+          controller.endExternal(queued.id);
+        }
+      }
+      const notice: string = await inbox.takeNotice();
+      if (incomingItems.length > 0) {
+        this.operationStatus = '系统分享已加入队列：成功 ' + String(imported) + '，失败 ' + String(failed) +
+          '；失败项目可重试或删除';
+      } else if (notice.length > 0) {
+        this.operationStatus = notice;
+      }
+      this.syncQueue();
+      await this.refreshCacheUsage();
+    } catch (error) {
+      this.operationStatus = '系统分享暂未加入队列：' + this.errorMessage(error) +
+        '；可以重新分享，或在应用内重新选择照片';
+      if (this.queueController?.hasPersistenceError !== true) this.shareDrainWakePending = false;
+    } finally {
+      this.pageBusy = false;
+      this.shareDrainInFlight = false;
+      this.syncQueue();
+      this.scheduleShareInboxDrain();
+    }
   }
 
   private detachQueueSession(): void {
@@ -640,7 +896,21 @@ struct Index {
         this.motionInspectionCache.delete(key);
       }
     }
+    for (const key of this.motionSplitCache.keys()) {
+      if (!validMotionKeys.has(key)) {
+        this.motionSplitCache.delete(key);
+      }
+    }
+    const validPairKeys: Set<string> = new Set<string>();
+    for (const item of this.queueItems) {
+      const pairKey: string = this.livePhotoPairCacheKey(item);
+      if (pairKey.length > 0) validPairKeys.add(pairKey);
+    }
+    for (const key of this.livePhotoPairCache.keys()) {
+      if (!validPairKeys.has(key)) this.livePhotoPairCache.delete(key);
+    }
     this.syncMotionSelection();
+    this.scheduleShareInboxDrain();
   }
 
   private selectedItem(): QueueItem | undefined {
@@ -651,23 +921,41 @@ struct Index {
     return item.id + '\u0000' + item.inputPath;
   }
 
+  private livePhotoPairCacheKey(item: QueueItem): string {
+    const result: QueueResult | undefined = item.result;
+    if (item.inputPath.length === 0 || result === undefined || result.modeKey !== 'apple' ||
+      result.sourceInputPath !== item.inputPath || !result.outputPath.endsWith('.heic')) {
+      return '';
+    }
+    return item.id + '\u0000' + item.inputPath + '\u0000' + result.outputPath;
+  }
+
   private syncMotionSelection(): void {
     const item: QueueItem | undefined = this.selectedItem();
+    const pairKey: string = item === undefined ? '' : this.livePhotoPairCacheKey(item);
+    if (this.livePhotoPairExportKey !== pairKey) {
+      this.livePhotoPairExportKey = pairKey;
+      this.livePhotoPairExportEntries = [];
+    }
+    this.livePhotoPairResult = pairKey.length === 0 ? undefined : this.livePhotoPairCache.get(pairKey);
     if (item === undefined || item.inputPath.length === 0) {
       if (this.motionInspectionItemId.length !== 0 || this.motionInspection.inputPath.length !== 0) {
         this.motionInspectionItemId = item === undefined ? '' : item.id;
         this.motionInspection = emptyMotionPhotoInspection();
       }
+      this.motionSplitResult = undefined;
       return;
     }
     if (this.motionInspectionItemId === item.id && this.motionInspection.inputPath === item.inputPath) {
       return;
     }
     const cached: MotionPhotoInspection | undefined = this.motionInspectionCache.get(this.motionCacheKey(item));
+    const splitCached: MotionPhotoSplitResult | undefined = this.motionSplitCache.get(this.motionCacheKey(item));
     this.motionInspectionItemId = item.id;
     this.motionInspection = cached === undefined
       ? { inputPath: item.inputPath, state: 'unidentified', message: '尚未识别当前输入' }
       : cached;
+    this.motionSplitResult = splitCached;
   }
 
   private selectQueueItem(id: string): void {
@@ -682,6 +970,51 @@ struct Index {
     return this.motionInspectingItemId === this.selectedItemId
       ? '识别中…'
       : '识别中：另一个项目';
+  }
+
+  private motionSplitButtonLabel(): string {
+    if (!this.motionSplitting) {
+      return this.motionSplitResult === undefined ? '拆分 Motion Photo 资源' : '重新拆分 Motion Photo 资源';
+    }
+    return this.motionSplittingItemId === this.selectedItemId ? '拆分中…' : '拆分中：另一个项目';
+  }
+
+  private canMakeLivePhotoPair(): boolean {
+    const item: QueueItem | undefined = this.selectedItem();
+    return item !== undefined && this.livePhotoPairCacheKey(item).length > 0 &&
+      this.motionInspection.state === 'motion' && this.motionInspection.inputPath === item.inputPath &&
+      this.motionInspection.report !== undefined;
+  }
+
+  private livePhotoPairButtonLabel(): string {
+    if (this.livePhotoPairing) {
+      return this.livePhotoPairItemId === this.selectedItemId ? 'Live Photo 配对中…' : 'Live Photo 配对中：另一个项目';
+    }
+    return this.livePhotoPairResult === undefined ? '生成 Live Photo 配对文件' : '重新生成 Live Photo 配对文件';
+  }
+
+  private livePhotoExportStatusLabel(entry: LivePhotoExportEntry): string {
+    if (entry.status === 'succeeded') return entry.label + '：已写入 ' + entry.targetUri;
+    if (entry.status === 'failed') return entry.label + '：写入失败：' + entry.errorMessage;
+    return entry.label + '：尚未写入';
+  }
+
+  private livePhotoExportSummaryText(): string {
+    const summary = summarizeLivePhotoExport(this.livePhotoPairExportEntries);
+    return '成对文件写入：' + String(summary.succeeded) + ' / ' + String(summary.total) +
+      '；失败 ' + String(summary.failed) + '；待处理 ' + String(summary.waiting);
+  }
+
+  private motionSplitAsset(kind: 'still' | 'video' | 'primary'): MotionPhotoSplitAsset | undefined {
+    if (this.motionSplitResult === undefined) {
+      return undefined;
+    }
+    return this.motionSplitResult.assets.find((asset: MotionPhotoSplitAsset): boolean => asset.kind === kind);
+  }
+
+  private motionSplitAssetDescription(kind: 'still' | 'video' | 'primary'): string {
+    const asset: MotionPhotoSplitAsset | undefined = this.motionSplitAsset(kind);
+    return asset === undefined ? '' : asset.label + ' · ' + asset.fileName + ' · ' + String(asset.size) + ' 字节';
   }
 
   private selectedItemRequired(): QueueItem {
@@ -744,6 +1077,13 @@ struct Index {
       this.operationStatus = '队列记录保存失败，请先重试保存';
       return;
     }
+    const selectedBeforePicker: QueueItem | undefined = this.selectedItem();
+    const reselectingShare: boolean = selectedBeforePicker !== undefined &&
+      selectedBeforePicker.sourceKind === 'share' && selectedBeforePicker.status === 'failed' &&
+      selectedBeforePicker.inputPath.length === 0;
+    const reselectTargetId: string = reselectingShare && selectedBeforePicker !== undefined
+      ? selectedBeforePicker.id
+      : '';
     this.pageBusy = true;
     this.operationStatus = '正在打开系统文件选择器…';
     try {
@@ -753,11 +1093,16 @@ struct Index {
       }
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.fileSuffixFilters = ['Images|.heic,.heif,.jpg,.jpeg,.png'];
-      options.maxSelectNumber = 500;
+      options.maxSelectNumber = reselectingShare ? 1 : 500;
       const documentPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
       const selected: Array<string> = await documentPicker.select(options);
       if (selected.length === 0) {
         this.operationStatus = '未选择照片';
+        return;
+      }
+
+      if (reselectingShare && reselectTargetId.length > 0) {
+        await this.reselectFailedShare(reselectTargetId, selected[0]);
         return;
       }
 
@@ -808,9 +1153,40 @@ struct Index {
     }
   }
 
-  private async prepareQueueItem(item: QueueItem): Promise<QueuePrepared> {
+  private async reselectFailedShare(itemId: string, sourceUri: string): Promise<void> {
+    const controller: QueueController = this.getController();
+    const item: QueueItem | undefined = controller.get(itemId);
+    if (item === undefined) {
+      throw new Error('原分享项目已不存在，请重新选择图片并加入新队列项目');
+    }
+    controller.beginExternal(itemId);
+    try {
+      controller.replaceFailedShareSource(itemId, sourceUri);
+      await controller.persist();
+      const updated: QueueItem | undefined = controller.get(itemId);
+      if (updated === undefined) throw new Error('重新选择的队列项目已不存在');
+      const prepared: QueuePrepared = await this.prepareQueueItem(updated, true);
+      controller.setPrepared(itemId, prepared.inputPath, prepared.details, prepared.classification);
+      await controller.persist();
+      this.operationStatus = '已重新选择并准备图片；原队列项目已恢复，可开始处理';
+    } catch (error) {
+      if (controller.hasPersistenceError || error instanceof QueuePersistenceError) {
+        throw new Error('队列记录保存失败：' + this.errorMessage(error));
+      }
+      controller.markPreparationFailed(itemId, this.errorMessage(error));
+      await controller.persist();
+      throw new Error(this.errorMessage(error));
+    } finally {
+      controller.endExternal(itemId);
+    }
+  }
+
+  private async prepareQueueItem(item: QueueItem, allowFreshShareUri: boolean = false): Promise<QueuePrepared> {
     let newPath: string = '';
     try {
+      if (item.sourceKind === 'share' && item.inputPath.length === 0 && !allowFreshShareUri) {
+        throw new Error('分享授权可能已过期；请使用应用内选择器重新选择图片，不会重试旧 URI');
+      }
       newPath = await this.materializeUri(item.sourceUri, item.id);
       // Register before metadata/classification so an import failure still
       // leaves an explicit task-owned path for best-effort cleanup.
@@ -835,7 +1211,12 @@ struct Index {
           // retries any path that could not be deleted here.
         }
       }
-      throw new Error(this.errorMessage(error));
+      const detail: string = this.errorMessage(error);
+      const message: string = item.sourceKind === 'share' && item.inputPath.length === 0
+        ? '无法重新读取分享图片；分享授权可能已过期，请重新分享或在应用内重新选择照片。' +
+          (detail.length > 0 ? '（' + detail + '）' : '')
+        : detail;
+      throw new Error(message);
     }
   }
 
@@ -851,6 +1232,10 @@ struct Index {
     const item: QueueItem | undefined = this.selectedItem();
     if (item === undefined) {
       this.operationStatus = '请先选择队列项目';
+      return;
+    }
+    if (item.sourceKind === 'share' && item.inputPath.length === 0) {
+      this.operationStatus = '分享授权可能已过期，不能重试旧 URI。请点“重新选择失效分享图片”恢复当前队列项目';
       return;
     }
     try {
@@ -989,7 +1374,7 @@ struct Index {
       locked = true;
       await controller.persist();
       this.operationStatus = '正在打开系统保存位置选择器…';
-      const destination: string | undefined = await this.exportItem(item);
+       const destination: string | undefined = await this.exportItem(item, controller);
       if (destination === undefined) {
         this.operationStatus = '未选择导出位置；沙盒结果仍保留';
       } else {
@@ -1020,7 +1405,7 @@ struct Index {
     }
   }
 
-  private async exportItem(item: QueueItem): Promise<string | undefined> {
+  private async exportItem(item: QueueItem, controller: QueueController): Promise<string | undefined> {
     if (item.result === undefined) {
       throw new Error('转换结果不可用');
     }
@@ -1036,9 +1421,107 @@ struct Index {
     if (saved.length === 0) {
       return undefined;
     }
+    if (saved.length !== 1) {
+      throw new Error('单项导出选择器返回多个位置；未写入图片');
+    }
     const destinationUri: string = saved[0];
-    await copyBatchOutput(this.batchFileIo(), item.result.outputPath, destinationUri, item.sourceUri);
+    await copyBatchOutput(
+      this.batchFileIo(),
+      item.result.outputPath,
+      destinationUri,
+      item.sourceUri,
+      this.batchProtectedPaths(controller)
+    );
     return destinationUri;
+  }
+
+  private async exportMotionSplitAsset(kind: 'still' | 'video' | 'primary'): Promise<void> {
+    if (this.pageBusy || this.batchExportRunning || this.motionSplitting || this.motionInspecting ||
+      this.queueRunning || this.cleanupRunning || this.settingsSaving) {
+      this.operationStatus = '当前有文件操作正在进行，暂不能导出 Motion Photo 资源';
+      return;
+    }
+    if (!this.queueLoaded || !this.queueReady || this.queueRecoveryRequired) {
+      this.operationStatus = '队列记录尚未恢复，暂不能导出 Motion Photo 资源';
+      return;
+    }
+    const item: QueueItem | undefined = this.selectedItem();
+    const controller: QueueController | undefined = this.queueController;
+    if (item === undefined || controller === undefined) {
+      this.operationStatus = '请先选择队列项目';
+      return;
+    }
+    if (controller.hasPersistenceError || controller.isPersistenceBusy || this.queueHasBlockingOperation(controller)) {
+      this.operationStatus = '队列仍有未完成文件操作或保存，请稍后重试导出';
+      return;
+    }
+    const cached: MotionPhotoSplitResult | undefined = this.motionSplitCache.get(this.motionCacheKey(item));
+    const asset: MotionPhotoSplitAsset | undefined = cached === undefined
+      ? undefined
+      : cached.assets.find((candidate: MotionPhotoSplitAsset): boolean => candidate.kind === kind);
+    if (cached === undefined || cached.inputPath !== item.inputPath || asset === undefined) {
+      this.operationStatus = '当前 Motion Photo 资源不可用，请重新拆分';
+      return;
+    }
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      this.operationStatus = '应用上下文不可用';
+      return;
+    }
+    let locked: boolean = false;
+    this.pageBusy = true;
+    try {
+      controller.beginExternal(item.id);
+      locked = true;
+      await controller.persist();
+      if (this.queueSandbox === undefined) {
+        throw new Error('沙盒尚未加载');
+      }
+      const assetState: QueuePathStatus = await this.queueSandbox.status(asset.path);
+      if (assetState !== 'file') {
+        throw new Error('拆分资源不可用：' + assetState);
+      }
+      const assetStat: MotionSplitFileStat = await this.motionSplitStat(asset.path);
+      if (assetStat.isSymbolicLink || assetStat.isDirectory || !assetStat.isFile ||
+        assetStat.size !== asset.size || assetStat.size <= 0) {
+        throw new Error('拆分资源大小或文件类型已变化');
+      }
+      const documentPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
+      const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      options.newFileNames = [asset.fileName];
+      options.fileSuffixChoices = [asset.mime + '|' + asset.suffix];
+      const saved: Array<string> = await documentPicker.save(options);
+      if (saved.length === 0) {
+        this.operationStatus = item.displayName + '：未选择导出位置；拆分资源仍保留';
+        return;
+      }
+      if (saved.length !== 1) {
+        throw new Error('资源导出选择器返回多个位置；未写入资源');
+      }
+      await copyBatchOutput(
+        this.batchFileIo(),
+        asset.path,
+        saved[0],
+        item.sourceUri,
+        this.batchProtectedPaths(controller)
+      );
+      this.operationStatus = item.displayName + '：' + asset.label + '导出成功；原转换结果状态未改变';
+    } catch (error) {
+      this.operationStatus = item.displayName + '：' + asset.label + '导出失败：' +
+        this.errorMessage(error) + '；拆分资源仍保留，可重试';
+    } finally {
+      if (locked) {
+        controller.endExternal(item.id);
+        try {
+          await controller.persist();
+        } catch (persistError) {
+          this.queueError = 'Motion Photo 资源导出结束后队列状态保存失败：' +
+            this.errorMessage(persistError) + '；请重试保存';
+        }
+      }
+      this.pageBusy = false;
+      this.syncQueue();
+    }
   }
 
   private batchExportStatusLabel(entry: BatchExportEntry): string {
@@ -1206,6 +1689,326 @@ struct Index {
     }
   }
 
+  private async splitSelectedMotionPhoto(): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    const item: QueueItem | undefined = this.selectedItem();
+    if (this.motionSplitting || this.motionInspecting || this.pageBusy || this.batchExportRunning ||
+      this.queueRunning || this.cleanupRunning || this.settingsSaving || !this.settingsLoaded ||
+      !this.queueLoaded || !this.queueReady || this.queueLoading || this.queueRecoveryRequired ||
+      controller === undefined) {
+      this.operationStatus = '当前有操作、设置或队列恢复正在进行，暂不能拆分 Motion Photo';
+      return;
+    }
+    if (controller.hasPersistenceError || controller.isPersistenceBusy || this.queueHasBlockingOperation(controller)) {
+      this.operationStatus = '队列仍有未完成文件操作或保存，请稍后重试拆分';
+      return;
+    }
+    if (item === undefined || item.inputPath.length === 0) {
+      this.operationStatus = '当前项目还没有可拆分的沙盒输入';
+      return;
+    }
+    if (this.motionInspection.state !== 'motion' || this.motionInspection.report === undefined ||
+      this.motionInspection.inputPath !== item.inputPath) {
+      this.operationStatus = '请先识别当前输入的 Motion Photo 结构';
+      return;
+    }
+    const context = this.getUIContext().getHostContext();
+    const sandbox: HarmonyQueueSandbox | undefined = this.queueSandbox;
+    if (context === undefined || sandbox === undefined) {
+      this.operationStatus = '应用沙盒尚未加载';
+      return;
+    }
+    const itemId: string = item.id;
+    const inputPath: string = item.inputPath;
+    const cacheKey: string = this.motionCacheKey(item);
+    let locked: boolean = false;
+    this.pageBusy = true;
+    this.motionSplitting = true;
+    this.motionSplittingItemId = itemId;
+    this.operationStatus = '正在拆分 Motion Photo：' + item.displayName;
+    try {
+      controller.beginExternal(itemId);
+      locked = true;
+      await controller.persist();
+      const inputState: QueuePathStatus = await sandbox.status(inputPath);
+      if (inputState !== 'file') {
+        throw new Error(inputState === 'empty' ? '沙盒输入为空' : '沙盒输入不可用：' + inputState);
+      }
+      const sourceStat: MotionSplitFileStat = await this.motionSplitStat(inputPath);
+      if (!Number.isSafeInteger(sourceStat.size) || sourceStat.size <= 0) {
+        throw new Error('沙盒输入大小不是安全的正整数');
+      }
+      this.motionSplitSerial += 1;
+      const plan: MotionSplitPathPlan = buildMotionSplitPathPlan(
+        context.filesDir,
+        itemId,
+        Date.now(),
+        this.motionSplitSerial,
+        inputPath
+      );
+      // Protect every path already referenced by every queue item before the
+      // attempt allocation is journaled. The production controller repeats
+      // the check atomically when registering the five paths.
+      controller.assertPathsAvailable(plan.ownedPaths);
+      const result: MotionPhotoSplitResult = await runMotionSplitPipeline(
+        { plan: plan, sourceInputPath: inputPath, sourceBytes: sourceStat.size },
+        {
+          status: async (path: string): Promise<'file' | 'empty' | 'missing' | 'unsafe'> => {
+            return await sandbox.status(path);
+          },
+          stat: async (path: string): Promise<MotionSplitFileStat> => {
+            return await this.motionSplitStat(path);
+          },
+          register: (paths: Array<string>): void => {
+            controller.registerOwnedPaths(itemId, paths);
+          },
+          persist: async (): Promise<void> => {
+            await controller.persist();
+          },
+          copy: async (source: string, destination: string): Promise<void> => {
+            await this.copySandboxPath(source, destination);
+          },
+          runSplit: async (input: string, outputDirectory: string): Promise<string> => {
+            return await xdremuxNative.motionSplit(input, outputDirectory) as string;
+          },
+          cleanup: async (paths: Array<string>): Promise<void> => {
+            await sandbox.cleanupOwned(paths);
+          }
+        }
+      );
+      this.motionSplitCache.set(cacheKey, result);
+      if (this.selectedItemId === itemId && this.selectedItem()?.inputPath === inputPath) {
+        this.motionSplitResult = result;
+      }
+      this.operationStatus = result.cleanupWarning.length > 0
+        ? 'Motion Photo 已拆分；临时输入清理失败：' + result.cleanupWarning + '，仍保留归属可重试删除'
+        : 'Motion Photo 已拆分，可分别导出静态图和视频资源';
+    } catch (error) {
+      this.operationStatus = item.displayName + '：Motion Photo 拆分失败：' +
+        this.errorMessage(error) + '；转换结果未改变，可重试';
+    } finally {
+      if (locked) {
+        controller.endExternal(itemId);
+        try {
+          await controller.persist();
+        } catch (persistError) {
+          this.queueError = 'Motion Photo 拆分结束后队列状态保存失败：' +
+            this.errorMessage(persistError) + '；请重试保存';
+        }
+      }
+      this.motionSplitting = false;
+      this.motionSplittingItemId = '';
+      this.pageBusy = false;
+      this.syncQueue();
+    }
+  }
+
+  private async makeSelectedLivePhotoPair(): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    const item: QueueItem | undefined = this.selectedItem();
+    if (this.livePhotoPairing || this.livePhotoPairExporting || this.motionSplitting || this.motionInspecting ||
+      this.pageBusy || this.batchExportRunning || this.queueRunning || this.cleanupRunning || this.settingsSaving ||
+      !this.settingsLoaded || !this.queueLoaded || !this.queueReady || this.queueLoading ||
+      this.queueRecoveryRequired || controller === undefined) {
+      this.operationStatus = '当前有操作、设置或队列恢复正在进行，暂不能生成 Live Photo 配对';
+      return;
+    }
+    if (controller.hasPersistenceError || controller.isPersistenceBusy || this.queueHasBlockingOperation(controller)) {
+      this.operationStatus = '队列仍有未完成文件操作或保存，请稍后重试 Live Photo 配对';
+      return;
+    }
+    if (item === undefined || !this.canMakeLivePhotoPair() || this.motionInspection.report === undefined) {
+      this.operationStatus = '请先识别当前 Motion Photo，并转换出与该原图绑定的 Apple HEIC 结果';
+      return;
+    }
+    const result: QueueResult | undefined = item.result;
+    if (result === undefined || result.modeKey !== 'apple' || result.sourceInputPath !== item.inputPath) {
+      this.operationStatus = 'Apple 转换结果不属于当前输入；请重新执行 Apple 转换';
+      return;
+    }
+    const context = this.getUIContext().getHostContext();
+    const sandbox: HarmonyQueueSandbox | undefined = this.queueSandbox;
+    if (context === undefined || sandbox === undefined) {
+      this.operationStatus = '应用沙盒尚未加载';
+      return;
+    }
+
+    const itemId: string = item.id;
+    const sourceInputPath: string = item.inputPath;
+    const convertedStillPath: string = result.outputPath;
+    const cacheKey: string = this.livePhotoPairCacheKey(item);
+    let locked: boolean = false;
+    this.pageBusy = true;
+    this.livePhotoPairing = true;
+    this.livePhotoPairItemId = itemId;
+    this.operationStatus = '正在生成 Live Photo HEIC/MOV 配对：' + item.displayName;
+    try {
+      controller.beginExternal(itemId);
+      locked = true;
+      await controller.persist();
+      if (await sandbox.status(sourceInputPath) !== 'file') throw new Error('Motion Photo 沙盒原图不可用');
+      if (await sandbox.status(convertedStillPath) !== 'file') throw new Error('Apple 转换静态图不可用');
+      this.livePhotoPairSerial += 1;
+      const plan: LivePhotoPairPathPlan = buildLivePhotoPairPathPlan(
+        context.filesDir, itemId, Date.now(), this.livePhotoPairSerial, sourceInputPath, convertedStillPath);
+      controller.assertPathsAvailable(plan.ownedPaths);
+      const paired: LivePhotoPairResult = await runLivePhotoPairPipeline(
+        { plan: plan, sourceInputPath: sourceInputPath, convertedStillPath: convertedStillPath },
+        {
+          status: async (path: string): Promise<'file' | 'empty' | 'missing' | 'unsafe'> => await sandbox.status(path),
+          stat: async (path: string): Promise<LivePhotoFileStat> => await this.motionSplitStat(path),
+          register: (paths: Array<string>): void => controller.registerOwnedPaths(itemId, paths),
+          persist: async (): Promise<void> => await controller.persist(),
+          copy: async (source: string, destination: string): Promise<void> =>
+            await this.copySandboxPath(source, destination),
+          makeLivePhoto: async (source: string, still: string, outputDirectory: string): Promise<string> =>
+            await xdremuxNative.livePhotoMake(source, still, outputDirectory) as string,
+          pairValid: async (still: string, mov: string): Promise<boolean> =>
+            await xdremuxNative.livePhotoPairValid(still, mov) as boolean,
+          cleanup: async (paths: Array<string>): Promise<void> => {
+            await sandbox.cleanupOwned(paths);
+          }
+        });
+      this.livePhotoPairCache.set(cacheKey, paired);
+      if (this.selectedItemId === itemId) {
+        const current: QueueItem | undefined = this.selectedItem();
+        if (current !== undefined && this.livePhotoPairCacheKey(current) === cacheKey) {
+          this.livePhotoPairResult = paired;
+        }
+      }
+      this.operationStatus = paired.cleanupWarning.length > 0
+        ? 'Live Photo 配对已生成；临时输入清理失败：' + paired.cleanupWarning + '，仍由队列管理'
+        : 'Live Photo HEIC/MOV 配对已生成，Rust 已确认标识匹配；图库导入与 Apple Photos 播放尚未验证';
+    } catch (error) {
+      this.operationStatus = item.displayName + '：Live Photo 配对失败：' + this.errorMessage(error) +
+        '；本次候选单独清理，旧配对和转换结果保留';
+    } finally {
+      if (locked) {
+        controller.endExternal(itemId);
+        try {
+          await controller.persist();
+        } catch (persistError) {
+          this.queueError = 'Live Photo 配对结束后队列状态保存失败：' + this.errorMessage(persistError) + '；请重试保存';
+        }
+      }
+      this.livePhotoPairing = false;
+      this.livePhotoPairItemId = '';
+      this.pageBusy = false;
+      this.syncQueue();
+    }
+  }
+
+  private async exportSelectedLivePhotoPair(): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    const item: QueueItem | undefined = this.selectedItem();
+    if (this.livePhotoPairExporting || this.livePhotoPairing || this.motionSplitting || this.motionInspecting ||
+      this.pageBusy || this.batchExportRunning || this.queueRunning || this.cleanupRunning || this.settingsSaving ||
+      controller === undefined || item === undefined) {
+      this.operationStatus = '当前有文件操作正在进行，暂不能导出 Live Photo 配对';
+      return;
+    }
+    if (!this.queueLoaded || !this.queueReady || this.queueRecoveryRequired || controller.hasPersistenceError ||
+      controller.isPersistenceBusy || this.queueHasBlockingOperation(controller)) {
+      this.operationStatus = '队列仍在恢复、保存或执行文件操作，暂不能导出 Live Photo 配对';
+      return;
+    }
+    const cacheKey: string = this.livePhotoPairCacheKey(item);
+    const pair: LivePhotoPairResult | undefined = cacheKey.length === 0 ? undefined : this.livePhotoPairCache.get(cacheKey);
+    if (pair === undefined || pair.inputPath !== item.inputPath || pair.convertedStillPath !== item.result?.outputPath) {
+      this.operationStatus = '当前项目没有与原图及 Apple 转换结果匹配的 Live Photo 配对；请重新生成';
+      return;
+    }
+    const context = this.getUIContext().getHostContext();
+    const sandbox: HarmonyQueueSandbox | undefined = this.queueSandbox;
+    if (context === undefined || sandbox === undefined) {
+      this.operationStatus = '应用沙盒尚未加载';
+      return;
+    }
+    const entries: Array<LivePhotoExportEntry> = buildLivePhotoExportPlan(pair);
+    const itemId: string = item.id;
+    let locked: boolean = false;
+    this.pageBusy = true;
+    this.livePhotoPairExporting = true;
+    this.livePhotoPairExportEntries = entries;
+    this.operationStatus = '正在准备 Live Photo 成对文件导出…';
+    try {
+      controller.beginExternal(itemId);
+      locked = true;
+      await controller.persist();
+      for (const entry of entries) {
+        const state: QueuePathStatus = await sandbox.status(entry.sourcePath);
+        if (state !== 'file') throw new Error(entry.label + ' 不可用：' + state);
+        const stat: LivePhotoFileStat = await this.motionSplitStat(entry.sourcePath);
+        if (stat.isSymbolicLink || stat.isDirectory || !stat.isFile ||
+          !Number.isSafeInteger(stat.size) || stat.size <= 0) throw new Error(entry.label + ' 不是非空普通文件');
+      }
+      const documentPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
+      const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      options.newFileNames = entries.map((entry: LivePhotoExportEntry): string => entry.fileName);
+      this.operationStatus = '请选择两个同名 Live Photo 文件的保存位置…';
+      this.batchPickerActive = true;
+      let saved: Array<string> = [];
+      try {
+        saved = await documentPicker.save(options);
+      } finally {
+        this.batchPickerActive = false;
+      }
+      if (saved.length === 0) {
+        this.operationStatus = '已取消 Live Photo 导出；两个文件都未写入';
+        return;
+      }
+      if (!await this.waitForBatchPageShow()) {
+        this.livePhotoPairExportEntries = entries.map((entry: LivePhotoExportEntry): LivePhotoExportEntry => ({
+          kind: entry.kind,
+          label: entry.label,
+          sourcePath: entry.sourcePath,
+          fileName: entry.fileName,
+          targetUri: entry.targetUri,
+          status: 'failed',
+          errorMessage: '页面未恢复前台，未写入'
+        }));
+        this.operationStatus = '页面未恢复前台；Live Photo 两个文件都未写入';
+        return;
+      }
+      const protectedPaths: Array<string> = this.batchProtectedPaths(controller);
+      const mapped: Array<LivePhotoExportEntry> = attachLivePhotoExportTargets(entries, saved, protectedPaths);
+      this.livePhotoPairExportEntries = mapped;
+      const completed: Array<LivePhotoExportEntry> = await runLivePhotoPairExport(mapped,
+        async (entry: LivePhotoExportEntry): Promise<void> => await copyBatchOutput(
+          this.batchFileIo(), entry.sourcePath, entry.targetUri, item.sourceUri, protectedPaths));
+      this.livePhotoPairExportEntries = completed;
+      const summary = summarizeLivePhotoExport(completed);
+      this.operationStatus = 'Live Photo 成对文件写入 ' + String(summary.succeeded) + ' / ' +
+        String(summary.total) + '；失败 ' + String(summary.failed) +
+        '。两个文件按顺序写入，不具备原子性；转换结果导出状态未改变';
+    } catch (error) {
+      const message: string = this.errorMessage(error);
+      this.livePhotoPairExportEntries = entries.map((entry: LivePhotoExportEntry): LivePhotoExportEntry => ({
+        kind: entry.kind,
+        label: entry.label,
+        sourcePath: entry.sourcePath,
+        fileName: entry.fileName,
+        targetUri: entry.targetUri,
+        status: 'failed',
+        errorMessage: message
+      }));
+      this.operationStatus = 'Live Photo 成对导出未完成：' + message + '；未修改转换结果导出状态';
+    } finally {
+      this.batchPickerActive = false;
+      if (locked) {
+        controller.endExternal(itemId);
+        try {
+          await controller.persist();
+        } catch (persistError) {
+          this.queueError = 'Live Photo 导出结束后队列状态保存失败：' + this.errorMessage(persistError) + '；请重试保存';
+        }
+      }
+      this.livePhotoPairExporting = false;
+      this.pageBusy = false;
+      this.syncQueue();
+    }
+  }
+
   private async startBatchExport(): Promise<void> {
     const controller: QueueController | undefined = this.queueController;
     if (this.batchExportRunning || this.pageBusy || this.queueRunning || this.cleanupRunning ||
@@ -1341,6 +2144,32 @@ struct Index {
     };
   }
 
+  private async motionSplitStat(path: string): Promise<MotionSplitFileStat> {
+    const stat: fileIo.Stat = await fileIo.lstat(path);
+    return {
+      size: stat.size,
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+      isSymbolicLink: stat.isSymbolicLink()
+    };
+  }
+
+  private async copySandboxPath(sourcePath: string, destinationPath: string): Promise<void> {
+    let sourceFd: number = -1;
+    try {
+      sourceFd = (await fileIo.open(sourcePath, fileIo.OpenMode.READ_ONLY)).fd;
+      await fileIo.copyFile(sourceFd, destinationPath);
+    } finally {
+      if (sourceFd >= 0) {
+        try {
+          await fileIo.close(sourceFd);
+        } catch (closeError) {
+          // Preserve a copy failure; the pipeline owns cleanup of the scratch.
+        }
+      }
+    }
+  }
+
   private async executeQueueItem(
     item: QueueItem,
     mode: QueueModeSnapshot,
@@ -1381,7 +2210,8 @@ struct Index {
         item.inputPath,
         temporaryPath,
         mode.config,
-        handle
+        handle,
+        ps3OptionsFor(item.inputPath, mode.applePhotographicStyles3 === true)
       ) as NativeConversionResult;
       if (!conversion.success) {
         const message: string = this.display(conversion.errorMessage);
@@ -1437,6 +2267,7 @@ struct Index {
     return {
       modeKey: settings.outputMode,
       modeLabel: modeLabel(settings),
+      applePhotographicStyles3: settings.applePhotographicStyles3,
       config: {
         oppoCompat: settings.oppoCompat,
         oppoCameraTail: settings.oppoCameraTail,
@@ -1532,6 +2363,276 @@ struct Index {
     }
   }
 
+  private async inspectGallerySelection(sourceUri: string): Promise<void> {
+    if (this.galleryImporting || sourceUri.length === 0) {
+      return;
+    }
+    this.galleryImporting = true;
+    this.galleryDetails = undefined;
+    this.galleryClassification = undefined;
+    this.gallerySandboxPath = '';
+    this.galleryCopiedBytes = 0;
+    this.galleryStatus = '正在把已授权图片复制到应用沙箱…';
+
+    let sourceFd: number = -1;
+    try {
+      const context = this.getUIContext().getHostContext();
+      if (context === undefined) {
+        throw new Error('应用上下文不可用');
+      }
+      this.galleryImportSerial += 1;
+      const directory: string = context.cacheDir + '/gallery-prototype';
+      await this.ensureDirectory(directory);
+      const destination: string = directory + '/selected-' + String(Date.now()) + '-' +
+        String(this.galleryImportSerial) + this.galleryFileSuffixFromUri(sourceUri);
+
+      // PhotoPicker grants access to a user-selected URI. Rust only receives
+      // an app-owned path after this physical copy has been verified.
+      sourceFd = (await fileIo.open(sourceUri, fileIo.OpenMode.READ_ONLY)).fd;
+      await fileIo.copyFile(sourceFd, destination);
+      await fileIo.close(sourceFd);
+      sourceFd = -1;
+
+      const stat: fileIo.Stat = await fileIo.stat(destination);
+      if (stat.size <= 0) {
+        throw new Error('图库图片复制到沙箱后为空');
+      }
+      this.gallerySandboxPath = destination;
+      this.galleryCopiedBytes = stat.size;
+      this.galleryStatus = '已复制到应用沙箱，正在读取图片信息…';
+
+      const detailsJson: string = await xdremuxNative.inspect(destination);
+      const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+      if (!details.success) {
+        throw new Error(this.display(details.errorMessage));
+      }
+      const classification: NativeClassificationResult =
+        await xdremuxNative.classify(destination) as NativeClassificationResult;
+      this.galleryDetails = details;
+      this.galleryClassification = classification;
+      this.galleryStatus = '图库读取成功 · 沙箱副本已验证 · Rust 信息读取与分类完成';
+    } catch (error) {
+      this.galleryStatus = '图库验证失败：' + this.errorMessage(error);
+    } finally {
+      if (sourceFd >= 0) {
+        try {
+          await fileIo.close(sourceFd);
+        } catch (closeError) {
+          // Keep the original picker/copy/inspection result visible.
+        }
+      }
+      this.galleryImporting = false;
+    }
+  }
+
+  private clearGallerySelection(status: string): void {
+    this.galleryMimeType = '';
+    this.gallerySandboxPath = '';
+    this.galleryCopiedBytes = 0;
+    this.galleryDetails = undefined;
+    this.galleryClassification = undefined;
+    this.galleryStatus = status;
+  }
+
+  private galleryMimeTypeFromUri(uri: string): string {
+    const path: string = uri.split('?')[0].split('#')[0].toLowerCase();
+    if (path.endsWith('.heic')) return 'image/heic';
+    if (path.endsWith('.heif')) return 'image/heif';
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+    return '';
+  }
+
+  private galleryFileSuffixFromUri(uri: string): string {
+    const path: string = uri.split('?')[0].split('#')[0].toLowerCase();
+    if (path.endsWith('.heic')) return '.heic';
+    if (path.endsWith('.heif')) return '.heif';
+    if (path.endsWith('.jpg')) return '.jpg';
+    if (path.endsWith('.jpeg')) return '.jpeg';
+    return '.photo';
+  }
+
+  private async chooseGalleryOriginal(): Promise<void> {
+    if (this.galleryImporting || this.galleryOriginalPickerActive) {
+      return;
+    }
+    this.galleryOriginalPickerActive = true;
+    this.clearGallerySelection('正在打开 API 26 原格式图库选择器…');
+    try {
+      const options: GalleryOriginalPhotoSelectOptions = new GalleryOriginalPhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
+      const uri: string = result.photoUris.length > 0 ? result.photoUris[0] : '';
+      if (uri.length === 0) {
+        this.clearGallerySelection('已取消原格式图库选择');
+        return;
+      }
+      this.galleryMimeType = this.galleryMimeTypeFromUri(uri);
+      await this.inspectGallerySelection(uri);
+    } catch (error) {
+      this.clearGallerySelection('原格式图库选择失败：' + this.errorMessage(error));
+    } finally {
+      this.galleryOriginalPickerActive = false;
+    }
+  }
+
+  private galleryFormatLabel(): string {
+    if (this.galleryMimeType.length > 0) {
+      return this.galleryMimeType.toUpperCase();
+    }
+    const path: string = this.gallerySandboxPath;
+    const dot: number = path.lastIndexOf('.');
+    return dot >= 0 ? path.substring(dot + 1).toUpperCase() : '未知';
+  }
+
+  @Builder
+  private galleryPrototypePage() {
+    Column() {
+      Row() {
+        Column() {
+          Text('XDRemux')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#52657D');
+          Text('图库')
+            .fontSize(28)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#18202A')
+            .margin({ top: 2 });
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1);
+        Button('队列')
+          .fontSize(14)
+          .fontColor('#244D88')
+          .backgroundColor('#DCEAFF')
+          .height(40)
+          .onClick((): void => {
+            this.galleryPrototypeVisible = false;
+          });
+      }
+      .width('100%')
+      .margin({ bottom: 8 });
+
+      Text('使用系统图库 · 仅在选择后读取，不申请整库照片权限')
+        .fontSize(13)
+        .fontColor('#64748B')
+        .width('100%')
+        .margin({ bottom: 8 });
+
+      Button('API 26 原格式选择（保留 HEIC 原片）')
+        .fontSize(14)
+        .fontColor('#244D88')
+        .backgroundColor('#DCEAFF')
+        .height(42)
+        .width('100%')
+        .enabled(!this.galleryImporting && !this.galleryOriginalPickerActive)
+        .margin({ bottom: 8 })
+        .onClick((): void => {
+          void this.chooseGalleryOriginal();
+        });
+
+      Text('原图模式保留 HEIC；JPEG 照片仍按 JPEG 读取。下方图库用于对照')
+        .fontSize(11)
+        .fontColor('#64748B')
+        .width('100%')
+        .margin({ bottom: 8 });
+
+      PhotoPickerComponent({
+        pickerOptions: this.galleryPickerOptions,
+        pickerController: this.galleryPickerController,
+        onItemClicked: (itemInfo: ItemInfo, _clickType: ClickType): boolean => {
+          if (itemInfo.mimeType !== undefined) {
+            this.galleryMimeType = itemInfo.mimeType;
+          }
+          return true;
+        },
+        onSelect: (uri: string): void => {
+          void this.inspectGallerySelection(uri);
+        },
+        onDeselect: (): void => {
+          if (!this.galleryImporting) {
+            this.clearGallerySelection('已取消图库选择；照片不会继续读取');
+          }
+        }
+      })
+        .layoutWeight(1)
+        .width('100%')
+        .borderRadius(18);
+
+      Column() {
+        Row() {
+          Text('图片信息')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18202A')
+            .layoutWeight(1);
+          if (this.galleryImporting) {
+            LoadingProgress()
+              .width(20)
+              .height(20);
+          }
+        }
+        .width('100%');
+
+        Text(this.galleryStatus)
+          .fontSize(12)
+          .fontColor(this.galleryStatus.indexOf('失败') >= 0 ? '#B3261E' : '#52606D')
+          .width('100%')
+          .margin({ top: 6 });
+
+        if (this.galleryDetails !== undefined) {
+          Row() {
+            Text('格式  ' + this.galleryFormatLabel())
+              .fontSize(13)
+              .fontColor('#26384F')
+              .layoutWeight(1);
+            Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0))
+              .fontSize(13)
+              .fontColor('#52606D');
+          }
+          .width('100%')
+          .margin({ top: 8 });
+
+          Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
+            (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
+              ? ' · ' + this.galleryClassification.modeKey
+              : ''))
+            .fontSize(12)
+            .fontColor('#52606D')
+            .width('100%')
+            .margin({ top: 5 });
+
+          Text('相机  ' + this.display(this.galleryDetails.make) + ' ' +
+            this.display(this.galleryDetails.model) + ' · ISO ' + this.display(this.galleryDetails.iso))
+            .fontSize(12)
+            .fontColor('#52606D')
+            .width('100%')
+            .margin({ top: 3 });
+        }
+        if (this.gallerySandboxPath.length > 0) {
+          Text('沙箱副本  ' + String(this.galleryCopiedBytes) + ' B')
+            .fontSize(12)
+            .fontColor('#52606D')
+            .width('100%')
+            .margin({ top: 5 });
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(14)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+      .margin({ top: 10 });
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .height('100%')
+    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    .backgroundColor('#F2F6FB');
+  }
+
   private async ensureDirectory(path: string): Promise<void> {
     try {
       await fileIo.mkdir(path, true);
@@ -1601,6 +2702,21 @@ struct Index {
       return '已完成';
     }
     return '失败';
+  }
+
+  private photoImportButtonLabel(): string {
+    const selected: QueueItem | undefined = this.selectedItem();
+    if (selected !== undefined && selected.sourceKind === 'share' && selected.status === 'failed' &&
+      selected.inputPath.length === 0) {
+      return '重新选择失效分享图片';
+    }
+    return '选择多个照片并加入队列';
+  }
+
+  private selectedShareRequiresReselection(): boolean {
+    const selected: QueueItem | undefined = this.selectedItem();
+    return selected !== undefined && selected.sourceKind === 'share' && selected.status === 'failed' &&
+      selected.inputPath.length === 0;
   }
 
   private progressStageLabel(stage: number): string {
@@ -1684,7 +2800,7 @@ struct Index {
         .fontColor('#18202A')
         .width('100%')
         .margin({ top: 14, bottom: 6 });
-      Text('识别只读取当前已物化的沙盒输入；结果按任务和 inputPath 缓存于本次运行，重启后需重新识别。')
+      Text('识别和拆分只使用当前项目的沙盒输入；结果绑定当前项目并保留在本次运行，重启后可重新识别和拆分。')
         .fontSize(12)
         .fontColor('#52606D')
         .width('100%');
@@ -1744,6 +2860,157 @@ struct Index {
             .fontSize(13)
             .fontColor('#18202A')
             .width('100%');
+        }
+        Button(this.motionSplitButtonLabel())
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#16845B')
+          .width('100%')
+          .height(44)
+          .margin({ top: 8 })
+          .enabled(!this.motionSplitting && !this.motionInspecting && !this.pageBusy &&
+            !this.queueRunning && !this.batchExportRunning && !this.cleanupRunning &&
+            !this.settingsSaving && this.queueLoaded && this.queueReady &&
+            !this.queueLoading && !this.queueRecoveryRequired && !this.queuePersistenceFailed())
+          .onClick(() => {
+            this.splitSelectedMotionPhoto();
+          });
+        if (this.motionSplitResult !== undefined) {
+          Text('已拆分资源：')
+            .fontSize(13)
+            .fontColor('#18202A')
+            .width('100%')
+            .margin({ top: 8 });
+          if (this.motionSplitAsset('still') !== undefined) {
+            Row() {
+              Text(this.motionSplitAssetDescription('still'))
+                .fontSize(12)
+                .fontColor('#18202A')
+                .layoutWeight(1);
+              Button('导出')
+                .fontSize(12)
+                .onClick(() => {
+                  this.exportMotionSplitAsset('still');
+                });
+            }
+            .width('100%')
+            .margin({ top: 4 });
+          }
+          if (this.motionSplitAsset('video') !== undefined) {
+            Row() {
+              Text(this.motionSplitAssetDescription('video'))
+                .fontSize(12)
+                .fontColor('#18202A')
+                .layoutWeight(1);
+              Button('导出')
+                .fontSize(12)
+                .onClick(() => {
+                  this.exportMotionSplitAsset('video');
+                });
+            }
+            .width('100%')
+            .margin({ top: 4 });
+          }
+          if (this.motionSplitAsset('primary') !== undefined) {
+            Row() {
+              Text(this.motionSplitAssetDescription('primary'))
+                .fontSize(12)
+                .fontColor('#18202A')
+                .layoutWeight(1);
+              Button('导出')
+                .fontSize(12)
+                .onClick(() => {
+                  this.exportMotionSplitAsset('primary');
+                });
+            }
+            .width('100%')
+            .margin({ top: 4 });
+          }
+          if (this.motionSplitResult.cleanupWarning.length > 0) {
+            Text('临时输入清理提示：' + this.motionSplitResult.cleanupWarning)
+              .fontSize(12)
+              .fontColor('#B3261E')
+              .width('100%')
+              .margin({ top: 4 });
+          }
+        }
+        Text('Live Photo 配对')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#18202A')
+          .width('100%')
+          .margin({ top: 12, bottom: 4 });
+        Text(this.canMakeLivePhotoPair()
+          ? '来源已绑定：当前 Motion Photo 原图 + 同一原图对应的 Apple HEIC 转换结果。'
+          : '请先将当前 Motion Photo 原图转换为 Apple HEIC；旧转换记录缺少来源绑定时需重新转换。')
+          .fontSize(12)
+          .fontColor('#52606D')
+          .width('100%');
+        Button(this.livePhotoPairButtonLabel())
+          .fontSize(14)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#7B4ACB')
+          .width('100%')
+          .height(44)
+          .margin({ top: 8 })
+          .enabled(this.canMakeLivePhotoPair() && !this.livePhotoPairing && !this.livePhotoPairExporting &&
+            !this.motionSplitting && !this.motionInspecting && !this.pageBusy && !this.queueRunning &&
+            !this.batchExportRunning && !this.cleanupRunning && !this.settingsSaving && this.queueReady &&
+            !this.queueRecoveryRequired && !this.queuePersistenceFailed())
+          .onClick(() => {
+            this.makeSelectedLivePhotoPair();
+          });
+        if (this.livePhotoPairResult !== undefined) {
+          Text('配对文件：' + this.livePhotoPairResult.stillPath.substring(
+            this.livePhotoPairResult.stillPath.lastIndexOf('/') + 1) + ' (' +
+            String(this.livePhotoPairResult.stillSize) + ' 字节) + ' +
+            this.livePhotoPairResult.movPath.substring(this.livePhotoPairResult.movPath.lastIndexOf('/') + 1) +
+            ' (' + String(this.livePhotoPairResult.movSize) + ' 字节)')
+            .fontSize(12)
+            .fontColor('#18202A')
+            .width('100%')
+            .margin({ top: 6 });
+          Text('标识：' + this.livePhotoPairResult.contentIdentifier +
+            ' · Rust 已确认 HEIC/MOV 标识匹配；尚未验证系统图库导入或 Apple Photos 播放。')
+            .fontSize(12)
+            .fontColor('#52606D')
+            .width('100%')
+            .margin({ top: 4 });
+          if (this.livePhotoPairResult.cleanupWarning.length > 0) {
+            Text('临时输入清理提示：' + this.livePhotoPairResult.cleanupWarning + '；文件仍归当前队列项目管理。')
+              .fontSize(12)
+              .fontColor('#B3261E')
+              .width('100%')
+              .margin({ top: 4 });
+          }
+          Button(this.livePhotoPairExporting ? '正在导出 HEIC + MOV…' : '成对导出 HEIC + MOV')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#315EAF')
+            .width('100%')
+            .height(44)
+            .margin({ top: 8 })
+            .enabled(!this.livePhotoPairExporting && !this.livePhotoPairing && !this.motionSplitting &&
+              !this.motionInspecting && !this.pageBusy && !this.queueRunning && !this.batchExportRunning &&
+              !this.cleanupRunning && !this.settingsSaving && !this.queuePersistenceFailed())
+            .onClick(() => {
+              this.exportSelectedLivePhotoPair();
+            });
+          if (this.livePhotoPairExportEntries.length > 0) {
+            Text(this.livePhotoExportSummaryText())
+              .fontSize(13)
+              .fontColor('#18202A')
+              .width('100%')
+              .margin({ top: 6 });
+            ForEach(this.livePhotoPairExportEntries, (entry: LivePhotoExportEntry) => {
+              Text(this.livePhotoExportStatusLabel(entry))
+                .fontSize(12)
+                .fontColor(entry.status === 'failed' ? '#B3261E' :
+                  (entry.status === 'succeeded' ? '#16845B' : '#52606D'))
+                .width('100%')
+                .margin({ top: 3 });
+            }, (entry: LivePhotoExportEntry) => entry.kind);
+          }
         }
       }
       Button(this.motionInspectButtonLabel())
@@ -1906,13 +3173,33 @@ struct Index {
         Toggle({ type: ToggleType.Switch, isOn: this.draftApplePhotographicStyles })
           .selectedColor('#2E6BD6')
           .switchPointColor('#FFFFFF')
-          .enabled(!this.settingsSaving)
+          .enabled(!this.settingsSaving && !this.draftApplePhotographicStyles3)
           .onChange((isOn: boolean): void => {
             this.setDraftAppleStyles(isOn);
           });
       }
       .width('100%')
       .margin({ top: 4 });
+      Row() {
+        Text('摄影风格 3（质感 + 颗粒）')
+          .fontSize(14)
+          .fontColor('#18202A')
+          .layoutWeight(1);
+        Toggle({ type: ToggleType.Switch, isOn: this.draftApplePhotographicStyles3 })
+          .selectedColor('#2E6BD6')
+          .switchPointColor('#FFFFFF')
+          .enabled(!this.settingsSaving)
+          .onChange((isOn: boolean): void => {
+            this.setDraftAppleStyles3(isOn);
+          });
+      }
+      .width('100%')
+      .margin({ top: 4 });
+      Text('开启后自动使用 Apple 输出并启用基础摄影风格，用于支持设备上的质感与颗粒编辑；部分图片格式可能无法转换。')
+        .fontSize(12)
+        .fontColor('#52606D')
+        .width('100%')
+        .margin({ top: 3 });
       Row() {
         Text('人像数据')
           .fontSize(14)
@@ -2121,13 +3408,14 @@ struct Index {
               this.motionPhotoPanel();
 
               Row() {
-                Button('重试失败项目')
+                Button(this.selectedShareRequiresReselection() ? '需重新选择图片' : '重试失败项目')
                   .fontSize(14)
                   .fontColor('#18202A')
                   .backgroundColor('#DDE5EE')
                   .layoutWeight(1)
                   .height(44)
-                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status === 'failed')
+                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy &&
+                    this.selectedItemRequired().status === 'failed' && !this.selectedShareRequiresReselection())
                   .onClick(() => {
                     this.retrySelected();
                   });
@@ -2179,7 +3467,22 @@ struct Index {
 
   build() {
     Column() {
-      Scroll() {
+      if (this.galleryPrototypeVisible) {
+        this.galleryPrototypePage();
+      } else {
+        Row() {
+          Button('返回图库')
+            .fontSize(14)
+            .fontColor('#244D88')
+            .backgroundColor('#DCEAFF')
+            .height(40)
+            .onClick((): void => {
+              this.galleryPrototypeVisible = true;
+            });
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 10 });
+        Scroll() {
         Column() {
           Text('XDRemux 原生版')
             .fontSize(30)
@@ -2341,7 +3644,7 @@ struct Index {
             .width('100%')
             .margin({ bottom: 8 });
 
-          Button('选择多个照片并加入队列')
+          Button(this.photoImportButtonLabel())
             .fontSize(17)
             .fontColor('#FFFFFF')
             .backgroundColor('#1F5FBF')
@@ -2537,6 +3840,7 @@ struct Index {
       }
       .layoutWeight(1)
       .width('100%');
+      }
     }
     .width('100%')
     .height('100%')

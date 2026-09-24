@@ -13,6 +13,8 @@
 #include <optional>
 #include <string>
 
+#include "ps3_pipeline.h"
+
 // Keep this declaration byte-for-byte compatible with xdremux/rust/src/lib.rs.
 // The Rust result owns all six string pointers until the by-value free function
 // is called. Do not change this to a pointer-to-struct ABI.
@@ -52,6 +54,9 @@ XdremuxClassificationResult xdremux_classify(const char *input_path);
 void xdremux_free_classification_result(XdremuxClassificationResult result);
 char *xdremux_inspect_photo_details(const char *input_path);
 char *xdremux_motion_photo_inspect(const char *input_path);
+char *xdremux_motion_photo_split(const char *input_path, const char *output_directory);
+char *xdremux_make_live_photo(const char *source_path, const char *still_path, const char *out_dir);
+std::uint8_t xdremux_live_photo_pair_valid(const char *still_path, const char *mov_path);
 XdremuxConversionResult xdremux_convert_with_progress(
     const char *input_path,
     const char *output_path,
@@ -61,6 +66,15 @@ std::uint32_t xdremux_progress_begin();
 void xdremux_progress_end(std::uint32_t handle);
 void xdremux_read_progress_for(std::uint32_t handle, std::uint32_t *buf);
 void xdremux_free_result(XdremuxConversionResult result);
+std::uint8_t xdremux_inject_texture_styles(
+    const char *input_path,
+    const char *output_path,
+    std::uint64_t grain_seed);
+std::uint8_t xdremux_inject_semantic_mattes(
+    const char *input_path,
+    const char *output_path);
+bool xdremux_verify_styles_output(const char *path);
+bool xdremux_verify_portrait_output(const char *path);
 }
 
 static_assert(sizeof(bool) == 1, "Rust bool ABI must be one byte on OHOS");
@@ -141,12 +155,23 @@ struct ConversionCopy {
     std::optional<std::string> error_message;
 };
 
+// Photographic Styles 3 is intentionally outside Rust's five-byte
+// ConvertConfig ABI. It travels through the N-API options object and is
+// consumed by the bridge while the same core mutex is held as conversion.
+struct Ps3Options {
+    bool enabled = false;
+    std::uint64_t grain_seed = 0;
+};
+
 struct AsyncContext {
     enum class Operation {
         VERSION,
         CLASSIFY,
         INSPECT,
         MOTION_INSPECT,
+        MOTION_SPLIT,
+        LIVE_PHOTO_MAKE,
+        LIVE_PHOTO_PAIR_VALID,
         CONVERT,
     };
 
@@ -155,13 +180,18 @@ struct AsyncContext {
     Operation operation = Operation::VERSION;
     std::string input_path;
     std::string output_path;
+    std::string still_path;
     std::string version;
     std::string details_json;
     std::string motion_json;
+    std::string motion_split_json;
+    std::string live_photo_json;
     ClassificationCopy classification;
     ConversionCopy conversion;
     XdremuxConvertConfig config{};
+    Ps3Options ps3;
     std::uint32_t progress_handle = 0;
+    bool live_photo_pair_valid = false;
     bool failed = false;
     std::array<char, 512> error_message{};
 };
@@ -235,6 +265,33 @@ void execute_operation(napi_env, void *data)
             context->motion_json.assign(value.get());
             return;
         }
+        case AsyncContext::Operation::MOTION_SPLIT: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_motion_photo_split(
+                    context->input_path.c_str(), context->output_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_motion_photo_split returned a null report");
+                return;
+            }
+            context->motion_split_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::LIVE_PHOTO_MAKE: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_make_live_photo(
+                    context->input_path.c_str(), context->still_path.c_str(), context->output_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_make_live_photo returned a null report");
+                return;
+            }
+            context->live_photo_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::LIVE_PHOTO_PAIR_VALID: {
+            context->live_photo_pair_valid = xdremux_live_photo_pair_valid(
+                context->input_path.c_str(), context->output_path.c_str()) == 1;
+            return;
+        }
         case AsyncContext::Operation::CLASSIFY: {
             ClassificationResultGuard result;
             result.value = xdremux_classify(context->input_path.c_str());
@@ -254,19 +311,54 @@ void execute_operation(napi_env, void *data)
             return;
         }
         case AsyncContext::Operation::CONVERT: {
-            ConversionResultGuard result;
-            result.value = xdremux_convert_with_progress(
-                context->input_path.c_str(),
-                context->output_path.c_str(),
-                &context->config,
-                context->progress_handle);
-            result.owns_result = true;
-            context->conversion.success = result.value.success;
-            context->conversion.mode = copy_optional_string(result.value.mode);
-            context->conversion.family = copy_optional_string(result.value.family);
-            context->conversion.edr_scale = result.value.edr_scale;
-            context->conversion.gain_map_max = result.value.gain_map_max;
-            context->conversion.error_message = copy_optional_string(result.value.error_message);
+            // Keep the Rust result guard in a tight scope. The post-process
+            // functions do not consume the result struct, and must never
+            // bypass its matching free function on success or failure.
+            bool conversion_success = false;
+            {
+                ConversionResultGuard result;
+                result.value = xdremux_convert_with_progress(
+                    context->input_path.c_str(),
+                    context->output_path.c_str(),
+                    &context->config,
+                    context->progress_handle);
+                result.owns_result = true;
+                context->conversion.success = result.value.success;
+                context->conversion.mode = copy_optional_string(result.value.mode);
+                context->conversion.family = copy_optional_string(result.value.family);
+                context->conversion.edr_scale = result.value.edr_scale;
+                context->conversion.gain_map_max = result.value.gain_map_max;
+                context->conversion.error_message = copy_optional_string(result.value.error_message);
+                conversion_success = result.value.success;
+            }
+            if (!conversion_success) {
+                return;
+            }
+
+            // Keep the post-process stages and structural checks in the same
+            // core lock as Rust conversion. The queue only renames this
+            // temporary path after this helper succeeds.
+            const xdremux_bridge::Ps3PipelineOptions pipeline_options{
+                context->ps3.enabled,
+                context->ps3.grain_seed,
+                context->config.apple_photographic_styles != 0 || context->ps3.enabled,
+                context->config.apple_portrait != 0,
+            };
+            const xdremux_bridge::Ps3PipelineCallbacks pipeline_callbacks{
+                xdremux_inject_texture_styles,
+                xdremux_inject_semantic_mattes,
+                xdremux_verify_styles_output,
+                xdremux_verify_portrait_output,
+            };
+            std::string pipeline_error;
+            if (!xdremux_bridge::run_ps3_pipeline(
+                    context->output_path.c_str(),
+                    pipeline_options,
+                    pipeline_callbacks,
+                    pipeline_error)) {
+                set_error(*context, pipeline_error.c_str());
+                return;
+            }
             return;
         }
         }
@@ -434,6 +526,27 @@ void complete_operation(napi_env env, napi_status status, void *data)
         } else {
             reject_with_message(env, context->deferred, "unable to create Motion Photo result");
         }
+    } else if (context->operation == AsyncContext::Operation::MOTION_SPLIT) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->motion_split_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Motion Photo split result");
+        }
+    } else if (context->operation == AsyncContext::Operation::LIVE_PHOTO_MAKE) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->live_photo_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Live Photo pair result");
+        }
+    } else if (context->operation == AsyncContext::Operation::LIVE_PHOTO_PAIR_VALID) {
+        napi_value value = nullptr;
+        if (napi_get_boolean(env, context->live_photo_pair_valid, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Live Photo validation result");
+        }
     } else {
         napi_status result_status = napi_ok;
         napi_value result = nullptr;
@@ -567,6 +680,96 @@ bool read_uint8_property(napi_env env, napi_value object, const char *name, std:
     return true;
 }
 
+std::uint64_t stable_grain_seed(const std::string &input_path) noexcept
+{
+    // This is the byte-oriented fallback for callers older than the optional
+    // JS options object. Current ArkTS callers pass the matching UTF-16 seed,
+    // but the fallback remains deterministic across native process launches.
+    std::uint64_t hash = 0;
+    for (const unsigned char byte : input_path) {
+        hash = (hash * 31ULL + static_cast<std::uint64_t>(byte)) & 0x7fffffffULL;
+    }
+    return hash;
+}
+
+bool read_optional_bool_property(
+    napi_env env,
+    napi_value object,
+    const char *name,
+    bool &output)
+{
+    bool has_property = false;
+    if (napi_has_named_property(env, object, name, &has_property) != napi_ok) {
+        return false;
+    }
+    if (!has_property) {
+        output = false;
+        return true;
+    }
+    napi_value value = nullptr;
+    return napi_get_named_property(env, object, name, &value) == napi_ok &&
+           napi_get_value_bool(env, value, &output) == napi_ok;
+}
+
+bool read_optional_seed_property(
+    napi_env env,
+    napi_value object,
+    const char *name,
+    bool &present,
+    std::uint64_t &output)
+{
+    present = false;
+    bool has_property = false;
+    if (napi_has_named_property(env, object, name, &has_property) != napi_ok) {
+        return false;
+    }
+    if (!has_property) {
+        return true;
+    }
+    napi_value value = nullptr;
+    double number = 0.0;
+    if (napi_get_named_property(env, object, name, &value) != napi_ok ||
+        napi_get_value_double(env, value, &number) != napi_ok ||
+        !std::isfinite(number) || number < 0.0 ||
+        number > 9007199254740991.0 || std::floor(number) != number) {
+        return false;
+    }
+    present = true;
+    output = static_cast<std::uint64_t>(number);
+    return true;
+}
+
+bool read_ps3_options(
+    napi_env env,
+    napi_value value,
+    const std::string &input_path,
+    Ps3Options &options)
+{
+    options = Ps3Options{};
+    if (value == nullptr) {
+        return true;
+    }
+    napi_valuetype type = napi_undefined;
+    if (napi_typeof(env, value, &type) != napi_ok) {
+        return false;
+    }
+    if (type == napi_undefined || type == napi_null) {
+        return true;
+    }
+    if (type != napi_object ||
+        !read_optional_bool_property(env, value, "applePhotographicStyles3", options.enabled)) {
+        return false;
+    }
+    bool seed_present = false;
+    if (!read_optional_seed_property(env, value, "grainSeed", seed_present, options.grain_seed)) {
+        return false;
+    }
+    if (options.enabled && !seed_present) {
+        options.grain_seed = stable_grain_seed(input_path);
+    }
+    return true;
+}
+
 bool read_convert_config(napi_env env, napi_value value, XdremuxConvertConfig &config)
 {
     if (!read_uint8_property(env, value, "oppoCompat", config.oppo_compat) ||
@@ -646,15 +849,127 @@ napi_value motion_inspect(napi_env env, napi_callback_info info)
     return queue_operation(env, context);
 }
 
+napi_value motion_split(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+        napi_throw_type_error(env, nullptr, "motionSplit(path, outputDirectory) requires two filesystem paths");
+        return nullptr;
+    }
+
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::MOTION_SPLIT;
+    try {
+        if (!read_local_path(env, args[0], context->input_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "motionSplit requires a local input filesystem path");
+            return nullptr;
+        }
+        if (!read_local_path(env, args[1], context->output_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "motionSplit requires a local output directory path");
+            return nullptr;
+        }
+        if (context->input_path == context->output_path) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "motionSplit output directory must differ from input");
+            return nullptr;
+        }
+    } catch (...) {
+        delete context;
+        napi_throw_error(env, nullptr, "unable to read Motion Photo split paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
+napi_value live_photo_make(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value args[3] = {nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+        napi_throw_type_error(env, nullptr, "livePhotoMake(sourcePath, stillPath, outputDirectory) requires three filesystem paths");
+        return nullptr;
+    }
+
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::LIVE_PHOTO_MAKE;
+    try {
+        if (!read_local_path(env, args[0], context->input_path) ||
+            !read_local_path(env, args[1], context->still_path) ||
+            !read_local_path(env, args[2], context->output_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoMake requires three local filesystem paths");
+            return nullptr;
+        }
+        if (context->input_path == context->still_path || context->input_path == context->output_path ||
+            context->still_path == context->output_path) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoMake input paths and output directory must be distinct");
+            return nullptr;
+        }
+    } catch (...) {
+        delete context;
+        napi_throw_error(env, nullptr, "unable to read Live Photo pair paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
+napi_value live_photo_pair_valid(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+        napi_throw_type_error(env, nullptr, "livePhotoPairValid(stillPath, movPath) requires two filesystem paths");
+        return nullptr;
+    }
+
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::LIVE_PHOTO_PAIR_VALID;
+    try {
+        if (!read_local_path(env, args[0], context->input_path) ||
+            !read_local_path(env, args[1], context->output_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoPairValid requires two local filesystem paths");
+            return nullptr;
+        }
+        if (context->input_path == context->output_path) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoPairValid paths must be distinct");
+            return nullptr;
+        }
+    } catch (...) {
+        delete context;
+        napi_throw_error(env, nullptr, "unable to read Live Photo validation paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
 napi_value convert(napi_env env, napi_callback_info info)
 {
-    size_t argc = 4;
-    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+    size_t argc = 5;
+    napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok ||
+        (argc != 4 && argc != 5)) {
         napi_throw_type_error(
             env,
             nullptr,
-            "convert(inputPath, outputPath, config, progressHandle) requires four arguments");
+            "convert(inputPath, outputPath, config, progressHandle, options?) requires four or five arguments");
         return nullptr;
     }
 
@@ -690,6 +1005,19 @@ napi_value convert(napi_env env, napi_callback_info info)
             delete context;
             napi_throw_type_error(env, nullptr, "convert requires a live progress handle");
             return nullptr;
+        }
+        if (argc == 5 && !read_ps3_options(env, args[4], context->input_path, context->ps3)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "convert PS3 options are invalid");
+            return nullptr;
+        }
+        if (context->ps3.enabled) {
+            // PS3's 2026 texture contract is an extension of the 2023 Apple
+            // styles graph. Enforce the same dependency at the native edge
+            // for direct callers that do not use Index.ets normalization.
+            context->config.apple_photographic_styles = 1;
+            context->config.oppo_compat = 0;
+            context->config.oppo_camera_tail = 0;
         }
     } catch (...) {
         delete context;
@@ -768,6 +1096,9 @@ napi_value initialize(napi_env env, napi_value exports)
         {"classify", nullptr, classify, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"inspect", nullptr, inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"motionInspect", nullptr, motion_inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"motionSplit", nullptr, motion_split, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"livePhotoMake", nullptr, live_photo_make, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"livePhotoPairValid", nullptr, live_photo_pair_valid, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"convert", nullptr, convert, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressBegin", nullptr, progress_begin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressRead", nullptr, progress_read, nullptr, nullptr, nullptr, napi_default, nullptr},

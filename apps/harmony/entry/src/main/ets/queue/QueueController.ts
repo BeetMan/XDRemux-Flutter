@@ -15,6 +15,8 @@ export interface QueueModeSnapshot {
   modeKey: string;
   modeLabel: string;
   config: NativeConvertConfig;
+  /** PS3 is a bridge-only option and therefore stays outside five-byte Rust config. */
+  applePhotographicStyles3?: boolean;
 }
 
 export interface QueueResult {
@@ -22,11 +24,15 @@ export interface QueueResult {
   modeKey: string;
   modeLabel: string;
   conversion: NativeConversionResult;
+  /** Exact imported input used by this successful conversion; older records may omit it. */
+  sourceInputPath?: string;
 }
 
 export interface QueueItemInput {
   displayName: string;
   sourceUri: string;
+  sourceKind?: 'share';
+  sourceToken?: string;
   inputPath?: string;
   details?: NativePhotoDetails;
   classification?: NativeClassificationResult;
@@ -38,6 +44,8 @@ export interface QueueItem {
   revision: number;
   displayName: string;
   sourceUri: string;
+  sourceKind?: 'share';
+  sourceToken?: string;
   inputPath: string;
   status: QueueItemStatus;
   attemptStatus: QueueAttemptStatus;
@@ -231,6 +239,8 @@ export class QueueController {
       revision: 0,
       displayName: input.displayName,
       sourceUri: input.sourceUri,
+      sourceKind: input.sourceKind,
+      sourceToken: input.sourceToken,
       inputPath: input.inputPath === undefined ? '' : input.inputPath,
       status: 'pending',
       attemptStatus: 'idle',
@@ -325,6 +335,11 @@ export class QueueController {
     }
     this.assertCleanupUsable(item);
     item.inputPath = inputPath;
+    if (item.sourceKind === 'share') {
+      // Once a shared image is copied into the app sandbox, do not retain its
+      // temporary external URI as the queue's source identity.
+      item.sourceUri = inputPath;
+    }
     this.addOwnedPath(item, inputPath);
     item.details = details;
     item.classification = classification;
@@ -346,12 +361,34 @@ export class QueueController {
     this.notify(item, true);
   }
 
+  /** Replace an expired shared source after an explicit in-app picker action. */
+  public replaceFailedShareSource(id: string, sourceUri: string): void {
+    const item = this.require(id);
+    if (!item.externalBusy) {
+      throw new Error('item is not locked for preparation');
+    }
+    this.assertCleanupUsable(item);
+    if (item.sourceKind !== 'share' || item.status !== 'failed' || item.inputPath.length > 0 ||
+      sourceUri.length === 0 || sourceUri.includes('\u0000')) {
+      throw new Error('该分享项目不需要重新选择，或新的图片 URI 无效');
+    }
+    item.sourceUri = sourceUri;
+    item.status = 'pending';
+    item.attemptStatus = 'pending';
+    item.errorMessage = '';
+    item.progress = { stage: 0, current: 0, total: 0 };
+    this.notify(item, true);
+  }
+
   public retry(id: string): void {
     const item = this.require(id);
     this.assertEditable(item);
     this.assertCleanupUsable(item);
     if (item.status !== 'failed') {
       throw new Error('only failed items can be retried');
+    }
+    if (item.sourceKind === 'share' && item.inputPath.length === 0) {
+      throw new Error('分享授权可能已过期，请使用“重新选择失效分享图片”选择新的图片');
     }
     item.status = 'pending';
     item.attemptStatus = 'pending';
@@ -394,13 +431,56 @@ export class QueueController {
    * partially failed conversion or copy.
    */
   public registerOwnedPath(id: string, path: string): void {
+    this.registerOwnedPaths(id, [path]);
+  }
+
+  /** Register a complete attempt allocation atomically before any file write.
+   * Paths already owned by the same item are harmless; a path owned by any
+   * other item is rejected before the list is mutated. */
+  public registerOwnedPaths(id: string, paths: Array<string>): void {
     const item = this.require(id);
     if (!item.externalBusy && item.status !== 'running' && this.activeId !== id) {
       throw new Error('item is not active for sandbox path registration');
     }
     this.assertCleanupUsable(item);
-    this.addOwnedPath(item, path);
-    this.notify(item, true);
+    const seen: Set<string> = new Set<string>();
+    for (const path of paths) {
+      if (path.length === 0 || path.includes('\u0000') || seen.has(path)) {
+        throw new Error('任务归属路径无效或重复');
+      }
+      seen.add(path);
+      for (const candidate of this.itemList) {
+        if (candidate.id !== id && candidate.ownedPaths.includes(path)) {
+          throw new Error('任务归属路径已被其他项目占用：' + path);
+        }
+      }
+    }
+    let changed: boolean = false;
+    for (const path of paths) {
+      if (!item.ownedPaths.includes(path)) {
+        item.ownedPaths.push(path);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.notify(item, true);
+    }
+  }
+
+  /** Check all queue ownership before allocating a new scratch/output set. */
+  public assertPathsAvailable(paths: Array<string>): void {
+    const seen: Set<string> = new Set<string>();
+    for (const path of paths) {
+      if (path.length === 0 || path.includes('\u0000') || seen.has(path)) {
+        throw new Error('候选沙盒路径无效或重复');
+      }
+      seen.add(path);
+      for (const item of this.itemList) {
+        if (item.ownedPaths.includes(path)) {
+          throw new Error('候选沙盒路径已被队列项目占用：' + path);
+        }
+      }
+    }
   }
 
   public async remove(id: string): Promise<void> {
@@ -524,11 +604,13 @@ export class QueueController {
         item.lastAttemptModeLabel = mode.modeLabel;
         this.notify(item, true);
         await this.persist();
-        const result: QueueResult = await this.execute(
+        const conversionInputPath: string = item.inputPath;
+        const executedResult: QueueResult = await this.execute(
           item,
           mode,
           (progress: NativeProgress): void => this.reportProgress(item.id, progress)
         );
+        const result: QueueResult = { ...executedResult, sourceInputPath: conversionInputPath };
         this.addOwnedPath(item, result.outputPath);
         item.result = result;
         item.status = 'succeeded';
@@ -606,6 +688,7 @@ export class QueueController {
     return {
       modeKey: captured.modeKey,
       modeLabel: captured.modeLabel,
+      applePhotographicStyles3: captured.applePhotographicStyles3 === true,
       config: {
         oppoCompat: captured.config.oppoCompat,
         oppoCameraTail: captured.config.oppoCameraTail,
@@ -622,6 +705,8 @@ export class QueueController {
       revision: item.revision,
       displayName: item.displayName,
       sourceUri: item.sourceUri,
+      sourceKind: item.sourceKind,
+      sourceToken: item.sourceToken,
       inputPath: item.inputPath,
       status: item.status,
       attemptStatus: item.attemptStatus,
@@ -635,6 +720,7 @@ export class QueueController {
         outputPath: item.result.outputPath,
         modeKey: item.result.modeKey,
         modeLabel: item.result.modeLabel,
+        sourceInputPath: item.result.sourceInputPath,
         conversion: {
           success: item.result.conversion.success,
           mode: item.result.conversion.mode,

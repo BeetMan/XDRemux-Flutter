@@ -16,6 +16,8 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { getHarmonyShareInbox } from '../queue/HarmonyShareInbox';
+import { SHARE_IMPORT_ACTION } from '../queue/ShareImportModel';
 
 const DOMAIN = 0x0000;
 
@@ -27,6 +29,12 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    this.receiveSharedWant(want, launchParam);
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    this.receiveSharedWant(want, launchParam);
   }
 
   onDestroy(): void {
@@ -59,5 +67,22 @@ export default class EntryAbility extends UIAbility {
   onBackground(): void {
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+  }
+
+  private receiveSharedWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    if (want.action !== SHARE_IMPORT_ACTION) return;
+    // API 18+ identifies Share Kit launches. If the system supplies a reason,
+    // accept only genuine system-share delivery; older/other sendData routes
+    // retain action-based parsing rather than consulting onForeground state.
+    const reason: string | undefined = launchParam.launchReasonMessage;
+    if (reason !== undefined && reason.length > 0 && reason !== 'ReasonMessage_SystemShare') return;
+    try {
+      const inbox = getHarmonyShareInbox(this.context.filesDir);
+      void inbox.receiveWant(want).catch((error: Object): void => {
+        hilog.error(DOMAIN, 'testTag', 'Failed to receive shared images. Cause: %{public}s', JSON.stringify(error));
+      });
+    } catch (error) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to create share inbox. Cause: %{public}s', JSON.stringify(error));
+    }
   }
 }

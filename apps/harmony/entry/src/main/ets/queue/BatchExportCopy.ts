@@ -1,3 +1,5 @@
+import { assertSafeExportDestination } from './BatchExport.ts';
+
 /** Platform-neutral file copy contract for batch export. */
 export interface BatchExportFileStat {
   size: number;
@@ -20,11 +22,10 @@ export async function copyBatchOutput(
   io: BatchExportFileIo,
   sourcePath: string,
   destinationUri: string,
-  sourceUri: string
+  sourceUri: string,
+  protectedPaths: Array<string> = []
 ): Promise<void> {
-  if (destinationUri === sourceUri || destinationUri === sourcePath) {
-    throw new Error('导出位置不能是原始输入或应用沙盒文件');
-  }
+  assertSafeExportDestination(destinationUri, [sourceUri, sourcePath, ...protectedPaths]);
   const sourceStat: BatchExportFileStat = await io.statPath(sourcePath);
   if (!Number.isFinite(sourceStat.size) || sourceStat.size <= 0) {
     throw new Error('沙盒转换结果为空或大小无效');
