@@ -136,6 +136,65 @@ image-reconstructible face geometry」—— 我们的结论：**绝大部分字
 4. 多人脸时的 faceID 分配规则
 5. `faceLandmarks` 的 76 点具体布局（哪 76 点？需要可视化对照）
 
+## 5.5 A1/A2/A3 实测结果
+
+### A1 —— 76 关键点布局（可视化 + 数值双确认）
+
+把关键点画到样张上（按 EXIF 方向转正，坐标同变换），归一化到 faceROI：
+
+| 索引 | 部位 | 点数 |
+|---|---|---|
+| 0-6 | **左眼** | 7 |
+| 7-13 | **右眼** | 7 |
+| 14-19 | 左眉 | 6 |
+| 20-25 | 右眉 | 6 |
+| 46, 47, 48 | 鼻梁（顶/中/尖）| 3 |
+| 49-58 | 嘴 | 10 |
+| 26-45, 59-75 | 轮廓与下颌 | 其余 |
+
+**要点**：眼睛两组各 **7 点**（6 轮廓 + 1 中心？）→ `UnderEyeBrightening` 的
+眼部 ROI 可由它们直接算出，无需额外检测。
+
+⚠️ 坐标变换陷阱：`faceROI`/`faceLandmarks` 存的是**未应用 EXIF 方向**的归一化坐标。
+可视化时图像和坐标必须做**同一个**变换，否则点会错位（我第一次就错在这里）。
+
+### A2 —— 粗糙度标定（n=21）
+
+`SkinSmoothFaceRoughness` 与 `faceSkinROI` 内图像纹理统计的相关：
+
+| 统计量 | 与 roughness 相关 r |
+|---|---|
+| **`lap_abs`（平均绝对拉普拉斯 = 高频纹理能量）** | **+0.673** ← 最强 |
+| `lap_var` | +0.584 |
+| `skin_G` | +0.572 |
+| `grad_mag` | +0.506 |
+| `lum_std` | +0.206 |
+| `lum_mean` | -0.114（无关）|
+
+**结论**：粗糙度 ≈ **皮肤区域的高频纹理能量**，用 `lap_abs` 最接近。
+
+⚠️ 方法学缺陷：分析时把图缩到 1024px，**丢掉高频细节**，所以 0.673 是**下界**。
+全分辨率重测预期更高。实现建议：在 faceSkinROI 内做全分辨率 3×3 拉普拉斯，
+取绝对值均值，再做线性标定（用已有 21 个样本拟合）。
+
+### A3 —— `FSINCInstanceMask9` 的 mask 在哪
+
+`FSINC` 是 **XMP 命名空间**（`fsincMattes` 1.0）：
+
+```xml
+<fsincMattes:InstanceMaskReferenceKey>FSINCInstanceMask9</fsincMattes:InstanceMaskReferenceKey>
+<fsincMattes:FSINCMatteVersion>0</fsincMattes:FSINCMatteVersion>
+```
+
+mask 数据在**独立的 XMP 二进制 blob** 中（样张 0x1b89b 处：键名 `FSINCInstanceMask9`
+后跟二进制 payload），PeopleData 里只有**引用键**，不内联像素。
+
+**推论**：要生成人物 mask，需要产出同样形态的 XMP blob 并写入引用键。
+这与 `semanticpersoninstances`（item 列表里已有）是不同的资源。
+
+顺带确认：样张 item 列表与我们注入的 12× 2026 semantic matte + `semanticpersoninstances`
+完全对应 ✓。
+
 ## 6. 样本统计（31 组原生样张实测）
 
 | 项 | 结果 |
