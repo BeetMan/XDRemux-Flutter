@@ -128,9 +128,9 @@ image-reconstructible face geometry」—— 我们的结论：**绝大部分字
 
 ## 6. 仍未解决
 
-1. ~~`SkinSmoothFaceRoughness` 的精确定义~~ **部分解决**：是高频纹理能量
-   （包围框 lap_abs 相关 0.68），但精确公式需在**皮肤 mask 加权**下标定
-   —— 见 6.5，包围框统计有系统偏差
+1. `SkinSmoothFaceRoughness` 的精确定义 —— **仍未锁定**：已知是高频纹理
+   能量（lap_abs 相关 0.68），但真 matte 加权反而更差。剩余差异可能来自
+   色彩空间（线性/sRGB）、鲁棒估计、或不同的 mask。见 6.5 的对比表
 2. **`FSINCInstanceMask9`** 引用的 mask 从哪来（是相机管线生成的？我们能生成吗？）
 3. ~~无人脸照片的 PeopleData 形态~~ **已确认：整键 `TextureStylePostProcessedPeopleData` 缺失**
    （不是空 list）—— 31 张里 8 张如此
@@ -270,6 +270,38 @@ mask 数据在**独立的 XMP 二进制 blob** 中（样张 0x1b89b 处：键名
 1. 统计公式锁定
 2. 也证明了**关键点几何生成的 mask 足以替代语义分割**
    （先验证几何 mask 能达到什么精度，再决定是否需要模型）
+
+### 真 matte 标定结果（含否定发现）
+
+用 `dump_item` + ffmpeg 解出样张里的真实 matte，做 mask 加权（n=21）：
+
+| mask 来源 | 平均肤色误差 | 粗糙度相关 r |
+|---|---|---|
+| 全包围框 | 0.156 | +0.681 |
+| **肤色启发式**（R>G+0.02 & G>B & 0.12<lum<0.95）| **0.108** | **+0.681** |
+| `semanticfaceskinmatte`（id=87）| 0.131 | +0.557 |
+| `semanticskinmattev2`（id=67）| 0.135 | +0.280 |
+
+**否定发现**：**真 matte 并不比肤色启发式更准**（0.131 vs 0.108），
+粗糙度相关反而更低（0.557 vs 0.681）。
+
+**推论**：
+1. `semanticfaceskinmatte` / `semanticskinmattev2` **可能都不是**柔肤统计用的
+   mask —— 或者统计方式不是简单 mask 加权（可能有鲁棒估计、线性空间、
+   或归一化）
+2. **好消息**：肤色启发式已经很接近，说明柔肤统计**不需要精确语义分割**，
+   几何 + 色域启发式就够用（误差 0.108 可接受的话）
+3. 记录值系统性偏亮（所有方法都是），提示可能是**色彩空间差异**
+   （线性 vs sRGB）或**鲁棒均值**（中位数/截尾）
+
+### mattechnical note: matte 解码
+
+matte payload 是单个 **length-prefixed HEVC IDR NAL**；VPS/SPS/PPS 在该 item 的
+**hvcC 属性**里（通过 ipma 匹配 item→属性，抓文件里第一个 hvcC 会拿到主图
+tile 的配置，解码报 `offset_len 52 is invalid`）。
+
+⚠️ matte 存的是**未应用 EXIF 方向**的坐标，处理时必须与图像同步变换
+（第一次没转 matte，导致 mask 错位、两张样本全 0）。
 
 ### 对实现的影响
 
