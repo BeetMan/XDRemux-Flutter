@@ -161,8 +161,11 @@ struct Index {
   @State private livePhotoPairResult: LivePhotoPairResult | undefined = undefined;
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
   @State private galleryPrototypeVisible: boolean = true;
+  @State private galleryDetailVisible: boolean = false;
   @State private galleryImporting: boolean = false;
   @State private galleryOriginalPickerActive: boolean = false;
+  @State private galleryQueuePreparing: boolean = false;
+  @State private galleryQueueItemId: string = '';
   @State private galleryStatus: string = '选择一张图片，验证图库授权、沙箱复制和 Rust 识别';
   @State private galleryMimeType: string = '';
   @State private gallerySandboxPath: string = '';
@@ -2367,6 +2370,8 @@ struct Index {
     if (this.galleryImporting || sourceUri.length === 0) {
       return;
     }
+    this.galleryDetailVisible = true;
+    this.galleryQueueItemId = '';
     this.galleryImporting = true;
     this.galleryDetails = undefined;
     this.galleryClassification = undefined;
@@ -2426,6 +2431,8 @@ struct Index {
   }
 
   private clearGallerySelection(status: string): void {
+    this.galleryDetailVisible = false;
+    this.galleryQueueItemId = '';
     this.galleryMimeType = '';
     this.gallerySandboxPath = '';
     this.galleryCopiedBytes = 0;
@@ -2475,6 +2482,111 @@ struct Index {
     } finally {
       this.galleryOriginalPickerActive = false;
     }
+  }
+
+  private async convertGallerySelection(): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    if (this.galleryQueuePreparing || this.galleryImporting || this.galleryOriginalPickerActive) {
+      return;
+    }
+    if (this.galleryQueueItemId.length > 0 && controller !== undefined &&
+      controller.get(this.galleryQueueItemId) !== undefined) {
+      this.selectQueueItem(this.galleryQueueItemId);
+      this.galleryPrototypeVisible = false;
+      this.operationStatus = '这张照片已在转换队列中；可以查看进度、重试或导出结果';
+      return;
+    }
+    if (!this.queueLoaded || !this.queueReady || this.queueLoading || this.queueRecoveryRequired ||
+      !this.settingsLoaded) {
+      this.galleryStatus = this.queueRecoveryRequired
+        ? '队列需要先恢复，暂不能转换这张照片'
+        : '设置或队列仍在加载，暂不能转换这张照片';
+      return;
+    }
+    if (this.pageBusy || this.queueRunning || this.cleanupRunning || this.batchExportRunning ||
+      this.settingsSaving || this.livePhotoPairing || this.livePhotoPairExporting ||
+      this.motionSplitting || this.motionInspecting) {
+      this.galleryStatus = '当前有其他文件操作，暂不能转换这张照片';
+      return;
+    }
+    if (this.gallerySandboxPath.length === 0 || this.galleryDetails === undefined ||
+      this.galleryClassification === undefined) {
+      this.galleryStatus = '请先从图库选择一张已成功读取的照片';
+      return;
+    }
+
+    const queue: QueueController = controller === undefined ? this.getController() : controller;
+    if (queue.hasPersistenceError || queue.isPersistenceBusy || this.queueHasBlockingOperation(queue)) {
+      this.galleryStatus = '队列仍有未完成的保存或文件操作，请完成后再转换';
+      return;
+    }
+    const hadPendingItems: boolean = queue.hasPendingItems;
+    const sourcePath: string = this.gallerySandboxPath;
+    const expectedBytes: number = this.galleryCopiedBytes;
+    let item: QueueItem | undefined = undefined;
+    let locked: boolean = false;
+    let prepared: boolean = false;
+    this.galleryQueuePreparing = true;
+    this.pageBusy = true;
+    this.galleryStatus = '正在把照片登记到持久化队列…';
+    try {
+      const sourceStat: fileIo.Stat = await fileIo.lstat(sourcePath);
+      if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size !== expectedBytes) {
+        throw new Error('图库沙箱副本已失效或大小发生变化，请重新选择照片');
+      }
+      const suffix: string = this.galleryFileSuffixFromUri(sourcePath);
+      item = queue.add({
+        displayName: '图库照片-' + String(this.galleryImportSerial) + suffix,
+        sourceUri: sourcePath
+      });
+      this.galleryQueueItemId = item.id;
+      queue.beginExternal(item.id);
+      locked = true;
+      this.selectQueueItem(item.id);
+      // The queue record and its source identity are durable before the
+      // selected cache copy is opened or the durable input copy is created.
+      await queue.persist();
+      const preparedInput: QueuePrepared = await this.prepareQueueItem(item);
+      const durableStat: fileIo.Stat = await fileIo.lstat(preparedInput.inputPath);
+      if (!durableStat.isFile() || durableStat.size !== expectedBytes) {
+        throw new Error('持久化队列副本与已检查的图库照片大小不一致');
+      }
+      queue.setPrepared(item.id, preparedInput.inputPath, preparedInput.details, preparedInput.classification);
+      await queue.persist();
+      prepared = true;
+      this.galleryStatus = '照片已复制到持久化队列；原图保持不变';
+    } catch (error) {
+      const message: string = this.errorMessage(error);
+      if (item !== undefined && locked && !queue.hasPersistenceError && !(error instanceof QueuePersistenceError)) {
+        try {
+          queue.markPreparationFailed(item.id, message);
+          await queue.persist();
+        } catch (persistError) {
+          this.queueError = '图库照片已登记，但队列状态保存失败：' + this.errorMessage(persistError);
+        }
+      } else if (queue.hasPersistenceError || error instanceof QueuePersistenceError) {
+        this.queueError = '队列记录保存失败：' + message + '；请先重试保存队列';
+      }
+      this.galleryStatus = '加入转换队列失败：' + message;
+    } finally {
+      if (item !== undefined && locked) {
+        queue.endExternal(item.id);
+      }
+      this.galleryQueuePreparing = false;
+      this.pageBusy = false;
+      this.syncQueue();
+    }
+
+    if (!prepared || item === undefined) {
+      return;
+    }
+    this.galleryPrototypeVisible = false;
+    if (hadPendingItems) {
+      this.operationStatus = '照片已加入队列；队列中还有其他待处理项目，请检查后点击“开始队列”';
+      return;
+    }
+    this.operationStatus = '照片已加入队列，正在按当前设置转换；原图保留，导出时再选择保存位置';
+    await this.startQueue();
   }
 
   private galleryFormatLabel(): string {
@@ -2552,7 +2664,7 @@ struct Index {
           void this.inspectGallerySelection(uri);
         },
         onDeselect: (): void => {
-          if (!this.galleryImporting) {
+          if (!this.galleryImporting && !this.galleryDetailVisible) {
             this.clearGallerySelection('已取消图库选择；照片不会继续读取');
           }
         }
@@ -2629,6 +2741,181 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .height('100%')
+    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    .backgroundColor('#F2F6FB');
+  }
+
+  @Builder
+  private galleryDetailPage() {
+    Column() {
+      Row() {
+        Button('返回图库')
+          .fontSize(14)
+          .fontColor('#244D88')
+          .backgroundColor('#DCEAFF')
+          .height(40)
+          .onClick((): void => {
+            this.clearGallerySelection('选择一张照片查看详情');
+          });
+        Text('照片详情')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#18202A')
+          .margin({ left: 12 });
+      }
+      .width('100%')
+      .margin({ bottom: 10 });
+
+      if (this.gallerySandboxPath.length > 0) {
+        Image('file://' + this.gallerySandboxPath)
+          .width('100%')
+          .height(250)
+          .objectFit(ImageFit.Contain)
+          .backgroundColor('#111820')
+          .borderRadius(18);
+      } else {
+        Row() {
+          if (this.galleryImporting) {
+            LoadingProgress().width(30).height(30);
+          }
+          Text(this.galleryImporting ? '正在读取所选照片…' : this.galleryStatus)
+            .fontSize(14)
+            .fontColor('#52606D')
+            .margin({ left: 10 });
+        }
+        .width('100%')
+        .height(150)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#E8EDF3')
+        .borderRadius(18);
+      }
+
+      Scroll() {
+        Column() {
+          Row() {
+            Text('当前格式')
+              .fontSize(14)
+              .fontColor('#52606D')
+              .layoutWeight(1);
+            Text(this.galleryFormatLabel())
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#18202A');
+          }
+          .width('100%');
+
+          if (this.galleryDetails !== undefined) {
+            Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0) +
+              ' · ' + this.display(this.galleryDetails.hdrKind))
+              .fontSize(13)
+              .fontColor('#52606D')
+              .width('100%')
+              .margin({ top: 5 });
+
+            Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
+              .fontSize(13)
+              .fontColor('#26384F')
+              .width('100%')
+              .margin({ top: 11 });
+            Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
+              .fontSize(13)
+              .fontColor('#52606D')
+              .width('100%')
+              .margin({ top: 5 });
+            Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
+              this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
+              .fontSize(13)
+              .fontColor('#52606D')
+              .width('100%')
+              .margin({ top: 5 });
+            Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
+              this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
+              this.display(this.galleryDetails.exposureBias))
+              .fontSize(13)
+              .fontColor('#52606D')
+              .width('100%')
+              .margin({ top: 5 });
+
+            Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
+              (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
+                ? ' · ' + this.galleryClassification.modeKey
+                : ''))
+              .fontSize(13)
+              .fontColor('#52606D')
+              .width('100%')
+              .margin({ top: 8 });
+          }
+
+          if (this.gallerySandboxPath.length > 0) {
+            Text('沙箱副本已校验 · ' + String(this.galleryCopiedBytes) + ' B')
+              .fontSize(12)
+              .fontColor('#64748B')
+              .width('100%')
+              .margin({ top: 7 });
+          }
+
+          Divider().color('#DCE3EB').margin({ top: 14, bottom: 12 });
+          Text('转换方式')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#18202A')
+            .width('100%');
+          Text('当前设置：' + (this.settingsLoaded ? this.savedSettingsSummary() : '设置加载中…'))
+            .fontSize(14)
+            .fontColor('#26384F')
+            .width('100%')
+            .margin({ top: 6 });
+          Text('可选 OPPO 兼容或 Apple 标准输出。转换会生成新图片并保留原图；导出时通过系统选择保存位置。')
+            .fontSize(12)
+            .fontColor('#64748B')
+            .width('100%')
+            .margin({ top: 4, bottom: 10 });
+          Row() {
+            Button(this.galleryQueuePreparing ? '正在准备队列…' : '按当前设置转换')
+              .fontSize(14)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#1F5FBF')
+              .layoutWeight(1)
+              .height(46)
+              .enabled(!this.galleryQueuePreparing && !this.galleryImporting && !this.pageBusy &&
+                this.galleryDetails !== undefined && this.galleryClassification !== undefined &&
+                this.settingsLoaded && this.queueLoaded && this.queueReady && !this.queueRecoveryRequired)
+              .onClick((): void => {
+                void this.convertGallerySelection();
+              });
+            Button('转换设置')
+              .fontSize(14)
+              .fontColor('#244D88')
+              .backgroundColor('#DCEAFF')
+              .height(46)
+              .margin({ left: 8 })
+              .enabled(this.settingsLoaded && !this.settingsSaving)
+              .onClick((): void => {
+                this.galleryPrototypeVisible = false;
+                this.openSettings();
+              });
+          }
+          .width('100%');
+
+          Text(this.galleryStatus)
+            .fontSize(12)
+            .fontColor(this.galleryStatus.indexOf('失败') >= 0 ? '#B3261E' : '#52606D')
+            .width('100%')
+            .margin({ top: 8 });
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(16)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(16)
+        .margin({ top: 10, bottom: 10 });
+      }
+      .layoutWeight(1)
+      .width('100%');
+    }
+    .alignItems(HorizontalAlign.Start)
+    .height('100%')
+    .width('100%')
     .padding({ left: 20, right: 20, top: 18, bottom: 18 })
     .backgroundColor('#F2F6FB');
   }
@@ -3468,7 +3755,11 @@ struct Index {
   build() {
     Column() {
       if (this.galleryPrototypeVisible) {
-        this.galleryPrototypePage();
+        if (this.galleryDetailVisible) {
+          this.galleryDetailPage();
+        } else {
+          this.galleryPrototypePage();
+        }
       } else {
         Row() {
           Button('返回图库')

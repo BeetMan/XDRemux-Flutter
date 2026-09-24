@@ -1,7 +1,7 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-24 code40011 系统分享图片接入已完成主机验证、unsigned 构建与 HAP 核验，详情见 §19；P4 的构建文档、host CI、HAP verifier 和 API18 后台能力审计已完成，详情见 §20。跨端一致性、图库/Apple Photos、分享生命周期、前后台、低存储/低内存等设备验收仍待用户可用设备验证；不能视为通过。更早版 code40004/40005/40007 的历史验收状态保留在各节。
-当前基线：`e30721b`（含 code40004 设置）。开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
+状态：2026-09-25 原格式图库选择已由用户确认可用；图库照片详情和队列转换入口见 §22，API26 编译及主机回归通过。P4 的跨端一致性、图库/Apple Photos、分享生命周期、前后台、低存储/低内存等设备验收仍待真机覆盖；不能视为通过。更早版 code40004/40005/40007 的历史验收状态保留在各节。
+当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
 
@@ -462,3 +462,16 @@ P0 补充检查（本批并行进行）：
 - 用户选择后只读打开 picker URI，并先物理复制到 `cache/gallery-prototype/`；校验沙箱副本大小后才传入 Rust `inspect` 与 `classify`，展示 MIME、像素尺寸、相机信息、核心分类与副本大小。没有将 picker URI 直接传给 Rust。
 - Rust 调用复用现有 N-API 包装；`xdremux_version` 的字符串与 `xdremux_classify` 的结构体通过对应 free 函数释放。
 - API 26 ArkTS 编译与 HAP 打包成功，未签名 HAP 的 bundle、版本、兼容 API、arm64 核心库及无签名项校验通过。签名步骤因现有本地 profile 与 `.arkui` bundle 不匹配而失败，所以尚未安装到真机；图库实际授权、URI 读取和图片展示仍待匹配的新 profile 完成设备验证。
+
+### 设备与原格式选择器补充（2026-09-25）
+
+- 用户已在 DevEco 配置匹配 `.arkui` bundle 的本地测试签名并安装应用；用户确认 API 26 原格式选择器可正常打开。已选 JPEG 显示为 `IMAGE/JPEG`；`x7 · portrait` 是 Rust 拍摄分类，不是图片容器格式。
+- API 26 `PhotoViewPicker` 使用 `supportedHighResolution=true`、`supportedMimeType=['image/heic']` 与 CURRENT 兼容模式；HEIC 原图先复制进应用沙箱再交给 Rust，JPEG 仍按 JPEG 显示。发布包继续按 unsigned 规则处理。
+
+## 22. 图库照片详情与队列转换入口（2026-09-25）
+
+- 从系统图库选择照片后进入详情页，显示沙箱预览、容器格式、尺寸、HDR、相机、拍摄时间、曝光参数和 Rust 拍摄分类。信息读取失败时保留可见错误，不把 picker URI 交给 Rust。
+- “按当前设置转换”将已验证的选择复制到持久化队列输入目录，再检查副本大小并读取其详情/分类；队列所有权先持久化，转换仍复用现有 Rust/N-API 与输出事务，原图不覆盖。
+- 页面显示当前已保存的 OPPO/Apple 输出设置，并可进入现有设置页；转换输出作为新图保存，导出时由系统选择目标位置。若队列已有待处理项目，先导航到队列并提示用户确认后启动，避免意外重跑旧任务。
+- DevEco Hvigor API26 编译成功，同时生成 unsigned 发布候选和本机签名调试包；HAP verifier 确认 bundle `.arkui`、0.4.2/code40011、compatible API 18、无签名项，核心库 SHA-256 `A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B`。unsigned HAP SHA-256 `7E9F609640EEFCEA3D5F0547890AA59C29554C01985CAB71FA111B6527114C91`，报告及两种 HAP 保存在外部 `harmony-native/gallery-detail/`。14 份 Node 主机回归及 5 份 HAP verifier Python 单测通过。当前自动化环境未解析到 `devecocli`，故此次用已安装 DevEco Hvigor 编译器完成构建；本次改动尚未安装到设备，也未做新鲜设备转换/图库显示验收。
+- 下一步真机检查 API26 HEIC/JPEG 预览和格式、照片详情读取、单照片转换/进度/导出，并确认队列中已有待处理任务时不会自动启动；随后再推进图库 Tab 与沉浸光感布局。
