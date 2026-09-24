@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-25 原格式图库选择已由用户确认可用；图库照片详情和队列转换入口见 §22，API26 编译及主机回归通过。P4 的跨端一致性、图库/Apple Photos、分享生命周期、前后台、低存储/低内存等设备验收仍待真机覆盖；不能视为通过。更早版 code40004/40005/40007 的历史验收状态保留在各节。
+状态：2026-09-25 原格式图库选择、图库详情/转换入口和双 Tab 导航已实现；API26 DevEco 构建、14 份 Node 回归、5 份 HAP 校验通过；code40012 unsigned HAP 校验通过。调试包已安装到 Pura X View，但手机锁屏阻止启动，Tab 界面与交互尚待解锁后真机验收。P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
 当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
@@ -474,4 +474,16 @@ P0 补充检查（本批并行进行）：
 - “按当前设置转换”将已验证的选择复制到持久化队列输入目录，再检查副本大小并读取其详情/分类；队列所有权先持久化，转换仍复用现有 Rust/N-API 与输出事务，原图不覆盖。
 - 页面显示当前已保存的 OPPO/Apple 输出设置，并可进入现有设置页；转换输出作为新图保存，导出时由系统选择目标位置。若队列已有待处理项目，先导航到队列并提示用户确认后启动，避免意外重跑旧任务。
 - DevEco Hvigor API26 编译成功，同时生成 unsigned 发布候选和本机签名调试包；HAP verifier 确认 bundle `.arkui`、0.4.2/code40011、compatible API 18、无签名项，核心库 SHA-256 `A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B`。unsigned HAP SHA-256 `7E9F609640EEFCEA3D5F0547890AA59C29554C01985CAB71FA111B6527114C91`，报告及两种 HAP 保存在外部 `harmony-native/gallery-detail/`。14 份 Node 主机回归及 5 份 HAP verifier Python 单测通过。当前自动化环境未解析到 `devecocli`，故此次用已安装 DevEco Hvigor 编译器完成构建；本次改动尚未安装到设备，也未做新鲜设备转换/图库显示验收。
-- 下一步真机检查 API26 HEIC/JPEG 预览和格式、照片详情读取、单照片转换/进度/导出，并确认队列中已有待处理任务时不会自动启动；随后再推进图库 Tab 与沉浸光感布局。
+- §22 的后续安排已由 §23 接续：图库/队列 Tab 与 API26 沉浸导航已完成构建；真机界面验收须先解锁手机后重试。
+
+
+## 23. 图库/队列双 Tab 与 API26 沉浸光感导航（2026-09-25）
+
+- 主界面改为图库与转换队列两个持久 Tab；图库选择/详情、转换入队、现有队列与设置面板都保留原编排。Tab 点击和代码驱动的队列导航共同同步选中状态。
+- API26 设置浮动底部 Tab 栏，使用 uiMaterial.ImmersiveMaterial 的 ULTRA_THIN 背板、系统阴影和交互光效；效果仅限小面积导航栏，图片区保持普通背景。调整图库/队列底部空白，避免悬浮栏遮住操作。
+- 兼容版本仍是 API18，目标 API26。通过 deviceInfo.sdkApiVersion 先进行老系统分支，再用 deviceInfo.apiAvailable('26.0.0') 启用 API26 沉浸 Tab；低版本走普通 Tabs。DevEco 仍对沉浸光感 API 报兼容性告警，源码含运行时分支，API18 真机/模拟器回归未验证。
+- app versionCode 升到 40012，versionName 维持 0.4.2；bundle 保持 io.github.beetman.xdremux.arkui，与 Flutter 应用独立。本批未重建 Rust，继续复用已暂存的 core（SHA-256 A8E5716404F7B07F272F2736F672432BC29F8888A07A289A21CA9AD9C68A1E6B）。
+- devecocli build --product default --build-mode debug 在 API26 SDK 构建成功。Unsigned HAP：5,968,514 bytes，SHA-256 A9BFDA7164A4301886140EEAC99AB8AACE00F529E36DF771940816EBE4E11926；HAP verifier 确认 .arkui / 0.4.2 / code40012 / compatible API18 / 无签名项，打包 core 与已暂存核心一致。签名调试 HAP 仅用 DevEco 本地 profile 进行设备安装，发布仍 unsigned。
+- 14 份 Node 回归和 5 份 HAP verifier Python 测试通过。外部记录/产物位于 C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/gallery-tabs/。
+- devecocli run --skip-build 在 Pura X View 安装 code40012 .arkui 成功，但启动时因手机锁屏且为开发者模式而失败（10106102 — device screen is locked during application launch）。未观察到崩溃证据，不把安装成功当成 UI 真机验收；解锁后还需检查两 Tab 显示、图库/队列切换、详情返回、设置入口、选图和导航栏对内容的避让。
+- 已发现 API24 Pura 90 模拟器，但模拟器协议尚未接受，因此未启动或测试。需用户在交互终端运行 devecocli emulator license accept 后再继续。

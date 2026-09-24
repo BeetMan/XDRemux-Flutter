@@ -1,3 +1,5 @@
+import { uiMaterial } from '@kit.ArkUI';
+import { Available, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import {
@@ -160,7 +162,7 @@ struct Index {
   @State private livePhotoPairExporting: boolean = false;
   @State private livePhotoPairResult: LivePhotoPairResult | undefined = undefined;
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
-  @State private galleryPrototypeVisible: boolean = true;
+  @State private mainTabIndex: number = 0;
   @State private galleryDetailVisible: boolean = false;
   @State private galleryImporting: boolean = false;
   @State private galleryOriginalPickerActive: boolean = false;
@@ -2492,7 +2494,7 @@ struct Index {
     if (this.galleryQueueItemId.length > 0 && controller !== undefined &&
       controller.get(this.galleryQueueItemId) !== undefined) {
       this.selectQueueItem(this.galleryQueueItemId);
-      this.galleryPrototypeVisible = false;
+      this.mainTabIndex = 1;
       this.operationStatus = '这张照片已在转换队列中；可以查看进度、重试或导出结果';
       return;
     }
@@ -2580,7 +2582,7 @@ struct Index {
     if (!prepared || item === undefined) {
       return;
     }
-    this.galleryPrototypeVisible = false;
+    this.mainTabIndex = 1;
     if (hadPendingItems) {
       this.operationStatus = '照片已加入队列；队列中还有其他待处理项目，请检查后点击“开始队列”';
       return;
@@ -2615,14 +2617,6 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1);
-        Button('队列')
-          .fontSize(14)
-          .fontColor('#244D88')
-          .backgroundColor('#DCEAFF')
-          .height(40)
-          .onClick((): void => {
-            this.galleryPrototypeVisible = false;
-          });
       }
       .width('100%')
       .margin({ bottom: 8 });
@@ -2741,7 +2735,7 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .width('100%')
     .height('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    .padding({ left: 20, right: 20, top: 18, bottom: 84 })
     .backgroundColor('#F2F6FB');
   }
 
@@ -2891,7 +2885,7 @@ struct Index {
               .margin({ left: 8 })
               .enabled(this.settingsLoaded && !this.settingsSaving)
               .onClick((): void => {
-                this.galleryPrototypeVisible = false;
+                this.mainTabIndex = 1;
                 this.openSettings();
               });
           }
@@ -2916,7 +2910,7 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
     .height('100%')
     .width('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    .padding({ left: 20, right: 20, top: 18, bottom: 84 })
     .backgroundColor('#F2F6FB');
   }
 
@@ -3752,27 +3746,28 @@ struct Index {
             .margin({ top: 8, bottom: 18 });
   }
 
-  build() {
+  @Builder
+  private mainTabBarItem(index: number, mark: string, label: string) {
     Column() {
-      if (this.galleryPrototypeVisible) {
-        if (this.galleryDetailVisible) {
-          this.galleryDetailPage();
-        } else {
-          this.galleryPrototypePage();
-        }
-      } else {
-        Row() {
-          Button('返回图库')
-            .fontSize(14)
-            .fontColor('#244D88')
-            .backgroundColor('#DCEAFF')
-            .height(40)
-            .onClick((): void => {
-              this.galleryPrototypeVisible = true;
-            });
-        }
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 10 });
+      Text(mark)
+        .fontSize(18)
+        .fontColor(this.mainTabIndex === index ? '#245EA8' : '#758397');
+      Text(label)
+        .fontSize(11)
+        .fontWeight(this.mainTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.mainTabIndex === index ? '#245EA8' : '#758397');
+    }
+    .justifyContent(FlexAlign.Center)
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.mainTabIndex === index ? '#E5F1FF' : '#00000000')
+    .borderRadius(22)
+    .margin({ left: 5, right: 5, top: 4, bottom: 4 });
+  }
+
+  @Builder
+  private queuePage() {
+    Column() {
         Scroll() {
         Column() {
           Text('XDRemux 原生版')
@@ -4127,14 +4122,96 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding({ left: 24, right: 24, top: 28, bottom: 24 });
+        .padding({ left: 24, right: 24, top: 28, bottom: 96 });
       }
       .layoutWeight(1)
       .width('100%');
-      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#F4F7FA');
   }
+
+  @Available({ minApiVersion: '26.0.0' })
+  @Builder
+  private immersiveTabs() {
+        Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
+          TabContent() {
+            if (this.galleryDetailVisible) {
+              this.galleryDetailPage();
+            } else {
+              this.galleryPrototypePage();
+            }
+          }
+          .tabBar(this.mainTabBarItem(0, '\u25A6', '\u56FE\u5E93'))
+
+          TabContent() {
+            this.queuePage();
+          }
+          .tabBar(this.mainTabBarItem(1, '\u2637', '\u961F\u5217'))
+        }
+        .barMode(BarMode.Fixed)
+        .barHeight(64)
+        .barOverlap(true)
+        .scrollable(false)
+        .onChange((index: number) => {
+          this.mainTabIndex = index;
+        })
+        .barFloatingStyle({
+          barBottomMargin: 8,
+          adaptToHandedness: true,
+          systemMaterial: new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+            applyShadow: true,
+            interactive: true,
+            lightEffect: { color: Color.White }
+          })
+        })
+        .expandSafeArea([SafeAreaType.SYSTEM])
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#F4F7FA');
+  }
+
+  @Builder
+  private standardTabs() {
+    Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
+      TabContent() {
+        if (this.galleryDetailVisible) {
+          this.galleryDetailPage();
+        } else {
+          this.galleryPrototypePage();
+        }
+      }
+      .tabBar(this.mainTabBarItem(0, '\u25A6', '\u56FE\u5E93'))
+
+      TabContent() {
+        this.queuePage();
+      }
+      .tabBar(this.mainTabBarItem(1, '\u2637', '\u961F\u5217'))
+    }
+    .barMode(BarMode.Fixed)
+    .barHeight(64)
+    .scrollable(false)
+    .onChange((index: number) => {
+      this.mainTabIndex = index;
+    })
+    .expandSafeArea([SafeAreaType.SYSTEM])
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#F4F7FA');
+  }
+
+  build() {
+    if (deviceInfo.sdkApiVersion >= 26) {
+      if (deviceInfo.apiAvailable('26.0.0')) {
+        this.immersiveTabs();
+      } else {
+        this.standardTabs();
+      }
+    } else {
+      this.standardTabs();
+    }
+  }
+
 }

@@ -13,9 +13,9 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-The unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The project is configured for arm64 devices, the independent bundle ID `io.github.beetman.xdremux.arkui`, and native app version code `40011` (`0.4.2`). Current P3 share-import build logs and copied HAP artifacts are kept outside the repository under `C:\Users\Beet\Documents\XDRemux-Flutter-logs\harmony-native\p3-share-import\`.
+The unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The project is configured for arm64 devices, the independent bundle ID `io.github.beetman.xdremux.arkui`, and native app version code `40012` (`0.4.2`). Current API26 gallery-tabs build logs and copied HAP artifacts are kept outside the repository under `C:\Users\Beet\Documents\XDRemux-Flutter-logs\harmony-native\gallery-tabs\`.
 
-The code40011 signed test HAP and the currently installed test app still use the historical `.native` bundle ID. New `.arkui` builds have a separate app identity and do not inherit that app's data; create a new DevEco local test-signing profile bound to `.arkui` before installing the redesigned app. Release artifacts remain unsigned.
+The historical code40011 signed test HAP uses the `.native` bundle ID. The current `.arkui` app has a separate identity and a matching local DevEco test-signing profile; it does not inherit `.native` app data. Release artifacts remain unsigned.
 
 DevEco has no checked-in signing profile for this independent bundle, so the build intentionally emits an unsigned HAP. Installing it on a physical device requires a separately configured local signing profile for this application; do not reuse the Flutter application's identity or credentials.
 
