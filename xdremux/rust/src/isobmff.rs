@@ -305,6 +305,25 @@ pub fn make_infe_box(item_id: u32, itype: &str, flags: u32) -> Vec<u8> {
     make_box(b"infe", &payload)
 }
 
+/// Build an infe box for a mime-type item with an explicit item name.
+/// Apple's fsincMattes XMP uses an empty name, so the caller must not assume
+/// 'hdrgm-xmp'.
+pub fn make_mime_infe_box_named(item_id: u32, flags: u32, name: &str) -> Vec<u8> {
+    let mut payload = vec![
+        2u8,
+        ((flags >> 16) & 0xff) as u8,
+        ((flags >> 8) & 0xff) as u8,
+        (flags & 0xff) as u8,
+    ];
+    write_u16be(item_id as u16, &mut payload);
+    write_u16be(0, &mut payload); // item_protection_index
+    payload.extend_from_slice(b"mime");
+    payload.extend_from_slice(name.as_bytes());
+    payload.push(0); // item_name terminator
+    payload.extend_from_slice(b"application/rdf+xml\0");
+    make_box(b"infe", &payload)
+}
+
 /// Build an infe box for mime-type items (XMP).
 pub fn make_mime_infe_box(item_id: u32, flags: u32) -> Vec<u8> {
     let mut payload = vec![

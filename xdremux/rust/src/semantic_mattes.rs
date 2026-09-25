@@ -437,8 +437,11 @@ pub fn inject_instance_mask(
     new_iinf_body
         .extend_from_slice(&(iinf_items.len() as u64 + 2).to_be_bytes()[8 - count_size..]);
     new_iinf_body.extend_from_slice(&data[entry_start..entry_end]);
-    new_iinf_body.extend_from_slice(&isobmff::make_infe_box(mask_id, "hvc1", 0));
-    new_iinf_body.extend_from_slice(&isobmff::make_infe_box(xmp_id, "mime", 0));
+    // Non-primary items carry the hidden flag (0x1), exactly like Apple's
+    // aux items. Without it the mask reads as a displayable image and the
+    // decoder refuses the file.
+    new_iinf_body.extend_from_slice(&isobmff::make_infe_box(mask_id, "hvc1", 1));
+    new_iinf_body.extend_from_slice(&isobmff::make_mime_infe_box_named(xmp_id, 1, ""));
     let new_iinf = make_box(b"iinf", &new_iinf_body);
 
     // ---- ipco: + ispe + hvcC; ipma: + one entry --------------------------
@@ -593,5 +596,24 @@ pub fn inject_instance_mask(
     out.extend_from_slice(&matte_stream);
     out.extend_from_slice(&xmp);
     out.extend_from_slice(&data[(mdat.box_start + mdat.size) as usize..]);
+
+    // Self-check: the container must still walk cleanly top to bottom. Shipping
+    // a corrupt file costs someone a round trip, so refuse to return one.
+    {
+        let mut off = 0usize;
+        while off + 8 <= out.len() {
+            let sz = u32::from_be_bytes([out[off], out[off + 1], out[off + 2], out[off + 3]]) as usize;
+            if sz < 8 || off + sz > out.len() {
+                return Err(format!("instance mask: box walk broke at offset {off}"));
+            }
+            off += sz;
+        }
+        if off != out.len() {
+            return Err(format!(
+                "instance mask: box walk ended at {off} of {}",
+                out.len()
+            ));
+        }
+    }
     Ok((out, key))
 }
