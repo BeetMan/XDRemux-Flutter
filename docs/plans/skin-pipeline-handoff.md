@@ -236,3 +236,38 @@ d=open(out,'rb').read()
 assert d.count(b'FSINCInstanceMask9')>=2   # 引用 + XMP 声明
 assert d.count(b'fsincMattes')>=3
 ```
+
+### ⚠️ 断点：inject_instance_mask 的 splice 仍会损坏容器
+
+**症状**：注入后 `all_items` 能读出 153 项（iinf/iloc 解析正常），
+但 `sips -g pixelWidth` 返回 `<nil>` —— 图像解不出。
+注入**之前**的中间产物正常（3456/4284）。
+
+**已修的三个容器 bug**（都在 splice 里）：
+1. `meta` box 头 size 未更新 → 后续 box 全部错位
+2. `mdat` box 头 size 未更新 → 同上
+3. `meta` 少了 4 字节 version/flags
+4. `head_delta` 漏了 iloc 自身增长量（已用两遍法测出 `d_iloc`）
+
+**还剩一个**没找到。怀疑方向：
+- `ipco` 属性计数 `ipco_children.len()` 是否与 ipma 索引一致（1-based）
+- 拷贝的间隙 `data[content_end..mdat.box_start]`（若原 meta 与 mdat 之间无间隙则为空）
+- 尾部 `data[(mdat.box_start+mdat.size)..]` 是否重复/丢失
+
+**最快的定位法**：把 `inject_instance_mask` 的输出与输入做 **box 逐个 diff**，
+看哪一层结构变了但不该变：
+
+```python
+import struct
+def boxes(d, start, end):
+    out=[]; off=start
+    while off+8<=end:
+        sz=struct.unpack('>I',d[off:off+4])[0]; t=d[off+4:off+8]
+        out.append((t, off, sz)); off+=sz
+    return out
+```
+
+对比注入前后的顶层 box、meta 子 box、ipco 属性 —— 差异会直接指向出错处。
+
+**注意**：不要在文件损坏的状态下发给用户测试。加个保险：
+注入后用 `sips` 或解析校验，失败就回退到注入前的字节。

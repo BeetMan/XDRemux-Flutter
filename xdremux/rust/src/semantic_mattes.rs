@@ -475,11 +475,31 @@ pub fn inject_instance_mask(
     let xmp = instance_mask_xmp(&key);
     let d_iinf = new_iinf.len() as i64 - iinf.size as i64;
     let d_iprp = (new_ipco.len() as i64 - ipco.size as i64) + (new_ipma.len() as i64 - ipma.size as i64);
-    let head_delta = d_iinf + d_iprp;
-
     let mdat = top.iter().find(|b| b.btype == *b"mdat").ok_or("mdat not found")?;
     let mdat_end = (mdat.box_start + mdat.size) as i64;
     let payload_len = (matte_stream.len() + xmp.len()) as i64;
+
+    // iloc itself grows by two entries, and that shift applies to everything
+    // after it — mdat included. Measure it first: the entry count is fixed, so
+    // the box size does not depend on the offset values.
+    let measure: Vec<isobmff::IlocEntry> = {
+        let mut v: Vec<isobmff::IlocEntry> = isobmff::parse_iloc(data, iloc)?;
+        v.push(isobmff::IlocEntry {
+            item_id: mask_id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, matte_stream.len() as u64)],
+        });
+        v.push(isobmff::IlocEntry {
+            item_id: xmp_id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, xmp.len() as u64)],
+        });
+        v
+    };
+    let d_iloc = isobmff::make_iloc_box(&measure).len() as i64 - iloc.size as i64;
+    let head_delta = d_iinf + d_iprp + d_iloc;
 
     let mut out_entries: Vec<isobmff::IlocEntry> = Vec::new();
     for mut e in isobmff::parse_iloc(data, iloc)? {
@@ -507,12 +527,16 @@ pub fn inject_instance_mask(
     let new_iloc = isobmff::make_iloc_box(&out_entries);
 
     // ---- splice ----------------------------------------------------------
+    // Rebuild meta rather than copying its header: the children below grew, and
+    // a stale box size makes every later box (mdat included) unparseable.
+    // meta carries a 4-byte version/flags before its children.
+    let mut meta_body = data[content_start - 4..content_start].to_vec();
     let mut out = Vec::with_capacity(data.len() + payload_len as usize + 4096);
-    out.extend_from_slice(&data[..content_start]);
+    out.extend_from_slice(&data[..meta_box.box_start]);
     for child in &children {
         match &child.btype {
-            b"iinf" => out.extend_from_slice(&new_iinf),
-            b"iloc" => out.extend_from_slice(&new_iloc),
+            b"iinf" => meta_body.extend_from_slice(&new_iinf),
+            b"iloc" => meta_body.extend_from_slice(&new_iloc),
             b"iprp" => {
                 let mut body = Vec::new();
                 for s in &sub {
@@ -522,13 +546,23 @@ pub fn inject_instance_mask(
                         _ => body.extend_from_slice(&data[s.box_start..s.box_start + s.size as usize]),
                     }
                 }
-                out.extend_from_slice(&make_box(b"iprp", &body));
+                meta_body.extend_from_slice(&make_box(b"iprp", &body));
             }
-            _ => out.extend_from_slice(&data[child.box_start..child.box_start + child.size as usize]),
+            _ => meta_body
+                .extend_from_slice(&data[child.box_start..child.box_start + child.size as usize]),
         }
     }
+    out.extend_from_slice(&make_box(b"meta", &meta_body));
     out.extend_from_slice(&data[content_end..mdat.box_start]);
-    out.extend_from_slice(&data[mdat.box_start..mdat_end as usize]);
+    // Rebuild mdat too: its payload grew by the mask and the XMP.
+    let mdat_payload_len = (mdat.size as usize - (mdat.data_start - mdat.box_start))
+        + matte_stream.len()
+        + xmp.len();
+    out.extend_from_slice(&make_box(b"mdat", &Vec::new()));
+    // make_box writes an 8-byte header; replace it with the true size.
+    let hdr_at = out.len() - 8;
+    out[hdr_at..hdr_at + 4].copy_from_slice(&((mdat_payload_len + 8) as u32).to_be_bytes());
+    out.extend_from_slice(&data[mdat.data_start..mdat_end as usize]);
     out.extend_from_slice(&matte_stream);
     out.extend_from_slice(&xmp);
     out.extend_from_slice(&data[(mdat.box_start + mdat.size) as usize..]);
