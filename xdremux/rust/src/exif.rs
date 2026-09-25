@@ -91,6 +91,20 @@ pub enum ExifOrientation {
 }
 
 impl ExifOrientation {
+    /// EXIF value (1..8) for this orientation.
+    pub fn to_u32(self) -> u32 {
+        match self {
+            Self::Normal => 1,
+            Self::FlipHorizontal => 2,
+            Self::Rotate180 => 3,
+            Self::FlipVertical => 4,
+            Self::Transpose => 5,
+            Self::Rotate90Clockwise => 6,
+            Self::Transverse => 7,
+            Self::Rotate90CounterClockwise => 8,
+        }
+    }
+
     pub fn from_u16(value: u16) -> Result<Self, String> {
         match value {
             1 => Ok(Self::Normal),
@@ -221,6 +235,46 @@ fn read_heif_item_payload(
 /// into presentation orientation while decoding, so a carried-forward Exif
 /// that still says "Rotate 90 CW" makes viewers rotate a second time. Returns
 /// whether an Orientation tag was actually rewritten.
+/// Orientation (1..8) of an image payload, whether it is a JPEG (APP1) or a
+/// HEIC (an Exif item). Scans for the TIFF header rather than walking the
+/// container, which is enough to recover the tag and keeps this independent
+/// of the item index.
+pub fn orientation_from_bytes(data: &[u8]) -> u32 {
+    if data.starts_with(&[0xFF, 0xD8]) {
+        // JPEG: find the Exif APP1 segment.
+        let mut i = 2;
+        while i + 4 < data.len() && data[i] == 0xFF {
+            let marker = data[i + 1];
+            let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+            if marker == 0xE1
+                && i + 10 < data.len()
+                && &data[i + 4..i + 10] == b"Exif\x00\x00"
+            {
+                if let Ok(o) = parse_exif_orientation(&data[i + 10..]) {
+                    return o.to_u32();
+                }
+            }
+            if marker == 0xDA {
+                break;
+            }
+            i += 2 + len;
+        }
+        return 1;
+    }
+    // HEIC/other: the Exif item payload starts with a byte count then a TIFF.
+    if let Some(pos) = find_tiff_header(data) {
+        if let Ok(o) = parse_exif_orientation(&data[pos..]) {
+            return o.to_u32();
+        }
+    }
+    1
+}
+
+fn find_tiff_header(data: &[u8]) -> Option<usize> {
+    data.windows(4)
+        .position(|w| w == [b'I', b'I', 0x2a, 0x00] || w == [b'M', b'M', 0x00, 0x2a])
+}
+
 pub fn normalize_tiff_orientation(tiff: &mut [u8]) -> bool {
     let Some((be, ifd0)) = tiff_ifd0_offset(tiff) else {
         return false;

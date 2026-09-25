@@ -123,7 +123,7 @@ pub fn place_landmarks(face_roi: [f64; 4]) -> Vec<(f64, f64, f64)> {
     let scale = face_roi[2].max(face_roi[3]);
     template
         .into_iter()
-        .map(|(x, y)| (cx + x * scale, cy + y * scale, 0.103))
+        .map(|(x, y)| (cx + x * scale, cy + y * scale, 0.02))
         .collect()
 }
 
@@ -253,9 +253,66 @@ pub fn detect_faces(image: &RgbImage) -> Result<Vec<DetectedFace>, String> {
     Ok(kept)
 }
 
+/// Map a normalised point from the *presented* (oriented) space back to the
+/// *stored* pixel space, which is where Apple records its face geometry.
+///
+/// The decode gives us pixels already rotated for display, so a measurement
+/// taken there has to be carried back before it is written to the bplist.
+/// `orientation` is the EXIF value (1..8).
+pub fn unorient_point(x: f64, y: f64, orientation: u32) -> (f64, f64) {
+    match orientation {
+        2 => (1.0 - x, y),
+        3 => (1.0 - x, 1.0 - y),
+        4 => (x, 1.0 - y),
+        5 => (y, x),
+        6 => (y, 1.0 - x),
+        7 => (1.0 - y, 1.0 - x),
+        8 => (1.0 - y, x),
+        _ => (x, y),
+    }
+}
+
+/// Same for a normalised `[x, y, w, h]` box: transform the corners and take
+/// the bounding box, since 90-degree turns swap width and height.
+pub fn unorient_rect(r: [f64; 4], orientation: u32) -> [f64; 4] {
+    if orientation <= 1 {
+        return r;
+    }
+    let corners = [
+        (r[0], r[1]),
+        (r[0] + r[2], r[1]),
+        (r[0], r[1] + r[3]),
+        (r[0] + r[2], r[1] + r[3]),
+    ];
+    let t: Vec<(f64, f64)> = corners
+        .iter()
+        .map(|(x, y)| unorient_point(*x, *y, orientation))
+        .collect();
+    let xs: Vec<f64> = t.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = t.iter().map(|p| p.1).collect();
+    let (x0, x1) = (
+        xs.iter().cloned().fold(f64::INFINITY, f64::min),
+        xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+    );
+    let (y0, y1) = (
+        ys.iter().cloned().fold(f64::INFINITY, f64::min),
+        ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+    );
+    [x0, y0, x1 - x0, y1 - y0]
+}
+
 /// Full person pipeline: detect, place landmarks, measure the image, and
 /// return the instances ready to publish in the texture bplist.
 pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, String> {
+    build_person_instances_oriented(image, 1)
+}
+
+/// Same, carrying the source EXIF orientation so the published geometry lands
+/// in the stored pixel space Apple uses.
+pub fn build_person_instances_oriented(
+    image: &RgbImage,
+    orientation: u32,
+) -> Result<Vec<PersonInstance>, String> {
     let faces = detect_faces(image)?;
     let mut out = Vec::with_capacity(faces.len());
     for (i, f) in faces.iter().enumerate() {
@@ -284,7 +341,14 @@ pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, S
             face_id: i as i64,
             face_roi: f.face_roi,
             face_skin_roi: skin,
-            instance_roi: f.face_roi,
+            // Apple records the whole person instance here (roughly 0.52 x
+            // 0.64 for a face of 0.07 x 0.10), not the face box.
+            instance_roi: {
+                let (fx, fy, fw, fh) = (f.face_roi[0], f.face_roi[1], f.face_roi[2], f.face_roi[3]);
+                let x = (fx - fw).max(0.0);
+                let y = (fy - 3.0 * fh).max(0.0);
+                [x, y, (3.5 * fw).min(1.0 - x), (7.0 * fh).min(1.0 - y)]
+            },
             // Apple records a fixed horizontal inset here for this detection
             // scheme (1 - 2/44 wide), not the full unit square.
             scaling_roi: [0.02272727272727276, 0.0, 0.9545454545454546, 1.0],
@@ -306,6 +370,20 @@ pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, S
         };
         fill_stats(image, &mut p, &lm_xy);
         p.mattify_colour = p.skin_colour;
+        // Geometry is measured in the oriented (presented) space the decoder
+        // gave us; Apple records it in the stored pixel space, so carry it
+        // back before publishing. Statistics are unaffected — they sample
+        // pixels, not coordinates.
+        if orientation > 1 {
+            p.face_roi = unorient_rect(p.face_roi, orientation);
+            p.face_skin_roi = unorient_rect(p.face_skin_roi, orientation);
+            p.instance_roi = unorient_rect(p.instance_roi, orientation);
+            for slot in p.landmarks.iter_mut() {
+                let (nx, ny) = unorient_point(slot.0, slot.1, orientation);
+                slot.0 = nx;
+                slot.1 = ny;
+            }
+        }
         out.push(p);
     }
     Ok(out)

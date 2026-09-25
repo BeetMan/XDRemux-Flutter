@@ -22,7 +22,11 @@ fn main() {
     };
 
     // 2. Detect + measure.
-    let people = match xdremux_core::face_detect::build_person_instances(&img) {
+    // Geometry has to be published in the stored pixel space, so remember how
+    // the source is oriented before the decoder rotates it for display.
+    let orientation = xdremux_core::exif::orientation_from_bytes(&bytes);
+    println!("exif orientation: {orientation}");
+    let people = match xdremux_core::face_detect::build_person_instances_oriented(&img, orientation) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("person pipeline failed: {e}");
