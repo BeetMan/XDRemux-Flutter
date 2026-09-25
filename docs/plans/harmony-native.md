@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-25 图库首页现以 API 26 `PhotoViewPicker` 原格式模式作为唯一图库入口，保留高分辨率 HEIC 支持；所选 URI 先物理复制到应用沙箱，再交给 Rust 检查。首页显示最近选择项，详情返回后保留当前照片；页面同步确认 `PhotoSelectResult.isOriginalPhoto` 并展示识别出的格式。三 Tab HDS 导航保持不变。当前版本 `0.4.4` / code40014；本次 DevEco debug 构建和 14 份 Node 回归、5 份 HAP verifier 单测通过，已在 Pura X View 安装并启动，`devecocli` smoke PASS。图库新首页仍需用户真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
+状态：2026-09-25 图库首页已改为整页内嵌 API 26 `PhotoPickerComponent` 单选网格，通过 `PickerOptions` 请求 CURRENT 原格式偏好和高分辨率 HEIC；选中 URI 先物理复制到应用沙箱，再交给 Rust 检查，格式以照片 MIME/文件类型显示。三 Tab HDS 导航保持不变。当前版本 `0.4.5` / code40015；DevEco debug 构建、14 份 Node 回归和 5 份 HAP verifier 单测通过。0.4.5 已安装到 Pura X View，但设备当时处于锁屏状态，`devecocli` 无法启动应用（10106102），所以图库布局和选择流程仍待解锁后的真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
 当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
@@ -466,7 +466,7 @@ P0 补充检查（本批并行进行）：
 ### 设备与原格式选择器补充（2026-09-25）
 
 - 用户已在 DevEco 配置匹配 `.arkui` bundle 的本地测试签名并安装应用；用户确认 API 26 原格式选择器可正常打开。已选 JPEG 显示为 `IMAGE/JPEG`；`x7 · portrait` 是 Rust 拍摄分类，不是图片容器格式。
-- API 26 `PhotoViewPicker` 使用 `supportedHighResolution=true`、`supportedMimeType=['image/heic']` 与 CURRENT 兼容模式；HEIC 原图先复制进应用沙箱再交给 Rust，JPEG 仍按 JPEG 显示。发布包继续按 unsigned 规则处理。
+- API 26 内嵌 `PhotoPickerComponent` 通过继承 `PickerOptions` 配置 CURRENT 原格式偏好、`supportedHighResolution=true` 与 `supportedMimeType=['image/heic']`；选中资源先复制进应用沙箱再交给 Rust，并按组件 MIME/文件类型显示格式。发布包继续按 unsigned 规则处理。
 
 ## 22. 图库照片详情与队列转换入口（2026-09-25）
 

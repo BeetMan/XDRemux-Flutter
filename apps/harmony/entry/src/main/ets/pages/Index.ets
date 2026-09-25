@@ -4,6 +4,14 @@ import { HdsTabs, hdsMaterial } from '@kit.UIDesignKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import {
+  ClickType,
+  ItemInfo,
+  PhotoPickerComponent,
+  PickerController,
+  PickerOptions,
+  SelectMode
+} from '@kit.MediaLibraryKit';
+import {
   photoAccessHelper
 } from '@kit.MediaLibraryKit';
 import xdremuxNative from 'libentry.so';
@@ -104,7 +112,7 @@ class GalleryHeicCompatibleCapability implements photoAccessHelper.AssetCompatib
   supportedMimeType: Array<string> = ['image/heic'];
 }
 
-class GalleryOriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
+class GalleryOriginalPickerOptions extends PickerOptions {
   // CURRENT is 1 in API 26. Keep the value numeric so older API runtimes can
   // ignore this extension field without resolving the API-26 enum at startup.
   preferredCompatibleMode: number = 1;
@@ -160,16 +168,15 @@ struct Index {
   @State private mainTabIndex: number = 0;
   @State private galleryDetailVisible: boolean = false;
   @State private galleryImporting: boolean = false;
-  @State private galleryOriginalPickerActive: boolean = false;
   @State private galleryQueuePreparing: boolean = false;
   @State private galleryQueueItemId: string = '';
-  @State private galleryStatus: string = '尚未选择照片';
+  @State private galleryStatus: string = '选择一张照片查看信息并开始转换';
   @State private galleryMimeType: string = '';
-  @State private galleryOriginalPhoto: boolean | undefined = undefined;
   @State private gallerySandboxPath: string = '';
   @State private galleryCopiedBytes: number = 0;
   @State private galleryDetails: NativePhotoDetails | undefined = undefined;
   @State private galleryClassification: NativeClassificationResult | undefined = undefined;
+  @State private galleryPickerController: PickerController = new PickerController();
 
   private queueController: QueueController | undefined = undefined;
   private queueStore: QueueStateStore | undefined = undefined;
@@ -189,6 +196,8 @@ struct Index {
   private livePhotoPairSerial: number = 0;
   private batchExportSerial: number = 0;
   private galleryImportSerial: number = 0;
+  private galleryPendingMimeType: string = '';
+  private readonly galleryPickerOptions: GalleryOriginalPickerOptions = new GalleryOriginalPickerOptions();
   private batchPickerActive: boolean = false;
   private batchPageShowWaiters: Array<(visible: boolean) => void> = [];
   private readonly motionInspectionCache: Map<string, MotionPhotoInspection> =
@@ -201,6 +210,8 @@ struct Index {
 
   aboutToAppear(): void {
     this.pageVisible = true;
+    this.galleryPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    this.galleryPickerOptions.selectMode = SelectMode.SINGLE_SELECT;
     this.refreshVersion();
     this.loadSettings();
     this.restoreQueueSession();
@@ -2407,7 +2418,7 @@ struct Index {
       this.galleryClassification = classification;
       this.galleryStatus = '已识别 ' + this.galleryFormatLabel() + ' · ' +
         String(details.width ?? 0) + ' × ' + String(details.height ?? 0) + ' · ' +
-        (this.galleryOriginalPhoto === true ? '系统确认返回原图' : '系统返回兼容资源');
+        'API 26 原格式请求';
     } catch (error) {
       this.galleryStatus = '图库验证失败：' + this.errorMessage(error);
     } finally {
@@ -2439,38 +2450,31 @@ struct Index {
     return '.photo';
   }
 
-  private async chooseGalleryOriginal(): Promise<void> {
-    if (this.galleryImporting || this.galleryOriginalPickerActive) {
+  private onGalleryPickerItemClicked(itemInfo: ItemInfo, _clickType: ClickType): boolean {
+    this.galleryPendingMimeType = itemInfo.mimeType ?? '';
+    return true;
+  }
+
+  private onGalleryPickerSelect(uri: string): void {
+    if (this.galleryImporting || uri.length === 0) {
       return;
     }
-    this.galleryOriginalPickerActive = true;
-    this.galleryStatus = '正在打开 API 26 原格式图库选择器…';
-    try {
-      const options: GalleryOriginalPhotoSelectOptions = new GalleryOriginalPhotoSelectOptions();
-      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
-      options.maxSelectNumber = 1;
-      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
-      const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
-      const uri: string = result.photoUris.length > 0 ? result.photoUris[0] : '';
-      if (uri.length === 0) {
-        this.galleryStatus = this.gallerySandboxPath.length > 0
-          ? '已取消选择，保留最近一次导入的照片'
-          : '已取消原格式图库选择';
-        return;
-      }
-      this.galleryMimeType = this.galleryMimeTypeFromUri(uri);
-      this.galleryOriginalPhoto = result.isOriginalPhoto;
-      await this.inspectGallerySelection(uri);
-    } catch (error) {
-      this.galleryStatus = '原格式图库选择失败：' + this.errorMessage(error);
-    } finally {
-      this.galleryOriginalPickerActive = false;
-    }
+    const uriMimeType: string = this.galleryMimeTypeFromUri(uri);
+    this.galleryMimeType = uriMimeType.length > 0 ? uriMimeType : this.galleryPendingMimeType;
+    this.galleryPendingMimeType = '';
+    void this.inspectGallerySelection(uri);
+  }
+
+  private onGalleryPickerDeselect(_uri: string): void {
+    this.galleryPendingMimeType = '';
+    this.galleryStatus = this.gallerySandboxPath.length > 0
+      ? '已取消图库选择；最近导入的照片仍保留'
+      : '选择一张照片查看信息并开始转换';
   }
 
   private async convertGallerySelection(): Promise<void> {
     const controller: QueueController | undefined = this.queueController;
-    if (this.galleryQueuePreparing || this.galleryImporting || this.galleryOriginalPickerActive) {
+    if (this.galleryQueuePreparing || this.galleryImporting) {
       return;
     }
     if (this.galleryQueueItemId.length > 0 && controller !== undefined &&
@@ -2592,172 +2596,47 @@ struct Index {
 
   @Builder
   private galleryPrototypePage() {
-    Scroll() {
-      Column() {
-        Column() {
-          Text('XDRemux')
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_secondary'));
-          Text('图库')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'))
-            .margin({ top: 3 });
-          Text('选择照片，查看信息并开始转换')
-            .fontSize(15)
-            .fontColor($r('sys.color.font_secondary'))
-            .margin({ top: 5 });
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .margin({ bottom: 20 });
-
-        Column() {
-          Row() {
-            Text('原格式导入')
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('sys.color.font_primary'))
-              .layoutWeight(1);
-            Text('API 26')
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.ohos_id_color_activated'))
-              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-              .backgroundColor($r('sys.color.background_tertiary'))
-              .borderRadius(16);
-          }
-          .width('100%');
-
-          Text('使用系统图库选择照片，按原格式读取并支持高分辨率资源。JPEG 仍按 JPEG 处理；实际格式和拍摄信息会在详情中显示。')
-            .fontSize(14)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 10 });
-
-          Row() {
-            Text('HEIC 原片')
-              .fontSize(12)
-              .fontColor($r('sys.color.font_primary'))
-              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-              .backgroundColor($r('sys.color.background_tertiary'))
-              .borderRadius(16);
-            Text('JPEG 原片')
-              .fontSize(12)
-              .fontColor($r('sys.color.font_primary'))
-              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-              .backgroundColor($r('sys.color.background_tertiary'))
-              .borderRadius(16)
-              .margin({ left: 8 });
-            Text('高分辨率')
-              .fontSize(12)
-              .fontColor($r('sys.color.font_primary'))
-              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-              .backgroundColor($r('sys.color.background_tertiary'))
-              .borderRadius(16)
-              .margin({ left: 8 });
-          }
-          .width('100%')
-          .margin({ top: 16 });
-
-          Button(this.galleryOriginalPickerActive ? '正在打开系统图库…' : '从图库选择照片')
-            .fontSize(16)
-            .height(50)
-            .width('100%')
-            .enabled(!this.galleryImporting && !this.galleryOriginalPickerActive)
-            .margin({ top: 20 })
-            .onClick((): void => {
-              void this.chooseGalleryOriginal();
-            });
-
-          Text('只读取你亲自选择的照片，不扫描整个图库。应用会先在本机生成工作副本，再读取照片信息。')
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 12 });
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .padding(20)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .borderRadius(24);
-
-        if (this.gallerySandboxPath.length > 0) {
-          Column() {
-            Text('最近选择')
-              .fontSize(18)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ bottom: 12 });
-            Row() {
-              Image('file://' + this.gallerySandboxPath)
-                .width(88)
-                .height(88)
-                .objectFit(ImageFit.Cover)
-                .borderRadius(16)
-                .backgroundColor($r('sys.color.background_tertiary'));
-              Column() {
-                Text(this.galleryFormatLabel())
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('sys.color.font_primary'));
-                if (this.galleryDetails !== undefined) {
-                  Text(String(this.galleryDetails.width ?? 0) + ' × ' +
-                    String(this.galleryDetails.height ?? 0))
-                    .fontSize(13)
-                    .fontColor($r('sys.color.font_secondary'))
-                    .margin({ top: 4 });
-                  Text((this.galleryOriginalPhoto === true ? '系统确认原图' : '系统返回兼容资源') +
-                    ' · ' + (this.galleryClassification?.family ?? '普通照片'))
-                    .fontSize(12)
-                    .fontColor($r('sys.color.font_secondary'))
-                    .margin({ top: 4 });
-                } else {
-                  Text(this.galleryStatus)
-                    .fontSize(12)
-                    .fontColor(this.galleryStatus.indexOf('失败') >= 0
-                      ? $r('sys.color.ohos_id_color_alert')
-                      : $r('sys.color.font_secondary'))
-                    .margin({ top: 4 });
-                }
-                Button('查看照片信息')
-                  .fontSize(13)
-                  .height(36)
-                  .margin({ top: 8 })
-                  .onClick((): void => {
-                    this.galleryDetailVisible = true;
-                  });
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1)
-              .margin({ left: 14 });
-            }
-            .width('100%');
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding(16)
+    Column() {
+      Row() {
+        Text('图库')
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.font_primary'))
+          .layoutWeight(1);
+        Text('API 26 · 原格式')
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.ohos_id_color_activated'))
+          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
           .backgroundColor($r('sys.color.background_secondary'))
-          .borderRadius(20)
-          .margin({ top: 16 });
-        } else {
-          Text(this.galleryStatus)
-            .fontSize(13)
-            .fontColor(this.galleryStatus.indexOf('失败') >= 0
-              ? $r('sys.color.ohos_id_color_alert')
-              : $r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 14 });
-        }
+          .borderRadius(16);
       }
-      .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding({ left: 20, right: 20, top: 18, bottom: 100 });
+      .padding({ left: 12, right: 12, top: 8, bottom: 4 });
+
+      Text(this.galleryImporting ? '正在复制到应用沙箱并读取信息…' : this.galleryStatus)
+        .fontSize(12)
+        .fontColor(this.galleryStatus.indexOf('失败') >= 0
+          ? $r('sys.color.ohos_id_color_alert')
+          : $r('sys.color.font_secondary'))
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 2, bottom: 8 });
+
+      PhotoPickerComponent({
+        pickerOptions: this.galleryPickerOptions,
+        pickerController: this.galleryPickerController,
+        onItemClicked: (itemInfo: ItemInfo, clickType: ClickType): boolean =>
+          this.onGalleryPickerItemClicked(itemInfo, clickType),
+        onSelect: (uri: string): void => this.onGalleryPickerSelect(uri),
+        onDeselect: (uri: string): void => this.onGalleryPickerDeselect(uri)
+      })
+        .layoutWeight(1)
+        .width('100%');
     }
+    .alignItems(HorizontalAlign.Start)
     .width('100%')
     .height('100%')
+    .padding({ left: 4, right: 4, top: 4, bottom: 88 })
     .backgroundColor($r('sys.color.background_primary'));
   }
 
