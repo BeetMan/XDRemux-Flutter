@@ -42,6 +42,198 @@ pub fn texture_info_payload(grain_seed: u64) -> Vec<u8> {
     w.finish(top)
 }
 
+/// One detected face in the Texture Style person contract.
+///
+/// Field meanings and the statistics recipes are documented in
+/// `docs/research/person-data-reverse-engineering.md`.
+#[derive(Debug, Clone)]
+pub struct PersonInstance {
+    pub face_id: i64,
+    /// Normalised rects as (x, y, width, height).
+    pub face_roi: [f64; 4],
+    pub face_skin_roi: [f64; 4],
+    pub instance_roi: [f64; 4],
+    pub scaling_roi: [f64; 4],
+    pub yaw: f64,
+    pub pitch: f64,
+    pub roll: f64,
+    /// (x, y, error) per landmark; the contract expects 76.
+    pub landmarks: Vec<(f64, f64, f64)>,
+    /// SkinSmoothingStandalone.
+    pub skin_colour: [f64; 3],
+    /// Optional: Apple omits it for some faces (2/24 in our samples).
+    pub skin_roughness: Option<f64>,
+    pub skin_skip: bool,
+    /// Mattify.
+    pub mattify_colour: [f64; 3],
+    pub mattify_highlights_ratio: f64,
+    /// UnderEyeBrightening.
+    pub left_eye_colour: [f64; 3],
+    pub right_eye_colour: [f64; 3],
+    pub left_eye_luma_var: f64,
+    pub right_eye_luma_var: f64,
+    pub left_eye_bimodal: bool,
+    pub right_eye_bimodal: bool,
+}
+
+/// textureInfo bplist with the person data block attached.
+pub fn texture_info_payload_with_people(grain_seed: u64, people: &[PersonInstance]) -> Vec<u8> {
+    let mut w = BplistWriter::new();
+    let k_preset = w.add_str("Preset");
+    let v_preset = w.add_str("Standard");
+    let k_ctype = w.add_str("CaptureType");
+    let v_ctype = w.add_str("LF");
+    let k_cmode = w.add_str("CaptureMode");
+    let v_cmode = w.add_str("Still");
+    let k_ptype = w.add_str("PortType");
+    let v_ptype = w.add_str("PortTypeBack");
+    let k_hw = w.add_str("HardwareModel");
+    let v_hw = w.add_str("iPhone 18 Pro");
+    let k_pdv = w.add_str("TextureStylePeopleDataVersion");
+    let v_pdv = w.add_int(3);
+    let k_gs = w.add_str("FilmGrainSeed");
+    let v_gs = w.add_int(grain_seed);
+
+    let k_people = w.add_str("TextureStylePostProcessedPeopleData");
+    let mut person_refs = Vec::with_capacity(people.len());
+    for p in people {
+        person_refs.push(write_person(&mut w, p));
+    }
+    let v_people = w.add_array(&person_refs);
+
+    let top = w.add_dict(&[
+        (k_preset, v_preset),
+        (k_ctype, v_ctype),
+        (k_cmode, v_cmode),
+        (k_ptype, v_ptype),
+        (k_hw, v_hw),
+        (k_pdv, v_pdv),
+        (k_gs, v_gs),
+        (k_people, v_people),
+    ]);
+    w.finish(top)
+}
+
+fn write_rect(w: &mut BplistWriter, r: [f64; 4]) -> usize {
+    let (kx, ky, kw, kh) = (
+        w.add_str("x"),
+        w.add_str("y"),
+        w.add_str("width"),
+        w.add_str("height"),
+    );
+    let (vx, vy, vw, vh) = (
+        w.add_real(r[0]),
+        w.add_real(r[1]),
+        w.add_real(r[2]),
+        w.add_real(r[3]),
+    );
+    w.add_dict(&[(kx, vx), (ky, vy), (kw, vw), (kh, vh)])
+}
+
+fn write_colour(w: &mut BplistWriter, name: &str, c: [f64; 3]) -> (usize, usize) {
+    let k = w.add_str(name);
+    let vals: Vec<usize> = c.iter().map(|v| w.add_real(*v)).collect();
+    (k, w.add_array(&vals))
+}
+
+fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
+    let mut e: Vec<(usize, usize)> = Vec::new();
+
+    let k = w.add_str("faceID");
+    e.push((k, w.add_int(p.face_id as u64)));
+    let k = w.add_str("faceSkinROI");
+    e.push((k, write_rect(w, p.face_skin_roi)));
+    let k = w.add_str("faceROI");
+    e.push((k, write_rect(w, p.face_roi)));
+    let k = w.add_str("instanceROI");
+    e.push((k, write_rect(w, p.instance_roi)));
+    let k = w.add_str("faceROIAndLandmarksROIRelativeScalingROI");
+    e.push((k, write_rect(w, p.scaling_roi)));
+
+    let (k, v) = (w.add_str("faceYaw"), w.add_real(p.yaw));
+    e.push((k, v));
+    let (k, v) = (w.add_str("facePitch"), w.add_real(p.pitch));
+    e.push((k, v));
+    let (k, v) = (w.add_str("faceRoll"), w.add_real(p.roll));
+    e.push((k, v));
+    let (k, v) = (w.add_str("faceLandmarkType"), w.add_int(1));
+    e.push((k, v));
+    let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_int(1));
+    e.push((k, v));
+    let (k, v) = (
+        w.add_str("instanceMaskReferenceKey"),
+        w.add_str("FSINCInstanceMask9"),
+    );
+    e.push((k, v));
+
+    // faceLandmarks: [{point:{x,y}, error}, ...]
+    let k_lm = w.add_str("faceLandmarks");
+    let mut lms = Vec::with_capacity(p.landmarks.len());
+    for (x, y, err) in &p.landmarks {
+        let (kpx, kpy) = (w.add_str("x"), w.add_str("y"));
+        let (vpx, vpy) = (w.add_real(*x), w.add_real(*y));
+        let kpoint = w.add_str("point");
+        let vpoint = w.add_dict(&[(kpx, vpx), (kpy, vpy)]);
+        let kerr = w.add_str("error");
+        let verr = w.add_real(*err);
+        lms.push(w.add_dict(&[(kpoint, vpoint), (kerr, verr)]));
+    }
+    e.push((k_lm, w.add_array(&lms)));
+
+    // imageStats
+    let k_stats = w.add_str("imageStats");
+    let mut blocks: Vec<(usize, usize)> = Vec::new();
+
+    let k_b = w.add_str("SkinSmoothingStandalone");
+    let mut sb = Vec::new();
+    let k = w.add_str("faceID");
+    sb.push((k, w.add_int(p.face_id as u64)));
+    sb.push(write_colour(w, "SkinSmoothAverageFaceColour", p.skin_colour));
+    if let Some(r) = p.skin_roughness {
+        let (k, v) = (w.add_str("SkinSmoothFaceRoughness"), w.add_real(r));
+        sb.push((k, v));
+    }
+    let (k, v) = (w.add_str("SkinSmoothSkipPerson"), w.add_bool(p.skin_skip));
+    sb.push((k, v));
+    blocks.push((k_b, w.add_dict(&sb)));
+
+    let k_b = w.add_str("Mattify");
+    let mut mb = Vec::new();
+    let k = w.add_str("faceID");
+    mb.push((k, w.add_int(p.face_id as u64)));
+    mb.push(write_colour(w, "AverageFaceColor", p.mattify_colour));
+    let (k, v) = (
+        w.add_str("HighlightsToMaskRatio"),
+        w.add_real(p.mattify_highlights_ratio),
+    );
+    mb.push((k, v));
+    let (k, v) = (w.add_str("SkipPerson"), w.add_bool(false));
+    mb.push((k, v));
+    blocks.push((k_b, w.add_dict(&mb)));
+
+    let k_b = w.add_str("UnderEyeBrightening");
+    let mut ub = Vec::new();
+    let k = w.add_str("faceID");
+    ub.push((k, w.add_int(p.face_id as u64)));
+    ub.push(write_colour(w, "LeftEyeAverageColor", p.left_eye_colour));
+    ub.push(write_colour(w, "RightEyeAverageColor", p.right_eye_colour));
+    let (k, v) = (w.add_str("LeftEyeLumaVariance"), w.add_real(p.left_eye_luma_var));
+    ub.push((k, v));
+    let (k, v) = (
+        w.add_str("RightEyeLumaVariance"),
+        w.add_real(p.right_eye_luma_var),
+    );
+    ub.push((k, v));
+    let (k, v) = (w.add_str("LeftEyeIsBiModal"), w.add_bool(p.left_eye_bimodal));
+    ub.push((k, v));
+    let (k, v) = (w.add_str("RightEyeIsBiModal"), w.add_bool(p.right_eye_bimodal));
+    ub.push((k, v));
+    blocks.push((k_b, w.add_dict(&ub)));
+
+    e.push((k_stats, w.add_dict(&blocks)));
+    w.add_dict(&e)
+}
+
 fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + payload.len());
     out.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
@@ -276,4 +468,81 @@ pub fn inject_uri_metadata_item(
 pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, String> {
     let payload = texture_info_payload(grain_seed);
     inject_uri_metadata_item(data, TEXTURE_STYLES_URI, &payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_person() -> PersonInstance {
+        PersonInstance {
+            face_id: 0,
+            face_roi: [0.34, 0.31, 0.074, 0.098],
+            face_skin_roi: [0.30, 0.24, 0.145, 0.193],
+            instance_roi: [0.24, 0.04, 0.52, 0.64],
+            scaling_roi: [0.023, 0.0, 0.955, 1.0],
+            yaw: -0.33,
+            pitch: 0.40,
+            roll: 0.14,
+            landmarks: (0..76).map(|i| (0.4 + i as f64 * 0.001, 0.3, 0.01)).collect(),
+            skin_colour: [0.7547, 0.5409, 0.4437],
+            skin_roughness: Some(0.02579),
+            skin_skip: false,
+            mattify_colour: [0.749, 0.5412, 0.4431],
+            mattify_highlights_ratio: 0.0,
+            left_eye_colour: [0.8252, 0.6069, 0.488],
+            right_eye_colour: [0.606, 0.4299, 0.354],
+            left_eye_luma_var: 0.0326,
+            right_eye_luma_var: 0.0124,
+            left_eye_bimodal: true,
+            right_eye_bimodal: false,
+        }
+    }
+
+    /// The generated payload must be a bplist whose top dict carries the person
+    /// block, so a downstream reader (Apple Photos, or plistlib for tests) can
+    /// parse it.
+    #[test]
+    fn people_payload_is_a_parseable_bplist() {
+        let payload = texture_info_payload_with_people(203, &[sample_person()]);
+        assert!(payload.starts_with(b"bplist00"));
+        assert_eq!(&payload[..8], b"bplist00");
+        // Every key we publish must appear as a UTF-16BE-ish ASCII run in the
+        // object table.
+        for key in [
+            "Preset",
+            "TextureStylePeopleDataVersion",
+            "TextureStylePostProcessedPeopleData",
+            "faceLandmarks",
+            "faceROI",
+            "faceSkinROI",
+            "faceYaw",
+            "instanceMaskReferenceKey",
+            "imageStats",
+            "SkinSmoothingStandalone",
+            "SkinSmoothAverageFaceColour",
+            "SkinSmoothFaceRoughness",
+            "Mattify",
+            "UnderEyeBrightening",
+            "LeftEyeAverageColor",
+        ] {
+            assert!(
+                payload.windows(key.len()).any(|w| w == key.as_bytes()),
+                "missing key {key}"
+            );
+        }
+    }
+
+    /// Roughness is optional: Apple omits it for some faces (2/24 in our
+    /// samples), so the writer must cope without it.
+    #[test]
+    fn people_payload_tolerates_missing_roughness() {
+        let mut p = sample_person();
+        p.skin_roughness = None;
+        let payload = texture_info_payload_with_people(203, &[p]);
+        assert!(payload.starts_with(b"bplist00"));
+        assert!(!payload
+            .windows("SkinSmoothFaceRoughness".len())
+            .any(|w| w == b"SkinSmoothFaceRoughness"));
+    }
 }

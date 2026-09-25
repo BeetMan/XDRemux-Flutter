@@ -11,6 +11,7 @@ enum Obj {
     Data(Vec<u8>),
     Str(String),
     Dict(Vec<(usize, usize)>), // (key ref, value ref)
+    Array(Vec<usize>),         // value refs in order
 }
 
 pub struct BplistWriter {
@@ -138,6 +139,10 @@ impl BplistWriter {
         self.objects.push(Obj::Dict(entries.to_vec()));
         self.objects.len() - 1
     }
+    pub fn add_array(&mut self, items: &[usize]) -> usize {
+        self.objects.push(Obj::Array(items.to_vec()));
+        self.objects.len() - 1
+    }
 
     pub fn finish(&self, top: usize) -> Vec<u8> {
         // Object references must be addressable: 1 byte covers 255 objects,
@@ -232,6 +237,12 @@ fn write_obj(out: &mut Vec<u8>, obj: &Obj, ref_size: u8) {
             debug_assert!(s.is_ascii());
             write_len_prefixed(out, 0x50, s.len());
             out.extend_from_slice(s.as_bytes());
+        }
+        Obj::Array(items) => {
+            write_len_prefixed(out, 0xa0, items.len());
+            for v in items {
+                push_ref(out, *v, ref_size);
+            }
         }
         Obj::Dict(entries) => {
             write_len_prefixed(out, 0xd0, entries.len());
