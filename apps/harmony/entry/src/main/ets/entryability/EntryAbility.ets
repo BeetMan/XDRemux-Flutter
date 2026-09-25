@@ -45,15 +45,33 @@ export default class EntryAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    windowStage.loadContent('pages/Index', (err) => {
-      if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
-        return;
-      }
-      hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
-    });
-  }
+    const loadMainPage = (): void => {
+      windowStage.loadContent('pages/Index', (err) => {
+        if (err.code) {
+          hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+          return;
+        }
+        hilog.info(DOMAIN, 'testTag', '%{public}s', 'Succeeded in loading the content.');
+      });
+    };
 
+    try {
+      const mainWindow: window.Window = windowStage.getMainWindowSync();
+      // Extend the app's layout behind the visible system status bar. The
+      // system theme retains control of status-bar text and icons.
+      void mainWindow.setWindowLayoutFullScreen(true)
+        .then((): Promise<void> => mainWindow.setWindowSystemBarProperties({ statusBarColor: '#00000000' }))
+        .then((): void => loadMainPage())
+        .catch((error: Object): void => {
+          hilog.error(DOMAIN, 'testTag', 'Failed to configure immersive system bars. Cause: %{public}s',
+            JSON.stringify(error));
+          loadMainPage();
+        });
+    } catch (error) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to configure immersive window. Cause: %{public}s', JSON.stringify(error));
+      loadMainPage();
+    }
+  }
   onWindowStageDestroy(): void {
     // Main window is destroyed, release UI related resources
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');

@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "XDRemux Native"
+    },
+    {
+      "name": "read_imagevideo_reason",
+      "value": "读取图库照片以展示缩略图、格式和拍摄信息，并供用户选择后在本机转换；不会上传照片。"
     }
   ]
 }
