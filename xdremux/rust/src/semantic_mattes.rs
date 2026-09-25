@@ -375,3 +375,21 @@ pub fn face_matte(
     let idr = drop_parameter_nals(&stream);
     Ok((hevc_byte_stream_to_length_prefixed(&idr), hvcc))
 }
+
+/// The fsincMattes XMP that names the instance mask. Apple ships this as its
+/// own `mime` item beside the mask pixels (item 157/158 in IMG_0004).
+fn instance_mask_xmp(key: &str) -> Vec<u8> {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">
+   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+      <rdf:Description rdf:about=""
+            xmlns:fsincMattes="http://ns.apple.com/fsinc/1.0/">
+         <fsincMattes:InstanceMaskReferenceKey>{key}</fsincMattes:InstanceMaskReferenceKey>
+         <fsincMattes:FSINCMatteVersion>0</fsincMattes:FSINCMatteVersion>
+      </rdf:Description>
+   </rdf:RDF>
+</x:xmpmeta>
+"#
+    )
+    .into_bytes()
+}

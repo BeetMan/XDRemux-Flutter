@@ -185,3 +185,54 @@ for k in [b'fsincMattes', b'FSINCInstanceMask9', ...]:
 
 `Screencapture` 只能拍壁纸 —— 需要在 系统设置→隐私与安全性→屏幕录制 里授权，
 才能截到 Photos 窗口做本地循环验证。
+
+### Apple 的 FSINC 实例遮罩布局（已查清，IMG_0004）
+
+| item | type | 尺寸 | 内容 |
+|---|---|---|---|
+| **157** | `hvc1` | **768×576** | 遮罩像素（HEVC，4695B）|
+| **158** | `mime` | — | fsincMattes XMP 声明（462B）|
+
+即 **`hvc1` 遮罩像素 + `mime` XMP 声明 成对**。缩放 ≈ 存储尺寸 / 7.425。
+
+（另有 142-151 五对 `hvc1 2016×1512` + `mime`，是语义遮罩；66-88 十三个 357B `mime`
+是 `FSINCMatteVersion` 声明。）
+
+### 已就绪（编译通过）
+
+- `semantic_mattes::face_matte(w, h, face_roi)` —— 人脸框填白/其余填黑，x265 →
+  length-prefixed HEVC + hvcC
+- `semantic_mattes::instance_mask_xmp(key)` —— 返回上面那段 XMP（含
+  `InstanceMaskReferenceKey` + `FSINCMatteVersion`）
+- `texture_styles::PersonInstance::mask_reference: bool`
+
+### 还要写：`inject_instance_mask(data, face_roi, 768, 576)`
+
+注入 2 个项。**正确的 API 名**（我第一次写错过，记下来）：
+
+```
+isobmff::make_infe_box(item_id, itype, flags)   // 不是 make_infe
+isobmff::make_ispe_box(w, h)                    // 不是 make_ispe
+isobmff::make_iloc_box(entries)                 // 生成整个 iloc box，不是单条 entry
+isobmff::make_ipma_entry(item_id, &assocs, flags)
+isobmff::parse_iloc(data, box_hdr)
+isobmff::make_box(btype, payload)
+```
+
+结构照抄 `inject_semantic_mattes`（iinf / ipco+ipma / iloc 两遍 / splice），
+但只有 2 项、**无 auxC URN**：
+
+- mask 项：`hvc1`，ipma = ispe + hvcC(essential)
+- xmp 项：`mime`，无属性
+- 两项都不建 `iref`（Apple 的实例遮罩不挂在主图上）
+- 数据追加到 `mdat` 末尾
+
+最后：把 `PersonInstance::mask_reference` 改成 **true**，由 `skin_test` 调用注入。
+
+### 验证
+
+```python
+d=open(out,'rb').read()
+assert d.count(b'FSINCInstanceMask9')>=2   # 引用 + XMP 声明
+assert d.count(b'fsincMattes')>=3
+```
