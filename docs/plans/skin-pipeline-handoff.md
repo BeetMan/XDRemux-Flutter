@@ -82,3 +82,49 @@ Photos 拒绝整个 texture_styles，所有风格选项都消失了）。
 - `docs/research/key1-reverse-engineering.md` —— key1 结构（另一条线）
 - `docs/research/oppo-proxdr-families.md` —— OPPO 两代 ProXDR
 - `docs/plans/roadmap-2026-09-25.md` —— 优先级
+
+---
+
+## 续：实机验证发现的剩余差异（2026-09-25）
+
+递归 diff 我们的 texture_styles 与 IMG_0004 真实数据（`/tmp/apple-ts.raw`
+vs `/tmp/fin.raw`，工具见 `examples/dump_item`）显示：**结构已100%对齐**
+（键、类型、顶层值、scalingROI 全匹配），**只剩测量值差异 + 两个语义问题**：
+
+### A. x 坐标疑似水平镜像（最可能的被拒原因）
+
+```
+Apple faceROI: x=0.3406  y=0.3078  w=0.0738  h=0.0983
+我们 faceROI:  x=0.6184  y=0.3159  w=0.0973  h=0.1043
+
+y 几乎一致（0.308 vs 0.316）
+1 − 0.618 = 0.382  ≈ Apple 的 0.341
+```
+
+**检查 `face_detect.rs` 的 anchor `col` 计算**（`i % cells_per_row`）与
+`sdr_source.rs` 的最近邻缩放 `fill_scaled` 是否有水平翻转。也可能是
+`decode_to_rgb` 输出的像素已镜像。
+
+### B. `instanceROI` 语义错
+
+Apple = **人物完整区域**（0.52 × 0.64，覆盖身体/场景）
+我们 = 脸框（0.097 × 0.104）
+
+应扩展到人物区域（可用 faceSkinROI 再放大，或估人物上半身）。
+
+### C. 测量值差异（格式已对，不阻塞）
+
+姿态角/肤色/粗糙度/眼部统计 —— 不同检测器结果不同是正常的。
+`faceLandmarks.error`：Apple 用真实检测误差（0.017-0.020），我们用模板误差 0.103
+—— 可改成 0.02 量级更像。
+
+### 工具
+
+```bash
+# 提取 Apple 参考
+./target/release/examples/dump_item "<样张>" 156 /tmp/apple-ts.raw raw
+# 提取我们的
+./target/release/examples/dump_item /tmp/skin-final.heic 152 /tmp/fin.raw raw
+# 递归 diff（见上文脚本）
+```
+
