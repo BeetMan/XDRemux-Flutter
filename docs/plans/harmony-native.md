@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-25 图库首页已改为整页内嵌 API 26 `PhotoPickerComponent` 单选网格，通过 `PickerOptions` 请求 CURRENT 原格式偏好和高分辨率 HEIC；选中 URI 先物理复制到应用沙箱，再交给 Rust 检查，格式以照片 MIME/文件类型显示。三 Tab HDS 导航保持不变。当前版本 `0.4.5` / code40015；DevEco debug 构建、14 份 Node 回归和 5 份 HAP verifier 单测通过。0.4.5 已安装到 Pura X View，但设备当时处于锁屏状态，`devecocli` 无法启动应用（10106102），所以图库布局和选择流程仍待解锁后的真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
+状态：2026-09-25 图库首页已取消自定义标题和页边距，让 API 26 `PhotoPickerComponent` 单选网格铺满图库页；`PickerOptions` 请求 CURRENT 原格式偏好和高分辨率 HEIC，选中 URI 先物理复制到应用沙箱再交 Rust 检查。照片详情改为一张超大圆角预览卡，使用 ArkUI `Stack`/`Image` 和沉浸光感模糊面板展示信息与转换操作。三 Tab HDS 导航保持不变。当前版本 `0.4.6` / code40016；DevEco debug 构建、14 份 Node 回归和 5 份 HAP verifier 单测通过。0.4.6 已安装到 Pura X View，但设备锁屏导致无法启动（10106102），所以新视觉仍待解锁后的真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收也待完成。
 当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
@@ -487,3 +487,10 @@ P0 补充检查（本批并行进行）：
 - 14 份 Node 回归和 5 份 HAP verifier Python 测试通过。外部记录/产物位于 C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/gallery-tabs/。
 - devecocli run --skip-build 在 Pura X View 安装 code40012 .arkui 成功，但启动时因手机锁屏且为开发者模式而失败（10106102 — device screen is locked during application launch）。未观察到崩溃证据，不把安装成功当成 UI 真机验收；解锁后还需检查两 Tab 显示、图库/队列切换、详情返回、设置入口、选图和导航栏对内容的避让。
 - 已发现 API24 Pura 90 模拟器，但模拟器协议尚未接受，因此未启动或测试。需用户在交互终端运行 devecocli emulator license accept 后再继续。
+
+## 24. 全屏图库与照片详情大卡片（2026-09-25）
+
+- 官方 `PhotoPickerComponent` 指南说明组件不应被 `overlay` 或更高层级组件覆盖，否则可能无法接收手势；因此图库页直接铺满 Tab 内容区，不放自定义浮层或额外控件。根 `HdsTabs` 保持沉浸式安全区域扩展，图库组件取消标题和上下留白；状态栏与系统导航仍显示在应用内容之上，HDS 浮动 Tab 保持原有交互。
+- 照片详情使用 ArkUI `Stack` 与 `Image` 构造单张大幅、圆角预览卡，采用 `ImageFit.Contain` 保持照片比例；顶部操作和底部信息/转换区域使用模糊材质呈现，完整 EXIF 摘要和操作可滚动查看。保留现有 HDS 浮动 Tab。
+- 控件评估：`HdsListItemCard` 的设计目标是设置/列表行，不适合承载大照片；`HdsVisualComponent` 用于专门的边缘流光等复杂视效，本场景也不需要。普通 ArkUI `Stack`、`Image`、`Scroll` 加 `backgroundBlurStyle` 更适合照片主视觉；HDS `hdsMaterial` 推荐使用系统自适应等级，本批玻璃效果限制在小面积操作/信息区。
+- 已完成 API 26 debug 编译、14 份 Node 回归与 5 份 HAP verifier 单测。0.4.6 已安装到设备，但锁屏时启动失败（10106102），尚未做设备视觉检查。参考华为[PhotoPickerComponent API](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ohos-file-photopickercomponent)、[窗口沉浸式指南](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/immersive-window-feature)、[Tabs 沉浸式 FAQ](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-arkui-1584)、[HdsListItemCard API](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ui-design-hdslistitem) 与[ArkUI 背景/模糊 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references-V13/ts-universal-attributes-background-V13)。

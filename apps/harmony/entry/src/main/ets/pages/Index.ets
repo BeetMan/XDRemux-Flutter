@@ -2596,33 +2596,7 @@ struct Index {
 
   @Builder
   private galleryPrototypePage() {
-    Column() {
-      Row() {
-        Text('图库')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.font_primary'))
-          .layoutWeight(1);
-        Text('API 26 · 原格式')
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.ohos_id_color_activated'))
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .backgroundColor($r('sys.color.background_secondary'))
-          .borderRadius(16);
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 4 });
-
-      Text(this.galleryImporting ? '正在复制到应用沙箱并读取信息…' : this.galleryStatus)
-        .fontSize(12)
-        .fontColor(this.galleryStatus.indexOf('失败') >= 0
-          ? $r('sys.color.ohos_id_color_alert')
-          : $r('sys.color.font_secondary'))
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 2, bottom: 8 });
-
-      PhotoPickerComponent({
+    PhotoPickerComponent({
         pickerOptions: this.galleryPickerOptions,
         pickerController: this.galleryPickerController,
         onItemClicked: (itemInfo: ItemInfo, clickType: ClickType): boolean =>
@@ -2630,182 +2604,199 @@ struct Index {
         onSelect: (uri: string): void => this.onGalleryPickerSelect(uri),
         onDeselect: (uri: string): void => this.onGalleryPickerDeselect(uri)
       })
-        .layoutWeight(1)
-        .width('100%');
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .height('100%')
-    .padding({ left: 4, right: 4, top: 4, bottom: 88 })
-    .backgroundColor($r('sys.color.background_primary'));
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
   private galleryDetailPage() {
-    Column() {
-      Row() {
-        Button('返回图库')
-          .fontSize(14)
-          .height(40)
-          .onClick((): void => {
-            this.galleryDetailVisible = false;
-          });
-        Text('照片详情')
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.font_primary'))
-          .margin({ left: 12 });
-      }
-      .width('100%')
-      .margin({ bottom: 10 });
-
+    Stack() {
       if (this.gallerySandboxPath.length > 0) {
         Image('file://' + this.gallerySandboxPath)
           .width('100%')
-          .height(250)
+          .height('100%')
           .objectFit(ImageFit.Contain)
-          .backgroundColor('#111820')
-          .borderRadius(18);
+          .backgroundColor('#111820');
       } else {
-        Row() {
+        Column() {
           if (this.galleryImporting) {
-            LoadingProgress().width(30).height(30);
+            LoadingProgress().width(34).height(34);
           }
           Text(this.galleryImporting ? '正在读取所选照片…' : this.galleryStatus)
             .fontSize(14)
             .fontColor($r('sys.color.font_secondary'))
-            .margin({ left: 10 });
+            .margin({ top: 12 });
         }
         .width('100%')
-        .height(150)
+        .height('100%')
         .justifyContent(FlexAlign.Center)
-        .backgroundColor($r('sys.color.background_tertiary'))
-        .borderRadius(18);
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('sys.color.background_tertiary'));
       }
 
-      Scroll() {
-        Column() {
-          Row() {
-            Text('当前格式')
-              .fontSize(14)
-              .fontColor($r('sys.color.font_secondary'))
+      Column() {
+        Row() {
+          Button('返回图库')
+            .fontSize(14)
+            .height(42)
+            .onClick((): void => {
+              this.galleryDetailVisible = false;
+            });
+          Text('照片详情')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+            .margin({ left: 12 });
+          Text(this.galleryFormatLabel())
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .backgroundColor($r('sys.color.background_tertiary'))
+            .borderRadius(18);
+        }
+        .width('100%')
+        .padding({ left: 6, right: 6, top: 6, bottom: 6 })
+        .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
+        .borderRadius(24);
+
+        Blank().layoutWeight(1);
+
+        Scroll() {
+          Column() {
+            Row() {
+              Column() {
+                Text(this.galleryFormatLabel())
+                  .fontSize(30)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('sys.color.font_primary'));
+                Text(String(this.galleryDetails?.width ?? 0) + ' × ' +
+                  String(this.galleryDetails?.height ?? 0) + ' · ' +
+                  this.display(this.galleryDetails?.hdrKind))
+                  .fontSize(14)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 4 });
+              }
+              .alignItems(HorizontalAlign.Start)
               .layoutWeight(1);
-            Text(this.galleryFormatLabel())
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('sys.color.font_primary'));
-          }
-          .width('100%');
+              Text(this.galleryClassification?.family ?? '照片')
+                .fontSize(13)
+                .fontColor($r('sys.color.ohos_id_color_activated'))
+                .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+                .backgroundColor($r('sys.color.background_tertiary'))
+                .borderRadius(18);
+            }
+            .width('100%');
 
-          if (this.galleryDetails !== undefined) {
-            Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0) +
-              ' · ' + this.display(this.galleryDetails.hdrKind))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 5 });
+            if (this.galleryDetails !== undefined) {
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
+              Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
+                .fontSize(14)
+                .fontColor($r('sys.color.font_primary'))
+                .width('100%');
+              Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 8 });
+              Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
+                this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 8 });
+              Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
+                this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
+                this.display(this.galleryDetails.exposureBias))
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 8 });
+              Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
+                (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
+                  ? ' · ' + this.galleryClassification.modeKey
+                  : ''))
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 8 });
+            }
 
-            Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
-              .fontSize(13)
+            if (this.gallerySandboxPath.length > 0) {
+              Text('沙箱副本已校验 · ' + String(this.galleryCopiedBytes) + ' B')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 10 });
+            }
+
+            Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 16, bottom: 12 });
+            Text('转换方式')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_primary'))
+              .width('100%');
+            Text('当前设置：' + (this.settingsLoaded ? this.savedSettingsSummary() : '设置加载中…'))
+              .fontSize(14)
               .fontColor($r('sys.color.font_primary'))
               .width('100%')
-              .margin({ top: 11 });
-            Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 5 });
-            Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
-              this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 5 });
-            Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
-              this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
-              this.display(this.galleryDetails.exposureBias))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 5 });
-
-            Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
-              (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
-                ? ' · ' + this.galleryClassification.modeKey
-                : ''))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 8 });
-          }
-
-          if (this.gallerySandboxPath.length > 0) {
-            Text('沙箱副本已校验 · ' + String(this.galleryCopiedBytes) + ' B')
+              .margin({ top: 6 });
+            Text('转换会生成新图片并保留原图；导出时可选择保存位置。')
               .fontSize(12)
               .fontColor($r('sys.color.font_secondary'))
               .width('100%')
-              .margin({ top: 7 });
-          }
-
-          Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
-          Text('转换方式')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
+              .margin({ top: 4, bottom: 10 });
+            Row() {
+              Button(this.galleryQueuePreparing ? '正在准备队列…' : '按当前设置转换')
+                .fontSize(14)
+                .layoutWeight(1)
+                .height(46)
+                .enabled(!this.galleryQueuePreparing && !this.galleryImporting && !this.pageBusy &&
+                  this.galleryDetails !== undefined && this.galleryClassification !== undefined &&
+                  this.settingsLoaded && this.queueLoaded && this.queueReady && !this.queueRecoveryRequired)
+                .onClick((): void => {
+                  void this.convertGallerySelection();
+                });
+              Button('转换设置')
+                .fontSize(14)
+                .height(46)
+                .margin({ left: 8 })
+                .enabled(this.settingsLoaded && !this.settingsSaving)
+                .onClick((): void => {
+                  this.mainTabIndex = 2;
+                });
+            }
             .width('100%');
-          Text('当前设置：' + (this.settingsLoaded ? this.savedSettingsSummary() : '设置加载中…'))
-            .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-            .margin({ top: 6 });
-          Text('可选 OPPO 兼容或 Apple 标准输出。转换会生成新图片并保留原图；导出时通过系统选择保存位置。')
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 4, bottom: 10 });
-          Row() {
-            Button(this.galleryQueuePreparing ? '正在准备队列…' : '按当前设置转换')
-              .fontSize(14)
-              .layoutWeight(1)
-              .height(46)
-              .enabled(!this.galleryQueuePreparing && !this.galleryImporting && !this.pageBusy &&
-                this.galleryDetails !== undefined && this.galleryClassification !== undefined &&
-                this.settingsLoaded && this.queueLoaded && this.queueReady && !this.queueRecoveryRequired)
-              .onClick((): void => {
-                void this.convertGallerySelection();
-              });
-            Button('转换设置')
-              .fontSize(14)
-              .height(46)
-              .margin({ left: 8 })
-              .enabled(this.settingsLoaded && !this.settingsSaving)
-              .onClick((): void => {
-                this.mainTabIndex = 2;
-              });
-          }
-          .width('100%');
 
-          Text(this.galleryStatus)
-            .fontSize(12)
-            .fontColor(this.galleryStatus.indexOf('失败') >= 0 ? '#B3261E' : '#52606D')
-            .width('100%')
-            .margin({ top: 8 });
+            Text(this.galleryStatus)
+              .fontSize(12)
+              .fontColor(this.galleryStatus.indexOf('失败') >= 0
+                ? $r('sys.color.ohos_id_color_alert')
+                : $r('sys.color.font_secondary'))
+              .width('100%')
+              .margin({ top: 10 });
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(18)
         }
-        .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding(16)
-        .backgroundColor($r('sys.color.background_secondary'))
-        .borderRadius(16)
-        .margin({ top: 10, bottom: 10 });
+        .height('58%')
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
+        .borderRadius(28);
       }
-      .layoutWeight(1)
-      .width('100%');
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .height('100%')
+      .padding({ left: 16, right: 16, top: 16, bottom: 16 });
     }
-    .alignItems(HorizontalAlign.Start)
-    .height('100%')
     .width('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 84 })
-    .backgroundColor($r('sys.color.background_primary'));
+    .height('100%')
+    .borderRadius(32)
+    .clip(true)
+    .backgroundColor('#111820');
   }
 
   private async ensureDirectory(path: string): Promise<void> {
