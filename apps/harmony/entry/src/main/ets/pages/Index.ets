@@ -1,11 +1,12 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { LengthMetrics, SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import {
   HdsNavigation,
   HdsNavigationTitleMode,
   HdsBarStyle,
   HdsTabs,
   HdsTabsController,
+  ScrollEffectType,
   TitleBarStyleOptions,
   hdsMaterial
 } from '@kit.UIDesignKit';
@@ -2652,25 +2653,37 @@ struct Index {
     return dot >= 0 ? path.substring(dot + 1).toUpperCase() : '未知';
   }
 
+  private shouldUseImmersiveMainChrome(): boolean {
+    return deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0');
+  }
+
   @Builder
   private ownGalleryPage() {
     Column() {
-      Row() {
-        Column() {
-          Text('图库')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'));
-          Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
-            .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
-            .margin({ top: 3 });
+      if (!this.shouldUseImmersiveMainChrome()) {
+        Row() {
+          Column() {
+            Text('图库')
+              .fontSize(30)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.font_primary'));
+            Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
+              .fontSize(13)
+              .fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 3 });
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1);
         }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1);
-      }
-      .width('100%')
-      .padding({ left: 18, right: 18, top: 14, bottom: 12 });
+        .width('100%')
+        .padding({ left: 18, right: 18, top: 14, bottom: 12 });
+      } else {
+          Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 14, bottom: 12 });
+        }
 
       if (this.galleryLoading && this.galleryPhotos.length === 0) {
         Column() {
@@ -2693,7 +2706,7 @@ struct Index {
             .textAlign(TextAlign.Center);
           Text(this.galleryLoadError.length > 0
             ? this.galleryLoadError
-            : '点右上角“导入”，从系统图库添加照片。导入后原图保存在应用沙箱，可随时查看信息和转换。')
+            : '点底部“＋”从系统图库添加照片。导入后原图保存在应用沙箱，可随时查看信息和转换。')
             .fontSize(14)
             .fontColor(this.galleryLoadError.length > 0
               ? $r('sys.color.ohos_id_color_alert')
@@ -2780,6 +2793,10 @@ struct Index {
   @Available({ minApiVersion: 'HarmonyOS 6.1.0' })
   private galleryNavigationMaterialStyle(): TitleBarStyleOptions {
     return {
+      scrollEffectOpts: {
+        enableScrollEffect: false,
+        scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
+      },
       systemMaterialEffect: {
         materialType: hdsMaterial.MaterialType.ADAPTIVE,
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -2954,6 +2971,10 @@ struct Index {
     .width('100%')
     .height('100%')
     .titleBar({
+      padding: {
+        start: LengthMetrics.vp(20),
+        end: LengthMetrics.vp(20)
+      },
       content: {
         title: {
           mainTitle: '照片详情',
@@ -3801,11 +3822,13 @@ struct Index {
     Column() {
       Scroll() {
         Column() {
-          Text('设置')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%');
+          if (!this.shouldUseImmersiveMainChrome()) {
+            Text('设置')
+              .fontSize(30)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.font_primary'))
+              .width('100%');
+          }
           Text('调整输出格式与转换时保留的照片信息')
             .fontSize(14)
             .fontColor($r('sys.color.font_secondary'))
@@ -3879,11 +3902,13 @@ struct Index {
     Column() {
         Scroll() {
         Column() {
-          Text('转换队列')
-            .fontSize(30)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'))
-            .margin({ bottom: 6 });
+          if (!this.shouldUseImmersiveMainChrome()) {
+            Text('转换队列')
+              .fontSize(30)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.font_primary'))
+              .margin({ bottom: 6 });
+          }
           Text('批量处理照片，查看进度并导出结果')
             .fontSize(15)
             .fontColor($r('sys.color.font_secondary'))
@@ -4174,55 +4199,78 @@ struct Index {
     this.getTabsController().applyMiniBarStyle(expanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE);
   }
 
-  private canImportFromCurrentTab(): boolean {
+  private mainTabTitle(): string {
+    if (this.mainTabIndex === 0) {
+      return '图库';
+    }
+    if (this.mainTabIndex === 1) {
+      return '转换队列';
+    }
+    return '设置';
+  }
+
+  private canRunMiniBarAction(): boolean {
     if (this.mainTabIndex === 0) {
       return !this.galleryImporting && !this.galleryLoading && !this.pageBusy && !this.queueRunning;
     }
     if (this.mainTabIndex === 1) {
-      return this.queueLoaded && this.queueReady && !this.queueLoading &&
+      return this.queueLoaded && this.queueReady && this.settingsLoaded && !this.queueLoading &&
         !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-        !this.pageBusy && !this.queueRunning;
+        !this.pageBusy && !this.queueRunning && !this.cleanupRunning &&
+        this.queueItems.some((item: QueueItem): boolean => item.status === 'pending' && !item.externalBusy);
     }
     return false;
   }
 
   @Available({ minApiVersion: '26.0.0' })
-  private async importFromMiniBar(): Promise<void> {
+  private async runMiniBarAction(): Promise<void> {
     const tabIndex: number = this.mainTabIndex;
     this.setImportMiniBarExpanded(false);
     if (tabIndex === 0) {
       await this.importGalleryPhotos();
     } else if (tabIndex === 1) {
-      await this.chooseAndImport(true);
+      await this.startQueue();
     }
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private immersiveButtonMaterial(): uiMaterial.ImmersiveMaterial {
+    return new uiMaterial.ImmersiveMaterial({
+      style: uiMaterial.ImmersiveStyle.THIN,
+      colorInvert: true,
+      interactive: true,
+      lightEffect: {}
+    });
   }
 
   @Available({ minApiVersion: '26.0.0' })
   @Builder
   private importMiniBar() {
     if (this.importMiniBarExpanded) {
-      Button('＋ 导入')
+      Button(this.mainTabIndex === 1 ? '开始转换' : '＋ 导入')
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_activated'))
-        .width(112)
+        .fontColor(Color.White)
+        .width(168)
         .height(56)
-        .backgroundColor(Color.Transparent)
+        .systemMaterial(this.immersiveButtonMaterial())
+        .backgroundColor('#D91F6BFF')
         .borderRadius(28)
-        .enabled(this.canImportFromCurrentTab())
+        .enabled(this.canRunMiniBarAction())
         .onClick((): void => {
-          void this.importFromMiniBar();
+          void this.runMiniBarAction();
         });
     } else {
-      Button('+')
-        .fontSize(30)
+      Button(this.mainTabIndex === 1 ? '▶' : '+')
+        .fontSize(this.mainTabIndex === 1 ? 22 : 30)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_activated'))
+        .fontColor(Color.White)
         .width(56)
         .height(56)
-        .backgroundColor(Color.Transparent)
+        .systemMaterial(this.immersiveButtonMaterial())
+        .backgroundColor('#D91F6BFF')
         .borderRadius(28)
-        .enabled(this.canImportFromCurrentTab())
+        .enabled(this.canRunMiniBarAction())
         .onClick((): void => {
           this.setImportMiniBarExpanded(true);
         });
@@ -4271,6 +4319,7 @@ struct Index {
       this.onMainTabChange(index);
     })
     .barFloatingStyle(this.mainTabIndex === 2 ? {
+      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 24,
       adaptToHandedness: false,
       systemMaterialEffect: {
@@ -4278,6 +4327,7 @@ struct Index {
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       }
     } : {
+      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 24,
       adaptToHandedness: false,
       systemMaterialEffect: {
@@ -4286,7 +4336,7 @@ struct Index {
       },
       miniBar: {
         miniBarBuilder: () => this.importMiniBar(),
-        miniBarWidth: { smallWidth: 112, mediumWidth: 112, largeWidth: 112 },
+        miniBarWidth: { smallWidth: 168, mediumWidth: 168, largeWidth: 168 },
         miniBarStyle: this.importMiniBarExpanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE,
         onBarStyleChange: (miniBarStyle: HdsBarStyle): void => {
           this.importMiniBarExpanded = miniBarStyle === HdsBarStyle.EXPAND;
@@ -4297,6 +4347,43 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor($r('sys.color.background_primary'));
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  @Builder
+  private immersiveMainNavigation() {
+    HdsNavigation() {
+      this.immersiveTabs();
+    }
+    .width('100%')
+    .height('100%')
+    .titleBar({
+      padding: {
+        start: LengthMetrics.vp(20),
+        end: LengthMetrics.vp(20)
+      },
+      content: {
+        title: {
+          mainTitle: this.mainTabTitle()
+        }
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: false,
+          scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      },
+      avoidLayoutSafeArea: false,
+      enableComponentSafeArea: true
+    })
+    .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(true)
+    .hideToolBar(true)
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP]);
   }
 
   @Builder
@@ -4344,8 +4431,8 @@ struct Index {
   }
 
   build() {
-    if (deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0')) {
-      this.immersiveTabs();
+    if (this.shouldUseImmersiveMainChrome()) {
+      this.immersiveMainNavigation();
     } else {
       this.standardTabs();
     }
