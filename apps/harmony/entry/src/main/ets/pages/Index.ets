@@ -1,6 +1,7 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { LengthMetrics, SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
+import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
 import {
+  BlurStrategy,
   HdsNavigation,
   HdsNavigationTitleMode,
   HdsBarStyle,
@@ -205,6 +206,9 @@ struct Index {
   private queueRestoreStarted: boolean = false;
   private queueRestoreInFlight: boolean = false;
   private readonly settingsStore: SettingsStore = new SettingsStore();
+  private readonly galleryScrollController: Scroller = new Scroller();
+  private readonly queueScrollController: Scroller = new Scroller();
+  private readonly settingsScrollController: Scroller = new Scroller();
   private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
   private tabsController: HdsTabsController | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
@@ -2678,7 +2682,7 @@ struct Index {
         .width('100%')
         .padding({ left: 18, right: 18, top: 14, bottom: 12 });
       } else {
-          Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
+        Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
           .fontSize(13)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
@@ -2730,7 +2734,7 @@ struct Index {
         .alignItems(HorizontalAlign.Center)
         .padding({ left: 32, right: 32, bottom: 40 });
       } else {
-        Scroll() {
+        Scroll(this.galleryScrollController) {
           Grid() {
             ForEach(this.galleryPhotos, (tile: GalleryPhotoTile) => {
               GridItem() {
@@ -2774,7 +2778,8 @@ struct Index {
           .padding({ left: 4, right: 4, bottom: 96 });
         }
         .layoutWeight(1)
-        .width('100%');
+        .width('100%')
+        .clipContent(ContentClipMode.SAFE_AREA);
 
         if (this.galleryLoadError.length > 0) {
           Text(this.galleryLoadError)
@@ -2787,7 +2792,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: 'HarmonyOS 6.1.0' })
@@ -3820,7 +3825,7 @@ struct Index {
   @Builder
   private settingsPage() {
     Column() {
-      Scroll() {
+      Scroll(this.settingsScrollController) {
         Column() {
           if (!this.shouldUseImmersiveMainChrome()) {
             Text('设置')
@@ -3890,17 +3895,18 @@ struct Index {
         .padding({ left: 20, right: 20, top: 24, bottom: 108 });
       }
       .layoutWeight(1)
-      .width('100%');
+      .width('100%')
+      .clipContent(ContentClipMode.SAFE_AREA);
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
   }
 
   @Builder
   private queuePage() {
     Column() {
-        Scroll() {
+        Scroll(this.queueScrollController) {
         Column() {
           if (!this.shouldUseImmersiveMainChrome()) {
             Text('转换队列')
@@ -4176,11 +4182,12 @@ struct Index {
         .padding({ left: 24, right: 24, top: 28, bottom: 96 });
       }
       .layoutWeight(1)
-      .width('100%');
+      .width('100%')
+      .clipContent(ContentClipMode.SAFE_AREA);
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: '26.0.0' })
@@ -4209,6 +4216,16 @@ struct Index {
     return '设置';
   }
 
+  private mainPageScroller(): Scroller {
+    if (this.mainTabIndex === 0) {
+      return this.galleryScrollController;
+    }
+    if (this.mainTabIndex === 1) {
+      return this.queueScrollController;
+    }
+    return this.settingsScrollController;
+  }
+
   private canRunMiniBarAction(): boolean {
     if (this.mainTabIndex === 0) {
       return !this.galleryImporting && !this.galleryLoading && !this.pageBusy && !this.queueRunning;
@@ -4234,46 +4251,54 @@ struct Index {
   }
 
   @Available({ minApiVersion: '26.0.0' })
-  private immersiveButtonMaterial(): uiMaterial.ImmersiveMaterial {
-    return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.THIN,
-      colorInvert: true,
-      interactive: true,
-      lightEffect: {}
-    });
-  }
-
-  @Available({ minApiVersion: '26.0.0' })
   @Builder
   private importMiniBar() {
     if (this.importMiniBarExpanded) {
-      Button(this.mainTabIndex === 1 ? '开始转换' : '＋ 导入')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Color.White)
-        .width(168)
-        .height(56)
-        .systemMaterial(this.immersiveButtonMaterial())
-        .backgroundColor('#D91F6BFF')
-        .borderRadius(28)
-        .enabled(this.canRunMiniBarAction())
-        .onClick((): void => {
-          void this.runMiniBarAction();
-        });
+      Row() {
+        Button(this.mainTabIndex === 1 ? '开始转换' : '＋ 导入')
+          .buttonStyle(ButtonStyleMode.NORMAL)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .width(160)
+          .height(48)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(24)
+          .enabled(this.canRunMiniBarAction())
+          .onClick((): void => {
+            void this.runMiniBarAction();
+          });
+      }
+      .width(168)
+      .height(56)
+      .justifyContent(FlexAlign.Center);
     } else {
-      Button(this.mainTabIndex === 1 ? '▶' : '+')
-        .fontSize(this.mainTabIndex === 1 ? 22 : 30)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Color.White)
-        .width(56)
-        .height(56)
-        .systemMaterial(this.immersiveButtonMaterial())
-        .backgroundColor('#D91F6BFF')
-        .borderRadius(28)
-        .enabled(this.canRunMiniBarAction())
-        .onClick((): void => {
-          this.setImportMiniBarExpanded(true);
-        });
+      Row() {
+        Button() {
+          if (this.mainTabIndex === 1) {
+            SymbolGlyph($r('sys.symbol.play_fill'))
+              .fontSize(22)
+              .fontColor([Color.White]);
+          } else {
+            Text('+')
+              .fontSize(30)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White);
+          }
+        }
+          .buttonStyle(ButtonStyleMode.NORMAL)
+          .width(48)
+          .height(48)
+          .backgroundColor(Color.Transparent)
+          .borderRadius(24)
+          .enabled(this.canRunMiniBarAction())
+          .onClick((): void => {
+            this.setImportMiniBarExpanded(true);
+          });
+      }
+      .width(56)
+      .height(56)
+      .justifyContent(FlexAlign.Center);
     }
   }
 
@@ -4322,6 +4347,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 24,
       adaptToHandedness: false,
+      gradientMask: { maskColor: '#663D8BFF', maskHeight: 92 },
       systemMaterialEffect: {
         materialType: hdsMaterial.MaterialType.ADAPTIVE,
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4330,6 +4356,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 24,
       adaptToHandedness: false,
+      gradientMask: { maskColor: '#663D8BFF', maskHeight: 92 },
       systemMaterialEffect: {
         materialType: hdsMaterial.MaterialType.ADAPTIVE,
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
@@ -4338,15 +4365,16 @@ struct Index {
         miniBarBuilder: () => this.importMiniBar(),
         miniBarWidth: { smallWidth: 168, mediumWidth: 168, largeWidth: 168 },
         miniBarStyle: this.importMiniBarExpanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE,
+        enableMiniBarBackground: true,
         onBarStyleChange: (miniBarStyle: HdsBarStyle): void => {
           this.importMiniBarExpanded = miniBarStyle === HdsBarStyle.EXPAND;
         }
       }
     })
-    .expandSafeArea([SafeAreaType.SYSTEM])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: '26.0.0' })
@@ -4369,21 +4397,36 @@ struct Index {
       },
       style: {
         scrollEffectOpts: {
-          enableScrollEffect: false,
-          scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(28)
         },
+        blurStrategy: BlurStrategy.ADAPTIVE,
+        originalStyle: { backgroundStyle: { backgroundColor: '#00FFFFFF' } },
+        scrollEffectStyle: { backgroundStyle: { backgroundColor: '#00FFFFFF' } },
         systemMaterialEffect: {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         }
       },
-      avoidLayoutSafeArea: false,
+      avoidLayoutSafeArea: true,
       enableComponentSafeArea: true
     })
+    .bindToScrollable([this.mainPageScroller()])
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(true)
     .hideToolBar(true)
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP]);
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .linearGradient({
+      angle: 90,
+      colors: [
+        ['#332D7BFF', 0.0],
+        ['#172D7BFF', 0.2],
+        [$r('sys.color.background_primary'), 0.55],
+        [$r('sys.color.background_primary'), 1.0]
+      ]
+    });
   }
 
   @Builder
