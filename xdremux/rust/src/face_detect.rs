@@ -18,6 +18,21 @@ const LANDMARKS_76: &str = include_str!("../models/face_landmarks_76.json");
 
 const INPUT_SIZE: usize = 640;
 
+/// Intersection over union of two normalised `[x, y, w, h]` boxes.
+fn iou(a: [f64; 4], b: [f64; 4]) -> f64 {
+    let (ax0, ay0, ax1, ay1) = (a[0], a[1], a[0] + a[2], a[1] + a[3]);
+    let (bx0, by0, bx1, by1) = (b[0], b[1], b[0] + b[2], b[1] + b[3]);
+    let (ix0, iy0) = (ax0.max(bx0), ay0.max(by0));
+    let (ix1, iy1) = (ax1.min(bx1), ay1.min(by1));
+    let inter = (ix1 - ix0).max(0.0) * (iy1 - iy0).max(0.0);
+    let union = a[2] * a[3] + b[2] * b[3] - inter;
+    if union <= 0.0 {
+        0.0
+    } else {
+        inter / union
+    }
+}
+
 /// One detected face before statistics are measured.
 #[derive(Debug, Clone)]
 pub struct DetectedFace {
@@ -126,9 +141,10 @@ pub fn detect_faces(image: &RgbImage) -> Result<Vec<DetectedFace>, String> {
         for x in 0..pw {
             let (sx, sy) = (x * sw / pw, y * sh / ph);
             let p = image.at(sx as u32, sy as u32);
-            planar[y * pw + x] = (p[0] * 255.0) as f32;
+            // YuNet is an OpenCV model: BGR channel order, 0..255 floats.
+            planar[y * pw + x] = (p[2] * 255.0) as f32;
             planar[pw * ph + y * pw + x] = (p[1] * 255.0) as f32;
-            planar[2 * pw * ph + y * pw + x] = (p[2] * 255.0) as f32;
+            planar[2 * pw * ph + y * pw + x] = (p[0] * 255.0) as f32;
         }
     }
 
@@ -166,25 +182,47 @@ pub fn detect_faces(image: &RgbImage) -> Result<Vec<DetectedFace>, String> {
         };
         for i in 0..cells {
             let conf = *cls.get(i).unwrap_or(&0.0);
-            if conf < 0.6 {
+            if conf < 0.85 {
                 continue;
             }
             let b = i * 4;
             if b + 4 > bbox.len() {
                 continue;
             }
-            let (x, y, w, h) = (
+            // YuNet predicts anchor-relative deltas, not absolute boxes:
+            //   centre = anchor_centre + delta * stride
+            //   size   = exp(delta) * stride
+            // with the anchor for cell (row, col) at ((col+0.5)*stride,
+            // (row+0.5)*stride) and base size = stride.
+            let cells_per_row = INPUT_SIZE / stride;
+            let (col, row) = (i % cells_per_row, i / cells_per_row);
+            let ax = (col as f64 + 0.5) * stride as f64;
+            let ay = (row as f64 + 0.5) * stride as f64;
+            let s = stride as f64;
+            let (dx, dy, dw, dh) = (
                 bbox[b] as f64,
                 bbox[b + 1] as f64,
                 bbox[b + 2] as f64,
                 bbox[b + 3] as f64,
             );
-            let mut kp5 = [(0.0, 0.0); 5];
-            for k in 0..5 {
+            let (cx, cy) = (ax + dx * s, ay + dy * s);
+            let (w, h) = (dw.exp() * s, dh.exp() * s);
+            let (x, y) = (cx - w / 2.0, cy - h / 2.0);
+            // Raw keypoint deltas for this anchor (5 pairs).
+            let mut kp5 = [(0.0f64, 0.0f64); 5];
+            for (k, slot) in kp5.iter_mut().enumerate() {
                 let o = i * 10 + k * 2;
                 if o + 1 < kps.len() {
-                    kp5[k] = (kps[o] as f64, kps[o + 1] as f64);
+                    *slot = (kps[o] as f64, kps[o + 1] as f64);
                 }
+            }
+            // Keypoints are anchor-relative the same way.
+            let mut kp_norm = [(0.0, 0.0); 5];
+            for (k, (kdx, kdy)) in kp5.iter().enumerate() {
+                kp_norm[k] = (
+                    (ax + kdx * s) / INPUT_SIZE as f64,
+                    (ay + kdy * s) / INPUT_SIZE as f64,
+                );
             }
             faces.push(DetectedFace {
                 face_roi: [
@@ -193,15 +231,26 @@ pub fn detect_faces(image: &RgbImage) -> Result<Vec<DetectedFace>, String> {
                     w / INPUT_SIZE as f64,
                     h / INPUT_SIZE as f64,
                 ],
-                keypoints: kp5,
+                keypoints: kp_norm,
                 confidence: conf as f64,
             });
         }
     }
-    // Keep the strongest few.
+    // NMS: the three strides report the same face several times, so keep the
+    // strongest and drop anything that overlaps it.
     faces.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
-    faces.truncate(4);
-    Ok(faces)
+    let mut kept: Vec<DetectedFace> = Vec::new();
+    for f in faces {
+        // Ignore slivers: a real face is at least a couple of percent wide.
+        if f.face_roi[2] < 0.02 {
+            continue;
+        }
+        let overlaps = kept.iter().any(|k| iou(k.face_roi, f.face_roi) > 0.3);
+        if !overlaps {
+            kept.push(f);
+        }
+    }
+    Ok(kept)
 }
 
 /// Full person pipeline: detect, place landmarks, measure the image, and
