@@ -260,6 +260,15 @@ pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, S
     let mut out = Vec::with_capacity(faces.len());
     for (i, f) in faces.iter().enumerate() {
         let lm = place_landmarks(f.face_roi);
+        // Face orientation from the five keypoints: the eye-line tilt gives
+        // roll, the nose's sideways offset gives yaw, and its height below the
+        // eye midpoint gives pitch.
+        let (re, le, nose) = (f.keypoints[0], f.keypoints[1], f.keypoints[2]);
+        let (eye_mx, eye_my) = ((re.0 + le.0) / 2.0, (re.1 + le.1) / 2.0);
+        let roll = (le.1 - re.1).atan2(le.0 - re.0);
+        let eye_span = ((le.0 - re.0).hypot(le.1 - re.1)).max(1e-6);
+        let yaw = ((nose.0 - eye_mx) / eye_span).clamp(-1.5, 1.5) * 2.0;
+        let pitch = ((nose.1 - eye_my) / eye_span - 0.45).clamp(-1.5, 1.5) * 2.0;
         // Skin region: a widened face box (Apple's faceSkinROI is larger than
         // the face box — it reaches the hairline and jaw).
         let pad = 0.55;
@@ -277,9 +286,9 @@ pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, S
             face_skin_roi: skin,
             instance_roi: f.face_roi,
             scaling_roi: [0.0, 0.0, 1.0, 1.0],
-            yaw: 0.0,
-            pitch: 0.0,
-            roll: 0.0,
+            yaw,
+            pitch,
+            roll,
             landmarks: lm,
             skin_colour: [0.0; 3],
             skin_roughness: None,

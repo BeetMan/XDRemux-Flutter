@@ -46,6 +46,16 @@ pub fn texture_info_payload(grain_seed: u64) -> Vec<u8> {
 ///
 /// Field meanings and the statistics recipes are documented in
 /// `docs/research/person-data-reverse-engineering.md`.
+/// Apple's face-landmark layout identifier (their 76-point scheme). Written
+/// verbatim; changing it would tell Photos the landmarks mean something else.
+const FACE_LANDMARK_TYPE: u64 = 1785383;
+
+/// `faceID` is a UUID string in Apple's own files. Generate a stable one from
+/// the instance index so the same face keeps its identity across rebuilds.
+fn face_uuid(index: i64) -> String {
+    format!("00000000-0000-4000-8000-{:012x}", (index as u64) & 0xffff_ffff_ffff)
+}
+
 #[derive(Debug, Clone)]
 pub struct PersonInstance {
     pub face_id: i64,
@@ -140,7 +150,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let mut e: Vec<(usize, usize)> = Vec::new();
 
     let k = w.add_str("faceID");
-    e.push((k, w.add_int(p.face_id as u64)));
+    e.push((k, w.add_str(&face_uuid(p.face_id))));
     let k = w.add_str("faceSkinROI");
     e.push((k, write_rect(w, p.face_skin_roi)));
     let k = w.add_str("faceROI");
@@ -156,9 +166,9 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     e.push((k, v));
     let (k, v) = (w.add_str("faceRoll"), w.add_real(p.roll));
     e.push((k, v));
-    let (k, v) = (w.add_str("faceLandmarkType"), w.add_int(1));
+    let (k, v) = (w.add_str("faceLandmarkType"), w.add_int(FACE_LANDMARK_TYPE));
     e.push((k, v));
-    let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_int(1));
+    let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_str("Radian"));
     e.push((k, v));
     let (k, v) = (
         w.add_str("instanceMaskReferenceKey"),
@@ -187,7 +197,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let k_b = w.add_str("SkinSmoothingStandalone");
     let mut sb = Vec::new();
     let k = w.add_str("faceID");
-    sb.push((k, w.add_int(p.face_id as u64)));
+    sb.push((k, w.add_str(&face_uuid(p.face_id))));
     sb.push(write_colour(w, "SkinSmoothAverageFaceColour", p.skin_colour));
     if let Some(r) = p.skin_roughness {
         let (k, v) = (w.add_str("SkinSmoothFaceRoughness"), w.add_real(r));
@@ -200,7 +210,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let k_b = w.add_str("Mattify");
     let mut mb = Vec::new();
     let k = w.add_str("faceID");
-    mb.push((k, w.add_int(p.face_id as u64)));
+    mb.push((k, w.add_str(&face_uuid(p.face_id))));
     mb.push(write_colour(w, "AverageFaceColor", p.mattify_colour));
     let (k, v) = (
         w.add_str("HighlightsToMaskRatio"),
