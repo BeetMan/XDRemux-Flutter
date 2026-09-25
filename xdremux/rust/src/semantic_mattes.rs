@@ -445,8 +445,21 @@ pub fn inject_instance_mask(
     let sub = isobmff::parse_boxes(data, iprp.data_start, iprp.data_end);
     let ipco = sub.iter().find(|b| b.btype == *b"ipco").ok_or("ipco not found")?;
     let ipma = sub.iter().find(|b| b.btype == *b"ipma").ok_or("ipma not found")?;
-    let ipco_children = isobmff::parse_boxes(data, ipco.data_start, ipco.box_start + ipco.size as usize);
-    let prop_base = ipco_children.len();
+    // Count ipco children by walking bytes: the property indices we append must
+    // continue the existing 1-based numbering exactly.
+    let mut prop_base = 0usize;
+    {
+        let mut q = ipco.data_start;
+        let end = ipco.box_start + ipco.size as usize;
+        while q + 8 <= end {
+            let sz = u32::from_be_bytes([data[q], data[q + 1], data[q + 2], data[q + 3]]) as usize;
+            if sz < 8 {
+                break;
+            }
+            prop_base += 1;
+            q += sz;
+        }
+    }
     let ispe_idx = (prop_base + 1) as u32;
     let hvcc_idx = (prop_base + 2) as u32;
     let mut new_ipco_body = data[ipco.data_start..ipco.box_start + ipco.size as usize].to_vec();
@@ -482,23 +495,37 @@ pub fn inject_instance_mask(
     // iloc itself grows by two entries, and that shift applies to everything
     // after it — mdat included. Measure it first: the entry count is fixed, so
     // the box size does not depend on the offset values.
-    let measure: Vec<isobmff::IlocEntry> = {
-        let mut v: Vec<isobmff::IlocEntry> = isobmff::parse_iloc(data, iloc)?;
+    // `make_iloc_box` sizes its offset/length fields from the values present, so
+    // measuring with zero offsets under-counts the growth. Build once with a
+    // plausible payload offset, measure the real box, then rebuild.
+    let shift_0 = d_iinf + d_iprp;
+    let measure = |payload_guess: u64| -> Vec<isobmff::IlocEntry> {
+        let mut v: Vec<isobmff::IlocEntry> = Vec::new();
+        for mut e in isobmff::parse_iloc(data, iloc).unwrap_or_default() {
+            for ext in e.extents.iter_mut() {
+                if (e.construction_method & 0xF) == 0 {
+                    let past = (ext.0 as i64) >= mdat_end;
+                    ext.0 = (ext.0 as i64 + shift_0 + if past { payload_len } else { 0 }) as u64;
+                }
+            }
+            v.push(e);
+        }
         v.push(isobmff::IlocEntry {
             item_id: mask_id,
             construction_method: 0,
             data_reference_index: 0,
-            extents: vec![(0, matte_stream.len() as u64)],
+            extents: vec![(payload_guess, matte_stream.len() as u64)],
         });
         v.push(isobmff::IlocEntry {
             item_id: xmp_id,
             construction_method: 0,
             data_reference_index: 0,
-            extents: vec![(0, xmp.len() as u64)],
+            extents: vec![(payload_guess + matte_stream.len() as u64, xmp.len() as u64)],
         });
         v
     };
-    let d_iloc = isobmff::make_iloc_box(&measure).len() as i64 - iloc.size as i64;
+    let d_iloc = isobmff::make_iloc_box(&measure(mdat_end as u64 + shift_0 as u64)).len() as i64
+        - iloc.size as i64;
     let head_delta = d_iinf + d_iprp + d_iloc;
 
     let mut out_entries: Vec<isobmff::IlocEntry> = Vec::new();

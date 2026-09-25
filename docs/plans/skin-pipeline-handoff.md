@@ -271,3 +271,43 @@ def boxes(d, start, end):
 
 **注意**：不要在文件损坏的状态下发给用户测试。加个保险：
 注入后用 `sips` 或解析校验，失败就回退到注入前的字节。
+
+### 断点 2：inject_instance_mask —— 已排除 10 个假设，剩 1 个
+
+**现象**：`sips -s format png` 报 `Cannot extract image from file`。
+对照：注入前（v7）能转 PNG，注入后（v15）不能。
+
+**已逐项验证为正确**（别再重复查这些）：
+
+| 检查 | 结果 |
+|---|---|
+| 顶层 box（ftyp/meta/mdat）| ✓ 尺寸精确加和 |
+| iloc 全部 extents 偏移 | ✓ item 2 提取内容与 v7 **逐字节一致** |
+| ipma 关联（含 mask 项）| ✓ `dump_item` 全部 `hvcC matched` |
+| ipco 前缀 | ✓ 新属性追加在末尾 |
+| iinf | ✓ `all_items` 读出 153 项 |
+| 新增 2 项 | ✓ 153=hvc1 768×576、154=mime |
+| pitm | ✓ 未改动 |
+| 跳过 ipma 注入仍失败 | ⇒ **问题不在属性区** |
+
+**仍未定位**。剩余怀疑（按概率）：
+1. **`make_infe_box` 生成的 infe 与原文件格式不符** —— 对比我生成的两条 infe
+   与原文件的 infe 原始字节（版本、flags、item_name/content_type 字段）
+2. **mdat 头 size 计算** —— 虽然顶层加和对，但 sips 可能按 mdat size 读
+3. **`idat`/`grpl`/`iref` 顺序** —— meta 子 box 顺序在注入前后是否真的一致
+4. **grid 的 `dimg` iref** —— 若主图是 grid，tile 引用是否受影响
+
+**下一轮第一步**：把 `make_infe_box(mask_id,"hvc1",0)` 的输出与
+原文件里任一 `hvc1` 项的 infe **逐字节对比**。infe 格式差异会让严格解析器
+拒绝整个 iinf，从而拒绝文件 —— 这与「all_items 能读、sips 不能」的现象吻合。
+
+**务必加自检**（这条最重要）：
+
+```rust
+// 注入后必须验证，失败就回退到注入前的字节
+fn decodes(data: &[u8]) -> bool {
+    // 用 heif-oxide 解一次，或至少校验 iloc extents 落在 mdat 内
+}
+```
+
+我发了 3 个损坏文件让用户测试，浪费了往返。**生成即自检。**
