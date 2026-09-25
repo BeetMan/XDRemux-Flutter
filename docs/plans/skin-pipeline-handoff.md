@@ -128,3 +128,60 @@ Apple = **人物完整区域**（0.52 × 0.64，覆盖身体/场景）
 # 递归 diff（见上文脚本）
 ```
 
+
+---
+
+## 断点：FSINC 实例遮罩（2026-09-25 傍晚）
+
+**已确认的被拒根因**：`instanceMaskReferenceKey: 'FSINCInstanceMask9'` 是**必需**的，
+但必须配真实的遮罩数据。
+
+| | Apple IMG_0004 | 我们（v7/v8）|
+|---|---|---|
+| `fsincMattes` XMP | 41 处 | **0** |
+| `FSINCInstanceMask9` | 2（引用 + XMP 定义）| 1（悬空）或 0 |
+
+Apple 的 XMP 声明（在独立的 `mime` 项里）：
+
+```xml
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+          xmlns:fsincMattes="http://ns.apple.com/fsinc/1.0/">
+      <fsincMattes:InstanceMaskReferenceKey>FSINCInstanceMask9</fsincMattes:InstanceMaskReferenceKey>
+      <fsincMattes:FSINCMatteVersion>0</fsincMattes:FSINCMatteVersion>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+```
+
+### 已就绪的部件
+
+- `semantic_mattes::face_matte(w, h, face_roi)` —— 把人脸框区域填白、其余填黑，
+  用 x265 编码成 length-prefixed HEVC + hvcC（与 `black_matte` 同一路径）
+- `texture_styles::PersonInstance::mask_reference: bool` —— 只有配了遮罩才写引用
+  （当前默认 false，**要改回 true**）
+
+### 还要做的
+
+1. **确定 Apple 的 matte 项如何与 XMP 关联** —— dump IMG_0004 的全部 `mime` 项
+   （`all_items`），找哪个携带实例遮罩像素；看它的 `infe`/`ipma`/`iref` 关联
+2. 注入：matte 项（hvc1/mime）+ fsincMattes XMP 项 + 引用
+3. 遮罩分辨率对齐（Apple 的 matte 通常是缩小图，见 `MATTE_W/MATTE_H`）
+
+### 排查方法（已验证有效）
+
+**别只在 bplist 里找差异** —— bplist 早就逐字段一致了（含叶子类型）。
+问题在**容器**。用：
+
+```python
+for k in [b'fsincMattes', b'FSINCInstanceMask9', ...]:
+    print(k, d.count(k))
+```
+
+对比 Apple 与我们的文件，差异会直接暴露。
+
+### 另：macOS 相册验证
+
+`Screencapture` 只能拍壁纸 —— 需要在 系统设置→隐私与安全性→屏幕录制 里授权，
+才能截到 Photos 窗口做本地循环验证。

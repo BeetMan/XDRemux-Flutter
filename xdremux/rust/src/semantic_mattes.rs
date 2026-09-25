@@ -341,3 +341,37 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&data[mdat_end..]);
     Ok(out)
 }
+
+/// Encode a face-region mask (the face box filled, everything else black) as
+/// a length-prefixed HEVC stream plus its hvcC, using the same encoder path as
+/// `black_matte`.
+pub fn face_matte(
+    w: u32,
+    h: u32,
+    face_roi: [f64; 4],
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let mut pixels = vec![0u8; (w * h) as usize];
+    let (fx, fy, fw, fh) = (
+        (face_roi[0] * w as f64) as i64,
+        (face_roi[1] * h as f64) as i64,
+        (face_roi[2] * w as f64) as i64,
+        (face_roi[3] * h as f64) as i64,
+    );
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            if x >= fx && x < fx + fw && y >= fy && y < fy + fh {
+                pixels[(y * w as i64 + x) as usize] = 255;
+            }
+        }
+    }
+    let refs: Vec<&[u8]> = vec![&pixels];
+    let stream = x265_encode_tiles(&refs, w, h, 1, false)
+        .map_err(|e| format!("face matte HEVC encode: {e}"))?
+        .into_iter()
+        .next()
+        .ok_or("face matte encode produced no stream")?;
+    let hvcc = extract_hvcc_config_with_chroma(&stream, 0)
+        .ok_or("face matte hvcC extraction failed")?;
+    let idr = drop_parameter_nals(&stream);
+    Ok((hevc_byte_stream_to_length_prefixed(&idr), hvcc))
+}
