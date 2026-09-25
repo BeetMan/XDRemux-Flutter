@@ -21,6 +21,7 @@ pub mod jpeg_decode;
 pub mod linear_thumbnail;
 pub mod progress;
 pub mod sdr_source;
+pub mod person_stats;
 
 // Apple Photographic Styles writer (R3c). This is intentionally kept as a
 // separate native Rust path until the Photos conformance surface is stable.
