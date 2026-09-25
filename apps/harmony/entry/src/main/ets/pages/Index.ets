@@ -4,11 +4,6 @@ import { HdsTabs, hdsMaterial } from '@kit.UIDesignKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import {
-  ClickType,
-  ItemInfo,
-  PhotoPickerComponent,
-  PickerController,
-  PickerOptions,
   photoAccessHelper
 } from '@kit.MediaLibraryKit';
 import xdremuxNative from 'libentry.so';
@@ -168,13 +163,13 @@ struct Index {
   @State private galleryOriginalPickerActive: boolean = false;
   @State private galleryQueuePreparing: boolean = false;
   @State private galleryQueueItemId: string = '';
-  @State private galleryStatus: string = '选择一张图片，验证图库授权、沙箱复制和 Rust 识别';
+  @State private galleryStatus: string = '尚未选择照片';
   @State private galleryMimeType: string = '';
+  @State private galleryOriginalPhoto: boolean | undefined = undefined;
   @State private gallerySandboxPath: string = '';
   @State private galleryCopiedBytes: number = 0;
   @State private galleryDetails: NativePhotoDetails | undefined = undefined;
   @State private galleryClassification: NativeClassificationResult | undefined = undefined;
-  @State private galleryPickerController: PickerController = new PickerController();
 
   private queueController: QueueController | undefined = undefined;
   private queueStore: QueueStateStore | undefined = undefined;
@@ -196,7 +191,6 @@ struct Index {
   private galleryImportSerial: number = 0;
   private batchPickerActive: boolean = false;
   private batchPageShowWaiters: Array<(visible: boolean) => void> = [];
-  private readonly galleryPickerOptions: PickerOptions = new PickerOptions();
   private readonly motionInspectionCache: Map<string, MotionPhotoInspection> =
     new Map<string, MotionPhotoInspection>();
   private readonly motionSplitCache: Map<string, MotionPhotoSplitResult> =
@@ -207,9 +201,6 @@ struct Index {
 
   aboutToAppear(): void {
     this.pageVisible = true;
-    this.galleryPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
-    this.galleryPickerOptions.maxSelectNumber = 1;
-    this.galleryPickerOptions.checkBoxColor = '#4B86F4';
     this.refreshVersion();
     this.loadSettings();
     this.restoreQueueSession();
@@ -2414,7 +2405,9 @@ struct Index {
         await xdremuxNative.classify(destination) as NativeClassificationResult;
       this.galleryDetails = details;
       this.galleryClassification = classification;
-      this.galleryStatus = '图库读取成功 · 沙箱副本已验证 · Rust 信息读取与分类完成';
+      this.galleryStatus = '已识别 ' + this.galleryFormatLabel() + ' · ' +
+        String(details.width ?? 0) + ' × ' + String(details.height ?? 0) + ' · ' +
+        (this.galleryOriginalPhoto === true ? '系统确认返回原图' : '系统返回兼容资源');
     } catch (error) {
       this.galleryStatus = '图库验证失败：' + this.errorMessage(error);
     } finally {
@@ -2427,17 +2420,6 @@ struct Index {
       }
       this.galleryImporting = false;
     }
-  }
-
-  private clearGallerySelection(status: string): void {
-    this.galleryDetailVisible = false;
-    this.galleryQueueItemId = '';
-    this.galleryMimeType = '';
-    this.gallerySandboxPath = '';
-    this.galleryCopiedBytes = 0;
-    this.galleryDetails = undefined;
-    this.galleryClassification = undefined;
-    this.galleryStatus = status;
   }
 
   private galleryMimeTypeFromUri(uri: string): string {
@@ -2462,7 +2444,7 @@ struct Index {
       return;
     }
     this.galleryOriginalPickerActive = true;
-    this.clearGallerySelection('正在打开 API 26 原格式图库选择器…');
+    this.galleryStatus = '正在打开 API 26 原格式图库选择器…';
     try {
       const options: GalleryOriginalPhotoSelectOptions = new GalleryOriginalPhotoSelectOptions();
       options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
@@ -2471,13 +2453,16 @@ struct Index {
       const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
       const uri: string = result.photoUris.length > 0 ? result.photoUris[0] : '';
       if (uri.length === 0) {
-        this.clearGallerySelection('已取消原格式图库选择');
+        this.galleryStatus = this.gallerySandboxPath.length > 0
+          ? '已取消选择，保留最近一次导入的照片'
+          : '已取消原格式图库选择';
         return;
       }
       this.galleryMimeType = this.galleryMimeTypeFromUri(uri);
+      this.galleryOriginalPhoto = result.isOriginalPhoto;
       await this.inspectGallerySelection(uri);
     } catch (error) {
-      this.clearGallerySelection('原格式图库选择失败：' + this.errorMessage(error));
+      this.galleryStatus = '原格式图库选择失败：' + this.errorMessage(error);
     } finally {
       this.galleryOriginalPickerActive = false;
     }
@@ -2590,7 +2575,15 @@ struct Index {
 
   private galleryFormatLabel(): string {
     if (this.galleryMimeType.length > 0) {
-      return this.galleryMimeType.toUpperCase();
+      const mimeType: string = this.galleryMimeType.toLowerCase();
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        return 'HEIC';
+      }
+      if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+        return 'JPEG';
+      }
+      const slash: number = mimeType.lastIndexOf('/');
+      return (slash >= 0 ? mimeType.substring(slash + 1) : mimeType).toUpperCase();
     }
     const path: string = this.gallerySandboxPath;
     const dot: number = path.lastIndexOf('.');
@@ -2599,138 +2592,172 @@ struct Index {
 
   @Builder
   private galleryPrototypePage() {
-    Column() {
-      Row() {
+    Scroll() {
+      Column() {
         Column() {
           Text('XDRemux')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_secondary'));
           Text('图库')
-            .fontSize(28)
+            .fontSize(30)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('sys.color.font_primary'))
-            .margin({ top: 2 });
+            .margin({ top: 3 });
+          Text('选择照片，查看信息并开始转换')
+            .fontSize(15)
+            .fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 5 });
         }
         .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1);
-      }
-      .width('100%')
-      .margin({ bottom: 8 });
-
-      Text('使用系统图库 · 仅在选择后读取，不申请整库照片权限')
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
         .width('100%')
-        .margin({ bottom: 8 });
+        .margin({ bottom: 20 });
 
-      Button('API 26 原格式选择（保留 HEIC 原片）')
-        .fontSize(14)
-        .height(42)
-        .width('100%')
-        .enabled(!this.galleryImporting && !this.galleryOriginalPickerActive)
-        .margin({ bottom: 8 })
-        .onClick((): void => {
-          void this.chooseGalleryOriginal();
-        });
-
-      Text('原图模式保留 HEIC；JPEG 照片仍按 JPEG 读取。下方图库用于对照')
-        .fontSize(11)
-        .fontColor($r('sys.color.font_secondary'))
-        .width('100%')
-        .margin({ bottom: 8 });
-
-      PhotoPickerComponent({
-        pickerOptions: this.galleryPickerOptions,
-        pickerController: this.galleryPickerController,
-        onItemClicked: (itemInfo: ItemInfo, _clickType: ClickType): boolean => {
-          if (itemInfo.mimeType !== undefined) {
-            this.galleryMimeType = itemInfo.mimeType;
-          }
-          return true;
-        },
-        onSelect: (uri: string): void => {
-          void this.inspectGallerySelection(uri);
-        },
-        onDeselect: (): void => {
-          if (!this.galleryImporting && !this.galleryDetailVisible) {
-            this.clearGallerySelection('已取消图库选择；照片不会继续读取');
-          }
-        }
-      })
-        .layoutWeight(1)
-        .width('100%')
-        .borderRadius(18);
-
-      Column() {
-        Row() {
-          Text('图片信息')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1);
-          if (this.galleryImporting) {
-            LoadingProgress()
-              .width(20)
-              .height(20);
-          }
-        }
-        .width('100%');
-
-        Text(this.galleryStatus)
-          .fontSize(12)
-          .fontColor(this.galleryStatus.indexOf('失败') >= 0 ? '#B3261E' : '#52606D')
-          .width('100%')
-          .margin({ top: 6 });
-
-        if (this.galleryDetails !== undefined) {
+        Column() {
           Row() {
-            Text('格式  ' + this.galleryFormatLabel())
-              .fontSize(13)
+            Text('原格式导入')
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
               .fontColor($r('sys.color.font_primary'))
               .layoutWeight(1);
-            Text(String(this.galleryDetails.width ?? 0) + ' × ' + String(this.galleryDetails.height ?? 0))
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'));
+            Text('API 26')
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.ohos_id_color_activated'))
+              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+              .backgroundColor($r('sys.color.background_tertiary'))
+              .borderRadius(16);
+          }
+          .width('100%');
+
+          Text('使用系统图库选择照片，按原格式读取并支持高分辨率资源。JPEG 仍按 JPEG 处理；实际格式和拍摄信息会在详情中显示。')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 10 });
+
+          Row() {
+            Text('HEIC 原片')
+              .fontSize(12)
+              .fontColor($r('sys.color.font_primary'))
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+              .backgroundColor($r('sys.color.background_tertiary'))
+              .borderRadius(16);
+            Text('JPEG 原片')
+              .fontSize(12)
+              .fontColor($r('sys.color.font_primary'))
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+              .backgroundColor($r('sys.color.background_tertiary'))
+              .borderRadius(16)
+              .margin({ left: 8 });
+            Text('高分辨率')
+              .fontSize(12)
+              .fontColor($r('sys.color.font_primary'))
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+              .backgroundColor($r('sys.color.background_tertiary'))
+              .borderRadius(16)
+              .margin({ left: 8 });
           }
           .width('100%')
-          .margin({ top: 8 });
+          .margin({ top: 16 });
 
-          Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
-            (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
-              ? ' · ' + this.galleryClassification.modeKey
-              : ''))
+          Button(this.galleryOriginalPickerActive ? '正在打开系统图库…' : '从图库选择照片')
+            .fontSize(16)
+            .height(50)
+            .width('100%')
+            .enabled(!this.galleryImporting && !this.galleryOriginalPickerActive)
+            .margin({ top: 20 })
+            .onClick((): void => {
+              void this.chooseGalleryOriginal();
+            });
+
+          Text('只读取你亲自选择的照片，不扫描整个图库。应用会先在本机生成工作副本，再读取照片信息。')
             .fontSize(12)
             .fontColor($r('sys.color.font_secondary'))
             .width('100%')
-            .margin({ top: 5 });
-
-          Text('相机  ' + this.display(this.galleryDetails.make) + ' ' +
-            this.display(this.galleryDetails.model) + ' · ISO ' + this.display(this.galleryDetails.iso))
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 3 });
+            .margin({ top: 12 });
         }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(20)
+        .backgroundColor($r('sys.color.background_secondary'))
+        .borderRadius(24);
+
         if (this.gallerySandboxPath.length > 0) {
-          Text('沙箱副本  ' + String(this.galleryCopiedBytes) + ' B')
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
+          Column() {
+            Text('最近选择')
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_primary'))
+              .width('100%')
+              .margin({ bottom: 12 });
+            Row() {
+              Image('file://' + this.gallerySandboxPath)
+                .width(88)
+                .height(88)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(16)
+                .backgroundColor($r('sys.color.background_tertiary'));
+              Column() {
+                Text(this.galleryFormatLabel())
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('sys.color.font_primary'));
+                if (this.galleryDetails !== undefined) {
+                  Text(String(this.galleryDetails.width ?? 0) + ' × ' +
+                    String(this.galleryDetails.height ?? 0))
+                    .fontSize(13)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 4 });
+                  Text((this.galleryOriginalPhoto === true ? '系统确认原图' : '系统返回兼容资源') +
+                    ' · ' + (this.galleryClassification?.family ?? '普通照片'))
+                    .fontSize(12)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .margin({ top: 4 });
+                } else {
+                  Text(this.galleryStatus)
+                    .fontSize(12)
+                    .fontColor(this.galleryStatus.indexOf('失败') >= 0
+                      ? $r('sys.color.ohos_id_color_alert')
+                      : $r('sys.color.font_secondary'))
+                    .margin({ top: 4 });
+                }
+                Button('查看照片信息')
+                  .fontSize(13)
+                  .height(36)
+                  .margin({ top: 8 })
+                  .onClick((): void => {
+                    this.galleryDetailVisible = true;
+                  });
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .margin({ left: 14 });
+            }
+            .width('100%');
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .padding(16)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(20)
+          .margin({ top: 16 });
+        } else {
+          Text(this.galleryStatus)
+            .fontSize(13)
+            .fontColor(this.galleryStatus.indexOf('失败') >= 0
+              ? $r('sys.color.ohos_id_color_alert')
+              : $r('sys.color.font_secondary'))
             .width('100%')
-            .margin({ top: 5 });
+            .margin({ top: 14 });
         }
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding(14)
-      .backgroundColor($r('sys.color.background_secondary'))
-      .borderRadius(16)
-      .margin({ top: 10 });
+      .padding({ left: 20, right: 20, top: 18, bottom: 100 });
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
     .height('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 84 })
     .backgroundColor($r('sys.color.background_primary'));
   }
 
@@ -2742,7 +2769,7 @@ struct Index {
           .fontSize(14)
           .height(40)
           .onClick((): void => {
-            this.clearGallerySelection('选择一张照片查看详情');
+            this.galleryDetailVisible = false;
           });
         Text('照片详情')
           .fontSize(22)

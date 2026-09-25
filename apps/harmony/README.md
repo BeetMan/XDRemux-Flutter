@@ -1,6 +1,6 @@
 # XDRemux Native HarmonyOS P3
 
-This is the small HarmonyOS native app for the existing Rust bridge. It loads the existing arm64 `libxdremux_core.so`, receives supported HEIC/JPEG system shares into app-owned sandbox files, and reads photo details/classification only after physical copies are complete. It runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split the selected sandbox Motion Photo on demand, create an eligible Live Photo pair, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
+This is the small HarmonyOS native app for the existing Rust bridge. The Gallery tab uses HarmonyOS 7's API 26 `PhotoViewPicker` in original-format mode and requests high-resolution assets; each selected photo is physically copied into the app sandbox before Rust reads it. The app also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
 ## Build
 
@@ -13,11 +13,11 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-The unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The project is configured for arm64 devices, the independent bundle ID `io.github.beetman.xdremux.arkui`, and native app version code `40012` (`0.4.2`). Current API26 gallery-tabs build logs and copied HAP artifacts are kept outside the repository under `C:\Users\Beet\Documents\XDRemux-Flutter-logs\harmony-native\gallery-tabs\`.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The project is configured for arm64 devices, the independent bundle ID `io.github.beetman.xdremux.arkui`, and native app version code `40014` (`0.4.4`). Previous API26 gallery-tabs build logs and copied HAP artifacts are kept outside the repository under `C:\Users\Beet\Documents\XDRemux-Flutter-logs\harmony-native\gallery-tabs\`.
 
 The historical code40011 signed test HAP uses the `.native` bundle ID. The current `.arkui` app has a separate identity and a matching local DevEco test-signing profile; it does not inherit `.native` app data. Release artifacts remain unsigned.
 
-DevEco has no checked-in signing profile for this independent bundle, so the build intentionally emits an unsigned HAP. Installing it on a physical device requires a separately configured local signing profile for this application; do not reuse the Flutter application's identity or credentials.
+DevEco signing material is machine-specific and must remain untracked. Use local signing only for device-test packages; release artifacts remain unsigned. Do not reuse the Flutter application's identity or credentials.
 
 ## System image sharing
 

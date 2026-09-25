@@ -1,6 +1,6 @@
 # 原生 HarmonyOS 前端开发计划
 
-状态：2026-09-25 原格式图库选择、图库详情/转换入口和双 Tab 导航已实现；API26 DevEco 构建、14 份 Node 回归、5 份 HAP 校验通过；code40012 unsigned HAP 校验通过。调试包已安装到 Pura X View，但手机锁屏阻止启动，Tab 界面与交互尚待解锁后真机验收。P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
+状态：2026-09-25 图库首页现以 API 26 `PhotoViewPicker` 原格式模式作为唯一图库入口，保留高分辨率 HEIC 支持；所选 URI 先物理复制到应用沙箱，再交给 Rust 检查。首页显示最近选择项，详情返回后保留当前照片；页面同步确认 `PhotoSelectResult.isOriginalPhoto` 并展示识别出的格式。三 Tab HDS 导航保持不变。当前版本 `0.4.4` / code40014；本次 DevEco debug 构建和 14 份 Node 回归、5 份 HAP verifier 单测通过，已在 Pura X View 安装并启动，`devecocli` smoke PASS。图库新首页仍需用户真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收待完成。
 当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 
 ## 1. 目标与范围
