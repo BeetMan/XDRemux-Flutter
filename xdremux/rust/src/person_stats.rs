@@ -44,7 +44,7 @@ pub struct RgbImage<'a> {
 }
 
 impl<'a> RgbImage<'a> {
-    fn at(&self, x: u32, y: u32) -> [f64; 3] {
+    pub fn at(&self, x: u32, y: u32) -> [f64; 3] {
         let i = ((y * self.width + x) * 3) as usize;
         [
             self.pixels[i] as f64 / 255.0,
@@ -52,7 +52,7 @@ impl<'a> RgbImage<'a> {
             self.pixels[i + 2] as f64 / 255.0,
         ]
     }
-    fn luma(&self, x: u32, y: u32) -> f64 {
+    pub fn luma(&self, x: u32, y: u32) -> f64 {
         let p = self.at(x, y);
         (p[0] + p[1] + p[2]) / 3.0
     }
