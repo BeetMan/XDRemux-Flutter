@@ -921,7 +921,9 @@ fn make_style_meta_infe(item_id: u32) -> Vec<u8> {
     payload.extend_from_slice(&(item_id as u16).to_be_bytes());
     payload.extend_from_slice(&[0, 0]);
     payload.extend_from_slice(b"uri ");
-    payload.extend_from_slice(b"styleMetadata\0");
+    // Apple's native files name this item "metadata"; use the same name so
+    // Photos sees no difference between ours and a camera original.
+    payload.extend_from_slice(b"metadata\0");
     payload.extend_from_slice(b"tag:apple.com,2023:photo:metadata:styles\0");
     isobmff::make_box(b"infe", &payload)
 }
@@ -952,7 +954,8 @@ pub fn replace_style_metadata(
         .items
         .iter()
         .find(|i| {
-            i.raw_infe.windows(13).any(|w| w == b"styleMetadata")
+            (i.raw_infe.windows(13).any(|w| w == b"styleMetadata")
+                || i.raw_infe.windows(9).any(|w| w == b"metadata\0"))
                 || i.raw_infe
                     .windows(40)
                     .any(|w| w == b"tag:apple.com,2023:photo:metadata:styles")
