@@ -1,7 +1,11 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import {
   HdsNavigation,
   HdsNavigationTitleMode,
+  HdsBarStyle,
+  HdsTabs,
+  HdsTabsController,
   TitleBarStyleOptions,
   hdsMaterial
 } from '@kit.UIDesignKit';
@@ -178,6 +182,7 @@ struct Index {
   @State private galleryLibraryReady: boolean = false;
   @State private galleryLoadError: string = '';
   @State private galleryImporting: boolean = false;
+  @State private importMiniBarExpanded: boolean = false;
   @State private galleryQueuePreparing: boolean = false;
   @State private galleryQueueItemId: string = '';
   @State private galleryStatus: string = '选择一张照片查看信息并开始转换';
@@ -200,6 +205,7 @@ struct Index {
   private queueRestoreInFlight: boolean = false;
   private readonly settingsStore: SettingsStore = new SettingsStore();
   private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
+  private tabsController: HdsTabsController | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   private inputSerial: number = 0;
   private outputSerial: number = 0;
@@ -375,6 +381,10 @@ struct Index {
   }
 
   private onMainTabChange(index: number): void {
+    if (index !== this.mainTabIndex && this.importMiniBarExpanded &&
+      deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0')) {
+      this.setImportMiniBarExpanded(false);
+    }
     this.mainTabIndex = index;
     if (index === 2 && this.settingsLoaded && !this.settingsSaving) {
       this.settingsError = '';
@@ -3038,15 +3048,6 @@ struct Index {
     return '失败';
   }
 
-  private photoImportButtonLabel(): string {
-    const selected: QueueItem | undefined = this.selectedItem();
-    if (selected !== undefined && selected.sourceKind === 'share' && selected.status === 'failed' &&
-      selected.inputPath.length === 0) {
-      return '重新选择失效分享图片';
-    }
-    return '选择多个照片并加入队列';
-  }
-
   private selectedShareRequiresReselection(): boolean {
     const selected: QueueItem | undefined = this.selectedItem();
     return selected !== undefined && selected.sourceKind === 'share' && selected.status === 'failed' &&
@@ -3874,19 +3875,6 @@ struct Index {
   }
 
   @Builder
-  private mainTabBarItem(index: number, label: string) {
-    Text(label)
-      .fontSize(14)
-      .fontWeight(this.mainTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
-      .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
-        $r('sys.color.font_secondary'))
-      .padding({ left: 13, right: 13, top: 9, bottom: 9 })
-      .backgroundColor(this.mainTabIndex === index ? $r('sys.color.background_tertiary') : Color.Transparent)
-      .borderRadius(20)
-      .onClick((): void => this.onMainTabChange(index));
-  }
-
-  @Builder
   private queuePage() {
     Column() {
         Scroll() {
@@ -3978,30 +3966,16 @@ struct Index {
             .width('100%')
             .margin({ bottom: 8 });
 
-          Row() {
-            Button(this.photoImportButtonLabel())
-              .fontSize(14)
-              .layoutWeight(1)
-              .height(50)
-              .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
-                !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-                !this.pageBusy && !this.queueRunning)
-              .onClick(() => {
-                this.chooseAndImport(true);
-              });
-            Button('文件')
-              .fontSize(14)
-              .width(72)
-              .height(50)
-              .margin({ left: 8 })
-              .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
-                !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-                !this.pageBusy && !this.queueRunning)
-              .onClick(() => {
-                this.chooseAndImport(false);
-              });
-          }
-          .width('100%');
+          Button('从文件选择')
+            .fontSize(14)
+            .width('100%')
+            .height(50)
+            .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
+              !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+              !this.pageBusy && !this.queueRunning)
+            .onClick(() => {
+              this.chooseAndImport(false);
+            });
 
           Row() {
             Button(this.queueRunning ? '处理中…' : '开始 / 继续队列')
@@ -4184,63 +4158,197 @@ struct Index {
     .backgroundColor($r('sys.color.background_primary'));
   }
 
-  @Builder
-  private mainNavigation() {
-    Row() {
-      Row() {
-        this.mainTabBarItem(0, '图库');
-        this.mainTabBarItem(1, '队列');
-        this.mainTabBarItem(2, '设置');
-      }
-      .padding(4)
-      .backgroundColor($r('sys.color.background_secondary'))
-      .borderRadius(24);
-
-      Blank().layoutWeight(1);
-
-      if (this.mainTabIndex === 0 && !this.galleryDetailVisible) {
-        Button(this.galleryImporting ? '导入中…' : '＋ 导入')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .width(88)
-          .height(42)
-          .backgroundColor($r('sys.color.ohos_id_color_activated'))
-          .borderRadius(22)
-          .enabled(!this.galleryImporting && !this.galleryLoading && !this.pageBusy &&
-            !this.queueRunning)
-          .onClick((): void => {
-            void this.importGalleryPhotos();
-          });
-      }
+  @Available({ minApiVersion: '26.0.0' })
+  private getTabsController(): HdsTabsController {
+    let controller: HdsTabsController | undefined = this.tabsController;
+    if (controller === undefined) {
+      controller = new HdsTabsController();
+      this.tabsController = controller;
     }
-    .width('100%')
-    .padding({ left: 18, right: 18, top: 52, bottom: 10 });
+    return controller;
   }
 
-  build() {
-    Column() {
-      this.mainNavigation();
-      Column() {
-        if (this.mainTabIndex === 0) {
-          if (this.galleryDetailVisible) {
-            this.galleryDetailPage();
-          } else {
-            this.ownGalleryPage();
-          }
-        } else if (this.mainTabIndex === 1) {
-          this.queuePage();
+  @Available({ minApiVersion: '26.0.0' })
+  private setImportMiniBarExpanded(expanded: boolean): void {
+    this.importMiniBarExpanded = expanded;
+    this.getTabsController().applyMiniBarStyle(expanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE);
+  }
+
+  private canImportFromCurrentTab(): boolean {
+    if (this.mainTabIndex === 0) {
+      return !this.galleryImporting && !this.galleryLoading && !this.pageBusy && !this.queueRunning;
+    }
+    if (this.mainTabIndex === 1) {
+      return this.queueLoaded && this.queueReady && !this.queueLoading &&
+        !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+        !this.pageBusy && !this.queueRunning;
+    }
+    return false;
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private async importFromMiniBar(): Promise<void> {
+    const tabIndex: number = this.mainTabIndex;
+    this.setImportMiniBarExpanded(false);
+    if (tabIndex === 0) {
+      await this.importGalleryPhotos();
+    } else if (tabIndex === 1) {
+      await this.chooseAndImport(true);
+    }
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  @Builder
+  private importMiniBar() {
+    if (this.importMiniBarExpanded) {
+      Button('＋ 导入')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.ohos_id_color_activated'))
+        .width(112)
+        .height(56)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(28)
+        .enabled(this.canImportFromCurrentTab())
+        .onClick((): void => {
+          void this.importFromMiniBar();
+        });
+    } else {
+      Button('+')
+        .fontSize(30)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.ohos_id_color_activated'))
+        .width(56)
+        .height(56)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(28)
+        .enabled(this.canImportFromCurrentTab())
+        .onClick((): void => {
+          this.setImportMiniBarExpanded(true);
+        });
+    }
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  @Builder
+  private immersiveTabs() {
+    HdsTabs({ index: this.mainTabIndex, controller: this.getTabsController() }) {
+      TabContent() {
+        if (this.galleryDetailVisible) {
+          this.galleryDetailPage();
         } else {
-          this.settingsPage();
+          this.ownGalleryPage();
         }
       }
-      .layoutWeight(1)
-      .width('100%');
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
+      }, '图库'))
+
+      TabContent() {
+        this.queuePage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
+      }, '队列'))
+
+      TabContent() {
+        this.settingsPage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
+      }, '设置'))
     }
+    .barPosition(BarPosition.End)
+    .vertical(false)
+    .barMode(BarMode.Fixed)
+    .barHeight(56)
+    .barOverlap(true)
+    .scrollable(true)
+    .onChange((index: number) => {
+      this.onMainTabChange(index);
+    })
+    .barFloatingStyle(this.mainTabIndex === 2 ? {
+      barBottomMargin: 24,
+      adaptToHandedness: false,
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      }
+    } : {
+      barBottomMargin: 24,
+      adaptToHandedness: false,
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      },
+      miniBar: {
+        miniBarBuilder: () => this.importMiniBar(),
+        miniBarWidth: { smallWidth: 112, mediumWidth: 112, largeWidth: 112 },
+        miniBarStyle: this.importMiniBarExpanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE,
+        onBarStyleChange: (miniBarStyle: HdsBarStyle): void => {
+          this.importMiniBarExpanded = miniBarStyle === HdsBarStyle.EXPAND;
+        }
+      }
+    })
     .expandSafeArea([SafeAreaType.SYSTEM])
     .width('100%')
     .height('100%')
     .backgroundColor($r('sys.color.background_primary'));
+  }
+
+  @Builder
+  private standardTabs() {
+    Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
+      TabContent() {
+        if (this.galleryDetailVisible) {
+          this.galleryDetailPage();
+        } else {
+          this.ownGalleryPage();
+        }
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
+      }, '图库'))
+
+      TabContent() {
+        this.queuePage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
+      }, '队列'))
+
+      TabContent() {
+        this.settingsPage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
+      }, '设置'))
+    }
+    .barPosition(BarPosition.End)
+    .barMode(BarMode.Fixed)
+    .barHeight(64)
+    .scrollable(true)
+    .onChange((index: number) => {
+      this.onMainTabChange(index);
+    })
+    .expandSafeArea([SafeAreaType.SYSTEM])
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_primary'));
+  }
+
+  build() {
+    if (deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0')) {
+      this.immersiveTabs();
+    } else {
+      this.standardTabs();
+    }
   }
 
 }
