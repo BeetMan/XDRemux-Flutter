@@ -1,12 +1,7 @@
-import { SymbolGlyphModifier } from '@kit.ArkUI';
-import { abilityAccessCtrl, Permissions } from '@kit.AbilityKit';
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { dataSharePredicates } from '@kit.ArkData';
-import { image } from '@kit.ImageKit';
 import {
   HdsNavigation,
   HdsNavigationTitleMode,
-  HdsTabs,
   TitleBarStyleOptions,
   hdsMaterial
 } from '@kit.UIDesignKit';
@@ -100,6 +95,12 @@ import {
 } from '../queue/LivePhotoPairExport';
 import type { LivePhotoExportEntry } from '../queue/LivePhotoPairExport';
 import { ps3OptionsFor } from '../queue/Ps3Model';
+import { HarmonyGalleryLibrary } from '../gallery/HarmonyGalleryLibrary';
+import {
+  galleryMimeTypeForExtension,
+  galleryItemPath
+} from '../gallery/GalleryLibraryModel';
+import type { GalleryLibraryItem } from '../gallery/GalleryLibraryModel';
 
 interface NativeError {
   message?: string;
@@ -107,10 +108,8 @@ interface NativeError {
 }
 
 interface GalleryPhotoTile {
-  uri: string;
-  displayName: string;
-  asset: photoAccessHelper.PhotoAsset;
-  thumbnail: image.PixelMap | undefined;
+  item: GalleryLibraryItem;
+  path: string;
 }
 
 class QueueHeicCompatibleCapability implements photoAccessHelper.AssetCompatibleCapability {
@@ -118,7 +117,7 @@ class QueueHeicCompatibleCapability implements photoAccessHelper.AssetCompatible
   supportedMimeType: Array<string> = ['image/heic'];
 }
 
-class QueueOriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
+class OriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
   // CURRENT is 1 in API 26. Keep the value numeric so older API runtimes can
   // ignore this extension field without resolving the API-26 enum at startup.
   preferredCompatibleMode: number = 1;
@@ -175,10 +174,8 @@ struct Index {
   @State private galleryDetailVisible: boolean = false;
   @State private galleryPhotos: Array<GalleryPhotoTile> = [];
   @State private galleryMediaCount: number = 0;
-  @State private galleryLoading: boolean = false;
-  @State private galleryPermissionGranted: boolean = false;
-  @State private galleryPermissionDenied: boolean = false;
-  @State private galleryPermissionRequesting: boolean = false;
+  @State private galleryLoading: boolean = true;
+  @State private galleryLibraryReady: boolean = false;
   @State private galleryLoadError: string = '';
   @State private galleryImporting: boolean = false;
   @State private galleryQueuePreparing: boolean = false;
@@ -187,6 +184,7 @@ struct Index {
   @State private galleryMimeType: string = '';
   @State private gallerySandboxPath: string = '';
   @State private galleryCopiedBytes: number = 0;
+  @State private galleryCurrentItem: GalleryLibraryItem | undefined = undefined;
   @State private galleryDetails: NativePhotoDetails | undefined = undefined;
   @State private galleryClassification: NativeClassificationResult | undefined = undefined;
 
@@ -201,14 +199,15 @@ struct Index {
   private queueRestoreStarted: boolean = false;
   private queueRestoreInFlight: boolean = false;
   private readonly settingsStore: SettingsStore = new SettingsStore();
+  private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   private inputSerial: number = 0;
   private outputSerial: number = 0;
   private motionSplitSerial: number = 0;
   private livePhotoPairSerial: number = 0;
   private batchExportSerial: number = 0;
-  private galleryImportSerial: number = 0;
-  private readonly queuePhotoPickerOptions: QueueOriginalPhotoSelectOptions = new QueueOriginalPhotoSelectOptions();
+  private readonly queuePhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
+  private readonly galleryPhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private batchPickerActive: boolean = false;
   private batchPageShowWaiters: Array<(visible: boolean) => void> = [];
   private readonly motionInspectionCache: Map<string, MotionPhotoInspection> =
@@ -223,8 +222,11 @@ struct Index {
     this.pageVisible = true;
     this.queuePhotoPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
     this.queuePhotoPickerOptions.maxSelectNumber = 500;
+    this.galleryPhotoPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    this.galleryPhotoPickerOptions.maxSelectNumber = 200;
     this.refreshVersion();
     this.loadSettings();
+    void this.loadGalleryLibrary();
     this.restoreQueueSession();
   }
 
@@ -2390,228 +2392,132 @@ struct Index {
     }
   }
 
-  private async requestGalleryPermission(): Promise<void> {
-    if (this.galleryPermissionRequesting || this.galleryLoading) {
-      return;
-    }
+  private async loadGalleryLibrary(): Promise<void> {
+    if (this.galleryLoading && this.galleryLibraryReady) return;
     const context = this.getUIContext().getHostContext();
     if (context === undefined) {
-      this.galleryLoadError = '应用上下文不可用，无法请求图库权限';
-      return;
-    }
-    this.galleryPermissionRequesting = true;
-    this.galleryLoadError = '';
-    try {
-      const permissions: Array<Permissions> = ['ohos.permission.READ_IMAGEVIDEO'];
-      const manager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
-      const result = await manager.requestPermissionsFromUser(context, permissions);
-      if (result.authResults.length > 0 && result.authResults[0] === 0) {
-        this.galleryPermissionGranted = true;
-        this.galleryPermissionDenied = false;
-        await this.loadGalleryAssets(true);
-      } else {
-        this.galleryPermissionGranted = false;
-        this.galleryPermissionDenied = true;
-        this.galleryLoadError = '系统未授予读取图库权限。可在系统设置中为 XDRemux Native 开启“照片和视频”访问。';
-      }
-    } catch (error) {
-      this.galleryPermissionGranted = false;
-      this.galleryLoadError = '图库权限不可用：' + this.errorMessage(error);
-    } finally {
-      this.galleryPermissionRequesting = false;
-    }
-  }
-
-  private async openGalleryPermissionSettings(): Promise<void> {
-    const context = this.getUIContext().getHostContext();
-    if (context === undefined) {
-      this.galleryLoadError = '应用上下文不可用，无法打开权限设置';
-      return;
-    }
-    this.galleryPermissionRequesting = true;
-    try {
-      const permissions: Array<Permissions> = ['ohos.permission.READ_IMAGEVIDEO'];
-      const manager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
-      const result: Array<abilityAccessCtrl.GrantStatus> =
-        await manager.requestPermissionOnSetting(context, permissions);
-      if (result.length > 0 && result[0] === 0) {
-        this.galleryPermissionGranted = true;
-        this.galleryPermissionDenied = false;
-        this.galleryLoadError = '';
-        await this.loadGalleryAssets(true);
-      } else {
-        this.galleryPermissionDenied = true;
-        this.galleryLoadError = '仍未获得图库访问权限。请在系统设置的应用权限中开启“照片和视频”。';
-      }
-    } catch (error) {
-      this.galleryLoadError = '打开图库权限设置失败：' + this.errorMessage(error);
-    } finally {
-      this.galleryPermissionRequesting = false;
-    }
-  }
-
-  private async loadGalleryAssets(reset: boolean): Promise<void> {
-    if (!this.galleryPermissionGranted || this.galleryLoading) {
-      return;
-    }
-    const context = this.getUIContext().getHostContext();
-    if (context === undefined) {
-      this.galleryLoadError = '应用上下文不可用，无法读取图库';
+      this.galleryLoadError = '应用上下文不可用，无法打开本地图库';
+      this.galleryLoading = false;
       return;
     }
     this.galleryLoading = true;
     this.galleryLoadError = '';
-    let fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset> | undefined = undefined;
     try {
-      const accessHelper: photoAccessHelper.PhotoAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
-      const predicates: dataSharePredicates.DataSharePredicates = new dataSharePredicates.DataSharePredicates();
-      predicates.equalTo('media_type', photoAccessHelper.PhotoType.IMAGE);
-      predicates.orderByDesc('date_added');
-      const options: photoAccessHelper.FetchOptions = {
-        fetchColumns: [],
-        predicates: predicates
-      };
-      fetchResult = await accessHelper.getAssets(options);
-      const total: number = fetchResult.getCount();
-      this.galleryMediaCount = total;
-      const offset: number = reset ? 0 : this.galleryPhotos.length;
-      if (offset >= total) {
-        if (reset) {
-          this.galleryPhotos = [];
-        }
-        return;
+      if (this.galleryLibrary === undefined) {
+        this.galleryLibrary = new HarmonyGalleryLibrary(context.filesDir);
       }
-
-      const pageCount: number = Math.min(60, total - offset);
-      const assets: Array<photoAccessHelper.PhotoAsset> = await fetchResult.getRangeObjects(offset, pageCount);
-      const page: Array<GalleryPhotoTile> = [];
-      for (let start: number = 0; start < assets.length; start += 8) {
-        const batch: Array<photoAccessHelper.PhotoAsset> = assets.slice(start, Math.min(start + 8, assets.length));
-        const batchTiles: Array<GalleryPhotoTile> = await Promise.all(batch.map(
-          async (asset: photoAccessHelper.PhotoAsset): Promise<GalleryPhotoTile> => {
-            let thumbnail: image.PixelMap | undefined = undefined;
-            try {
-              thumbnail = await asset.getThumbnail({ width: 360, height: 360 });
-            } catch (thumbnailError) {
-              // A tile can still open from its URI if the system cannot produce
-              // a preview for one damaged or temporarily unavailable asset.
-            }
-            return {
-              uri: asset.uri,
-              displayName: asset.displayName,
-              asset: asset,
-              thumbnail: thumbnail
-            };
-          }
-        ));
-        page.push(...batchTiles);
-      }
-      this.galleryPhotos = reset ? page : this.galleryPhotos.concat(page);
-      this.galleryStatus = '已读取 ' + String(this.galleryPhotos.length) + ' / ' + String(total) + ' 张照片';
+      const items: Array<GalleryLibraryItem> = await this.galleryLibrary.load();
+      this.galleryPhotos = items.map((item: GalleryLibraryItem): GalleryPhotoTile => ({
+        item: item,
+        path: this.galleryLibrary?.pathFor(item) ?? galleryItemPath(context.filesDir + '/xdremux-gallery', item)
+      }));
+      this.galleryMediaCount = items.length;
+      this.galleryLibraryReady = true;
+      this.galleryStatus = items.length > 0
+        ? '本地图库已加载 ' + String(items.length) + ' 张照片'
+        : '导入照片后会保存在 XDRemux 本地图库中';
     } catch (error) {
-      this.galleryLoadError = '读取媒体库失败：' + this.errorMessage(error);
+      this.galleryLibraryReady = false;
+      this.galleryLoadError = '读取本地图库失败：' + this.errorMessage(error);
     } finally {
-      if (fetchResult !== undefined) {
-        try {
-          fetchResult.close();
-        } catch (closeError) {
-          // Preserve the query result and keep the gallery responsive.
-        }
-      }
       this.galleryLoading = false;
     }
   }
 
-  private async inspectGallerySelection(sourceUri: string): Promise<void> {
-    if (this.galleryImporting || sourceUri.length === 0) {
+  private async importGalleryPhotos(): Promise<void> {
+    if (this.galleryImporting || this.galleryLoading || this.pageBusy || this.queueRunning) return;
+    if (!this.galleryLibraryReady || this.galleryLibrary === undefined) {
+      this.galleryLoadError = '本地图库尚未就绪，请先重新加载';
       return;
     }
-    this.galleryDetailVisible = true;
-    this.galleryQueueItemId = '';
     this.galleryImporting = true;
-    this.galleryDetails = undefined;
-    this.galleryClassification = undefined;
-    this.gallerySandboxPath = '';
-    this.galleryCopiedBytes = 0;
-    this.galleryStatus = '正在把已授权图片复制到应用沙箱…';
-
-    let sourceFd: number = -1;
+    this.pageBusy = true;
+    this.galleryLoadError = '';
+    this.galleryStatus = '正在打开照片选择器…';
+    let imported: number = 0;
+    let failed: number = 0;
     try {
-      const context = this.getUIContext().getHostContext();
-      if (context === undefined) {
-        throw new Error('应用上下文不可用');
+      const pickerView: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      // The system picker grants access only to the chosen assets. Request
+      // API 26 originals, then persist a physical copy before any Rust call.
+      const selection: photoAccessHelper.PhotoSelectResult =
+        await pickerView.select(this.galleryPhotoPickerOptions);
+      const selected: Array<string> = selection.photoUris;
+      if (selected.length === 0) {
+        this.galleryStatus = '未选择照片';
+        return;
       }
-      this.galleryImportSerial += 1;
-      const directory: string = context.cacheDir + '/gallery-detail';
-      await this.ensureDirectory(directory);
-      const destination: string = directory + '/selected-' + String(Date.now()) + '-' +
-        String(this.galleryImportSerial) + this.galleryFileSuffixFromUri(sourceUri);
-
-      // PhotoPicker grants access to a user-selected URI. Rust only receives
-      // an app-owned path after this physical copy has been verified.
-      sourceFd = (await fileIo.open(sourceUri, fileIo.OpenMode.READ_ONLY)).fd;
-      await fileIo.copyFile(sourceFd, destination);
-      await fileIo.close(sourceFd);
-      sourceFd = -1;
-
-      const stat: fileIo.Stat = await fileIo.stat(destination);
-      if (stat.size <= 0) {
-        throw new Error('图库图片复制到沙箱后为空');
-      }
-      this.gallerySandboxPath = destination;
-      this.galleryCopiedBytes = stat.size;
-      this.galleryStatus = '已复制到应用沙箱，正在读取图片信息…';
-
-      const detailsJson: string = await xdremuxNative.inspect(destination);
-      const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
-      if (!details.success) {
-        throw new Error(this.display(details.errorMessage));
-      }
-      const classification: NativeClassificationResult =
-        await xdremuxNative.classify(destination) as NativeClassificationResult;
-      this.galleryDetails = details;
-      this.galleryClassification = classification;
-      this.galleryStatus = '已读取原图 ' + this.galleryFormatLabel() + ' · ' +
-        String(details.width ?? 0) + ' × ' + String(details.height ?? 0);
-    } catch (error) {
-      this.galleryStatus = '图库验证失败：' + this.errorMessage(error);
-    } finally {
-      if (sourceFd >= 0) {
+      for (let index: number = 0; index < selected.length; index += 1) {
         try {
-          await fileIo.close(sourceFd);
-        } catch (closeError) {
-          // Keep the original picker/copy/inspection result visible.
+          const displayName: string = this.displayNameFromUri(selected[index], index);
+          const item: GalleryLibraryItem = await this.galleryLibrary.importPhoto(selected[index], displayName);
+          const tile: GalleryPhotoTile = { item: item, path: this.galleryLibrary.pathFor(item) };
+          this.galleryPhotos = [tile, ...this.galleryPhotos];
+          this.galleryMediaCount += 1;
+          imported += 1;
+        } catch (error) {
+          failed += 1;
         }
       }
+      this.galleryStatus = '已导入 ' + String(imported) + ' 张照片' +
+        (failed > 0 ? '，失败 ' + String(failed) + ' 张' : '') +
+        '；原图保存在应用本地';
+    } catch (error) {
+      this.galleryStatus = '导入失败：' + this.errorMessage(error);
+    } finally {
+      this.pageBusy = false;
       this.galleryImporting = false;
     }
   }
 
-  private galleryMimeTypeFromUri(uri: string): string {
-    const path: string = uri.split('?')[0].split('#')[0].toLowerCase();
-    if (path.endsWith('.heic')) return 'image/heic';
-    if (path.endsWith('.heif')) return 'image/heif';
-    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
-    return '';
+  private async inspectGallerySelection(tile: GalleryPhotoTile): Promise<void> {
+    if (this.galleryImporting || tile.path.length === 0) return;
+    this.galleryDetailVisible = true;
+    this.galleryCurrentItem = tile.item;
+    this.galleryQueueItemId = '';
+    this.galleryImporting = true;
+    this.galleryDetails = undefined;
+    this.galleryClassification = undefined;
+    this.gallerySandboxPath = tile.path;
+    this.galleryCopiedBytes = 0;
+    this.galleryMimeType = tile.item.mimeType.length > 0
+      ? tile.item.mimeType
+      : galleryMimeTypeForExtension(tile.item.extension);
+    this.galleryStatus = '正在读取本地原图信息…';
+    try {
+      const stat: fileIo.Stat = await fileIo.lstat(tile.path);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size !== tile.item.size || stat.size <= 0) {
+        throw new Error('本地图库原图缺失或大小不匹配');
+      }
+      this.galleryCopiedBytes = stat.size;
+      const detailsJson: string = await xdremuxNative.inspect(tile.path);
+      const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+      if (!details.success) throw new Error(this.display(details.errorMessage));
+      const classification: NativeClassificationResult =
+        await xdremuxNative.classify(tile.path) as NativeClassificationResult;
+      this.galleryDetails = details;
+      this.galleryClassification = classification;
+      this.galleryStatus = '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
+        String(details.width ?? 0) + ' × ' + String(details.height ?? 0);
+    } catch (error) {
+      this.galleryStatus = '读取本地照片失败：' + this.errorMessage(error);
+    } finally {
+      this.galleryImporting = false;
+    }
   }
 
   private galleryFileSuffixFromUri(uri: string): string {
     const path: string = uri.split('?')[0].split('#')[0].toLowerCase();
-    if (path.endsWith('.heic')) return '.heic';
-    if (path.endsWith('.heif')) return '.heif';
-    if (path.endsWith('.jpg')) return '.jpg';
-    if (path.endsWith('.jpeg')) return '.jpeg';
-    return '.photo';
+    const dot: number = path.lastIndexOf('.');
+    if (dot < 0) return '.img';
+    const extension: string = path.substring(dot);
+    return extension.length > 1 && extension.length <= 13 ? extension : '.img';
   }
 
   private openGalleryTile(tile: GalleryPhotoTile): void {
-    if (this.galleryImporting) {
-      return;
-    }
-    this.galleryMimeType = this.galleryMimeTypeFromUri(tile.displayName);
-    this.galleryStatus = '正在读取 ' + tile.displayName + '…';
-    this.galleryDetailVisible = true;
-    void this.inspectGallerySelection(tile.asset.uri);
+    if (this.galleryImporting) return;
+    this.galleryStatus = '正在读取 ' + tile.item.displayName + '…';
+    void this.inspectGallerySelection(tile);
   }
 
   private async convertGallerySelection(): Promise<void> {
@@ -2666,7 +2572,7 @@ struct Index {
       }
       const suffix: string = this.galleryFileSuffixFromUri(sourcePath);
       item = queue.add({
-        displayName: '图库照片-' + String(this.galleryImportSerial) + suffix,
+        displayName: this.galleryCurrentItem?.displayName ?? ('本地照片' + suffix),
         sourceUri: sourcePath
       });
       this.galleryQueueItemId = item.id;
@@ -2745,81 +2651,21 @@ struct Index {
             .fontSize(30)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('sys.color.font_primary'));
-          Text(this.galleryPermissionGranted
-            ? String(this.galleryMediaCount) + ' 张照片'
-            : '本机照片 · 仅本地处理')
+          Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
             .fontSize(13)
             .fontColor($r('sys.color.font_secondary'))
             .margin({ top: 3 });
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1);
-        if (this.galleryPermissionGranted) {
-          Button(this.galleryLoading ? '读取中…' : '刷新')
-            .height(38)
-            .enabled(!this.galleryLoading && !this.galleryImporting)
-            .onClick((): void => {
-              void this.loadGalleryAssets(true);
-            });
-        }
       }
       .width('100%')
       .padding({ left: 18, right: 18, top: 14, bottom: 12 });
 
-      if (!this.galleryPermissionGranted) {
-        Column() {
-          Blank().layoutWeight(1);
-          Text('▦')
-            .fontSize(46)
-            .fontColor($r('sys.color.ohos_id_color_activated'));
-          Text('浏览整机图库')
-            .fontSize(22)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .margin({ top: 18 });
-          Text('授权后，XDRemux 会在此显示手机中的照片，并读取格式、分辨率和拍摄信息。转换只在本机完成，原图不会被覆盖。')
-            .fontSize(14)
-            .fontColor($r('sys.color.font_secondary'))
-            .textAlign(TextAlign.Center)
-            .lineHeight(22)
-            .margin({ top: 10 });
-          if (this.galleryLoadError.length > 0) {
-            Text(this.galleryLoadError)
-              .fontSize(12)
-              .fontColor($r('sys.color.ohos_id_color_alert'))
-              .textAlign(TextAlign.Center)
-              .margin({ top: 12 });
-          }
-          Button(this.galleryPermissionRequesting ? '正在请求权限…' :
-            (this.galleryPermissionDenied ? '前往系统设置授权' : '授权并打开图库'))
-            .width('100%')
-            .height(48)
-            .enabled(!this.galleryPermissionRequesting)
-            .margin({ top: 20 })
-            .onClick((): void => {
-              if (this.galleryPermissionDenied) {
-                void this.openGalleryPermissionSettings();
-              } else {
-                void this.requestGalleryPermission();
-              }
-            });
-          Text('读取整机照片需要 ohos.permission.READ_IMAGEVIDEO。')
-            .fontSize(11)
-            .fontColor($r('sys.color.font_secondary'))
-            .textAlign(TextAlign.Center)
-            .margin({ top: 10 });
-          Blank().layoutWeight(1);
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .padding({ left: 28, right: 28, bottom: 42 })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .backgroundColor($r('sys.color.background_primary'));
-      } else if (this.galleryLoading && this.galleryPhotos.length === 0) {
+      if (this.galleryLoading && this.galleryPhotos.length === 0) {
         Column() {
           LoadingProgress().width(38).height(38);
-          Text('正在读取照片与缩略图…')
+          Text('正在打开本地图库…')
             .fontSize(14)
             .fontColor($r('sys.color.font_secondary'))
             .margin({ top: 12 });
@@ -2830,49 +2676,49 @@ struct Index {
         .alignItems(HorizontalAlign.Center);
       } else if (this.galleryPhotos.length === 0) {
         Column() {
-          Text(this.galleryLoadError.length > 0 ? this.galleryLoadError : '图库中还没有可显示的照片')
-            .fontSize(15)
+          Text(this.galleryLoadError.length > 0 ? '本地图库暂时无法打开' : '还没有导入照片')
+            .fontSize(19)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .textAlign(TextAlign.Center);
+          Text(this.galleryLoadError.length > 0
+            ? this.galleryLoadError
+            : '点右上角“导入”，从系统图库添加照片。导入后原图保存在应用沙箱，可随时查看信息和转换。')
+            .fontSize(14)
             .fontColor(this.galleryLoadError.length > 0
               ? $r('sys.color.ohos_id_color_alert')
               : $r('sys.color.font_secondary'))
-            .textAlign(TextAlign.Center);
-          Button('重新读取')
-            .height(42)
-            .margin({ top: 14 })
-            .enabled(!this.galleryLoading)
-            .onClick((): void => {
-              void this.loadGalleryAssets(true);
-            });
+            .textAlign(TextAlign.Center)
+            .lineHeight(22)
+            .margin({ top: 9 });
+          if (this.galleryLoadError.length > 0) {
+            Button('重试')
+              .height(42)
+              .margin({ top: 14 })
+              .enabled(!this.galleryLoading)
+              .onClick((): void => {
+                void this.loadGalleryLibrary();
+              });
+          }
         }
         .layoutWeight(1)
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center);
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 32, right: 32, bottom: 40 });
       } else {
         Scroll() {
           Grid() {
             ForEach(this.galleryPhotos, (tile: GalleryPhotoTile) => {
               GridItem() {
                 Stack() {
-                  if (tile.thumbnail !== undefined) {
-                    Image(tile.thumbnail)
-                      .width('100%')
-                      .height('100%')
-                      .objectFit(ImageFit.Cover);
-                  } else {
-                    Column() {
-                      Text('照片')
-                        .fontSize(12)
-                        .fontColor($r('sys.color.font_secondary'));
-                    }
+                  Image('file://' + tile.path)
                     .width('100%')
                     .height('100%')
-                    .justifyContent(FlexAlign.Center)
-                    .alignItems(HorizontalAlign.Center)
+                    .objectFit(ImageFit.Cover)
                     .backgroundColor($r('sys.color.background_tertiary'));
-                  }
                   Column() {
-                    Text(tile.displayName)
+                    Text(tile.item.displayName)
                       .fontSize(10)
                       .fontColor(Color.White)
                       .maxLines(1)
@@ -2896,7 +2742,7 @@ struct Index {
                   this.openGalleryTile(tile);
                 });
               }
-            }, (tile: GalleryPhotoTile) => tile.uri);
+            }, (tile: GalleryPhotoTile) => tile.item.id);
           }
           .columnsTemplate('1fr 1fr 1fr')
           .columnsGap(4)
@@ -2913,17 +2759,6 @@ struct Index {
             .fontColor($r('sys.color.ohos_id_color_alert'))
             .width('100%')
             .padding({ left: 18, right: 18, top: 5, bottom: 5 });
-        }
-        if (this.galleryPhotos.length < this.galleryMediaCount) {
-          Button(this.galleryLoading ? '正在加载…' :
-            '加载更多 · ' + String(this.galleryMediaCount - this.galleryPhotos.length) + ' 张')
-            .width('100%')
-            .height(42)
-            .margin({ left: 18, right: 18, bottom: 90 })
-            .enabled(!this.galleryLoading)
-            .onClick((): void => {
-              void this.loadGalleryAssets(false);
-            });
         }
       }
     }
@@ -3033,7 +2868,7 @@ struct Index {
             }
 
             if (this.gallerySandboxPath.length > 0) {
-              Text('沙箱副本已校验 · ' + String(this.galleryCopiedBytes) + ' B')
+              Text('本地图库原图已校验 · ' + String(this.galleryCopiedBytes) + ' B')
                 .fontSize(12)
                 .fontColor($r('sys.color.font_secondary'))
                 .width('100%')
@@ -4039,24 +3874,16 @@ struct Index {
   }
 
   @Builder
-  private mainTabBarItem(index: number, mark: string, label: string) {
-    Column() {
-      Text(mark)
-        .fontSize(18)
-        .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
-          $r('sys.color.font_secondary'));
-      Text(label)
-        .fontSize(11)
-        .fontWeight(this.mainTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
-          $r('sys.color.font_secondary'));
-    }
-    .justifyContent(FlexAlign.Center)
-    .width('100%')
-    .height('100%')
-    .backgroundColor(this.mainTabIndex === index ? $r('sys.color.background_tertiary') : Color.Transparent)
-    .borderRadius(22)
-    .margin({ left: 5, right: 5, top: 4, bottom: 4 });
+  private mainTabBarItem(index: number, label: string) {
+    Text(label)
+      .fontSize(14)
+      .fontWeight(this.mainTabIndex === index ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.mainTabIndex === index ? $r('sys.color.ohos_id_color_activated') :
+        $r('sys.color.font_secondary'))
+      .padding({ left: 13, right: 13, top: 9, bottom: 9 })
+      .backgroundColor(this.mainTabIndex === index ? $r('sys.color.background_tertiary') : Color.Transparent)
+      .borderRadius(20)
+      .onClick((): void => this.onMainTabChange(index));
   }
 
   @Builder
@@ -4357,104 +4184,63 @@ struct Index {
     .backgroundColor($r('sys.color.background_primary'));
   }
 
-  @Available({ minApiVersion: '26.0.0' })
   @Builder
-  private immersiveTabs() {
-    HdsTabs({ index: this.mainTabIndex }) {
-      TabContent() {
-        if (this.galleryDetailVisible) {
-          this.galleryDetailPage();
-        } else {
-          this.ownGalleryPage();
-        }
+  private mainNavigation() {
+    Row() {
+      Row() {
+        this.mainTabBarItem(0, '图库');
+        this.mainTabBarItem(1, '队列');
+        this.mainTabBarItem(2, '设置');
       }
-      .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
-        selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
-      }, '图库'))
+      .padding(4)
+      .backgroundColor($r('sys.color.background_secondary'))
+      .borderRadius(24);
 
-      TabContent() {
-        this.queuePage();
-      }
-      .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')),
-        selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
-      }, '队列'))
+      Blank().layoutWeight(1);
 
-      TabContent() {
-        this.settingsPage();
+      if (this.mainTabIndex === 0 && !this.galleryDetailVisible) {
+        Button(this.galleryImporting ? '导入中…' : '＋ 导入')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .width(88)
+          .height(42)
+          .backgroundColor($r('sys.color.ohos_id_color_activated'))
+          .borderRadius(22)
+          .enabled(!this.galleryImporting && !this.galleryLoading && !this.pageBusy &&
+            !this.queueRunning)
+          .onClick((): void => {
+            void this.importGalleryPhotos();
+          });
       }
-      .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')),
-        selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
-      }, '设置'))
     }
-    .barPosition(BarPosition.End)
-    .vertical(false)
-    .barMode(BarMode.Fixed)
-    .barOverlap(true)
-    .scrollable(false)
-    .onChange((index: number) => {
-      this.onMainTabChange(index);
-    })
-    .barFloatingStyle({
-      barBottomMargin: 8,
-      adaptToHandedness: true,
-      systemMaterialEffect: {
-        materialType: hdsMaterial.MaterialType.ADAPTIVE,
-        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-      }
-    })
-    .expandSafeArea([SafeAreaType.SYSTEM])
     .width('100%')
-    .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
-  }
-
-  @Builder
-  private standardTabs() {
-    Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
-      TabContent() {
-        if (this.galleryDetailVisible) {
-          this.galleryDetailPage();
-        } else {
-          this.ownGalleryPage();
-        }
-      }
-      .tabBar(this.mainTabBarItem(0, '\u25A6', '\u56FE\u5E93'))
-
-      TabContent() {
-        this.queuePage();
-      }
-      .tabBar(this.mainTabBarItem(1, '\u2637', '\u961F\u5217'))
-
-      TabContent() {
-        this.settingsPage();
-      }
-      .tabBar(this.mainTabBarItem(2, '\u2699', '\u8BBE\u7F6E'))
-    }
-    .barMode(BarMode.Fixed)
-    .barHeight(64)
-    .scrollable(false)
-    .onChange((index: number) => {
-      this.onMainTabChange(index);
-    })
-    .expandSafeArea([SafeAreaType.SYSTEM])
-    .width('100%')
-    .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .padding({ left: 18, right: 18, top: 52, bottom: 10 });
   }
 
   build() {
-    if (deviceInfo.sdkApiVersion >= 26) {
-      if (deviceInfo.apiAvailable('26.0.0')) {
-        this.immersiveTabs();
-      } else {
-        this.standardTabs();
+    Column() {
+      this.mainNavigation();
+      Column() {
+        if (this.mainTabIndex === 0) {
+          if (this.galleryDetailVisible) {
+            this.galleryDetailPage();
+          } else {
+            this.ownGalleryPage();
+          }
+        } else if (this.mainTabIndex === 1) {
+          this.queuePage();
+        } else {
+          this.settingsPage();
+        }
       }
-    } else {
-      this.standardTabs();
+      .layoutWeight(1)
+      .width('100%');
     }
+    .expandSafeArea([SafeAreaType.SYSTEM])
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
 }

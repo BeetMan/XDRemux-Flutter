@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "io.github.beetman.xdremux.arkui",
     "vendor": "BeetMan",
-    "versionCode": 40018,
-    "versionName": "0.4.8",
+    "versionCode": 40019,
+    "versionName": "0.4.9",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
   }
