@@ -393,3 +393,144 @@ fn instance_mask_xmp(key: &str) -> Vec<u8> {
     )
     .into_bytes()
 }
+
+/// Inject one FSINC instance mask: an `hvc1` item carrying the face-region
+/// pixels plus its `mime` XMP declaration. Apple stores them as a pair with
+/// no iref and no auxC (items 157/158 in IMG_0004), so the person data's
+/// `instanceMaskReferenceKey` finally points at something real.
+pub fn inject_instance_mask(
+    data: &[u8],
+    face_roi: [f64; 4],
+    mask_w: u32,
+    mask_h: u32,
+) -> Result<(Vec<u8>, String), String> {
+    // The person data always carries the reference; what must be absent is the
+    // XMP declaration that gives the key its mask.
+    if data.windows(11).any(|w| w == b"fsincMattes") {
+        return Err("instance mask already present".into());
+    }
+    let key = "FSINCInstanceMask9".to_string();
+    let (matte_stream, matte_hvcc) = face_matte(mask_w, mask_h, face_roi)?;
+
+    let top = isobmff::parse_boxes(data, 0, data.len());
+    let meta_box = top.iter().find(|b| b.btype == *b"meta").ok_or("meta box not found")?;
+    let content_start = meta_box.data_start + 4;
+    let content_end = meta_box.box_start + meta_box.size as usize;
+    let children = isobmff::parse_boxes(data, content_start, content_end);
+    let iinf = children.iter().find(|b| b.btype == *b"iinf").ok_or("iinf not found")?;
+    let iloc = children.iter().find(|b| b.btype == *b"iloc").ok_or("iloc not found")?;
+    let iprp = children.iter().find(|b| b.btype == *b"iprp").ok_or("iprp not found")?;
+
+    let parsed = isobmff::parse_source_meta(data)?;
+    let next_id = parsed.items.iter().map(|i| i.item_id).max().unwrap_or(0) + 1;
+    let (mask_id, xmp_id) = (next_id, next_id + 1);
+
+    // ---- iinf: append two entries ---------------------------------------
+    let iinf_items = isobmff::parse_iinf(data, iinf)?;
+    let iinf_version = data[iinf.data_start];
+    let count_size = if iinf_version == 0 { 2 } else { 4 };
+    let entry_start = iinf.data_start + 4 + count_size;
+    let entry_end = iinf.box_start + iinf.size as usize;
+    let mut new_iinf_body = data[iinf.data_start..entry_start].to_vec();
+    new_iinf_body[..4].copy_from_slice(&data[iinf.data_start..iinf.data_start + 4]);
+    new_iinf_body.truncate(4);
+    new_iinf_body
+        .extend_from_slice(&(iinf_items.len() as u64 + 2).to_be_bytes()[8 - count_size..]);
+    new_iinf_body.extend_from_slice(&data[entry_start..entry_end]);
+    new_iinf_body.extend_from_slice(&isobmff::make_infe_box(mask_id, "hvc1", 0));
+    new_iinf_body.extend_from_slice(&isobmff::make_infe_box(xmp_id, "mime", 0));
+    let new_iinf = make_box(b"iinf", &new_iinf_body);
+
+    // ---- ipco: + ispe + hvcC; ipma: + one entry --------------------------
+    let sub = isobmff::parse_boxes(data, iprp.data_start, iprp.data_end);
+    let ipco = sub.iter().find(|b| b.btype == *b"ipco").ok_or("ipco not found")?;
+    let ipma = sub.iter().find(|b| b.btype == *b"ipma").ok_or("ipma not found")?;
+    let ipco_children = isobmff::parse_boxes(data, ipco.data_start, ipco.box_start + ipco.size as usize);
+    let prop_base = ipco_children.len();
+    let ispe_idx = (prop_base + 1) as u32;
+    let hvcc_idx = (prop_base + 2) as u32;
+    let mut new_ipco_body = data[ipco.data_start..ipco.box_start + ipco.size as usize].to_vec();
+    new_ipco_body.extend_from_slice(&isobmff::make_ispe_box(mask_w, mask_h));
+    new_ipco_body.extend_from_slice(&make_box(b"hvcC", &matte_hvcc));
+    let new_ipco = make_box(b"ipco", &new_ipco_body);
+
+    let mut ipma_flags = data[ipma.data_start + 3];
+    if hvcc_idx > 127 {
+        ipma_flags |= 2;
+    }
+    let mut entries = parsed.ipma_entries.clone();
+    entries.push(isobmff::IpmaEntry {
+        item_id: mask_id,
+        associations: vec![(ispe_idx, false), (hvcc_idx, true)],
+    });
+    let mut new_ipma_payload = vec![data[ipma.data_start], 0, 0, ipma_flags];
+    new_ipma_payload.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for e in &entries {
+        new_ipma_payload
+            .extend_from_slice(&isobmff::make_ipma_entry(e.item_id, &e.associations, ipma_flags as u32));
+    }
+    let new_ipma = make_box(b"ipma", &new_ipma_payload);
+
+    // ---- iloc: shift existing extents, append two -----------------------
+    let xmp = instance_mask_xmp(&key);
+    let d_iinf = new_iinf.len() as i64 - iinf.size as i64;
+    let d_iprp = (new_ipco.len() as i64 - ipco.size as i64) + (new_ipma.len() as i64 - ipma.size as i64);
+    let head_delta = d_iinf + d_iprp;
+
+    let mdat = top.iter().find(|b| b.btype == *b"mdat").ok_or("mdat not found")?;
+    let mdat_end = (mdat.box_start + mdat.size) as i64;
+    let payload_len = (matte_stream.len() + xmp.len()) as i64;
+
+    let mut out_entries: Vec<isobmff::IlocEntry> = Vec::new();
+    for mut e in isobmff::parse_iloc(data, iloc)? {
+        for ext in e.extents.iter_mut() {
+            if (e.construction_method & 0xF) == 0 {
+                let past = (ext.0 as i64) >= mdat_end;
+                ext.0 = (ext.0 as i64 + head_delta + if past { payload_len } else { 0 }) as u64;
+            }
+        }
+        out_entries.push(e);
+    }
+    let payload_abs = (mdat_end + head_delta) as u64;
+    out_entries.push(isobmff::IlocEntry {
+        item_id: mask_id,
+        construction_method: 0,
+        data_reference_index: 0,
+        extents: vec![(payload_abs, matte_stream.len() as u64)],
+    });
+    out_entries.push(isobmff::IlocEntry {
+        item_id: xmp_id,
+        construction_method: 0,
+        data_reference_index: 0,
+        extents: vec![(payload_abs + matte_stream.len() as u64, xmp.len() as u64)],
+    });
+    let new_iloc = isobmff::make_iloc_box(&out_entries);
+
+    // ---- splice ----------------------------------------------------------
+    let mut out = Vec::with_capacity(data.len() + payload_len as usize + 4096);
+    out.extend_from_slice(&data[..content_start]);
+    for child in &children {
+        match &child.btype {
+            b"iinf" => out.extend_from_slice(&new_iinf),
+            b"iloc" => out.extend_from_slice(&new_iloc),
+            b"iprp" => {
+                let mut body = Vec::new();
+                for s in &sub {
+                    match &s.btype {
+                        b"ipco" => body.extend_from_slice(&new_ipco),
+                        b"ipma" => body.extend_from_slice(&new_ipma),
+                        _ => body.extend_from_slice(&data[s.box_start..s.box_start + s.size as usize]),
+                    }
+                }
+                out.extend_from_slice(&make_box(b"iprp", &body));
+            }
+            _ => out.extend_from_slice(&data[child.box_start..child.box_start + child.size as usize]),
+        }
+    }
+    out.extend_from_slice(&data[content_end..mdat.box_start]);
+    out.extend_from_slice(&data[mdat.box_start..mdat_end as usize]);
+    out.extend_from_slice(&matte_stream);
+    out.extend_from_slice(&xmp);
+    out.extend_from_slice(&data[(mdat.box_start + mdat.size) as usize..]);
+    Ok((out, key))
+}

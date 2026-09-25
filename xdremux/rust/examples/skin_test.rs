@@ -81,7 +81,28 @@ fn main() {
         &people,
     ) {
         Ok(with_people) => {
-            std::fs::write(output, &with_people).unwrap();
+            // Ship the FSINC instance mask the person data points at. Without
+            // it 'instanceMaskReferenceKey' is a dangling reference and Photos
+            // drops the whole texture_styles item.
+            let final_bytes = match people.first() {
+                Some(p0) => match xdremux_core::semantic_mattes::inject_instance_mask(
+                    &with_people,
+                    p0.face_roi,
+                    768,
+                    576,
+                ) {
+                    Ok((masked, key)) => {
+                        println!("instance mask attached ({key})");
+                        masked
+                    }
+                    Err(e) => {
+                        eprintln!("instance mask failed: {e}");
+                        with_people
+                    }
+                },
+                None => with_people,
+            };
+            std::fs::write(output, &final_bytes).unwrap();
             println!("people data attached -> {output}");
         }
         Err(e) => eprintln!("people inject failed: {e}"),
