@@ -63,6 +63,8 @@ pub struct PersonInstance {
     pub face_roi: [f64; 4],
     pub face_skin_roi: [f64; 4],
     pub instance_roi: [f64; 4],
+    /// Set only when a real FSINC mask accompanies this instance.
+    pub mask_reference: bool,
     pub scaling_roi: [f64; 4],
     pub yaw: f64,
     pub pitch: f64,
@@ -170,11 +172,16 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     e.push((k, v));
     let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_int(1));
     e.push((k, v));
-    let (k, v) = (
-        w.add_str("instanceMaskReferenceKey"),
-        w.add_str("FSINCInstanceMask9"),
-    );
-    e.push((k, v));
+    // Omit the mask reference unless a real FSINC mask is present: pointing at
+    // 'FSINCInstanceMask9' without shipping the mask leaves a dangling
+    // reference, and Photos drops the whole item over it.
+    if p.mask_reference {
+        let (k, v) = (
+            w.add_str("instanceMaskReferenceKey"),
+            w.add_str("FSINCInstanceMask9"),
+        );
+        e.push((k, v));
+    }
 
     // faceLandmarks: [{point:{x,y}, error}, ...]
     let k_lm = w.add_str("faceLandmarks");
@@ -501,6 +508,7 @@ mod tests {
 
     fn sample_person() -> PersonInstance {
         PersonInstance {
+            mask_reference: false,
             face_id: 0,
             face_roi: [0.34, 0.31, 0.074, 0.098],
             face_skin_roi: [0.30, 0.24, 0.145, 0.193],
@@ -532,6 +540,9 @@ mod tests {
         let payload = texture_info_payload_with_people(203, &[sample_person()]);
         assert!(payload.starts_with(b"bplist00"));
         assert_eq!(&payload[..8], b"bplist00");
+        // Without a real FSINC mask we must not emit the reference: a dangling
+        // 'FSINCInstanceMask9' makes Photos drop the whole item.
+        assert!(!payload.windows(18).any(|w| w == b"FSINCInstanceMask9"));
         // Every key we publish must appear as a UTF-16BE-ish ASCII run in the
         // object table.
         for key in [
@@ -542,7 +553,6 @@ mod tests {
             "faceROI",
             "faceSkinROI",
             "faceYaw",
-            "instanceMaskReferenceKey",
             "imageStats",
             "SkinSmoothingStandalone",
             "SkinSmoothAverageFaceColour",

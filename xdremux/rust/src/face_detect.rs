@@ -351,6 +351,7 @@ pub fn build_person_instances_oriented(
             },
             // Apple records a fixed horizontal inset here for this detection
             // scheme (1 - 2/44 wide), not the full unit square.
+            mask_reference: false,
             scaling_roi: [0.02272727272727276, 0.0, 0.9545454545454546, 1.0],
             yaw,
             pitch,
