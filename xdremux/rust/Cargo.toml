@@ -21,6 +21,7 @@ quick-xml = "0.42"
 serde_json = "1.0"
 zstd = "0.13"
 png = "0.17"
+ort = "2.0.0-rc.13"
 
 [dev-dependencies]
 sha2 = "0.10"
