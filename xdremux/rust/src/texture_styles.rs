@@ -25,7 +25,7 @@ pub fn texture_info_payload(grain_seed: u64) -> Vec<u8> {
     let k_ptype = w.add_str("PortType");
     let v_ptype = w.add_str("PortTypeBack");
     let k_hw = w.add_str("HardwareModel");
-    let v_hw = w.add_str("iPhone 18 Pro");
+    let v_hw = w.add_str("iPhone19,2");
     let k_pdv = w.add_str("TextureStylePeopleDataVersion");
     let v_pdv = w.add_int(3);
     let k_gs = w.add_str("FilmGrainSeed");
@@ -98,7 +98,7 @@ pub fn texture_info_payload_with_people(grain_seed: u64, people: &[PersonInstanc
     let k_ptype = w.add_str("PortType");
     let v_ptype = w.add_str("PortTypeBack");
     let k_hw = w.add_str("HardwareModel");
-    let v_hw = w.add_str("iPhone 18 Pro");
+    let v_hw = w.add_str("iPhone19,2");
     let k_pdv = w.add_str("TextureStylePeopleDataVersion");
     let v_pdv = w.add_int(3);
     let k_gs = w.add_str("FilmGrainSeed");
@@ -150,7 +150,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let mut e: Vec<(usize, usize)> = Vec::new();
 
     let k = w.add_str("faceID");
-    e.push((k, w.add_str(&face_uuid(p.face_id))));
+    e.push((k, w.add_int(p.face_id as u64)));
     let k = w.add_str("faceSkinROI");
     e.push((k, write_rect(w, p.face_skin_roi)));
     let k = w.add_str("faceROI");
@@ -166,9 +166,9 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     e.push((k, v));
     let (k, v) = (w.add_str("faceRoll"), w.add_real(p.roll));
     e.push((k, v));
-    let (k, v) = (w.add_str("faceLandmarkType"), w.add_int(FACE_LANDMARK_TYPE));
+    let (k, v) = (w.add_str("faceLandmarkType"), w.add_int(1));
     e.push((k, v));
-    let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_str("Radian"));
+    let (k, v) = (w.add_str("faceUnitOfAngle"), w.add_int(1));
     e.push((k, v));
     let (k, v) = (
         w.add_str("instanceMaskReferenceKey"),
@@ -197,7 +197,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let k_b = w.add_str("SkinSmoothingStandalone");
     let mut sb = Vec::new();
     let k = w.add_str("faceID");
-    sb.push((k, w.add_str(&face_uuid(p.face_id))));
+    sb.push((k, w.add_int(p.face_id as u64)));
     sb.push(write_colour(w, "SkinSmoothAverageFaceColour", p.skin_colour));
     if let Some(r) = p.skin_roughness {
         let (k, v) = (w.add_str("SkinSmoothFaceRoughness"), w.add_real(r));
@@ -210,7 +210,7 @@ fn write_person(w: &mut BplistWriter, p: &PersonInstance) -> usize {
     let k_b = w.add_str("Mattify");
     let mut mb = Vec::new();
     let k = w.add_str("faceID");
-    mb.push((k, w.add_str(&face_uuid(p.face_id))));
+    mb.push((k, w.add_int(p.face_id as u64)));
     mb.push(write_colour(w, "AverageFaceColor", p.mattify_colour));
     let (k, v) = (
         w.add_str("HighlightsToMaskRatio"),

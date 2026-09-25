@@ -285,7 +285,9 @@ pub fn build_person_instances(image: &RgbImage) -> Result<Vec<PersonInstance>, S
             face_roi: f.face_roi,
             face_skin_roi: skin,
             instance_roi: f.face_roi,
-            scaling_roi: [0.0, 0.0, 1.0, 1.0],
+            // Apple records a fixed horizontal inset here for this detection
+            // scheme (1 - 2/44 wide), not the full unit square.
+            scaling_roi: [0.02272727272727276, 0.0, 0.9545454545454546, 1.0],
             yaw,
             pitch,
             roll,
