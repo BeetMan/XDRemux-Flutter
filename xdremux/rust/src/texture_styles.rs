@@ -467,6 +467,21 @@ pub fn inject_uri_metadata_item(
 /// Returns the patched file bytes.
 pub fn inject_texture_styles(data: &[u8], grain_seed: u64) -> Result<Vec<u8>, String> {
     let payload = texture_info_payload(grain_seed);
+    inject_texture_styles_payload(data, &payload)
+}
+
+/// Same, but with the person block filled in (skin smoothing / mattify /
+/// under-eye statistics). See `crate::face_detect::build_person_instances`.
+pub fn inject_texture_styles_with_people(
+    data: &[u8],
+    grain_seed: u64,
+    people: &[PersonInstance],
+) -> Result<Vec<u8>, String> {
+    let payload = texture_info_payload_with_people(grain_seed, people);
+    inject_texture_styles_payload(data, &payload)
+}
+
+fn inject_texture_styles_payload(data: &[u8], payload: &[u8]) -> Result<Vec<u8>, String> {
     inject_uri_metadata_item(data, TEXTURE_STYLES_URI, &payload)
 }
 
