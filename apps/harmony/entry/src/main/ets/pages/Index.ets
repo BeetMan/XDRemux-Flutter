@@ -1,5 +1,5 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
+import { ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
@@ -4348,6 +4348,15 @@ struct Index {
       : hdsMaterial.MaterialLevel.SMOOTH;
   }
 
+  private systemAccentColorWithAlpha(alpha: number): string {
+    try {
+      const accent: ColorMetrics = ColorMetrics.resourceColor($r('sys.color.ohos_id_color_activated'));
+      return ColorMetrics.rgba(accent.red, accent.green, accent.blue, Math.max(0, Math.min(1, alpha))).color;
+    } catch (_error) {
+      return '#00000000';
+    }
+  }
+
   @Builder
   private ownGalleryPage() {
     Column() {
@@ -4543,9 +4552,9 @@ struct Index {
       .height(52)
       .systemMaterial(new uiMaterial.ImmersiveMaterial({
         style: uiMaterial.ImmersiveStyle.THIN,
-        materialColor: 'rgba(31, 107, 255, 0.72)',
+        materialColor: this.systemAccentColorWithAlpha(0.72),
         interactive: true,
-        lightEffect: { color: 'rgba(111, 180, 255, 0.58)' }
+        lightEffect: { color: this.systemAccentColorWithAlpha(0.58) }
       }))
       .hitTestBehavior(HitTestMode.Default)
       .accessibilityText('加入转换队列')
@@ -4717,9 +4726,8 @@ struct Index {
   private galleryTopActionMaterial(): uiMaterial.ImmersiveMaterial {
     return new uiMaterial.ImmersiveMaterial({
       style: uiMaterial.ImmersiveStyle.THIN,
-      materialColor: 'rgba(18, 35, 58, 0.28)',
       interactive: true,
-      lightEffect: { color: 'rgba(72, 145, 255, 0.42)' }
+      lightEffect: { color: this.systemAccentColorWithAlpha(0.42) }
     });
   }
 
@@ -6789,7 +6797,7 @@ struct Index {
           }
           .width(52)
           .height(52)
-          .backgroundColor('rgba(31, 107, 255, 0.72)')
+          .backgroundColor(this.systemAccentColorWithAlpha(0.72))
           .enabled(this.canImportQueueMiniBarAction())
           .onClick((): void => {
             // Queue imports use the system photo picker and are copied into the
@@ -6804,7 +6812,7 @@ struct Index {
             .fontColor(Color.White)
             .width(112)
             .height(48)
-            .backgroundColor('#991F6BFF')
+            .backgroundColor(this.systemAccentColorWithAlpha(0.6))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
             .enabled(this.canRunMiniBarAction())
@@ -6825,7 +6833,7 @@ struct Index {
             .fontColor(Color.White)
             .width(112)
             .height(44)
-            .backgroundColor('#661F6BFF')
+            .backgroundColor(this.systemAccentColorWithAlpha(0.4))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
             .enabled(this.canRunMiniBarAction())
@@ -6840,7 +6848,7 @@ struct Index {
             .fontColor(Color.White)
             .width(128)
             .height(44)
-            .backgroundColor('#661F6BFF')
+            .backgroundColor(this.systemAccentColorWithAlpha(0.4))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
             .enabled(this.canImportQueueMiniBarAction() && this.galleryLibraryReady && this.galleryPhotos.length > 0)
@@ -6863,10 +6871,10 @@ struct Index {
         }
         .width(52)
         .height(52)
-        .backgroundColor('rgba(31, 107, 255, 0.72)')
+        .backgroundColor(this.systemAccentColorWithAlpha(0.72))
         .systemMaterial(new uiMaterial.ImmersiveMaterial({
           style: uiMaterial.ImmersiveStyle.THIN,
-          materialColor: 'rgba(31, 107, 255, 0.72)',
+          materialColor: this.systemAccentColorWithAlpha(0.72),
           interactive: true
         }))
         .opacity(this.mainTabIndex === 1
@@ -6927,7 +6935,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: '#66316BFF',
+      lightColor: this.systemAccentColorWithAlpha(0.4),
       systemMaterialEffect: {
         materialType: this.hdsSystemMaterialType(),
         materialLevel: this.hdsSystemMaterialLevel()
@@ -6936,7 +6944,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: '#66316BFF',
+      lightColor: this.systemAccentColorWithAlpha(0.4),
       systemMaterialEffect: {
         materialType: this.hdsSystemMaterialType(),
         materialLevel: this.hdsSystemMaterialLevel()
