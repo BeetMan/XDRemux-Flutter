@@ -432,6 +432,9 @@ class _HomePageState extends State<HomePage> {
         classificationStatus: cpItem.classificationStatus,
         hdrKind: cpItem.hdrKind,
         family: cpItem.family,
+        huaweiHdr: cpItem.huaweiHdr,
+        huaweiHasXtstyle: cpItem.huaweiHasXtstyle,
+        huaweiPortrait: cpItem.huaweiPortrait,
         motionPhoto:
             mpJson == null
                 ? null
@@ -1045,6 +1048,10 @@ class _HomePageState extends State<HomePage> {
       if (summary == null) return;
       item.motionPhoto = summary;
       item.motionPhotoMode = _config.motionPhotoDefaultMode;
+      if (item.huaweiHdr) {
+        item.status = QueueItemStatus.pending;
+        item.policyReason = null;
+      }
       if (mounted) setState(() {});
     } finally {
       _motionInspectsInFlight--;
@@ -1129,6 +1136,17 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -1140,6 +1158,22 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: reportedHuaweiHdr
+                ? (huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true
+                    ? QueueItemStatus.pending
+                    : QueueItemStatus.skippedPolicy)
+                : QueueItemStatus.pending,
+            policyReason: reportedHuaweiHdr
+                ? (huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true
+                    ? null
+                    : t(
+                        '华为 HDR 原生兼容 Apple Photos，无需转换',
+                        'Huawei HDR is natively compatible with Apple Photos; no conversion needed',
+                      ))
+                : null,
           ),
         );
         _inspectMotionPhoto(_queue.last);
@@ -1663,11 +1697,81 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
+      // Huawei Portrait fast path: uses the dedicated remux pipeline
+      // instead of the OPPO-based classify/extract/encode path.
+      Map<String, dynamic>? result;
+      if (item.huaweiPortrait != null &&
+          item.huaweiPortrait!['safeToTransform'] == true) {
+        result = await Isolate.run(() {
+          final report = XdRemuxFFI.remuxHuaweiPortrait(
+            item.inputPath,
+            item.outputPath,
+          );
+          if (report['success'] == true) {
+            final outputValid = XdRemuxFFI.verifyPortraitOutput(item.outputPath);
+            if (outputValid) {
+              return <String, dynamic>{
+                'success': true,
+                'outputValid': true,
+              };
+            }
+            return <String, dynamic>{
+              'success': false,
+              'outputValid': false,
+              'errorMessage': t(
+                '华为人像输出验证失败',
+                'Huawei portrait output verification failed',
+              ),
+            };
+          }
+          return <String, dynamic>{
+            'success': false,
+            'errorMessage': report['error'] ?? t('华为人像转换失败', 'Huawei portrait conversion failed'),
+          };
+        });
+      } else if (item.huaweiHdr) {
+        // Huawei standard HDR fast path: Huawei HDR is natively compatible
+        // with Apple Photos; no re-encoding is needed.
+        // When it is a Motion Photo, materialize the clean still at outputPath
+        // so downstream Live Photo pairing or video export can run.
+        result = await Isolate.run(() async {
+          try {
+            final inFile = File(item.inputPath);
+            final outFile = File(item.outputPath);
+            final parent = outFile.parent;
+            if (!parent.existsSync()) {
+              parent.createSync(recursive: true);
+            }
+            final stillBytes = item.motionPhoto?.stillBytes ?? 0;
+            if (stillBytes > 0 && stillBytes < inFile.lengthSync()) {
+              final raf = await inFile.open(mode: FileMode.read);
+              try {
+                final bytes = await raf.read(stillBytes);
+                await outFile.writeAsBytes(bytes, flush: true);
+              } finally {
+                await raf.close();
+              }
+            } else if (item.inputPath != item.outputPath) {
+              await inFile.copy(item.outputPath);
+            }
+            return <String, dynamic>{
+              'success': true,
+              'outputValid': true,
+            };
+          } catch (e) {
+            return <String, dynamic>{
+              'success': false,
+              'errorMessage': t('华为静帧提取失败: $e', 'Huawei still extraction failed: $e'),
+            };
+          }
+        });
+      }
+
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
-      Map<String, dynamic>? result;
-      if (runConfig.backend == ConversionBackend.rust &&
+      if (result == null &&
+          runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
           runConfig.hardwareEncode &&
@@ -2380,6 +2484,17 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -2391,6 +2506,22 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: reportedHuaweiHdr
+                ? (huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true
+                    ? QueueItemStatus.pending
+                    : QueueItemStatus.skippedPolicy)
+                : QueueItemStatus.pending,
+            policyReason: reportedHuaweiHdr
+                ? (huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true
+                    ? null
+                    : t(
+                        '华为 HDR 原生兼容 Apple Photos，无需转换',
+                        'Huawei HDR is natively compatible with Apple Photos; no conversion needed',
+                      ))
+                : null,
           ),
         );
         _inspectMotionPhoto(_queue.last);

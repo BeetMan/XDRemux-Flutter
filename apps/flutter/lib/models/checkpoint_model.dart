@@ -82,6 +82,9 @@ class CheckpointItem {
   final String? classificationStatus;
   final String? hdrKind;
   final String? family;
+  final bool huaweiHdr;
+  final bool huaweiHasXtstyle;
+  final Map<String, dynamic>? huaweiPortrait;
 
   /// Motion Photo detection result (null when not a Motion Photo) and the
   /// per-card handling mode, so restore reproduces the exact queue state.
@@ -101,6 +104,9 @@ class CheckpointItem {
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.huaweiHdr = false,
+    this.huaweiHasXtstyle = false,
+    this.huaweiPortrait,
     this.motionPhoto,
     this.motionPhotoMode = 'livePhotoPair',
   });
@@ -121,6 +127,9 @@ class CheckpointItem {
           'classificationStatus': classificationStatus,
         if (hdrKind != null) 'hdrKind': hdrKind,
         if (family != null) 'family': family,
+        if (huaweiHdr) 'huaweiHdr': true,
+        if (huaweiHasXtstyle) 'huaweiHasXtstyle': true,
+        if (huaweiPortrait != null) 'huaweiPortrait': huaweiPortrait,
         if (motionPhoto != null) 'motionPhoto': motionPhoto,
         'motionPhotoMode': motionPhotoMode,
       };
@@ -141,6 +150,11 @@ class CheckpointItem {
       classificationStatus: json['classificationStatus'] as String?,
       hdrKind: json['hdrKind'] as String?,
       family: json['family'] as String?,
+      huaweiHdr: json['huaweiHdr'] as bool? ?? false,
+      huaweiHasXtstyle: json['huaweiHasXtstyle'] as bool? ?? false,
+      huaweiPortrait: json['huaweiPortrait'] != null
+          ? Map<String, dynamic>.from(json['huaweiPortrait'] as Map)
+          : null,
       motionPhoto:
           json['motionPhoto'] != null
               ? Map<String, dynamic>.from(json['motionPhoto'] as Map)

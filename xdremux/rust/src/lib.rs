@@ -246,6 +246,11 @@ pub extern "C" fn xdremux_make_live_photo(
             .map_err(|e| format!("cannot read source: {e}"))?;
         let still = std::fs::read(still_path)
             .map_err(|e| format!("cannot read still: {e}"))?;
+        let still = if let Ok(Some(still_asset)) = motion_photo::parse_motion_photo(&still) {
+            still[still_asset.still_range.start as usize..still_asset.still_range.end as usize].to_vec()
+        } else {
+            still
+        };
         let asset = motion_photo::parse_motion_photo(&source)?
             .ok_or("source is not a Motion Photo")?;
         let primary = motion_photo::primary_video_range(&source, &asset);
@@ -866,6 +871,85 @@ pub extern "C" fn xdremux_huawei_inspect(input_path: *const c_char) -> *mut c_ch
         .to_string()
     });
     CString::new(report).unwrap_or_default().into_raw()
+}
+
+/// Remux a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
+///
+/// Returns a JSON string with `{"success": true}` or `{"success": false, "error": "..."}`.
+/// The returned string is owned and must be released with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_remux_huawei_portrait(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = std::panic::catch_unwind(|| {
+        if input_path.is_null() || output_path.is_null() {
+            return serde_json::json!({
+                "success": false,
+                "error": "null path pointer",
+            })
+            .to_string();
+        }
+        let in_str = match unsafe { CStr::from_ptr(input_path) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("invalid utf-8 input path: {e}"),
+                })
+                .to_string()
+            }
+        };
+        let out_str = match unsafe { CStr::from_ptr(output_path) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("invalid utf-8 output path: {e}"),
+                })
+                .to_string()
+            }
+        };
+        let data = match std::fs::read(in_str) {
+            Ok(d) => d,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("read error: {e}"),
+                })
+                .to_string()
+            }
+        };
+        match portrait::run_huawei_portrait(&data) {
+            Ok(remuxed) => {
+                if let Err(e) = std::fs::write(out_str, remuxed) {
+                    return serde_json::json!({
+                        "success": false,
+                        "error": format!("write error: {e}"),
+                    })
+                    .to_string();
+                }
+                serde_json::json!({
+                    "success": true,
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({
+                "success": false,
+                "error": e,
+            })
+            .to_string(),
+        }
+    })
+    .unwrap_or_else(|_| {
+        serde_json::json!({
+            "success": false,
+            "error": "panic in xdremux_remux_huawei_portrait",
+        })
+        .to_string()
+    });
+
+    CString::new(result).unwrap_or_default().into_raw()
 }
 
 // ---------------------------------------------------------------------------

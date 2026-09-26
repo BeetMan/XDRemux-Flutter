@@ -1567,6 +1567,53 @@ fn find_meta_child(data: &[u8], meta_hdr: &BoxHeader, target: &[u8; 4]) -> Optio
     .find(|b| &b.btype == target)
 }
 
+fn extract_exif_fnumber(payload: &[u8]) -> Option<f64> {
+    let tiff_start = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+        0usize
+    } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
+        10usize
+    } else if payload.len() >= 4 {
+        let off = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        4 + off
+    } else {
+        0usize
+    };
+    let tiff = payload.get(tiff_start..)?;
+    let le = tiff.starts_with(b"II");
+    let u16v = |o: usize| -> Option<u16> {
+        let b: [u8; 2] = tiff.get(o..o + 2)?.try_into().ok()?;
+        Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+    };
+    let u32v = |o: usize| -> Option<u32> {
+        let b: [u8; 4] = tiff.get(o..o + 4)?.try_into().ok()?;
+        Some(if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+    };
+    let ifd0 = u32v(4)? as usize;
+    let n0 = u16v(ifd0)? as usize;
+    let mut exif_ifd = None;
+    for k in 0..n0 {
+        let pos = ifd0 + 2 + k * 12;
+        if u16v(pos)? == 0x8769 {
+            exif_ifd = Some(u32v(pos + 8)? as usize);
+            break;
+        }
+    }
+    let exif_ifd = exif_ifd?;
+    let ne = u16v(exif_ifd)? as usize;
+    for k in 0..ne {
+        let pos = exif_ifd + 2 + k * 12;
+        if u16v(pos)? == 0x829d { // FNumber
+            let off = u32v(pos + 8)? as usize;
+            let num = u32v(off)? as f64;
+            let den = u32v(off + 4)? as f64;
+            if den > 0.0 {
+                return Some(num / den);
+            }
+        }
+    }
+    None
+}
+
 fn extract_exif_datetime(base: &[u8], meta: &ParsedMeta) -> Option<String> {
     let exif_item = meta.items.iter().find(|i| i.itype == "Exif")?;
     let entry = meta
@@ -1618,6 +1665,113 @@ pub(crate) fn cmd_portrait(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Derive a smooth Apple Portrait Effects Matte (foreground person segmentation mask)
+/// from Huawei disparity map and face detection bounding box / focus point.
+fn derive_huawei_portrait_matte(
+    raw_plane: &[u8],
+    rf_payload: &[u8],
+    disp_oriented: &[u8],
+    ow: usize,
+    oh: usize,
+    dim_major: f64,
+    dim_minor: f64,
+    focus_rank: f64,
+) -> Vec<u8> {
+    let p1_end = 64 + 1024 * 768;
+    let mut subj_depth_opt = None;
+
+    // 1. Check for face / subject bounding box in RfDataB subsegment (tag 0x00007b07)
+    if rf_payload.len() >= p1_end + 64 {
+        let sub = &rf_payload[p1_end..];
+        if sub.len() >= 64 && u32::from_le_bytes([sub[0], sub[1], sub[2], sub[3]]) == 0x7b07 {
+            let u32_at = |o: usize| u32::from_le_bytes([sub[o], sub[o + 1], sub[o + 2], sub[o + 3]]);
+            let c1_x = u32_at(20);
+            let c1_y = u32_at(24);
+            let c2_x = u32_at(28);
+            let c3_y = u32_at(40);
+            let (xmin, xmax) = (c1_x.min(c2_x), c1_x.max(c2_x));
+            let (ymin, ymax) = (c1_y.min(c3_y), c1_y.max(c3_y));
+            let d_major = if dim_major > 0.0 { dim_major } else { 4096.0 };
+            let d_minor = if dim_minor > 0.0 { dim_minor } else { 3072.0 };
+            if xmax > xmin && ymax > ymin && xmax <= 8192 && ymax <= 8192 {
+                let d_xmin = ((xmin as f64 / d_major) * 1024.0).clamp(0.0, 1023.0) as usize;
+                let d_xmax = ((xmax as f64 / d_major) * 1024.0).clamp(0.0, 1023.0) as usize;
+                let d_ymin = ((ymin as f64 / d_minor) * 768.0).clamp(0.0, 767.0) as usize;
+                let d_ymax = ((ymax as f64 / d_minor) * 768.0).clamp(0.0, 767.0) as usize;
+                let mut box_vals = Vec::new();
+                for y in d_ymin..=d_ymax {
+                    for x in d_xmin..=d_xmax {
+                        let v = raw_plane[y * 1024 + x];
+                        if v > 60 {
+                            box_vals.push(v);
+                        }
+                    }
+                }
+                if box_vals.len() >= 30 {
+                    box_vals.sort_unstable();
+                    let m = box_vals[box_vals.len() / 2];
+                    subj_depth_opt = Some(m);
+                }
+            }
+        }
+    }
+
+    // 2. Fallbacks if bounding box not present or empty
+    let subj_depth = if let Some(m) = subj_depth_opt {
+        m
+    } else if focus_rank >= 80.0 {
+        focus_rank as u8
+    } else {
+        // Histogram cluster search: find foreground cluster (disparity >= 90)
+        let mut hist = [0u32; 256];
+        for &b in disp_oriented {
+            hist[b as usize] += 1;
+        }
+        let min_cluster_size = (ow * oh / 20) as u32; // >= 5% of pixels
+        let mut fg_vals = Vec::new();
+        for d in 90..=255 {
+            if hist[d] > 500 {
+                fg_vals.push((d as u8, hist[d]));
+            }
+        }
+        let total_fg: u32 = fg_vals.iter().map(|(_, c)| *c).sum();
+        if total_fg >= min_cluster_size {
+            let mut acc = 0;
+            let mut med = 170u8;
+            for &(d, c) in &fg_vals {
+                acc += c;
+                if acc >= total_fg / 2 {
+                    med = d;
+                    break;
+                }
+            }
+            med
+        } else {
+            focus_rank.max(80.0) as u8
+        }
+    };
+
+    let delta = 30.0f32;
+    let thresh_high = (subj_depth as f32 - 15.0).max(35.0);
+    let thresh_low = (thresh_high - delta).max(10.0);
+
+    let mut matte_oriented = vec![0u8; ow * oh];
+    for i in 0..ow * oh {
+        let d = disp_oriented[i] as f32;
+        if d >= thresh_high {
+            matte_oriented[i] = 255;
+        } else if d <= thresh_low {
+            matte_oriented[i] = 0;
+        } else {
+            let t = (d - thresh_low) / (thresh_high - thresh_low);
+            let s = t * t * (3.0 - 2.0 * t);
+            matte_oriented[i] = (s * 255.0).round() as u8;
+        }
+    }
+
+    matte_oriented
+}
+
 /// Convert a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
 pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     let top = top_level_boxes(source)?;
@@ -1630,7 +1784,14 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
         .iter()
         .find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"edof"))
         .map(|i| i.item_id);
-    let primary = edof_item.unwrap_or(meta.primary_id);
+    let use_base = std::env::var("XDREMUX_PORTRAIT_USE_BASE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let primary = if use_base {
+        meta.primary_id
+    } else {
+        edof_item.unwrap_or(meta.primary_id)
+    };
     let (pw_frame, ph_frame) = item_dims(&meta, primary)?;
 
     // Gain-map grid item (must target the gain map grid, not edof or primary).
@@ -1669,12 +1830,58 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     }
     let raw_plane = &rf_payload[64..64 + 1024 * 768];
 
-    // Orient depth plane: if primary is portrait (ph > pw), rotate CW 90.
-    let (disp_oriented, ow, oh) = if ph_frame > pw_frame {
+    // RfDataB header parsing (64 bytes):
+    // Offset 2 (u16le): mode_flags (0x2300 for portrait, 0x2200 for landscape)
+    // Offset 24 (u16le): dim_major (e.g. 4096)
+    // Offset 26 (u16le): dim_minor (e.g. 3072)
+    // Offset 28 (u16le): pos_major (focus coordinate along major dimension)
+    // Offset 30 (u16le): pos_minor (focus coordinate along minor dimension)
+    let u16_at = |off: usize| -> u16 {
+        u16::from_le_bytes([rf_payload[off], rf_payload[off + 1]])
+    };
+    let mode_flags = u16_at(2);
+    let dim_major = u16_at(24) as f64;
+    let dim_minor = u16_at(26) as f64;
+    let pos_major = u16_at(28) as f64;
+    let pos_minor = u16_at(30) as f64;
+
+    let is_portrait = ph_frame > pw_frame;
+    let (disp_oriented, ow, oh, focus_x, focus_y) = if is_portrait {
         let (r, w2, h2) = rotate_cw90(raw_plane, 1024, 768);
-        (r, w2 as u32, h2 as u32)
+        let fx = if dim_minor > 0.0 && pos_minor > 0.0 {
+            (pos_minor / dim_minor).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let fy = if dim_major > 0.0 && pos_major > 0.0 {
+            (pos_major / dim_major).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        (r, w2 as u32, h2 as u32, fx, fy)
     } else {
-        (raw_plane.to_vec(), 1024u32, 768u32)
+        let rotate_180 = mode_flags == 0x2200;
+        let r = if rotate_180 {
+            raw_plane.iter().rev().copied().collect()
+        } else {
+            raw_plane.to_vec()
+        };
+        let (fx, fy) = if dim_major > 0.0 && dim_minor > 0.0 && pos_major > 0.0 {
+            if rotate_180 {
+                (
+                    ((dim_major - pos_major) / dim_major).clamp(0.0, 1.0),
+                    ((dim_minor - pos_minor) / dim_minor).clamp(0.0, 1.0),
+                )
+            } else {
+                (
+                    (pos_major / dim_major).clamp(0.0, 1.0),
+                    (pos_minor / dim_minor).clamp(0.0, 1.0),
+                )
+            }
+        } else {
+            (0.5, 0.5)
+        };
+        (r, 1024u32, 768u32, fx, fy)
     };
 
     // Upscale 2x: e.g. 768x1024 -> 1536x2048 (matches half of 3072x4096 primary, matching gain map)
@@ -1683,19 +1890,65 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     // Encode disparity mono8 stream
     let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
 
+    let exif_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .ok_or("no Exif item in base")?
+        .item_id;
+    let exif_payload =
+        read_item_payload(source, &meta, exif_item).ok_or("Exif payload unreadable")?;
+    let aperture = extract_exif_fnumber(&exif_payload).unwrap_or(2.0);
+
+    let fx_px = (focus_x * ow as f64).clamp(0.0, (ow - 1) as f64) as usize;
+    let fy_px = (focus_y * oh as f64).clamp(0.0, (oh - 1) as f64) as usize;
+
+    let mut window = Vec::with_capacity(25);
+    for dy in -2i32..=2i32 {
+        let y = (fy_px as i32 + dy).clamp(0, oh as i32 - 1) as usize;
+        for dx in -2i32..=2i32 {
+            let x = (fx_px as i32 + dx).clamp(0, ow as i32 - 1) as usize;
+            window.push(disp_oriented[y * ow as usize + x]);
+        }
+    }
+    window.sort_unstable();
+    let focus_rank = window[window.len() / 2] as f64;
+    let focus_normalized = (focus_rank / 255.0).clamp(0.0, 1.0);
+
     // Apple Disparity parameters:
+    // Typical Apple portrait scene absolute disparity span is ~2.1 diopters (0.005 to 2.105),
+    // matching APPLE_REFERENCE_SPAN. This ensures Apple Photos' CIDepthBlurEffect
+    // calculates a realistic Circle of Confusion across the simulated aperture
+    // range (f/1.4 - f/16), rather than a compressed, flat blur.
     let float_min = 0.005f64;
-    let float_max = 0.25f64;
-    let activation = 0.8f64;
+    let float_max = 2.105f64;
     let headroom = 1.0f64;
+    let headroom_normalized = (headroom / 4.0).min(1.0);
+    let lux_normalized = 0.5f64;
+    let fitted_primary_gain = (0.02
+        + 0.17 * focus_normalized
+        + 0.04 * headroom_normalized
+        + 0.02 * lux_normalized)
+        .clamp(0.005, 0.25);
+    let activation = (fitted_primary_gain / 0.25).clamp(0.1, 1.0);
     let dynamic = xhlrb_dynamic_values(activation, headroom, true);
     let rend = patch_rend(&dynamic)?;
     let rend_b64 = base64_encode(&rend);
-    let disparity_xmp = disparity_xmp(float_min, float_max, &rend_b64, 2.0);
+    let disparity_xmp = disparity_xmp(float_min, float_max, &rend_b64, aperture);
 
-    // Encode stub portrait effects / person matte (all zero, matching scaffold)
-    let zero_matte = vec![0u8; (disp_fw * disp_fh) as usize];
-    let (person_stream, person_hvcc) = encode_mono(&zero_matte, disp_fw, disp_fh)?;
+    // Derive portrait effects / person matte from disparity and bounding box / focus
+    let matte_oriented = derive_huawei_portrait_matte(
+        raw_plane,
+        &rf_payload,
+        &disp_oriented,
+        ow as usize,
+        oh as usize,
+        dim_major,
+        dim_minor,
+        focus_rank,
+    );
+    let (person_matte, _, _) = upscale2x(&matte_oriented, ow as usize, oh as usize);
+    let (person_stream, person_hvcc) = encode_mono(&person_matte, disp_fw, disp_fh)?;
     let hair_stream = person_stream.clone();
     let hair_hvcc = person_hvcc.clone();
 
@@ -1938,8 +2191,6 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
             to: auxl_targets.clone(),
         });
     }
-    let exif_payload =
-        read_item_payload(source, &meta, exif_item).ok_or("Exif payload unreadable")?;
     let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
 
     // Primary XMP with Focus region
@@ -1965,8 +2216,8 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     };
     let merged_main_xmp = merge_focus_into_xmp(
         &base_xmp,
-        pw_frame as f64 * 0.5,
-        ph_frame as f64 * 0.5,
+        focus_x,
+        focus_y,
         pw_frame,
         ph_frame,
         &datetime,

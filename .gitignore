@@ -123,3 +123,8 @@ apps/flutter/ios/SwiftBackend/.build/
 apps/flutter/third_party/ohos/
 # Rust cdylib built for OHOS (regenerate via xdremux/rust/build_ohos.sh)
 apps/flutter/ohos/entry/libs/
+
+# Harmony OS standalone project
+apps/harmony/
+**/oh_modules/
+**/.hvigor/

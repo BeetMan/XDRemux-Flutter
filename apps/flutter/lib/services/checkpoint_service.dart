@@ -315,6 +315,9 @@ class CheckpointService {
         classificationStatus: item.classificationStatus,
         hdrKind: item.hdrKind,
         family: item.family,
+        huaweiHdr: item.huaweiHdr,
+        huaweiHasXtstyle: item.huaweiHasXtstyle,
+        huaweiPortrait: item.huaweiPortrait,
         motionPhoto: item.motionPhoto?.toJson(),
         motionPhotoMode: item.motionPhotoMode.name,
       );

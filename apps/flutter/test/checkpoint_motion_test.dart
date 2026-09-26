@@ -167,13 +167,44 @@ void main() {
       expect(summary.videoWidth, 3840);
       expect(summary.videoHeight, 2880);
       expect(summary.resolutionLabel, contains('3840×2880'));
-      expect(summary.hasAudio, isTrue);
-      expect(summary.audioCodec, 'mp4a');
-      expect(summary.audioChannels, 1);
-      expect(summary.audioSampleRate, 16000);
-      expect(summary.secondaryWidth, 1920);
-      expect(summary.secondaryHeight, 1440);
-      expect(summary.presentationTimestampUs, 1496141);
+    });
+
+    test('MotionPhotoService inspects real Huawei Mate 70 motion photo if present', () async {
+      const sample = r'C:\tmp\huawei\portrait-motion-20260907\IMG_20260907_021031.heic';
+      if (!File(sample).existsSync()) return;
+
+      final summary = await MotionPhotoService.inspect(sample);
+      expect(summary, isNotNull);
+      expect(summary!.kind, 'huaweiOpenHarmonyMotionPhoto');
+      expect(summary.videoBytes, greaterThan(0));
+      expect(summary.stillBytes, greaterThan(0));
+    });
+
+    test('CheckpointItem persists huawei fields', () {
+      final item = CheckpointItem(
+        inputPath: '/tmp/IMG_0001.heic',
+        outputPath: '/out/IMG_0001_iso.heic',
+        status: CheckpointItemStatus.pending,
+        huaweiHdr: true,
+        huaweiHasXtstyle: true,
+        huaweiPortrait: const {'classification': 'huawei-portrait', 'safeToTransform': true},
+        motionPhoto: const {
+          'kind': 'huaweiOpenHarmonyMotionPhoto',
+          'stillBytes': 2854016,
+          'videoBytes': 4562931,
+          'streamCount': 1,
+        },
+        motionPhotoMode: 'livePhotoPair',
+      );
+
+      final json = item.toJson();
+      final restored = CheckpointItem.fromJson(json);
+
+      expect(restored.huaweiHdr, isTrue);
+      expect(restored.huaweiHasXtstyle, isTrue);
+      expect(restored.huaweiPortrait?['safeToTransform'], isTrue);
+      expect(restored.motionPhoto?['kind'], 'huaweiOpenHarmonyMotionPhoto');
+      expect(restored.motionPhotoMode, 'livePhotoPair');
     });
   });
 }

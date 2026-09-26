@@ -226,6 +226,12 @@ class XdRemuxFFI {
         ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)
       >('xdremux_huawei_inspect');
 
+  static final _remuxHuaweiPortrait = _lib
+      .lookupFunction<
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)
+      >('xdremux_remux_huawei_portrait');
+
   static final _classify = _lib.lookupFunction<
       ClassificationResult Function(ffi.Pointer<Utf8>),
       ClassificationResult Function(ffi.Pointer<Utf8>)>('xdremux_classify');
@@ -540,6 +546,36 @@ class XdRemuxFFI {
       'status': 'invalid-report',
       'isHuaweiHdr': false,
     };
+  }
+
+  /// Remux a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
+  static Map<String, dynamic> remuxHuaweiPortrait(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final res = _remuxHuaweiPortrait(inPtr, outPtr);
+      if (res == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'error': 'Rust remux Huawei portrait returned null',
+        };
+      }
+      try {
+        final decoded = jsonDecode(res.toDartString());
+        if (decoded is Map) {
+          return Map<String, dynamic>.from(decoded);
+        }
+        return <String, dynamic>{
+          'success': false,
+          'error': 'Malformed response from remux Huawei portrait',
+        };
+      } finally {
+        _freeString(res);
+      }
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+    }
   }
 
   /// Split a Motion Photo into still image + video files under [outDir].

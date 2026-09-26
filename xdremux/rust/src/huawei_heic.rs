@@ -477,8 +477,8 @@ fn inspect_huawei_portrait(data: &[u8], meta: &ParsedMeta) -> Option<HuaweiPortr
         } else {
             "huawei-portrait-incomplete".into()
         },
-        safe_to_transform: false,
-        recommended_action: "inspect-only".into(),
+        safe_to_transform: complete,
+        recommended_action: if complete { "remux-portrait" } else { "inspect-only" }.into(),
         primary_item_id: meta.primary_id,
         edof_item_id,
         edof_dimensions: edof_item_id.and_then(|item_id| item_dimensions(meta, item_id)),

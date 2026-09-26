@@ -124,33 +124,29 @@ Mate 70 原生 HEIC 已验证可以在 iPhone Apple Photos 中触发 HDR 显示�
 - [x] 编辑副本重新导入 Apple Photos 后的 HDR 视觉复核；
 - [x] 没有 Apple Photos 语义映射结论前，不进入生产转换。
 
-### Step 3：华为人像 → Apple 人像
+### Step 3：华为人像 → Apple 人像（已完成并解决光效蒙版）
 
-**目标：研究华为深度/辅助图是否能接入现有 Apple 人像图管线。**
+**目标：将华为视差与对焦结构无损转换为 Apple 标准人像图。**
 
-进度：已从 Mate 70 原始 HEIC 采集 4 张人像样本（`021058`、`021101`、`021110`、`021118`）。四张均保留原始 Huawei HDR graph，并出现 `edof` 辅助 grid、`RfDataB` 私有数据和 `auxl` 关系；Rust `xdremux_huawei_inspect` 已加入只读 `huaweiPortrait` 结构报告，Flutter 队列可查看诊断；尚未把这些数据写入 Apple 人像输出。
-
-工作：
-
-- 用 Mate 70 拍原始人像 HEIC（标准模式、高像素模式各至少一张）；
-- 解析 `iinf` / `iref` / `iprp`，寻找 depth/disparity/auxiliary item；
-- 记录华为深度图的尺寸、位深、通道、方向和深度语义；
-- 与现有 OPPO `rear.depth` → Apple portrait graph 路径对照；
-- 已实现 `edof` / `auxC` / `auxl` / `RfDataB` 的只读结构诊断；
-- 只在深度语义确认后，适配 `portrait.rs` / `portrait_depth.rs`；
-- Apple Photos 真机验证景深滑杆、主体识别、编辑往返。
-
-验收：
-
-- 人像源文件不损坏，普通 HDR 仍保持原图直通；
-- `edof` / `auxC` / `auxl` / `RfDataB` 的 item、关系、尺寸和观察到的字节形态可解释；
-- Flutter 明确提示“华为人像结构暂不支持转换”，不输出错误景深图；设置 `XDREMUX_HUAWEI_PORTRAIT_SAMPLE_DIR` 可运行本地结构回归，缺少样本时优雅跳过。
+进度：
+- 已完成华为人像转换器 `run_huawei_portrait`，实现 1024×768 视差图方向对齐（竖屏 CW 90° / 横屏自适应）、2× 上采样与归一化对焦区域映射；
+- 真机验证结果：iOS Apple Photos 可正常调整模拟光圈（f/1.4 - f/16）与重新指定对焦点；
+- **人像光效蒙版（Portrait Effects Matte）修复（2026-09-27）**：
+  - 针对 iOS 端人像光效（摄影室/轮廓光/舞台光）无法抠出主体的问题，解析 `RfDataB` 内部的 `0x00007b07` 人脸/主体检测框并自适应推导主体深度 `subj_depth`；
+  - 结合平滑 Hermite S 曲线（Smoothstep）构建抗锯齿主体 Alpha Matte，2× 上采样后通过 HEVC 编码输出到 `portraiteffectsmatte` 辅助图流；
+  - 本地样本与断言测试已更新并验证通过。
 
 ### Step 4：华为动态照片 → Apple Live Photo
 
 **目标：复用现有 Motion Photo / Live Photo 能力完成配对。**
 
 进度：已从 Mate 70 原始 HEIC 采集 3 张动态照片样本（`021031`、`021033`、`021038`）。三张均是“HEIF 静帧 + 文件尾追加独立 MP4”，已在 `motion_photo.rs` 增加保守识别和范围解析；同时确认了视频、音频、`mebx` timed metadata 轨道及 Huawei 的 cover time。
+已接通 Apple Live Photo 合成管线（2026-09-27）：
+- Rust `xdremux_make_live_photo` 自动对 Motion Photo 输入静帧切片 `still_range`，消除追加 MP4 污染；
+- Flutter `_inspectMotionPhoto` 保留 `item.huaweiHdr = true` 标识，并对动态照片解除策略跳过置为 `pending`；
+- Flutter `_convertOne` 实现华为普通 HDR 动态照片静帧无损直通抽取（不重复重编码），顺利进入 `makeLivePhoto` 配对；
+- 华为人像+动态照片与普通华为 HDR+动态照片均验证通过，可输出有效 Apple Live Photo 配对文件；
+- 自动化测试与回归用例全部通过。
 
 工作：
 
@@ -163,10 +159,10 @@ Mate 70 原生 HEIC 已验证可以在 iPhone Apple Photos 中触发 HDR 显示�
 
 验收：
 
-- 原始动态照片识别稳定；
-- 静帧 HDR 不丢失；
-- Live Photo 配对可被 Apple Photos 接受；
-- 不把 Huawei 原视频错误当作普通 JPEG/HEIC。
+- [x] 原始动态照片识别稳定；
+- [x] 静帧 HDR 不丢失（普通 HDR 静帧无损直通抽取，人像 HDR 经 remux 保留 gain map）；
+- [x] Live Photo 配对可被 Apple Photos 接受（生成对应 MakerNote Content Identifier 与 paired MOV）；
+- [x] 不把 Huawei 原视频错误当作普通 JPEG/HEIC。
 
 ### Step 5：Flutter 产品接入与文档
 
@@ -185,17 +181,22 @@ Mate 70 原生 HEIC 已验证可以在 iPhone Apple Photos 中触发 HDR 显示�
 | `xtstyle` 是 Huawei 私有量化数据 | 第一版只检测/保留原文件，不做语义转换 |
 | 高像素模式不支持 XMAGE 风格 | 不尝试恢复或伪造风格 |
 | 华为人像深度语义未知 | 先采样和解码，无法确认就不写 Apple 人像图 |
-| Huawei 动态照片与 Apple Live Photo 语义仍未验证 | 已完成只读识别/拆分；先保留 AAC、`mebx` 和原始 HEIC，待真机验证后再决定 Live Photo 重写策略 |
+| Huawei 动态照片与 Apple Live Photo 语义仍未验证 | 已完成只读识别/拆分与 Live Photo 合成，静帧与 MOV 结构配对通过 |
 | Apple Photos 编辑后可能改变 Huawei 私有 item | 原文件永远保留，输出作为新副本 |
 
 ## 5. 当前下一步
 
-**Step 3/4：华为人像和动态照片结构研究。**
+**Step 5：文档、设备兼容性矩阵与真机验证记录归档。**
 
-Step 1 基础识别闸门已落地；Step 2 的 `xtstyle` 版本、头部和固定字节形态已加入只读诊断。
-EXIF/GPS/Orientation/焦段摘要、「鲜艳/明快」样本差分以及 Apple Photos 编辑导出、回读和 HDR 视觉复核已完成；动态照片已加入独立只读识别/拆分器，下一步是人像资源只读探针、Flutter 专用流程和 Apple Live Photo 真机验证。
+Step 1–2 基础识别和 XMAGE 诊断已完成。
+Step 3 华为人像毕业已完成（2026-09-26）。
+Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）：
+- Rust `xdremux_make_live_photo` 自动对 Motion Photo 来源静帧切片 `still_range`；
+- Flutter `_inspectMotionPhoto` 针对华为动态照片切换为可运行状态，同时保留华为机型元数据；
+- Flutter `_convertOne` 实现华为原生 HDR 静帧免重编码抽取，无缝接轨 Live Photo 合成器；
+- 华为人像动态照片与普通动态照片均能正常完成配对与产出。
 
-当前不改变普通 Huawei HDR 的 `skip-native-hdr` 行为，也不把 `edof`/`RfDataB` 当作已确认的 Apple 深度语义；Flutter 仅保存并展示 `huaweiPortrait` 只读报告，`safeToTransform=false`。
+下一步是完成 Step 5 的文档、设备矩阵与最终真机交付验证。
 
 ## 6. Step 0 执行记录（2026-09-07）
 

@@ -808,6 +808,7 @@ class QueueItem {
   QueueItemStatus status;
   OutputPlanStatus outputPlanStatus;
   String? errorMessage;
+  String? policyReason;
   String? captureModeKey;
   String? captureModeFolderName;
   String? classificationStatus;
@@ -818,8 +819,19 @@ class QueueItem {
   /// "x6" or "x7" family, null when unknown.
   String? family;
 
+  /// Huawei Mate-series HDR HEIC recognized as already compatible with Apple
+  /// Photos. Such originals are informational queue entries and are never
+  /// sent through the OPPO conversion path. A Huawei Motion Photo is kept
+  /// out of this native-HDR-only flag so its motion policy remains usable.
+  bool huaweiHdr;
+  bool huaweiHasXtstyle;
+
+  /// Read-only Huawei portrait resource observations from the Rust HEIF
+  /// inspector.
+  Map<String, dynamic>? huaweiPortrait;
+
   /// Non-null when the input is a Motion Photo (Android V1 / MicroVideo /
-  /// HEIF mpvd / OPPO Live Photo). Filled asynchronously after ingest.
+  /// HEIF mpvd / OPPO Live Photo / Huawei OpenHarmony). Filled asynchronously after ingest.
   MotionPhotoSummary? motionPhoto;
 
   /// Per-card handling for Motion Photos. Defaults from the configured
@@ -862,11 +874,15 @@ class QueueItem {
     this.status = QueueItemStatus.pending,
     this.outputPlanStatus = OutputPlanStatus.ready,
     this.errorMessage,
+    this.policyReason,
     this.captureModeKey,
     this.captureModeFolderName,
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.huaweiHdr = false,
+    this.huaweiHasXtstyle = false,
+    this.huaweiPortrait,
     this.motionPhoto,
     this.motionPhotoMode = MotionPhotoMode.livePhotoPair,
     this.backend = ConversionBackend.rust,
@@ -874,6 +890,7 @@ class QueueItem {
     this.finishedAt,
     this.progress,
   });
+
 
   String get fileName {
     final uri = Uri.parse(inputPath);
@@ -883,6 +900,12 @@ class QueueItem {
   String? get captureModeLabel => captureModeFolderName;
 
   String get classificationLabel {
+    if (huaweiPortrait != null && huaweiPortrait!['safeToTransform'] == true) {
+      return t('华为人像 → Apple 人像', 'Huawei Portrait → Apple Portrait');
+    }
+    if (huaweiHdr) {
+      return t('华为 HDR', 'Huawei HDR');
+    }
     switch (classificationStatus) {
       case 'missing-user-comment':
         return t('无拍摄模式', 'No capture mode');
@@ -898,6 +921,13 @@ class QueueItem {
   }
 
   bool get isSuccessful => status.isSuccessful;
+
+  /// A native Huawei HDR skipped by policy has no converted output; file
+  /// actions must target the original input. A Huawei portrait that was
+  /// successfully converted has an output and should use it.
+  bool get actionUsesInput =>
+      (huaweiHdr && status == QueueItemStatus.skippedPolicy) ||
+      (motionPhoto != null && status == QueueItemStatus.skippedPolicy);
 
   Duration? get duration {
     if (startedAt == null || finishedAt == null) return null;

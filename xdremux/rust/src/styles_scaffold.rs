@@ -994,11 +994,12 @@ pub(crate) fn normalize_primary_orientation(exif: &[u8]) -> Result<Vec<u8>, Stri
 /// its Apple-specific meaning still requires device validation. Append a new
 /// directory when absent, leaving all TIFF payload/thumbnail/GPS offsets intact.
 pub(crate) fn set_portrait_custom_rendered(exif: &[u8]) -> Result<Vec<u8>, String> {
-    let prefix = exif_prefix_len(exif)?;
+    let exif = rename_extra_maker_notes(exif)?;
+    let prefix = exif_prefix_len(&exif)?;
     let (bo, _) = tiff_header(&exif[prefix..]).ok_or("bad TIFF header")?;
     let mut value = [0; 2];
     bo.put_u16(&mut value, 9);
-    upsert_exif_field(exif, 0xa401, 3, 1, &value)
+    upsert_exif_field(&exif, 0xa401, 3, 1, &value)
 }
 
 /// Append payloads/directories rather than shifting TIFF data: MakerNotes,

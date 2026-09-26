@@ -287,6 +287,20 @@ class XdRemuxService {
     }
   }
 
+  static Future<Map<String, dynamic>> remuxHuaweiPortrait(
+    String inputPath,
+    String outputPath,
+  ) async {
+    try {
+      return XdRemuxFFI.remuxHuaweiPortrait(inputPath, outputPath);
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'error': error.toString(),
+      };
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Capture-mode classification
   // -----------------------------------------------------------------------
