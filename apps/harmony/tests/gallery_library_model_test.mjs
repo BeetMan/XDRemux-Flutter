@@ -5,7 +5,8 @@ import {
   encodeGalleryLibrary,
   galleryExtensionFromName,
   galleryItemPath,
-  galleryMimeTypeForExtension
+  galleryMimeTypeForExtension,
+  removeGalleryLibraryItem
 } from '../entry/src/main/ets/gallery/GalleryLibraryModel.ts';
 
 const photo = {
@@ -25,6 +26,16 @@ assert.equal(galleryExtensionFromName('file://media/Camera/IMG_1001.JPEG?grant=1
 assert.equal(galleryExtensionFromName('photo-without-extension'), '.img');
 assert.equal(galleryMimeTypeForExtension('.heif'), 'image/heic');
 assert.equal(galleryMimeTypeForExtension('.jpeg'), 'image/jpeg');
+const otherPhoto = {
+  ...photo,
+  id: 'a3f2b843-aeb0-46aa-919a-a8b3d168be59',
+  displayName: 'other.jpg',
+  extension: '.jpg',
+  mimeType: 'image/jpeg'
+};
+assert.deepEqual(removeGalleryLibraryItem([photo], photo.id), []);
+assert.deepEqual(removeGalleryLibraryItem([photo, otherPhoto], photo.id), [otherPhoto]);
+assert.throws(() => removeGalleryLibraryItem([photo], 'not-present'), /不在本地图库/);
 
 assert.throws(() => decodeGalleryLibrary('{'), /JSON/);
 assert.throws(() => decodeGalleryLibrary(JSON.stringify({ schema: 2, items: [] })), /版本/);

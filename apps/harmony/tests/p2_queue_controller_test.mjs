@@ -86,6 +86,29 @@ async function testModeConfigDefensiveCopy() {
   assert.deepEqual(captured.map((entry) => entry.compat), [2, 6]);
 }
 
+async function testStartSingleUsesPhotoOverrideAndLeavesOtherItemsPending() {
+  const calls = [];
+  const controller = makeController(async (job, snapshot) => {
+    calls.push({ name: job.displayName, mode: snapshot.modeKey });
+    return successfulResult(job, snapshot);
+  });
+  const selected = controller.add(item('selected-photo'));
+  controller.setModeOverride(selected.id, mode('apple'));
+  const other = controller.add(item('other-photo'));
+
+  await controller.startSingle(selected.id);
+  assert.deepEqual(calls, [{ name: 'selected-photo', mode: 'apple' }]);
+  assert.equal(selected.status, 'succeeded');
+  assert.equal(other.status, 'pending');
+
+  await controller.start();
+  assert.deepEqual(calls, [
+    { name: 'selected-photo', mode: 'apple' },
+    { name: 'other-photo', mode: 'oppo' }
+  ]);
+  assert.equal(other.status, 'succeeded');
+}
+
 async function testCleanupFailureIsExplicitAndRetryOnlyRemoves() {
   let cleanupCalls = 0;
   const controller = makeController(
@@ -325,6 +348,7 @@ async function testRetryReconvertAndRemoveBoundaries() {
 
 await testEmptyStartAddStart();
 await testModeConfigDefensiveCopy();
+await testStartSingleUsesPhotoOverrideAndLeavesOtherItemsPending();
 await testCleanupFailureIsExplicitAndRetryOnlyRemoves();
 await testDetachStopsLaterItems();
 await testMissingInputRetryRematerializes();
@@ -333,4 +357,4 @@ await testDoubleStartSameRunner();
 await testStopAfterCurrent();
 await testModeSnapshotAtEachStart();
 await testRetryReconvertAndRemoveBoundaries();
-console.log('P2 queue controller tests passed: serial/failure/empty-start/double-start/stop/mode/copy/cleanup/detach/prepare/retry/reconvert/remove');
+console.log('P2 queue controller tests passed: serial/single-item/overrides/failure/empty-start/double-start/stop/mode/copy/cleanup/detach/prepare/retry/reconvert/remove');

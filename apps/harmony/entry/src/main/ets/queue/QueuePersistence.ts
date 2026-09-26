@@ -8,7 +8,8 @@ import type {
   QueueAttemptStatus,
   QueueItem,
   QueueItemStatus,
-  QueueResult
+  QueueResult,
+  QueueModeSnapshot
 } from './QueueController';
 
 export const QUEUE_SCHEMA_VERSION: number = 1;
@@ -69,6 +70,8 @@ export interface PersistedQueueItem {
   classification?: PersistedClassification;
   progress: NativeProgress;
   result?: PersistedResult;
+  /** Optional photo-specific settings; absent for older queue records. */
+  modeOverride?: QueueModeSnapshot;
   exportedUri: string;
   errorMessage: string;
   lastAttemptModeKey: string;
@@ -270,6 +273,54 @@ function decodeClassification(value: Object | undefined): NativeClassificationRe
   };
 }
 
+function copyModeOverride(value: QueueModeSnapshot): QueueModeSnapshot {
+  if (!isRecord(value as Object)) throw new Error('modeOverride 必须是对象');
+  const raw = value as unknown as { modeKey?: Object; modeLabel?: Object; config?: Object;
+    applePhotographicStyles3?: Object };
+  if (raw.modeKey !== 'oppo' && raw.modeKey !== 'apple') throw new Error('modeOverride.modeKey 无效');
+  const modeKey: 'oppo' | 'apple' = raw.modeKey === 'apple' ? 'apple' : 'oppo';
+  const configValue: Object | undefined = raw.config;
+  if (!isRecord(configValue)) throw new Error('modeOverride.config 必须是对象');
+  const config = configValue as { oppoCompat?: Object; oppoCameraTail?: Object; strictTmap?: Object;
+    applePhotographicStyles?: Object; applePortrait?: Object };
+  const oppoCompat: number = requiredCounter(config.oppoCompat, 'modeOverride.config.oppoCompat');
+  const oppoCameraTail: number = requiredCounter(config.oppoCameraTail, 'modeOverride.config.oppoCameraTail');
+  const strictTmap: number = requiredCounter(config.strictTmap, 'modeOverride.config.strictTmap');
+  const applePhotographicStyles: number = requiredCounter(
+    config.applePhotographicStyles, 'modeOverride.config.applePhotographicStyles'
+  );
+  const applePortrait: number = requiredCounter(config.applePortrait, 'modeOverride.config.applePortrait');
+  const applePhotographicStyles3: boolean = raw.applePhotographicStyles3 === undefined
+    ? false
+    : requiredBoolean(raw.applePhotographicStyles3, 'modeOverride.applePhotographicStyles3');
+  if (oppoCompat > 6 || (oppoCameraTail !== 255 && oppoCameraTail > 9) || strictTmap > 1 ||
+    applePhotographicStyles > 1 || applePortrait > 1) {
+    throw new Error('modeOverride.config 超出支持范围');
+  }
+  if (modeKey === 'oppo' && (applePhotographicStyles !== 0 || applePortrait !== 0 ||
+    applePhotographicStyles3)) {
+    throw new Error('OPPO modeOverride 不能包含 Apple 功能');
+  }
+  if (modeKey === 'apple' && (oppoCompat !== 0 || oppoCameraTail !== 0)) {
+    throw new Error('Apple modeOverride 不能包含 OPPO 配置');
+  }
+  if (applePhotographicStyles3 && (modeKey !== 'apple' || applePhotographicStyles !== 1)) {
+    throw new Error('摄影风格 3 必须同时启用 Apple 标准与摄影风格');
+  }
+  return {
+    modeKey: modeKey,
+    modeLabel: requiredString(raw.modeLabel, 'modeOverride.modeLabel', true),
+    applePhotographicStyles3: applePhotographicStyles3,
+    config: {
+      oppoCompat: oppoCompat,
+      oppoCameraTail: oppoCameraTail,
+      strictTmap: strictTmap,
+      applePhotographicStyles: applePhotographicStyles,
+      applePortrait: applePortrait
+    }
+  };
+}
+
 function encodeConversion(conversion: NativeConversionResult): PersistedConversion {
   if (conversion.success !== true) {
     throw new Error('result.conversion.success 必须为 true');
@@ -428,6 +479,7 @@ function encodeItem(item: QueueItem): PersistedQueueItem {
   }
   if (item.details !== undefined) encoded.details = cloneDetails(item.details);
   if (item.classification !== undefined) encoded.classification = encodeClassification(item.classification);
+  if (item.modeOverride !== undefined) encoded.modeOverride = copyModeOverride(item.modeOverride);
   if (item.result !== undefined) encoded.result = encodeResult(item.result);
   return encoded;
 }
@@ -438,7 +490,7 @@ function decodeItem(value: Object | undefined, index: number): QueueItem {
     sourceToken?: Object;
     inputPath?: Object; status?: Object;
     attemptStatus?: Object; externalBusy?: Object; details?: Object; classification?: Object; progress?: Object;
-    result?: Object; exportedUri?: Object; errorMessage?: Object; lastAttemptModeKey?: Object;
+    result?: Object; modeOverride?: Object; exportedUri?: Object; errorMessage?: Object; lastAttemptModeKey?: Object;
     lastAttemptModeLabel?: Object; cleanupStatus?: Object; cleanupErrorMessage?: Object; ownedPaths?: Object };
   const id: string = requiredString(raw.id, 'items[' + String(index) + '].id');
   if (!/^job-[1-9][0-9]*$/.test(id)) throw new Error('任务 ID 无效');
@@ -483,6 +535,7 @@ function decodeItem(value: Object | undefined, index: number): QueueItem {
     externalBusy: requiredBoolean(raw.externalBusy, 'externalBusy'),
     details: raw.details === undefined ? undefined : decodeDetails(raw.details),
     classification: raw.classification === undefined ? undefined : decodeClassification(raw.classification),
+    modeOverride: raw.modeOverride === undefined ? undefined : copyModeOverride(raw.modeOverride as QueueModeSnapshot),
     progress: {
       stage: requiredCounter(progressRaw.stage, 'progress.stage'),
       current: requiredCounter(progressRaw.current, 'progress.current'),

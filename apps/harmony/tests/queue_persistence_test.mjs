@@ -173,6 +173,34 @@ const testU64RoundTrip = () => {
   }
 };
 
+const testPhotoModeOverrideRoundTrip = () => {
+  const modeOverride = {
+    modeKey: 'apple',
+    modeLabel: 'Apple 标准 · 摄影风格 3 · 严格 ISO',
+    applePhotographicStyles3: true,
+    config: {
+      oppoCompat: 0,
+      oppoCameraTail: 0,
+      strictTmap: 1,
+      applePhotographicStyles: 1,
+      applePortrait: 0
+    }
+  };
+  const encoded = serializeQueueSnapshot(snapshotWith([queueItem({ modeOverride })], 2));
+  const decoded = decodeQueueSnapshot(encoded);
+  assert.equal(decoded.corrupt, false);
+  assert.deepEqual(decoded.snapshot.items[0].modeOverride, modeOverride);
+
+  const legacy = validSerializedRecord();
+  delete legacy.items[0].modeOverride;
+  assert.equal(decodeQueueSnapshot(JSON.stringify(legacy)).corrupt, false);
+  assert.equal(decodeQueueSnapshot(JSON.stringify(legacy)).snapshot.items[0].modeOverride, undefined);
+
+  const invalid = JSON.parse(encoded);
+  invalid.items[0].modeOverride.config.oppoCompat = 7;
+  assertCorrupt(JSON.stringify(invalid), /modeOverride/);
+};
+
 const testEmptyAndMalformedRecords = async () => {
   assertCorrupt('', /记录为空/);
   assertCorrupt('   ');
@@ -468,10 +496,11 @@ const testQuarantineKeepsEvidenceOnPartialFailure = async () => {
 
 await testEmptyAndMalformedRecords();
 testU64RoundTrip();
+testPhotoModeOverrideRoundTrip();
 testIdentifierAndOwnershipInvariants();
 testResultSafety();
 testRestoreRecovery();
 await testStateStoreTransactions();
 await testQuarantineKeepsEvidenceOnPartialFailure();
 
-console.log('Harmony queue persistence tests passed: u64/empty-malformed/schema/identity/ownership/result-safety/restore/store/quarantine');
+console.log('Harmony queue persistence tests passed: photo-mode-override/u64/empty-malformed/schema/identity/ownership/result-safety/restore/store/quarantine');

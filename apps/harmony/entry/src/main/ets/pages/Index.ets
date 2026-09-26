@@ -1,19 +1,25 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { LengthMetrics, SymbolGlyphModifier } from '@kit.ArkUI';
+import { LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { image } from '@kit.ImageKit';
 import {
   BlurStrategy,
   HdsNavigation,
   HdsNavigationTitleMode,
+  HdsAnimationMode,
   HdsBarStyle,
   HdsTabs,
   HdsTabsController,
+  bleedIconStyle,
   ScrollEffectType,
-  TitleBarStyleOptions,
   hdsMaterial
 } from '@kit.UIDesignKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { fileUri } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { systemShare } from '@kit.ShareKit';
 import xdremuxNative from 'libentry.so';
 import {
   DEFAULT_SETTINGS,
@@ -118,6 +124,59 @@ interface GalleryPhotoTile {
   path: string;
 }
 
+class GalleryPhotoDataSource implements IDataSource {
+  private items: Array<GalleryPhotoTile> = [];
+  private listeners: Array<DataChangeListener> = [];
+
+  totalCount(): number {
+    return this.items.length;
+  }
+
+  getData(index: number): GalleryPhotoTile {
+    return this.items[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index: number = this.listeners.indexOf(listener);
+    if (index >= 0) this.listeners.splice(index, 1);
+  }
+
+  replaceAll(items: Array<GalleryPhotoTile>): void {
+    this.items = items.slice();
+    this.listeners.forEach((listener: DataChangeListener): void => {
+      listener.onDataReloaded();
+    });
+  }
+}
+
+interface GalleryPhotoInspection {
+  details: NativePhotoDetails;
+  classification: NativeClassificationResult;
+  displayImageWidth: number;
+  displayImageHeight: number;
+}
+
+const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
+const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
+const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
+const GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT: number = 92;
+const GALLERY_DETAIL_PANEL_HANDLE_HEIGHT: number = 36;
+const GALLERY_DETAIL_PANEL_BOTTOM_INSET: number = GALLERY_DETAIL_BAR_BOTTOM_MARGIN;
+const GALLERY_DETAIL_PANEL_TOP_CLEARANCE: number = 120;
+const GALLERY_DETAIL_PANEL_CONTENT_CLEARANCE: number = 48;
+const GALLERY_DETAIL_PANEL_SNAP_DRAG_THRESHOLD: number = 32;
+const GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD: number = 12;
+const GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD: number = 450;
+const GALLERY_DETAIL_THUMBNAIL_STRIP_HEIGHT: number = 74;
+const GALLERY_DETAIL_THUMBNAIL_GAP: number = 10;
+const GALLERY_THUMBNAIL_CACHE_LIMIT: number = 96;
+const GALLERY_THUMBNAIL_DECODE_WIDTH: number = 200;
+const GALLERY_THUMBNAIL_DECODE_HEIGHT: number = 240;
+
 class QueueHeicCompatibleCapability implements photoAccessHelper.AssetCompatibleCapability {
   supportedHighResolution: boolean = true;
   supportedMimeType: Array<string> = ['image/heic'];
@@ -176,15 +235,46 @@ struct Index {
   @State private livePhotoPairExporting: boolean = false;
   @State private livePhotoPairResult: LivePhotoPairResult | undefined = undefined;
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
-  @State private mainTabIndex: number = 0;
+  @State private mainTabIndex: number = 1;
   @State private galleryDetailVisible: boolean = false;
+  @State private galleryDetailMounted: boolean = false;
+  @State private galleryHeroPreloadPending: boolean = false;
+  @State private galleryHeroPreloadItemId: string = '';
+  @State private galleryHeroImageDecoded: boolean = false;
+  @State private galleryHeroMetadataReady: boolean = false;
+  @State private galleryHeroTransitionActive: boolean = false;
+  @State private galleryHeroOpening: boolean = false;
+  @State private galleryPhotoTitleTopPosition: number = 47;
+  @State private galleryDisplayImageWidth: number = 0;
+  @State private galleryDisplayImageHeight: number = 0;
+  @State private galleryZoomScale: number = 1;
+  @State private galleryPanOffsetX: number = 0;
+  @State private galleryPanOffsetY: number = 0;
+  @State private galleryDismissOffsetY: number = 0;
+  @State private galleryViewportWidth: number = 0;
+  @State private galleryViewportHeight: number = 0;
+  @State private galleryInfoPanelVisible: boolean = false;
+  @State private galleryChromeVisible: boolean = true;
+  @State private galleryPanelHeight: number = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
+  @State private galleryPanelMode: 'info' | 'settings' = 'info';
+  @State private galleryPhotoSettingsId: string = '';
+  @State private galleryPhotoSettingsView: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   @State private galleryPhotos: Array<GalleryPhotoTile> = [];
+  @State private galleryLoadedPreviewIds: Array<string> = [];
+  @State private galleryDetailLoadedImageId: string = '';
+  @State private galleryCachedThumbnailIds: Array<string> = [];
+  @State private galleryThumbnailDecodeFailedIds: Array<string> = [];
+  @State private gallerySdrCompareHolding: boolean = false;
+  @State private gallerySdrCompareLoading: boolean = false;
+  @State private gallerySdrCompareActive: boolean = false;
+  @State private gallerySdrPreviewPixelMap: image.PixelMap | undefined = undefined;
   @State private galleryMediaCount: number = 0;
   @State private galleryLoading: boolean = true;
   @State private galleryLibraryReady: boolean = false;
   @State private galleryLoadError: string = '';
   @State private galleryImporting: boolean = false;
   @State private importMiniBarExpanded: boolean = false;
+  @State private supportsHdsImmersiveMaterial: boolean = false;
   @State private galleryQueuePreparing: boolean = false;
   @State private galleryQueueItemId: string = '';
   @State private galleryStatus: string = '选择一张照片查看信息并开始转换';
@@ -212,11 +302,45 @@ struct Index {
   private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
   private tabsController: HdsTabsController | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
+  private readonly galleryPhotoSettings: Map<string, NativeSettings> = new Map<string, NativeSettings>();
+  private readonly galleryInspectionCache: Map<string, GalleryPhotoInspection> =
+    new Map<string, GalleryPhotoInspection>();
+  private readonly galleryDecodedDimensionsCache: Map<string, Array<number>> = new Map<string, Array<number>>();
+  private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  private readonly galleryThumbnailDecodeInFlight: Set<string> = new Set<string>();
+  private readonly gallerySwiperDataSource: GalleryPhotoDataSource = new GalleryPhotoDataSource();
+  private readonly galleryDetailSwiperController: SwiperController = new SwiperController();
+  private readonly galleryThumbnailScroller: Scroller = new Scroller();
   private inputSerial: number = 0;
   private outputSerial: number = 0;
   private motionSplitSerial: number = 0;
   private livePhotoPairSerial: number = 0;
   private batchExportSerial: number = 0;
+  private galleryPinchStartScale: number = 1;
+  private galleryPinchStartPanX: number = 0;
+  private galleryPinchStartPanY: number = 0;
+  private galleryPinchCenterX: number = 0.5;
+  private galleryPinchCenterY: number = 0.5;
+  private galleryPanStartX: number = 0;
+  private galleryPanStartY: number = 0;
+  @State private galleryInfoPanelContentHeight: number = 0;
+  @State private galleryInfoPanelScrollViewportHeight: number = 0;
+  private galleryPanelDragStartHeight: number = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
+  private galleryPanelBodyDragStartHeight: number = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
+  private galleryPanelBodyDragActive: boolean = false;
+  private galleryPanelBodyDragVertical: boolean = false;
+  private galleryPageGestureAxis: 'none' | 'horizontal' | 'vertical' = 'none';
+  private galleryPagePanBlockedByPanel: boolean = false;
+  private galleryPanBlockedByInfoPanel: boolean = false;
+  private galleryPinchBlockedByInfoPanel: boolean = false;
+  private galleryGestureAxis: 'none' | 'horizontal' | 'vertical' = 'none';
+  private gallerySelectionSerial: number = 0;
+  private gallerySdrDecodeSerial: number = 0;
+  private gallerySdrPreviewItemId: string = '';
+  private galleryChromeToggleBlockedUntil: number = 0;
+  private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
+  private galleryStatusBarResetTimer: number = -1;
+  private galleryHeroBackdropResetTimer: number = -1;
   private readonly queuePhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private readonly galleryPhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private batchPickerActive: boolean = false;
@@ -231,6 +355,10 @@ struct Index {
 
   aboutToAppear(): void {
     this.pageVisible = true;
+    void this.updateGalleryPhotoTitlePosition();
+    if (this.shouldUseImmersiveMainChrome()) {
+      this.updateHdsImmersiveMaterialSupport();
+    }
     this.queuePhotoPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
     this.queuePhotoPickerOptions.maxSelectNumber = 500;
     this.galleryPhotoPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
@@ -241,11 +369,33 @@ struct Index {
     this.restoreQueueSession();
   }
 
+  onBackPress(): boolean {
+    if (this.galleryHeroPreloadPending) {
+      this.galleryHeroPreloadPending = false;
+      this.galleryHeroPreloadItemId = '';
+      this.galleryHeroImageDecoded = false;
+      this.galleryHeroMetadataReady = false;
+      this.galleryHeroOpening = false;
+      this.gallerySelectionSerial += 1;
+      return true;
+    }
+    if (!this.galleryDetailVisible) {
+      return this.galleryDetailMounted;
+    }
+    if (this.galleryPanelMode === 'settings') {
+      this.galleryPanelMode = 'info';
+      return true;
+    }
+    this.closeGalleryDetail();
+    return true;
+  }
+
   onPageShow(): void {
     // Returning to the foreground only reattaches the view. A stopped queue
     // requires an explicit Start/Resume click so no later native work starts
     // silently after a foreground transition.
     this.pageVisible = true;
+    this.setGalleryStatusBarMask(this.galleryDetailVisible && this.galleryChromeVisible);
     this.attachShareInbox();
     this.attachQueueSession();
     this.requestShareInboxDrain();
@@ -269,6 +419,8 @@ struct Index {
 
   aboutToDisappear(): void {
     this.pageVisible = false;
+    this.endGallerySdrCompare();
+    this.setGalleryStatusBarMask(false);
     // Page teardown is a real departure, unlike the temporary hide caused by
     // the system picker. Finish the current copy and stop later batch items.
     if (this.batchExportRunning) {
@@ -1091,7 +1243,10 @@ struct Index {
     }
   }
 
-  private async chooseAndImport(usePhotoLibraryPicker: boolean = true): Promise<void> {
+  private async chooseAndImport(
+    usePhotoLibraryPicker: boolean = true,
+    allowReselectSelectedShare: boolean = true
+  ): Promise<void> {
     if (!this.queueLoaded || !this.queueReady || this.queueLoading || this.queueRecoveryRequired) {
       this.operationStatus = this.queueRecoveryRequired
         ? '队列记录需要安全恢复，暂不能加入照片'
@@ -1110,7 +1265,7 @@ struct Index {
       return;
     }
     const selectedBeforePicker: QueueItem | undefined = this.selectedItem();
-    const reselectingShare: boolean = selectedBeforePicker !== undefined &&
+    const reselectingShare: boolean = allowReselectSelectedShare && selectedBeforePicker !== undefined &&
       selectedBeforePicker.sourceKind === 'share' && selectedBeforePicker.status === 'failed' &&
       selectedBeforePicker.inputPath.length === 0;
     const reselectTargetId: string = reselectingShare && selectedBeforePicker !== undefined
@@ -2307,7 +2462,11 @@ struct Index {
   }
 
   private modeSnapshot(): QueueModeSnapshot {
-    const settings: NativeSettings = normalizeSettings(cloneSettings(this.committedSettings));
+    return this.modeSnapshotForSettings(this.committedSettings);
+  }
+
+  private modeSnapshotForSettings(values: NativeSettings): QueueModeSnapshot {
+    const settings: NativeSettings = normalizeSettings(cloneSettings(values));
     return {
       modeKey: settings.outputMode,
       modeLabel: modeLabel(settings),
@@ -2320,6 +2479,244 @@ struct Index {
         applePortrait: settings.applePortrait ? 1 : 0
       }
     };
+  }
+
+  private settingsFromModeSnapshot(snapshot: QueueModeSnapshot): NativeSettings {
+    return normalizeSettings({
+      outputMode: snapshot.modeKey as SettingsOutputMode,
+      oppoCompat: snapshot.config.oppoCompat,
+      oppoCameraTail: snapshot.config.oppoCameraTail,
+      strictTmap: snapshot.config.strictTmap === 1,
+      applePhotographicStyles: snapshot.config.applePhotographicStyles === 1,
+      applePhotographicStyles3: snapshot.applePhotographicStyles3 === true,
+      applePortrait: snapshot.config.applePortrait === 1
+    });
+  }
+
+  private galleryPhotoIsHeif(): boolean {
+    const mimeType: string = this.galleryMimeType.toLowerCase();
+    const extension: string = (this.galleryCurrentItem?.extension ?? '').toLowerCase();
+    return mimeType === 'image/heic' || mimeType === 'image/heif' ||
+      extension === 'heic' || extension === 'heif' || extension === '.heic' || extension === '.heif';
+  }
+
+  private gallerySupportsNativeConversion(): boolean {
+    const classification: NativeClassificationResult | undefined = this.galleryClassification;
+    const details: NativePhotoDetails | undefined = this.galleryDetails;
+    const hdrKind: string = (classification?.hdrKind ?? details?.hdrKind ?? '').toLowerCase();
+    return hdrKind === 'lhdr' || hdrKind === 'uhdr';
+  }
+
+  private canCompareGallerySdr(): boolean {
+    return this.galleryDetailVisible && this.galleryChromeVisible && this.galleryCurrentItem !== undefined &&
+      this.gallerySandboxPath.length > 0 && this.gallerySupportsNativeConversion();
+  }
+
+  private async beginGallerySdrCompare(): Promise<void> {
+    if (!this.canCompareGallerySdr() || this.gallerySdrCompareLoading || this.gallerySdrCompareActive) return;
+    this.gallerySdrCompareHolding = true;
+    this.gallerySdrCompareLoading = true;
+    const serial: number = this.gallerySdrDecodeSerial + 1;
+    this.gallerySdrDecodeSerial = serial;
+    const itemId: string = this.galleryCurrentItem?.id ?? '';
+    let imageSource: image.ImageSource | undefined = undefined;
+    let pixelMap: image.PixelMap | undefined = undefined;
+    try {
+      imageSource = image.createImageSource('file://' + this.gallerySandboxPath);
+      pixelMap = await imageSource.createPixelMap({
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        desiredDynamicRange: image.DecodingDynamicRange.SDR
+      });
+      if (!this.gallerySdrCompareHolding || serial !== this.gallerySdrDecodeSerial ||
+        itemId !== this.galleryCurrentItem?.id) return;
+      const previousPixelMap: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
+      this.gallerySdrPreviewPixelMap = pixelMap;
+      pixelMap = undefined;
+      this.gallerySdrPreviewItemId = itemId;
+      this.gallerySdrCompareActive = true;
+      if (previousPixelMap !== undefined) {
+        setTimeout((): void => {
+          void previousPixelMap.release();
+        }, 180);
+      }
+    } catch (error) {
+      if (serial === this.gallerySdrDecodeSerial && this.gallerySdrCompareHolding) {
+        this.galleryStatus = 'SDR 对比加载失败：' + this.errorMessage(error);
+      }
+    } finally {
+      if (imageSource !== undefined) {
+        try {
+          await imageSource.release();
+        } catch (releaseError) {
+          // The PixelMap is independent after decoding; source release is best effort.
+        }
+      }
+      if (pixelMap !== undefined) {
+        try {
+          await pixelMap.release();
+        } catch (releaseError) {
+          // A stale decode can finish after the user has released the button.
+        }
+      }
+      if (serial === this.gallerySdrDecodeSerial) this.gallerySdrCompareLoading = false;
+    }
+  }
+
+  private endGallerySdrCompare(): void {
+    if (!this.gallerySdrCompareHolding && !this.gallerySdrCompareActive && !this.gallerySdrCompareLoading) return;
+    this.gallerySdrCompareHolding = false;
+    this.gallerySdrDecodeSerial += 1;
+    this.gallerySdrCompareLoading = false;
+    this.gallerySdrCompareActive = false;
+    const pixelMap: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
+    this.gallerySdrPreviewPixelMap = undefined;
+    this.gallerySdrPreviewItemId = '';
+    if (pixelMap !== undefined) {
+      setTimeout((): void => {
+        void pixelMap.release();
+      }, 180);
+    }
+  }
+
+  private canConvertGalleryPhotoDirectly(): boolean {
+    return this.galleryLibraryReady && this.galleryLibrary !== undefined && this.galleryCurrentItem !== undefined &&
+      this.gallerySandboxPath.length > 0 && this.galleryDetails !== undefined &&
+      this.galleryClassification !== undefined && this.gallerySupportsNativeConversion() && this.settingsLoaded &&
+      !this.galleryImporting && !this.galleryQueuePreparing && !this.pageBusy && !this.queueRunning &&
+      !this.cleanupRunning && !this.batchExportRunning && !this.settingsSaving && !this.livePhotoPairing &&
+      !this.livePhotoPairExporting && !this.motionSplitting && !this.motionInspecting;
+  }
+
+  private gallerySupportedOutputModes(): Array<SettingsOutputMode> {
+    return this.gallerySupportsNativeConversion() ? ['oppo', 'apple'] : [];
+  }
+
+  private gallerySupportsApplePhotoData(): boolean {
+    return this.gallerySupportsNativeConversion() && this.galleryPhotoIsHeif();
+  }
+
+  private gallerySupportsPortraitData(): boolean {
+    return this.gallerySupportsApplePhotoData() && this.galleryClassification?.modeKey === 'portrait';
+  }
+
+  private galleryEffectiveSettings(): NativeSettings {
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    if (!this.gallerySupportsApplePhotoData()) {
+      settings.applePhotographicStyles = false;
+      settings.applePhotographicStyles3 = false;
+      settings.applePortrait = false;
+    } else if (!this.gallerySupportsPortraitData()) {
+      settings.applePortrait = false;
+    }
+    return normalizeSettings(settings);
+  }
+
+  private galleryPhotoModeSnapshot(): QueueModeSnapshot {
+    if (!this.gallerySupportsNativeConversion()) {
+      throw new Error('这张照片不含可转换的 ProXDR 数据');
+    }
+    return this.modeSnapshotForSettings(this.galleryEffectiveSettings());
+  }
+
+  private galleryPhotoSettingsSummary(): string {
+    try {
+      return modeLabel(this.galleryEffectiveSettings());
+    } catch (error) {
+      return '设置无效';
+    }
+  }
+
+  private updateGalleryPhotoSettings(values: NativeSettings): void {
+    if (this.galleryPhotoSettingsId.length === 0) return;
+    try {
+      const normalized: NativeSettings = normalizeSettings(values);
+      const snapshot: NativeSettings = cloneSettings(normalized);
+      this.galleryPhotoSettings.set(this.galleryPhotoSettingsId, snapshot);
+      this.galleryPhotoSettingsView = cloneSettings(snapshot);
+      this.galleryStatus = '转换设置仅保存到当前照片';
+    } catch (error) {
+      this.galleryStatus = '照片设置无效：' + this.errorMessage(error);
+    }
+  }
+
+  private setGalleryPhotoOutputMode(mode: SettingsOutputMode): void {
+    if (!this.gallerySupportedOutputModes().includes(mode)) return;
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.outputMode = mode;
+    if (mode === 'apple') {
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    } else {
+      settings.applePhotographicStyles = false;
+      settings.applePhotographicStyles3 = false;
+      settings.applePortrait = false;
+      if (settings.oppoCompat === 0) settings.oppoCompat = DEFAULT_SETTINGS.oppoCompat;
+      if (settings.oppoCameraTail === 0) settings.oppoCameraTail = DEFAULT_SETTINGS.oppoCameraTail;
+    }
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoCompat(value: number): void {
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.outputMode = 'oppo';
+    settings.oppoCompat = value;
+    settings.applePhotographicStyles = false;
+    settings.applePhotographicStyles3 = false;
+    settings.applePortrait = false;
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoCameraTail(value: number): void {
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.outputMode = 'oppo';
+    settings.oppoCameraTail = value;
+    settings.applePhotographicStyles = false;
+    settings.applePhotographicStyles3 = false;
+    settings.applePortrait = false;
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoStrictTmap(enabled: boolean): void {
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.strictTmap = enabled;
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoStyles(enabled: boolean): void {
+    if (!this.gallerySupportsApplePhotoData()) return;
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.applePhotographicStyles = enabled || settings.applePhotographicStyles3;
+    if (enabled) {
+      settings.outputMode = 'apple';
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    }
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoStyles3(enabled: boolean): void {
+    if (!this.gallerySupportsApplePhotoData()) return;
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.applePhotographicStyles3 = enabled;
+    if (enabled) {
+      settings.applePhotographicStyles = true;
+      settings.outputMode = 'apple';
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    }
+    this.updateGalleryPhotoSettings(settings);
+  }
+
+  private setGalleryPhotoPortrait(enabled: boolean): void {
+    if (!this.gallerySupportsPortraitData()) return;
+    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
+    settings.applePortrait = enabled;
+    if (enabled) {
+      settings.outputMode = 'apple';
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    }
+    this.updateGalleryPhotoSettings(settings);
   }
 
   private savedSettingsSummary(): string {
@@ -2426,6 +2823,8 @@ struct Index {
         item: item,
         path: this.galleryLibrary?.pathFor(item) ?? galleryItemPath(context.filesDir + '/xdremux-gallery', item)
       }));
+      this.galleryLoadedPreviewIds = [];
+      this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
       this.galleryMediaCount = items.length;
       this.galleryLibraryReady = true;
       this.galleryStatus = items.length > 0
@@ -2468,6 +2867,7 @@ struct Index {
           const item: GalleryLibraryItem = await this.galleryLibrary.importPhoto(selected[index], displayName);
           const tile: GalleryPhotoTile = { item: item, path: this.galleryLibrary.pathFor(item) };
           this.galleryPhotos = [tile, ...this.galleryPhotos];
+          this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
           this.galleryMediaCount += 1;
           imported += 1;
         } catch (error) {
@@ -2485,39 +2885,224 @@ struct Index {
     }
   }
 
-  private async inspectGallerySelection(tile: GalleryPhotoTile): Promise<void> {
-    if (this.galleryImporting || tile.path.length === 0) return;
-    this.galleryDetailVisible = true;
+  @Available({ minApiVersion: '26.0.0' })
+  private async enqueueAllGalleryPhotos(): Promise<void> {
+    if (!this.canImportQueueMiniBarAction() || !this.galleryLibraryReady || this.galleryPhotos.length === 0) {
+      this.galleryStatus = this.galleryPhotos.length === 0
+        ? '本地图库没有可加入队列的照片'
+        : '队列或本地图库尚未就绪，请稍后重试';
+      this.mainTabIndex = 1;
+      this.setImportMiniBarExpanded(false);
+      return;
+    }
+
+    const queue: QueueController = this.getController();
+    const tiles: Array<GalleryPhotoTile> = this.galleryPhotos.slice();
+    let added: number = 0;
+    let skipped: number = 0;
+    let failed: number = 0;
+    this.setImportMiniBarExpanded(false);
+    this.galleryQueuePreparing = true;
+    this.pageBusy = true;
+    this.galleryStatus = '正在检查本地图库并加入可转换照片…';
+    try {
+      for (const tile of tiles) {
+        if (queue.hasPersistenceError || this.queueRecoveryRequired) {
+          failed += tiles.length - added - skipped - failed;
+          break;
+        }
+        if (queue.items().some((item: QueueItem): boolean => item.sourceUri === tile.path)) {
+          skipped += 1;
+          continue;
+        }
+
+        let item: QueueItem | undefined = undefined;
+        let locked: boolean = false;
+        try {
+          let inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
+          if (inspection === undefined) {
+            const detailsJson: string = await xdremuxNative.inspect(tile.path);
+            const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+            if (!details.success) throw new Error(this.display(details.errorMessage));
+            const classification: NativeClassificationResult =
+              await xdremuxNative.classify(tile.path) as NativeClassificationResult;
+            inspection = {
+              details: details,
+              classification: classification,
+              displayImageWidth: this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0,
+              displayImageHeight: this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0
+            };
+            this.galleryInspectionCache.set(tile.item.id, inspection);
+          }
+
+          const hdrKind: string = (inspection.classification.hdrKind ?? inspection.details.hdrKind ?? '').toLowerCase();
+          if (hdrKind !== 'lhdr' && hdrKind !== 'uhdr') {
+            skipped += 1;
+            continue;
+          }
+
+          const savedSettings: NativeSettings | undefined = this.galleryPhotoSettings.get(tile.item.id);
+          const settings: NativeSettings = normalizeSettings(cloneSettings(
+            savedSettings ?? this.committedSettings
+          ));
+          const extension: string = tile.item.extension.toLowerCase();
+          const isHeif: boolean = extension === '.heic' || extension === '.heif';
+          if (!isHeif) {
+            settings.applePhotographicStyles = false;
+            settings.applePhotographicStyles3 = false;
+            settings.applePortrait = false;
+          } else if (inspection.classification.modeKey !== 'portrait') {
+            settings.applePortrait = false;
+          }
+
+          item = queue.add({
+            displayName: tile.item.displayName,
+            sourceUri: tile.path,
+            modeOverride: this.modeSnapshotForSettings(settings)
+          });
+          queue.beginExternal(item.id);
+          locked = true;
+          await queue.persist();
+          const prepared: QueuePrepared = await this.prepareQueueItem(item);
+          queue.setPrepared(item.id, prepared.inputPath, prepared.details, prepared.classification);
+          await queue.persist();
+          added += 1;
+        } catch (error) {
+          failed += 1;
+          const message: string = this.errorMessage(error);
+          if (item !== undefined && locked && !queue.hasPersistenceError &&
+            !(error instanceof QueuePersistenceError)) {
+            try {
+              queue.markPreparationFailed(item.id, message);
+              await queue.persist();
+            } catch (persistError) {
+              this.queueError = '批量加入队列时保存失败：' + this.errorMessage(persistError);
+            }
+          } else if (queue.hasPersistenceError || error instanceof QueuePersistenceError) {
+            this.queueError = '批量加入队列时保存失败：' + message + '；请先重试保存队列';
+            break;
+          }
+        } finally {
+          if (item !== undefined && locked) queue.endExternal(item.id);
+          this.syncQueue();
+        }
+      }
+    } finally {
+      this.galleryQueuePreparing = false;
+      this.pageBusy = false;
+      this.mainTabIndex = 1;
+      this.syncQueue();
+    }
+
+    this.operationStatus = '本地图库加入队列：新增 ' + String(added) + ' 张，已存在或不含可转换 HDR 数据 ' +
+      String(skipped) + ' 张' + (failed > 0 ? '，失败 ' + String(failed) + ' 张' : '');
+    this.galleryStatus = this.operationStatus;
+  }
+
+  private async inspectGallerySelection(
+    tile: GalleryPhotoTile,
+    openDetail: boolean = false
+  ): Promise<void> {
+    if (tile.path.length === 0) return;
+    this.endGallerySdrCompare();
+    const selectionSerial: number = this.gallerySelectionSerial + 1;
+    this.gallerySelectionSerial = selectionSerial;
+    const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
+    const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
+    if (tile.item.id !== this.galleryCurrentItem?.id) this.galleryDetailLoadedImageId = '';
+    this.galleryZoomScale = 1;
+    this.galleryPanOffsetX = 0;
+    this.galleryPanOffsetY = 0;
+    this.galleryDismissOffsetY = 0;
+    this.galleryGestureAxis = 'none';
     this.galleryCurrentItem = tile.item;
-    this.galleryQueueItemId = '';
-    this.galleryImporting = true;
-    this.galleryDetails = undefined;
-    this.galleryClassification = undefined;
+    const cachedDimensions: Array<number> | undefined = this.galleryDecodedDimensionsCache.get(tile.item.id);
+    this.galleryDisplayImageWidth = cachedDimensions?.[0] ?? 0;
+    this.galleryDisplayImageHeight = cachedDimensions?.[1] ?? 0;
+    this.galleryPanelMode = 'info';
+    const existingQueueItem: QueueItem | undefined = this.queueItems.find(
+      (item: QueueItem): boolean => item.sourceUri === tile.path
+    );
+    this.galleryQueueItemId = existingQueueItem?.id ?? '';
+    this.galleryPhotoSettingsId = tile.item.id;
+    const savedPhotoSettings: NativeSettings | undefined = this.galleryPhotoSettings.get(tile.item.id);
+    const initialPhotoSettings: NativeSettings = savedPhotoSettings !== undefined
+      ? cloneSettings(savedPhotoSettings)
+      : existingQueueItem?.modeOverride !== undefined
+        ? this.settingsFromModeSnapshot(existingQueueItem.modeOverride)
+        : cloneSettings(this.settingsLoaded ? this.committedSettings : DEFAULT_SETTINGS);
+    this.galleryPhotoSettings.set(tile.item.id, cloneSettings(initialPhotoSettings));
+    this.galleryPhotoSettingsView = cloneSettings(initialPhotoSettings);
+    this.galleryImporting = cachedInspection === undefined;
+    this.galleryDetails = cachedInspection?.details;
+    this.galleryClassification = cachedInspection?.classification;
     this.gallerySandboxPath = tile.path;
     this.galleryCopiedBytes = 0;
     this.galleryMimeType = tile.item.mimeType.length > 0
       ? tile.item.mimeType
       : galleryMimeTypeForExtension(tile.item.extension);
-    this.galleryStatus = '正在读取本地原图信息…';
+    this.galleryStatus = cachedInspection === undefined
+      ? '正在读取本地原图信息…'
+      : '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
+        String(cachedInspection.details.width ?? 0) + ' × ' + String(cachedInspection.details.height ?? 0);
+    if (shouldOpenDetail) {
+      if (this.galleryStatusBarResetTimer >= 0) {
+        clearTimeout(this.galleryStatusBarResetTimer);
+        this.galleryStatusBarResetTimer = -1;
+      }
+      this.galleryPanelHeight = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
+      this.galleryChromeVisible = true;
+      this.galleryHeroPreloadItemId = tile.item.id;
+      this.galleryHeroImageDecoded = false;
+      this.galleryHeroMetadataReady = false;
+      this.galleryHeroPreloadPending = true;
+    }
+    if (cachedInspection !== undefined) {
+      this.galleryCopiedBytes = tile.item.size;
+      if (shouldOpenDetail) {
+        this.galleryHeroMetadataReady = true;
+        this.tryStartGalleryHeroTransition(tile.item.id);
+      }
+      return;
+    }
     try {
       const stat: fileIo.Stat = await fileIo.lstat(tile.path);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size !== tile.item.size || stat.size <= 0) {
         throw new Error('本地图库原图缺失或大小不匹配');
       }
+      if (selectionSerial !== this.gallerySelectionSerial) return;
       this.galleryCopiedBytes = stat.size;
       const detailsJson: string = await xdremuxNative.inspect(tile.path);
       const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
       if (!details.success) throw new Error(this.display(details.errorMessage));
+      if (selectionSerial !== this.gallerySelectionSerial) return;
+      this.galleryDetails = details;
+      if (shouldOpenDetail) {
+        this.galleryHeroMetadataReady = true;
+        this.tryStartGalleryHeroTransition(tile.item.id);
+      }
       const classification: NativeClassificationResult =
         await xdremuxNative.classify(tile.path) as NativeClassificationResult;
-      this.galleryDetails = details;
+      if (selectionSerial !== this.gallerySelectionSerial) return;
+      this.galleryInspectionCache.set(tile.item.id, {
+        details: details,
+        classification: classification,
+        displayImageWidth: this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0,
+        displayImageHeight: this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0
+      });
       this.galleryClassification = classification;
       this.galleryStatus = '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
         String(details.width ?? 0) + ' × ' + String(details.height ?? 0);
     } catch (error) {
-      this.galleryStatus = '读取本地照片失败：' + this.errorMessage(error);
+      if (selectionSerial === this.gallerySelectionSerial) {
+        this.galleryStatus = '读取本地照片失败：' + this.errorMessage(error);
+        if (shouldOpenDetail) {
+          this.galleryHeroMetadataReady = true;
+          this.tryStartGalleryHeroTransition(tile.item.id);
+        }
+      }
     } finally {
-      this.galleryImporting = false;
+      if (selectionSerial === this.gallerySelectionSerial) this.galleryImporting = false;
     }
   }
 
@@ -2532,19 +3117,681 @@ struct Index {
   private openGalleryTile(tile: GalleryPhotoTile): void {
     if (this.galleryImporting) return;
     this.galleryStatus = '正在读取 ' + tile.item.displayName + '…';
-    void this.inspectGallerySelection(tile);
+    void this.inspectGallerySelection(tile, true);
   }
 
-  private async convertGallerySelection(): Promise<void> {
-    const controller: QueueController | undefined = this.queueController;
-    if (this.galleryQueuePreparing || this.galleryImporting) {
+  private onGalleryHeroPreloadComplete(itemId: string, width: number = 0, height: number = 0): void {
+    if (!this.galleryHeroPreloadPending || itemId !== this.galleryHeroPreloadItemId ||
+      itemId !== this.galleryCurrentItem?.id) return;
+    this.onGalleryPreviewDecoded(itemId, width, height);
+    this.galleryHeroImageDecoded = true;
+    this.tryStartGalleryHeroTransition(itemId);
+  }
+
+  private tryStartGalleryHeroTransition(itemId: string): void {
+    if (!this.galleryHeroPreloadPending || itemId !== this.galleryHeroPreloadItemId ||
+      itemId !== this.galleryCurrentItem?.id || !this.galleryHeroImageDecoded ||
+      !this.galleryHeroMetadataReady || this.galleryViewportWidth <= 0 || this.galleryViewportHeight <= 0) return;
+    this.galleryHeroPreloadPending = false;
+    this.galleryHeroPreloadItemId = '';
+    this.galleryHeroImageDecoded = false;
+    this.galleryHeroMetadataReady = false;
+    this.galleryChromeToggleBlockedUntil = Date.now() + 650;
+    if (this.galleryHeroBackdropResetTimer >= 0) {
+      clearTimeout(this.galleryHeroBackdropResetTimer);
+      this.galleryHeroBackdropResetTimer = -1;
+    }
+    this.galleryHeroTransitionActive = true;
+    this.galleryHeroOpening = true;
+    this.setGalleryStatusBarMask(true);
+    this.getUIContext().animateTo({ duration: 420, curve: Curve.Friction }, () => {
+      this.galleryDetailMounted = true;
+      this.galleryDetailVisible = true;
+      this.galleryInfoPanelVisible = true;
+    });
+    this.galleryHeroBackdropResetTimer = setTimeout((): void => {
+      this.galleryHeroBackdropResetTimer = -1;
+      if (this.galleryDetailVisible) {
+        this.galleryHeroTransitionActive = false;
+        this.galleryHeroOpening = false;
+      }
+    }, 460);
+  }
+
+  private closeGalleryDetail(): void {
+    if (!this.galleryDetailVisible) return;
+    this.endGallerySdrCompare();
+    this.gallerySelectionSerial += 1;
+    if (this.galleryStatusBarResetTimer >= 0) clearTimeout(this.galleryStatusBarResetTimer);
+    if (this.galleryHeroBackdropResetTimer >= 0) {
+      clearTimeout(this.galleryHeroBackdropResetTimer);
+      this.galleryHeroBackdropResetTimer = -1;
+    }
+    this.galleryHeroTransitionActive = true;
+    this.galleryHeroOpening = false;
+    this.getUIContext().animateTo({ duration: 360, curve: Curve.Friction }, () => {
+      this.galleryZoomScale = 1;
+      this.galleryPanOffsetX = 0;
+      this.galleryPanOffsetY = 0;
+      this.galleryDismissOffsetY = 0;
+      this.galleryPanelHeight = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
+      this.galleryInfoPanelVisible = false;
+      this.galleryChromeVisible = false;
+      this.galleryDetailVisible = false;
+      // Removing the destination frame starts the reverse shared-element
+      // transition; the framework keeps its transition snapshot alive while
+      // the source tile follows it back into the grid.
+      this.galleryDetailMounted = false;
+    });
+    this.galleryStatusBarResetTimer = setTimeout((): void => {
+      this.galleryStatusBarResetTimer = -1;
+      if (!this.galleryDetailVisible) {
+        this.galleryHeroTransitionActive = false;
+        this.setGalleryStatusBarMask(false);
+      }
+    }, 420);
+  }
+
+  private galleryTransitionId(itemId: string): string {
+    return 'xdremux-gallery-photo-' + itemId;
+  }
+
+  private cacheGalleryDecodedDimensions(itemId: string, width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
+    this.galleryDecodedDimensionsCache.set(itemId, [width, height]);
+    const inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(itemId);
+    if (inspection !== undefined) {
+      inspection.displayImageWidth = width;
+      inspection.displayImageHeight = height;
+    }
+    if (itemId === this.galleryCurrentItem?.id) {
+      this.galleryDisplayImageWidth = width;
+      this.galleryDisplayImageHeight = height;
+    }
+  }
+
+  private galleryPreviewIsLoaded(itemId: string): boolean {
+    return this.galleryLoadedPreviewIds.includes(itemId);
+  }
+
+  private cacheGalleryThumbnail(itemId: string, pixelMap: image.PixelMap): void {
+    this.galleryThumbnailPixelMapCache.delete(itemId);
+    this.galleryThumbnailPixelMapCache.set(itemId, pixelMap);
+    this.galleryCachedThumbnailIds = [...this.galleryCachedThumbnailIds.filter(
+      (cachedId: string): boolean => cachedId !== itemId
+    ), itemId];
+
+    while (this.galleryThumbnailPixelMapCache.size > GALLERY_THUMBNAIL_CACHE_LIMIT) {
+      const cacheIds: Array<string> = Array.from(this.galleryThumbnailPixelMapCache.keys());
+      if (cacheIds.length === 0) break;
+      let oldestId: string = cacheIds[0];
+      if (oldestId === itemId && cacheIds.length > 1) oldestId = cacheIds[1];
+      const evictedPixelMap: image.PixelMap | undefined = this.galleryThumbnailPixelMapCache.get(oldestId);
+      this.galleryThumbnailPixelMapCache.delete(oldestId);
+      this.galleryCachedThumbnailIds = this.galleryCachedThumbnailIds.filter(
+        (cachedId: string): boolean => cachedId !== oldestId
+      );
+      if (evictedPixelMap !== undefined) {
+        setTimeout((): void => {
+          void evictedPixelMap.release();
+        }, 240);
+      }
+    }
+  }
+
+  private touchGalleryThumbnail(tile: GalleryPhotoTile): void {
+    const cachedPixelMap: image.PixelMap | undefined = this.galleryThumbnailPixelMapCache.get(tile.item.id);
+    if (cachedPixelMap !== undefined) {
+      this.galleryThumbnailPixelMapCache.delete(tile.item.id);
+      this.galleryThumbnailPixelMapCache.set(tile.item.id, cachedPixelMap);
       return;
     }
-    if (this.galleryQueueItemId.length > 0 && controller !== undefined &&
-      controller.get(this.galleryQueueItemId) !== undefined) {
-      this.selectQueueItem(this.galleryQueueItemId);
-      this.mainTabIndex = 1;
-      this.operationStatus = '这张照片已在转换队列中；可以查看进度、重试或导出结果';
+    if (this.galleryThumbnailDecodeFailedIds.includes(tile.item.id) ||
+      this.galleryThumbnailDecodeInFlight.has(tile.item.id)) return;
+    void this.decodeGalleryThumbnail(tile);
+  }
+
+  private async decodeGalleryThumbnail(tile: GalleryPhotoTile): Promise<void> {
+    if (this.galleryThumbnailPixelMapCache.has(tile.item.id) ||
+      this.galleryThumbnailDecodeInFlight.has(tile.item.id)) return;
+    this.galleryThumbnailDecodeInFlight.add(tile.item.id);
+    let imageSource: image.ImageSource | undefined = undefined;
+    let pixelMap: image.PixelMap | undefined = undefined;
+    try {
+      imageSource = image.createImageSource('file://' + tile.path);
+      pixelMap = await imageSource.createPixelMap({
+        desiredSize: {
+          width: GALLERY_THUMBNAIL_DECODE_WIDTH,
+          height: GALLERY_THUMBNAIL_DECODE_HEIGHT
+        },
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+      });
+      if (pixelMap === undefined) throw new Error('无法生成缩略图');
+      if (!this.galleryPhotos.some((currentTile: GalleryPhotoTile): boolean =>
+        currentTile.item.id === tile.item.id)) return;
+      this.cacheGalleryThumbnail(tile.item.id, pixelMap);
+      pixelMap = undefined;
+    } catch (error) {
+      this.galleryThumbnailDecodeFailedIds = [...this.galleryThumbnailDecodeFailedIds, tile.item.id];
+    } finally {
+      if (imageSource !== undefined) {
+        try {
+          await imageSource.release();
+        } catch (releaseError) {
+          // Decoded thumbnails are independent of their source.
+        }
+      }
+      if (pixelMap !== undefined) {
+        try {
+          await pixelMap.release();
+        } catch (releaseError) {
+          // Release a thumbnail that was discarded before reaching the cache.
+        }
+      }
+      this.galleryThumbnailDecodeInFlight.delete(tile.item.id);
+    }
+  }
+
+  private centerGalleryThumbnail(index: number, animated: boolean = true): void {
+    if (index < 0 || index >= this.galleryPhotos.length) return;
+    const itemStride: number = 58 + 8;
+    const contentWidth: number = 36 + this.galleryPhotos.length * itemStride - 8;
+    const maximumOffset: number = Math.max(0, contentWidth - this.galleryViewportWidth);
+    const selectedCenter: number = 18 + index * itemStride + 29;
+    const offset: number = Math.max(0, Math.min(maximumOffset, selectedCenter - this.galleryViewportWidth / 2));
+    try {
+      this.galleryThumbnailScroller.scrollTo({
+        xOffset: offset,
+        yOffset: 0,
+        animation: animated ? { duration: 240, curve: Curve.EaseOut } : false
+      });
+    } catch (error) {
+      // The strip may not be attached yet during the opening transition.
+    }
+  }
+
+  private onGalleryPreviewDecoded(itemId: string, width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
+    this.cacheGalleryDecodedDimensions(itemId, width, height);
+    if (this.galleryPreviewIsLoaded(itemId)) return;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.galleryLoadedPreviewIds = [...this.galleryLoadedPreviewIds, itemId];
+    });
+  }
+
+  private onGalleryDetailImageDecoded(itemId: string, width: number, height: number): void {
+    this.onGalleryPreviewDecoded(itemId, width, height);
+    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
+    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
+      this.galleryDetailLoadedImageId = itemId;
+    });
+  }
+
+  private galleryImageDimensions(itemId: string): Array<number> {
+    const decoded: Array<number> | undefined = this.galleryDecodedDimensionsCache.get(itemId);
+    if (decoded !== undefined && decoded[0] > 0 && decoded[1] > 0) return decoded;
+    const inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(itemId);
+    if (inspection !== undefined && inspection.displayImageWidth > 0 && inspection.displayImageHeight > 0) {
+      return [inspection.displayImageWidth, inspection.displayImageHeight];
+    }
+    if (itemId === this.galleryCurrentItem?.id && this.galleryDisplayImageWidth > 0 &&
+      this.galleryDisplayImageHeight > 0) {
+      return [this.galleryDisplayImageWidth, this.galleryDisplayImageHeight];
+    }
+    return [0, 0];
+  }
+
+  private galleryImageFrameWidth(itemId: string): number {
+    if (this.galleryViewportWidth <= 0) return 0;
+    return this.galleryImageDimensions(itemId)[0] > 0
+      ? this.galleryViewportWidth
+      : Math.min(this.galleryViewportWidth, this.galleryViewportHeight);
+  }
+
+  private galleryImageFrameHeight(itemId: string): number {
+    const dimensions: Array<number> = this.galleryImageDimensions(itemId);
+    if (dimensions[0] <= 0 || dimensions[1] <= 0 || this.galleryViewportWidth <= 0) {
+      return Math.min(this.galleryViewportWidth, this.galleryViewportHeight);
+    }
+    return this.galleryViewportWidth * dimensions[1] / dimensions[0];
+  }
+
+  private galleryBaseImageWidth(): number {
+    const dimensions: Array<number> = this.galleryImageDimensions(this.galleryCurrentItem?.id ?? '');
+    const imageWidth: number = dimensions[0];
+    const imageHeight: number = dimensions[1];
+    if (imageWidth <= 0 || imageHeight <= 0 || this.galleryViewportWidth <= 0 || this.galleryViewportHeight <= 0) {
+      return Math.min(this.galleryViewportWidth, this.galleryViewportHeight);
+    }
+    return this.galleryViewportWidth;
+  }
+
+  private galleryBaseImageHeight(): number {
+    const dimensions: Array<number> = this.galleryImageDimensions(this.galleryCurrentItem?.id ?? '');
+    const imageWidth: number = dimensions[0];
+    const imageHeight: number = dimensions[1];
+    if (imageWidth <= 0 || imageHeight <= 0 || this.galleryViewportWidth <= 0 || this.galleryViewportHeight <= 0) {
+      return Math.min(this.galleryViewportWidth, this.galleryViewportHeight);
+    }
+    return this.galleryViewportWidth * imageHeight / imageWidth;
+  }
+
+  private galleryPhotoVerticalOffset(): number {
+    return 0;
+  }
+
+  private galleryMaxPanX(scale: number): number {
+    if (this.galleryViewportWidth <= 0) return 0;
+    return Math.max(0, (this.galleryBaseImageWidth() * scale - this.galleryViewportWidth) / 2);
+  }
+
+  private galleryMaxPanY(scale: number): number {
+    if (this.galleryViewportHeight <= 0) return 0;
+    return Math.max(0, (this.galleryBaseImageHeight() * scale - this.galleryViewportHeight) / 2);
+  }
+
+  private clampGalleryPanX(value: number, scale: number = this.galleryZoomScale): number {
+    const limit: number = this.galleryMaxPanX(scale);
+    return Math.max(-limit, Math.min(limit, value));
+  }
+
+  private clampGalleryPanY(value: number, scale: number = this.galleryZoomScale): number {
+    const limit: number = this.galleryMaxPanY(scale);
+    const baseOffset: number = this.galleryDetailVisible ? this.galleryPhotoVerticalOffset() : 0;
+    return Math.max(-limit - baseOffset, Math.min(limit - baseOffset, value));
+  }
+
+  private galleryTouchStartedInInfoPanel(event: GestureEvent, usePanOrigin: boolean = false): boolean {
+    if (!this.galleryChromeVisible || !this.galleryInfoPanelVisible || this.galleryViewportHeight <= 0 ||
+      this.galleryInfoPanelContentHeight <= 0) return false;
+    const panelTop: number = this.galleryPanelTop();
+    if (event.fingerList.length === 0) return false;
+    for (const finger of event.fingerList) {
+      const touchY: number = usePanOrigin ? finger.localY - event.offsetY : finger.localY;
+      if (touchY >= panelTop && touchY <= this.galleryViewportHeight) return true;
+    }
+    return false;
+  }
+
+  private galleryTouchStartedOnPanelHandle(event: GestureEvent, usePanOrigin: boolean = false): boolean {
+    if (!this.galleryChromeVisible || !this.galleryInfoPanelVisible || this.galleryViewportHeight <= 0 ||
+      event.fingerList.length === 0) return false;
+    const panelTop: number = this.galleryPanelTop();
+    for (const finger of event.fingerList) {
+      const touchY: number = usePanOrigin ? finger.localY - event.offsetY : finger.localY;
+      if (touchY >= panelTop && touchY <= panelTop + GALLERY_DETAIL_PANEL_HANDLE_HEIGHT) return true;
+    }
+    return false;
+  }
+
+  private galleryPanelMaximumHeight(): number {
+    if (this.galleryViewportHeight <= 0) return 560;
+    const safeAvailableHeight: number = Math.max(GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT,
+      this.galleryViewportHeight - GALLERY_DETAIL_PANEL_BOTTOM_INSET - GALLERY_DETAIL_PANEL_TOP_CLEARANCE);
+    const contentFitHeight: number = this.galleryInfoPanelContentHeight > 0
+      ? GALLERY_DETAIL_PANEL_HANDLE_HEIGHT + this.galleryInfoPanelContentHeight +
+        GALLERY_DETAIL_PANEL_CONTENT_CLEARANCE + GALLERY_DETAIL_BAR_HEIGHT
+      : Math.max(220, this.galleryViewportHeight * 0.68);
+    return Math.max(GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT, Math.min(safeAvailableHeight, contentFitHeight));
+  }
+
+  private clampGalleryPanelHeight(height: number): number {
+    return Math.max(GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT,
+      Math.min(this.galleryPanelMaximumHeight(), height));
+  }
+
+  private galleryPanelSnapHeights(): Array<number> {
+    const maximumHeight: number = this.galleryPanelMaximumHeight();
+    const snapHeights: Array<number> = [GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT];
+    if (maximumHeight > snapHeights[snapHeights.length - 1] + 1) {
+      snapHeights.push(maximumHeight);
+    }
+    return snapHeights;
+  }
+
+  private galleryPanelSnapTarget(height: number): number {
+    const snapHeights: Array<number> = this.galleryPanelSnapHeights();
+    let targetHeight: number = snapHeights[0];
+    let nearestDistance: number = Math.abs(height - targetHeight);
+    for (let index: number = 1; index < snapHeights.length; index += 1) {
+      const distance: number = Math.abs(height - snapHeights[index]);
+      if (distance < nearestDistance) {
+        targetHeight = snapHeights[index];
+        nearestDistance = distance;
+      }
+    }
+    return targetHeight;
+  }
+
+  private galleryPanelTop(): number {
+    return Math.max(0, this.galleryViewportHeight - this.galleryPanelHeight - GALLERY_DETAIL_PANEL_BOTTOM_INSET);
+  }
+
+  private galleryPanelDragStart(): void {
+    this.galleryPanelDragStartHeight = this.galleryPanelHeight;
+  }
+
+  private galleryPanelDragUpdate(event: GestureEvent): void {
+    // Gesture offsets are in vp, matching the panel's ArkUI height.
+    this.galleryPanelHeight = this.clampGalleryPanelHeight(this.galleryPanelDragStartHeight - event.offsetY);
+  }
+
+  private galleryPanelDragEnd(event: GestureEvent): void {
+    const height: number = this.clampGalleryPanelHeight(this.galleryPanelDragStartHeight - event.offsetY);
+    const dragOffsetY: number = event.offsetY;
+    const upwardIntent: boolean = dragOffsetY <= -GALLERY_DETAIL_PANEL_SNAP_DRAG_THRESHOLD ||
+      (dragOffsetY <= -GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD &&
+        event.velocityY <= -GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD);
+    const downwardIntent: boolean = dragOffsetY >= GALLERY_DETAIL_PANEL_SNAP_DRAG_THRESHOLD ||
+      (dragOffsetY >= GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD &&
+        event.velocityY >= GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD);
+    const targetHeight: number = upwardIntent ? this.galleryPanelMaximumHeight()
+      : downwardIntent ? GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT
+        : this.galleryPanelSnapTarget(height);
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+      this.galleryPanelHeight = targetHeight;
+    });
+  }
+
+  private galleryPanelBodyCanCollapse(): boolean {
+    return this.galleryPanelHeight > GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 1 &&
+      this.galleryInfoPanelScrollViewportHeight > 0 &&
+      this.galleryInfoPanelContentHeight <= this.galleryInfoPanelScrollViewportHeight + 1;
+  }
+
+  private galleryPanelBodyDragStart(): void {
+    this.galleryPanelBodyDragActive = this.galleryPanelBodyCanCollapse();
+    this.galleryPanelBodyDragVertical = false;
+    this.galleryPanelBodyDragStartHeight = this.galleryPanelHeight;
+  }
+
+  private galleryPanelBodyDragUpdate(event: GestureEvent): void {
+    if (!this.galleryPanelBodyDragActive) return;
+    const horizontalTravel: number = Math.abs(event.offsetX);
+    const verticalTravel: number = Math.abs(event.offsetY);
+    if (Math.max(horizontalTravel, verticalTravel) < 10) return;
+    if (verticalTravel <= horizontalTravel * 1.15) return;
+    this.galleryPanelBodyDragVertical = true;
+    if (event.offsetY > 0) {
+      this.galleryPanelHeight = Math.max(GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT,
+        this.galleryPanelBodyDragStartHeight - event.offsetY);
+    }
+  }
+
+  private galleryPanelBodyDragEnd(event: GestureEvent): void {
+    if (!this.galleryPanelBodyDragActive) return;
+    this.galleryPanelBodyDragActive = false;
+    if (!this.galleryPanelBodyDragVertical) return;
+    const downwardIntent: boolean = event.offsetY >= GALLERY_DETAIL_PANEL_SNAP_DRAG_THRESHOLD ||
+      (event.offsetY >= GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD &&
+        event.velocityY >= GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD);
+    const targetHeight: number = downwardIntent
+      ? GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT
+      : this.galleryPanelBodyDragStartHeight;
+    this.getUIContext().animateTo({ duration: 190, curve: Curve.Friction }, () => {
+      this.galleryPanelHeight = targetHeight;
+    });
+  }
+
+  private galleryPagePanStart(event: GestureEvent): void {
+    const startedInPanel: boolean = this.galleryTouchStartedInInfoPanel(event, true);
+    const startedOnHandle: boolean = this.galleryTouchStartedOnPanelHandle(event, true);
+    this.galleryPagePanBlockedByPanel = startedOnHandle ||
+      (startedInPanel && this.galleryPanelHeight > GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 1);
+    this.galleryPageGestureAxis = 'none';
+  }
+
+  private galleryPagePanUpdate(event: GestureEvent): void {
+    if (this.galleryPagePanBlockedByPanel || this.galleryZoomScale > 1.02) return;
+    if (this.galleryPageGestureAxis === 'none') {
+      const horizontalTravel: number = Math.abs(event.offsetX);
+      const verticalTravel: number = Math.abs(event.offsetY);
+      if (Math.max(horizontalTravel, verticalTravel) < 10) return;
+      if (horizontalTravel > verticalTravel * 1.15) {
+        this.galleryPageGestureAxis = 'horizontal';
+      } else if (verticalTravel > horizontalTravel * 1.15) {
+        this.galleryPageGestureAxis = 'vertical';
+      } else {
+        return;
+      }
+    }
+    if (this.galleryPageGestureAxis === 'vertical') {
+      this.galleryDismissOffsetY = Math.max(0, event.offsetY);
+    }
+  }
+
+  private galleryPagePanEnd(event: GestureEvent): void {
+    if (this.galleryPagePanBlockedByPanel) {
+      this.galleryPagePanBlockedByPanel = false;
+      this.galleryPageGestureAxis = 'none';
+      return;
+    }
+    if (this.galleryZoomScale > 1.02) {
+      this.galleryPageGestureAxis = 'none';
+      return;
+    }
+    if (this.galleryPageGestureAxis !== 'vertical') {
+      this.galleryPageGestureAxis = 'none';
+      return;
+    }
+    const dragOffsetY: number = event.offsetY;
+    const dismissThreshold: number = Math.max(72, this.galleryViewportHeight * 0.10);
+    const downwardIntent: boolean = dragOffsetY >= dismissThreshold ||
+      (dragOffsetY >= GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD &&
+        event.velocityY >= GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD);
+    const upwardIntent: boolean = dragOffsetY <= -GALLERY_DETAIL_PANEL_SNAP_DRAG_THRESHOLD ||
+      (dragOffsetY <= -GALLERY_DETAIL_PANEL_FLICK_OFFSET_THRESHOLD &&
+        event.velocityY <= -GALLERY_DETAIL_PANEL_FLICK_VELOCITY_THRESHOLD);
+    this.galleryPageGestureAxis = 'none';
+    if (downwardIntent) {
+      this.dismissGalleryDetailBySwipe();
+    } else if (upwardIntent) {
+      this.expandGalleryInfoPanelFromSwipe();
+    } else {
+      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+        this.galleryDismissOffsetY = 0;
+      });
+    }
+  }
+
+  private galleryPanStart(event: GestureEvent): void {
+    this.galleryPanBlockedByInfoPanel = this.galleryTouchStartedInInfoPanel(event, true);
+    this.galleryGestureAxis = 'none';
+    this.galleryPanStartX = this.galleryPanOffsetX;
+    this.galleryPanStartY = this.galleryPanOffsetY;
+  }
+
+  private galleryPanUpdate(event: GestureEvent): void {
+    if (this.galleryPanBlockedByInfoPanel) return;
+    if (this.galleryZoomScale > 1.02) {
+      this.galleryPanOffsetX = this.clampGalleryPanX(this.galleryPanStartX + event.offsetX);
+      this.galleryPanOffsetY = this.clampGalleryPanY(this.galleryPanStartY + event.offsetY);
+      return;
+    }
+    if (this.galleryGestureAxis === 'none') {
+      const horizontalTravel: number = Math.abs(event.offsetX);
+      const verticalTravel: number = Math.abs(event.offsetY);
+      if (Math.max(horizontalTravel, verticalTravel) < 10) return;
+      if (horizontalTravel > verticalTravel * 1.15) {
+        this.galleryGestureAxis = 'horizontal';
+      } else if (verticalTravel > horizontalTravel * 1.15) {
+        this.galleryGestureAxis = 'vertical';
+      } else {
+        return;
+      }
+    }
+    if (this.galleryGestureAxis === 'vertical') {
+      // The page-level gesture owns expand/dismiss actions; this photo gesture
+      // only tracks the downward offset so the page follows the finger.
+      this.galleryDismissOffsetY = Math.max(0, event.offsetY);
+    }
+  }
+
+  private galleryPanEnd(event: GestureEvent): void {
+    if (this.galleryPanBlockedByInfoPanel) {
+      this.galleryPanBlockedByInfoPanel = false;
+      this.galleryGestureAxis = 'none';
+      return;
+    }
+    if (this.galleryZoomScale > 1.02) {
+      this.galleryPanOffsetX = this.clampGalleryPanX(this.galleryPanOffsetX);
+      this.galleryPanOffsetY = this.clampGalleryPanY(this.galleryPanOffsetY);
+      return;
+    }
+    if (this.galleryGestureAxis === 'horizontal') {
+      this.galleryGestureAxis = 'none';
+      return;
+    }
+    if (this.galleryGestureAxis === 'vertical') {
+      this.galleryGestureAxis = 'none';
+      return;
+    }
+    this.galleryGestureAxis = 'none';
+  }
+
+  private expandGalleryInfoPanelFromSwipe(): void {
+    if (!this.galleryDetailVisible) return;
+    // The photo layer also owns a single-tap chrome toggle. A swipe can finish
+    // close enough to a tap for both recognizers to fire in parallel; suppress
+    // that trailing tap so the panel stays open after an upward swipe.
+    this.galleryChromeToggleBlockedUntil = Date.now() + 700;
+    if (!this.galleryChromeVisible) {
+      this.galleryChromeVisible = true;
+      this.setGalleryStatusBarMask(true);
+    }
+    this.galleryInfoPanelVisible = true;
+    const targetHeight: number = this.galleryPanelMaximumHeight();
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+      this.galleryDismissOffsetY = 0;
+      this.galleryPanelHeight = targetHeight;
+    });
+  }
+
+  private galleryPinchStart(event: GestureEvent): void {
+    this.galleryPinchBlockedByInfoPanel = this.galleryTouchStartedInInfoPanel(event);
+    if (this.galleryPinchBlockedByInfoPanel) return;
+    this.galleryPinchStartScale = this.galleryZoomScale;
+    this.galleryPinchStartPanX = this.galleryPanOffsetX;
+    this.galleryPinchStartPanY = this.galleryPanOffsetY;
+    const imageWidth: number = this.galleryBaseImageWidth() * this.galleryZoomScale;
+    const imageHeight: number = this.galleryBaseImageHeight() * this.galleryZoomScale;
+    if (imageWidth > 0 && imageHeight > 0 && this.galleryViewportWidth > 0 && this.galleryViewportHeight > 0) {
+      const imageLeft: number = (this.galleryViewportWidth - imageWidth) / 2 + this.galleryPanOffsetX;
+      const imageTop: number = (this.galleryViewportHeight - imageHeight) / 2 +
+        this.galleryPhotoVerticalOffset() + this.galleryPanOffsetY;
+      this.galleryPinchCenterX = Math.max(0, Math.min(1, (event.pinchCenterX - imageLeft) / imageWidth));
+      this.galleryPinchCenterY = Math.max(0, Math.min(1, (event.pinchCenterY - imageTop) / imageHeight));
+    } else {
+      this.galleryPinchCenterX = 0.5;
+      this.galleryPinchCenterY = 0.5;
+    }
+  }
+
+  private galleryPinchUpdate(event: GestureEvent): void {
+    if (this.galleryPinchBlockedByInfoPanel) return;
+    const nextScale: number = Math.max(1, Math.min(5, this.galleryPinchStartScale * event.scale));
+    if (nextScale <= 1.02) {
+      this.galleryZoomScale = 1;
+      this.galleryPanOffsetX = 0;
+      this.galleryPanOffsetY = 0;
+      return;
+    }
+    const scaleRatio: number = nextScale / this.galleryPinchStartScale;
+    this.galleryZoomScale = nextScale;
+    this.galleryPanOffsetX = this.clampGalleryPanX(this.galleryPinchStartPanX +
+      (this.galleryPinchCenterX - 0.5) * this.galleryBaseImageWidth() * this.galleryPinchStartScale *
+      (scaleRatio - 1), nextScale);
+    this.galleryPanOffsetY = this.clampGalleryPanY(this.galleryPinchStartPanY +
+      (this.galleryPinchCenterY - 0.5) * this.galleryBaseImageHeight() * this.galleryPinchStartScale *
+      (scaleRatio - 1), nextScale);
+  }
+
+  private galleryPinchEnd(): void {
+    if (this.galleryPinchBlockedByInfoPanel) {
+      this.galleryPinchBlockedByInfoPanel = false;
+      return;
+    }
+    if (this.galleryZoomScale <= 1.02) {
+      this.galleryZoomScale = 1;
+      this.galleryPanOffsetX = 0;
+      this.galleryPanOffsetY = 0;
+    }
+    this.galleryPinchStartScale = this.galleryZoomScale;
+  }
+
+  private toggleGalleryZoom(event: GestureEvent): void {
+    if (this.galleryTouchStartedInInfoPanel(event)) return;
+    const nextScale: number = this.galleryZoomScale > 1.05 ? 1 : 2;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseInOut }, () => {
+      this.galleryZoomScale = nextScale;
+      if (nextScale === 1) {
+        this.galleryPanOffsetX = 0;
+        this.galleryPanOffsetY = 0;
+      }
+    });
+  }
+
+  private toggleGalleryChrome(): void {
+    if (!this.galleryDetailVisible || Date.now() < this.galleryChromeToggleBlockedUntil) return;
+    const nextChromeVisible: boolean = !this.galleryChromeVisible;
+    if (!nextChromeVisible) this.endGallerySdrCompare();
+    this.setGalleryStatusBarMask(nextChromeVisible);
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseInOut }, () => {
+      this.galleryChromeVisible = nextChromeVisible;
+    });
+  }
+
+  private setGalleryStatusBarMask(_masked: boolean): void {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) return;
+    this.galleryStatusBarUpdate = this.galleryStatusBarUpdate
+      .then(async (): Promise<void> => {
+        const mainWindow: window.Window = await window.getLastWindow(context);
+        await mainWindow.setWindowSystemBarProperties({ statusBarColor: TRANSPARENT_SYSTEM_BAR_COLOR });
+      })
+      .catch((error: Object): void => {
+        console.error('Failed to update gallery status bar appearance: ' + JSON.stringify(error));
+      });
+  }
+
+  private async updateGalleryPhotoTitlePosition(): Promise<void> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) return;
+    try {
+      const mainWindow: window.Window = await window.getLastWindow(context);
+      const avoidArea: window.AvoidArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      this.galleryPhotoTitleTopPosition = this.getUIContext().px2vp(avoidArea.topRect.height) + 5;
+    } catch (error) {
+      // Keep the phone-sized fallback if the system inset is unavailable.
+    }
+  }
+
+  private galleryCurrentPhotoIndex(): number {
+    const selectedId: string | undefined = this.galleryCurrentItem?.id;
+    if (selectedId === undefined) return -1;
+    for (let index: number = 0; index < this.galleryPhotos.length; index += 1) {
+      if (this.galleryPhotos[index].item.id === selectedId) return index;
+    }
+    return -1;
+  }
+
+  private onGallerySwiperChange(index: number): void {
+    if (index < 0 || index >= this.galleryPhotos.length) return;
+    this.centerGalleryThumbnail(index);
+    const nextTile: GalleryPhotoTile = this.galleryPhotos[index];
+    if (nextTile.item.id === this.galleryCurrentItem?.id) return;
+    this.galleryStatus = '正在读取 ' + nextTile.item.displayName + '…';
+    void this.inspectGallerySelection(nextTile, false);
+  }
+
+  private dismissGalleryDetailBySwipe(): void {
+    if (!this.galleryDetailVisible) return;
+    this.closeGalleryDetail();
+  }
+
+  private async convertGallerySelection(runImmediately: boolean): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    if (this.galleryQueuePreparing || this.galleryImporting) {
       return;
     }
     if (!this.queueLoaded || !this.queueReady || this.queueLoading || this.queueRecoveryRequired ||
@@ -2565,13 +3812,47 @@ struct Index {
       this.galleryStatus = '请先从图库选择一张已成功读取的照片';
       return;
     }
+    if (!this.gallerySupportsNativeConversion()) {
+      this.galleryStatus = '这张照片不含可转换的 ProXDR 数据';
+      return;
+    }
 
     const queue: QueueController = controller === undefined ? this.getController() : controller;
     if (queue.hasPersistenceError || queue.isPersistenceBusy || this.queueHasBlockingOperation(queue)) {
       this.galleryStatus = '队列仍有未完成的保存或文件操作，请完成后再转换';
       return;
     }
-    const hadPendingItems: boolean = queue.hasPendingItems;
+    const mode: QueueModeSnapshot = this.galleryPhotoModeSnapshot();
+    const existing: QueueItem | undefined = this.galleryQueueItemId.length > 0
+      ? queue.get(this.galleryQueueItemId)
+      : undefined;
+    if (existing !== undefined) {
+      if (existing.status === 'running' || existing.externalBusy) {
+        this.galleryStatus = '这张照片正在处理中，请等待当前操作完成';
+        return;
+      }
+      try {
+        queue.setModeOverride(existing.id, mode);
+        if (existing.status === 'succeeded') {
+          queue.reconvert(existing.id);
+        } else if (existing.status === 'failed') {
+          queue.retry(existing.id);
+        }
+        await queue.persist();
+        this.galleryStatus = runImmediately
+          ? '已更新这张照片的设置，准备单张转换…'
+          : '已更新队列中这张照片的设置';
+        if (runImmediately) {
+          await this.startGalleryQueueItemSingle(existing.id, queue);
+        } else {
+          this.showGalleryQueueAddedToast();
+        }
+      } catch (error) {
+        this.galleryStatus = '更新队列项目失败：' + this.errorMessage(error);
+      }
+      return;
+    }
+
     const sourcePath: string = this.gallerySandboxPath;
     const expectedBytes: number = this.galleryCopiedBytes;
     let item: QueueItem | undefined = undefined;
@@ -2588,7 +3869,8 @@ struct Index {
       const suffix: string = this.galleryFileSuffixFromUri(sourcePath);
       item = queue.add({
         displayName: this.galleryCurrentItem?.displayName ?? ('本地照片' + suffix),
-        sourceUri: sourcePath
+        sourceUri: sourcePath,
+        modeOverride: mode
       });
       this.galleryQueueItemId = item.id;
       queue.beginExternal(item.id);
@@ -2631,13 +3913,250 @@ struct Index {
     if (!prepared || item === undefined) {
       return;
     }
-    this.mainTabIndex = 1;
-    if (hadPendingItems) {
-      this.operationStatus = '照片已加入队列；队列中还有其他待处理项目，请检查后点击“开始队列”';
+    if (runImmediately) {
+      this.galleryStatus = '正在单独转换这张照片…';
+      await this.startGalleryQueueItemSingle(item.id, queue);
       return;
     }
-    this.operationStatus = '照片已加入队列，正在按当前设置转换；原图保留，导出时再选择保存位置';
-    await this.startQueue();
+    this.galleryStatus = '照片已加入转换队列；此设置只应用于这张照片';
+    this.operationStatus = '照片已加入队列；可继续浏览，或在队列页开始处理';
+    this.showGalleryQueueAddedToast();
+  }
+
+  private showGalleryQueueAddedToast(): void {
+    this.showGallerySuccessToast('已加入队列');
+  }
+
+  private showGallerySuccessToast(message: string): void {
+    try {
+      if (this.shouldUseImmersiveMainChrome()) {
+        this.showImmersiveGallerySuccessToast(message);
+      } else {
+        this.getUIContext().getPromptAction().showToast({
+          message: message,
+          duration: 2000
+        });
+      }
+    } catch (error) {
+      // Queue persistence already succeeded; a toast failure must not change that result.
+    }
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private showImmersiveGallerySuccessToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({
+      message: message,
+      duration: 2000,
+      systemMaterial: new uiMaterial.ImmersiveMaterial({
+        style: uiMaterial.ImmersiveStyle.THIN
+      })
+    });
+  }
+
+  private galleryConvertedPhotoName(item: GalleryLibraryItem, modeKey: string): string {
+    const dot: number = item.displayName.lastIndexOf('.');
+    const stem: string = dot > 0 ? item.displayName.substring(0, dot) : item.displayName;
+    return stem + '-' + modeKey + '.heic';
+  }
+
+  private async convertGalleryPhotoDirectly(): Promise<void> {
+    if (!this.canConvertGalleryPhotoDirectly()) {
+      this.galleryStatus = '照片尚未准备好，或当前有其他文件操作';
+      return;
+    }
+    const sourceItem: GalleryLibraryItem | undefined = this.galleryCurrentItem;
+    const library: HarmonyGalleryLibrary | undefined = this.galleryLibrary;
+    if (sourceItem === undefined || library === undefined) return;
+
+    const sourcePath: string = this.gallerySandboxPath;
+    const expectedBytes: number = this.galleryCopiedBytes;
+    const selectionSerial: number = this.gallerySelectionSerial;
+    let mode: QueueModeSnapshot | undefined = undefined;
+    let temporaryPath: string = '';
+    let finalPath: string = '';
+    let handle: number = 0;
+    let timer: number = -1;
+    try {
+      mode = this.galleryPhotoModeSnapshot();
+      const paths: Array<string> = this.nextGalleryOutputPaths();
+      temporaryPath = paths[0];
+      finalPath = paths[1];
+    } catch (error) {
+      this.galleryStatus = '无法准备图库输出路径：' + this.errorMessage(error);
+      return;
+    }
+    if (mode === undefined) return;
+
+    this.pageBusy = true;
+    this.galleryStatus = '正在直接转换并保存新图…';
+    try {
+      const sourceStat: fileIo.Stat = await fileIo.lstat(sourcePath);
+      if (sourceStat.isSymbolicLink() || !sourceStat.isFile() || sourceStat.size <= 0 ||
+        sourceStat.size !== expectedBytes) {
+        throw new Error('图库沙箱原图已失效或大小发生变化');
+      }
+      await this.ensureDirectory(this.parentDirectory(finalPath));
+      if (temporaryPath === sourcePath || finalPath === sourcePath) {
+        throw new Error('输出路径不能覆盖当前原图');
+      }
+
+      handle = xdremuxNative.progressBegin();
+      if (handle === 0) throw new Error('无法创建转换进度句柄');
+      timer = setInterval(() => {
+        try {
+          const progress: NativeProgress = xdremuxNative.progressRead(handle) as NativeProgress;
+          const progressText: string = progress.total > 0
+            ? String(progress.current) + ' / ' + String(progress.total)
+            : '处理中';
+          if (selectionSerial === this.gallerySelectionSerial) {
+            this.galleryStatus = this.progressStageLabel(progress.stage) + '：' + progressText;
+          }
+        } catch (error) {
+          // The Rust progress handle can close immediately after conversion.
+        }
+      }, 250);
+
+      const conversion: NativeConversionResult = await xdremuxNative.convert(
+        sourcePath,
+        temporaryPath,
+        mode.config,
+        handle,
+        ps3OptionsFor(sourcePath, mode.applePhotographicStyles3 === true)
+      ) as NativeConversionResult;
+      if (!conversion.success) {
+        const message: string = this.display(conversion.errorMessage);
+        throw new Error(message === '—' ? 'Rust 转换失败' : message);
+      }
+
+      const temporaryStat: fileIo.Stat = await fileIo.lstat(temporaryPath);
+      if (temporaryStat.isSymbolicLink() || !temporaryStat.isFile() || temporaryStat.size <= 0) {
+        throw new Error('转换输出为空或格式无效');
+      }
+      await fileIo.rename(temporaryPath, finalPath);
+      const finalStat: fileIo.Stat = await fileIo.lstat(finalPath);
+      if (finalStat.isSymbolicLink() || !finalStat.isFile() || finalStat.size <= 0) {
+        throw new Error('转换结果校验失败');
+      }
+
+      const savedItem: GalleryLibraryItem = await library.importPhoto(
+        finalPath,
+        this.galleryConvertedPhotoName(sourceItem, mode.modeKey)
+      );
+      const savedTile: GalleryPhotoTile = { item: savedItem, path: library.pathFor(savedItem) };
+      this.galleryPhotos = [savedTile, ...this.galleryPhotos.filter(
+        (tile: GalleryPhotoTile): boolean => tile.item.id !== savedItem.id
+      )];
+      this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
+      this.galleryMediaCount = this.galleryPhotos.length;
+      if (selectionSerial === this.gallerySelectionSerial) {
+        this.galleryStatus = '转换完成，新图已保存到 XDRemux 本地图库';
+      }
+      this.operationStatus = '照片已直接转换并保存为本地图库新图';
+      this.showGallerySuccessToast('已转换并保存为新照片');
+    } catch (error) {
+      const message: string = '直接转换失败：' + this.errorMessage(error);
+      if (selectionSerial === this.gallerySelectionSerial) this.galleryStatus = message;
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    } finally {
+      if (timer >= 0) clearInterval(timer);
+      if (handle !== 0) {
+        try {
+          xdremuxNative.progressEnd(handle);
+        } catch (error) {
+          // Preserve the settled conversion result.
+        }
+      }
+      for (const outputPath of [temporaryPath, finalPath]) {
+        if (outputPath.length === 0) continue;
+        try {
+          await fileIo.unlink(outputPath);
+        } catch (error) {
+          // A missing scratch/output file is already cleaned up.
+        }
+      }
+      this.pageBusy = false;
+    }
+  }
+
+  private async startGalleryQueueItemSingle(itemId: string, queue: QueueController): Promise<void> {
+    if (queue.isRunning || this.queueRunning) {
+      this.galleryStatus = '队列正在运行，请等待当前项目完成后再单独转换';
+      return;
+    }
+    this.selectQueueItem(itemId);
+    this.closeGalleryDetail();
+    this.mainTabIndex = 1;
+    this.operationStatus = '正在转换所选照片；队列中的其他项目保持待处理';
+    try {
+      await queue.startSingle(itemId);
+      const finished: QueueItem | undefined = queue.get(itemId);
+      this.operationStatus = finished?.status === 'succeeded'
+        ? '单张转换完成；其他队列项目仍保持待处理'
+        : '单张转换结束；请检查所选项目状态';
+    } catch (error) {
+      this.operationStatus = '单张转换失败：' + this.errorMessage(error);
+    } finally {
+      this.syncQueue();
+    }
+  }
+
+  private galleryPhotoTitleLabel(): string {
+    return this.galleryCurrentItem?.displayName ?? '本地照片';
+  }
+
+  private galleryCameraModelLabel(): string {
+    const make: string = (this.galleryDetails?.make ?? '').trim();
+    const model: string = (this.galleryDetails?.model ?? '').trim();
+    if (model.length > 0) {
+      return make.length > 0 && model.toLowerCase().indexOf(make.toLowerCase()) < 0
+        ? make + ' ' + model
+        : model;
+    }
+    return make.length > 0 ? make : '未知机型';
+  }
+
+  private galleryPhotoModeLabel(): string {
+    const displayName: string = (this.galleryCurrentItem?.displayName ?? '').toLowerCase();
+    if (displayName.endsWith('-oppo.heic')) return '已转换为 OPPO';
+    if (displayName.endsWith('-apple.heic')) return '已转换为 Apple';
+
+    const classification: NativeClassificationResult | undefined = this.galleryClassification;
+    const folderName: string = (classification?.folderName ?? '').trim();
+    if (folderName.length > 0) return folderName;
+    if (this.galleryImporting) return '正在识别模式…';
+    return '未识别模式';
+  }
+
+  private galleryDetailSubtitle(): string {
+    return this.galleryCameraModelLabel() + ' · ' + this.galleryPhotoModeLabel();
+  }
+
+  @Builder
+  private galleryPhotoTitleOverlay() {
+    if (this.galleryDetailMounted && this.galleryChromeVisible) {
+      Row() {
+        Marquee({
+          start: true,
+          step: 0.8,
+          loop: -1,
+          fromStart: true,
+          src: this.galleryPhotoTitleLabel(),
+          delay: 1400
+        })
+          .width('100%')
+          .height(28)
+          .fontColor(Color.White)
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold);
+      }
+      .width('100%')
+      .height(28)
+      .padding({ left: 68, right: 120 })
+      .alignItems(VerticalAlign.Center)
+      .position({ x: 0, y: this.galleryPhotoTitleTopPosition })
+      .hitTestBehavior(HitTestMode.None)
+      .zIndex(25);
+    }
   }
 
   private galleryFormatLabel(): string {
@@ -2657,8 +4176,176 @@ struct Index {
     return dot >= 0 ? path.substring(dot + 1).toUpperCase() : '未知';
   }
 
+  private async shareCurrentGalleryPhoto(): Promise<void> {
+    const item: GalleryLibraryItem | undefined = this.galleryCurrentItem;
+    const path: string = this.gallerySandboxPath;
+    if (item === undefined || path.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '当前没有可分享的照片' });
+      return;
+    }
+
+    try {
+      const stat: fileIo.Stat = await fileIo.stat(path);
+      if (!Number.isSafeInteger(stat.size) || stat.size <= 0) {
+        throw new Error('本地照片为空或不可读');
+      }
+      const uiContext: UIContext = this.getUIContext();
+      const context: common.UIAbilityContext = uiContext.getHostContext() as common.UIAbilityContext;
+      const imageType: string = utd.getUniformDataTypeByFilenameExtension(
+        item.extension,
+        utd.UniformDataType.IMAGE
+      );
+      const data: systemShare.SharedData = new systemShare.SharedData({
+        utd: imageType,
+        uri: fileUri.getUriFromPath(path),
+        title: item.displayName
+      });
+      const controller: systemShare.ShareController = new systemShare.ShareController(data);
+      await controller.show(context, {
+        selectionMode: systemShare.SelectionMode.SINGLE,
+        previewMode: systemShare.SharePreviewMode.DETAIL
+      });
+    } catch (error) {
+      const message: string = '分享照片失败：' + this.errorMessage(error);
+      this.galleryStatus = message;
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    }
+  }
+
+  private galleryPhotoHasQueueReference(path: string): boolean {
+    return this.queueItems.some((item: QueueItem): boolean =>
+      item.sourceUri === path || item.inputPath === path
+    );
+  }
+
+  private confirmDeleteCurrentGalleryPhoto(): void {
+    const item: GalleryLibraryItem | undefined = this.galleryCurrentItem;
+    const tile: GalleryPhotoTile | undefined = item === undefined
+      ? undefined
+      : this.galleryPhotos.find((photo: GalleryPhotoTile): boolean => photo.item.id === item.id);
+    if (item === undefined || tile === undefined || this.galleryLibrary === undefined) return;
+    if (this.galleryImporting || this.pageBusy || this.queueRunning || this.galleryQueuePreparing) {
+      this.showGallerySuccessToast('当前有文件操作，暂不能删除照片');
+      return;
+    }
+    if (this.galleryPhotoHasQueueReference(tile.path)) {
+      this.showGallerySuccessToast('该照片仍被队列记录引用，请先移除队列项目再删除');
+      return;
+    }
+
+    try {
+      this.getUIContext().showAlertDialog({
+        title: '删除本地照片？',
+        message: '将从 XDRemux 本地图库和应用沙箱中删除“' + item.displayName + '”。手机系统图库中的原图不会受影响。',
+        autoCancel: true,
+        buttons: [
+          {
+            value: '取消',
+            action: (): void => {}
+          },
+          {
+            value: '删除',
+            style: DialogButtonStyle.HIGHLIGHT,
+            action: (): void => {
+              void this.deleteGalleryPhoto(item.id);
+            }
+          }
+        ]
+      });
+    } catch (error) {
+      this.showGallerySuccessToast('无法打开删除确认窗口');
+    }
+  }
+
+  private async deleteGalleryPhoto(itemId: string): Promise<void> {
+    const index: number = this.galleryPhotos.findIndex((photo: GalleryPhotoTile): boolean =>
+      photo.item.id === itemId
+    );
+    const tile: GalleryPhotoTile | undefined = index >= 0 ? this.galleryPhotos[index] : undefined;
+    const library: HarmonyGalleryLibrary | undefined = this.galleryLibrary;
+    if (tile === undefined || library === undefined) return;
+    if (this.galleryPhotoHasQueueReference(tile.path)) {
+      this.showGallerySuccessToast('该照片仍被队列记录引用，请先移除队列项目再删除');
+      return;
+    }
+
+    try {
+      await library.removePhoto(itemId);
+      const remainingPhotos: Array<GalleryPhotoTile> = this.galleryPhotos.filter(
+        (photo: GalleryPhotoTile): boolean => photo.item.id !== itemId
+      );
+      const oldThumbnail: image.PixelMap | undefined = this.galleryThumbnailPixelMapCache.get(itemId);
+      this.galleryThumbnailPixelMapCache.delete(itemId);
+      this.galleryCachedThumbnailIds = this.galleryCachedThumbnailIds.filter(
+        (cachedId: string): boolean => cachedId !== itemId
+      );
+      this.galleryThumbnailDecodeFailedIds = this.galleryThumbnailDecodeFailedIds.filter(
+        (failedId: string): boolean => failedId !== itemId
+      );
+      this.galleryLoadedPreviewIds = this.galleryLoadedPreviewIds.filter(
+        (loadedId: string): boolean => loadedId !== itemId
+      );
+      if (this.galleryDetailLoadedImageId === itemId) this.galleryDetailLoadedImageId = '';
+      this.galleryInspectionCache.delete(itemId);
+      this.galleryDecodedDimensionsCache.delete(itemId);
+      this.galleryPhotoSettings.delete(itemId);
+      if (oldThumbnail !== undefined) {
+        setTimeout((): void => {
+          void oldThumbnail.release();
+        }, 240);
+      }
+
+      this.galleryPhotos = remainingPhotos;
+      this.galleryMediaCount = remainingPhotos.length;
+      this.gallerySwiperDataSource.replaceAll(remainingPhotos);
+      if (remainingPhotos.length > 0) {
+        const nextIndex: number = Math.min(index, remainingPhotos.length - 1);
+        const nextTile: GalleryPhotoTile = remainingPhotos[nextIndex];
+        this.galleryCurrentItem = nextTile.item;
+        void this.inspectGallerySelection(nextTile, false);
+      } else {
+        this.gallerySelectionSerial += 1;
+        this.galleryCurrentItem = undefined;
+        this.galleryDetails = undefined;
+        this.galleryClassification = undefined;
+        this.gallerySandboxPath = '';
+        this.galleryMimeType = '';
+        this.galleryDetailVisible = false;
+        this.galleryDetailMounted = false;
+        this.galleryHeroTransitionActive = false;
+        this.setGalleryStatusBarMask(false);
+        this.galleryStatus = '导入照片后会保存在 XDRemux 本地图库中';
+      }
+      this.operationStatus = '已从 XDRemux 本地图库删除照片';
+      this.showGallerySuccessToast('已删除本地照片副本');
+    } catch (error) {
+      const message: string = '删除照片失败：' + this.errorMessage(error);
+      this.galleryStatus = message;
+      this.showGallerySuccessToast(message);
+    }
+  }
+
   private shouldUseImmersiveMainChrome(): boolean {
     return deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0');
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private updateHdsImmersiveMaterialSupport(): void {
+    const supportedTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();
+    this.supportsHdsImmersiveMaterial =
+      supportedTypes.indexOf(hdsMaterial.MaterialType.IMMERSIVE) >= 0;
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private hdsSystemMaterialType(): hdsMaterial.MaterialType {
+    return hdsMaterial.MaterialType.ADAPTIVE;
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private hdsSystemMaterialLevel(): hdsMaterial.MaterialLevel {
+    return this.supportsHdsImmersiveMaterial
+      ? hdsMaterial.MaterialLevel.EXQUISITE
+      : hdsMaterial.MaterialLevel.SMOOTH;
   }
 
   @Builder
@@ -2686,7 +4373,7 @@ struct Index {
           .fontSize(13)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
-          .padding({ left: 20, right: 20, top: 14, bottom: 12 });
+          .padding({ left: 20, right: 20, top: 98, bottom: 12 });
         }
 
       if (this.galleryLoading && this.galleryPhotos.length === 0) {
@@ -2736,39 +4423,45 @@ struct Index {
       } else {
         Scroll(this.galleryScrollController) {
           Grid() {
-            ForEach(this.galleryPhotos, (tile: GalleryPhotoTile) => {
+            LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
               GridItem() {
                 Stack() {
+                  if (!this.galleryPreviewIsLoaded(tile.item.id)) {
+                    Stack({ alignContent: Alignment.Center }) {
+                      SymbolGlyph($r('sys.symbol.picture'))
+                        .fontSize(20)
+                        .fontColor(['#55FFFFFF']);
+                    }
+                    .width('100%')
+                    .height('100%')
+                    .backgroundColor('#181B20');
+                  }
                   Image('file://' + tile.path)
                     .width('100%')
                     .height('100%')
+                    .orientation(ImageRotateOrientation.AUTO)
                     .objectFit(ImageFit.Cover)
-                    .backgroundColor($r('sys.color.background_tertiary'));
-                  Column() {
-                    Text(tile.item.displayName)
-                      .fontSize(10)
-                      .fontColor(Color.White)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      .width('100%');
-                  }
-                  .width('100%')
-                  .padding({ left: 7, right: 7, top: 14, bottom: 7 })
-                  .alignItems(HorizontalAlign.Start)
-                  .align(Alignment.BottomStart)
-                  .linearGradient({
-                    angle: 90,
-                    colors: [[Color.Transparent, 0.0], ['#AA000000', 1.0]]
-                  });
+                    .autoResize(true)
+                    .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
+                    .onComplete((event): void => {
+                      this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
+                        Number(event?.height ?? 0));
+                    });
                 }
                 .width('100%')
                 .aspectRatio(1)
                 .clip(true)
                 .borderRadius(10)
+                .backgroundColor($r('sys.color.background_tertiary'))
+                .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
+                  ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
+                .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
+                .transition(TransitionEffect.IDENTITY)
                 .onClick((): void => {
                   this.openGalleryTile(tile);
                 });
               }
+            .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
             }, (tile: GalleryPhotoTile) => tile.item.id);
           }
           .columnsTemplate('1fr 1fr 1fr')
@@ -2779,7 +4472,9 @@ struct Index {
         }
         .layoutWeight(1)
         .width('100%')
-        .clipContent(ContentClipMode.SAFE_AREA);
+        .align(Alignment.Top)
+        .clipContent(ContentClipMode.BOUNDARY)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
 
         if (this.galleryLoadError.length > 0) {
           Text(this.galleryLoadError)
@@ -2792,215 +4487,1014 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
+    .backgroundColor($r('sys.color.background_primary'))
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      this.galleryViewportWidth = Number(newArea.width);
+      this.galleryViewportHeight = Number(newArea.height);
+      if (this.galleryHeroPreloadPending) {
+        this.tryStartGalleryHeroTransition(this.galleryHeroPreloadItemId);
+      }
+    });
   }
 
-  @Available({ minApiVersion: 'HarmonyOS 6.1.0' })
-  private galleryNavigationMaterialStyle(): TitleBarStyleOptions {
-    return {
-      scrollEffectOpts: {
-        enableScrollEffect: false,
-        scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR
-      },
-      systemMaterialEffect: {
-        materialType: hdsMaterial.MaterialType.ADAPTIVE,
-        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+  @Builder
+  private galleryActionTabContent() {
+    Row() {}
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.None);
+  }
+
+  @Builder
+  private galleryConvertActionTab() {
+    Column({ space: 3 }) {
+      SymbolGlyph($r('sys.symbol.play_arrow_triangle_2_circlepath'))
+        .fontSize(20)
+        .fontColor([this.canConvertGalleryPhotoDirectly() ? Color.White : '#99FFFFFF']);
+      Text('转换单张')
+        .fontSize(10)
+        .fontColor(this.canConvertGalleryPhotoDirectly() ? '#E6FFFFFF' : '#99FFFFFF');
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .hitTestBehavior(HitTestMode.Default)
+    .accessibilityText('转换并保存为本地图库新图')
+    .onClick((): void => {
+      if (!this.canConvertGalleryPhotoDirectly()) {
+        this.showGallerySuccessToast('暂不支持转换该图片');
+        return;
       }
-    };
+      void this.convertGalleryPhotoDirectly();
+    });
+  }
+
+  @Builder
+  private galleryQueueActionTab() {
+    Stack({ alignContent: Alignment.Center }) {
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(25)
+          .fontColor([Color.White])
+          .hitTestBehavior(HitTestMode.None);
+      }
+      .width(52)
+      .height(52)
+      .systemMaterial(new uiMaterial.ImmersiveMaterial({
+        style: uiMaterial.ImmersiveStyle.THIN,
+        materialColor: 'rgba(31, 107, 255, 0.72)',
+        interactive: true,
+        lightEffect: { color: 'rgba(111, 180, 255, 0.58)' }
+      }))
+      .hitTestBehavior(HitTestMode.Default)
+      .accessibilityText('加入转换队列')
+      .onClick((): void => {
+        if (this.galleryQueuePreparing || this.galleryImporting || this.pageBusy ||
+          !this.gallerySupportsNativeConversion() || this.galleryDetails === undefined ||
+          this.galleryClassification === undefined || !this.settingsLoaded || !this.queueLoaded ||
+          !this.queueReady || this.queueRecoveryRequired) return;
+        void this.convertGallerySelection(false);
+      });
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(2)
+    .hitTestBehavior(HitTestMode.Transparent);
+  }
+
+  @Builder
+  private gallerySettingsActionTab() {
+    Column({ space: 3 }) {
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(20)
+        .fontColor([Color.White]);
+      Text('转换设置')
+        .fontSize(10)
+        .fontColor('#E6FFFFFF');
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .hitTestBehavior(HitTestMode.Default)
+    .accessibilityText('此照片的转换设置')
+    .onClick((): void => {
+      if (!this.settingsLoaded || this.settingsSaving || this.galleryImporting) return;
+      this.openGalleryPhotoSettings();
+    });
+  }
+
+  private openGalleryPhotoSettings(): void {
+    this.galleryPanelMode = 'settings';
+    const requestedHeight: number = this.clampGalleryPanelHeight(Math.max(
+      this.galleryPanelHeight,
+      this.galleryViewportHeight * 0.68
+    ));
+    const targetHeight: number = this.galleryPanelSnapTarget(requestedHeight);
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+      this.galleryPanelHeight = targetHeight;
+    });
+  }
+
+  private galleryThumbnailStripVisible(): boolean {
+    return this.galleryChromeVisible && this.galleryInfoPanelVisible &&
+      this.galleryPanelHeight <= GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 4 && !this.galleryHeroOpening;
+  }
+
+  @Builder
+  private galleryThumbnailStrip() {
+    Scroll(this.galleryThumbnailScroller) {
+      Row({ space: 8 }) {
+        LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+          Stack() {
+            if (this.galleryCachedThumbnailIds.includes(tile.item.id) &&
+              this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
+              Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                .width(58)
+                .height(70)
+                .orientation(ImageRotateOrientation.AUTO)
+                .objectFit(ImageFit.Cover)
+                .autoResize(true)
+                .backgroundColor('#17191D');
+            } else if (this.galleryThumbnailDecodeFailedIds.includes(tile.item.id)) {
+              Image('file://' + tile.path)
+                .width(58)
+                .height(70)
+                .orientation(ImageRotateOrientation.AUTO)
+                .objectFit(ImageFit.Cover)
+                .autoResize(true)
+                .backgroundColor('#17191D');
+            } else {
+              Stack({ alignContent: Alignment.Center }) {
+                SymbolGlyph($r('sys.symbol.picture'))
+                  .fontSize(16)
+                  .fontColor(['#55FFFFFF']);
+              }
+              .width(58)
+              .height(70)
+              .backgroundColor('#17191D');
+            }
+            if (tile.item.id === this.galleryCurrentItem?.id) {
+              Blank()
+                .width(58)
+                .height(70)
+                .border({ width: 2, color: $r('sys.color.ohos_id_color_activated') })
+                .borderRadius(9);
+            }
+          }
+          .width(58)
+          .height(70)
+          .clip(true)
+          .borderRadius(9)
+          .backgroundColor('#17191D')
+          .onAppear((): void => {
+            this.touchGalleryThumbnail(tile);
+          })
+          .onClick((): void => {
+              const targetIndex: number = this.galleryPhotos.findIndex(
+                (photo: GalleryPhotoTile): boolean => photo.item.id === tile.item.id
+              );
+              if (targetIndex < 0) return;
+              this.centerGalleryThumbnail(targetIndex);
+              if (targetIndex !== this.galleryCurrentPhotoIndex()) {
+                try {
+                  this.galleryDetailSwiperController.changeIndex(targetIndex, false);
+                } catch (error) {
+                  void this.inspectGallerySelection(tile, false);
+                }
+              }
+          });
+        }, (tile: GalleryPhotoTile): string => tile.item.id);
+      }
+      .padding({ left: 18, right: 18 });
+    }
+    .width('100%')
+    .height(74)
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .onAppear((): void => {
+      this.centerGalleryThumbnail(this.galleryCurrentPhotoIndex(), false);
+    })
+    .position({
+      x: 0,
+      y: Math.max(0, this.galleryViewportHeight - GALLERY_DETAIL_PANEL_BOTTOM_INSET -
+        GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT - GALLERY_DETAIL_THUMBNAIL_GAP -
+        GALLERY_DETAIL_THUMBNAIL_STRIP_HEIGHT)
+    })
+    .opacity(this.galleryThumbnailStripVisible() ? 1 : 0)
+    .hitTestBehavior(this.galleryThumbnailStripVisible() ? HitTestMode.Default : HitTestMode.None)
+    .zIndex(9);
+  }
+
+  @Builder
+  private gallerySdrCompareButton() {
+    if (this.canCompareGallerySdr()) {
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
+        Text(this.gallerySdrCompareLoading ? '…' : this.gallerySdrCompareActive ? 'SDR' : 'HDR')
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White);
+      }
+      .width(40)
+      .height(40)
+      .systemMaterial(this.galleryTopActionMaterial())
+      .backgroundColor(Color.Transparent)
+      .accessibilityText('按住显示 SDR，松开恢复 HDR')
+      .gesture(
+        LongPressGesture({ repeat: false, duration: 450 })
+          .onAction((): void => {
+            void this.beginGallerySdrCompare();
+          })
+          .onActionEnd((): void => {
+            this.endGallerySdrCompare();
+          })
+      )
+      .zIndex(22);
+    }
+  }
+
+  private galleryTopActionMaterial(): uiMaterial.ImmersiveMaterial {
+    return new uiMaterial.ImmersiveMaterial({
+      style: uiMaterial.ImmersiveStyle.THIN,
+      materialColor: 'rgba(18, 35, 58, 0.28)',
+      interactive: true,
+      lightEffect: { color: 'rgba(72, 145, 255, 0.42)' }
+    });
+  }
+
+  @Builder
+  private galleryDeleteButton() {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(18)
+        .fontColor([Color.White]);
+    }
+    .width(40)
+    .height(40)
+    .systemMaterial(this.galleryTopActionMaterial())
+    .backgroundColor(Color.Transparent)
+    .accessibilityText('删除本地照片')
+    .onClick((): void => {
+      this.confirmDeleteCurrentGalleryPhoto();
+    });
+  }
+
+  @Builder
+  private galleryShareButton() {
+    Button({ type: ButtonType.Circle, stateEffect: false }) {
+      SymbolGlyph($r('sys.symbol.share'))
+        .fontSize(18)
+        .fontColor([Color.White]);
+    }
+    .width(40)
+    .height(40)
+    .systemMaterial(this.galleryTopActionMaterial())
+    .backgroundColor(Color.Transparent)
+    .accessibilityText('分享照片')
+    .onClick((): void => {
+      void this.shareCurrentGalleryPhoto();
+    });
+  }
+
+  @Builder
+  private galleryDetailTopActionBar() {
+    if (this.galleryChromeVisible && this.galleryCurrentItem !== undefined) {
+      Row({ space: 8 }) {
+        if (this.canCompareGallerySdr()) {
+          this.gallerySdrCompareButton();
+        }
+        this.galleryDeleteButton();
+        this.galleryShareButton();
+      }
+      .width(this.canCompareGallerySdr() ? 136 : 88)
+      .height(40)
+      .position({
+        x: Math.max(12, this.galleryViewportWidth - (this.canCompareGallerySdr() ? 148 : 100)),
+        y: 48
+      })
+      .zIndex(23);
+    }
+  }
+
+  @Builder
+  private galleryDetailInfoPanel() {
+    Stack() {
+      if (this.galleryPanelHeight > GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 1) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundEffect({
+            radius: 36,
+            saturation: 1.18,
+            brightness: 0.78
+          })
+          .borderRadius(26)
+          .hitTestBehavior(HitTestMode.None);
+      }
+      Column() {
+      Row() {
+        Blank();
+        Column()
+          .width(38)
+          .height(5)
+          .backgroundColor(this.galleryPanelHeight <= GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 1
+            ? '#80FFFFFF' : '#AFFFFFFF')
+          .borderRadius(3)
+          .shadow({ radius: 5, color: '#99000000', offsetY: 1 });
+        Blank();
+      }
+      .width('100%')
+      .height(GALLERY_DETAIL_PANEL_HANDLE_HEIGHT)
+      .justifyContent(FlexAlign.Center)
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+      .priorityGesture(
+        PanGesture({ fingers: 1, distance: 2 })
+          .onActionStart((): void => {
+            this.galleryPanelDragStart();
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            this.galleryPanelDragUpdate(event);
+          })
+          .onActionEnd((event: GestureEvent): void => {
+            this.galleryPanelDragEnd(event);
+          }),
+        GestureMask.IgnoreInternal
+      );
+      Scroll() {
+      Column() {
+        if (this.galleryPanelMode === 'settings') {
+          this.galleryPhotoConversionSettingsPanel();
+        } else {
+        Row() {
+          Column() {
+            Text(this.galleryFormatLabel())
+              .fontSize(30)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.font_primary'));
+            Text(String(this.galleryDetails?.width ?? 0) + ' × ' +
+              String(this.galleryDetails?.height ?? 0) + ' · ' +
+              this.display(this.galleryDetails?.hdrKind))
+              .fontSize(14)
+              .fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 4 });
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1);
+          Text(this.galleryClassification?.family ?? '照片')
+            .fontSize(13)
+            .fontColor($r('sys.color.ohos_id_color_activated'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .backgroundColor($r('sys.color.background_tertiary'))
+            .borderRadius(18);
+        }
+        .width('100%');
+
+        Text(this.galleryCurrentItem?.displayName ?? '本地照片')
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: 8 });
+        if (this.gallerySandboxPath.length > 0) {
+          Text('本地图库原图已校验 · ' + String(this.galleryCopiedBytes) + ' B')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 6 });
+        }
+
+        Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
+        Text('转换方式')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%');
+        Text('此照片设置：' + (this.settingsLoaded ? this.galleryPhotoSettingsSummary() : '设置加载中…'))
+          .fontSize(14)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%')
+          .margin({ top: 6 });
+        Text('转换会生成新图片并保留原图；导出时可选择保存位置。')
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 4, bottom: 10 });
+        Text(this.galleryStatus)
+          .fontSize(12)
+          .fontColor(this.galleryStatus.indexOf('失败') >= 0
+            ? $r('sys.color.ohos_id_color_alert')
+            : $r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 8 });
+
+        Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 6 });
+        Text('照片信息')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%')
+          .margin({ top: 8, bottom: 4 });
+        if (this.galleryDetails !== undefined) {
+          Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%');
+          Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 8 });
+          Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
+            this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 8 });
+          Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
+            this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
+            this.display(this.galleryDetails.exposureBias))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 8 });
+          Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
+            (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
+              ? ' · ' + this.galleryClassification.modeKey
+              : ''))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 8 });
+        }
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      .onAreaChange((_oldArea: Area, newArea: Area): void => {
+        const contentHeight: number = Number(newArea.height);
+        if (Math.abs(contentHeight - this.galleryInfoPanelContentHeight) < 1) return;
+        this.galleryInfoPanelContentHeight = contentHeight;
+        if (this.galleryPanelHeight > GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 1) {
+          const targetHeight: number = this.galleryPanelMaximumHeight();
+          if (Math.abs(targetHeight - this.galleryPanelHeight) > 2) {
+            this.galleryPanelHeight = targetHeight;
+          }
+        }
+      });
+    }
+      .layoutWeight(1)
+      .width('100%')
+      .padding({ bottom: 24 })
+      .opacity(Math.max(0, Math.min(1,
+        (this.galleryPanelHeight - GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT) / 76)))
+      .parallelGesture(
+        PanGesture({ fingers: 1, distance: 2 })
+          .onActionStart((): void => {
+            this.galleryPanelBodyDragStart();
+          })
+          .onActionUpdate((event: GestureEvent): void => {
+            this.galleryPanelBodyDragUpdate(event);
+          })
+          .onActionEnd((event: GestureEvent): void => {
+            this.galleryPanelBodyDragEnd(event);
+          }),
+        GestureMask.Normal
+      )
+      .nestedScroll({
+        scrollForward: NestedScrollMode.PARENT_FIRST,
+        scrollBackward: NestedScrollMode.SELF_FIRST
+      })
+      .onAreaChange((_oldArea: Area, newArea: Area): void => {
+        this.galleryInfoPanelScrollViewportHeight = Number(newArea.height);
+      });
+      Blank()
+        .height(GALLERY_DETAIL_BAR_HEIGHT)
+        .hitTestBehavior(HitTestMode.None);
+    }
+    .width('100%')
+    .height(this.galleryPanelHeight)
+    .padding({ left: 18, right: 18, bottom: 0 })
+  }
+  .width(Math.max(0, this.galleryViewportWidth - 32))
+  .height(this.galleryPanelHeight)
+    .position({ x: 16, y: this.galleryPanelTop() })
+    .zIndex(8);
+  }
+
+  @Builder
+  private galleryPhotoConversionSettingsPanel() {
+    Column() {
+      Row() {
+        Button('‹ 返回照片信息')
+          .fontSize(13)
+          .height(38)
+          .onClick((): void => {
+            this.galleryPanelMode = 'info';
+          });
+        Blank();
+        Text('仅此照片')
+          .fontSize(12)
+          .fontColor($r('sys.color.ohos_id_color_activated'))
+          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+          .backgroundColor($r('sys.color.background_tertiary'))
+          .borderRadius(16);
+      }
+      .width('100%');
+
+      Text('转换设置')
+        .fontSize(25)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('sys.color.font_primary'))
+        .width('100%')
+        .margin({ top: 8 });
+      Text(this.galleryCurrentItem?.displayName ?? '本地照片')
+        .fontSize(13)
+        .fontColor($r('sys.color.font_secondary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .margin({ top: 4 });
+      Text('设置只随这张照片的转换任务保存，不会改动全局设置。')
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+        .margin({ top: 5, bottom: 12 });
+
+      Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ bottom: 12 });
+      Text('此照片可用的输出格式')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.font_primary'))
+        .width('100%');
+
+      if (this.gallerySupportedOutputModes().length === 0) {
+        Text('未检测到 XDRemux 支持的 ProXDR 数据，暂时没有可用的转换格式。')
+          .fontSize(14)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(21)
+          .width('100%')
+          .margin({ top: 8 });
+      } else {
+        if (this.gallerySupportedOutputModes().includes('oppo')) {
+          Row() {
+            Radio({ value: 'oppo', group: 'xdremux-gallery-output-mode' })
+              .checked(this.galleryPhotoSettingsView.outputMode === 'oppo')
+              .onChange((checked: boolean): void => {
+                if (checked) this.setGalleryPhotoOutputMode('oppo');
+              });
+            Text('OPPO 兼容')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .margin({ left: 9 });
+          }
+          .width('100%')
+          .height(46)
+          .onClick((): void => {
+            this.setGalleryPhotoOutputMode('oppo');
+          });
+        }
+        if (this.gallerySupportedOutputModes().includes('apple')) {
+          Row() {
+            Radio({ value: 'apple', group: 'xdremux-gallery-output-mode' })
+              .checked(this.galleryPhotoSettingsView.outputMode === 'apple')
+              .onChange((checked: boolean): void => {
+                if (checked) this.setGalleryPhotoOutputMode('apple');
+              });
+            Text('Apple 标准')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .margin({ left: 9 });
+          }
+          .width('100%')
+          .height(46)
+          .onClick((): void => {
+            this.setGalleryPhotoOutputMode('apple');
+          });
+        }
+
+        if (this.galleryPhotoSettingsView.outputMode === 'oppo') {
+          Text('OPPO 兼容模式')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 8 });
+          Select(OPPO_COMPAT_OPTIONS.map((option: SettingsOption): SelectOption => {
+            return { value: option.label };
+          }))
+            .selected(this.compatIndex(this.galleryPhotoSettingsView.oppoCompat))
+            .value(compatLabel(this.galleryPhotoSettingsView.oppoCompat))
+            .fontColor($r('sys.color.font_primary'))
+            .optionFont({ size: 14, weight: FontWeight.Regular })
+            .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+            .width('100%')
+            .margin({ top: 5 })
+            .onSelect((index: number, text?: string): void => {
+              if (index >= 0 && index < OPPO_COMPAT_OPTIONS.length) {
+                this.setGalleryPhotoCompat(OPPO_COMPAT_OPTIONS[index].value);
+              }
+            });
+          Text('保留相机附加信息')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 10 });
+          Select(OPPO_CAMERA_TAIL_OPTIONS.map((option: SettingsOption): SelectOption => {
+            return { value: option.label };
+          }))
+            .selected(this.cameraTailIndex(this.galleryPhotoSettingsView.oppoCameraTail))
+            .value(cameraTailLabel(this.galleryPhotoSettingsView.oppoCameraTail))
+            .fontColor($r('sys.color.font_primary'))
+            .optionFont({ size: 14, weight: FontWeight.Regular })
+            .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+            .width('100%')
+            .margin({ top: 5 })
+            .onSelect((index: number, text?: string): void => {
+              if (index >= 0 && index < OPPO_CAMERA_TAIL_OPTIONS.length) {
+                this.setGalleryPhotoCameraTail(OPPO_CAMERA_TAIL_OPTIONS[index].value);
+              }
+            });
+        } else {
+          Text(this.gallerySupportsApplePhotoData()
+            ? '本图为 HEIC/HEIF，可用的 Apple 摄影数据选项如下。'
+            : '本图不支持 Apple 摄影风格或人像数据，因此只显示 Apple 标准输出。')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(19)
+            .width('100%')
+            .margin({ top: 6, bottom: 4 });
+          if (this.gallerySupportsApplePhotoData()) {
+            Row() {
+              Text('摄影风格数据')
+                .fontSize(14)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePhotographicStyles })
+                .enabled(!this.galleryPhotoSettingsView.applePhotographicStyles3)
+                .onChange((isOn: boolean): void => {
+                  this.setGalleryPhotoStyles(isOn);
+                });
+            }
+            .width('100%')
+            .height(46);
+            Row() {
+              Text('摄影风格 3（质感 + 颗粒）')
+                .fontSize(14)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePhotographicStyles3 })
+                .onChange((isOn: boolean): void => {
+                  this.setGalleryPhotoStyles3(isOn);
+                });
+            }
+            .width('100%')
+            .height(46);
+          }
+          if (this.gallerySupportsPortraitData()) {
+            Row() {
+              Text('Apple 人像数据')
+                .fontSize(14)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePortrait })
+                .onChange((isOn: boolean): void => {
+                  this.setGalleryPhotoPortrait(isOn);
+                });
+            }
+            .width('100%')
+            .height(46);
+          }
+        }
+
+        Row() {
+          Text('严格 ISO 兼容')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1);
+          Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.strictTmap })
+            .onChange((isOn: boolean): void => {
+              this.setGalleryPhotoStrictTmap(isOn);
+            });
+        }
+        .width('100%')
+        .height(46)
+        .margin({ top: 8 });
+      }
+
+      Text('当前转换：' + this.galleryPhotoSettingsSummary())
+        .fontSize(13)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+        .margin({ top: 12 });
+      Button('完成')
+        .width('100%')
+        .height(44)
+        .margin({ top: 12 })
+        .onClick((): void => {
+          this.galleryPanelMode = 'info';
+        });
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding({ left: 18, right: 18, top: 12, bottom: 28 });
+  }
+
+  @Builder
+  private galleryHeroPreloader(itemId: string, path: string) {
+    Image('file://' + path)
+      .width('100%')
+      .height('100%')
+      .orientation(ImageRotateOrientation.AUTO)
+      .objectFit(ImageFit.Contain)
+      .autoResize(true)
+      .dynamicRangeMode(DynamicRangeMode.HIGH)
+      .opacity(0.001)
+      .hitTestBehavior(HitTestMode.None)
+      .onComplete((event): void => {
+        this.onGalleryHeroPreloadComplete(itemId, Number(event?.width ?? 0), Number(event?.height ?? 0));
+      })
+      .onError((): void => {
+        this.onGalleryHeroPreloadComplete(itemId);
+      });
   }
 
   @Builder
   private galleryDetailPage() {
-    HdsNavigation() {
+    Stack() {
       Stack() {
-        if (this.gallerySandboxPath.length > 0) {
-        Image('file://' + this.gallerySandboxPath)
+        Stack() {
+        if (this.galleryPhotos.length > 0) {
+          Swiper(this.galleryDetailSwiperController) {
+            LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+                Stack({ alignContent: Alignment.Center }) {
+                  Stack() {
+                    if (tile.item.id === this.galleryCurrentItem?.id && this.gallerySdrCompareActive &&
+                      this.gallerySdrPreviewItemId === tile.item.id && this.gallerySdrPreviewPixelMap !== undefined) {
+                      Image(this.gallerySdrPreviewPixelMap as image.PixelMap)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .onComplete((event): void => {
+                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0));
+                        });
+                    } else {
+                      Image('file://' + tile.path)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .onComplete((event): void => {
+                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0));
+                        });
+                    }
+                    if (tile.item.id === this.galleryCurrentItem?.id &&
+                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
+                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .opacity(this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
+                        .hitTestBehavior(HitTestMode.None);
+                    }
+                  }
+                  .width(this.galleryImageFrameWidth(tile.item.id))
+                  .height(this.galleryImageFrameHeight(tile.item.id))
+                  .clip(true)
+                  .scale({
+                    x: tile.item.id === this.galleryCurrentItem?.id ? this.galleryZoomScale : 1,
+                    y: tile.item.id === this.galleryCurrentItem?.id ? this.galleryZoomScale : 1
+                  })
+                  .translate({
+                    x: tile.item.id === this.galleryCurrentItem?.id ? this.galleryPanOffsetX : 0,
+                    y: (tile.item.id === this.galleryCurrentItem?.id ? this.galleryPanOffsetY : 0) +
+                      this.galleryPhotoVerticalOffset()
+                  })
+                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
+                    ? this.galleryTransitionId(tile.item.id) : '')
+                  .transition(TransitionEffect.IDENTITY);
+                }
+                .width('100%')
+                .height('100%')
+                .clip(true)
+                .gesture(
+                  GestureGroup(GestureMode.Parallel,
+                    PanGesture({ fingers: 1, distance: this.galleryZoomScale > 1.02 ? 3 : 50 })
+                      .onActionStart((event: GestureEvent): void => {
+                        this.galleryPanStart(event);
+                      })
+                      .onActionUpdate((event: GestureEvent): void => {
+                        this.galleryPanUpdate(event);
+                      })
+                      .onActionEnd((event: GestureEvent): void => {
+                        this.galleryPanEnd(event);
+                      }),
+                    PinchGesture({ fingers: 2, distance: 1 })
+                      .onActionStart((event: GestureEvent): void => {
+                        this.galleryPinchStart(event);
+                      })
+                      .onActionUpdate((event: GestureEvent): void => {
+                        this.galleryPinchUpdate(event);
+                      })
+                      .onActionEnd((): void => {
+                        this.galleryPinchEnd();
+                      }),
+                    GestureGroup(GestureMode.Exclusive,
+                      TapGesture({ count: 2 })
+                        .onAction((event: GestureEvent): void => {
+                          this.toggleGalleryZoom(event);
+                        }),
+                      TapGesture({ count: 1 })
+                        .onAction((): void => {
+                          this.toggleGalleryChrome();
+                        })
+                    )
+                  )
+                );
+            }, (tile: GalleryPhotoTile): string => tile.item.id);
+          }
           .width('100%')
           .height('100%')
-          .objectFit(ImageFit.Contain)
-          .backgroundColor('#111820');
-      } else {
-        Column() {
-          if (this.galleryImporting) {
-            LoadingProgress().width(34).height(34);
-          }
-          Text(this.galleryImporting ? '正在读取所选照片…' : this.galleryStatus)
-            .fontSize(14)
-            .fontColor($r('sys.color.font_secondary'))
-            .margin({ top: 12 });
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .backgroundColor($r('sys.color.background_tertiary'));
-      }
-
-      Column() {
-        Blank().layoutWeight(1);
-
-        Scroll() {
+          .index(Math.max(0, this.galleryCurrentPhotoIndex()))
+          .loop(true)
+          .duration(260)
+          .cachedCount(1)
+          .indicator(false)
+          .disableSwipe(this.galleryZoomScale > 1.02)
+          .onChange((index: number): void => {
+            this.onGallerySwiperChange(index);
+          });
+        } else {
           Column() {
-            Row() {
-              Column() {
-                Text(this.galleryFormatLabel())
-                  .fontSize(30)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('sys.color.font_primary'));
-                Text(String(this.galleryDetails?.width ?? 0) + ' × ' +
-                  String(this.galleryDetails?.height ?? 0) + ' · ' +
-                  this.display(this.galleryDetails?.hdrKind))
-                  .fontSize(14)
-                  .fontColor($r('sys.color.font_secondary'))
-                  .margin({ top: 4 });
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1);
-              Text(this.galleryClassification?.family ?? '照片')
-                .fontSize(13)
-                .fontColor($r('sys.color.ohos_id_color_activated'))
-                .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-                .backgroundColor($r('sys.color.background_tertiary'))
-                .borderRadius(18);
+            if (this.galleryImporting) {
+              LoadingProgress().width(34).height(34);
             }
-            .width('100%');
-
-            if (this.galleryDetails !== undefined) {
-              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
-              Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
-                .fontSize(14)
-                .fontColor($r('sys.color.font_primary'))
-                .width('100%');
-              Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
-                .fontSize(13)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 8 });
-              Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
-                this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
-                .fontSize(13)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 8 });
-              Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
-                this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
-                this.display(this.galleryDetails.exposureBias))
-                .fontSize(13)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 8 });
-              Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
-                (this.galleryClassification?.modeKey !== null && this.galleryClassification?.modeKey !== undefined
-                  ? ' · ' + this.galleryClassification.modeKey
-                  : ''))
-                .fontSize(13)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 8 });
-            }
-
-            if (this.gallerySandboxPath.length > 0) {
-              Text('本地图库原图已校验 · ' + String(this.galleryCopiedBytes) + ' B')
-                .fontSize(12)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 10 });
-            }
-
-            Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 16, bottom: 12 });
-            Text('转换方式')
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%');
-            Text('当前设置：' + (this.settingsLoaded ? this.savedSettingsSummary() : '设置加载中…'))
+            Text(this.galleryImporting ? '正在读取所选照片…' : this.galleryStatus)
               .fontSize(14)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ top: 6 });
-            Text('转换会生成新图片并保留原图；导出时可选择保存位置。')
-              .fontSize(12)
               .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 4, bottom: 10 });
-            Row() {
-              Button(this.galleryQueuePreparing ? '正在准备队列…' : '按当前设置转换')
-                .fontSize(14)
-                .layoutWeight(1)
-                .height(46)
-                .enabled(!this.galleryQueuePreparing && !this.galleryImporting && !this.pageBusy &&
-                  this.galleryDetails !== undefined && this.galleryClassification !== undefined &&
-                  this.settingsLoaded && this.queueLoaded && this.queueReady && !this.queueRecoveryRequired)
-                .onClick((): void => {
-                  void this.convertGallerySelection();
-                });
-              Button('转换设置')
-                .fontSize(14)
-                .height(46)
-                .margin({ left: 8 })
-                .enabled(this.settingsLoaded && !this.settingsSaving)
-                .onClick((): void => {
-                  this.mainTabIndex = 2;
-                });
-            }
-            .width('100%');
-
-            Text(this.galleryStatus)
-              .fontSize(12)
-              .fontColor(this.galleryStatus.indexOf('失败') >= 0
-                ? $r('sys.color.ohos_id_color_alert')
-                : $r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 10 });
+              .margin({ top: 12 });
           }
-          .alignItems(HorizontalAlign.Start)
           .width('100%')
-          .padding(18)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .backgroundColor($r('sys.color.background_tertiary'));
         }
-        .width('100%')
-        .height('58%')
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK)
-        .borderRadius(28);
+
+      if (this.galleryDetailVisible && this.gallerySandboxPath.length > 0 && this.galleryPhotos.length > 1) {
+        this.galleryThumbnailStrip();
       }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-        .height('100%')
-        .padding({ left: 16, right: 16, top: 16, bottom: 16 });
+      if (this.galleryChromeVisible && this.galleryInfoPanelVisible) {
+        this.galleryDetailInfoPanel();
       }
+      }
+
       .width('100%')
       .height('100%')
-      .borderRadius(32)
-      .clip(true)
-      .backgroundColor('#111820');
+      .backgroundColor(this.galleryHeroTransitionActive ? Color.Transparent : '#000000')
+      .onAreaChange((_oldArea: Area, newArea: Area): void => {
+        this.galleryViewportWidth = Number(newArea.width);
+        this.galleryViewportHeight = Number(newArea.height);
+      });
+      HdsNavigation() {
+        Row() {}
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None);
+      }
+      .width('100%')
+      .height(104)
+      .titleBar({
+        padding: {
+          start: LengthMetrics.vp(20),
+          end: LengthMetrics.vp(156)
+        },
+        content: {
+          title: {
+            mainTitle: this.galleryPhotoTitleLabel(),
+            subTitle: this.galleryDetailSubtitle()
+          },
+          backIcon: {
+            label: '返回图库',
+            icon: $r('sys.symbol.chevron_left'),
+            isEnabled: true,
+            action: (): void => {
+              this.closeGalleryDetail();
+            }
+          }
+        },
+        style: {
+          scrollEffectOpts: {
+            enableScrollEffect: true,
+            scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR,
+            blurEffectiveStartOffset: LengthMetrics.vp(0),
+            blurEffectiveEndOffset: LengthMetrics.vp(28)
+          },
+          blurStrategy: BlurStrategy.ENABLE,
+          systemMaterialEffect: {
+            materialType: this.hdsSystemMaterialType(),
+            materialLevel: this.hdsSystemMaterialLevel()
+          },
+          originalStyle: {
+            backgroundStyle: { backgroundColor: '#52000000' },
+            contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
+          },
+          scrollEffectStyle: {
+            backgroundStyle: { backgroundColor: '#52000000' },
+            contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
+          }
+        },
+        avoidLayoutSafeArea: true,
+        enableComponentSafeArea: true
+      })
+      .titleMode(HdsNavigationTitleMode.MINI)
+      .hideTitleBar(!this.galleryChromeVisible, true)
+      .hideBackButton(false)
+      .hideToolBar(true)
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+      .backgroundColor(Color.Transparent)
+      .hitTestBehavior(HitTestMode.None)
+      .position({ x: 0, y: 0 })
+      .zIndex(20);
+      this.galleryDetailTopActionBar();
     }
     .width('100%')
     .height('100%')
-    .titleBar({
-      padding: {
-        start: LengthMetrics.vp(20),
-        end: LengthMetrics.vp(20)
-      },
-      content: {
-        title: {
-          mainTitle: '照片详情',
-          subTitle: this.galleryFormatLabel()
-        },
-        backIcon: {
-          label: '返回图库',
-          icon: $r('sys.symbol.chevron_left'),
-          isEnabled: true,
-          action: (): void => {
-            this.galleryDetailVisible = false;
-          }
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .zIndex(10);
+
+      HdsTabs() {
+        TabContent() {
+          this.galleryActionTabContent();
         }
-      },
-      style: deviceInfo.apiAvailable('6.1.0') ? this.galleryNavigationMaterialStyle() : undefined,
-      avoidLayoutSafeArea: false,
-      enableComponentSafeArea: false
-    })
-    .titleMode(HdsNavigationTitleMode.MINI)
-    .hideBackButton(false)
-    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP]);
+        .tabBar(this.galleryConvertActionTab())
+
+        TabContent() {
+          this.galleryActionTabContent();
+        }
+        .tabBar(this.galleryQueueActionTab())
+
+        TabContent() {
+          this.galleryActionTabContent();
+        }
+        .tabBar(this.gallerySettingsActionTab())
+      }
+      .barOverlap(true)
+      .barPosition(BarPosition.End)
+      .vertical(false)
+      .barMode(BarMode.Fixed)
+      .barHeight(GALLERY_DETAIL_BAR_HEIGHT)
+      .scrollable(false)
+      .barFloatingStyle({
+        barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
+        barBottomMargin: 28,
+        adaptToHandedness: false,
+        barOpacity: this.galleryChromeVisible && this.galleryInfoPanelVisible ? 1 : 0,
+        systemMaterialEffect: {
+          materialType: this.hdsSystemMaterialType(),
+          materialLevel: this.hdsSystemMaterialLevel()
+        }
+      })
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
+      .hitTestBehavior(HitTestMode.Transparent)
+      .zIndex(15);
+      this.galleryPhotoTitleOverlay();
+    }
+    .width('100%')
+    .height('100%')
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .translate({ x: 0, y: this.galleryDismissOffsetY })
+    .opacity(Math.max(0.7, 1 - Math.abs(this.galleryDismissOffsetY) /
+      Math.max(this.galleryViewportHeight, 1) * 0.3))
+    .backgroundColor(this.galleryHeroTransitionActive ? Color.Transparent : '#000000')
+    .zIndex(10)
+    .transition(TransitionEffect.IDENTITY)
+    .parallelGesture(
+      PanGesture({ fingers: 1, distance: 10 })
+        .onActionStart((event: GestureEvent): void => {
+          this.galleryPagePanStart(event);
+        })
+        .onActionUpdate((event: GestureEvent): void => {
+          this.galleryPagePanUpdate(event);
+        })
+        .onActionEnd((event: GestureEvent): void => {
+          this.galleryPagePanEnd(event);
+        }),
+      GestureMask.Normal
+    );
   }
 
   private async ensureDirectory(path: string): Promise<void> {
@@ -3018,6 +5512,23 @@ struct Index {
       }
       throw new Error(this.errorMessage(mkdirError));
     }
+  }
+
+  private nextGalleryOutputPaths(): Array<string> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      throw new Error('应用上下文不可用');
+    }
+    this.outputSerial += 1;
+    const stem: string = 'xdremux-gallery-' + String(Date.now()) + '-' + String(this.outputSerial);
+    const outputDirectory: string = context.filesDir + '/outputs';
+    const temporaryPath: string = outputDirectory + '/' + stem + '.heic.tmp';
+    const finalPath: string = outputDirectory + '/' + stem + '.heic';
+    if (this.queueSandbox !== undefined) {
+      this.queueSandbox.pathPolicy.validate(temporaryPath);
+      this.queueSandbox.pathPolicy.validate(finalPath);
+    }
+    return [temporaryPath, finalPath];
   }
 
   private nextOutputPaths(itemId: string): Array<string> {
@@ -3892,15 +6403,16 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding({ left: 20, right: 20, top: 24, bottom: 108 });
+        .padding({ left: 20, right: 20, top: this.shouldUseImmersiveMainChrome() ? 98 : 24, bottom: 108 });
       }
       .layoutWeight(1)
       .width('100%')
-      .clipContent(ContentClipMode.SAFE_AREA);
+      .clipContent(ContentClipMode.BOUNDARY)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
@@ -4179,15 +6691,16 @@ struct Index {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding({ left: 24, right: 24, top: 28, bottom: 96 });
+        .padding({ left: 24, right: 24, top: this.shouldUseImmersiveMainChrome() ? 98 : 28, bottom: 96 });
       }
       .layoutWeight(1)
       .width('100%')
-      .clipContent(ContentClipMode.SAFE_AREA);
+      .clipContent(ContentClipMode.BOUNDARY)
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: '26.0.0' })
@@ -4216,6 +6729,10 @@ struct Index {
     return '设置';
   }
 
+  private shouldHideMainTabTitle(): boolean {
+    return this.galleryHeroPreloadPending || this.galleryHeroTransitionActive || this.galleryDetailMounted;
+  }
+
   private mainPageScroller(): Scroller {
     if (this.mainTabIndex === 0) {
       return this.galleryScrollController;
@@ -4240,6 +6757,14 @@ struct Index {
   }
 
   @Available({ minApiVersion: '26.0.0' })
+  private canImportQueueMiniBarAction(): boolean {
+    const controller: QueueController | undefined = this.queueController;
+    return this.queueLoaded && this.queueReady && !this.queueLoading && !this.queueRecoveryRequired &&
+      this.settingsLoaded && !this.pageBusy && !this.queueRunning && !this.cleanupRunning &&
+      !this.queuePersistenceFailed() && controller !== undefined && !this.queueHasBlockingOperation(controller);
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
   private async runMiniBarAction(): Promise<void> {
     const tabIndex: number = this.mainTabIndex;
     this.setImportMiniBarExpanded(false);
@@ -4254,51 +6779,110 @@ struct Index {
   @Builder
   private importMiniBar() {
     if (this.importMiniBarExpanded) {
-      Row() {
-        Button(this.mainTabIndex === 1 ? '开始转换' : '＋ 导入')
-          .buttonStyle(ButtonStyleMode.NORMAL)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .width(160)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .borderRadius(24)
-          .enabled(this.canRunMiniBarAction())
-          .onClick((): void => {
-            void this.runMiniBarAction();
-          });
-      }
-      .width(168)
-      .height(56)
-      .justifyContent(FlexAlign.Center);
-    } else {
-      Row() {
-        Button() {
-          if (this.mainTabIndex === 1) {
-            SymbolGlyph($r('sys.symbol.play_fill'))
-              .fontSize(22)
-              .fontColor([Color.White]);
-          } else {
+      if (this.mainTabIndex === 1) {
+        Row() {
+          Button({ type: ButtonType.Circle, stateEffect: false }) {
             Text('+')
-              .fontSize(30)
+              .fontSize(28)
               .fontWeight(FontWeight.Medium)
               .fontColor(Color.White);
           }
-        }
-          .buttonStyle(ButtonStyleMode.NORMAL)
-          .width(48)
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .borderRadius(24)
-          .enabled(this.canRunMiniBarAction())
+          .width(52)
+          .height(52)
+          .backgroundColor('rgba(31, 107, 255, 0.72)')
+          .enabled(this.canImportQueueMiniBarAction())
           .onClick((): void => {
-            this.setImportMiniBarExpanded(true);
+            // Queue imports use the system photo picker and are copied into the
+            // queue sandbox by chooseAndImport before any Rust processing.
+            void this.chooseAndImport(true, false);
           });
+
+          Button('开始转换')
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .width(112)
+            .height(48)
+            .backgroundColor('#991F6BFF')
+            .border({ width: 1, color: '#66FFFFFF' })
+            .borderRadius(24)
+            .enabled(this.canRunMiniBarAction())
+            .onClick((): void => {
+              void this.runMiniBarAction();
+            });
+        }
+        .width(200)
+        .height(56)
+        .justifyContent(FlexAlign.SpaceBetween)
+        .padding({ left: 8, right: 8 });
+      } else {
+        Row() {
+          Button('导入新照片')
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .width(112)
+            .height(44)
+            .backgroundColor('#661F6BFF')
+            .border({ width: 1, color: '#66FFFFFF' })
+            .borderRadius(24)
+            .enabled(this.canRunMiniBarAction())
+            .onClick((): void => {
+              void this.runMiniBarAction();
+            });
+
+          Button('全部加入队列')
+            .buttonStyle(ButtonStyleMode.NORMAL)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .width(128)
+            .height(44)
+            .backgroundColor('#661F6BFF')
+            .border({ width: 1, color: '#66FFFFFF' })
+            .borderRadius(24)
+            .enabled(this.canImportQueueMiniBarAction() && this.galleryLibraryReady && this.galleryPhotos.length > 0)
+            .onClick((): void => {
+              void this.enqueueAllGalleryPhotos();
+            });
+        }
+        .width(280)
+        .height(56)
+        .justifyContent(FlexAlign.SpaceBetween)
+        .padding({ left: 8, right: 8 });
+      }
+    } else {
+      Stack({ alignContent: Alignment.Center }) {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(25)
+            .fontColor([Color.White])
+            .hitTestBehavior(HitTestMode.None);
+        }
+        .width(52)
+        .height(52)
+        .backgroundColor('rgba(31, 107, 255, 0.72)')
+        .systemMaterial(new uiMaterial.ImmersiveMaterial({
+          style: uiMaterial.ImmersiveStyle.THIN,
+          materialColor: 'rgba(31, 107, 255, 0.72)',
+          interactive: true
+        }))
+        .opacity(this.mainTabIndex === 1
+          ? this.canImportQueueMiniBarAction() || this.canRunMiniBarAction() ? 1 : 0.45
+          : this.canRunMiniBarAction() ? 1 : 0.45)
+        .accessibilityText('打开导入与转换操作')
+        .onClick((): void => {
+          if (this.mainTabIndex === 1
+            ? this.canImportQueueMiniBarAction() || this.canRunMiniBarAction()
+            : this.canRunMiniBarAction()) {
+            this.setImportMiniBarExpanded(true);
+          }
+        });
       }
       .width(56)
-      .height(56)
-      .justifyContent(FlexAlign.Center);
+      .height(56);
     }
   }
 
@@ -4307,14 +6891,10 @@ struct Index {
   private immersiveTabs() {
     HdsTabs({ index: this.mainTabIndex, controller: this.getTabsController() }) {
       TabContent() {
-        if (this.galleryDetailVisible) {
-          this.galleryDetailPage();
-        } else {
-          this.ownGalleryPage();
-        }
+        this.ownGalleryPage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
+        normal: new SymbolGlyphModifier($r('sys.symbol.picture')).fontColor([Color.White]),
         selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
       }, '图库'))
 
@@ -4322,7 +6902,7 @@ struct Index {
         this.queuePage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')),
+        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')).fontColor([Color.White]),
         selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
       }, '队列'))
 
@@ -4330,7 +6910,7 @@ struct Index {
         this.settingsPage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')),
+        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')).fontColor([Color.White]),
         selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
       }, '设置'))
     }
@@ -4345,25 +6925,25 @@ struct Index {
     })
     .barFloatingStyle(this.mainTabIndex === 2 ? {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
-      barBottomMargin: 24,
-      adaptToHandedness: false,
-      gradientMask: { maskColor: '#663D8BFF', maskHeight: 92 },
+      barBottomMargin: 28,
+      adaptToHandedness: true,
+      lightColor: '#66316BFF',
       systemMaterialEffect: {
-        materialType: hdsMaterial.MaterialType.ADAPTIVE,
-        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        materialType: this.hdsSystemMaterialType(),
+        materialLevel: this.hdsSystemMaterialLevel()
       }
     } : {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
-      barBottomMargin: 24,
-      adaptToHandedness: false,
-      gradientMask: { maskColor: '#663D8BFF', maskHeight: 92 },
+      barBottomMargin: 28,
+      adaptToHandedness: true,
+      lightColor: '#66316BFF',
       systemMaterialEffect: {
-        materialType: hdsMaterial.MaterialType.ADAPTIVE,
-        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        materialType: this.hdsSystemMaterialType(),
+        materialLevel: this.hdsSystemMaterialLevel()
       },
       miniBar: {
         miniBarBuilder: () => this.importMiniBar(),
-        miniBarWidth: { smallWidth: 168, mediumWidth: 168, largeWidth: 168 },
+        miniBarWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
         miniBarStyle: this.importMiniBarExpanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE,
         enableMiniBarBackground: true,
         onBarStyleChange: (miniBarStyle: HdsBarStyle): void => {
@@ -4371,10 +6951,10 @@ struct Index {
         }
       }
     })
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
     .width('100%')
-    .height('100%')
-    .backgroundColor(this.shouldUseImmersiveMainChrome() ? Color.Transparent : $r('sys.color.background_primary'));
+    .height(LayoutPolicy.matchParent)
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Available({ minApiVersion: '26.0.0' })
@@ -4403,11 +6983,21 @@ struct Index {
           blurEffectiveEndOffset: LengthMetrics.vp(28)
         },
         blurStrategy: BlurStrategy.ADAPTIVE,
-        originalStyle: { backgroundStyle: { backgroundColor: '#00FFFFFF' } },
-        scrollEffectStyle: { backgroundStyle: { backgroundColor: '#00FFFFFF' } },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        originalStyle: {
+          backgroundStyle: { backgroundColor: '#00FFFFFF' },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: this.shouldHideMainTabTitle() ? '#00000000' : $r('sys.color.font_primary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: { backgroundColor: '#00FFFFFF' },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: this.shouldHideMainTabTitle() ? '#00000000' : $r('sys.color.font_primary')
+            }
+          }
         }
       },
       avoidLayoutSafeArea: true,
@@ -4418,26 +7008,15 @@ struct Index {
     .hideBackButton(true)
     .hideToolBar(true)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-    .linearGradient({
-      angle: 90,
-      colors: [
-        ['#332D7BFF', 0.0],
-        ['#172D7BFF', 0.2],
-        [$r('sys.color.background_primary'), 0.55],
-        [$r('sys.color.background_primary'), 1.0]
-      ]
-    });
+    .backgroundColor(Color.Transparent)
+    .transition(TransitionEffect.IDENTITY);
   }
 
   @Builder
   private standardTabs() {
     Tabs({ barPosition: BarPosition.End, index: this.mainTabIndex }) {
       TabContent() {
-        if (this.galleryDetailVisible) {
-          this.galleryDetailPage();
-        } else {
-          this.ownGalleryPage();
-        }
+        this.ownGalleryPage();
       }
       .tabBar(new BottomTabBarStyle({
         normal: new SymbolGlyphModifier($r('sys.symbol.picture')),
@@ -4470,15 +7049,28 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM])
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor($r('sys.color.background_primary'))
+    .transition(TransitionEffect.IDENTITY);
   }
 
   build() {
-    if (this.shouldUseImmersiveMainChrome()) {
-      this.immersiveMainNavigation();
-    } else {
-      this.standardTabs();
+    Stack() {
+      if (this.shouldUseImmersiveMainChrome()) {
+        this.immersiveMainNavigation();
+      } else {
+        this.standardTabs();
+      }
+      if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId.length > 0 &&
+        this.gallerySandboxPath.length > 0) {
+        this.galleryHeroPreloader(this.galleryHeroPreloadItemId, this.gallerySandboxPath);
+      }
+      if (this.galleryDetailMounted) {
+        this.galleryDetailPage();
+      }
     }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
 }

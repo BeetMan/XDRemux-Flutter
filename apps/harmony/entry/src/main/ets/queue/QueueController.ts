@@ -36,6 +36,8 @@ export interface QueueItemInput {
   inputPath?: string;
   details?: NativePhotoDetails;
   classification?: NativeClassificationResult;
+  /** Optional per-item conversion settings, captured by this queue record. */
+  modeOverride?: QueueModeSnapshot;
 }
 
 export interface QueueItem {
@@ -54,6 +56,7 @@ export interface QueueItem {
   classification?: NativeClassificationResult;
   progress: NativeProgress;
   result?: QueueResult;
+  modeOverride?: QueueModeSnapshot;
   exportedUri: string;
   errorMessage: string;
   lastAttemptModeKey: string;
@@ -245,6 +248,7 @@ export class QueueController {
       status: 'pending',
       attemptStatus: 'idle',
       externalBusy: false,
+      modeOverride: input.modeOverride === undefined ? undefined : this.copyMode(input.modeOverride),
       details: input.details,
       classification: input.classification,
       progress: { stage: 0, current: 0, total: 0 },
@@ -346,6 +350,15 @@ export class QueueController {
     item.status = 'pending';
     item.attemptStatus = 'idle';
     item.errorMessage = '';
+    this.notify(item, true);
+  }
+
+  /** Capture photo-specific conversion settings before a queued attempt starts. */
+  public setModeOverride(id: string, mode: QueueModeSnapshot): void {
+    const item = this.require(id);
+    this.assertEditable(item);
+    this.assertCleanupUsable(item);
+    item.modeOverride = this.copyMode(mode);
     this.notify(item, true);
   }
 
@@ -550,12 +563,32 @@ export class QueueController {
       return this.runnerTask;
     }
 
+    return this.startRunner();
+  }
+
+  /** Run only the requested item, leaving every other pending task untouched. */
+  public startSingle(id: string): Promise<void> {
+    if (!this.attached) {
+      return Promise.reject(new Error('queue requires a foreground attachment'));
+    }
+    if (this.runnerTask !== undefined) {
+      return Promise.reject(new Error('queue is already running'));
+    }
+    const item: QueueItem | undefined = this.get(id);
+    if (item === undefined || item.status !== 'pending' || item.externalBusy ||
+      item.cleanupStatus === 'failed') {
+      return Promise.reject(new Error('该项目当前不能单独开始转换'));
+    }
+    return this.startRunner(id);
+  }
+
+  private startRunner(onlyItemId?: string): Promise<void> {
     this.stopRequested = false;
     // Install the runner guard before scheduling the loop. This closes the
     // empty-start/add/start and same-tick double-click races.
     const task: Promise<void> = Promise.resolve().then(async (): Promise<void> => {
       await this.persist();
-      await this.runLoop();
+      await this.runLoop(onlyItemId);
     });
     this.runnerTask = task;
     // Register cleanup before returning task so an empty start cannot leave a
@@ -567,11 +600,12 @@ export class QueueController {
     return task;
   }
 
-  private async runLoop(): Promise<void> {
+  private async runLoop(onlyItemId?: string): Promise<void> {
     while (!this.stopRequested && this.attached) {
       const item: QueueItem | undefined = this.itemList.find(
         (candidate: QueueItem): boolean => candidate.status === 'pending' &&
-          !candidate.externalBusy && candidate.cleanupStatus !== 'failed'
+          !candidate.externalBusy && candidate.cleanupStatus !== 'failed' &&
+          (onlyItemId === undefined || candidate.id === onlyItemId)
       );
       if (item === undefined) {
         return;
@@ -599,7 +633,9 @@ export class QueueController {
         // Capture immediately before the actual native conversion start.
         // Preparation can be asynchronous, and the copy prevents later global
         // UI mutations from changing this run's config object.
-        const mode: QueueModeSnapshot = this.copyMode(this.captureMode());
+        const mode: QueueModeSnapshot = this.copyMode(
+          item.modeOverride === undefined ? this.captureMode() : item.modeOverride
+        );
         item.lastAttemptModeKey = mode.modeKey;
         item.lastAttemptModeLabel = mode.modeLabel;
         this.notify(item, true);
@@ -711,6 +747,7 @@ export class QueueController {
       status: item.status,
       attemptStatus: item.attemptStatus,
       externalBusy: item.externalBusy,
+      modeOverride: item.modeOverride === undefined ? undefined : this.copyMode(item.modeOverride),
       progress: {
         stage: item.progress.stage,
         current: item.progress.current,

@@ -5,7 +5,8 @@ import {
   encodeGalleryLibrary,
   galleryExtensionFromName,
   galleryItemPath,
-  galleryMimeTypeForExtension
+  galleryMimeTypeForExtension,
+  removeGalleryLibraryItem
 } from './GalleryLibraryModel';
 import type { GalleryLibraryItem, GalleryLibraryRecord } from './GalleryLibraryModel';
 
@@ -112,6 +113,46 @@ export class HarmonyGalleryLibrary {
       }
       throw this.asError(error);
     }
+  }
+
+  public async removePhoto(itemId: string): Promise<GalleryLibraryItem> {
+    if (!this.loaded) throw new Error('本地图库尚未加载');
+    const itemIndex: number = this.items.findIndex((item: GalleryLibraryItem): boolean => item.id === itemId);
+    if (itemIndex < 0) throw new Error('要删除的照片已不在本地图库中');
+
+    const item: GalleryLibraryItem = this.cloneItem(this.items[itemIndex]);
+    const path: string = this.pathFor(item);
+    let fileExists: boolean = false;
+    try {
+      const stat: fileIo.Stat = await fileIo.lstat(path);
+      this.requireRegularFile(path, stat);
+      fileExists = true;
+    } catch (error) {
+      const fileError: GalleryFileError = error as GalleryFileError;
+      if (fileError.code !== 13900002) throw this.asError(error);
+    }
+
+    const previousItems: Array<GalleryLibraryItem> = this.items.slice();
+    const nextItems: Array<GalleryLibraryItem> = removeGalleryLibraryItem(previousItems, itemId);
+    await this.writeAtomic(encodeGalleryLibrary(nextItems));
+    this.items = nextItems;
+
+    if (fileExists) {
+      try {
+        await fileIo.unlink(path);
+      } catch (error) {
+        try {
+          await this.writeAtomic(encodeGalleryLibrary(previousItems));
+          this.items = previousItems;
+        } catch (rollbackError) {
+          // Keep memory aligned with the committed index if rollback also fails.
+          this.items = nextItems;
+          throw new Error('照片索引已删除，但文件删除和索引回滚均失败：' + this.asError(error).message);
+        }
+        throw this.asError(error);
+      }
+    }
+    return item;
   }
 
   private async ensureDirectories(): Promise<void> {

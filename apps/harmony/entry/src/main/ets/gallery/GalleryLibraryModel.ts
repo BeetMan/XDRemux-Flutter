@@ -55,6 +55,15 @@ export function encodeGalleryLibrary(items: Array<GalleryLibraryItem>): string {
   return JSON.stringify(record);
 }
 
+export function removeGalleryLibraryItem(items: Array<GalleryLibraryItem>, itemId: string): Array<GalleryLibraryItem> {
+  const normalized: Array<GalleryLibraryItem> = validateGalleryItems(items);
+  const remaining: Array<GalleryLibraryItem> = normalized.filter(
+    (item: GalleryLibraryItem): boolean => item.id !== itemId
+  );
+  if (remaining.length === normalized.length) throw new Error('要删除的照片已不在本地图库中');
+  return remaining;
+}
+
 export function decodeGalleryLibrary(raw: string): GalleryLibraryRecord {
   const parsed: Object = JSON.parse(raw) as Object;
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

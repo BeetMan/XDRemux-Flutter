@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { getHarmonyShareInbox } from '../queue/HarmonyShareInbox';
@@ -22,6 +22,8 @@ import { SHARE_IMPORT_ACTION } from '../queue/ShareImportModel';
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
+  private mainWindow: window.Window | undefined = undefined;
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
@@ -41,6 +43,10 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
   }
 
+  onConfigurationUpdate(newConfig: Configuration): void {
+    this.applyStatusBarIconColor(newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+  }
+
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
@@ -57,10 +63,14 @@ export default class EntryAbility extends UIAbility {
 
     try {
       const mainWindow: window.Window = windowStage.getMainWindowSync();
-      // Extend the app's layout behind the visible system status bar. The
-      // system theme retains control of status-bar text and icons.
+      this.mainWindow = mainWindow;
+      // Extend the app's layout behind the visible system status bar and keep
+      // the status icons readable on the theme's transparent background.
       void mainWindow.setWindowLayoutFullScreen(true)
-        .then((): Promise<void> => mainWindow.setWindowSystemBarProperties({ statusBarColor: '#00000000' }))
+        .then((): Promise<void> => mainWindow.setWindowSystemBarProperties({
+          statusBarColor: '#00000000',
+          isStatusBarLightIcon: this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+        }))
         .then((): void => loadMainPage())
         .catch((error: Object): void => {
           hilog.error(DOMAIN, 'testTag', 'Failed to configure immersive system bars. Cause: %{public}s',
@@ -85,6 +95,16 @@ export default class EntryAbility extends UIAbility {
   onBackground(): void {
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+  }
+
+  private applyStatusBarIconColor(isDarkMode: boolean): void {
+    const mainWindow: window.Window | undefined = this.mainWindow;
+    if (mainWindow === undefined) return;
+    void mainWindow.setWindowSystemBarProperties({
+      isStatusBarLightIcon: isDarkMode
+    }).catch((error: Object): void => {
+      hilog.error(DOMAIN, 'testTag', 'Failed to update status bar appearance. Cause: %{public}s', JSON.stringify(error));
+    });
   }
 
   private receiveSharedWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
