@@ -5390,6 +5390,22 @@ struct Index {
         this.galleryViewportWidth = Number(newArea.width);
         this.galleryViewportHeight = Number(newArea.height);
       });
+      if (this.galleryChromeVisible) {
+        Column()
+          .width('100%')
+          .height(152)
+          .linearGradient({
+            direction: GradientDirection.Bottom,
+            colors: [
+              ['#66000000', 0],
+              ['#42000000', 0.58],
+              ['#00000000', 1]
+            ]
+          })
+          .hitTestBehavior(HitTestMode.None)
+          .position({ x: 0, y: 0 })
+          .zIndex(19);
+      }
       HdsNavigation() {
         Row() {}
           .width('100%')
@@ -5430,11 +5446,11 @@ struct Index {
             materialLevel: this.hdsSystemMaterialLevel()
           },
           originalStyle: {
-            backgroundStyle: { backgroundColor: '#52000000' },
+            backgroundStyle: { backgroundColor: '#00000000' },
             contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
           },
           scrollEffectStyle: {
-            backgroundStyle: { backgroundColor: '#52000000' },
+            backgroundStyle: { backgroundColor: '#00000000' },
             contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
           }
         },
