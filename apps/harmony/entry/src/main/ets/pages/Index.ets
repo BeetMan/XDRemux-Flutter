@@ -4496,7 +4496,10 @@ struct Index {
         .width('100%')
         .align(Alignment.Top)
         .clipContent(ContentClipMode.BOUNDARY)
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+        .onScrollStart((): void => {
+          this.expandGalleryImportMiniBarOnScroll();
+        });
 
         if (this.galleryLoadError.length > 0) {
           Text(this.galleryLoadError)
@@ -6738,6 +6741,14 @@ struct Index {
   private setImportMiniBarExpanded(expanded: boolean): void {
     this.importMiniBarExpanded = expanded;
     this.getTabsController().applyMiniBarStyle(expanded ? HdsBarStyle.EXPAND : HdsBarStyle.COLLAPSE);
+  }
+
+  private expandGalleryImportMiniBarOnScroll(): void {
+    if (!this.shouldUseImmersiveMainChrome() || this.mainTabIndex !== 0 || this.galleryDetailMounted ||
+      this.importMiniBarExpanded || this.galleryPhotos.length === 0) {
+      return;
+    }
+    this.setImportMiniBarExpanded(true);
   }
 
   private mainTabTitle(): string {
