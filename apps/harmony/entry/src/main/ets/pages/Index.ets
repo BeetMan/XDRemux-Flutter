@@ -4377,13 +4377,15 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 18, right: 18, top: 14, bottom: 12 });
-      } else {
+      }
+
+      if (this.galleryPhotos.length === 0 && this.shouldUseImmersiveMainChrome()) {
         Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
           .fontSize(13)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
           .padding({ left: 20, right: 20, top: 98, bottom: 12 });
-        }
+      }
 
       if (this.galleryLoading && this.galleryPhotos.length === 0) {
         Column() {
@@ -4431,53 +4433,64 @@ struct Index {
         .padding({ left: 32, right: 32, bottom: 40 });
       } else {
         Scroll(this.galleryScrollController) {
-          Grid() {
-            LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
-              GridItem() {
-                Stack() {
-                  if (!this.galleryPreviewIsLoaded(tile.item.id)) {
-                    Stack({ alignContent: Alignment.Center }) {
-                      SymbolGlyph($r('sys.symbol.picture'))
-                        .fontSize(20)
-                        .fontColor(['#55FFFFFF']);
-                    }
-                    .width('100%')
-                    .height('100%')
-                    .backgroundColor('#181B20');
-                  }
-                  Image('file://' + tile.path)
-                    .width('100%')
-                    .height('100%')
-                    .orientation(ImageRotateOrientation.AUTO)
-                    .objectFit(ImageFit.Cover)
-                    .autoResize(true)
-                    .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
-                    .onComplete((event): void => {
-                      this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
-                        Number(event?.height ?? 0));
-                    });
-                }
+          Column() {
+            if (this.shouldUseImmersiveMainChrome()) {
+              Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
                 .width('100%')
-                .aspectRatio(1)
-                .clip(true)
-                .borderRadius(10)
-                .backgroundColor($r('sys.color.background_tertiary'))
-                .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
-                  ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
+                .padding({ left: 20, right: 20, top: 98, bottom: 12 });
+            }
+
+            Grid() {
+              LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+                GridItem() {
+                  Stack() {
+                    if (!this.galleryPreviewIsLoaded(tile.item.id)) {
+                      Stack({ alignContent: Alignment.Center }) {
+                        SymbolGlyph($r('sys.symbol.picture'))
+                          .fontSize(20)
+                          .fontColor(['#55FFFFFF']);
+                      }
+                      .width('100%')
+                      .height('100%')
+                      .backgroundColor('#181B20');
+                    }
+                    Image('file://' + tile.path)
+                      .width('100%')
+                      .height('100%')
+                      .orientation(ImageRotateOrientation.AUTO)
+                      .objectFit(ImageFit.Cover)
+                      .autoResize(true)
+                      .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
+                      .onComplete((event): void => {
+                        this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
+                          Number(event?.height ?? 0));
+                      });
+                  }
+                  .width('100%')
+                  .aspectRatio(1)
+                  .clip(true)
+                  .borderRadius(10)
+                  .backgroundColor($r('sys.color.background_tertiary'))
+                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
+                    ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
+                  .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
+                  .transition(TransitionEffect.IDENTITY)
+                  .onClick((): void => {
+                    this.openGalleryTile(tile);
+                  });
+                }
                 .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
-                .transition(TransitionEffect.IDENTITY)
-                .onClick((): void => {
-                  this.openGalleryTile(tile);
-                });
-              }
-            .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
-            }, (tile: GalleryPhotoTile) => tile.item.id);
+              }, (tile: GalleryPhotoTile) => tile.item.id);
+            }
+            .columnsTemplate('1fr 1fr 1fr')
+            .columnsGap(4)
+            .rowsGap(4)
+            .width('100%')
+            .padding({ left: 4, right: 4, bottom: 96 });
           }
-          .columnsTemplate('1fr 1fr 1fr')
-          .columnsGap(4)
-          .rowsGap(4)
-          .width('100%')
-          .padding({ left: 4, right: 4, bottom: 96 });
+          .width('100%');
         }
         .layoutWeight(1)
         .width('100%')
