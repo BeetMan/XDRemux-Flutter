@@ -6383,36 +6383,6 @@ struct Index {
   @Builder
   private queueItemSettingsPanel(item: QueueItem): void {
     Column() {
-      Row() {
-        Column() {
-          Text('仅此照片')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'));
-          Text(item.displayName)
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .maxLines(1)
-            .width('100%')
-            .margin({ top: 3 });
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1);
-        Button('完成')
-          .fontSize(12)
-          .height(34)
-          .onClick((): void => {
-            this.queueSettingsEditingItemId = '';
-          });
-      }
-      .width('100%');
-      Text('开始批量转换时仍会处理全部待处理照片；已完成照片修改设置后会自动重新加入批次。')
-        .fontSize(12)
-        .fontColor($r('sys.color.font_secondary'))
-        .lineHeight(18)
-        .width('100%')
-        .margin({ top: 8, bottom: 10 });
-
       if (this.queueItemSupportedOutputModes(item).length === 0) {
         Text('暂不支持此照片格式的转换设置。')
           .fontSize(13)
@@ -6608,10 +6578,11 @@ struct Index {
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(12)
-    .backgroundColor($r('sys.color.background_primary'))
-    .borderRadius(14)
-    .margin({ bottom: 10 });
+    .padding(14)
+    .backgroundColor($r('sys.color.background_tertiary'))
+    .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+    .borderRadius(20)
+    .margin({ bottom: 12 });
   }
 
   private selectedShareRequiresReselection(): boolean {
@@ -7186,60 +7157,9 @@ struct Index {
   }
 
   @Builder
-  private selectedDetails(): void {
-    Column() {
-      Row() {
-        Column() {
-          Text('项目详情')
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'));
-          Text(this.selectedItemRequired().displayName + ' · ' + this.statusLabel(this.selectedItemRequired()))
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .maxLines(1)
-            .width('100%')
-            .margin({ top: 3 });
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1);
-        Row({ space: 4 }) {
-          Text(this.queueDetailsExpanded ? '收起' : '查看详情')
-            .fontSize(13)
-            .fontColor($r('sys.color.ohos_id_color_activated'));
-          SymbolGlyph(this.queueDetailsExpanded ? $r('sys.symbol.chevron_up') :
-            $r('sys.symbol.chevron_down'))
-            .fontSize(12)
-            .fontColor([$r('sys.color.ohos_id_color_activated')]);
-        }
-        .padding({ left: 8, right: 4, top: 8, bottom: 8 })
-        .onClick((): void => {
-          this.queueDetailsExpanded = !this.queueDetailsExpanded;
-        });
-      }
-      .width('100%');
-      if (this.queueDetailsExpanded) {
-        this.selectedDetailsContent();
-      }
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .padding(12)
-    .backgroundColor($r('sys.color.background_secondary'))
-    .borderRadius(14)
-    .margin({ top: 6, bottom: 12 });
-  }
-
-  @Builder
   private selectedDetailsContent(): void {
 
             Column() {
-              Text('当前项目详情')
-                .fontSize(18)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('sys.color.font_primary'))
-                .width('100%')
-                .margin({ bottom: 8 });
               Text('项目 ID：' + this.selectedItemRequired().id + ' · 文件：' + this.selectedItemRequired().displayName)
                 .fontSize(14)
                 .fontColor($r('sys.color.font_primary'))
@@ -7396,8 +7316,8 @@ struct Index {
             .padding(14)
             .backgroundColor($r('sys.color.background_tertiary'))
             .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
-            .borderRadius(18)
-            .margin({ top: 10, bottom: 4 });
+            .borderRadius(20)
+            .margin({ bottom: 12 });
   }
 
   @Builder
@@ -7591,7 +7511,8 @@ struct Index {
     .backgroundColor($r('sys.color.background_tertiary'))
     .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
     .borderRadius(20)
-    .margin({ bottom: 12 });
+    .margin({ bottom: this.queueSettingsEditingItemId === item.id ||
+      (this.selectedItemId === item.id && this.queueDetailsExpanded) ? 0 : 12 });
   }
 
   private queueItemModeLabel(item: QueueItem): string {
@@ -7921,7 +7842,7 @@ struct Index {
                     this.queueItemSettingsPanel(item);
                   }
                   if (item.id === this.selectedItemId && this.queueDetailsExpanded) {
-                    this.selectedDetails();
+                    this.selectedDetailsContent();
                   }
                 }
                 .width('100%');
