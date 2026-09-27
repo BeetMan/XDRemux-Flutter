@@ -3190,6 +3190,10 @@ struct Index {
           this.galleryHeroTransitionActive = false;
         });
         this.galleryHeroOpening = false;
+        const openedItemId: string | undefined = this.galleryCurrentItem?.id;
+        if (openedItemId !== undefined && this.galleryDetailDecodedImageIds.has(openedItemId)) {
+          this.scheduleGalleryDetailImageReveal(openedItemId);
+        }
         this.ensureGalleryStatusBarVisible();
       }
     }, 460);
@@ -3466,12 +3470,18 @@ struct Index {
     if (!isHighDynamicRangeImage) return;
     this.galleryDetailDecodedImageIds.add(itemId);
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
+    if (this.galleryHeroOpening) return;
     if (!this.galleryDetailSelectionUsesDelayedReveal) {
       this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
         this.galleryDetailLoadedImageId = itemId;
       });
       return;
     }
+    this.scheduleGalleryDetailImageReveal(itemId);
+  }
+
+  private scheduleGalleryDetailImageReveal(itemId: string): void {
+    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     // Image.onComplete may fire again when the HDR frame is promoted after its
     // initial decode. Debounce the SDR preview reveal so it stays in place
     // until the current HDR image has stopped reporting completed frames.
@@ -5489,7 +5499,7 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
-                    } else if (tile.item.id !== this.galleryCurrentItem?.id || !this.galleryHeroOpening ||
+                    } else if (tile.item.id !== this.galleryCurrentItem?.id ||
                       this.galleryDetailPreviewPixelMap(tile.item.id) === undefined) {
                       Image('file://' + tile.path)
                         .width('100%')
@@ -5498,11 +5508,10 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(tile.item.id === this.galleryCurrentItem?.id
-                          && !this.galleryHeroOpening ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
+                          ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0), tile.item.id !== this.galleryCurrentItem?.id ||
-                              !this.galleryHeroOpening);
+                            Number(event?.height ?? 0));
                         });
                     }
                     if (tile.item.id === this.galleryCurrentItem?.id &&
