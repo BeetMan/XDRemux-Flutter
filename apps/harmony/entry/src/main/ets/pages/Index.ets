@@ -8028,8 +8028,8 @@ struct Index {
               .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
               .hitTestBehavior(HitTestMode.None);
           }
-          .width(52)
-          .height(52)
+          .width(48)
+          .height(48)
           .backgroundColor(this.systemAccentColorWithAlpha(0.72))
           .systemMaterial(new uiMaterial.ImmersiveMaterial({
             style: uiMaterial.ImmersiveStyle.THIN,
@@ -8066,8 +8066,8 @@ struct Index {
             .hitTestBehavior(HitTestMode.None);
           }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .width(204)
-            .height(52)
+            .width(216)
+            .height(48)
             .backgroundColor(this.systemAccentColorWithAlpha(0.72))
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
               style: uiMaterial.ImmersiveStyle.THIN,
@@ -8076,7 +8076,7 @@ struct Index {
               lightEffect: { color: Color.White }
             }))
             .border({ width: 1, color: '#66FFFFFF' })
-            .borderRadius(26)
+            .borderRadius(24)
             .enabled(this.canRunMiniBarAction())
             .accessibilityText('开始转换全部待处理照片')
             .onClick((): void => {
@@ -8086,7 +8086,8 @@ struct Index {
         .width(280)
         .height(56)
         .justifyContent(FlexAlign.Start)
-        .padding({ left: 8, right: 8 });
+        .alignItems(VerticalAlign.Center)
+        .padding(4);
       } else {
         Row({ space: 8 }) {
           Button() {
@@ -8108,7 +8109,7 @@ struct Index {
             .hitTestBehavior(HitTestMode.None);
           }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .width(128)
+            .width(132)
             .height(48)
             .backgroundColor(this.systemAccentColorWithAlpha(0.72))
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
@@ -8144,7 +8145,7 @@ struct Index {
             .hitTestBehavior(HitTestMode.None);
           }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .width(128)
+            .width(132)
             .height(48)
             .backgroundColor(this.systemAccentColorWithAlpha(0.72))
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
@@ -8164,7 +8165,8 @@ struct Index {
         .width(280)
         .height(56)
         .justifyContent(FlexAlign.Center)
-        .padding({ left: 8, right: 8 });
+        .alignItems(VerticalAlign.Center)
+        .padding(4);
       }
     } else {
       Stack({ alignContent: Alignment.Center }) {
@@ -8174,8 +8176,8 @@ struct Index {
             .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
             .hitTestBehavior(HitTestMode.None);
         }
-        .width(52)
-        .height(52)
+        .width(48)
+        .height(48)
         .backgroundColor(this.systemAccentColorWithAlpha(0.72))
         .systemMaterial(new uiMaterial.ImmersiveMaterial({
           style: uiMaterial.ImmersiveStyle.THIN,
