@@ -240,7 +240,7 @@ struct Index {
   @State private galleryDetailMounted: boolean = false;
   @State private galleryHeroPreloadPending: boolean = false;
   @State private galleryHeroPreloadItemId: string = '';
-  @State private galleryHeroImageDecoded: boolean = false;
+  @State private galleryHeroPlaceholderReady: boolean = false;
   @State private galleryHeroMetadataReady: boolean = false;
   @State private galleryHeroTransitionActive: boolean = false;
   @State private galleryHeroOpening: boolean = false;
@@ -374,7 +374,7 @@ struct Index {
     if (this.galleryHeroPreloadPending) {
       this.galleryHeroPreloadPending = false;
       this.galleryHeroPreloadItemId = '';
-      this.galleryHeroImageDecoded = false;
+      this.galleryHeroPlaceholderReady = false;
       this.galleryHeroMetadataReady = false;
       this.galleryHeroOpening = false;
       this.gallerySelectionSerial += 1;
@@ -3010,7 +3010,11 @@ struct Index {
     this.gallerySelectionSerial = selectionSerial;
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
-    if (tile.item.id !== this.galleryCurrentItem?.id) {
+    if (shouldOpenDetail) {
+      // A decoded image from a previous visit does not guarantee the newly
+      // mounted HDR Image already has a frame to draw.
+      this.galleryDetailLoadedImageId = '';
+    } else if (tile.item.id !== this.galleryCurrentItem?.id) {
       this.galleryDetailLoadedImageId = this.galleryDetailDecodedImageIds.has(tile.item.id) ? tile.item.id : '';
     }
     this.galleryZoomScale = 1;
@@ -3056,9 +3060,12 @@ struct Index {
       this.galleryPanelHeight = GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT;
       this.galleryChromeVisible = true;
       this.galleryHeroPreloadItemId = tile.item.id;
-      this.galleryHeroImageDecoded = false;
+      this.galleryHeroPlaceholderReady = false;
       this.galleryHeroMetadataReady = false;
       this.galleryHeroPreloadPending = true;
+      this.touchGalleryThumbnail(tile);
+      this.galleryHeroPlaceholderReady = this.galleryThumbnailPixelMapCache.has(tile.item.id) ||
+        this.galleryThumbnailDecodeFailedIds.includes(tile.item.id);
     }
     if (cachedInspection !== undefined) {
       this.galleryCopiedBytes = tile.item.size;
@@ -3123,21 +3130,15 @@ struct Index {
     void this.inspectGallerySelection(tile, true);
   }
 
-  private onGalleryHeroPreloadComplete(itemId: string, width: number = 0, height: number = 0): void {
-    if (!this.galleryHeroPreloadPending || itemId !== this.galleryHeroPreloadItemId ||
-      itemId !== this.galleryCurrentItem?.id) return;
-    this.onGalleryPreviewDecoded(itemId, width, height);
-    this.galleryHeroImageDecoded = true;
-    this.tryStartGalleryHeroTransition(itemId);
-  }
-
   private tryStartGalleryHeroTransition(itemId: string): void {
     if (!this.galleryHeroPreloadPending || itemId !== this.galleryHeroPreloadItemId ||
-      itemId !== this.galleryCurrentItem?.id || !this.galleryHeroImageDecoded ||
+      itemId !== this.galleryCurrentItem?.id || !this.galleryHeroPlaceholderReady ||
       !this.galleryHeroMetadataReady || this.galleryViewportWidth <= 0 || this.galleryViewportHeight <= 0) return;
+    if (!this.galleryThumbnailPixelMapCache.has(itemId) &&
+      !this.galleryThumbnailDecodeFailedIds.includes(itemId)) return;
     this.galleryHeroPreloadPending = false;
     this.galleryHeroPreloadItemId = '';
-    this.galleryHeroImageDecoded = false;
+    this.galleryHeroPlaceholderReady = false;
     this.galleryHeroMetadataReady = false;
     this.galleryChromeToggleBlockedUntil = Date.now() + 650;
     if (this.galleryHeroBackdropResetTimer >= 0) {
@@ -3268,15 +3269,28 @@ struct Index {
           width: GALLERY_THUMBNAIL_DECODE_WIDTH,
           height: GALLERY_THUMBNAIL_DECODE_HEIGHT
         },
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        desiredDynamicRange: image.DecodingDynamicRange.SDR
       });
       if (pixelMap === undefined) throw new Error('无法生成缩略图');
       if (!this.galleryPhotos.some((currentTile: GalleryPhotoTile): boolean =>
         currentTile.item.id === tile.item.id)) return;
       this.cacheGalleryThumbnail(tile.item.id, pixelMap);
       pixelMap = undefined;
+      if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id &&
+        this.galleryCurrentItem?.id === tile.item.id) {
+        this.galleryHeroPlaceholderReady = true;
+      }
+      this.tryStartGalleryHeroTransition(tile.item.id);
     } catch (error) {
-      this.galleryThumbnailDecodeFailedIds = [...this.galleryThumbnailDecodeFailedIds, tile.item.id];
+      if (!this.galleryThumbnailDecodeFailedIds.includes(tile.item.id)) {
+        this.galleryThumbnailDecodeFailedIds = [...this.galleryThumbnailDecodeFailedIds, tile.item.id];
+      }
+      if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id &&
+        this.galleryCurrentItem?.id === tile.item.id) {
+        this.galleryHeroPlaceholderReady = true;
+      }
+      this.tryStartGalleryHeroTransition(tile.item.id);
     } finally {
       if (imageSource !== undefined) {
         try {
@@ -4515,6 +4529,9 @@ struct Index {
                       .orientation(ImageRotateOrientation.AUTO)
                       .objectFit(ImageFit.Cover)
                       .autoResize(true)
+                      // Keep grid cells SDR so their shared-element source
+                      // matches the SDR frame used while opening the detail.
+                      .dynamicRangeMode(DynamicRangeMode.STANDARD)
                       .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
                       .onComplete((event): void => {
                         this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
@@ -4706,6 +4723,7 @@ struct Index {
                 .orientation(ImageRotateOrientation.AUTO)
                 .objectFit(ImageFit.Cover)
                 .autoResize(true)
+                .dynamicRangeMode(DynamicRangeMode.STANDARD)
                 .backgroundColor('#17191D');
             } else {
               Stack({ alignContent: Alignment.Center }) {
@@ -5308,25 +5326,6 @@ struct Index {
   }
 
   @Builder
-  private galleryHeroPreloader(itemId: string, path: string) {
-    Image('file://' + path)
-      .width('100%')
-      .height('100%')
-      .orientation(ImageRotateOrientation.AUTO)
-      .objectFit(ImageFit.Contain)
-      .autoResize(true)
-      .dynamicRangeMode(DynamicRangeMode.HIGH)
-      .opacity(0.001)
-      .hitTestBehavior(HitTestMode.None)
-      .onComplete((event): void => {
-        this.onGalleryHeroPreloadComplete(itemId, Number(event?.width ?? 0), Number(event?.height ?? 0));
-      })
-      .onError((): void => {
-        this.onGalleryHeroPreloadComplete(itemId);
-      });
-  }
-
-  @Builder
   private galleryDetailPage() {
     Stack() {
       Stack() {
@@ -5349,6 +5348,18 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
+                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening &&
+                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
+                      // Keep the shared-element opening on the already decoded
+                      // SDR frame. Mount the full HDR source only after the
+                      // geometry transition has settled.
+                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD);
                     } else {
                       Image('file://' + tile.path)
                         .width('100%')
@@ -5356,7 +5367,8 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
-                        .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .dynamicRangeMode(tile.item.id === this.galleryCurrentItem?.id
+                          ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0));
@@ -5370,6 +5382,7 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .opacity(this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
@@ -7203,10 +7216,6 @@ struct Index {
         this.immersiveMainNavigation();
       } else {
         this.standardTabs();
-      }
-      if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId.length > 0 &&
-        this.gallerySandboxPath.length > 0) {
-        this.galleryHeroPreloader(this.galleryHeroPreloadItemId, this.gallerySandboxPath);
       }
       if (this.galleryDetailMounted) {
         this.galleryDetailPage();
