@@ -1,5 +1,5 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
-import { ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
+import { ChipGroup, ChipSize, ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
@@ -213,6 +213,7 @@ struct Index {
   @State private queueItems: Array<QueueItem> = [];
   @State private selectedItemId: string = '';
   @State private queueFilter: 'all' | 'pending' | 'succeeded' | 'failed' = 'all';
+  @State private queueFilterInTitleBar: boolean = false;
   @State private queueDetailsExpanded: boolean = false;
   @State private queueToolsExpanded: boolean = false;
   @State private queueSettingsEditingItemId: string = '';
@@ -314,6 +315,7 @@ struct Index {
   private readonly galleryScrollController: Scroller = new Scroller();
   private readonly queueScrollController: Scroller = new Scroller();
   private readonly settingsScrollController: Scroller = new Scroller();
+  private queueScrollOffset: number = 0;
   private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
   private tabsController: HdsTabsController | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
@@ -6153,6 +6155,93 @@ struct Index {
     return this.queueItems;
   }
 
+  private queueFilterHeaderPinned(): boolean {
+    return this.shouldUseImmersiveMainChrome() && this.mainTabIndex === 1 && this.queueLoaded &&
+      this.queueItems.length > 0 && this.queueFilterInTitleBar;
+  }
+
+  private updateQueueFilterHeader(scrollOffset: number): void {
+    if (!this.shouldUseImmersiveMainChrome() || this.mainTabIndex !== 1) {
+      return;
+    }
+    this.queueScrollOffset = Math.max(0, this.queueScrollOffset + scrollOffset);
+    if (!this.queueLoaded || this.queueItems.length === 0) {
+      if (this.queueFilterInTitleBar) {
+        this.queueFilterInTitleBar = false;
+      }
+      return;
+    }
+    const shouldPin: boolean = this.queueFilterInTitleBar ? this.queueScrollOffset > 64 :
+      this.queueScrollOffset >= 96;
+    if (shouldPin !== this.queueFilterInTitleBar) {
+      this.queueFilterInTitleBar = shouldPin;
+    }
+  }
+
+  private queueFilterIndex(): number {
+    if (this.queueFilter === 'pending') return 1;
+    if (this.queueFilter === 'succeeded') return 2;
+    if (this.queueFilter === 'failed') return 3;
+    return 0;
+  }
+
+  private setQueueFilterByIndex(index: number): void {
+    if (index === 1) {
+      this.queueFilter = 'pending';
+    } else if (index === 2) {
+      this.queueFilter = 'succeeded';
+    } else if (index === 3) {
+      this.queueFilter = 'failed';
+    } else {
+      this.queueFilter = 'all';
+    }
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  @Builder
+  private queueFilterTitleBarChips(): void {
+    Row() {
+      ChipGroup({
+        items: [
+          { label: { text: '全部 ' + String(this.queueItems.length) } },
+          { label: { text: '待处理 ' + String(this.queuePendingCount()) } },
+          { label: { text: '已完成 ' + String(this.queueCount('succeeded')) } },
+          { label: { text: '失败 ' + String(this.queueCount('failed')) } }
+        ],
+        itemStyle: {
+          size: ChipSize.SMALL,
+          backgroundColor: Color.Transparent,
+          selectedBackgroundColor: Color.Transparent,
+          fontColor: $r('sys.color.font_secondary'),
+          selectedFontColor: $r('sys.color.font_primary')
+        },
+        selectedIndexes: [this.queueFilterIndex()],
+        multiple: false,
+        chipGroupSpace: { itemSpace: 4, startSpace: 0, endSpace: 0 },
+        chipGroupPadding: { top: 0, bottom: 0 },
+        backgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+          style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+          colorInvert: true,
+          interactive: true
+        }),
+        selectedBackgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+          style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+          materialColor: $r('sys.color.ohos_id_color_emphasize'),
+          colorInvert: true,
+          interactive: true
+        }),
+        onChange: (activeIndexes: Array<number>): void => {
+          if (activeIndexes.length > 0) {
+            this.setQueueFilterByIndex(activeIndexes[0]);
+          }
+        }
+      });
+    }
+    .width('100%')
+    .height(56)
+    .alignItems(VerticalAlign.Center);
+  }
+
   @Builder
   private queueFilterChip(label: string, count: number,
     filter: 'all' | 'pending' | 'succeeded' | 'failed'): void {
@@ -7680,6 +7769,7 @@ struct Index {
               this.queueFilterChip('失败', this.queueCount('failed'), 'failed');
             }
             .width('100%')
+            .visibility(this.queueFilterHeaderPinned() ? Visibility.Hidden : Visibility.Visible)
             .margin({ bottom: 12 });
           }
 
@@ -8007,6 +8097,9 @@ struct Index {
       .width('100%')
       .clipContent(ContentClipMode.BOUNDARY)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+      .onDidScroll((_xOffset: number, yOffset: number, _scrollState: ScrollState): void => {
+        this.updateQueueFilterHeader(yOffset);
+      })
       .onScrollStart((): void => {
         this.expandQueueImportMiniBarOnScroll();
       });
@@ -8399,7 +8492,9 @@ struct Index {
         start: LengthMetrics.vp(20),
         end: LengthMetrics.vp(20)
       },
-      content: {
+      content: this.queueFilterHeaderPinned() ? {
+        stackBuilder: (): void => this.queueFilterTitleBarChips()
+      } : {
         title: {
           mainTitle: this.mainTabTitle()
         }
