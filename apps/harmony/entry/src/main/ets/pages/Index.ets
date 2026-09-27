@@ -1,6 +1,6 @@
 import { Available, deviceInfo } from '@kit.BasicServicesKit';
 import { ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
+import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
 import {
@@ -3749,14 +3749,34 @@ struct Index {
         const mainWindow: window.Window = await window.getLastWindow(context);
         await mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
         await mainWindow.setWindowSystemBarProperties({
-          statusBarColor: this.galleryDetailVisible && this.galleryChromeVisible ? '#0DFFFFFF' :
-            TRANSPARENT_SYSTEM_BAR_COLOR,
-          isStatusBarLightIcon: this.galleryDetailVisible
+          // Match the detail scrim while controls are visible; leave the photo
+          // unobstructed when the gallery chrome is hidden.
+          statusBarColor: this.galleryDetailVisible && this.galleryChromeVisible
+            ? this.galleryDetailScrimColor()
+            : TRANSPARENT_SYSTEM_BAR_COLOR,
+          statusBarContentColor: this.galleryDetailForegroundColor()
         });
       })
       .catch((error: Object): void => {
         console.error('Failed to restore gallery status bar: ' + JSON.stringify(error));
       });
+  }
+
+  private isSystemDarkMode(): boolean {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext | undefined;
+    return context !== undefined &&
+      context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+  }
+
+  private galleryDetailScrimColor(): string {
+    return this.isSystemDarkMode() ? '#80000000' : '#80FFFFFF';
+  }
+
+  private galleryDetailForegroundColor(): string {
+    // The chrome-free photo view has a black backing strip under the status
+    // indicators; keep those indicators readable until the title chrome returns.
+    if (this.galleryDetailVisible && !this.galleryChromeVisible) return '#FFFFFFFF';
+    return this.isSystemDarkMode() ? '#FFFFFFFF' : '#FF000000';
   }
 
   private async updateGalleryPhotoTitlePosition(): Promise<void> {
@@ -4150,7 +4170,7 @@ struct Index {
         })
           .width('100%')
           .height(28)
-          .fontColor($r('sys.color.font_primary'))
+          .fontColor(this.galleryDetailForegroundColor())
           .fontSize(22)
           .fontWeight(FontWeight.Bold);
       }
@@ -5404,7 +5424,7 @@ struct Index {
           .width('100%')
           .height(104)
           .backgroundEffect({ radius: 32, saturation: 1.12, brightness: 1.0 })
-          .backgroundColor('#80FFFFFF')
+          .backgroundColor(this.galleryDetailScrimColor())
           .hitTestBehavior(HitTestMode.None)
           .position({ x: 0, y: 0 })
           .zIndex(19);

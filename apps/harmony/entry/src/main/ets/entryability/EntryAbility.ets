@@ -44,7 +44,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
-    this.applyStatusBarIconColor(newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+    this.applyStatusBarContentColor(newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -70,7 +70,9 @@ export default class EntryAbility extends UIAbility {
         .then((): Promise<void> => mainWindow.setSpecificSystemBarEnabled('status', true))
         .then((): Promise<void> => mainWindow.setWindowSystemBarProperties({
           statusBarColor: '#00000000',
-          isStatusBarLightIcon: this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+          statusBarContentColor: this.statusBarContentColor(
+            this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+          )
         }))
         .then((): void => loadMainPage())
         .catch((error: Object): void => {
@@ -98,11 +100,15 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
 
-  private applyStatusBarIconColor(isDarkMode: boolean): void {
+  private statusBarContentColor(isDarkMode: boolean): string {
+    return isDarkMode ? '#FFFFFFFF' : '#FF000000';
+  }
+
+  private applyStatusBarContentColor(isDarkMode: boolean): void {
     const mainWindow: window.Window | undefined = this.mainWindow;
     if (mainWindow === undefined) return;
     void mainWindow.setWindowSystemBarProperties({
-      isStatusBarLightIcon: isDarkMode
+      statusBarContentColor: this.statusBarContentColor(isDarkMode)
     }).catch((error: Object): void => {
       hilog.error(DOMAIN, 'testTag', 'Failed to update status bar appearance. Cause: %{public}s', JSON.stringify(error));
     });
