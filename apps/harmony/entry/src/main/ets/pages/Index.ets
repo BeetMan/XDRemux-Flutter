@@ -290,6 +290,7 @@ struct Index {
   @State private galleryCurrentItem: GalleryLibraryItem | undefined = undefined;
   @State private galleryDetails: NativePhotoDetails | undefined = undefined;
   @State private galleryClassification: NativeClassificationResult | undefined = undefined;
+  @State private gallerySystemImageIsHdr: boolean = false;
 
   private queueController: QueueController | undefined = undefined;
   private queueStore: QueueStateStore | undefined = undefined;
@@ -311,6 +312,7 @@ struct Index {
   private readonly galleryPhotoSettings: Map<string, NativeSettings> = new Map<string, NativeSettings>();
   private readonly galleryInspectionCache: Map<string, GalleryPhotoInspection> =
     new Map<string, GalleryPhotoInspection>();
+  private readonly gallerySystemHdrCache: Map<string, boolean> = new Map<string, boolean>();
   private readonly galleryDecodedDimensionsCache: Map<string, Array<number>> = new Map<string, Array<number>>();
   private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
   private readonly galleryHeroPreviewDecodeFailedIds: Set<string> = new Set<string>();
@@ -2514,6 +2516,33 @@ struct Index {
       extension === 'heic' || extension === 'heif' || extension === '.heic' || extension === '.heif';
   }
 
+  private async inspectGallerySystemHdr(tile: GalleryPhotoTile, selectionSerial: number): Promise<void> {
+    let imageSource: image.ImageSource | undefined = undefined;
+    let isHdr: boolean = false;
+    let inspectionSucceeded: boolean = false;
+    try {
+      imageSource = image.createImageSource('file://' + tile.path);
+      const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
+      isHdr = imageInfo.isHdr === true;
+      inspectionSucceeded = true;
+    } catch (error) {
+      console.warn('System HDR recognition failed for gallery item ' + tile.item.id + ': ' +
+        this.errorMessage(error));
+    } finally {
+      if (imageSource !== undefined) {
+        try {
+          await imageSource.release();
+        } catch (releaseError) {
+          // The source is no longer used after reading ImageInfo.
+        }
+      }
+    }
+    if (inspectionSucceeded) this.gallerySystemHdrCache.set(tile.item.id, isHdr);
+    if (selectionSerial === this.gallerySelectionSerial && this.galleryCurrentItem?.id === tile.item.id) {
+      this.gallerySystemImageIsHdr = isHdr;
+    }
+  }
+
   private gallerySupportsNativeConversion(): boolean {
     const classification: NativeClassificationResult | undefined = this.galleryClassification;
     const details: NativePhotoDetails | undefined = this.galleryDetails;
@@ -2523,7 +2552,7 @@ struct Index {
 
   private canCompareGallerySdr(): boolean {
     return this.galleryDetailVisible && this.galleryChromeVisible && this.galleryCurrentItem !== undefined &&
-      this.gallerySandboxPath.length > 0 && this.gallerySupportsNativeConversion();
+      this.gallerySandboxPath.length > 0 && this.gallerySystemImageIsHdr;
   }
 
   private async beginGallerySdrCompare(): Promise<void> {
@@ -3027,6 +3056,8 @@ struct Index {
     this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
     this.galleryDetailSelectionIsSwipe = delayHdrReveal && !shouldOpenDetail && this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
+    const cachedSystemHdr: boolean | undefined = this.gallerySystemHdrCache.get(tile.item.id);
+    this.gallerySystemImageIsHdr = cachedSystemHdr === true;
     if (shouldOpenDetail) {
       // A decoded image from a previous visit does not guarantee the newly
       // mounted HDR Image already has a frame to draw. Keep the SDR preview
@@ -3069,6 +3100,7 @@ struct Index {
     this.galleryDetails = cachedInspection?.details;
     this.galleryClassification = cachedInspection?.classification;
     this.gallerySandboxPath = tile.path;
+    if (cachedSystemHdr === undefined) void this.inspectGallerySystemHdr(tile, selectionSerial);
     this.galleryCopiedBytes = 0;
     this.galleryMimeType = tile.item.mimeType.length > 0
       ? tile.item.mimeType
@@ -4537,6 +4569,7 @@ struct Index {
       if (this.galleryDetailLoadedImageId === itemId) this.galleryDetailLoadedImageId = '';
       this.galleryDetailDecodedImageIds.delete(itemId);
       this.galleryInspectionCache.delete(itemId);
+      this.gallerySystemHdrCache.delete(itemId);
       this.galleryDecodedDimensionsCache.delete(itemId);
       this.galleryPhotoSettings.delete(itemId);
       if (oldThumbnail !== undefined) {
@@ -4558,6 +4591,7 @@ struct Index {
         this.galleryCurrentItem = undefined;
         this.galleryDetails = undefined;
         this.galleryClassification = undefined;
+        this.gallerySystemImageIsHdr = false;
         this.gallerySandboxPath = '';
         this.galleryMimeType = '';
         this.galleryDetailVisible = false;
