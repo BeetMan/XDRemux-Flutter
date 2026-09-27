@@ -336,6 +336,7 @@ struct Index {
   private galleryPinchBlockedByInfoPanel: boolean = false;
   private galleryGestureAxis: 'none' | 'horizontal' | 'vertical' = 'none';
   private gallerySelectionSerial: number = 0;
+  private galleryDetailSelectionUsesDelayedReveal: boolean = false;
   private gallerySdrDecodeSerial: number = 0;
   private gallerySdrPreviewItemId: string = '';
   private galleryChromeToggleBlockedUntil: number = 0;
@@ -3003,20 +3004,26 @@ struct Index {
 
   private async inspectGallerySelection(
     tile: GalleryPhotoTile,
-    openDetail: boolean = false
+    openDetail: boolean = false,
+    delayHdrReveal: boolean = false
   ): Promise<void> {
     if (tile.path.length === 0) return;
     this.endGallerySdrCompare();
     const selectionSerial: number = this.gallerySelectionSerial + 1;
     this.gallerySelectionSerial = selectionSerial;
     this.clearGalleryDetailImageRevealTimer();
+    this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
-    if (shouldOpenDetail || tile.item.id !== this.galleryCurrentItem?.id) {
+    if (shouldOpenDetail || delayHdrReveal) {
       // A decoded image from a previous visit does not guarantee the newly
       // mounted HDR Image already has a frame to draw. Keep the SDR preview
-      // until this particular render completes.
+      // through the detail entrance until this particular render completes.
       this.galleryDetailLoadedImageId = '';
+    } else if (tile.item.id !== this.galleryCurrentItem?.id) {
+      // Horizontal photo swipes keep the original quick path: reuse an already
+      // decoded frame immediately and otherwise reveal on the decode callback.
+      this.galleryDetailLoadedImageId = this.galleryDetailDecodedImageIds.has(tile.item.id) ? tile.item.id : '';
     }
     this.galleryZoomScale = 1;
     this.galleryPanOffsetX = 0;
@@ -3128,7 +3135,7 @@ struct Index {
   private openGalleryTile(tile: GalleryPhotoTile): void {
     if (this.galleryImporting) return;
     this.galleryStatus = '正在读取 ' + tile.item.displayName + '…';
-    void this.inspectGallerySelection(tile, true);
+    void this.inspectGallerySelection(tile, true, true);
   }
 
   private tryStartGalleryHeroTransition(itemId: string): void {
@@ -3361,6 +3368,12 @@ struct Index {
     this.galleryDetailDecodedImageIds.add(itemId);
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId ||
       this.galleryDetailImageRevealTimer >= 0) return;
+    if (!this.galleryDetailSelectionUsesDelayedReveal) {
+      this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
+        this.galleryDetailLoadedImageId = itemId;
+      });
+      return;
+    }
     const selectionSerial: number = this.gallerySelectionSerial;
     this.galleryDetailImageRevealTimer = setTimeout((): void => {
       this.galleryDetailImageRevealTimer = -1;
