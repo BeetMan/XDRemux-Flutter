@@ -162,8 +162,6 @@ interface GalleryPhotoInspection {
 
 const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
 const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
-const GALLERY_DETAIL_HDR_SWIPE_SETTLE_DELAY_MS: number = 60;
-const GALLERY_DETAIL_HDR_SWIPE_REVEAL_DURATION_MS: number = 130;
 const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
@@ -3029,7 +3027,7 @@ struct Index {
     this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
     this.galleryDetailSelectionIsSwipe = delayHdrReveal && !shouldOpenDetail && this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
-    if (shouldOpenDetail || delayHdrReveal) {
+    if (shouldOpenDetail) {
       // A decoded image from a previous visit does not guarantee the newly
       // mounted HDR Image already has a frame to draw. Keep the SDR preview
       // through the detail entrance until this particular render completes.
@@ -3481,16 +3479,19 @@ struct Index {
     this.galleryDetailDecodedImageIds.add(itemId);
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     if (this.galleryHeroOpening) return;
+    if (this.galleryDetailSelectionIsSwipe) {
+      // Swipe pages render their HDR source directly; no SDR-to-HDR fade is
+      // needed once the image source itself is already the displayed layer.
+      this.galleryDetailLoadedImageId = itemId;
+      return;
+    }
     if (!this.galleryDetailSelectionUsesDelayedReveal) {
       this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
         this.galleryDetailLoadedImageId = itemId;
       });
       return;
     }
-    this.scheduleGalleryDetailImageReveal(itemId,
-      this.galleryDetailSelectionIsSwipe ? GALLERY_DETAIL_HDR_SWIPE_SETTLE_DELAY_MS :
-        GALLERY_DETAIL_HDR_SETTLE_DELAY_MS,
-      this.galleryDetailSelectionIsSwipe ? GALLERY_DETAIL_HDR_SWIPE_REVEAL_DURATION_MS : 220);
+    this.scheduleGalleryDetailImageReveal(itemId);
   }
 
   private scheduleGalleryDetailImageReveal(itemId: string,
@@ -5513,6 +5514,21 @@ struct Index {
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
+                        });
+                    } else if (tile.item.id === this.galleryCurrentItem?.id &&
+                      this.galleryDetailSelectionIsSwipe) {
+                      // Horizontal swipes use the decoded HDR source directly,
+                      // avoiding a separate SDR layer and its extra handoff.
+                      Image('file://' + tile.path)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .onComplete((event): void => {
+                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0));
                         });
                     } else {
                       if (tile.item.id === this.galleryCurrentItem?.id) {
