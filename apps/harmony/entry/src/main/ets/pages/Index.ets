@@ -3030,8 +3030,7 @@ struct Index {
       // through the detail entrance until this particular render completes.
       this.galleryDetailLoadedImageId = '';
     } else if (tile.item.id !== this.galleryCurrentItem?.id) {
-      // Horizontal photo swipes keep the original quick path: reuse an already
-      // decoded frame immediately and otherwise reveal on the decode callback.
+      // Non-delayed selection paths may reuse a previously decoded HDR frame.
       this.galleryDetailLoadedImageId = this.galleryDetailDecodedImageIds.has(tile.item.id) ? tile.item.id : '';
     }
     this.galleryZoomScale = 1;
@@ -3987,7 +3986,7 @@ struct Index {
     const nextTile: GalleryPhotoTile = this.galleryPhotos[index];
     if (nextTile.item.id === this.galleryCurrentItem?.id) return;
     this.galleryStatus = '正在读取 ' + nextTile.item.displayName + '…';
-    void this.inspectGallerySelection(nextTile, false);
+    void this.inspectGallerySelection(nextTile, false, true);
   }
 
   private dismissGalleryDetailBySwipe(): void {
@@ -4511,7 +4510,7 @@ struct Index {
         const nextIndex: number = Math.min(index, remainingPhotos.length - 1);
         const nextTile: GalleryPhotoTile = remainingPhotos[nextIndex];
         this.galleryCurrentItem = nextTile.item;
-        void this.inspectGallerySelection(nextTile, false);
+        void this.inspectGallerySelection(nextTile, false, true);
       } else {
         this.gallerySelectionSerial += 1;
         this.galleryCurrentItem = undefined;
@@ -4912,7 +4911,7 @@ struct Index {
                 try {
                   this.galleryDetailSwiperController.changeIndex(targetIndex, false);
                 } catch (error) {
-                  void this.inspectGallerySelection(tile, false);
+                  void this.inspectGallerySelection(tile, false, true);
                 }
               }
           });
@@ -5499,19 +5498,34 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
-                    } else if (tile.item.id !== this.galleryCurrentItem?.id ||
-                      this.galleryDetailPreviewPixelMap(tile.item.id) === undefined) {
+                    } else {
+                      if (tile.item.id === this.galleryCurrentItem?.id) {
+                        // Prepare HDR underneath the SDR source while the SDR
+                        // layer remains visible, then crossfade at reveal time.
+                        Image('file://' + tile.path)
+                          .width('100%')
+                          .height('100%')
+                          .orientation(ImageRotateOrientation.AUTO)
+                          .objectFit(ImageFit.Contain)
+                          .autoResize(true)
+                          .dynamicRangeMode(DynamicRangeMode.HIGH)
+                          .onComplete((event): void => {
+                            this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                              Number(event?.height ?? 0));
+                          });
+                      }
                       Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
-                        .dynamicRangeMode(tile.item.id === this.galleryCurrentItem?.id
-                          ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .opacity(tile.item.id === this.galleryCurrentItem?.id && !this.galleryHeroOpening &&
+                          this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0));
+                            Number(event?.height ?? 0), false);
                         });
                     }
                     if (tile.item.id === this.galleryCurrentItem?.id &&
