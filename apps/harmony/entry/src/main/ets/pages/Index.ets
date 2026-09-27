@@ -4904,13 +4904,26 @@ struct Index {
     Stack({ alignContent: Alignment.Center }) {
       Column() {
         Button({ type: ButtonType.Circle, stateEffect: false }) {
-          SymbolGlyph($r('sys.symbol.plus'))
-            .fontSize(24)
-            .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
-            .hitTestBehavior(HitTestMode.None);
+          Column() {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(22)
+              .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+              .hitTestBehavior(HitTestMode.None);
+            Text('加入队列')
+              .fontSize(9)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+              .maxLines(1)
+              .height(12)
+              .hitTestBehavior(HitTestMode.None);
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center);
         }
-        .width(48)
-        .height(48)
+        .width(52)
+        .height(52)
         .backgroundColor(Color.Transparent)
         .systemMaterial(new uiMaterial.ImmersiveMaterial({
           style: uiMaterial.ImmersiveStyle.THIN,
@@ -4927,13 +4940,6 @@ struct Index {
             !this.queueReady || this.queueRecoveryRequired) return;
           void this.convertGallerySelection(false);
         });
-        Text('加入队列')
-          .fontSize(10)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .maxLines(1)
-          .height(12)
-          .hitTestBehavior(HitTestMode.None);
       }
       .width('100%')
       .height(60)
