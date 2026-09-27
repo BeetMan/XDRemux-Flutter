@@ -8164,40 +8164,80 @@ struct Index {
         .justifyContent(FlexAlign.SpaceBetween)
         .padding({ left: 8, right: 8 });
       } else {
-        Row() {
-          Button('导入新照片')
+        Row({ space: 8 }) {
+          Button({ stateEffect: false }) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.plus'))
+                .fontSize(17)
+                .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+                .hitTestBehavior(HitTestMode.None);
+              Text('导入新照片')
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                .hitTestBehavior(HitTestMode.None);
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(HitTestMode.None);
+          }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
-            .width(112)
-            .height(44)
-            .backgroundColor(this.systemAccentColorWithAlpha(0.4))
+            .width(128)
+            .height(48)
+            .backgroundColor(this.systemAccentColorWithAlpha(0.72))
+            .systemMaterial(new uiMaterial.ImmersiveMaterial({
+              style: uiMaterial.ImmersiveStyle.THIN,
+              materialColor: this.systemAccentColorWithAlpha(0.72),
+              interactive: true
+            }))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
             .enabled(this.canRunMiniBarAction())
+            .accessibilityText('导入新照片到本地图库')
             .onClick((): void => {
               void this.runMiniBarAction();
             });
 
-          Button('全部加入队列')
+          Button({ stateEffect: false }) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.list_bullet'))
+                .fontSize(17)
+                .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+                .hitTestBehavior(HitTestMode.None);
+              Text('全部加入队列')
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                .hitTestBehavior(HitTestMode.None);
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(HitTestMode.None);
+          }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
             .width(128)
-            .height(44)
-            .backgroundColor(this.systemAccentColorWithAlpha(0.4))
+            .height(48)
+            .backgroundColor(this.systemAccentColorWithAlpha(0.72))
+            .systemMaterial(new uiMaterial.ImmersiveMaterial({
+              style: uiMaterial.ImmersiveStyle.THIN,
+              materialColor: this.systemAccentColorWithAlpha(0.72),
+              interactive: true
+            }))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
             .enabled(this.canImportQueueMiniBarAction() && this.galleryLibraryReady && this.galleryPhotos.length > 0)
+            .accessibilityText('全部加入队列')
             .onClick((): void => {
               void this.enqueueAllGalleryPhotos();
             });
         }
         .width(280)
         .height(56)
-        .justifyContent(FlexAlign.SpaceBetween)
+        .justifyContent(FlexAlign.Center)
         .padding({ left: 8, right: 8 });
       }
     } else {
