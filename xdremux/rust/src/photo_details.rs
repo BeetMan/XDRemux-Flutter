@@ -30,6 +30,11 @@ pub struct PhotoDetails {
     pub width: Option<u32>,
     pub height: Option<u32>,
 
+    // Apple editing metadata. These are structural checks for converted
+    // HEIF outputs, not claims that Apple Photos can render every feature.
+    pub apple_photographic_styles: bool,
+    pub apple_portrait: bool,
+
     // HDR GainMap Properties
     pub hdr_kind: Option<String>,
     pub edr_scale: Option<f64>,
@@ -40,6 +45,14 @@ impl PhotoDetails {
     pub fn to_json(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
         map.insert("success".into(), serde_json::Value::Bool(self.success));
+        map.insert(
+            "applePhotographicStyles".into(),
+            serde_json::Value::Bool(self.apple_photographic_styles),
+        );
+        map.insert(
+            "applePortrait".into(),
+            serde_json::Value::Bool(self.apple_portrait),
+        );
         if let Some(err) = &self.error_message {
             map.insert("errorMessage".into(), serde_json::Value::String(err.clone()));
         }
@@ -465,6 +478,8 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
     }
     // 2. HEIF / ISO BMFF path
     else if data.len() >= 12 && &data[4..8] == b"ftyp" {
+        details.apple_photographic_styles = crate::verify_photographic_styles(data);
+        details.apple_portrait = crate::verify_portrait_graph(data);
         if let Ok(Some(exif_bytes)) = isobmff_write::read_exif_payload(data) {
             if let Some(tiff) = find_tiff_slice(&exif_bytes) {
                 parse_tiff_exif(tiff, &mut details);

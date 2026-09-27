@@ -24,6 +24,8 @@ export interface PhotoDetails {
   exposureBias?: string;
   width?: number;
   height?: number;
+  applePhotographicStyles?: boolean;
+  applePortrait?: boolean;
   hdrKind?: string;
   edrScale?: number;
   gainMapMax?: number;

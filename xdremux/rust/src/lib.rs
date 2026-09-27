@@ -1942,7 +1942,7 @@ pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
     verify_iso_gain_map(&data) && verify_portrait_graph(&data)
 }
 
-fn verify_portrait_graph(data: &[u8]) -> bool {
+pub(crate) fn verify_portrait_graph(data: &[u8]) -> bool {
     let meta = match isobmff::parse_source_meta(data) {
         Ok(meta) => meta,
         Err(_) => return false,
@@ -1960,7 +1960,7 @@ fn contains_ascii(data: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && data.windows(needle.len()).any(|window| window == needle)
 }
 
-fn verify_photographic_styles(data: &[u8]) -> bool {
+pub(crate) fn verify_photographic_styles(data: &[u8]) -> bool {
     let meta = match isobmff::parse_source_meta(data) {
         Ok(meta) => meta,
         Err(_) => return false,

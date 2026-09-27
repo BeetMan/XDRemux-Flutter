@@ -4365,14 +4365,41 @@ struct Index {
     return make.length > 0 ? make : '未知机型';
   }
 
+  private galleryCameraBrandLabel(): string {
+    const make: string = (this.galleryDetails?.make ?? '').trim().toLowerCase();
+    const model: string = (this.galleryDetails?.model ?? '').trim().toLowerCase();
+    const identity: string = make + ' ' + model;
+    if (identity.indexOf('oneplus') >= 0 || identity.indexOf('one plus') >= 0 ||
+      identity.indexOf('一加') >= 0) {
+      return '一加';
+    }
+    if (identity.indexOf('realme') >= 0 || model.indexOf('rmx') === 0) {
+      return 'realme';
+    }
+    if (identity.indexOf('oppo') >= 0 || identity.indexOf('find x') >= 0 ||
+      identity.indexOf('reno') >= 0) {
+      return 'OPPO';
+    }
+    return '';
+  }
+
   private galleryPhotoModeLabel(): string {
     const displayName: string = (this.galleryCurrentItem?.displayName ?? '').toLowerCase();
-    if (displayName.endsWith('-oppo.heic')) return '已转换为 OPPO';
-    if (displayName.endsWith('-apple.heic')) return '已转换为 Apple';
+    if (displayName.endsWith('-oppo.heic')) return '已转换为 OPPO 兼容';
+    if (displayName.endsWith('-apple.heic')) {
+      const details: NativePhotoDetails | undefined = this.galleryDetails;
+      const features: Array<string> = ['已转换为 Apple 标准'];
+      if (details?.applePhotographicStyles === true) features.push('摄影风格');
+      if (details?.applePortrait === true) features.push('人像');
+      return features.join(' · ');
+    }
 
     const classification: NativeClassificationResult | undefined = this.galleryClassification;
     const folderName: string = (classification?.folderName ?? '').trim();
-    if (folderName.length > 0) return folderName;
+    if (folderName.length > 0) {
+      const brand: string = this.galleryCameraBrandLabel();
+      return brand.length > 0 ? brand + ' ' + folderName : folderName;
+    }
     if (this.galleryImporting) return '正在识别模式…';
     return '未识别模式';
   }
@@ -4407,8 +4434,8 @@ struct Index {
       .height(46)
       .alignItems(HorizontalAlign.Start)
       // Keep the model static and scroll the mode only within the space left
-      // between the back control and the HDR/delete/share actions.
-      .padding({ left: 68, right: 176 })
+      // between the back control and the delete/share actions.
+      .padding({ left: 68, right: 128 })
       .position({ x: 0, y: this.galleryPhotoTitleTopPosition })
       .hitTestBehavior(HitTestMode.None)
       .zIndex(25);
@@ -4902,6 +4929,12 @@ struct Index {
       this.galleryPanelHeight <= GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT + 4 && !this.galleryHeroOpening;
   }
 
+  private galleryThumbnailStripTop(): number {
+    return Math.max(0, this.galleryViewportHeight - GALLERY_DETAIL_PANEL_BOTTOM_INSET -
+      GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT - GALLERY_DETAIL_THUMBNAIL_GAP -
+      GALLERY_DETAIL_THUMBNAIL_STRIP_HEIGHT);
+  }
+
   @Builder
   private galleryThumbnailStrip() {
     Scroll(this.galleryThumbnailScroller) {
@@ -4977,12 +5010,7 @@ struct Index {
     .onAppear((): void => {
       this.centerGalleryThumbnail(this.galleryCurrentPhotoIndex(), false);
     })
-    .position({
-      x: 0,
-      y: Math.max(0, this.galleryViewportHeight - GALLERY_DETAIL_PANEL_BOTTOM_INSET -
-        GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT - GALLERY_DETAIL_THUMBNAIL_GAP -
-        GALLERY_DETAIL_THUMBNAIL_STRIP_HEIGHT)
-    })
+    .position({ x: 0, y: this.galleryThumbnailStripTop() })
     .opacity(this.galleryThumbnailStripVisible() ? 1 : 0)
     .hitTestBehavior(this.galleryThumbnailStripVisible() ? HitTestMode.Default : HitTestMode.None)
     .zIndex(9);
@@ -4990,7 +5018,7 @@ struct Index {
 
   @Builder
   private gallerySdrCompareButton() {
-    if (this.canCompareGallerySdr()) {
+    if (this.canCompareGallerySdr() && this.galleryThumbnailStripVisible()) {
       Button({ type: ButtonType.Circle, stateEffect: false }) {
         Text(this.gallerySdrCompareLoading ? '…' : this.gallerySdrCompareActive ? 'SDR' : 'HDR')
           .fontSize(10)
@@ -4999,8 +5027,8 @@ struct Index {
       }
       .width(40)
       .height(40)
-      .systemMaterial(this.galleryTopActionMaterial())
-      .backgroundColor(Color.Transparent)
+      .backgroundEffect({ radius: 22, saturation: 1.12, brightness: 1.0 })
+      .backgroundColor(this.isSystemDarkMode() ? '#66000000' : '#66FFFFFF')
       .accessibilityText('按下显示 SDR，松开恢复 HDR')
       .onTouch((event: TouchEvent): void => {
         if (event.type === TouchType.Down) {
@@ -5008,6 +5036,10 @@ struct Index {
         } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
           this.endGallerySdrCompare();
         }
+      })
+      .position({
+        x: Math.max(0, this.galleryViewportWidth - 18 - 40),
+        y: Math.max(0, this.galleryThumbnailStripTop() - GALLERY_DETAIL_THUMBNAIL_GAP - 40)
       })
       .zIndex(22);
     }
@@ -5079,9 +5111,6 @@ struct Index {
         .zIndex(24);
 
         Row({ space: 8 }) {
-          if (this.canCompareGallerySdr()) {
-            this.gallerySdrCompareButton();
-          }
           this.galleryDeleteButton();
           this.galleryShareButton();
         }
@@ -5727,7 +5756,7 @@ struct Index {
       .titleBar({
         padding: {
           start: LengthMetrics.vp(68),
-          end: LengthMetrics.vp(176)
+          end: LengthMetrics.vp(128)
         },
         content: {
           title: {
@@ -5810,6 +5839,7 @@ struct Index {
         .hitTestBehavior(HitTestMode.Transparent)
         .zIndex(15);
       }
+      this.gallerySdrCompareButton();
       this.galleryPhotoTitleOverlay();
     }
     .width('100%')
