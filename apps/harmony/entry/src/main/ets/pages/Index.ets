@@ -4349,40 +4349,52 @@ struct Index {
     return '未识别模式';
   }
 
-  private galleryDetailSubtitle(): string {
-    return this.galleryCameraModelLabel() + ' · ' + this.galleryPhotoModeLabel();
-  }
-
   @Builder
   private galleryPhotoTitleOverlay() {
     if (this.galleryDetailMounted && this.galleryChromeVisible) {
       Column() {
         Marquee({
           start: true,
-          step: 0.8,
+          step: 1.25,
           loop: -1,
           fromStart: true,
           src: this.galleryPhotoTitleLabel(),
-          delay: 1400
+          delay: 1000
         })
           .width('100%')
           .height(26)
           .fontColor(this.galleryDetailForegroundColor())
           .fontSize(22)
           .fontWeight(FontWeight.Bold);
-        Marquee({
-          start: true,
-          step: 0.55,
-          loop: -1,
-          fromStart: true,
-          src: this.galleryDetailSubtitle(),
-          delay: 1800
-        })
-          .width('100%')
-          .height(20)
-          .fontColor(this.galleryInfoPanelSecondaryTextColor())
-          .fontSize(14)
-          .fontWeight(FontWeight.Regular);
+        Row({ space: 4 }) {
+          Text(this.galleryCameraModelLabel())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 132 })
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
+            .fontSize(14)
+            .fontWeight(FontWeight.Regular);
+          Text('·')
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
+            .fontSize(14)
+            .fontWeight(FontWeight.Regular);
+          Marquee({
+            start: true,
+            step: 1.2,
+            loop: -1,
+            fromStart: true,
+            src: this.galleryPhotoModeLabel(),
+            delay: 1000
+          })
+            .layoutWeight(1)
+            .height(20)
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
+            .fontSize(14)
+            .fontWeight(FontWeight.Regular);
+        }
+        .width('100%')
+        .height(20)
+        .alignItems(VerticalAlign.Center);
       }
       .width('100%')
       .height(46)
