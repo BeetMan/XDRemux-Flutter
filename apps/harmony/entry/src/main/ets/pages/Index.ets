@@ -342,6 +342,7 @@ struct Index {
   private galleryStatusBarResetTimer: number = -1;
   private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
   private galleryHeroBackdropResetTimer: number = -1;
+  private galleryDetailImageRevealTimer: number = -1;
   private readonly queuePhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private readonly galleryPhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private batchPickerActive: boolean = false;
@@ -3008,14 +3009,14 @@ struct Index {
     this.endGallerySdrCompare();
     const selectionSerial: number = this.gallerySelectionSerial + 1;
     this.gallerySelectionSerial = selectionSerial;
+    this.clearGalleryDetailImageRevealTimer();
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
-    if (shouldOpenDetail) {
+    if (shouldOpenDetail || tile.item.id !== this.galleryCurrentItem?.id) {
       // A decoded image from a previous visit does not guarantee the newly
-      // mounted HDR Image already has a frame to draw.
+      // mounted HDR Image already has a frame to draw. Keep the SDR preview
+      // until this particular render completes.
       this.galleryDetailLoadedImageId = '';
-    } else if (tile.item.id !== this.galleryCurrentItem?.id) {
-      this.galleryDetailLoadedImageId = this.galleryDetailDecodedImageIds.has(tile.item.id) ? tile.item.id : '';
     }
     this.galleryZoomScale = 1;
     this.galleryPanOffsetX = 0;
@@ -3164,6 +3165,7 @@ struct Index {
   }
 
   private closeGalleryDetail(): void {
+    this.clearGalleryDetailImageRevealTimer();
     if (!this.galleryDetailVisible) return;
     this.endGallerySdrCompare();
     this.gallerySelectionSerial += 1;
@@ -3357,10 +3359,23 @@ struct Index {
     this.onGalleryPreviewDecoded(itemId, width, height);
     if (!isHighDynamicRangeImage) return;
     this.galleryDetailDecodedImageIds.add(itemId);
-    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
-      this.galleryDetailLoadedImageId = itemId;
-    });
+    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId ||
+      this.galleryDetailImageRevealTimer >= 0) return;
+    const selectionSerial: number = this.gallerySelectionSerial;
+    this.galleryDetailImageRevealTimer = setTimeout((): void => {
+      this.galleryDetailImageRevealTimer = -1;
+      if (selectionSerial !== this.gallerySelectionSerial || itemId !== this.galleryCurrentItem?.id ||
+        !this.galleryDetailVisible || this.galleryHeroOpening) return;
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+        this.galleryDetailLoadedImageId = itemId;
+      });
+    }, 100);
+  }
+
+  private clearGalleryDetailImageRevealTimer(): void {
+    if (this.galleryDetailImageRevealTimer < 0) return;
+    clearTimeout(this.galleryDetailImageRevealTimer);
+    this.galleryDetailImageRevealTimer = -1;
   }
 
   private galleryImageDimensions(itemId: string): Array<number> {
