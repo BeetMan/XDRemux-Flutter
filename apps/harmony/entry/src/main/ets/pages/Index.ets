@@ -213,7 +213,6 @@ struct Index {
   @State private queueItems: Array<QueueItem> = [];
   @State private selectedItemId: string = '';
   @State private queueFilter: 'all' | 'pending' | 'succeeded' | 'failed' = 'all';
-  @State private queueFilterInTitleBar: boolean = false;
   @State private queueDetailsExpanded: boolean = false;
   @State private queueToolsExpanded: boolean = false;
   @State private queueSettingsEditingItemId: string = '';
@@ -315,7 +314,6 @@ struct Index {
   private readonly galleryScrollController: Scroller = new Scroller();
   private readonly queueScrollController: Scroller = new Scroller();
   private readonly settingsScrollController: Scroller = new Scroller();
-  private queueScrollOffset: number = 0;
   private galleryLibrary: HarmonyGalleryLibrary | undefined = undefined;
   private tabsController: HdsTabsController | undefined = undefined;
   private committedSettings: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
@@ -6155,27 +6153,9 @@ struct Index {
     return this.queueItems;
   }
 
-  private queueFilterHeaderPinned(): boolean {
+  private queueFilterTitleBarVisible(): boolean {
     return this.shouldUseImmersiveMainChrome() && this.mainTabIndex === 1 && this.queueLoaded &&
-      this.queueItems.length > 0 && this.queueFilterInTitleBar;
-  }
-
-  private updateQueueFilterHeader(scrollOffset: number): void {
-    if (!this.shouldUseImmersiveMainChrome() || this.mainTabIndex !== 1) {
-      return;
-    }
-    this.queueScrollOffset = Math.max(0, this.queueScrollOffset + scrollOffset);
-    if (!this.queueLoaded || this.queueItems.length === 0) {
-      if (this.queueFilterInTitleBar) {
-        this.queueFilterInTitleBar = false;
-      }
-      return;
-    }
-    const shouldPin: boolean = this.queueFilterInTitleBar ? this.queueScrollOffset > 64 :
-      this.queueScrollOffset >= 96;
-    if (shouldPin !== this.queueFilterInTitleBar) {
-      this.queueFilterInTitleBar = shouldPin;
-    }
+      this.queueItems.length > 0;
   }
 
   private queueFilterIndex(): number {
@@ -6195,34 +6175,6 @@ struct Index {
     } else {
       this.queueFilter = 'all';
     }
-  }
-
-  @Builder
-  private queueFilterInlineChips(): void {
-    ChipGroup({
-      items: [
-        { label: { text: '全部 ' + String(this.queueItems.length) } },
-        { label: { text: '待处理 ' + String(this.queuePendingCount()) } },
-        { label: { text: '已完成 ' + String(this.queueCount('succeeded')) } },
-        { label: { text: '失败 ' + String(this.queueCount('failed')) } }
-      ],
-      itemStyle: {
-        size: ChipSize.SMALL,
-        backgroundColor: $r('sys.color.background_secondary'),
-        selectedBackgroundColor: $r('sys.color.ohos_id_color_emphasize'),
-        fontColor: $r('sys.color.font_secondary'),
-        selectedFontColor: $r('sys.color.ohos_id_color_primary_contrary')
-      },
-      selectedIndexes: [this.queueFilterIndex()],
-      multiple: false,
-      chipGroupSpace: { itemSpace: 6, startSpace: 0, endSpace: 0 },
-      chipGroupPadding: { top: 0, bottom: 0 },
-      onChange: (activeIndexes: Array<number>): void => {
-        if (activeIndexes.length > 0) {
-          this.setQueueFilterByIndex(activeIndexes[0]);
-        }
-      }
-    });
   }
 
   @Available({ minApiVersion: '26.0.0' })
@@ -7629,15 +7581,6 @@ struct Index {
             .margin({ bottom: 12 });
           }
 
-          if (this.queueLoaded && this.queueItems.length > 0) {
-            Row() {
-              this.queueFilterInlineChips();
-            }
-            .width('100%')
-            .visibility(this.queueFilterHeaderPinned() ? Visibility.Hidden : Visibility.Visible)
-            .margin({ bottom: 12 });
-          }
-
           if (!this.shouldUseImmersiveMainChrome() && this.queueItems.length > 0) {
             Row() {
               Button('添加照片')
@@ -7803,12 +7746,13 @@ struct Index {
                   this.chooseAndImport(false);
                 });
             }
+            .justifyContent(FlexAlign.Start)
             .alignItems(HorizontalAlign.Start)
             .width('100%')
             .padding({ left: 18, right: 18, top: 20, bottom: 20 })
             .backgroundColor($r('sys.color.background_secondary'))
             .borderRadius(20)
-            .margin({ top: 8, bottom: 18 });
+            .margin({ top: 0, bottom: 18 });
           } else {
             Row() {
               Text(this.queueFilter === 'all' ? '照片任务' :
@@ -7955,17 +7899,20 @@ struct Index {
           .borderRadius(14)
           .margin({ top: 8, bottom: 14 });
         }
+        .justifyContent(FlexAlign.Start)
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding({ left: 20, right: 20, top: this.shouldUseImmersiveMainChrome() ? 98 : 28, bottom: 112 });
+        .padding({
+          left: 20,
+          right: 20,
+          top: this.shouldUseImmersiveMainChrome() ? (this.queueFilterTitleBarVisible() ? 154 : 98) : 28,
+          bottom: 112
+        });
       }
       .layoutWeight(1)
       .width('100%')
       .clipContent(ContentClipMode.BOUNDARY)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-      .onDidScroll((_xOffset: number, yOffset: number, _scrollState: ScrollState): void => {
-        this.updateQueueFilterHeader(yOffset);
-      })
       .onScrollStart((): void => {
         this.expandQueueImportMiniBarOnScroll();
       });
@@ -8358,8 +8305,14 @@ struct Index {
         start: LengthMetrics.vp(20),
         end: LengthMetrics.vp(20)
       },
-      content: this.queueFilterHeaderPinned() ? {
-        stackBuilder: (): void => this.queueFilterTitleBarChips()
+      content: this.queueFilterTitleBarVisible() ? {
+        title: {
+          mainTitle: this.mainTabTitle()
+        },
+        bottomBuilder: {
+          builder: (): void => this.queueFilterTitleBarChips(),
+          height: 56
+        }
       } : {
         title: {
           mainTitle: this.mainTabTitle()
