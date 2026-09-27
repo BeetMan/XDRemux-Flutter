@@ -3164,7 +3164,12 @@ struct Index {
     this.galleryHeroBackdropResetTimer = setTimeout((): void => {
       this.galleryHeroBackdropResetTimer = -1;
       if (this.galleryDetailVisible) {
-        this.galleryHeroTransitionActive = false;
+        // GeometryTransition drops its sandbox snapshot at about 420ms. Fade
+        // the photo-page backing in just after that instead of exposing the
+        // abrupt transparent-to-black color swap on the final frame.
+        this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+          this.galleryHeroTransitionActive = false;
+        });
         this.galleryHeroOpening = false;
         this.ensureGalleryStatusBarVisible();
       }
@@ -5387,10 +5392,21 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
+                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening &&
+                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
+                      // The shared-element snapshot can outlive the source
+                      // decode. Use the already decoded SDR preview as its
+                      // destination so the first detail frame is never blank.
+                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD);
                     } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening) {
-                      // Keep the shared element on the original image and its
-                      // natural aspect ratio; only promote it to HDR after the
-                      // geometry transition has settled.
+                      // If thumbnail decoding failed, keep the previous SDR
+                      // fallback and promote it only after the transition.
                       Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
