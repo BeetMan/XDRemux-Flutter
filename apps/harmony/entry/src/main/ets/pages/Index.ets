@@ -5618,7 +5618,12 @@ struct Index {
           barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
           barBottomMargin: 28,
           adaptToHandedness: false,
-          barOpacity: 1
+          barOpacity: 1,
+          gradientMask: { maskColor: Color.Transparent, maskHeight: 1 },
+          systemMaterialEffect: {
+            materialType: this.hdsTabBarMaterialType(),
+            materialLevel: this.hdsTabBarMaterialLevel()
+          }
         })
         .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
         .width('100%')
