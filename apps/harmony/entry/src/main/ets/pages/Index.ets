@@ -6164,6 +6164,24 @@ struct Index {
     return 0;
   }
 
+  private queueFilterMaterialColor(): ResourceColor {
+    let resource: Resource = $r('sys.color.ohos_id_color_emphasize');
+    if (this.queueFilter === 'pending') {
+      resource = $r('sys.color.ohos_id_color_alert');
+    } else if (this.queueFilter === 'succeeded') {
+      resource = $r('sys.color.ohos_id_color_connected');
+    } else if (this.queueFilter === 'failed') {
+      resource = $r('sys.color.ohos_id_color_warning');
+    }
+    try {
+      const color: ColorMetrics = ColorMetrics.resourceColor(resource);
+      // Tint the glass without covering its material filter with an opaque fill.
+      return ColorMetrics.rgba(color.red, color.green, color.blue, 0.45).color;
+    } catch (_error) {
+      return Color.Transparent;
+    }
+  }
+
   private setQueueFilterByIndex(index: number): void {
     if (index === 1) {
       this.queueFilter = 'pending';
@@ -6205,7 +6223,7 @@ struct Index {
           }),
           selectedBackgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
             style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-            materialColor: $r('sys.color.ohos_id_color_emphasize'),
+            materialColor: this.queueFilterMaterialColor(),
             colorInvert: true,
             interactive: true
           }),
