@@ -4354,10 +4354,6 @@ struct Index {
     }
   }
 
-  private galleryPhotoTitleLabel(): string {
-    return this.galleryCurrentItem?.displayName ?? '本地照片';
-  }
-
   private galleryCameraModelLabel(): string {
     const make: string = (this.galleryDetails?.make ?? '').trim();
     const model: string = (this.galleryDetails?.model ?? '').trim();
@@ -4385,53 +4381,32 @@ struct Index {
   private galleryPhotoTitleOverlay() {
     if (this.galleryDetailMounted && this.galleryChromeVisible) {
       Column() {
-        Marquee({
-          start: true,
-          step: 1.25,
-          loop: -1,
-          fromStart: true,
-          src: this.galleryPhotoTitleLabel(),
-          delay: 1000
-        })
+        Text(this.galleryCameraModelLabel())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
           .height(26)
           .fontColor(this.galleryDetailForegroundColor())
-          .fontSize(22)
+          .fontSize(20)
           .fontWeight(FontWeight.Bold);
-        Row({ space: 4 }) {
-          Text(this.galleryCameraModelLabel())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ maxWidth: 132 })
-            .fontColor(this.galleryInfoPanelSecondaryTextColor())
-            .fontSize(14)
-            .fontWeight(FontWeight.Regular);
-          Text('·')
-            .fontColor(this.galleryInfoPanelSecondaryTextColor())
-            .fontSize(14)
-            .fontWeight(FontWeight.Regular);
-          Marquee({
-            start: true,
-            step: 1.2,
-            loop: -1,
-            fromStart: true,
-            src: this.galleryPhotoModeLabel(),
-            delay: 1000
-          })
-            .layoutWeight(1)
-            .height(20)
-            .fontColor(this.galleryInfoPanelSecondaryTextColor())
-            .fontSize(14)
-            .fontWeight(FontWeight.Regular);
-        }
-        .width('100%')
-        .height(20)
-        .alignItems(VerticalAlign.Center);
+        Marquee({
+          start: true,
+          step: 1.2,
+          loop: -1,
+          fromStart: true,
+          src: this.galleryPhotoModeLabel(),
+          delay: 1000
+        })
+          .width('100%')
+          .height(20)
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
+          .fontSize(14)
+          .fontWeight(FontWeight.Regular);
       }
       .width('100%')
       .height(46)
       .alignItems(HorizontalAlign.Start)
-      // Both lines use the same fixed text size and scroll in the space left
+      // Keep the model static and scroll the mode only within the space left
       // between the back control and the HDR/delete/share actions.
       .padding({ left: 68, right: 176 })
       .position({ x: 0, y: this.galleryPhotoTitleTopPosition })
@@ -5756,7 +5731,7 @@ struct Index {
         },
         content: {
           title: {
-            mainTitle: this.galleryPhotoTitleLabel(),
+            mainTitle: this.galleryCameraModelLabel(),
             subTitle: ''
           },
           stackBuilder: (): void => this.galleryDetailTopActionBar()
