@@ -5528,11 +5528,11 @@ struct Index {
                             Number(event?.height ?? 0), false);
                         });
                     }
-                    if (tile.item.id === this.galleryCurrentItem?.id &&
+                    if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening &&
                       this.galleryDetailPreviewPixelMap(tile.item.id) !== undefined) {
-                      // Keep this exact SDR preview node alive across the
-                      // shared-element handoff; only fade it after the HDR
-                      // image has settled underneath.
+                      // The decoded preview is only for the shared-element
+                      // entrance. Swipes keep the sharper full-size SDR image
+                      // visible while the HDR layer settles underneath.
                       Image(this.galleryDetailPreviewPixelMap(tile.item.id) as image.PixelMap)
                         .width('100%')
                         .height('100%')
@@ -5540,8 +5540,6 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                        .opacity(!this.galleryHeroOpening &&
-                          this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
                   }
