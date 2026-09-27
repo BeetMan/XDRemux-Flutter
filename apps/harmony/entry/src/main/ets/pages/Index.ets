@@ -4628,9 +4628,9 @@ struct Index {
 
   @Builder
   private galleryConvertActionTab() {
-    Row({ space: 4 }) {
+    Column({ space: 3 }) {
       SymbolGlyph($r('sys.symbol.play_arrow_triangle_2_circlepath'))
-        .fontSize(18)
+        .fontSize(20)
         .fontColor([this.canConvertGalleryPhotoDirectly()
           ? $r('sys.color.font_primary')
           : $r('sys.color.font_secondary')]);
@@ -4643,7 +4643,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
+    .alignItems(HorizontalAlign.Center)
     .hitTestBehavior(HitTestMode.Default)
     .accessibilityText('转换并保存为本地图库新图')
     .onClick((): void => {
@@ -4690,9 +4690,9 @@ struct Index {
 
   @Builder
   private gallerySettingsActionTab() {
-    Row({ space: 4 }) {
+    Column({ space: 3 }) {
       SymbolGlyph($r('sys.symbol.gearshape'))
-        .fontSize(18)
+        .fontSize(20)
         .fontColor([$r('sys.color.font_primary')]);
       Text('转换设置')
         .fontSize(10)
@@ -4701,7 +4701,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
+    .alignItems(HorizontalAlign.Center)
     .hitTestBehavior(HitTestMode.Default)
     .accessibilityText('此照片的转换设置')
     .onClick((): void => {
@@ -5602,7 +5602,7 @@ struct Index {
         .barHeight(GALLERY_DETAIL_BAR_HEIGHT)
         .scrollable(false)
         .barFloatingStyle({
-          barWidth: { smallWidth: 224, mediumWidth: 224, largeWidth: 224 },
+          barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
           barBottomMargin: 28,
           adaptToHandedness: false,
           barOpacity: 1,
