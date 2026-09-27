@@ -7427,11 +7427,13 @@ struct Index {
               .fontColor($r('sys.color.font_primary'))
               .maxLines(1)
               .layoutWeight(1);
-            Text(this.statusLabel(item))
-              .fontSize(12)
-              .fontColor(item.status === 'failed' ? $r('sys.color.ohos_id_color_alert') :
-                (item.status === 'succeeded' ? $r('sys.color.ohos_id_color_connected') :
-                  $r('sys.color.ohos_id_color_activated')));
+            if (item.status !== 'pending') {
+              Text(this.statusLabel(item))
+                .fontSize(12)
+                .fontColor(item.status === 'failed' ? $r('sys.color.ohos_id_color_alert') :
+                  (item.status === 'succeeded' ? $r('sys.color.ohos_id_color_connected') :
+                    $r('sys.color.ohos_id_color_activated')));
+            }
           }
           .width('100%');
 
