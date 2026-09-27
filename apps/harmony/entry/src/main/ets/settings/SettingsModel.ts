@@ -255,11 +255,10 @@ export function modeLabel(values: NativeSettings): string {
   const labels: Array<string> = [];
   if (normalized.outputMode === 'apple') {
     labels.push('Apple 标准');
-    if (normalized.applePhotographicStyles) {
-      labels.push('摄影风格');
-    }
     if (normalized.applePhotographicStyles3) {
       labels.push('摄影风格 3');
+    } else if (normalized.applePhotographicStyles) {
+      labels.push('摄影风格');
     }
     if (normalized.applePortrait) {
       labels.push('人像数据');

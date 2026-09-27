@@ -212,6 +212,11 @@ struct Index {
   @State private draftApplePortrait: boolean = DEFAULT_SETTINGS.applePortrait;
   @State private queueItems: Array<QueueItem> = [];
   @State private selectedItemId: string = '';
+  @State private queueFilter: 'all' | 'pending' | 'succeeded' | 'failed' = 'all';
+  @State private queueDetailsExpanded: boolean = false;
+  @State private queueToolsExpanded: boolean = false;
+  @State private queueSettingsEditingItemId: string = '';
+  @State private queuePhotoSettingsView: NativeSettings = cloneSettings(DEFAULT_SETTINGS);
   @State private queueRunning: boolean = false;
   @State private stopRequested: boolean = false;
   @State private activeItemId: string = '';
@@ -1164,6 +1169,9 @@ struct Index {
   }
 
   private selectQueueItem(id: string): void {
+    if (this.selectedItemId !== id) {
+      this.queueDetailsExpanded = false;
+    }
     this.selectedItemId = id;
     this.syncMotionSelection();
   }
@@ -1542,7 +1550,7 @@ struct Index {
       this.operationStatus = '没有可运行的待处理项目';
       return;
     }
-    this.operationStatus = '队列运行中：失败项目不会阻塞后续项目';
+    this.operationStatus = '正在批量处理全部待处理照片；失败项目不会阻塞后续项目';
     try {
       await controller.start();
       if (controller.isStopRequested) {
@@ -1552,6 +1560,47 @@ struct Index {
       }
     } catch (error) {
       this.operationStatus = '队列运行失败：' + this.errorMessage(error);
+    } finally {
+      this.syncQueue();
+    }
+  }
+
+  private queueItemNeedsReselection(item: QueueItem): boolean {
+    return item.sourceKind === 'share' && item.status === 'failed' && item.inputPath.length === 0;
+  }
+
+  private async retryAllFailedQueueItems(): Promise<void> {
+    if (!this.queueLoaded || !this.queueReady || this.queueLoading || this.queueRecoveryRequired ||
+      this.pageBusy || this.queueRunning || this.cleanupRunning || this.batchExportRunning) {
+      this.operationStatus = '队列当前不可编辑，暂不能重试失败项目';
+      return;
+    }
+    const controller: QueueController = this.getController();
+    if (controller.hasPersistenceError) {
+      this.operationStatus = '队列记录保存失败，请先重试保存';
+      return;
+    }
+    let retried: number = 0;
+    let needsReselection: number = 0;
+    for (const item of this.queueItems) {
+      if (item.status !== 'failed' || item.externalBusy) continue;
+      if (this.queueItemNeedsReselection(item)) {
+        needsReselection += 1;
+        continue;
+      }
+      try {
+        controller.retry(item.id);
+        retried += 1;
+      } catch (error) {
+        // Keep other retryable queue entries available for the batch.
+      }
+    }
+    try {
+      await controller.persist();
+      this.operationStatus = '已将 ' + String(retried) + ' 个失败项目加入批次' +
+        (needsReselection > 0 ? '；另有 ' + String(needsReselection) + ' 个失效分享项目需要重新选择照片' : '');
+    } catch (error) {
+      this.operationStatus = '更新失败项目状态失败：' + this.errorMessage(error);
     } finally {
       this.syncQueue();
     }
@@ -6068,6 +6117,414 @@ struct Index {
     return '失败';
   }
 
+  private queueCount(status: string): number {
+    let count: number = 0;
+    for (const item of this.queueItems) {
+      if (item.status === status) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private queuePendingCount(): number {
+    return this.queueCount('pending') + this.queueCount('running');
+  }
+
+  private queueExportableCount(): number {
+    let count: number = 0;
+    for (const item of this.queueItems) {
+      if (item.result !== undefined && item.exportedUri.length === 0 && item.status !== 'running' &&
+        !item.externalBusy && item.cleanupStatus === 'none') {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private queueVisibleItems(): Array<QueueItem> {
+    if (this.queueFilter === 'pending') {
+      return this.queueItems.filter((item: QueueItem): boolean =>
+        item.status === 'pending' || item.status === 'running');
+    }
+    if (this.queueFilter === 'succeeded' || this.queueFilter === 'failed') {
+      return this.queueItems.filter((item: QueueItem): boolean => item.status === this.queueFilter);
+    }
+    return this.queueItems;
+  }
+
+  @Builder
+  private queueFilterChip(label: string, count: number,
+    filter: 'all' | 'pending' | 'succeeded' | 'failed'): void {
+    Button() {
+      Row({ space: 5 }) {
+        Text(label)
+          .fontSize(12)
+          .fontWeight(this.queueFilter === filter ? FontWeight.Medium : FontWeight.Regular)
+          .fontColor(this.queueFilter === filter ? $r('sys.color.ohos_id_color_activated') :
+            $r('sys.color.font_secondary'));
+        Text(String(count))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.queueFilter === filter ? $r('sys.color.ohos_id_color_activated') :
+            $r('sys.color.font_secondary'));
+      }
+      .justifyContent(FlexAlign.Center);
+    }
+      .layoutWeight(1)
+      .height(36)
+      .backgroundColor(this.queueFilter === filter ? $r('sys.color.background_tertiary') :
+        $r('sys.color.background_secondary'))
+      .borderRadius(18)
+      .onClick((): void => {
+        this.queueFilter = filter;
+      });
+  }
+
+  private queueItemExtension(item: QueueItem): string {
+    const displayName: string = item.displayName;
+    const displaySlash: number = Math.max(displayName.lastIndexOf('/'), displayName.lastIndexOf('\\'));
+    const displayDot: number = displayName.lastIndexOf('.');
+    if (displayDot > displaySlash) return displayName.substring(displayDot).toLowerCase();
+    const source: string = item.inputPath;
+    const slash: number = Math.max(source.lastIndexOf('/'), source.lastIndexOf('\\'));
+    const dot: number = source.lastIndexOf('.');
+    return dot > slash ? source.substring(dot).toLowerCase() : '';
+  }
+
+  private queueItemSupportsNativeConversion(item: QueueItem): boolean {
+    const hdrKind: string = (item.classification?.hdrKind ?? item.details?.hdrKind ?? '').toLowerCase();
+    return hdrKind === 'lhdr' || hdrKind === 'uhdr';
+  }
+
+  private queueItemSupportsApplePhotoData(item: QueueItem): boolean {
+    const extension: string = this.queueItemExtension(item);
+    return extension === '.heic' || extension === '.heif' || extension === '.jpg' ||
+      extension === '.jpeg' || extension === '.png';
+  }
+
+  private queueItemSupportsPortraitData(item: QueueItem): boolean {
+    const extension: string = this.queueItemExtension(item);
+    return this.queueItemSupportsNativeConversion(item) &&
+      (extension === '.heic' || extension === '.heif') && item.classification?.modeKey === 'portrait';
+  }
+
+  private queueItemSupportedOutputModes(item: QueueItem): Array<SettingsOutputMode> {
+    if (this.queueItemSupportsNativeConversion(item)) return ['oppo', 'apple'];
+    return this.queueItemSupportsApplePhotoData(item) ? ['apple'] : [];
+  }
+
+  private queuePhotoSettingsForItem(item: QueueItem, values: NativeSettings): NativeSettings {
+    const settings: NativeSettings = normalizeSettings(cloneSettings(values));
+    if (!this.queueItemSupportsApplePhotoData(item)) {
+      settings.applePhotographicStyles = false;
+      settings.applePhotographicStyles3 = false;
+      settings.applePortrait = false;
+    }
+    if (!this.queueItemSupportsNativeConversion(item) && this.queueItemSupportsApplePhotoData(item)) {
+      settings.outputMode = 'apple';
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    }
+    if (!this.queueItemSupportsPortraitData(item)) settings.applePortrait = false;
+    return normalizeSettings(settings);
+  }
+
+  private toggleQueueItemSettings(item: QueueItem): void {
+    if (this.queueSettingsEditingItemId === item.id) {
+      this.queueSettingsEditingItemId = '';
+      return;
+    }
+    if (this.queueRunning || this.pageBusy || this.cleanupRunning || item.status === 'running' || item.externalBusy) {
+      this.operationStatus = '当前项目正在处理，暂不能修改转换设置';
+      return;
+    }
+    const base: NativeSettings = item.modeOverride === undefined
+      ? cloneSettings(this.committedSettings)
+      : this.settingsFromModeSnapshot(item.modeOverride);
+    this.queuePhotoSettingsView = this.queuePhotoSettingsForItem(item, base);
+    this.queueSettingsEditingItemId = item.id;
+  }
+
+  private async saveQueueItemSettings(item: QueueItem, values: NativeSettings): Promise<void> {
+    if (this.queueRunning || this.pageBusy || this.cleanupRunning || item.status === 'running' || item.externalBusy) {
+      this.operationStatus = '当前项目正在处理，暂不能修改转换设置';
+      return;
+    }
+    const settings: NativeSettings = this.queuePhotoSettingsForItem(item, values);
+    const controller: QueueController = this.getController();
+    this.queuePhotoSettingsView = cloneSettings(settings);
+    try {
+      controller.setModeOverride(item.id, this.modeSnapshotForSettings(settings));
+      if (item.status === 'succeeded') {
+        controller.reconvert(item.id);
+      } else if (item.status === 'failed' && !this.queueItemNeedsReselection(item)) {
+        controller.retry(item.id);
+      }
+      await controller.persist();
+      this.queuePhotoSettingsView = cloneSettings(settings);
+      this.operationStatus = item.status === 'succeeded' ||
+        (item.status === 'failed' && !this.queueItemNeedsReselection(item))
+        ? '已保存此照片设置，并加入批量待处理项目'
+        : '已保存此照片的专属转换设置';
+    } catch (error) {
+      this.operationStatus = '保存照片转换设置失败：' + this.errorMessage(error);
+    } finally {
+      this.syncQueue();
+    }
+  }
+
+  private setQueueItemOutputMode(item: QueueItem, mode: SettingsOutputMode): void {
+    if (!this.queueItemSupportedOutputModes(item).includes(mode)) return;
+    const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+    settings.outputMode = mode;
+    if (mode === 'apple') {
+      settings.oppoCompat = 0;
+      settings.oppoCameraTail = 0;
+    } else {
+      settings.applePhotographicStyles = false;
+      settings.applePhotographicStyles3 = false;
+      settings.applePortrait = false;
+      if (settings.oppoCompat === 0) settings.oppoCompat = DEFAULT_SETTINGS.oppoCompat;
+      if (settings.oppoCameraTail === 0) settings.oppoCameraTail = DEFAULT_SETTINGS.oppoCameraTail;
+    }
+    void this.saveQueueItemSettings(item, settings);
+  }
+
+  @Builder
+  private queueItemSettingsPanel(item: QueueItem): void {
+    Column() {
+      Row() {
+        Column() {
+          Text('仅此照片')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'));
+          Text(item.displayName)
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .maxLines(1)
+            .width('100%')
+            .margin({ top: 3 });
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1);
+        Button('完成')
+          .fontSize(12)
+          .height(34)
+          .onClick((): void => {
+            this.queueSettingsEditingItemId = '';
+          });
+      }
+      .width('100%');
+      Text('开始批量转换时仍会处理全部待处理照片；已完成照片修改设置后会自动重新加入批次。')
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .lineHeight(18)
+        .width('100%')
+        .margin({ top: 8, bottom: 10 });
+
+      if (this.queueItemSupportedOutputModes(item).length === 0) {
+        Text('暂不支持此照片格式的转换设置。')
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%');
+      } else {
+        if (this.queueItemSupportedOutputModes(item).includes('oppo')) {
+          Row() {
+            Radio({ value: 'oppo', group: 'xdremux-queue-output-' + item.id })
+              .checked(this.queuePhotoSettingsView.outputMode === 'oppo')
+              .enabled(!this.queueRunning && !this.settingsSaving)
+              .onChange((checked: boolean): void => {
+                if (checked) this.setQueueItemOutputMode(item, 'oppo');
+              });
+            Text('OPPO 兼容')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .margin({ left: 8 });
+          }
+          .width('100%')
+          .height(42)
+          .onClick((): void => this.setQueueItemOutputMode(item, 'oppo'));
+        }
+        if (this.queueItemSupportedOutputModes(item).includes('apple')) {
+          Row() {
+            Radio({ value: 'apple', group: 'xdremux-queue-output-' + item.id })
+              .checked(this.queuePhotoSettingsView.outputMode === 'apple' ||
+                !this.queueItemSupportedOutputModes(item).includes('oppo'))
+              .enabled(!this.queueRunning && !this.settingsSaving &&
+                this.queueItemSupportedOutputModes(item).includes('oppo'))
+              .onChange((checked: boolean): void => {
+                if (checked) this.setQueueItemOutputMode(item, 'apple');
+              });
+            Text('Apple 标准')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .margin({ left: 8 });
+          }
+          .width('100%')
+          .height(42)
+          .onClick((): void => this.setQueueItemOutputMode(item, 'apple'));
+        }
+
+        if (this.queuePhotoSettingsView.outputMode === 'oppo' &&
+          this.queueItemSupportedOutputModes(item).includes('oppo')) {
+          Text('OPPO 兼容模式')
+            .fontSize(13)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 6 });
+          Select(OPPO_COMPAT_OPTIONS.map((option: SettingsOption): SelectOption => {
+            return { value: option.label };
+          }))
+            .selected(this.compatIndex(this.queuePhotoSettingsView.oppoCompat))
+            .value(compatLabel(this.queuePhotoSettingsView.oppoCompat))
+            .fontColor($r('sys.color.font_primary'))
+            .optionFont({ size: 14, weight: FontWeight.Regular })
+            .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+            .width('100%')
+            .margin({ top: 4 })
+            .onSelect((index: number, text?: string): void => {
+              if (index >= 0 && index < OPPO_COMPAT_OPTIONS.length) {
+                const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+                settings.oppoCompat = OPPO_COMPAT_OPTIONS[index].value;
+                void this.saveQueueItemSettings(item, settings);
+              }
+            });
+          Text('保留相机附加信息')
+            .fontSize(13)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 8 });
+          Select(OPPO_CAMERA_TAIL_OPTIONS.map((option: SettingsOption): SelectOption => {
+            return { value: option.label };
+          }))
+            .selected(this.cameraTailIndex(this.queuePhotoSettingsView.oppoCameraTail))
+            .value(cameraTailLabel(this.queuePhotoSettingsView.oppoCameraTail))
+            .fontColor($r('sys.color.font_primary'))
+            .optionFont({ size: 14, weight: FontWeight.Regular })
+            .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
+            .width('100%')
+            .margin({ top: 4 })
+            .onSelect((index: number, text?: string): void => {
+              if (index >= 0 && index < OPPO_CAMERA_TAIL_OPTIONS.length) {
+                const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+                settings.oppoCameraTail = OPPO_CAMERA_TAIL_OPTIONS[index].value;
+                void this.saveQueueItemSettings(item, settings);
+              }
+            });
+        } else if (this.queueItemSupportsApplePhotoData(item)) {
+          Text('Apple 摄影数据')
+            .fontSize(13)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ top: 6 });
+          Row() {
+            Text('摄影风格')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1);
+            Toggle({ type: ToggleType.Switch, isOn: this.queuePhotoSettingsView.applePhotographicStyles })
+              .enabled(!this.queuePhotoSettingsView.applePhotographicStyles3 && !this.queueRunning)
+              .onChange((isOn: boolean): void => {
+                const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+                settings.applePhotographicStyles = isOn || settings.applePhotographicStyles3;
+                if (isOn) {
+                  settings.outputMode = 'apple';
+                  settings.oppoCompat = 0;
+                  settings.oppoCameraTail = 0;
+                }
+                void this.saveQueueItemSettings(item, settings);
+              });
+          }
+          .width('100%')
+          .height(42);
+          Row() {
+            Text('摄影风格 3（质感 + 颗粒）')
+              .fontSize(14)
+              .fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1);
+            Toggle({ type: ToggleType.Switch, isOn: this.queuePhotoSettingsView.applePhotographicStyles3 })
+              .enabled(!this.queueRunning)
+              .onChange((isOn: boolean): void => {
+                const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+                settings.applePhotographicStyles3 = isOn;
+                if (isOn) {
+                  settings.applePhotographicStyles = true;
+                  settings.outputMode = 'apple';
+                  settings.oppoCompat = 0;
+                  settings.oppoCameraTail = 0;
+                }
+                void this.saveQueueItemSettings(item, settings);
+              });
+          }
+          .width('100%')
+          .height(42);
+          if (this.queueItemSupportsPortraitData(item)) {
+            Row() {
+              Text('Apple 人像数据')
+                .fontSize(14)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Toggle({ type: ToggleType.Switch, isOn: this.queuePhotoSettingsView.applePortrait })
+                .enabled(!this.queueRunning)
+                .onChange((isOn: boolean): void => {
+                  const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+                  settings.applePortrait = isOn;
+                  if (isOn) {
+                    settings.outputMode = 'apple';
+                    settings.oppoCompat = 0;
+                    settings.oppoCameraTail = 0;
+                  }
+                  void this.saveQueueItemSettings(item, settings);
+                });
+            }
+            .width('100%')
+            .height(42);
+          }
+        }
+
+        Row() {
+          Text('严格 ISO 兼容')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1);
+          Toggle({ type: ToggleType.Switch, isOn: this.queuePhotoSettingsView.strictTmap })
+            .enabled(!this.queueRunning)
+            .onChange((isOn: boolean): void => {
+              const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
+              settings.strictTmap = isOn;
+              void this.saveQueueItemSettings(item, settings);
+            });
+        }
+        .width('100%')
+        .height(42)
+        .margin({ top: 4 });
+        if (!this.queueItemSupportsNativeConversion(item) &&
+          !this.queuePhotoSettingsView.applePhotographicStyles &&
+          !this.queuePhotoSettingsView.applePhotographicStyles3) {
+          Text('普通照片请至少开启一种摄影风格，才能生成 Apple 标准 HEIC。')
+            .fontSize(12)
+            .fontColor($r('sys.color.ohos_id_color_warning'))
+            .lineHeight(18)
+            .width('100%')
+            .margin({ top: 6 });
+        }
+        Text('当前转换：' + modeLabel(this.queuePhotoSettingsView))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 8 });
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(12)
+    .backgroundColor($r('sys.color.background_primary'))
+    .borderRadius(14)
+    .margin({ bottom: 10 });
+  }
+
   private selectedShareRequiresReselection(): boolean {
     const selected: QueueItem | undefined = this.selectedItem();
     return selected !== undefined && selected.sourceKind === 'share' && selected.status === 'failed' &&
@@ -6641,6 +7098,51 @@ struct Index {
 
   @Builder
   private selectedDetails(): void {
+    Column() {
+      Row() {
+        Column() {
+          Text('项目详情')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'));
+          Text(this.selectedItemRequired().displayName + ' · ' + this.statusLabel(this.selectedItemRequired()))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .maxLines(1)
+            .width('100%')
+            .margin({ top: 3 });
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1);
+        Row({ space: 4 }) {
+          Text(this.queueDetailsExpanded ? '收起' : '查看详情')
+            .fontSize(13)
+            .fontColor($r('sys.color.ohos_id_color_activated'));
+          SymbolGlyph(this.queueDetailsExpanded ? $r('sys.symbol.chevron_up') :
+            $r('sys.symbol.chevron_down'))
+            .fontSize(12)
+            .fontColor([$r('sys.color.ohos_id_color_activated')]);
+        }
+        .padding({ left: 8, right: 4, top: 8, bottom: 8 })
+        .onClick((): void => {
+          this.queueDetailsExpanded = !this.queueDetailsExpanded;
+        });
+      }
+      .width('100%');
+      if (this.queueDetailsExpanded) {
+        this.selectedDetailsContent();
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(12)
+    .backgroundColor($r('sys.color.background_secondary'))
+    .borderRadius(14)
+    .margin({ top: 6, bottom: 12 });
+  }
+
+  @Builder
+  private selectedDetailsContent(): void {
 
             Column() {
               Text('当前项目详情')
@@ -6764,32 +7266,24 @@ struct Index {
 
               this.motionPhotoPanel();
 
-              Row() {
-                Button(this.selectedShareRequiresReselection() ? '需重新选择图片' : '重试失败项目')
+              if (this.selectedShareRequiresReselection()) {
+                Button('重新选择失效分享照片')
                   .fontSize(14)
-                  .layoutWeight(1)
+                  .width('100%')
                   .height(44)
-                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy &&
-                    this.selectedItemRequired().status === 'failed' && !this.selectedShareRequiresReselection())
-                  .onClick(() => {
+                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy)
+                  .onClick((): void => {
                     this.retrySelected();
-                  });
-                Button('重新转换')
-                  .fontSize(14)
-                  .layoutWeight(1)
-                  .height(44)
-                  .margin({ left: 8 })
-                  .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status === 'succeeded')
-                  .onClick(() => {
-                    this.reconvertSelected();
-                  });
+                  })
+                  .margin({ top: 12 });
+              }
+              Row() {
                 Button('删除项目')
                   .fontSize(14)
                   .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
                   .backgroundColor($r('sys.color.ohos_id_color_alert'))
-                  .layoutWeight(1)
+                  .width('100%')
                   .height(44)
-                  .margin({ left: 8 })
                   .enabled(!this.pageBusy && !this.selectedItemRequired().externalBusy && this.selectedItemRequired().status !== 'running')
                   .onClick(() => {
                     this.removeSelected();
@@ -6899,9 +7393,129 @@ struct Index {
   }
 
   @Builder
+  private queueTaskCard(item: QueueItem): void {
+    Row() {
+      Row() {
+        if (item.inputPath.length > 0) {
+          Image('file://' + item.inputPath)
+            .width(64)
+            .height(64)
+            .orientation(ImageRotateOrientation.AUTO)
+            .objectFit(ImageFit.Cover)
+            .autoResize(true)
+            .dynamicRangeMode(DynamicRangeMode.STANDARD)
+            .clip(true)
+            .borderRadius(11)
+            .backgroundColor($r('sys.color.background_tertiary'));
+        } else {
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph($r('sys.symbol.picture'))
+              .fontSize(22)
+              .fontColor([$r('sys.color.font_secondary')]);
+          }
+          .width(64)
+          .height(64)
+          .borderRadius(11)
+          .backgroundColor($r('sys.color.background_tertiary'));
+        }
+
+        Column() {
+          Row() {
+            Text(item.displayName)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_primary'))
+              .maxLines(1)
+              .layoutWeight(1);
+            Text(this.statusLabel(item))
+              .fontSize(12)
+              .fontColor(item.status === 'failed' ? $r('sys.color.ohos_id_color_alert') :
+                (item.status === 'succeeded' ? $r('sys.color.ohos_id_color_connected') :
+                  $r('sys.color.ohos_id_color_activated')));
+          }
+          .width('100%');
+
+          Text(this.queueItemModeLabel(item))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .maxLines(1)
+            .width('100%')
+            .margin({ top: 4 });
+
+          if (item.status === 'running' || item.progress.current > 0 || item.progress.total > 0) {
+            Text(this.progressStageLabel(item.progress.stage) + ' · ' +
+              String(item.progress.current) + ' / ' + String(item.progress.total))
+              .fontSize(11)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .margin({ top: 3 });
+          }
+          if (item.errorMessage.length > 0) {
+            Text(item.errorMessage)
+              .fontSize(12)
+              .fontColor($r('sys.color.ohos_id_color_alert'))
+              .maxLines(2)
+              .width('100%')
+              .margin({ top: 3 });
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .margin({ left: 12 });
+      }
+      .alignItems(VerticalAlign.Center)
+      .layoutWeight(1)
+      .onClick((): void => {
+        this.queueSettingsEditingItemId = '';
+        if (this.selectedItemId === item.id && this.queueDetailsExpanded) {
+          this.queueDetailsExpanded = false;
+          return;
+        }
+        this.selectQueueItem(item.id);
+        this.queueDetailsExpanded = true;
+      });
+
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.gearshape'))
+          .fontSize(19)
+          .fontColor([$r('sys.color.ohos_id_color_primary_contrary')]);
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor($r('sys.color.ohos_id_color_activated'))
+      .enabled(!this.queueRunning && !this.pageBusy && !this.cleanupRunning &&
+        item.status !== 'running' && !item.externalBusy)
+      .accessibilityText('单张转换设置')
+      .onClick((): void => {
+        if (!this.queueRunning && !this.pageBusy && !this.cleanupRunning &&
+          item.status !== 'running' && !item.externalBusy) {
+          this.queueDetailsExpanded = false;
+          this.toggleQueueItemSettings(item);
+        }
+      });
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor($r('sys.color.background_tertiary'))
+    .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+    .borderRadius(20)
+    .margin({ bottom: 12 });
+  }
+
+  private queueItemModeLabel(item: QueueItem): string {
+    if (item.modeOverride !== undefined) {
+      return modeLabel(this.settingsFromModeSnapshot(item.modeOverride));
+    }
+    if (item.lastAttemptModeLabel.length > 0) {
+      return item.lastAttemptModeLabel.replace('摄影风格 · 摄影风格 3', '摄影风格 3');
+    }
+    return '使用当前转换设置';
+  }
+
+  @Builder
   private queuePage() {
     Column() {
-        Scroll(this.queueScrollController) {
+      Scroll(this.queueScrollController) {
         Column() {
           if (!this.shouldUseImmersiveMainChrome()) {
             Text('转换队列')
@@ -6910,276 +7524,481 @@ struct Index {
               .fontColor($r('sys.color.font_primary'))
               .margin({ bottom: 6 });
           }
-          Text('批量处理照片，查看进度并导出结果')
-            .fontSize(15)
-            .fontColor($r('sys.color.font_secondary'))
-            .margin({ bottom: 18 });
-
           if (this.queueLoading) {
-            Text('正在校验并恢复队列记录…')
-              .fontSize(13)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 8, bottom: 8 });
-          }
-          if (this.queueRecoveryRequired) {
-            Text(this.queueWarning.length > 0 ? this.queueWarning :
-              '队列记录无法安全读取；不会自动删除或覆盖原记录。')
-              .fontSize(13)
-              .fontColor($r('sys.color.ohos_id_color_warning'))
-              .width('100%')
-              .margin({ top: 8, bottom: 6 });
             Row() {
-              Button('备份并新建空队列')
-                .fontSize(14)
-                .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
-                .backgroundColor($r('sys.color.ohos_id_color_warning'))
-                .layoutWeight(1)
-                .height(44)
-                .enabled(!this.pageBusy && !this.queueLoading && !this.cleanupRunning)
-                .onClick(() => {
-                  this.recoverQueueRecord();
-                });
-              Button('重试读取')
-                .fontSize(14)
-                .layoutWeight(1)
-                .height(44)
-                .margin({ left: 8 })
-                .enabled(!this.pageBusy && !this.queueLoading && !this.cleanupRunning)
-                .onClick(() => {
-                  this.queueRestoreStarted = false;
-                  this.restoreQueueSession();
+              LoadingProgress().width(18).height(18);
+              Text('正在恢复照片队列…')
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .margin({ left: 9 });
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(14)
+            .margin({ bottom: 10 });
+          }
+
+          if (this.queueRecoveryRequired) {
+            Column() {
+              Text('需要恢复队列记录')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.ohos_id_color_warning'))
+                .width('100%');
+              Text(this.queueWarning.length > 0 ? this.queueWarning :
+                '队列记录无法安全读取；原记录会保留，直到你选择恢复方式。')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 5, bottom: 10 });
+              Row() {
+                Button('备份并新建空队列')
+                  .fontSize(13)
+                  .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                  .backgroundColor($r('sys.color.ohos_id_color_warning'))
+                  .layoutWeight(1)
+                  .height(42)
+                  .enabled(!this.pageBusy && !this.queueLoading && !this.cleanupRunning)
+                  .onClick((): void => {
+                    this.recoverQueueRecord();
+                  });
+                Button('重试读取')
+                  .fontSize(13)
+                  .layoutWeight(1)
+                  .height(42)
+                  .margin({ left: 8 })
+                  .enabled(!this.pageBusy && !this.queueLoading && !this.cleanupRunning)
+                  .onClick((): void => {
+                    this.queueRestoreStarted = false;
+                    this.restoreQueueSession();
+                  });
+              }
+              .width('100%');
+            }
+            .alignItems(HorizontalAlign.Start)
+            .width('100%')
+            .padding(14)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(16)
+            .margin({ bottom: 12 });
+          }
+
+          if (this.queueError.length > 0 && !this.queueRecoveryRequired) {
+            Column() {
+              Text(this.queueError)
+                .fontSize(13)
+                .fontColor($r('sys.color.ohos_id_color_alert'))
+                .width('100%');
+              Button('重试保存队列记录')
+                .fontSize(13)
+                .width('100%')
+                .height(40)
+                .margin({ top: 8 })
+                .enabled(this.queueLoaded && !this.queueLoading && !this.queueRunning &&
+                  !this.pageBusy && !this.cleanupRunning)
+                .onClick((): void => {
+                  this.retryQueuePersistence();
                 });
             }
             .width('100%')
-            .margin({ bottom: 10 });
-          }
-          if (this.queueError.length > 0 && !this.queueRecoveryRequired) {
-            Text(this.queueError)
-              .fontSize(13)
-              .fontColor($r('sys.color.ohos_id_color_alert'))
-              .width('100%')
-              .margin({ top: 6, bottom: 6 });
-            Button('重试保存队列记录')
-              .fontSize(14)
-              .width('100%')
-              .height(42)
-              .enabled(this.queueLoaded && !this.queueLoading && !this.queueRunning &&
-                !this.pageBusy && !this.cleanupRunning)
-              .onClick(() => {
-                this.retryQueuePersistence();
-              });
+            .padding(12)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(14)
+            .margin({ bottom: 12 });
           }
 
-          Text(this.cacheUsage)
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
+          if (this.queueLoaded && this.queueItems.length > 0) {
+            Row({ space: 8 }) {
+              Column() {
+                Text(String(this.queueItems.length))
+                  .fontSize(22)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.font_primary'));
+                Text('全部照片')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'));
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Column() {
+                Text(String(this.queuePendingCount()))
+                  .fontSize(22)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.ohos_id_color_activated'));
+                Text('待处理')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'));
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Column() {
+                Text(String(this.queueCount('succeeded')))
+                  .fontSize(22)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.ohos_id_color_connected'));
+                Text('已完成')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'));
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Column() {
+                Text(String(this.queueCount('failed')))
+                  .fontSize(22)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.queueCount('failed') > 0 ? $r('sys.color.ohos_id_color_alert') :
+                    $r('sys.color.font_secondary'));
+                Text('失败')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'));
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+            }
             .width('100%')
-            .margin({ top: 8 });
-          Button(this.cleanupRunning ? '清理沙盒中…' : '清理未引用沙盒文件')
-            .fontSize(13)
-            .width('100%')
-            .height(42)
-            .enabled(this.queueLoaded && this.queueReady && !this.queueRecoveryRequired &&
-              !this.pageBusy && !this.queueRunning && !this.settingsSaving && !this.cleanupRunning &&
-              !this.queuePersistenceFailed())
-            .onClick(() => {
-              this.cleanupOrphanFiles();
-            });
-          Text('清理只处理本应用 inputs/outputs 中未被队列引用的产物；导出的系统文件和原始 URI 不会删除。')
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ bottom: 8 });
+            .padding(14)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(16)
+            .margin({ bottom: 12 });
 
-          Button('从文件选择')
-            .fontSize(14)
+            Row({ space: 6 }) {
+              this.queueFilterChip('全部', this.queueItems.length, 'all');
+              this.queueFilterChip('待处理', this.queuePendingCount(), 'pending');
+              this.queueFilterChip('已完成', this.queueCount('succeeded'), 'succeeded');
+              this.queueFilterChip('失败', this.queueCount('failed'), 'failed');
+            }
             .width('100%')
-            .height(50)
-            .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
-              !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-              !this.pageBusy && !this.queueRunning)
-            .onClick(() => {
-              this.chooseAndImport(false);
-            });
-
-          Row() {
-            Button(this.queueRunning ? '处理中…' : '开始 / 继续队列')
-              .fontSize(16)
-              .layoutWeight(1)
-              .height(48)
-              .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
-                !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-                !this.pageBusy && !this.queueRunning && this.queueItems.length > 0)
-              .onClick(() => {
-                this.startQueue();
-              });
-            Button('停止（当前完成后）')
-              .fontSize(15)
-              .layoutWeight(1)
-              .height(48)
-              .margin({ left: 10 })
-              .enabled(this.queueRunning && !this.cleanupRunning)
-              .onClick(() => {
-                this.stopQueue();
-              });
+            .margin({ bottom: 12 });
           }
-          .width('100%')
-          .margin({ top: 10 });
 
-          Row() {
-            Button(this.batchExportRunning ? '批量导出中…' : '批量导出未导出结果')
-              .fontSize(15)
-              .layoutWeight(1)
-              .height(46)
-              .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
-                !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
-                !this.pageBusy && !this.queueRunning && !this.cleanupRunning &&
-                !this.settingsSaving && !this.batchExportRunning)
-              .onClick(() => {
-                this.startBatchExport();
-              });
-            Button('停止后续批量导出')
-              .fontSize(14)
-              .layoutWeight(1)
-              .height(46)
-              .margin({ left: 10 })
-              .enabled(this.batchExportRunning)
-              .onClick(() => {
-                this.stopBatchExport();
-              });
+          if (!this.shouldUseImmersiveMainChrome() && this.queueItems.length > 0) {
+            Row() {
+              Button('添加照片')
+                .fontSize(13)
+                .layoutWeight(1)
+                .height(42)
+                .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
+                  !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+                  !this.pageBusy && !this.queueRunning)
+                .onClick((): void => {
+                  this.chooseAndImport(false);
+                });
+              Button('开始批量转换')
+                .fontSize(13)
+                .layoutWeight(1)
+                .height(42)
+                .margin({ left: 8 })
+                .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
+                  !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+                  !this.pageBusy && !this.queueRunning && this.queuePendingCount() > 0)
+                .onClick((): void => {
+                  this.startQueue();
+                });
+            }
+            .width('100%')
+            .margin({ bottom: 12 });
           }
-          .width('100%')
-          .margin({ top: 10 });
 
-          if (this.batchExportEntries.length > 0) {
-            Text(this.batchExportSummaryText())
-              .fontSize(13)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ top: 8, bottom: 6 });
-            Text('系统可能会先创建空目标文件；写入失败时不会自动删除用户选择的位置，沙盒结果仍可重试导出。')
-              .fontSize(11)
+          if (this.queueCount('failed') > 0 && !this.queueRunning) {
+            Row() {
+              Column() {
+                Text(String(this.queueCount('failed')) + ' 个失败项目')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.font_primary'));
+                Text('重新加入下一次批量处理')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 3 });
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Button('重试失败项目')
+                .fontSize(13)
+                .height(40)
+                .enabled(this.queueReady && !this.queueLoading && !this.queueRecoveryRequired &&
+                  !this.queuePersistenceFailed() && !this.pageBusy && !this.cleanupRunning &&
+                  !this.batchExportRunning)
+                .onClick((): void => {
+                  void this.retryAllFailedQueueItems();
+                });
+            }
+            .width('100%')
+            .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(14)
+            .margin({ bottom: 12 });
+          }
+
+          if (this.queueRunning) {
+            Row() {
+              Column() {
+                Text('正在转换')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.font_primary'));
+                Text(this.operationStatus)
+                  .fontSize(12)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .maxLines(2)
+                  .margin({ top: 3 });
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Button('停止')
+                .fontSize(13)
+                .height(38)
+                .enabled(!this.cleanupRunning)
+                .onClick((): void => {
+                  this.stopQueue();
+                });
+            }
+            .width('100%')
+            .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(14)
+            .margin({ bottom: 12 });
+          } else if (this.operationStatus !== '准备就绪' && !this.queueRecoveryRequired &&
+            this.queueError.length === 0) {
+            Text(this.operationStatus)
+              .fontSize(12)
               .fontColor($r('sys.color.font_secondary'))
               .width('100%')
-              .margin({ bottom: 6 });
-            ForEach(this.batchExportEntries, (entry: BatchExportEntry) => {
+              .padding(11)
+              .backgroundColor($r('sys.color.background_secondary'))
+              .borderRadius(12)
+              .margin({ bottom: 12 });
+          }
+
+          if (this.queueExportableCount() > 0 || this.batchExportRunning) {
+            Row() {
               Column() {
-                Row() {
-                  Text(entry.displayName)
-                    .fontSize(14)
-                    .fontColor($r('sys.color.font_primary'))
-                    .layoutWeight(1);
-                  Text(this.batchExportStatusLabel(entry))
-                    .fontSize(12)
-                    .fontColor(entry.status === 'failed' || entry.status === 'journal-failed' ?
-                      '#B3261E' : (entry.exported ? '#16845B' : '#52606D'));
+                Text(this.batchExportRunning ? '正在批量导出' :
+                  String(this.queueExportableCount()) + ' 个结果可导出')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.font_primary'));
+                Text(this.batchExportRunning ? '停止后续文件；当前写入会完成' : '转换结果保留在应用沙盒中')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 3 });
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              Button(this.batchExportRunning ? '停止导出' : '批量导出')
+                .fontSize(13)
+                .height(40)
+                .enabled(this.batchExportRunning || (this.queueLoaded && this.queueReady &&
+                  !this.queueLoading && !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+                  !this.pageBusy && !this.queueRunning && !this.cleanupRunning &&
+                  !this.settingsSaving && !this.batchExportRunning))
+                .onClick((): void => {
+                  if (this.batchExportRunning) {
+                    this.stopBatchExport();
+                  } else {
+                    this.startBatchExport();
+                  }
+                });
+            }
+            .width('100%')
+            .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(14)
+            .margin({ bottom: 16 });
+          }
+
+          if (this.queueItems.length === 0) {
+            Column() {
+              SymbolGlyph($r('sys.symbol.list_bullet'))
+                .fontSize(34)
+                .fontColor([$r('sys.color.font_secondary')])
+                .margin({ bottom: 12 });
+              Text(this.queueLoading ? '正在载入队列' : '队列还是空的')
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'))
+                .margin({ bottom: 5 });
+              Text(this.queueLoading ? '载入完成后，照片任务会显示在这里' :
+                '从文件选择照片，或在图库中把照片加入队列')
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .textAlign(TextAlign.Center)
+                .width('100%')
+                .margin({ bottom: 14 });
+              Button('选择照片并加入队列')
+                .fontSize(14)
+                .height(44)
+                .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
+                  !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
+                  !this.pageBusy && !this.queueRunning)
+                .onClick((): void => {
+                  this.chooseAndImport(false);
+                });
+            }
+            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .padding({ left: 24, right: 24, top: 36, bottom: 36 })
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(20)
+            .margin({ top: 8, bottom: 18 });
+          } else {
+            Row() {
+              Text(this.queueFilter === 'all' ? '照片任务' :
+                (this.queueFilter === 'pending' ? '待处理照片' :
+                  (this.queueFilter === 'succeeded' ? '已完成照片' : '失败照片')))
+                .fontSize(18)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Text(String(this.queueVisibleItems().length) + ' 张')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'));
+            }
+            .width('100%')
+            .margin({ bottom: 9 });
+
+            if (this.queueVisibleItems().length === 0) {
+              Text('这个筛选下暂无照片')
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .padding(18)
+                .backgroundColor($r('sys.color.background_secondary'))
+                .borderRadius(14)
+                .margin({ bottom: 10 });
+            } else {
+              ForEach(this.queueVisibleItems(), (item: QueueItem) => {
+                Column() {
+                  this.queueTaskCard(item);
+                  if (item.id === this.queueSettingsEditingItemId) {
+                    this.queueItemSettingsPanel(item);
+                  }
+                  if (item.id === this.selectedItemId && this.queueDetailsExpanded) {
+                    this.selectedDetails();
+                  }
                 }
-                Text(entry.fileName)
+                .width('100%');
+              }, (item: QueueItem) => item.id + '-' + String(item.revision));
+            }
+          }
+
+          Column() {
+            Row() {
+              Column() {
+                Text('队列管理')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('sys.color.font_primary'));
+                Text(this.queueToolsExpanded ? '存储清理与最近导出记录' : '存储、清理与导出记录')
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .margin({ top: 2 });
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1);
+              SymbolGlyph(this.queueToolsExpanded ? $r('sys.symbol.chevron_up') :
+                $r('sys.symbol.chevron_down'))
+                .fontSize(14)
+                .fontColor([$r('sys.color.font_secondary')]);
+            }
+            .width('100%')
+            .padding(12)
+            .onClick((): void => {
+              this.queueToolsExpanded = !this.queueToolsExpanded;
+            });
+
+            if (this.queueToolsExpanded) {
+              Column() {
+                Text(this.cacheUsage)
+                  .fontSize(12)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .width('100%')
+                  .margin({ bottom: 8 });
+                Button(this.cleanupRunning ? '清理沙盒中…' : '清理未引用沙盒文件')
+                  .fontSize(13)
+                  .width('100%')
+                  .height(42)
+                  .enabled(this.queueLoaded && this.queueReady && !this.queueRecoveryRequired &&
+                    !this.pageBusy && !this.queueRunning && !this.settingsSaving && !this.cleanupRunning &&
+                    !this.queuePersistenceFailed())
+                  .onClick((): void => {
+                    this.cleanupOrphanFiles();
+                  });
+                Text('只清理本应用沙盒中未被队列引用的文件，不会删除系统文件或原始照片。')
                   .fontSize(11)
                   .fontColor($r('sys.color.font_secondary'))
                   .width('100%')
-                  .margin({ top: 3 });
-                if (entry.errorMessage.length > 0) {
-                  Text(entry.errorMessage)
-                    .fontSize(11)
-                    .fontColor($r('sys.color.ohos_id_color_alert'))
+                  .margin({ top: 6, bottom: 4 });
+
+                if (this.batchExportEntries.length > 0) {
+                  Text(this.batchExportSummaryText())
+                    .fontSize(12)
+                    .fontColor($r('sys.color.font_primary'))
                     .width('100%')
-                    .margin({ top: 3 });
+                    .margin({ top: 10, bottom: 6 });
+                  Text('系统可能先创建空目标文件；写入失败时，沙盒结果仍可重试导出。')
+                    .fontSize(11)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .width('100%')
+                    .margin({ bottom: 6 });
+                  ForEach(this.batchExportEntries, (entry: BatchExportEntry) => {
+                    Column() {
+                      Row() {
+                        Text(entry.displayName)
+                          .fontSize(13)
+                          .fontColor($r('sys.color.font_primary'))
+                          .layoutWeight(1);
+                        Text(this.batchExportStatusLabel(entry))
+                          .fontSize(11)
+                          .fontColor(entry.status === 'failed' || entry.status === 'journal-failed' ?
+                            $r('sys.color.ohos_id_color_alert') : (entry.exported ?
+                              $r('sys.color.ohos_id_color_connected') : $r('sys.color.font_secondary')));
+                      }
+                      Text(entry.fileName)
+                        .fontSize(10)
+                        .fontColor($r('sys.color.font_secondary'))
+                        .width('100%')
+                        .margin({ top: 3 });
+                      if (entry.errorMessage.length > 0) {
+                        Text(entry.errorMessage)
+                          .fontSize(11)
+                          .fontColor($r('sys.color.ohos_id_color_alert'))
+                          .width('100%')
+                          .margin({ top: 3 });
+                      }
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .width('100%')
+                    .padding(10)
+                    .backgroundColor($r('sys.color.background_primary'))
+                    .borderRadius(10)
+                    .margin({ bottom: 6 });
+                  }, (entry: BatchExportEntry) => entry.id + '-' + entry.fileName + '-' + entry.status + '-' +
+                    String(entry.copySucceeded) + '-' + String(entry.exported));
                 }
               }
               .alignItems(HorizontalAlign.Start)
               .width('100%')
-              .padding(10)
-              .backgroundColor($r('sys.color.background_secondary'))
-              .borderRadius(8)
-              .margin({ bottom: 6 });
-            }, (entry: BatchExportEntry) => entry.id + '-' + entry.fileName + '-' + entry.status + '-' +
-              String(entry.copySucceeded) + '-' + String(entry.exported));
+              .padding({ left: 12, right: 12, bottom: 12 });
+            }
           }
-
-          Text(this.operationStatus)
-            .fontSize(15)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-            .margin({ top: 14, bottom: 8 });
-          Text('队列项目：' + String(this.queueItems.length) +
-            ' · 关键状态会保存；重启后需手动继续，转换仅在前台运行')
-            .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ bottom: 10 });
-
-          if (this.queueItems.length === 0) {
-            Text('尚未加入照片')
-              .fontSize(16)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%');
-          } else {
-            Text('项目列表（点击项目查看详情）')
-              .fontSize(18)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%')
-              .margin({ bottom: 8 });
-            ForEach(this.queueItems, (item: QueueItem) => {
-              Row() {
-                Column() {
-                  Text(item.displayName)
-                    .fontSize(15)
-                    .fontColor($r('sys.color.font_primary'))
-                    .width('100%');
-                  Text(this.statusLabel(item) +
-                    (item.lastAttemptModeLabel.length > 0 ? ' · ' + item.lastAttemptModeLabel : ''))
-                    .fontSize(13)
-                    .fontColor(item.status === 'failed' ? '#B3261E' : '#52606D')
-                    .width('100%')
-                    .margin({ top: 4 });
-                  if (item.status === 'running' || item.progress.current > 0 || item.progress.total > 0) {
-                    Text(this.progressStageLabel(item.progress.stage) + '：' +
-                      String(item.progress.current) + ' / ' + String(item.progress.total))
-                      .fontSize(12)
-                      .fontColor($r('sys.color.font_secondary'))
-                      .width('100%')
-                      .margin({ top: 3 });
-                  }
-                  if (item.errorMessage.length > 0) {
-                    Text(item.errorMessage)
-                      .fontSize(12)
-                      .fontColor($r('sys.color.ohos_id_color_alert'))
-                      .width('100%')
-                      .margin({ top: 3 });
-                  }
-                }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1);
-                Text(item.id === this.activeItemId ? '当前' : (item.id === this.selectedItemId ? '已选' : ''))
-                  .fontSize(13)
-                  .fontColor($r('sys.color.ohos_id_color_activated'));
-              }
-              .width('100%')
-              .padding(12)
-              .backgroundColor(item.id === this.selectedItemId ? $r('sys.color.background_tertiary') : $r('sys.color.background_secondary'))
-              .borderRadius(10)
-              .margin({ bottom: 8 })
-              .onClick(() => {
-                this.selectQueueItem(item.id);
-              });
-            }, (item: QueueItem) => item.id + '-' + String(item.revision));
-          }
-
-          if (this.selectedItem() !== undefined) {
-            this.selectedDetails();
-          }
+          .width('100%')
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(14)
+          .margin({ top: 8, bottom: 14 });
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .padding({ left: 24, right: 24, top: this.shouldUseImmersiveMainChrome() ? 98 : 28, bottom: 96 });
+        .padding({ left: 20, right: 20, top: this.shouldUseImmersiveMainChrome() ? 98 : 28, bottom: 112 });
       }
       .layoutWeight(1)
       .width('100%')
       .clipContent(ContentClipMode.BOUNDARY)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
+      .onScrollStart((): void => {
+        this.expandQueueImportMiniBarOnScroll();
+      });
     }
     .width('100%')
     .height('100%')
@@ -7205,6 +8024,13 @@ struct Index {
   private expandGalleryImportMiniBarOnScroll(): void {
     if (!this.shouldUseImmersiveMainChrome() || this.mainTabIndex !== 0 || this.galleryDetailMounted ||
       this.importMiniBarExpanded || this.galleryPhotos.length === 0) {
+      return;
+    }
+    this.setImportMiniBarExpanded(true);
+  }
+
+  private expandQueueImportMiniBarOnScroll(): void {
+    if (!this.shouldUseImmersiveMainChrome() || this.mainTabIndex !== 1 || this.importMiniBarExpanded) {
       return;
     }
     this.setImportMiniBarExpanded(true);
@@ -7273,37 +8099,65 @@ struct Index {
       if (this.mainTabIndex === 1) {
         Row() {
           Button({ type: ButtonType.Circle, stateEffect: false }) {
-            Text('+')
-              .fontSize(28)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.ohos_id_color_primary_contrary'));
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(24)
+              .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+              .hitTestBehavior(HitTestMode.None);
           }
           .width(52)
           .height(52)
           .backgroundColor(this.systemAccentColorWithAlpha(0.72))
+          .systemMaterial(new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.THIN,
+            materialColor: this.systemAccentColorWithAlpha(0.72),
+            interactive: true
+          }))
+          .border({ width: 1, color: '#66FFFFFF' })
           .enabled(this.canImportQueueMiniBarAction())
+          .accessibilityText('添加照片到转换队列')
           .onClick((): void => {
             // Queue imports use the system photo picker and are copied into the
             // queue sandbox by chooseAndImport before any Rust processing.
             void this.chooseAndImport(true, false);
           });
 
-          Button('开始转换')
+          Button({ stateEffect: false }) {
+            Row() {
+              SymbolGlyph($r('sys.symbol.play_arrow_triangle_2_circlepath'))
+                .fontSize(19)
+                .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+                .hitTestBehavior(HitTestMode.None);
+              Text('开始转换')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
+                .margin({ left: 8 })
+                .hitTestBehavior(HitTestMode.None);
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(VerticalAlign.Center)
+            .hitTestBehavior(HitTestMode.None);
+          }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
-            .width(112)
-            .height(48)
-            .backgroundColor(this.systemAccentColorWithAlpha(0.6))
+            .width(184)
+            .height(52)
+            .backgroundColor(this.systemAccentColorWithAlpha(0.72))
+            .systemMaterial(new uiMaterial.ImmersiveMaterial({
+              style: uiMaterial.ImmersiveStyle.THIN,
+              materialColor: this.systemAccentColorWithAlpha(0.72),
+              interactive: true
+            }))
             .border({ width: 1, color: '#66FFFFFF' })
-            .borderRadius(24)
+            .borderRadius(26)
             .enabled(this.canRunMiniBarAction())
+            .accessibilityText('开始转换全部待处理照片')
             .onClick((): void => {
               void this.runMiniBarAction();
             });
         }
-        .width(200)
+        .width(264)
         .height(56)
         .justifyContent(FlexAlign.SpaceBetween)
         .padding({ left: 8, right: 8 });
