@@ -5500,20 +5500,7 @@ struct Index {
             LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
                 Stack({ alignContent: Alignment.Center }) {
                   Stack() {
-                    if (tile.item.id === this.galleryCurrentItem?.id && this.gallerySdrCompareActive &&
-                      this.gallerySdrPreviewItemId === tile.item.id && this.gallerySdrPreviewPixelMap !== undefined) {
-                      Image(this.gallerySdrPreviewPixelMap as image.PixelMap)
-                        .width('100%')
-                        .height('100%')
-                        .orientation(ImageRotateOrientation.AUTO)
-                        .objectFit(ImageFit.Contain)
-                        .autoResize(true)
-                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                        .onComplete((event): void => {
-                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0), false);
-                        });
-                    } else if (tile.item.id === this.galleryCurrentItem?.id &&
+                    if (tile.item.id === this.galleryCurrentItem?.id &&
                       tile.item.id === this.galleryHeroFallbackItemId) {
                       // Keep SDR only for the source used by the entrance
                       // shared-element handoff; the HDR frame is prepared below.
@@ -5570,6 +5557,19 @@ struct Index {
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .opacity(!this.galleryHeroOpening &&
                           this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
+                        .hitTestBehavior(HitTestMode.None);
+                    }
+                    if (tile.item.id === this.galleryCurrentItem?.id && this.gallerySdrCompareActive &&
+                      this.gallerySdrPreviewItemId === tile.item.id && this.gallerySdrPreviewPixelMap !== undefined) {
+                      // The HDR Image stays mounted underneath this ready SDR
+                      // PixelMap, so pressing or releasing cannot expose a blank frame.
+                      Image(this.gallerySdrPreviewPixelMap as image.PixelMap)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .hitTestBehavior(HitTestMode.None);
                     }
                   }
