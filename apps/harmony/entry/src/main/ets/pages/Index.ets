@@ -8315,6 +8315,12 @@ struct Index {
           blurEffectiveEndOffset: LengthMetrics.vp(28)
         },
         blurStrategy: BlurStrategy.ADAPTIVE,
+        // HDS gradient blur needs the matching material configuration as well as
+        // the individual ChipGroup materials in the title-bar bottomBuilder.
+        systemMaterialEffect: this.mainTabIndex === 1 ? {
+          materialType: hdsMaterial.MaterialType.IMMERSIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        } : undefined,
         originalStyle: {
           backgroundStyle: { backgroundColor: '#00FFFFFF' },
           contentStyle: {
