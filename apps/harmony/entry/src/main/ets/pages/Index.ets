@@ -4910,7 +4910,7 @@ struct Index {
               .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
               .hitTestBehavior(HitTestMode.None);
             Text('加入队列')
-              .fontSize(9)
+              .fontSize(8)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
               .maxLines(1)
