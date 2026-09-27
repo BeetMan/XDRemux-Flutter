@@ -6153,9 +6153,8 @@ struct Index {
     return this.queueItems;
   }
 
-  private queueFilterTitleBarVisible(): boolean {
-    return this.shouldUseImmersiveMainChrome() && this.mainTabIndex === 1 && this.queueLoaded &&
-      this.queueItems.length > 0;
+  private queueFilterTitleBarEnabled(): boolean {
+    return this.shouldUseImmersiveMainChrome() && this.mainTabIndex === 1 && this.queueItems.length > 0;
   }
 
   private queueFilterIndex(): number {
@@ -6182,44 +6181,46 @@ struct Index {
   private queueFilterTitleBarChips(): void {
     Row() {
       ChipGroup({
-        items: [
-          { label: { text: '全部 ' + String(this.queueItems.length) } },
-          { label: { text: '待处理 ' + String(this.queuePendingCount()) } },
-          { label: { text: '已完成 ' + String(this.queueCount('succeeded')) } },
-          { label: { text: '失败 ' + String(this.queueCount('failed')) } }
-        ],
-        itemStyle: {
-          size: ChipSize.SMALL,
-          backgroundColor: Color.Transparent,
-          selectedBackgroundColor: Color.Transparent,
-          fontColor: $r('sys.color.font_secondary'),
-          selectedFontColor: $r('sys.color.font_primary')
-        },
-        selectedIndexes: [this.queueFilterIndex()],
-        multiple: false,
-        chipGroupSpace: { itemSpace: 4, startSpace: 0, endSpace: 0 },
-        chipGroupPadding: { top: 0, bottom: 0 },
-        backgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
-          style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-          colorInvert: true,
-          interactive: true
-        }),
-        selectedBackgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
-          style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
-          materialColor: $r('sys.color.ohos_id_color_emphasize'),
-          colorInvert: true,
-          interactive: true
-        }),
-        onChange: (activeIndexes: Array<number>): void => {
-          if (activeIndexes.length > 0) {
-            this.setQueueFilterByIndex(activeIndexes[0]);
+          items: [
+            { label: { text: '全部 ' + String(this.queueItems.length) } },
+            { label: { text: '待处理 ' + String(this.queuePendingCount()) } },
+            { label: { text: '已完成 ' + String(this.queueCount('succeeded')) } },
+            { label: { text: '失败 ' + String(this.queueCount('failed')) } }
+          ],
+          itemStyle: {
+            size: ChipSize.SMALL,
+            backgroundColor: Color.Transparent,
+            selectedBackgroundColor: Color.Transparent,
+            fontColor: $r('sys.color.font_secondary'),
+            selectedFontColor: $r('sys.color.font_primary')
+          },
+          selectedIndexes: [this.queueFilterIndex()],
+          multiple: false,
+          chipGroupSpace: { itemSpace: 4, startSpace: 0, endSpace: 0 },
+          chipGroupPadding: { top: 0, bottom: 0 },
+          backgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+            colorInvert: true,
+            interactive: true
+          }),
+          selectedBackgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+            materialColor: $r('sys.color.ohos_id_color_emphasize'),
+            colorInvert: true,
+            interactive: true
+          }),
+          onChange: (activeIndexes: Array<number>): void => {
+            if (activeIndexes.length > 0) {
+              this.setQueueFilterByIndex(activeIndexes[0]);
+            }
           }
-        }
-      });
+      })
+      .margin({ top: -14 });
     }
     .width('100%')
     .height(56)
-    .alignItems(VerticalAlign.Center);
+    .padding({ left: 20, right: 20 })
+    .alignItems(VerticalAlign.Top);
   }
 
   private queueItemExtension(item: QueueItem): string {
@@ -7668,7 +7669,9 @@ struct Index {
             .backgroundColor($r('sys.color.background_secondary'))
             .borderRadius(14)
             .margin({ bottom: 12 });
-          } else if (this.operationStatus !== '准备就绪' && !this.queueRecoveryRequired &&
+          } else if (this.operationStatus !== '准备就绪' &&
+            this.operationStatus !== '队列已恢复；重启会保留项目，转换仍需前台手动开始' &&
+            !this.queueRecoveryRequired &&
             this.queueError.length === 0) {
             Text(this.operationStatus)
               .fontSize(12)
@@ -7754,21 +7757,6 @@ struct Index {
             .borderRadius(20)
             .margin({ top: 0, bottom: 18 });
           } else {
-            Row() {
-              Text(this.queueFilter === 'all' ? '照片任务' :
-                (this.queueFilter === 'pending' ? '待处理照片' :
-                  (this.queueFilter === 'succeeded' ? '已完成照片' : '失败照片')))
-                .fontSize(18)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('sys.color.font_primary'))
-                .layoutWeight(1);
-              Text(String(this.queueVisibleItems().length) + ' 张')
-                .fontSize(12)
-                .fontColor($r('sys.color.font_secondary'));
-            }
-            .width('100%')
-            .margin({ bottom: 9 });
-
             if (this.queueVisibleItems().length === 0) {
               Text('这个筛选下暂无照片')
                 .fontSize(13)
@@ -7902,10 +7890,11 @@ struct Index {
         .justifyContent(FlexAlign.Start)
         .alignItems(HorizontalAlign.Start)
         .width('100%')
+        .constraintSize({ minHeight: '100%' })
         .padding({
           left: 20,
           right: 20,
-          top: this.shouldUseImmersiveMainChrome() ? (this.queueFilterTitleBarVisible() ? 154 : 98) : 28,
+          top: this.shouldUseImmersiveMainChrome() ? (this.queueItems.length > 0 ? 136 : 64) : 28,
           bottom: 112
         });
       }
@@ -8305,7 +8294,7 @@ struct Index {
         start: LengthMetrics.vp(20),
         end: LengthMetrics.vp(20)
       },
-      content: this.queueFilterTitleBarVisible() ? {
+      content: this.queueFilterTitleBarEnabled() ? {
         title: {
           mainTitle: this.mainTabTitle()
         },
