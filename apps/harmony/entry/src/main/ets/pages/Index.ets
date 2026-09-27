@@ -3767,7 +3767,7 @@ struct Index {
   }
 
   private galleryDetailScrimColor(): string {
-    return this.isSystemDarkMode() ? '#80000000' : '#80FFFFFF';
+    return this.isSystemDarkMode() ? '#B3000000' : '#B3FFFFFF';
   }
 
   private galleryDetailForegroundColor(): string {
@@ -4174,7 +4174,9 @@ struct Index {
       }
       .width('100%')
       .height(28)
-      .padding({ left: 68, right: 120 })
+      // Keep the scrolling filename clear of the right-side HDR/delete/share
+      // controls. The HDR action is wider than the title bar's normal menu.
+      .padding({ left: 68, right: this.canCompareGallerySdr() ? 152 : 120 })
       .alignItems(VerticalAlign.Center)
       .position({ x: 0, y: this.galleryPhotoTitleTopPosition })
       .hitTestBehavior(HitTestMode.None)
@@ -4767,10 +4769,12 @@ struct Index {
 
   private galleryTopActionMaterial(): uiMaterial.ImmersiveMaterial {
     return new uiMaterial.ImmersiveMaterial({
-      style: uiMaterial.ImmersiveStyle.THIN,
-      colorInvert: true,
+      style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+      colorInvert: false,
       interactive: true,
-      lightEffect: { color: this.systemAccentColorWithAlpha(0.42) }
+      // Keep the system's neutral white light response; the accent-color tint
+      // made the glass look blue at rest.
+      lightEffect: {}
     });
   }
 
@@ -4811,20 +4815,41 @@ struct Index {
   @Builder
   private galleryDetailTopActionBar() {
     if (this.galleryChromeVisible && this.galleryCurrentItem !== undefined) {
-      Row({ space: 8 }) {
-        if (this.canCompareGallerySdr()) {
-          this.gallerySdrCompareButton();
+      Stack() {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.font_primary')]);
         }
-        this.galleryDeleteButton();
-        this.galleryShareButton();
+        .width(40)
+        .height(40)
+        .systemMaterial(this.galleryTopActionMaterial())
+        .backgroundColor(Color.Transparent)
+        .accessibilityText('返回图库')
+        .onClick((): void => {
+          this.closeGalleryDetail();
+        })
+        .position({ x: 20, y: 0 })
+        .zIndex(24);
+
+        Row({ space: 8 }) {
+          if (this.canCompareGallerySdr()) {
+            this.gallerySdrCompareButton();
+          }
+          this.galleryDeleteButton();
+          this.galleryShareButton();
+        }
+        .width('100%')
+        .height(40)
+        .padding({ right: 12 })
+        .justifyContent(FlexAlign.End)
+        .alignItems(VerticalAlign.Center)
+        .position({ x: 0, y: 0 })
+        .zIndex(23);
       }
-      .width(this.canCompareGallerySdr() ? 136 : 88)
+      .width('100%')
       .height(40)
-      .position({
-        x: Math.max(12, this.galleryViewportWidth - (this.canCompareGallerySdr() ? 148 : 100)),
-        y: 48
-      })
-      .zIndex(23);
+      .position({ x: 0, y: 0 });
     }
   }
 
@@ -5438,7 +5463,7 @@ struct Index {
       .height(104)
       .titleBar({
         padding: {
-          start: LengthMetrics.vp(20),
+          start: LengthMetrics.vp(68),
           end: LengthMetrics.vp(156)
         },
         content: {
@@ -5446,17 +5471,14 @@ struct Index {
             mainTitle: this.galleryPhotoTitleLabel(),
             subTitle: this.galleryDetailSubtitle()
           },
-          backIcon: {
-            label: '返回图库',
-            icon: $r('sys.symbol.chevron_left'),
-            isEnabled: true,
-            action: (): void => {
-              this.closeGalleryDetail();
-            }
-          }
+          stackBuilder: (): void => this.galleryDetailTopActionBar()
         },
         style: {
           blurStrategy: BlurStrategy.DISABLE,
+          systemMaterialEffect: {
+            materialType: this.hdsSystemMaterialType(),
+            materialLevel: this.hdsSystemMaterialLevel()
+          },
           originalStyle: {
             backgroundStyle: { backgroundColor: '#00000000' },
             contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
@@ -5471,14 +5493,13 @@ struct Index {
       })
       .titleMode(HdsNavigationTitleMode.MINI)
       .hideTitleBar(!this.galleryChromeVisible, true)
-      .hideBackButton(false)
+      .hideBackButton(true)
       .hideToolBar(true)
       .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
       .backgroundColor(Color.Transparent)
       .hitTestBehavior(HitTestMode.None)
       .position({ x: 0, y: 0 })
       .zIndex(20);
-      this.galleryDetailTopActionBar();
     }
     .width('100%')
     .height('100%')
