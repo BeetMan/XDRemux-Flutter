@@ -3749,11 +3749,9 @@ struct Index {
         const mainWindow: window.Window = await window.getLastWindow(context);
         await mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
         await mainWindow.setWindowSystemBarProperties({
-          // Match the detail scrim while controls are visible; leave the photo
-          // unobstructed when the gallery chrome is hidden.
-          statusBarColor: this.galleryDetailVisible && this.galleryChromeVisible
-            ? this.galleryDetailScrimColor()
-            : TRANSPARENT_SYSTEM_BAR_COLOR,
+          // Keep the system bar clear so the page's single top material can
+          // extend continuously behind it.
+          statusBarColor: TRANSPARENT_SYSTEM_BAR_COLOR,
           statusBarContentColor: this.galleryDetailForegroundColor()
         });
       })
@@ -5425,6 +5423,7 @@ struct Index {
           .height(104)
           .backgroundEffect({ radius: 32, saturation: 1.12, brightness: 1.0 })
           .backgroundColor(this.galleryDetailScrimColor())
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
           .hitTestBehavior(HitTestMode.None)
           .position({ x: 0, y: 0 })
           .zIndex(19);
@@ -5486,49 +5485,52 @@ struct Index {
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
     .zIndex(10);
 
-      HdsTabs() {
-        TabContent() {
-          this.galleryActionTabContent();
-        }
-        .tabBar(this.galleryConvertActionTab())
+      if (this.galleryChromeVisible && this.galleryInfoPanelVisible) {
+        HdsTabs() {
+          TabContent() {
+            this.galleryActionTabContent();
+          }
+          .tabBar(this.galleryConvertActionTab())
 
-        TabContent() {
-          this.galleryActionTabContent();
-        }
-        .tabBar(this.galleryQueueActionTab())
+          TabContent() {
+            this.galleryActionTabContent();
+          }
+          .tabBar(this.galleryQueueActionTab())
 
-        TabContent() {
-          this.galleryActionTabContent();
+          TabContent() {
+            this.galleryActionTabContent();
+          }
+          .tabBar(this.gallerySettingsActionTab())
         }
-        .tabBar(this.gallerySettingsActionTab())
+        .barOverlap(true)
+        .barPosition(BarPosition.End)
+        .vertical(false)
+        .barMode(BarMode.Fixed)
+        .barHeight(GALLERY_DETAIL_BAR_HEIGHT)
+        .scrollable(false)
+        .barFloatingStyle({
+          barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
+          barBottomMargin: 28,
+          adaptToHandedness: false,
+          barOpacity: 1,
+          systemMaterialEffect: {
+            materialType: this.hdsSystemMaterialType(),
+            materialLevel: this.hdsSystemMaterialLevel()
+          }
+        })
+        .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .hitTestBehavior(HitTestMode.Transparent)
+        .zIndex(15);
       }
-      .barOverlap(true)
-      .barPosition(BarPosition.End)
-      .vertical(false)
-      .barMode(BarMode.Fixed)
-      .barHeight(GALLERY_DETAIL_BAR_HEIGHT)
-      .scrollable(false)
-      .barFloatingStyle({
-        barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
-        barBottomMargin: 28,
-        adaptToHandedness: false,
-        barOpacity: this.galleryChromeVisible && this.galleryInfoPanelVisible ? 1 : 0,
-        systemMaterialEffect: {
-          materialType: this.hdsSystemMaterialType(),
-          materialLevel: this.hdsSystemMaterialLevel()
-        }
-      })
-      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
-      .width('100%')
-      .height('100%')
-      .backgroundColor(Color.Transparent)
-      .hitTestBehavior(HitTestMode.Transparent)
-      .zIndex(15);
       this.galleryPhotoTitleOverlay();
     }
     .width('100%')
     .height('100%')
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
     .translate({ x: 0, y: this.galleryDismissOffsetY })
     .opacity(Math.max(0.7, 1 - Math.abs(this.galleryDismissOffsetY) /
       Math.max(this.galleryViewportHeight, 1) * 0.3))
