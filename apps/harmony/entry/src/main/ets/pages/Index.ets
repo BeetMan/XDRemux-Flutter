@@ -3264,10 +3264,21 @@ struct Index {
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
       imageSource = image.createImageSource('file://' + tile.path);
+      let sourceWidth: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0;
+      let sourceHeight: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0;
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
+        sourceWidth = imageInfo.size.width;
+        sourceHeight = imageInfo.size.height;
+      }
+      if (sourceWidth <= 0 || sourceHeight <= 0) throw new Error('无法读取照片尺寸');
+      const previewScale: number = Math.min(1,
+        Math.max(GALLERY_THUMBNAIL_DECODE_WIDTH, GALLERY_THUMBNAIL_DECODE_HEIGHT) /
+        Math.max(sourceWidth, sourceHeight));
       pixelMap = await imageSource.createPixelMap({
         desiredSize: {
-          width: GALLERY_THUMBNAIL_DECODE_WIDTH,
-          height: GALLERY_THUMBNAIL_DECODE_HEIGHT
+          width: Math.max(1, Math.round(sourceWidth * previewScale)),
+          height: Math.max(1, Math.round(sourceHeight * previewScale))
         },
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
         desiredDynamicRange: image.DecodingDynamicRange.SDR
@@ -5348,18 +5359,21 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
-                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening &&
-                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
-                      // Keep the shared-element opening on the already decoded
-                      // SDR frame. Mount the full HDR source only after the
+                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening) {
+                      // Keep the shared element on the original image and its
+                      // natural aspect ratio; only promote it to HDR after the
                       // geometry transition has settled.
-                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                      Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
-                        .dynamicRangeMode(DynamicRangeMode.STANDARD);
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .onComplete((event): void => {
+                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0), false);
+                        });
                     } else {
                       Image('file://' + tile.path)
                         .width('100%')
@@ -5374,7 +5388,7 @@ struct Index {
                             Number(event?.height ?? 0));
                         });
                     }
-                    if (tile.item.id === this.galleryCurrentItem?.id &&
+                    if (tile.item.id === this.galleryCurrentItem?.id && !this.galleryHeroOpening &&
                       this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
                       Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
                         .width('100%')
