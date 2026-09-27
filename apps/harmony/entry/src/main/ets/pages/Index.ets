@@ -246,6 +246,7 @@ struct Index {
   @State private galleryHeroMetadataReady: boolean = false;
   @State private galleryHeroTransitionActive: boolean = false;
   @State private galleryHeroOpening: boolean = false;
+  @State private galleryHeroBackdropOpacity: number = 0;
   @State private galleryPhotoTitleTopPosition: number = 47;
   @State private galleryDisplayImageWidth: number = 0;
   @State private galleryDisplayImageHeight: number = 0;
@@ -385,6 +386,9 @@ struct Index {
       this.galleryHeroMetadataReady = false;
       this.galleryHeroOpening = false;
       this.gallerySelectionSerial += 1;
+      this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+        this.galleryHeroBackdropOpacity = 0;
+      });
       return true;
     }
     if (!this.galleryDetailVisible) {
@@ -3066,6 +3070,12 @@ struct Index {
       : '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
         String(cachedInspection.details.width ?? 0) + ' × ' + String(cachedInspection.details.height ?? 0);
     if (shouldOpenDetail) {
+      // Start dimming the gallery backing at the tap. The shared-element
+      // destination is mounted later, after its preview and metadata are ready.
+      this.galleryHeroBackdropOpacity = 0;
+      this.getUIContext().animateTo({ duration: 420, curve: Curve.Friction }, () => {
+        this.galleryHeroBackdropOpacity = 1;
+      });
       if (this.galleryStatusBarResetTimer >= 0) {
         clearTimeout(this.galleryStatusBarResetTimer);
         this.galleryStatusBarResetTimer = -1;
@@ -3175,9 +3185,7 @@ struct Index {
     this.galleryHeroBackdropResetTimer = setTimeout((): void => {
       this.galleryHeroBackdropResetTimer = -1;
       if (this.galleryDetailVisible) {
-        // GeometryTransition drops its sandbox snapshot at about 420ms. Fade
-        // the photo-page backing in just after that instead of exposing the
-        // abrupt transparent-to-black color swap on the final frame.
+        // GeometryTransition drops its sandbox snapshot at about 420ms.
         this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
           this.galleryHeroTransitionActive = false;
         });
@@ -3200,6 +3208,7 @@ struct Index {
     this.galleryHeroTransitionActive = true;
     this.galleryHeroOpening = false;
     this.getUIContext().animateTo({ duration: 360, curve: Curve.Friction }, () => {
+      this.galleryHeroBackdropOpacity = 0;
       this.galleryZoomScale = 1;
       this.galleryPanOffsetX = 0;
       this.galleryPanOffsetY = 0;
@@ -4714,7 +4723,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'))
+    .backgroundColor(ColorMetrics.rgba(0, 0, 0, this.galleryHeroBackdropOpacity).color)
     .onAreaChange((_oldArea: Area, newArea: Area): void => {
       this.galleryViewportWidth = Number(newArea.width);
       this.galleryViewportHeight = Number(newArea.height);
@@ -5606,7 +5615,7 @@ struct Index {
 
       .width('100%')
       .height('100%')
-      .backgroundColor(this.galleryHeroTransitionActive ? Color.Transparent : '#000000')
+      .backgroundColor(ColorMetrics.rgba(0, 0, 0, this.galleryHeroBackdropOpacity).color)
       .onAreaChange((_oldArea: Area, newArea: Area): void => {
         this.galleryViewportWidth = Number(newArea.width);
         this.galleryViewportHeight = Number(newArea.height);
@@ -5725,7 +5734,7 @@ struct Index {
     .translate({ x: 0, y: this.galleryDismissOffsetY })
     .opacity(Math.max(0.7, 1 - Math.abs(this.galleryDismissOffsetY) /
       Math.max(this.galleryViewportHeight, 1) * 0.3))
-    .backgroundColor(this.galleryHeroTransitionActive ? Color.Transparent : '#000000')
+    .backgroundColor(ColorMetrics.rgba(0, 0, 0, this.galleryHeroBackdropOpacity).color)
     .zIndex(10)
     .transition(TransitionEffect.IDENTITY)
     .parallelGesture(
