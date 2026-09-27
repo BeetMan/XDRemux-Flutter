@@ -8100,7 +8100,7 @@ struct Index {
     if (this.importMiniBarExpanded) {
       if (this.mainTabIndex === 1) {
         Row() {
-          Button({ type: ButtonType.Circle, stateEffect: false }) {
+          Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.plus'))
               .fontSize(24)
               .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
@@ -8112,7 +8112,8 @@ struct Index {
           .systemMaterial(new uiMaterial.ImmersiveMaterial({
             style: uiMaterial.ImmersiveStyle.THIN,
             materialColor: this.systemAccentColorWithAlpha(0.72),
-            interactive: true
+            interactive: true,
+            lightEffect: { color: Color.White }
           }))
           .border({ width: 1, color: '#66FFFFFF' })
           .enabled(this.canImportQueueMiniBarAction())
@@ -8123,7 +8124,7 @@ struct Index {
             void this.chooseAndImport(true, false);
           });
 
-          Button({ stateEffect: false }) {
+          Button() {
             Row() {
               SymbolGlyph($r('sys.symbol.play_arrow_triangle_2_circlepath'))
                 .fontSize(19)
@@ -8143,13 +8144,14 @@ struct Index {
             .hitTestBehavior(HitTestMode.None);
           }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .width(184)
+            .width(196)
             .height(52)
             .backgroundColor(this.systemAccentColorWithAlpha(0.72))
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
               style: uiMaterial.ImmersiveStyle.THIN,
               materialColor: this.systemAccentColorWithAlpha(0.72),
-              interactive: true
+              interactive: true,
+              lightEffect: { color: Color.White }
             }))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(26)
@@ -8159,13 +8161,13 @@ struct Index {
               void this.runMiniBarAction();
             });
         }
-        .width(264)
+        .width(280)
         .height(56)
-        .justifyContent(FlexAlign.SpaceBetween)
+        .justifyContent(FlexAlign.Center)
         .padding({ left: 8, right: 8 });
       } else {
         Row({ space: 8 }) {
-          Button({ stateEffect: false }) {
+          Button() {
             Row({ space: 6 }) {
               SymbolGlyph($r('sys.symbol.plus'))
                 .fontSize(17)
@@ -8190,7 +8192,8 @@ struct Index {
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
               style: uiMaterial.ImmersiveStyle.THIN,
               materialColor: this.systemAccentColorWithAlpha(0.72),
-              interactive: true
+              interactive: true,
+              lightEffect: { color: Color.White }
             }))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
@@ -8200,7 +8203,7 @@ struct Index {
               void this.runMiniBarAction();
             });
 
-          Button({ stateEffect: false }) {
+          Button() {
             Row({ space: 6 }) {
               SymbolGlyph($r('sys.symbol.list_bullet'))
                 .fontSize(17)
@@ -8225,7 +8228,8 @@ struct Index {
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
               style: uiMaterial.ImmersiveStyle.THIN,
               materialColor: this.systemAccentColorWithAlpha(0.72),
-              interactive: true
+              interactive: true,
+              lightEffect: { color: Color.White }
             }))
             .border({ width: 1, color: '#66FFFFFF' })
             .borderRadius(24)
@@ -8242,7 +8246,7 @@ struct Index {
       }
     } else {
       Stack({ alignContent: Alignment.Center }) {
-        Button({ type: ButtonType.Circle, stateEffect: false }) {
+        Button({ type: ButtonType.Circle }) {
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(25)
             .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
@@ -8254,7 +8258,8 @@ struct Index {
         .systemMaterial(new uiMaterial.ImmersiveMaterial({
           style: uiMaterial.ImmersiveStyle.THIN,
           materialColor: this.systemAccentColorWithAlpha(0.72),
-          interactive: true
+          interactive: true,
+          lightEffect: { color: Color.White }
         }))
         .opacity(this.mainTabIndex === 1
           ? this.canImportQueueMiniBarAction() || this.canRunMiniBarAction() ? 1 : 0.45
