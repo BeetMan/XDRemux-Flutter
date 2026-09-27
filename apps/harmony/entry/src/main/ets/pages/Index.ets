@@ -7449,13 +7449,15 @@ struct Index {
       .alignItems(VerticalAlign.Center)
       .layoutWeight(1)
       .onClick((): void => {
-        this.queueSettingsEditingItemId = '';
-        if (this.selectedItemId === item.id && this.queueDetailsExpanded) {
-          this.queueDetailsExpanded = false;
-          return;
-        }
-        this.selectQueueItem(item.id);
-        this.queueDetailsExpanded = true;
+        this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+          this.queueSettingsEditingItemId = '';
+          if (this.selectedItemId === item.id && this.queueDetailsExpanded) {
+            this.queueDetailsExpanded = false;
+            return;
+          }
+          this.selectQueueItem(item.id);
+          this.queueDetailsExpanded = true;
+        });
       });
 
       Button({ type: ButtonType.Circle }) {
@@ -7472,8 +7474,10 @@ struct Index {
       .onClick((): void => {
         if (!this.queueRunning && !this.pageBusy && !this.cleanupRunning &&
           item.status !== 'running' && !item.externalBusy) {
-          this.queueDetailsExpanded = false;
-          this.toggleQueueItemSettings(item);
+          this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+            this.queueDetailsExpanded = false;
+            this.toggleQueueItemSettings(item);
+          });
         }
       });
     }
@@ -7482,8 +7486,7 @@ struct Index {
     .backgroundColor($r('sys.color.background_tertiary'))
     .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
     .borderRadius(20)
-    .margin({ bottom: this.queueSettingsEditingItemId === item.id ||
-      (this.selectedItemId === item.id && this.queueDetailsExpanded) ? 0 : 12 });
+    .margin({ bottom: 12 });
   }
 
   private queueItemModeLabel(item: QueueItem): string {
@@ -7789,13 +7792,22 @@ struct Index {
                 Column() {
                   this.queueTaskCard(item);
                   if (item.id === this.queueSettingsEditingItemId) {
-                    this.queueItemSettingsPanel(item);
+                    Column() {
+                      this.queueItemSettingsPanel(item);
+                    }
+                    .width('100%')
+                    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: -8 })));
                   }
                   if (item.id === this.selectedItemId && this.queueDetailsExpanded) {
-                    this.selectedDetailsContent();
+                    Column() {
+                      this.selectedDetailsContent();
+                    }
+                    .width('100%')
+                    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: -8 })));
                   }
                 }
-                .width('100%');
+                .width('100%')
+                .clip(true);
               }, (item: QueueItem) => item.id + '-' + String(item.revision));
             }
           }
