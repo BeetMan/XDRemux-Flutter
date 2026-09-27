@@ -307,6 +307,7 @@ struct Index {
     new Map<string, GalleryPhotoInspection>();
   private readonly galleryDecodedDimensionsCache: Map<string, Array<number>> = new Map<string, Array<number>>();
   private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  private readonly galleryDetailDecodedImageIds: Set<string> = new Set<string>();
   private readonly galleryThumbnailDecodeInFlight: Set<string> = new Set<string>();
   private readonly gallerySwiperDataSource: GalleryPhotoDataSource = new GalleryPhotoDataSource();
   private readonly galleryDetailSwiperController: SwiperController = new SwiperController();
@@ -3009,7 +3010,9 @@ struct Index {
     this.gallerySelectionSerial = selectionSerial;
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
-    if (tile.item.id !== this.galleryCurrentItem?.id) this.galleryDetailLoadedImageId = '';
+    if (tile.item.id !== this.galleryCurrentItem?.id) {
+      this.galleryDetailLoadedImageId = this.galleryDetailDecodedImageIds.has(tile.item.id) ? tile.item.id : '';
+    }
     this.galleryZoomScale = 1;
     this.galleryPanOffsetX = 0;
     this.galleryPanOffsetY = 0;
@@ -3320,8 +3323,15 @@ struct Index {
     });
   }
 
-  private onGalleryDetailImageDecoded(itemId: string, width: number, height: number): void {
+  private onGalleryDetailImageDecoded(
+    itemId: string,
+    width: number,
+    height: number,
+    isHighDynamicRangeImage: boolean = true
+  ): void {
     this.onGalleryPreviewDecoded(itemId, width, height);
+    if (!isHighDynamicRangeImage) return;
+    this.galleryDetailDecodedImageIds.add(itemId);
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
       this.galleryDetailLoadedImageId = itemId;
@@ -4319,6 +4329,7 @@ struct Index {
         (loadedId: string): boolean => loadedId !== itemId
       );
       if (this.galleryDetailLoadedImageId === itemId) this.galleryDetailLoadedImageId = '';
+      this.galleryDetailDecodedImageIds.delete(itemId);
       this.galleryInspectionCache.delete(itemId);
       this.galleryDecodedDimensionsCache.delete(itemId);
       this.galleryPhotoSettings.delete(itemId);
@@ -5326,7 +5337,7 @@ struct Index {
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0));
+                            Number(event?.height ?? 0), false);
                         });
                     } else {
                       Image('file://' + tile.path)
