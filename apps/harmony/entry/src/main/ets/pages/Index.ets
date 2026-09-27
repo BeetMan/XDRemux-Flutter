@@ -3777,6 +3777,14 @@ struct Index {
     return this.isSystemDarkMode() ? '#FFFFFFFF' : '#FF000000';
   }
 
+  private galleryInfoPanelPrimaryTextColor(): string {
+    return this.isSystemDarkMode() ? '#FFF9FAFC' : '#FF17191C';
+  }
+
+  private galleryInfoPanelSecondaryTextColor(): string {
+    return this.isSystemDarkMode() ? '#D9F9FAFC' : '#CC30343A';
+  }
+
   private async updateGalleryPhotoTitlePosition(): Promise<void> {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) return;
@@ -4861,10 +4869,11 @@ struct Index {
           .width('100%')
           .height('100%')
           .backgroundEffect({
-            radius: 36,
-            saturation: 1.18,
-            brightness: 0.78
+            radius: 32,
+            saturation: 1.12,
+            brightness: 1.0
           })
+          .backgroundColor(this.galleryDetailScrimColor())
           .borderRadius(26)
           .hitTestBehavior(HitTestMode.None);
       }
@@ -4907,12 +4916,12 @@ struct Index {
             Text(this.galleryFormatLabel())
               .fontSize(30)
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('sys.color.font_primary'));
+              .fontColor(this.galleryInfoPanelPrimaryTextColor());
             Text(String(this.galleryDetails?.width ?? 0) + ' × ' +
               String(this.galleryDetails?.height ?? 0) + ' · ' +
               this.display(this.galleryDetails?.hdrKind))
               .fontSize(14)
-              .fontColor($r('sys.color.font_secondary'))
+              .fontColor(this.galleryInfoPanelSecondaryTextColor())
               .margin({ top: 4 });
           }
           .alignItems(HorizontalAlign.Start)
@@ -4928,7 +4937,7 @@ struct Index {
 
         Text(this.galleryCurrentItem?.displayName ?? '本地照片')
           .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -4936,7 +4945,7 @@ struct Index {
         if (this.gallerySandboxPath.length > 0) {
           Text('本地图库原图已校验 · ' + String(this.galleryCopiedBytes) + ' B')
             .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .width('100%')
             .margin({ top: 6 });
         }
@@ -4945,23 +4954,23 @@ struct Index {
         Text('转换方式')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
+          .fontColor(this.galleryInfoPanelPrimaryTextColor())
           .width('100%');
         Text('此照片设置：' + (this.settingsLoaded ? this.galleryPhotoSettingsSummary() : '设置加载中…'))
           .fontSize(14)
-          .fontColor($r('sys.color.font_primary'))
+          .fontColor(this.galleryInfoPanelPrimaryTextColor())
           .width('100%')
           .margin({ top: 6 });
         Text('转换会生成新图片并保留原图；导出时可选择保存位置。')
           .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
           .width('100%')
           .margin({ top: 4, bottom: 10 });
         Text(this.galleryStatus)
           .fontSize(12)
           .fontColor(this.galleryStatus.indexOf('失败') >= 0
             ? $r('sys.color.ohos_id_color_alert')
-            : $r('sys.color.font_secondary'))
+            : this.galleryInfoPanelSecondaryTextColor())
           .width('100%')
           .margin({ top: 8 });
 
@@ -4969,30 +4978,30 @@ struct Index {
         Text('照片信息')
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
+          .fontColor(this.galleryInfoPanelPrimaryTextColor())
           .width('100%')
           .margin({ top: 8, bottom: 4 });
         if (this.galleryDetails !== undefined) {
           Text('相机  ' + this.display(this.galleryDetails.make) + ' ' + this.display(this.galleryDetails.model))
             .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .width('100%');
           Text('拍摄时间  ' + this.display(this.galleryDetails.dateTime))
             .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .width('100%')
             .margin({ top: 8 });
           Text('曝光  ' + this.display(this.galleryDetails.exposureTime) + ' · 光圈  ' +
             this.display(this.galleryDetails.fNumber) + ' · ISO  ' + this.display(this.galleryDetails.iso))
             .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .width('100%')
             .margin({ top: 8 });
           Text('焦距  ' + this.display(this.galleryDetails.focalLength) + ' · 35mm  ' +
             this.display(this.galleryDetails.focalLength35mm) + ' · 曝光补偿  ' +
             this.display(this.galleryDetails.exposureBias))
             .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .width('100%')
             .margin({ top: 8 });
           Text('拍摄分类  ' + (this.galleryClassification?.family ?? '未知') +
@@ -5000,7 +5009,7 @@ struct Index {
               ? ' · ' + this.galleryClassification.modeKey
               : ''))
             .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .width('100%')
             .margin({ top: 8 });
         }
@@ -5083,19 +5092,19 @@ struct Index {
       Text('转换设置')
         .fontSize(25)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.font_primary'))
+        .fontColor(this.galleryInfoPanelPrimaryTextColor())
         .width('100%')
         .margin({ top: 8 });
       Text(this.galleryCurrentItem?.displayName ?? '本地照片')
         .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
+        .fontColor(this.galleryInfoPanelSecondaryTextColor())
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .margin({ top: 4 });
       Text('设置只随这张照片的转换任务保存，不会改动全局设置。')
         .fontSize(12)
-        .fontColor($r('sys.color.font_secondary'))
+        .fontColor(this.galleryInfoPanelSecondaryTextColor())
         .width('100%')
         .margin({ top: 5, bottom: 12 });
 
@@ -5103,13 +5112,13 @@ struct Index {
       Text('此照片可用的输出格式')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'))
+        .fontColor(this.galleryInfoPanelPrimaryTextColor())
         .width('100%');
 
       if (this.gallerySupportedOutputModes().length === 0) {
         Text('未检测到 XDRemux 支持的 ProXDR 数据，暂时没有可用的转换格式。')
           .fontSize(14)
-          .fontColor($r('sys.color.font_secondary'))
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
           .lineHeight(21)
           .width('100%')
           .margin({ top: 8 });
@@ -5123,7 +5132,7 @@ struct Index {
               });
             Text('OPPO 兼容')
               .fontSize(14)
-              .fontColor($r('sys.color.font_primary'))
+              .fontColor(this.galleryInfoPanelPrimaryTextColor())
               .margin({ left: 9 });
           }
           .width('100%')
@@ -5141,7 +5150,7 @@ struct Index {
               });
             Text('Apple 标准')
               .fontSize(14)
-              .fontColor($r('sys.color.font_primary'))
+              .fontColor(this.galleryInfoPanelPrimaryTextColor())
               .margin({ left: 9 });
           }
           .width('100%')
@@ -5154,7 +5163,7 @@ struct Index {
         if (this.galleryPhotoSettingsView.outputMode === 'oppo') {
           Text('OPPO 兼容模式')
             .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .width('100%')
             .margin({ top: 8 });
           Select(OPPO_COMPAT_OPTIONS.map((option: SettingsOption): SelectOption => {
@@ -5162,7 +5171,7 @@ struct Index {
           }))
             .selected(this.compatIndex(this.galleryPhotoSettingsView.oppoCompat))
             .value(compatLabel(this.galleryPhotoSettingsView.oppoCompat))
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .optionFont({ size: 14, weight: FontWeight.Regular })
             .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
             .width('100%')
@@ -5174,7 +5183,7 @@ struct Index {
             });
           Text('保留相机附加信息')
             .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .width('100%')
             .margin({ top: 10 });
           Select(OPPO_CAMERA_TAIL_OPTIONS.map((option: SettingsOption): SelectOption => {
@@ -5182,7 +5191,7 @@ struct Index {
           }))
             .selected(this.cameraTailIndex(this.galleryPhotoSettingsView.oppoCameraTail))
             .value(cameraTailLabel(this.galleryPhotoSettingsView.oppoCameraTail))
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .optionFont({ size: 14, weight: FontWeight.Regular })
             .selectedOptionFont({ size: 14, weight: FontWeight.Medium })
             .width('100%')
@@ -5197,7 +5206,7 @@ struct Index {
             ? '本图为 HEIC/HEIF，可用的 Apple 摄影数据选项如下。'
             : '本图不支持 Apple 摄影风格或人像数据，因此只显示 Apple 标准输出。')
             .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
             .lineHeight(19)
             .width('100%')
             .margin({ top: 6, bottom: 4 });
@@ -5205,7 +5214,7 @@ struct Index {
             Row() {
               Text('摄影风格数据')
                 .fontSize(14)
-                .fontColor($r('sys.color.font_primary'))
+                .fontColor(this.galleryInfoPanelPrimaryTextColor())
                 .layoutWeight(1);
               Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePhotographicStyles })
                 .enabled(!this.galleryPhotoSettingsView.applePhotographicStyles3)
@@ -5218,7 +5227,7 @@ struct Index {
             Row() {
               Text('摄影风格 3（质感 + 颗粒）')
                 .fontSize(14)
-                .fontColor($r('sys.color.font_primary'))
+                .fontColor(this.galleryInfoPanelPrimaryTextColor())
                 .layoutWeight(1);
               Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePhotographicStyles3 })
                 .onChange((isOn: boolean): void => {
@@ -5232,7 +5241,7 @@ struct Index {
             Row() {
               Text('Apple 人像数据')
                 .fontSize(14)
-                .fontColor($r('sys.color.font_primary'))
+                .fontColor(this.galleryInfoPanelPrimaryTextColor())
                 .layoutWeight(1);
               Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.applePortrait })
                 .onChange((isOn: boolean): void => {
@@ -5247,7 +5256,7 @@ struct Index {
         Row() {
           Text('严格 ISO 兼容')
             .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .layoutWeight(1);
           Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.strictTmap })
             .onChange((isOn: boolean): void => {
@@ -5261,7 +5270,7 @@ struct Index {
 
       Text('当前转换：' + this.galleryPhotoSettingsSummary())
         .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
+        .fontColor(this.galleryInfoPanelSecondaryTextColor())
         .width('100%')
         .margin({ top: 12 });
       Button('完成')
