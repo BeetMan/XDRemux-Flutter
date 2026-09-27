@@ -7084,7 +7084,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: this.systemAccentColorWithAlpha(0.4),
+      lightColor: '#FFFFFFFF',
       systemMaterialEffect: {
         materialType: this.hdsTabBarMaterialType(),
         materialLevel: this.hdsTabBarMaterialLevel()
@@ -7093,7 +7093,7 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: this.systemAccentColorWithAlpha(0.4),
+      lightColor: '#FFFFFFFF',
       systemMaterialEffect: {
         materialType: this.hdsTabBarMaterialType(),
         materialLevel: this.hdsTabBarMaterialLevel()
