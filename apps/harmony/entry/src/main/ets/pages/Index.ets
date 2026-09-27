@@ -2521,6 +2521,15 @@ struct Index {
       extension === 'heic' || extension === 'heif' || extension === '.heic' || extension === '.heif';
   }
 
+  private galleryPhotoSupportsAppleStyles(): boolean {
+    const mimeType: string = this.galleryMimeType.toLowerCase();
+    const extension: string = (this.galleryCurrentItem?.extension ?? '').toLowerCase();
+    return mimeType === 'image/heic' || mimeType === 'image/heif' ||
+      mimeType === 'image/jpeg' || mimeType === 'image/jpg' || mimeType === 'image/png' ||
+      extension === '.heic' || extension === '.heif' || extension === '.jpg' ||
+      extension === '.jpeg' || extension === '.png';
+  }
+
   private async inspectGallerySystemHdr(tile: GalleryPhotoTile, selectionSerial: number): Promise<void> {
     let imageSource: image.ImageSource | undefined = undefined;
     let isHdr: boolean = false;
@@ -2629,22 +2638,24 @@ struct Index {
   private canConvertGalleryPhotoDirectly(): boolean {
     return this.galleryLibraryReady && this.galleryLibrary !== undefined && this.galleryCurrentItem !== undefined &&
       this.gallerySandboxPath.length > 0 && this.galleryDetails !== undefined &&
-      this.galleryClassification !== undefined && this.gallerySupportsNativeConversion() && this.settingsLoaded &&
+      this.galleryClassification !== undefined && this.galleryCanConvertInSelectedMode() && this.settingsLoaded &&
       !this.galleryImporting && !this.galleryQueuePreparing && !this.pageBusy && !this.queueRunning &&
       !this.cleanupRunning && !this.batchExportRunning && !this.settingsSaving && !this.livePhotoPairing &&
       !this.livePhotoPairExporting && !this.motionSplitting && !this.motionInspecting;
   }
 
   private gallerySupportedOutputModes(): Array<SettingsOutputMode> {
-    return this.gallerySupportsNativeConversion() ? ['oppo', 'apple'] : [];
+    if (this.gallerySupportsNativeConversion()) return ['oppo', 'apple'];
+    return this.galleryPhotoSupportsAppleStyles() ? ['apple'] : [];
   }
 
   private gallerySupportsApplePhotoData(): boolean {
-    return this.gallerySupportsNativeConversion() && this.galleryPhotoIsHeif();
+    return this.galleryPhotoSupportsAppleStyles();
   }
 
   private gallerySupportsPortraitData(): boolean {
-    return this.gallerySupportsApplePhotoData() && this.galleryClassification?.modeKey === 'portrait';
+    return this.gallerySupportsNativeConversion() && this.galleryPhotoIsHeif() &&
+      this.galleryClassification?.modeKey === 'portrait';
   }
 
   private galleryEffectiveSettings(): NativeSettings {
@@ -2653,15 +2664,43 @@ struct Index {
       settings.applePhotographicStyles = false;
       settings.applePhotographicStyles3 = false;
       settings.applePortrait = false;
-    } else if (!this.gallerySupportsPortraitData()) {
-      settings.applePortrait = false;
+    } else {
+      if (!this.gallerySupportsNativeConversion()) {
+        // SDR photos have no OPPO/ProXDR route. The Rust Styles fallback
+        // rebuilds supported HEIC/JPEG/PNG pixels as Apple-standard HEIC.
+        settings.outputMode = 'apple';
+        settings.oppoCompat = 0;
+        settings.oppoCameraTail = 0;
+      }
+      if (!this.gallerySupportsPortraitData()) settings.applePortrait = false;
     }
     return normalizeSettings(settings);
   }
 
-  private galleryPhotoModeSnapshot(): QueueModeSnapshot {
+  private galleryCanConvertInSelectedMode(): boolean {
+    if (this.gallerySupportsNativeConversion()) return true;
+    if (!this.gallerySupportsApplePhotoData()) return false;
+    const settings: NativeSettings = this.galleryEffectiveSettings();
+    return settings.outputMode === 'apple' &&
+      (settings.applePhotographicStyles || settings.applePhotographicStyles3);
+  }
+
+  private galleryConversionUnavailableMessage(): string {
+    if (this.galleryDetails === undefined || this.galleryClassification === undefined || this.galleryImporting) {
+      return '照片信息仍在读取，请稍后再试';
+    }
+    if (!this.gallerySupportsNativeConversion() && !this.gallerySupportsApplePhotoData()) {
+      return '暂不支持转换该图片格式';
+    }
     if (!this.gallerySupportsNativeConversion()) {
-      throw new Error('这张照片不含可转换的 ProXDR 数据');
+      return '请在此照片的转换设置中开启 Apple 摄影风格后再转换';
+    }
+    return '暂不支持转换该图片';
+  }
+
+  private galleryPhotoModeSnapshot(): QueueModeSnapshot {
+    if (!this.galleryCanConvertInSelectedMode()) {
+      throw new Error(this.galleryConversionUnavailableMessage());
     }
     return this.modeSnapshotForSettings(this.galleryEffectiveSettings());
   }
@@ -4081,8 +4120,8 @@ struct Index {
       this.galleryStatus = '请先从图库选择一张已成功读取的照片';
       return;
     }
-    if (!this.gallerySupportsNativeConversion()) {
-      this.galleryStatus = '这张照片不含可转换的 ProXDR 数据';
+    if (!this.galleryCanConvertInSelectedMode()) {
+      this.galleryStatus = this.galleryConversionUnavailableMessage();
       return;
     }
 
@@ -4892,7 +4931,7 @@ struct Index {
     .accessibilityText('转换并保存为本地图库新图')
     .onClick((): void => {
       if (!this.canConvertGalleryPhotoDirectly()) {
-        this.showGallerySuccessToast('暂不支持转换该图片');
+        this.showGallerySuccessToast(this.galleryConversionUnavailableMessage());
         return;
       }
       void this.convertGalleryPhotoDirectly();
@@ -4934,10 +4973,15 @@ struct Index {
         .hitTestBehavior(HitTestMode.Default)
         .accessibilityText('加入转换队列')
         .onClick((): void => {
+          if (!this.galleryCanConvertInSelectedMode()) {
+            const message: string = this.galleryConversionUnavailableMessage();
+            this.galleryStatus = message;
+            this.getUIContext().getPromptAction().showToast({ message: message });
+            return;
+          }
           if (this.galleryQueuePreparing || this.galleryImporting || this.pageBusy ||
-            !this.gallerySupportsNativeConversion() || this.galleryDetails === undefined ||
-            this.galleryClassification === undefined || !this.settingsLoaded || !this.queueLoaded ||
-            !this.queueReady || this.queueRecoveryRequired) return;
+            this.galleryDetails === undefined || this.galleryClassification === undefined ||
+            !this.settingsLoaded || !this.queueLoaded || !this.queueReady || this.queueRecoveryRequired) return;
           void this.convertGallerySelection(false);
         });
       }
@@ -5446,7 +5490,7 @@ struct Index {
         .width('100%');
 
       if (this.gallerySupportedOutputModes().length === 0) {
-        Text('未检测到 XDRemux 支持的 ProXDR 数据，暂时没有可用的转换格式。')
+        Text('此格式暂不支持转换。Apple 摄影风格目前支持 HEIC/HEIF、JPEG 和 PNG。')
           .fontSize(14)
           .fontColor(this.galleryInfoPanelSecondaryTextColor())
           .lineHeight(21)
@@ -5474,7 +5518,8 @@ struct Index {
         if (this.gallerySupportedOutputModes().includes('apple')) {
           Row() {
             Radio({ value: 'apple', group: 'xdremux-gallery-output-mode' })
-              .checked(this.galleryPhotoSettingsView.outputMode === 'apple')
+              .checked(this.galleryPhotoSettingsView.outputMode === 'apple' ||
+                !this.gallerySupportedOutputModes().includes('oppo'))
               .onChange((checked: boolean): void => {
                 if (checked) this.setGalleryPhotoOutputMode('apple');
               });
@@ -5490,7 +5535,8 @@ struct Index {
           });
         }
 
-        if (this.galleryPhotoSettingsView.outputMode === 'oppo') {
+        if (this.galleryPhotoSettingsView.outputMode === 'oppo' &&
+          this.gallerySupportedOutputModes().includes('oppo')) {
           Text('OPPO 兼容模式')
             .fontSize(14)
             .fontColor(this.galleryInfoPanelPrimaryTextColor())
@@ -5533,7 +5579,9 @@ struct Index {
             });
         } else {
           Text(this.gallerySupportsApplePhotoData()
-            ? '本图为 HEIC/HEIF，可用的 Apple 摄影数据选项如下。'
+            ? (this.gallerySupportsNativeConversion()
+              ? '本图可使用 Apple 标准输出及摄影数据选项。'
+              : '普通照片将重建为 Apple 标准 HEIC；开启摄影风格后即可转换。')
             : '本图不支持 Apple 摄影风格或人像数据，因此只显示 Apple 标准输出。')
             .fontSize(12)
             .fontColor(this.galleryInfoPanelSecondaryTextColor())
