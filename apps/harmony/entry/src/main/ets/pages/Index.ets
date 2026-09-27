@@ -5516,9 +5516,9 @@ struct Index {
                             Number(event?.height ?? 0), false);
                         });
                     } else if (tile.item.id === this.galleryCurrentItem?.id &&
-                      this.galleryDetailSelectionIsSwipe) {
-                      // Horizontal swipes use the decoded HDR source directly,
-                      // avoiding a separate SDR layer and its extra handoff.
+                      tile.item.id === this.galleryHeroFallbackItemId) {
+                      // Keep SDR only for the source used by the entrance
+                      // shared-element handoff; the HDR frame is prepared below.
                       Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
@@ -5530,22 +5530,6 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0));
                         });
-                    } else {
-                      if (tile.item.id === this.galleryCurrentItem?.id) {
-                        // Prepare HDR underneath the SDR source while the SDR
-                        // layer remains visible, then crossfade at reveal time.
-                        Image('file://' + tile.path)
-                          .width('100%')
-                          .height('100%')
-                          .orientation(ImageRotateOrientation.AUTO)
-                          .objectFit(ImageFit.Contain)
-                          .autoResize(true)
-                          .dynamicRangeMode(DynamicRangeMode.HIGH)
-                          .onComplete((event): void => {
-                            this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                              Number(event?.height ?? 0));
-                          });
-                      }
                       Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
@@ -5558,6 +5542,20 @@ struct Index {
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
+                        });
+                    } else {
+                      // Pre-decode adjacent Swiper pages in HDR as well, so a
+                      // swipe never promotes a previously visible SDR page.
+                      Image('file://' + tile.path)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Contain)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .onComplete((event): void => {
+                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0));
                         });
                     }
                     if (tile.item.id === this.galleryCurrentItem?.id &&
