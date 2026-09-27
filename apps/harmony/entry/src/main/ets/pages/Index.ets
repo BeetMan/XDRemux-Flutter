@@ -161,6 +161,7 @@ interface GalleryPhotoInspection {
 }
 
 const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
+const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
 const GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT: number = 92;
@@ -3371,14 +3372,17 @@ struct Index {
     this.onGalleryPreviewDecoded(itemId, width, height);
     if (!isHighDynamicRangeImage) return;
     this.galleryDetailDecodedImageIds.add(itemId);
-    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId ||
-      this.galleryDetailImageRevealTimer >= 0) return;
+    if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     if (!this.galleryDetailSelectionUsesDelayedReveal) {
       this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseOut }, () => {
         this.galleryDetailLoadedImageId = itemId;
       });
       return;
     }
+    // Image.onComplete may fire again when the HDR frame is promoted after its
+    // initial decode. Debounce the SDR preview reveal so it stays in place
+    // until the current HDR image has stopped reporting completed frames.
+    this.clearGalleryDetailImageRevealTimer();
     const selectionSerial: number = this.gallerySelectionSerial;
     this.galleryDetailImageRevealTimer = setTimeout((): void => {
       this.galleryDetailImageRevealTimer = -1;
@@ -3387,7 +3391,7 @@ struct Index {
       this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
         this.galleryDetailLoadedImageId = itemId;
       });
-    }, 100);
+    }, GALLERY_DETAIL_HDR_SETTLE_DELAY_MS);
   }
 
   private clearGalleryDetailImageRevealTimer(): void {
