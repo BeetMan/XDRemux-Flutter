@@ -4967,16 +4967,14 @@ struct Index {
       .height(40)
       .systemMaterial(this.galleryTopActionMaterial())
       .backgroundColor(Color.Transparent)
-      .accessibilityText('按住显示 SDR，松开恢复 HDR')
-      .gesture(
-        LongPressGesture({ repeat: false, duration: 450 })
-          .onAction((): void => {
-            void this.beginGallerySdrCompare();
-          })
-          .onActionEnd((): void => {
-            this.endGallerySdrCompare();
-          })
-      )
+      .accessibilityText('按下显示 SDR，松开恢复 HDR')
+      .onTouch((event: TouchEvent): void => {
+        if (event.type === TouchType.Down) {
+          void this.beginGallerySdrCompare();
+        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.endGallerySdrCompare();
+        }
+      })
       .zIndex(22);
     }
   }
