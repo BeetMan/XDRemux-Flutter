@@ -162,6 +162,7 @@ interface GalleryPhotoInspection {
 
 const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
 const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
+const GALLERY_PHOTO_HEADER_REFRESH_DELAY_MS: number = 120;
 const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
@@ -248,6 +249,8 @@ struct Index {
   @State private galleryHeroOpening: boolean = false;
   @State private galleryHeroBackdropOpacity: number = 0;
   @State private galleryPhotoTitleTopPosition: number = 47;
+  @State private galleryPhotoHeaderModel: string = '';
+  @State private galleryPhotoHeaderMode: string = '';
   @State private galleryDisplayImageWidth: number = 0;
   @State private galleryDisplayImageHeight: number = 0;
   @State private galleryZoomScale: number = 1;
@@ -354,6 +357,7 @@ struct Index {
   private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
   private galleryHeroBackdropResetTimer: number = -1;
   private galleryDetailImageRevealTimer: number = -1;
+  private galleryPhotoHeaderRefreshTimer: number = -1;
   private readonly queuePhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private readonly galleryPhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private batchPickerActive: boolean = false;
@@ -435,6 +439,7 @@ struct Index {
 
   aboutToDisappear(): void {
     this.pageVisible = false;
+    this.clearGalleryPhotoHeaderRefreshTimer();
     this.ensureGalleryStatusBarVisible();
     this.endGallerySdrCompare();
     // Page teardown is a real departure, unlike the temporary hide caused by
@@ -3052,10 +3057,15 @@ struct Index {
     const selectionSerial: number = this.gallerySelectionSerial + 1;
     this.gallerySelectionSerial = selectionSerial;
     this.clearGalleryDetailImageRevealTimer();
+    this.clearGalleryPhotoHeaderRefreshTimer();
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
     this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
     this.galleryDetailSelectionIsSwipe = delayHdrReveal && !shouldOpenDetail && this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
+    if (shouldOpenDetail && cachedInspection === undefined) {
+      this.galleryPhotoHeaderModel = '';
+      this.galleryPhotoHeaderMode = '';
+    }
     const cachedSystemHdr: boolean | undefined = this.gallerySystemHdrCache.get(tile.item.id);
     this.gallerySystemImageIsHdr = cachedSystemHdr === true;
     if (shouldOpenDetail) {
@@ -3136,6 +3146,7 @@ struct Index {
     }
     if (cachedInspection !== undefined) {
       this.galleryCopiedBytes = tile.item.size;
+      this.scheduleGalleryPhotoHeaderRefresh(tile.item.id, selectionSerial);
       if (shouldOpenDetail) {
         this.galleryHeroMetadataReady = true;
         this.tryStartGalleryHeroTransition(tile.item.id);
@@ -3170,9 +3181,11 @@ struct Index {
       this.galleryClassification = classification;
       this.galleryStatus = '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
         String(details.width ?? 0) + ' × ' + String(details.height ?? 0);
+      this.scheduleGalleryPhotoHeaderRefresh(tile.item.id, selectionSerial);
     } catch (error) {
       if (selectionSerial === this.gallerySelectionSerial) {
         this.galleryStatus = '读取本地照片失败：' + this.errorMessage(error);
+        this.scheduleGalleryPhotoHeaderRefresh(tile.item.id, selectionSerial, true);
         if (shouldOpenDetail) {
           this.galleryHeroMetadataReady = true;
           this.tryStartGalleryHeroTransition(tile.item.id);
@@ -3241,6 +3254,7 @@ struct Index {
 
   private closeGalleryDetail(): void {
     this.clearGalleryDetailImageRevealTimer();
+    this.clearGalleryPhotoHeaderRefreshTimer();
     if (!this.galleryDetailVisible) return;
     this.endGallerySdrCompare();
     this.gallerySelectionSerial += 1;
@@ -3514,7 +3528,8 @@ struct Index {
     if (this.galleryDetailSelectionIsSwipe) {
       // Swipe pages render their HDR source directly; no SDR-to-HDR fade is
       // needed once the image source itself is already the displayed layer.
-      this.galleryDetailLoadedImageId = itemId;
+      // Avoid invalidating the Swiper with a reveal-state update that its
+      // swipe branch does not consume.
       return;
     }
     if (!this.galleryDetailSelectionUsesDelayedReveal) {
@@ -4404,11 +4419,35 @@ struct Index {
     return '未识别模式';
   }
 
+  private clearGalleryPhotoHeaderRefreshTimer(): void {
+    if (this.galleryPhotoHeaderRefreshTimer < 0) return;
+    clearTimeout(this.galleryPhotoHeaderRefreshTimer);
+    this.galleryPhotoHeaderRefreshTimer = -1;
+  }
+
+  private scheduleGalleryPhotoHeaderRefresh(
+    itemId: string,
+    selectionSerial: number,
+    allowIncompleteInspection: boolean = false
+  ): void {
+    this.clearGalleryPhotoHeaderRefreshTimer();
+    if (!allowIncompleteInspection &&
+      (this.galleryDetails === undefined || this.galleryClassification === undefined)) return;
+    this.galleryPhotoHeaderRefreshTimer = setTimeout((): void => {
+      this.galleryPhotoHeaderRefreshTimer = -1;
+      if (selectionSerial !== this.gallerySelectionSerial || itemId !== this.galleryCurrentItem?.id) return;
+      if (!allowIncompleteInspection &&
+        (this.galleryDetails === undefined || this.galleryClassification === undefined)) return;
+      this.galleryPhotoHeaderModel = this.galleryCameraModelLabel();
+      this.galleryPhotoHeaderMode = this.galleryPhotoModeLabel();
+    }, GALLERY_PHOTO_HEADER_REFRESH_DELAY_MS);
+  }
+
   @Builder
   private galleryPhotoTitleOverlay() {
     if (this.galleryDetailMounted && this.galleryChromeVisible) {
       Column() {
-        Text(this.galleryCameraModelLabel())
+        Text(this.galleryPhotoHeaderModel)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -4421,7 +4460,7 @@ struct Index {
           step: 1.2,
           loop: -1,
           fromStart: true,
-          src: this.galleryPhotoModeLabel(),
+          src: this.galleryPhotoHeaderMode,
           delay: 1000
         })
           .width('100%')
@@ -4593,6 +4632,9 @@ struct Index {
         this.galleryCurrentItem = undefined;
         this.galleryDetails = undefined;
         this.galleryClassification = undefined;
+        this.clearGalleryPhotoHeaderRefreshTimer();
+        this.galleryPhotoHeaderModel = '';
+        this.galleryPhotoHeaderMode = '';
         this.gallerySystemImageIsHdr = false;
         this.gallerySandboxPath = '';
         this.galleryMimeType = '';
@@ -4771,7 +4813,7 @@ struct Index {
                   .clip(true)
                   .borderRadius(10)
                   .backgroundColor($r('sys.color.background_tertiary'))
-                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
+                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive
                     ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
                   .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
                   .transition(TransitionEffect.IDENTITY)
@@ -4860,32 +4902,47 @@ struct Index {
   @Builder
   private galleryQueueActionTab() {
     Stack({ alignContent: Alignment.Center }) {
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
-        SymbolGlyph($r('sys.symbol.plus'))
-          .fontSize(25)
-          .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+      Column() {
+        Button({ type: ButtonType.Circle, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(24)
+            .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
+            .hitTestBehavior(HitTestMode.None);
+        }
+        .width(48)
+        .height(48)
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(new uiMaterial.ImmersiveMaterial({
+          style: uiMaterial.ImmersiveStyle.THIN,
+          materialColor: this.systemAccentColorWithAlpha(0.72),
+          interactive: true,
+          lightEffect: { color: this.systemAccentColorWithAlpha(0.58) }
+        }))
+        .hitTestBehavior(HitTestMode.Default)
+        .accessibilityText('加入转换队列')
+        .onClick((): void => {
+          if (this.galleryQueuePreparing || this.galleryImporting || this.pageBusy ||
+            !this.gallerySupportsNativeConversion() || this.galleryDetails === undefined ||
+            this.galleryClassification === undefined || !this.settingsLoaded || !this.queueLoaded ||
+            !this.queueReady || this.queueRecoveryRequired) return;
+          void this.convertGallerySelection(false);
+        });
+        Text('加入队列')
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .maxLines(1)
+          .height(12)
           .hitTestBehavior(HitTestMode.None);
       }
-      .width(52)
-      .height(52)
-      .systemMaterial(new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.THIN,
-        materialColor: this.systemAccentColorWithAlpha(0.72),
-        interactive: true,
-        lightEffect: { color: this.systemAccentColorWithAlpha(0.58) }
-      }))
-      .hitTestBehavior(HitTestMode.Default)
-      .accessibilityText('加入转换队列')
-      .onClick((): void => {
-        if (this.galleryQueuePreparing || this.galleryImporting || this.pageBusy ||
-          !this.gallerySupportsNativeConversion() || this.galleryDetails === undefined ||
-          this.galleryClassification === undefined || !this.settingsLoaded || !this.queueLoaded ||
-          !this.queueReady || this.queueRecoveryRequired) return;
-        void this.convertGallerySelection(false);
-      });
+      .width('100%')
+      .height(60)
+      .justifyContent(FlexAlign.Start)
+      .alignItems(HorizontalAlign.Center)
+      .offset({ x: 0, y: -4 });
     }
     .width('100%')
-    .height('100%')
+    .height(60)
     .zIndex(2)
     .hitTestBehavior(HitTestMode.Transparent);
   }
@@ -5027,7 +5084,7 @@ struct Index {
       }
       .width(40)
       .height(40)
-      .backgroundEffect({ radius: 22, saturation: 1.12, brightness: 1.0 })
+      .backgroundEffect({ radius: 24, saturation: 1.12, brightness: 1.0 })
       .backgroundColor(this.isSystemDarkMode() ? '#66000000' : '#66FFFFFF')
       .accessibilityText('按下显示 SDR，松开恢复 HDR')
       .onTouch((event: TouchEvent): void => {
@@ -5648,7 +5705,7 @@ struct Index {
                     y: (tile.item.id === this.galleryCurrentItem?.id ? this.galleryPanOffsetY : 0) +
                       this.galleryPhotoVerticalOffset()
                   })
-                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id
+                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive
                     ? this.galleryTransitionId(tile.item.id) : '')
                   .transition(TransitionEffect.IDENTITY);
                 }
@@ -5760,7 +5817,7 @@ struct Index {
         },
         content: {
           title: {
-            mainTitle: this.galleryCameraModelLabel(),
+            mainTitle: this.galleryPhotoHeaderModel,
             subTitle: ''
           },
           stackBuilder: (): void => this.galleryDetailTopActionBar()
@@ -5808,7 +5865,9 @@ struct Index {
           TabContent() {
             this.galleryActionTabContent();
           }
-          .tabBar(this.galleryQueueActionTab())
+          .tabBar(bleedIconStyle(() => {
+            this.galleryQueueActionTab();
+          }))
 
           TabContent() {
             this.galleryActionTabContent();
