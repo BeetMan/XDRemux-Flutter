@@ -162,6 +162,7 @@ interface GalleryPhotoInspection {
 
 const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
 const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
+const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
 const GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT: number = 92;
@@ -263,6 +264,8 @@ struct Index {
   @State private galleryPhotos: Array<GalleryPhotoTile> = [];
   @State private galleryLoadedPreviewIds: Array<string> = [];
   @State private galleryDetailLoadedImageId: string = '';
+  @State private galleryHeroPreviewPixelMap: image.PixelMap | undefined = undefined;
+  @State private galleryHeroPreviewItemId: string = '';
   @State private galleryCachedThumbnailIds: Array<string> = [];
   @State private galleryThumbnailDecodeFailedIds: Array<string> = [];
   @State private gallerySdrCompareHolding: boolean = false;
@@ -308,6 +311,7 @@ struct Index {
     new Map<string, GalleryPhotoInspection>();
   private readonly galleryDecodedDimensionsCache: Map<string, Array<number>> = new Map<string, Array<number>>();
   private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  private readonly galleryHeroPreviewDecodeFailedIds: Set<string> = new Set<string>();
   private readonly galleryDetailDecodedImageIds: Set<string> = new Set<string>();
   private readonly galleryThumbnailDecodeInFlight: Set<string> = new Set<string>();
   private readonly gallerySwiperDataSource: GalleryPhotoDataSource = new GalleryPhotoDataSource();
@@ -3073,8 +3077,12 @@ struct Index {
       this.galleryHeroMetadataReady = false;
       this.galleryHeroPreloadPending = true;
       this.touchGalleryThumbnail(tile);
-      this.galleryHeroPlaceholderReady = this.galleryThumbnailPixelMapCache.has(tile.item.id) ||
-        this.galleryThumbnailDecodeFailedIds.includes(tile.item.id);
+      this.galleryHeroPlaceholderReady = this.galleryHeroPreviewItemId === tile.item.id &&
+        this.galleryHeroPreviewPixelMap !== undefined;
+      if (!this.galleryHeroPlaceholderReady) {
+        this.galleryHeroPreviewDecodeFailedIds.delete(tile.item.id);
+        void this.decodeGalleryHeroPreview(tile, selectionSerial);
+      }
     }
     if (cachedInspection !== undefined) {
       this.galleryCopiedBytes = tile.item.size;
@@ -3143,8 +3151,10 @@ struct Index {
     if (!this.galleryHeroPreloadPending || itemId !== this.galleryHeroPreloadItemId ||
       itemId !== this.galleryCurrentItem?.id || !this.galleryHeroPlaceholderReady ||
       !this.galleryHeroMetadataReady || this.galleryViewportWidth <= 0 || this.galleryViewportHeight <= 0) return;
-    if (!this.galleryThumbnailPixelMapCache.has(itemId) &&
-      !this.galleryThumbnailDecodeFailedIds.includes(itemId)) return;
+    if (this.galleryHeroPreviewItemId !== itemId || this.galleryHeroPreviewPixelMap === undefined) {
+      if (!this.galleryThumbnailPixelMapCache.has(itemId) &&
+        !this.galleryThumbnailDecodeFailedIds.includes(itemId)) return;
+    }
     this.galleryHeroPreloadPending = false;
     this.galleryHeroPreloadItemId = '';
     this.galleryHeroPlaceholderReady = false;
@@ -3259,6 +3269,78 @@ struct Index {
     }
   }
 
+  private galleryDetailPreviewPixelMap(itemId: string): image.PixelMap | undefined {
+    if (this.galleryHeroPreviewItemId === itemId && this.galleryHeroPreviewPixelMap !== undefined) {
+      return this.galleryHeroPreviewPixelMap;
+    }
+    return this.galleryThumbnailPixelMapCache.get(itemId);
+  }
+
+  private async decodeGalleryHeroPreview(tile: GalleryPhotoTile, selectionSerial: number): Promise<void> {
+    let imageSource: image.ImageSource | undefined = undefined;
+    let pixelMap: image.PixelMap | undefined = undefined;
+    try {
+      imageSource = image.createImageSource('file://' + tile.path);
+      let sourceWidth: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0;
+      let sourceHeight: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0;
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
+        sourceWidth = imageInfo.size.width;
+        sourceHeight = imageInfo.size.height;
+      }
+      if (sourceWidth <= 0 || sourceHeight <= 0) throw new Error('无法读取照片尺寸');
+      const previewScale: number = Math.min(1, GALLERY_HERO_PREVIEW_MAX_EDGE /
+        Math.max(sourceWidth, sourceHeight));
+      pixelMap = await imageSource.createPixelMap({
+        desiredSize: {
+          width: Math.max(1, Math.round(sourceWidth * previewScale)),
+          height: Math.max(1, Math.round(sourceHeight * previewScale))
+        },
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+        desiredDynamicRange: image.DecodingDynamicRange.SDR
+      });
+      if (pixelMap === undefined) throw new Error('无法生成高分辨率预览');
+      if (selectionSerial !== this.gallerySelectionSerial || this.galleryCurrentItem?.id !== tile.item.id) return;
+      const previousPixelMap: image.PixelMap | undefined = this.galleryHeroPreviewPixelMap;
+      this.galleryHeroPreviewItemId = tile.item.id;
+      this.galleryHeroPreviewPixelMap = pixelMap;
+      this.galleryHeroPreviewDecodeFailedIds.delete(tile.item.id);
+      pixelMap = undefined;
+      if (previousPixelMap !== undefined) {
+        setTimeout((): void => {
+          void previousPixelMap.release();
+        }, 240);
+      }
+      if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id) {
+        this.galleryHeroPlaceholderReady = true;
+        this.tryStartGalleryHeroTransition(tile.item.id);
+      }
+    } catch (error) {
+      if (selectionSerial === this.gallerySelectionSerial && this.galleryCurrentItem?.id === tile.item.id &&
+        this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id) {
+        this.galleryHeroPreviewDecodeFailedIds.add(tile.item.id);
+        this.galleryHeroPlaceholderReady = this.galleryThumbnailPixelMapCache.has(tile.item.id) ||
+          this.galleryThumbnailDecodeFailedIds.includes(tile.item.id);
+        this.tryStartGalleryHeroTransition(tile.item.id);
+      }
+    } finally {
+      if (imageSource !== undefined) {
+        try {
+          await imageSource.release();
+        } catch (releaseError) {
+          // A decoded hero preview no longer depends on its image source.
+        }
+      }
+      if (pixelMap !== undefined) {
+        try {
+          await pixelMap.release();
+        } catch (releaseError) {
+          // Release a preview that became stale before reaching the view state.
+        }
+      }
+    }
+  }
+
   private touchGalleryThumbnail(tile: GalleryPhotoTile): void {
     const cachedPixelMap: image.PixelMap | undefined = this.galleryThumbnailPixelMapCache.get(tile.item.id);
     if (cachedPixelMap !== undefined) {
@@ -3305,7 +3387,8 @@ struct Index {
       pixelMap = undefined;
       if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id &&
         this.galleryCurrentItem?.id === tile.item.id) {
-        this.galleryHeroPlaceholderReady = true;
+        this.galleryHeroPlaceholderReady = (this.galleryHeroPreviewItemId === tile.item.id &&
+          this.galleryHeroPreviewPixelMap !== undefined) || this.galleryHeroPreviewDecodeFailedIds.has(tile.item.id);
       }
       this.tryStartGalleryHeroTransition(tile.item.id);
     } catch (error) {
@@ -3314,7 +3397,8 @@ struct Index {
       }
       if (this.galleryHeroPreloadPending && this.galleryHeroPreloadItemId === tile.item.id &&
         this.galleryCurrentItem?.id === tile.item.id) {
-        this.galleryHeroPlaceholderReady = true;
+        this.galleryHeroPlaceholderReady = (this.galleryHeroPreviewItemId === tile.item.id &&
+          this.galleryHeroPreviewPixelMap !== undefined) || this.galleryHeroPreviewDecodeFailedIds.has(tile.item.id);
       }
       this.tryStartGalleryHeroTransition(tile.item.id);
     } finally {
@@ -5396,33 +5480,8 @@ struct Index {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0), false);
                         });
-                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening &&
-                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
-                      // The shared-element snapshot can outlive the source
-                      // decode. Use the already decoded SDR preview as its
-                      // destination so the first detail frame is never blank.
-                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
-                        .width('100%')
-                        .height('100%')
-                        .orientation(ImageRotateOrientation.AUTO)
-                        .objectFit(ImageFit.Contain)
-                        .autoResize(true)
-                        .dynamicRangeMode(DynamicRangeMode.STANDARD);
-                    } else if (tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroOpening) {
-                      // If thumbnail decoding failed, keep the previous SDR
-                      // fallback and promote it only after the transition.
-                      Image('file://' + tile.path)
-                        .width('100%')
-                        .height('100%')
-                        .orientation(ImageRotateOrientation.AUTO)
-                        .objectFit(ImageFit.Contain)
-                        .autoResize(true)
-                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                        .onComplete((event): void => {
-                          this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0), false);
-                        });
-                    } else {
+                    } else if (tile.item.id !== this.galleryCurrentItem?.id || !this.galleryHeroOpening ||
+                      this.galleryDetailPreviewPixelMap(tile.item.id) === undefined) {
                       Image('file://' + tile.path)
                         .width('100%')
                         .height('100%')
@@ -5430,22 +5489,27 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(tile.item.id === this.galleryCurrentItem?.id
-                          ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
+                          && !this.galleryHeroOpening ? DynamicRangeMode.HIGH : DynamicRangeMode.STANDARD)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
-                            Number(event?.height ?? 0));
+                            Number(event?.height ?? 0), tile.item.id !== this.galleryCurrentItem?.id ||
+                              !this.galleryHeroOpening);
                         });
                     }
-                    if (tile.item.id === this.galleryCurrentItem?.id && !this.galleryHeroOpening &&
-                      this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
-                      Image(this.galleryThumbnailPixelMapCache.get(tile.item.id) as image.PixelMap)
+                    if (tile.item.id === this.galleryCurrentItem?.id &&
+                      this.galleryDetailPreviewPixelMap(tile.item.id) !== undefined) {
+                      // Keep this exact SDR preview node alive across the
+                      // shared-element handoff; only fade it after the HDR
+                      // image has settled underneath.
+                      Image(this.galleryDetailPreviewPixelMap(tile.item.id) as image.PixelMap)
                         .width('100%')
                         .height('100%')
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                        .opacity(this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
+                        .opacity(!this.galleryHeroOpening &&
+                          this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
                   }
