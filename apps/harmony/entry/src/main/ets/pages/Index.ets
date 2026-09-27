@@ -7113,19 +7113,17 @@ struct Index {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: '#FFFFFFFF',
       systemMaterialEffect: {
-        materialType: this.hdsTabBarMaterialType(),
-        materialLevel: this.hdsTabBarMaterialLevel()
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       }
     } : {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
-      lightColor: '#FFFFFFFF',
       systemMaterialEffect: {
-        materialType: this.hdsTabBarMaterialType(),
-        materialLevel: this.hdsTabBarMaterialLevel()
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       },
       miniBar: {
         miniBarBuilder: () => this.importMiniBar(),
