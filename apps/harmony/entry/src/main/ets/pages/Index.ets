@@ -4391,6 +4391,16 @@ struct Index {
       : hdsMaterial.MaterialLevel.SMOOTH;
   }
 
+  @Available({ minApiVersion: '26.0.0' })
+  private hdsTabBarMaterialType(): hdsMaterial.MaterialType {
+    return hdsMaterial.MaterialType.IMMERSIVE;
+  }
+
+  @Available({ minApiVersion: '26.0.0' })
+  private hdsTabBarMaterialLevel(): hdsMaterial.MaterialLevel {
+    return hdsMaterial.MaterialLevel.EXQUISITE;
+  }
+
   private systemAccentColorWithAlpha(alpha: number): string {
     try {
       const accent: ColorMetrics = ColorMetrics.resourceColor($r('sys.color.ohos_id_color_activated'));
@@ -5555,8 +5565,8 @@ struct Index {
           adaptToHandedness: false,
           barOpacity: 1,
           systemMaterialEffect: {
-            materialType: this.hdsSystemMaterialType(),
-            materialLevel: this.hdsSystemMaterialLevel()
+            materialType: this.hdsTabBarMaterialType(),
+            materialLevel: this.hdsTabBarMaterialLevel()
           }
         })
         .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.TOP])
@@ -6999,27 +7009,54 @@ struct Index {
       }
       .tabBar(new BottomTabBarStyle({
         normal: new SymbolGlyphModifier($r('sys.symbol.picture'))
-          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
+          .fontColor([$r('sys.color.font_primary')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
-      }, '图库'))
+          .fontColor([$r('sys.color.ohos_id_color_activated')])
+      }, '图库')
+        .labelStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        })
+        .iconStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        }))
 
       TabContent() {
         this.queuePage();
       }
       .tabBar(new BottomTabBarStyle({
         normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
-          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
+          .fontColor([$r('sys.color.font_primary')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
-      }, '队列'))
+          .fontColor([$r('sys.color.ohos_id_color_activated')])
+      }, '队列')
+        .labelStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        })
+        .iconStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        }))
 
       TabContent() {
         this.settingsPage();
       }
       .tabBar(new BottomTabBarStyle({
         normal: new SymbolGlyphModifier($r('sys.symbol.gearshape'))
-          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
+          .fontColor([$r('sys.color.font_primary')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
-      }, '设置'))
+          .fontColor([$r('sys.color.ohos_id_color_activated')])
+      }, '设置')
+        .labelStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        })
+        .iconStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        }))
     }
     .barPosition(BarPosition.End)
     .vertical(false)
@@ -7036,8 +7073,8 @@ struct Index {
       adaptToHandedness: true,
       lightColor: this.systemAccentColorWithAlpha(0.4),
       systemMaterialEffect: {
-        materialType: this.hdsSystemMaterialType(),
-        materialLevel: this.hdsSystemMaterialLevel()
+        materialType: this.hdsTabBarMaterialType(),
+        materialLevel: this.hdsTabBarMaterialLevel()
       }
     } : {
       barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
@@ -7045,8 +7082,8 @@ struct Index {
       adaptToHandedness: true,
       lightColor: this.systemAccentColorWithAlpha(0.4),
       systemMaterialEffect: {
-        materialType: this.hdsSystemMaterialType(),
-        materialLevel: this.hdsSystemMaterialLevel()
+        materialType: this.hdsTabBarMaterialType(),
+        materialLevel: this.hdsTabBarMaterialLevel()
       },
       miniBar: {
         miniBarBuilder: () => this.importMiniBar(),
