@@ -6197,6 +6197,34 @@ struct Index {
     }
   }
 
+  @Builder
+  private queueFilterInlineChips(): void {
+    ChipGroup({
+      items: [
+        { label: { text: '全部 ' + String(this.queueItems.length) } },
+        { label: { text: '待处理 ' + String(this.queuePendingCount()) } },
+        { label: { text: '已完成 ' + String(this.queueCount('succeeded')) } },
+        { label: { text: '失败 ' + String(this.queueCount('failed')) } }
+      ],
+      itemStyle: {
+        size: ChipSize.SMALL,
+        backgroundColor: $r('sys.color.background_secondary'),
+        selectedBackgroundColor: $r('sys.color.ohos_id_color_emphasize'),
+        fontColor: $r('sys.color.font_secondary'),
+        selectedFontColor: $r('sys.color.ohos_id_color_primary_contrary')
+      },
+      selectedIndexes: [this.queueFilterIndex()],
+      multiple: false,
+      chipGroupSpace: { itemSpace: 6, startSpace: 0, endSpace: 0 },
+      chipGroupPadding: { top: 0, bottom: 0 },
+      onChange: (activeIndexes: Array<number>): void => {
+        if (activeIndexes.length > 0) {
+          this.setQueueFilterByIndex(activeIndexes[0]);
+        }
+      }
+    });
+  }
+
   @Available({ minApiVersion: '26.0.0' })
   @Builder
   private queueFilterTitleBarChips(): void {
@@ -6240,34 +6268,6 @@ struct Index {
     .width('100%')
     .height(56)
     .alignItems(VerticalAlign.Center);
-  }
-
-  @Builder
-  private queueFilterChip(label: string, count: number,
-    filter: 'all' | 'pending' | 'succeeded' | 'failed'): void {
-    Button() {
-      Row({ space: 5 }) {
-        Text(label)
-          .fontSize(12)
-          .fontWeight(this.queueFilter === filter ? FontWeight.Medium : FontWeight.Regular)
-          .fontColor(this.queueFilter === filter ? $r('sys.color.ohos_id_color_activated') :
-            $r('sys.color.font_secondary'));
-        Text(String(count))
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.queueFilter === filter ? $r('sys.color.ohos_id_color_activated') :
-            $r('sys.color.font_secondary'));
-      }
-      .justifyContent(FlexAlign.Center);
-    }
-      .layoutWeight(1)
-      .height(36)
-      .backgroundColor(this.queueFilter === filter ? $r('sys.color.background_tertiary') :
-        $r('sys.color.background_secondary'))
-      .borderRadius(18)
-      .onClick((): void => {
-        this.queueFilter = filter;
-      });
   }
 
   private queueItemExtension(item: QueueItem): string {
@@ -7709,64 +7709,8 @@ struct Index {
           }
 
           if (this.queueLoaded && this.queueItems.length > 0) {
-            Row({ space: 8 }) {
-              Column() {
-                Text(String(this.queueItems.length))
-                  .fontSize(22)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('sys.color.font_primary'));
-                Text('全部照片')
-                  .fontSize(11)
-                  .fontColor($r('sys.color.font_secondary'));
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1);
-              Column() {
-                Text(String(this.queuePendingCount()))
-                  .fontSize(22)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('sys.color.ohos_id_color_activated'));
-                Text('待处理')
-                  .fontSize(11)
-                  .fontColor($r('sys.color.font_secondary'));
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1);
-              Column() {
-                Text(String(this.queueCount('succeeded')))
-                  .fontSize(22)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('sys.color.ohos_id_color_connected'));
-                Text('已完成')
-                  .fontSize(11)
-                  .fontColor($r('sys.color.font_secondary'));
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1);
-              Column() {
-                Text(String(this.queueCount('failed')))
-                  .fontSize(22)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(this.queueCount('failed') > 0 ? $r('sys.color.ohos_id_color_alert') :
-                    $r('sys.color.font_secondary'));
-                Text('失败')
-                  .fontSize(11)
-                  .fontColor($r('sys.color.font_secondary'));
-              }
-              .alignItems(HorizontalAlign.Start)
-              .layoutWeight(1);
-            }
-            .width('100%')
-            .padding(14)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .borderRadius(16)
-            .margin({ bottom: 12 });
-
-            Row({ space: 6 }) {
-              this.queueFilterChip('全部', this.queueItems.length, 'all');
-              this.queueFilterChip('待处理', this.queuePendingCount(), 'pending');
-              this.queueFilterChip('已完成', this.queueCount('succeeded'), 'succeeded');
-              this.queueFilterChip('失败', this.queueCount('failed'), 'failed');
+            Row() {
+              this.queueFilterInlineChips();
             }
             .width('100%')
             .visibility(this.queueFilterHeaderPinned() ? Visibility.Hidden : Visibility.Visible)
@@ -7924,11 +7868,12 @@ struct Index {
                 '从文件选择照片，或在图库中把照片加入队列')
                 .fontSize(13)
                 .fontColor($r('sys.color.font_secondary'))
-                .textAlign(TextAlign.Center)
+                .textAlign(TextAlign.Start)
                 .width('100%')
                 .margin({ bottom: 14 });
               Button('选择照片并加入队列')
                 .fontSize(14)
+                .width('100%')
                 .height(44)
                 .enabled(this.queueLoaded && this.queueReady && !this.queueLoading &&
                   !this.queueRecoveryRequired && !this.queuePersistenceFailed() &&
@@ -7937,9 +7882,9 @@ struct Index {
                   this.chooseAndImport(false);
                 });
             }
-            .alignItems(HorizontalAlign.Center)
+            .alignItems(HorizontalAlign.Start)
             .width('100%')
-            .padding({ left: 24, right: 24, top: 36, bottom: 36 })
+            .padding({ left: 18, right: 18, top: 20, bottom: 20 })
             .backgroundColor($r('sys.color.background_secondary'))
             .borderRadius(20)
             .margin({ top: 8, bottom: 18 });
