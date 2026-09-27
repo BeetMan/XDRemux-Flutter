@@ -162,6 +162,8 @@ interface GalleryPhotoInspection {
 
 const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
 const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
+const GALLERY_DETAIL_HDR_SWIPE_SETTLE_DELAY_MS: number = 60;
+const GALLERY_DETAIL_HDR_SWIPE_REVEAL_DURATION_MS: number = 130;
 const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
@@ -344,6 +346,7 @@ struct Index {
   private galleryGestureAxis: 'none' | 'horizontal' | 'vertical' = 'none';
   private gallerySelectionSerial: number = 0;
   private galleryDetailSelectionUsesDelayedReveal: boolean = false;
+  private galleryDetailSelectionIsSwipe: boolean = false;
   private gallerySdrDecodeSerial: number = 0;
   private gallerySdrPreviewItemId: string = '';
   private galleryChromeToggleBlockedUntil: number = 0;
@@ -3022,8 +3025,9 @@ struct Index {
     const selectionSerial: number = this.gallerySelectionSerial + 1;
     this.gallerySelectionSerial = selectionSerial;
     this.clearGalleryDetailImageRevealTimer();
-    this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
     const shouldOpenDetail: boolean = openDetail && !this.galleryDetailVisible;
+    this.galleryDetailSelectionUsesDelayedReveal = delayHdrReveal;
+    this.galleryDetailSelectionIsSwipe = delayHdrReveal && !shouldOpenDetail && this.galleryDetailVisible;
     const cachedInspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
     if (shouldOpenDetail || delayHdrReveal) {
       // A decoded image from a previous visit does not guarantee the newly
@@ -3483,10 +3487,15 @@ struct Index {
       });
       return;
     }
-    this.scheduleGalleryDetailImageReveal(itemId);
+    this.scheduleGalleryDetailImageReveal(itemId,
+      this.galleryDetailSelectionIsSwipe ? GALLERY_DETAIL_HDR_SWIPE_SETTLE_DELAY_MS :
+        GALLERY_DETAIL_HDR_SETTLE_DELAY_MS,
+      this.galleryDetailSelectionIsSwipe ? GALLERY_DETAIL_HDR_SWIPE_REVEAL_DURATION_MS : 220);
   }
 
-  private scheduleGalleryDetailImageReveal(itemId: string): void {
+  private scheduleGalleryDetailImageReveal(itemId: string,
+    settleDelayMs: number = GALLERY_DETAIL_HDR_SETTLE_DELAY_MS,
+    revealDurationMs: number = 220): void {
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     // Image.onComplete may fire again when the HDR frame is promoted after its
     // initial decode. Debounce the SDR preview reveal so it stays in place
@@ -3497,10 +3506,10 @@ struct Index {
       this.galleryDetailImageRevealTimer = -1;
       if (selectionSerial !== this.gallerySelectionSerial || itemId !== this.galleryCurrentItem?.id ||
         !this.galleryDetailVisible || this.galleryHeroOpening) return;
-      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.getUIContext().animateTo({ duration: revealDurationMs, curve: Curve.EaseOut }, () => {
         this.galleryDetailLoadedImageId = itemId;
       });
-    }, GALLERY_DETAIL_HDR_SETTLE_DELAY_MS);
+    }, settleDelayMs);
   }
 
   private clearGalleryDetailImageRevealTimer(): void {
