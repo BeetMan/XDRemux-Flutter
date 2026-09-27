@@ -6510,7 +6510,7 @@ struct Index {
             .width('100%')
             .margin({ top: 6 });
         }
-        Text('当前转换：' + modeLabel(this.queuePhotoSettingsView))
+        Text('当前转换：' + this.queuePhotoModeLabel(this.queuePhotoSettingsView))
           .fontSize(12)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
@@ -7305,9 +7305,10 @@ struct Index {
             .alignItems(HorizontalAlign.Start)
             .width('100%')
             .padding(14)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .borderRadius(12)
-            .margin({ top: 8, bottom: 18 });
+            .backgroundColor($r('sys.color.background_tertiary'))
+            .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+            .borderRadius(18)
+            .margin({ top: 10, bottom: 4 });
   }
 
   @Builder
@@ -7506,12 +7507,20 @@ struct Index {
 
   private queueItemModeLabel(item: QueueItem): string {
     if (item.modeOverride !== undefined) {
-      return modeLabel(this.settingsFromModeSnapshot(item.modeOverride));
+      return this.queuePhotoModeLabel(this.settingsFromModeSnapshot(item.modeOverride));
     }
     if (item.lastAttemptModeLabel.length > 0) {
-      return item.lastAttemptModeLabel.replace('摄影风格 · 摄影风格 3', '摄影风格 3');
+      const label: string = item.lastAttemptModeLabel.replace('摄影风格 · 摄影风格 3', '摄影风格 3');
+      return label.startsWith('OPPO 兼容 · 兼容模式：OPPO 兼容') ? 'OPPO 兼容' : label;
     }
     return '使用当前转换设置';
+  }
+
+  private queuePhotoModeLabel(settings: NativeSettings): string {
+    if (settings.outputMode === 'oppo' && (settings.oppoCompat === 2 || settings.oppoCompat === 3)) {
+      return 'OPPO 兼容';
+    }
+    return modeLabel(settings);
   }
 
   @Builder
@@ -8099,7 +8108,7 @@ struct Index {
   private importMiniBar() {
     if (this.importMiniBarExpanded) {
       if (this.mainTabIndex === 1) {
-        Row() {
+        Row({ space: 8 }) {
           Button({ type: ButtonType.Circle }) {
             SymbolGlyph($r('sys.symbol.plus'))
               .fontSize(24)
@@ -8144,7 +8153,7 @@ struct Index {
             .hitTestBehavior(HitTestMode.None);
           }
             .buttonStyle(ButtonStyleMode.NORMAL)
-            .width(196)
+            .width(204)
             .height(52)
             .backgroundColor(this.systemAccentColorWithAlpha(0.72))
             .systemMaterial(new uiMaterial.ImmersiveMaterial({
@@ -8163,7 +8172,7 @@ struct Index {
         }
         .width(280)
         .height(56)
-        .justifyContent(FlexAlign.Center)
+        .justifyContent(FlexAlign.Start)
         .padding({ left: 8, right: 8 });
       } else {
         Row({ space: 8 }) {
