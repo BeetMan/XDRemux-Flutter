@@ -265,7 +265,6 @@ struct Index {
   @State private galleryPhotos: Array<GalleryPhotoTile> = [];
   @State private galleryLoadedPreviewIds: Array<string> = [];
   @State private galleryDetailLoadedImageId: string = '';
-  @State private galleryDetailStandardLoadedImageId: string = '';
   @State private galleryHeroFallbackItemId: string = '';
   @State private galleryHeroPreviewPixelMap: image.PixelMap | undefined = undefined;
   @State private galleryHeroPreviewItemId: string = '';
@@ -3037,11 +3036,9 @@ struct Index {
     }
     if (shouldOpenDetail) {
       this.galleryHeroFallbackItemId = tile.item.id;
-      this.galleryDetailStandardLoadedImageId = '';
     } else if (tile.item.id !== this.galleryCurrentItem?.id) {
       // The low-resolution hero preview must not follow a swipe selection.
       this.galleryHeroFallbackItemId = '';
-      this.galleryDetailStandardLoadedImageId = '';
     }
     this.galleryZoomScale = 1;
     this.galleryPanOffsetX = 0;
@@ -3476,10 +3473,7 @@ struct Index {
     isHighDynamicRangeImage: boolean = true
   ): void {
     this.onGalleryPreviewDecoded(itemId, width, height);
-    if (!isHighDynamicRangeImage) {
-      if (itemId === this.galleryCurrentItem?.id) this.galleryDetailStandardLoadedImageId = itemId;
-      return;
-    }
+    if (!isHighDynamicRangeImage) return;
     this.galleryDetailDecodedImageIds.add(itemId);
     if (itemId !== this.galleryCurrentItem?.id || this.galleryDetailLoadedImageId === itemId) return;
     if (this.galleryHeroOpening) return;
@@ -5543,10 +5537,9 @@ struct Index {
                     }
                     if (tile.item.id === this.galleryCurrentItem?.id &&
                       tile.item.id === this.galleryHeroFallbackItemId &&
-                      (this.galleryHeroOpening || this.galleryDetailStandardLoadedImageId !== tile.item.id) &&
                       this.galleryDetailPreviewPixelMap(tile.item.id) !== undefined) {
-                      // Keep the hero preview until the full-resolution SDR
-                      // image has a decoded frame; never reuse it for swipes.
+                      // Keep the entry preview until the HDR frame completes
+                      // its reveal; never reuse the low-resolution layer for swipes.
                       Image(this.galleryDetailPreviewPixelMap(tile.item.id) as image.PixelMap)
                         .width('100%')
                         .height('100%')
@@ -5554,6 +5547,8 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .opacity(!this.galleryHeroOpening &&
+                          this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
                   }
