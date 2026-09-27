@@ -338,8 +338,8 @@ struct Index {
   private gallerySdrDecodeSerial: number = 0;
   private gallerySdrPreviewItemId: string = '';
   private galleryChromeToggleBlockedUntil: number = 0;
-  private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
   private galleryStatusBarResetTimer: number = -1;
+  private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
   private galleryHeroBackdropResetTimer: number = -1;
   private readonly queuePhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
   private readonly galleryPhotoPickerOptions: OriginalPhotoSelectOptions = new OriginalPhotoSelectOptions();
@@ -395,7 +395,7 @@ struct Index {
     // requires an explicit Start/Resume click so no later native work starts
     // silently after a foreground transition.
     this.pageVisible = true;
-    this.setGalleryStatusBarMask(this.galleryDetailVisible && this.galleryChromeVisible);
+    this.ensureGalleryStatusBarVisible();
     this.attachShareInbox();
     this.attachQueueSession();
     this.requestShareInboxDrain();
@@ -419,8 +419,8 @@ struct Index {
 
   aboutToDisappear(): void {
     this.pageVisible = false;
+    this.ensureGalleryStatusBarVisible();
     this.endGallerySdrCompare();
-    this.setGalleryStatusBarMask(false);
     // Page teardown is a real departure, unlike the temporary hide caused by
     // the system picker. Finish the current copy and stop later batch items.
     if (this.batchExportRunning) {
@@ -3143,7 +3143,7 @@ struct Index {
     }
     this.galleryHeroTransitionActive = true;
     this.galleryHeroOpening = true;
-    this.setGalleryStatusBarMask(true);
+    this.ensureGalleryStatusBarVisible();
     this.getUIContext().animateTo({ duration: 420, curve: Curve.Friction }, () => {
       this.galleryDetailMounted = true;
       this.galleryDetailVisible = true;
@@ -3154,6 +3154,7 @@ struct Index {
       if (this.galleryDetailVisible) {
         this.galleryHeroTransitionActive = false;
         this.galleryHeroOpening = false;
+        this.ensureGalleryStatusBarVisible();
       }
     }, 460);
   }
@@ -3187,7 +3188,7 @@ struct Index {
       this.galleryStatusBarResetTimer = -1;
       if (!this.galleryDetailVisible) {
         this.galleryHeroTransitionActive = false;
-        this.setGalleryStatusBarMask(false);
+        this.ensureGalleryStatusBarVisible();
       }
     }, 420);
   }
@@ -3657,7 +3658,6 @@ struct Index {
     this.galleryChromeToggleBlockedUntil = Date.now() + 700;
     if (!this.galleryChromeVisible) {
       this.galleryChromeVisible = true;
-      this.setGalleryStatusBarMask(true);
     }
     this.galleryInfoPanelVisible = true;
     const targetHeight: number = this.galleryPanelMaximumHeight();
@@ -3735,22 +3735,27 @@ struct Index {
     if (!this.galleryDetailVisible || Date.now() < this.galleryChromeToggleBlockedUntil) return;
     const nextChromeVisible: boolean = !this.galleryChromeVisible;
     if (!nextChromeVisible) this.endGallerySdrCompare();
-    this.setGalleryStatusBarMask(nextChromeVisible);
+    this.ensureGalleryStatusBarVisible();
     this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseInOut }, () => {
       this.galleryChromeVisible = nextChromeVisible;
     });
   }
 
-  private setGalleryStatusBarMask(_masked: boolean): void {
+  private ensureGalleryStatusBarVisible(): void {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) return;
     this.galleryStatusBarUpdate = this.galleryStatusBarUpdate
       .then(async (): Promise<void> => {
         const mainWindow: window.Window = await window.getLastWindow(context);
-        await mainWindow.setWindowSystemBarProperties({ statusBarColor: TRANSPARENT_SYSTEM_BAR_COLOR });
+        await mainWindow.setWindowSystemBarEnable(['status', 'navigation']);
+        await mainWindow.setWindowSystemBarProperties({
+          statusBarColor: this.galleryDetailVisible && this.galleryChromeVisible ? '#0DFFFFFF' :
+            TRANSPARENT_SYSTEM_BAR_COLOR,
+          isStatusBarLightIcon: this.galleryDetailVisible
+        });
       })
       .catch((error: Object): void => {
-        console.error('Failed to update gallery status bar appearance: ' + JSON.stringify(error));
+        console.error('Failed to restore gallery status bar: ' + JSON.stringify(error));
       });
   }
 
@@ -4145,7 +4150,7 @@ struct Index {
         })
           .width('100%')
           .height(28)
-          .fontColor(Color.White)
+          .fontColor($r('sys.color.font_primary'))
           .fontSize(22)
           .fontWeight(FontWeight.Bold);
       }
@@ -4313,7 +4318,6 @@ struct Index {
         this.galleryDetailVisible = false;
         this.galleryDetailMounted = false;
         this.galleryHeroTransitionActive = false;
-        this.setGalleryStatusBarMask(false);
         this.galleryStatus = '导入照片后会保存在 XDRemux 本地图库中';
       }
       this.operationStatus = '已从 XDRemux 本地图库删除照片';
@@ -4535,10 +4539,14 @@ struct Index {
     Column({ space: 3 }) {
       SymbolGlyph($r('sys.symbol.play_arrow_triangle_2_circlepath'))
         .fontSize(20)
-        .fontColor([this.canConvertGalleryPhotoDirectly() ? Color.White : '#99FFFFFF']);
+        .fontColor([this.canConvertGalleryPhotoDirectly()
+          ? $r('sys.color.font_primary')
+          : $r('sys.color.font_secondary')]);
       Text('转换单张')
         .fontSize(10)
-        .fontColor(this.canConvertGalleryPhotoDirectly() ? '#E6FFFFFF' : '#99FFFFFF');
+        .fontColor(this.canConvertGalleryPhotoDirectly()
+          ? $r('sys.color.font_primary')
+          : $r('sys.color.font_secondary'));
     }
     .width('100%')
     .height('100%')
@@ -4561,7 +4569,7 @@ struct Index {
       Button({ type: ButtonType.Circle, stateEffect: false }) {
         SymbolGlyph($r('sys.symbol.plus'))
           .fontSize(25)
-          .fontColor([Color.White])
+          .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
           .hitTestBehavior(HitTestMode.None);
       }
       .width(52)
@@ -4593,10 +4601,10 @@ struct Index {
     Column({ space: 3 }) {
       SymbolGlyph($r('sys.symbol.gearshape'))
         .fontSize(20)
-        .fontColor([Color.White]);
+        .fontColor([$r('sys.color.font_primary')]);
       Text('转换设置')
         .fontSize(10)
-        .fontColor('#E6FFFFFF');
+        .fontColor($r('sys.color.font_primary'));
     }
     .width('100%')
     .height('100%')
@@ -4719,7 +4727,7 @@ struct Index {
         Text(this.gallerySdrCompareLoading ? '…' : this.gallerySdrCompareActive ? 'SDR' : 'HDR')
           .fontSize(10)
           .fontWeight(FontWeight.Bold)
-          .fontColor(Color.White);
+          .fontColor($r('sys.color.font_primary'));
       }
       .width(40)
       .height(40)
@@ -4742,6 +4750,7 @@ struct Index {
   private galleryTopActionMaterial(): uiMaterial.ImmersiveMaterial {
     return new uiMaterial.ImmersiveMaterial({
       style: uiMaterial.ImmersiveStyle.THIN,
+      colorInvert: true,
       interactive: true,
       lightEffect: { color: this.systemAccentColorWithAlpha(0.42) }
     });
@@ -4752,7 +4761,7 @@ struct Index {
     Button({ type: ButtonType.Circle, stateEffect: false }) {
       SymbolGlyph($r('sys.symbol.trash'))
         .fontSize(18)
-        .fontColor([Color.White]);
+        .fontColor([$r('sys.color.font_primary')]);
     }
     .width(40)
     .height(40)
@@ -4769,7 +4778,7 @@ struct Index {
     Button({ type: ButtonType.Circle, stateEffect: false }) {
       SymbolGlyph($r('sys.symbol.share'))
         .fontSize(18)
-        .fontColor([Color.White]);
+        .fontColor([$r('sys.color.font_primary')]);
     }
     .width(40)
     .height(40)
@@ -5393,15 +5402,9 @@ struct Index {
       if (this.galleryChromeVisible) {
         Column()
           .width('100%')
-          .height(152)
-          .linearGradient({
-            direction: GradientDirection.Bottom,
-            colors: [
-              ['#66000000', 0],
-              ['#42000000', 0.58],
-              ['#00000000', 1]
-            ]
-          })
+          .height(104)
+          .backgroundEffect({ radius: 32, saturation: 1.12, brightness: 1.0 })
+          .backgroundColor('#80FFFFFF')
           .hitTestBehavior(HitTestMode.None)
           .position({ x: 0, y: 0 })
           .zIndex(19);
@@ -5434,17 +5437,7 @@ struct Index {
           }
         },
         style: {
-          scrollEffectOpts: {
-            enableScrollEffect: true,
-            scrollEffectType: ScrollEffectType.IMMERSIVE_GRADIENT_BLUR,
-            blurEffectiveStartOffset: LengthMetrics.vp(0),
-            blurEffectiveEndOffset: LengthMetrics.vp(28)
-          },
-          blurStrategy: BlurStrategy.ENABLE,
-          systemMaterialEffect: {
-            materialType: this.hdsSystemMaterialType(),
-            materialLevel: this.hdsSystemMaterialLevel()
-          },
+          blurStrategy: BlurStrategy.DISABLE,
           originalStyle: {
             backgroundStyle: { backgroundColor: '#00000000' },
             contentStyle: { titleStyle: { mainTitleColor: '#00000000' } }
@@ -6833,7 +6826,7 @@ struct Index {
             Text('+')
               .fontSize(28)
               .fontWeight(FontWeight.Medium)
-              .fontColor(Color.White);
+              .fontColor($r('sys.color.ohos_id_color_primary_contrary'));
           }
           .width(52)
           .height(52)
@@ -6849,7 +6842,7 @@ struct Index {
             .buttonStyle(ButtonStyleMode.NORMAL)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
+            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
             .width(112)
             .height(48)
             .backgroundColor(this.systemAccentColorWithAlpha(0.6))
@@ -6870,7 +6863,7 @@ struct Index {
             .buttonStyle(ButtonStyleMode.NORMAL)
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
+            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
             .width(112)
             .height(44)
             .backgroundColor(this.systemAccentColorWithAlpha(0.4))
@@ -6885,7 +6878,7 @@ struct Index {
             .buttonStyle(ButtonStyleMode.NORMAL)
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
+            .fontColor($r('sys.color.ohos_id_color_primary_contrary'))
             .width(128)
             .height(44)
             .backgroundColor(this.systemAccentColorWithAlpha(0.4))
@@ -6906,7 +6899,7 @@ struct Index {
         Button({ type: ButtonType.Circle, stateEffect: false }) {
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(25)
-            .fontColor([Color.White])
+            .fontColor([$r('sys.color.ohos_id_color_primary_contrary')])
             .hitTestBehavior(HitTestMode.None);
         }
         .width(52)
@@ -6942,7 +6935,8 @@ struct Index {
         this.ownGalleryPage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.picture')).fontColor([Color.White]),
+        normal: new SymbolGlyphModifier($r('sys.symbol.picture'))
+          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.picture_fill'))
       }, '图库'))
 
@@ -6950,7 +6944,8 @@ struct Index {
         this.queuePage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet')).fontColor([Color.White]),
+        normal: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
+          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.list_bullet'))
       }, '队列'))
 
@@ -6958,7 +6953,8 @@ struct Index {
         this.settingsPage();
       }
       .tabBar(new BottomTabBarStyle({
-        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape')).fontColor([Color.White]),
+        normal: new SymbolGlyphModifier($r('sys.symbol.gearshape'))
+          .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
         selected: new SymbolGlyphModifier($r('sys.symbol.gearshape_fill'))
       }, '设置'))
     }

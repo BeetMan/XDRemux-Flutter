@@ -67,6 +67,7 @@ export default class EntryAbility extends UIAbility {
       // Extend the app's layout behind the visible system status bar and keep
       // the status icons readable on the theme's transparent background.
       void mainWindow.setWindowLayoutFullScreen(true)
+        .then((): Promise<void> => mainWindow.setSpecificSystemBarEnabled('status', true))
         .then((): Promise<void> => mainWindow.setWindowSystemBarProperties({
           statusBarColor: '#00000000',
           isStatusBarLightIcon: this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
