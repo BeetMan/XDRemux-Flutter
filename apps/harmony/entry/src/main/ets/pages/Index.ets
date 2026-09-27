@@ -4356,7 +4356,7 @@ struct Index {
   @Builder
   private galleryPhotoTitleOverlay() {
     if (this.galleryDetailMounted && this.galleryChromeVisible) {
-      Row() {
+      Column() {
         Marquee({
           start: true,
           step: 0.8,
@@ -4366,17 +4366,30 @@ struct Index {
           delay: 1400
         })
           .width('100%')
-          .height(28)
+          .height(26)
           .fontColor(this.galleryDetailForegroundColor())
           .fontSize(22)
           .fontWeight(FontWeight.Bold);
+        Marquee({
+          start: true,
+          step: 0.55,
+          loop: -1,
+          fromStart: true,
+          src: this.galleryDetailSubtitle(),
+          delay: 1800
+        })
+          .width('100%')
+          .height(20)
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
+          .fontSize(14)
+          .fontWeight(FontWeight.Regular);
       }
       .width('100%')
-      .height(28)
-      // Keep the scrolling filename clear of the right-side HDR/delete/share
-      // controls. The HDR action is wider than the title bar's normal menu.
-      .padding({ left: 68, right: this.canCompareGallerySdr() ? 152 : 120 })
-      .alignItems(VerticalAlign.Center)
+      .height(46)
+      .alignItems(HorizontalAlign.Start)
+      // Both lines use the same fixed text size and scroll in the space left
+      // between the back control and the HDR/delete/share actions.
+      .padding({ left: 68, right: 176 })
       .position({ x: 0, y: this.galleryPhotoTitleTopPosition })
       .hitTestBehavior(HitTestMode.None)
       .zIndex(25);
@@ -5693,12 +5706,12 @@ struct Index {
       .titleBar({
         padding: {
           start: LengthMetrics.vp(68),
-          end: LengthMetrics.vp(156)
+          end: LengthMetrics.vp(176)
         },
         content: {
           title: {
             mainTitle: this.galleryPhotoTitleLabel(),
-            subTitle: this.galleryDetailSubtitle()
+            subTitle: ''
           },
           stackBuilder: (): void => this.galleryDetailTopActionBar()
         },
