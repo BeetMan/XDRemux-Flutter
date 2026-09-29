@@ -4601,19 +4601,19 @@ struct Index {
       }
       const uiContext: UIContext = this.getUIContext();
       const context: common.UIAbilityContext = uiContext.getHostContext() as common.UIAbilityContext;
-      const imageType: string = utd.getUniformDataTypeByFilenameExtension(
-        item.extension,
-        utd.UniformDataType.IMAGE
-      );
+      // Share the sandbox file as a file URI instead of an IMAGE record. This
+      // keeps the original HEIC/Live Photo bytes intact and prevents the
+      // Huawei share panel from treating the payload as an editable image and
+      // silently converting it before delivery.
       const data: systemShare.SharedData = new systemShare.SharedData({
-        utd: imageType,
+        utd: utd.UniformDataType.FILE_URI,
         uri: fileUri.getUriFromPath(path),
         title: item.displayName
       });
       const controller: systemShare.ShareController = new systemShare.ShareController(data);
       await controller.show(context, {
         selectionMode: systemShare.SelectionMode.SINGLE,
-        previewMode: systemShare.SharePreviewMode.DETAIL
+        previewMode: systemShare.SharePreviewMode.DEFAULT
       });
     } catch (error) {
       const message: string = '分享照片失败：' + this.errorMessage(error);

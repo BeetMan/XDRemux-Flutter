@@ -63,6 +63,16 @@ export interface Progress {
 export const version: () => Promise<string>;
 export const classify: (path: string) => Promise<ClassificationResult>;
 export const inspect: (path: string) => Promise<string>;
+export const huaweiInspect: (path: string) => Promise<string>;
+export const diagnosePortrait: (path: string) => Promise<string>;
+export const remuxHuaweiPortrait: (inputPath: string, outputPath: string) => Promise<string>;
+export const attachStyleLayers: (
+  inputPath: string,
+  outputPath: string,
+  grainSeed: number,
+  flags: number
+) => Promise<string>;
+export const verifyHuaweiPortraitOutput: (path: string) => Promise<boolean>;
 export const motionInspect: (path: string) => Promise<string>;
 export const motionSplit: (path: string, outputDirectory: string) => Promise<string>;
 export const livePhotoMake: (sourcePath: string, stillPath: string, outputDirectory: string) => Promise<string>;

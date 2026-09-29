@@ -53,6 +53,15 @@ void xdremux_free_string(char *value);
 XdremuxClassificationResult xdremux_classify(const char *input_path);
 void xdremux_free_classification_result(XdremuxClassificationResult result);
 char *xdremux_inspect_photo_details(const char *input_path);
+char *xdremux_huawei_inspect(const char *input_path);
+char *xdremux_diagnose_portrait(const char *input_path);
+char *xdremux_remux_huawei_portrait(const char *input_path, const char *output_path);
+bool xdremux_verify_huawei_portrait_output(const char *path);
+char *xdremux_attach_style_layers(
+    const char *input_path,
+    const char *output_path,
+    std::uint64_t grain_seed,
+    std::uint32_t flags);
 char *xdremux_motion_photo_inspect(const char *input_path);
 char *xdremux_motion_photo_split(const char *input_path, const char *output_directory);
 char *xdremux_make_live_photo(const char *source_path, const char *still_path, const char *out_dir);
@@ -168,6 +177,11 @@ struct AsyncContext {
         VERSION,
         CLASSIFY,
         INSPECT,
+        HUAWEI_INSPECT,
+        DIAGNOSE_PORTRAIT,
+        REMUX_HUAWEI_PORTRAIT,
+        ATTACH_STYLE_LAYERS,
+        VERIFY_HUAWEI_PORTRAIT,
         MOTION_INSPECT,
         MOTION_SPLIT,
         LIVE_PHOTO_MAKE,
@@ -183,6 +197,9 @@ struct AsyncContext {
     std::string still_path;
     std::string version;
     std::string details_json;
+    std::string huawei_json;
+    std::string portrait_json;
+    std::string style_layers_json;
     std::string motion_json;
     std::string motion_split_json;
     std::string live_photo_json;
@@ -192,6 +209,9 @@ struct AsyncContext {
     Ps3Options ps3;
     std::uint32_t progress_handle = 0;
     bool live_photo_pair_valid = false;
+    bool huawei_portrait_valid = false;
+    std::uint64_t grain_seed = 0;
+    std::uint32_t style_layer_flags = 0;
     bool failed = false;
     std::array<char, 512> error_message{};
 };
@@ -253,6 +273,56 @@ void execute_operation(napi_env, void *data)
                 return;
             }
             context->details_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::HUAWEI_INSPECT: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_huawei_inspect(context->input_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_huawei_inspect returned a null report");
+                return;
+            }
+            context->huawei_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::DIAGNOSE_PORTRAIT: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_diagnose_portrait(context->input_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_diagnose_portrait returned a null report");
+                return;
+            }
+            context->portrait_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::REMUX_HUAWEI_PORTRAIT: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_remux_huawei_portrait(
+                    context->input_path.c_str(), context->output_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_remux_huawei_portrait returned a null report");
+                return;
+            }
+            context->huawei_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::ATTACH_STYLE_LAYERS: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_attach_style_layers(
+                    context->input_path.c_str(),
+                    context->output_path.c_str(),
+                    context->grain_seed,
+                    context->style_layer_flags));
+            if (!value) {
+                set_error(*context, "xdremux_attach_style_layers returned a null report");
+                return;
+            }
+            context->style_layers_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::VERIFY_HUAWEI_PORTRAIT: {
+            context->huawei_portrait_valid = xdremux_verify_huawei_portrait_output(
+                context->input_path.c_str());
             return;
         }
         case AsyncContext::Operation::MOTION_INSPECT: {
@@ -518,6 +588,41 @@ void complete_operation(napi_env env, napi_status status, void *data)
             napi_resolve_deferred(env, context->deferred, value);
         } else {
             reject_with_message(env, context->deferred, "unable to create photo details result");
+        }
+    } else if (context->operation == AsyncContext::Operation::HUAWEI_INSPECT) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->huawei_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Huawei inspection result");
+        }
+    } else if (context->operation == AsyncContext::Operation::DIAGNOSE_PORTRAIT) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->portrait_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create portrait diagnostic result");
+        }
+    } else if (context->operation == AsyncContext::Operation::REMUX_HUAWEI_PORTRAIT) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->huawei_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Huawei portrait conversion result");
+        }
+    } else if (context->operation == AsyncContext::Operation::ATTACH_STYLE_LAYERS) {
+        napi_value value = nullptr;
+        if (napi_create_string_utf8(env, context->style_layers_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create style layer result");
+        }
+    } else if (context->operation == AsyncContext::Operation::VERIFY_HUAWEI_PORTRAIT) {
+        napi_value value = nullptr;
+        if (napi_get_boolean(env, context->huawei_portrait_valid, &value) == napi_ok) {
+            napi_resolve_deferred(env, context->deferred, value);
+        } else {
+            reject_with_message(env, context->deferred, "unable to create Huawei portrait validation result");
         }
     } else if (context->operation == AsyncContext::Operation::MOTION_INSPECT) {
         napi_value value = nullptr;
@@ -820,6 +925,125 @@ napi_value inspect(napi_env env, napi_callback_info info)
     return queue_operation(env, context);
 }
 
+napi_value huawei_inspect(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "huaweiInspect(path) requires one filesystem path");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::HUAWEI_INSPECT;
+    if (!read_local_path(env, args[0], context->input_path)) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "huaweiInspect requires a local filesystem path");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
+napi_value diagnose_portrait(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "diagnosePortrait(path) requires one filesystem path");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::DIAGNOSE_PORTRAIT;
+    if (!read_local_path(env, args[0], context->input_path)) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "diagnosePortrait requires a local filesystem path");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
+napi_value remux_huawei_portrait(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+        napi_throw_type_error(env, nullptr, "remuxHuaweiPortrait(inputPath, outputPath) requires two paths");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::REMUX_HUAWEI_PORTRAIT;
+    if (!read_local_path(env, args[0], context->input_path) ||
+        !read_local_path(env, args[1], context->output_path) ||
+        context->input_path == context->output_path) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "remuxHuaweiPortrait requires distinct local paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
+napi_value attach_style_layers(napi_env env, napi_callback_info info)
+{
+    size_t argc = 4;
+    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+        napi_throw_type_error(env, nullptr, "attachStyleLayers(inputPath, outputPath, grainSeed, flags) requires four arguments");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::ATTACH_STYLE_LAYERS;
+    std::uint32_t grain_seed = 0;
+    if (!read_local_path(env, args[0], context->input_path) ||
+        !read_local_path(env, args[1], context->output_path) ||
+        context->input_path == context->output_path ||
+        napi_get_value_uint32(env, args[2], &grain_seed) != napi_ok ||
+        napi_get_value_uint32(env, args[3], &context->style_layer_flags) != napi_ok ||
+        context->style_layer_flags == 0 || context->style_layer_flags > 7) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "attachStyleLayers arguments are invalid");
+        return nullptr;
+    }
+    context->grain_seed = grain_seed;
+    return queue_operation(env, context);
+}
+
+napi_value verify_huawei_portrait(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "verifyHuaweiPortraitOutput(path) requires one path");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::VERIFY_HUAWEI_PORTRAIT;
+    if (!read_local_path(env, args[0], context->input_path)) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "verifyHuaweiPortraitOutput requires a local path");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
 napi_value motion_inspect(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -1095,6 +1319,11 @@ napi_value initialize(napi_env env, napi_value exports)
         {"version", nullptr, version, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"classify", nullptr, classify, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"inspect", nullptr, inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"huaweiInspect", nullptr, huawei_inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"diagnosePortrait", nullptr, diagnose_portrait, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"remuxHuaweiPortrait", nullptr, remux_huawei_portrait, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"attachStyleLayers", nullptr, attach_style_layers, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"verifyHuaweiPortraitOutput", nullptr, verify_huawei_portrait, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"motionInspect", nullptr, motion_inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"motionSplit", nullptr, motion_split, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"livePhotoMake", nullptr, live_photo_make, nullptr, nullptr, nullptr, napi_default, nullptr},
