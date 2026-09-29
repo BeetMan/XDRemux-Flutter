@@ -440,6 +440,78 @@ fn remuxes_huawei_portrait_samples_when_available() {
         let entry = meta.iloc_entries.iter().find(|e| e.item_id == matte_id).expect("iloc for matte");
         let (_off, len) = entry.extents[0];
         assert!(len > 3000, "portraiteffectsmatte stream must contain non-empty person mask: len={len}");
+        assert!(
+            xdremux_core::huawei_portrait_output_ok(&remuxed),
+            "Huawei portrait output must pass the portrait-graph check: {}",
+            sample.display()
+        );
+
+        let styles_uri = xdremux_core::styles_attach::STYLES_URI.as_bytes();
+        let texture_uri = b"tag:apple.com,2026:photo:metadata:texture_styles";
+        // Photographic Styles alone must not pull in Styles 3 texture/mattes.
+        let styles_only = xdremux_core::styles_attach::attach_style_layers(
+            &remuxed,
+            104,
+            xdremux_core::styles_attach::StyleLayers::STYLES_ONLY,
+        )
+        .unwrap_or_else(|e| panic!("{}: styles attach failed: {e}", sample.display()));
+        assert!(
+            styles_only.1.added.iter().any(|s| *s == "styles"),
+            "{}: styles layer was not added",
+            sample.display()
+        );
+        assert!(
+            !styles_only.1.added.iter().any(|s| *s == "texture" || *s == "mattes"),
+            "{}: styles-only attach wrote Styles 3 layers",
+            sample.display()
+        );
+        assert!(
+            styles_only.0.windows(styles_uri.len()).any(|w| w == styles_uri),
+            "{}: styles URI missing after attach",
+            sample.display()
+        );
+        assert!(
+            xdremux_core::huawei_portrait_output_ok(&styles_only.0),
+            "{}: portrait graph lost after styles attach",
+            sample.display()
+        );
+        assert!(
+            !styles_only.0.windows(texture_uri.len()).any(|w| w == texture_uri),
+            "{}: styles-only output contains texture_styles",
+            sample.display()
+        );
+
+        let styles3 = xdremux_core::styles_attach::attach_style_layers(
+            &remuxed,
+            104,
+            xdremux_core::styles_attach::StyleLayers::ALL,
+        )
+        .unwrap_or_else(|e| panic!("{}: styles 3 attach failed: {e}", sample.display()));
+        assert!(
+            styles3.1.added.iter().any(|s| *s == "styles"),
+            "{}: styles 3 attach missed the styles item",
+            sample.display()
+        );
+        assert!(
+            styles3.1.added.iter().any(|s| *s == "texture"),
+            "{}: styles 3 attach missed texture_styles",
+            sample.display()
+        );
+        assert!(
+            styles3.1.added.iter().any(|s| *s == "mattes" || *s == "mattes-person"),
+            "{}: styles 3 attach missed semantic mattes",
+            sample.display()
+        );
+        assert!(
+            styles3.0.windows(texture_uri.len()).any(|w| w == texture_uri),
+            "{}: texture_styles URI missing",
+            sample.display()
+        );
+        assert!(
+            xdremux_core::huawei_portrait_output_ok(&styles3.0),
+            "{}: portrait graph lost after styles 3 attach",
+            sample.display()
+        );
 
         tested += 1;
     }

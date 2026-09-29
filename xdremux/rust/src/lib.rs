@@ -471,6 +471,54 @@ pub extern "C" fn xdremux_attach_styles(
     CString::new(json).map(|s| s.into_raw()).unwrap_or_else(|_| std::ptr::null_mut())
 }
 
+/// Same JSON contract as [`xdremux_attach_styles`], but only the requested
+/// layers are written.
+///
+/// `flags`: bit 0 = 2023 styles item, bit 1 = texture/grain, bit 2 = the 12
+/// semantic part mattes. Huawei portrait calls this after the portrait remux
+/// so Photographic Styles can be on without a second encode.
+#[no_mangle]
+pub extern "C" fn xdremux_attach_style_layers(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+    flags: u32,
+) -> *mut c_char {
+    let result = (|| -> Result<String, String> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path).ok_or("bad input path")?;
+        let output = read(output_path).ok_or("bad output path")?;
+        let data = std::fs::read(input).map_err(|e| format!("read: {e}"))?;
+        let layers = styles_attach::StyleLayers {
+            styles: flags & 1 != 0,
+            texture: flags & 2 != 0,
+            mattes: flags & 4 != 0,
+        };
+        let (patched, report) = styles_attach::attach_style_layers(&data, grain_seed, layers)?;
+        std::fs::write(output, patched).map_err(|e| format!("write: {e}"))?;
+        let added = report
+            .added
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(format!(
+            "{{\"status\":\"{}\",\"added\":[{}]}}",
+            report.status, added
+        ))
+    })();
+    let json = match result {
+        Ok(json) => json,
+        Err(message) => {
+            let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{{\"status\":\"error\",\"message\":\"{escaped}\"}}")
+        }
+    };
+    CString::new(json).map(|s| s.into_raw()).unwrap_or_else(|_| std::ptr::null_mut())
+}
+
 /// Frees a string previously returned by `xdremux_version`.
 #[no_mangle]
 pub extern "C" fn xdremux_free_string(s: *mut c_char) {
@@ -1437,6 +1485,44 @@ fn xdremux_convert_impl(
                 }
             }
         }
+    } else if huawei_heic::inspect_bytes(&source).is_huawei_hdr {
+        // Huawei HDR already carries its own gain map. LHDR/UHDR tails are the
+        // OPPO container, so they are not searched here. Photographic Styles
+        // decode the picture and rebuild a standard container around it.
+        match sdr_fallback(&source, apple_photographic_styles, input) {
+            Some(Ok((synth, extracted))) => {
+                source = synth;
+                extracted
+            }
+            Some(Err(sdr_err)) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!(
+                        "Huawei HDR Photographic Styles decode failed: {sdr_err}"
+                    ))
+                    .unwrap()
+                    .into_raw(),
+                };
+            }
+            None => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(
+                        "Huawei HDR is not an OPPO LHDR/UHDR container",
+                    )
+                    .unwrap()
+                    .into_raw(),
+                };
+            }
+        }
     } else {
         match container::extract_lhdr_from_bytes(&source) {
             Ok(e) => e,
@@ -2073,6 +2159,17 @@ pub extern "C" fn xdremux_verify_styles_output(path: *const c_char) -> bool {
     verify_iso_gain_map(&data) && verify_photographic_styles(&data)
 }
 
+/// Portrait graph written by the Huawei remux. Photos already accepts this
+/// file. [`xdremux_verify_portrait_output`] does not: it also requires an
+/// ISO 21496-1 gain-map `auxC` and a `mimehdrgm-xmp` item, and the Huawei
+/// container stores the matte XMP inside `mime` items instead.
+pub fn huawei_portrait_output_ok(data: &[u8]) -> bool {
+    contains_ascii(data, b"portraiteffectsmatte")
+        && contains_ascii(data, b"semanticskinmatte")
+        && contains_ascii(data, b"semantichairmatte")
+        && contains_ascii(data, b"portraitLightingEffect")
+}
+
 /// Verifies a Rust Apple Portrait output structurally. Photos remains the
 /// final authority for rendering the editable depth effect.
 #[no_mangle]
@@ -2086,6 +2183,20 @@ pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
         Err(_) => return false,
     };
     verify_iso_gain_map(&data) && verify_portrait_graph(&data)
+}
+
+/// Huawei portrait check used by the app. See [`huawei_portrait_output_ok`].
+#[no_mangle]
+pub extern "C" fn xdremux_verify_huawei_portrait_output(path: *const c_char) -> bool {
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let data = match std::fs::read(path_str) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    huawei_portrait_output_ok(&data)
 }
 
 fn verify_portrait_graph(data: &[u8]) -> bool {
@@ -2111,11 +2222,13 @@ fn verify_photographic_styles(data: &[u8]) -> bool {
         Ok(meta) => meta,
         Err(_) => return false,
     };
-    let style_item = match meta
-        .items
-        .iter()
-        .find(|item| item.itype.contains("styleMetadata"))
-    {
+    let style_item = match meta.items.iter().find(|item| {
+        item.itype.contains("styleMetadata")
+            || item
+                .raw_infe
+                .windows(13)
+                .any(|window| window == b"styleMetadata")
+    }) {
         Some(item) => item,
         None => return false,
     };
@@ -3048,6 +3161,147 @@ mod tests {
     fn verify_output_junk_data() {
         // Junk data should not crash and should return false
         assert!(!verify_iso_gain_map(&[0u8; 1024]));
+    }
+
+    #[test]
+    fn huawei_hdr_styles_native_skips_primary_reencode() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\run-20260930-0104\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("huawei hdr");
+        let started = std::time::Instant::now();
+        let (styled, report) = styles_attach::attach_style_layers(
+            &data,
+            1,
+            styles_attach::StyleLayers::STYLES_ONLY,
+        )
+        .expect("styles on huawei hdr");
+        let elapsed = started.elapsed();
+        eprintln!("huawei hdr styles {} bytes in {elapsed:?}", styled.len());
+        assert!(
+            report.added.iter().any(|layer| *layer == "styles-native"),
+            "{report:?}"
+        );
+        assert!(verify_photographic_styles(&styled), "styleMetadata");
+        assert!(
+            elapsed.as_secs() < 5,
+            "grafting styles re-encoded the primary ({elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn huawei_portrait_full_styles_keeps_portrait_markers() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\run-20260930-0104\1790697212348-IMG_20260907_021118_iso.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("portrait remux");
+        let (styled, report) = styles_attach::attach_style_layers(
+            &data,
+            1,
+            styles_attach::StyleLayers::ALL,
+        )
+        .expect("portrait styles");
+        assert!(
+            report.added.iter().any(|layer| *layer == "styles-native"),
+            "{report:?}"
+        );
+        for needle in [
+            b"portraiteffectsmatte".as_slice(),
+            b"semanticskinmatte".as_slice(),
+            b"semantichairmatte".as_slice(),
+            b"portraitLightingEffect".as_slice(),
+            b"styleMetadata".as_slice(),
+            b"semanticpersonmatte".as_slice(),
+        ] {
+            assert!(
+                styled.windows(needle.len()).any(|window| window == needle),
+                "missing {}",
+                String::from_utf8_lossy(needle)
+            );
+        }
+        if portrait::huawei_person_contour(&data).is_some() {
+            assert!(
+                report.added.iter().any(|layer| *layer == "mattes-person"),
+                "{report:?}"
+            );
+            let meta = isobmff::parse_source_meta(&styled).expect("styled meta");
+            let len_of = |urn: &[u8]| -> u64 {
+                let item = meta
+                    .ipma_entries
+                    .iter()
+                    .find(|entry| {
+                        entry.associations.iter().any(|(idx, _)| {
+                            meta.props.iter().any(|prop| {
+                                prop.index == *idx
+                                    && prop.raw.windows(urn.len()).any(|window| window == urn)
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("missing {}", String::from_utf8_lossy(urn)));
+                meta.iloc_entries
+                    .iter()
+                    .find(|entry| entry.item_id == item.item_id)
+                    .and_then(|entry| entry.extents.first())
+                    .map(|extent| extent.1)
+                    .unwrap_or(0)
+            };
+            assert_ne!(
+                len_of(b"semanticpersonmatte"),
+                len_of(b"semanticnosematte"),
+                "person matte stayed empty"
+            );
+        }
+    }
+
+    #[test]
+    fn huawei_hdr_is_not_searched_as_oppo_lhdr() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\fail-20260930\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let input = CString::new(path.to_str().unwrap()).unwrap();
+        let output = CString::new(r"C:\tmp\huawei\fail-20260930\unused-output.heic").unwrap();
+        let config = ConvertConfig {
+            oppo_compat: 0,
+            oppo_camera_tail: 0,
+            strict_tmap: 0,
+            apple_photographic_styles: 0,
+            apple_portrait: 0,
+        };
+        let result = xdremux_convert(input.as_ptr(), output.as_ptr(), &config);
+        assert!(!result.success);
+        let message = unsafe { CStr::from_ptr(result.error_message) }
+            .to_string_lossy()
+            .into_owned();
+        xdremux_free_string(result.error_message);
+        assert!(
+            !message.contains("Failed to locate LHDR"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn styles_item_named_style_metadata_counts() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\fail-20260930\1790700514014-IMG_20260907_021033_iso.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("styled output");
+        assert!(
+            verify_photographic_styles(&data),
+            "uri item named styleMetadata must pass"
+        );
+        assert!(verify_iso_gain_map(&data));
     }
 
     // Real-photo conversions live in `tests/local_samples.rs`. They are

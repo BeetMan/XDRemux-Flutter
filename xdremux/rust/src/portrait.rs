@@ -1772,6 +1772,101 @@ fn derive_huawei_portrait_matte(
     matte_oriented
 }
 
+/// Person silhouette from Huawei `RfDataB`, in the same orientation as the
+/// primary frame. This is the contour `derive_huawei_portrait_matte` writes
+/// onto `portraiteffectsmatte`, before the 2× upscale.
+///
+/// Photographic Styles 3 has no separate contour item. Callers place this
+/// plane on `semanticpersonmatte`.
+pub fn huawei_person_contour(source: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    let edof_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"edof"))
+        .map(|i| i.item_id);
+    let primary = edof_item.unwrap_or(meta.primary_id);
+    let (pw_frame, ph_frame) = item_dims(&meta, primary).ok()?;
+    let rf_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "mime" && i.raw_infe.windows(7).any(|w| w == b"RfDataB"))?;
+    let rf_payload = read_item_payload(source, &meta, rf_item.item_id)?;
+    if rf_payload.len() < 64 + 1024 * 768 {
+        return None;
+    }
+    let raw_plane = &rf_payload[64..64 + 1024 * 768];
+    let u16_at = |off: usize| -> u16 {
+        u16::from_le_bytes([rf_payload[off], rf_payload[off + 1]])
+    };
+    let mode_flags = u16_at(2);
+    let dim_major = u16_at(24) as f64;
+    let dim_minor = u16_at(26) as f64;
+    let pos_major = u16_at(28) as f64;
+    let pos_minor = u16_at(30) as f64;
+    let is_portrait = ph_frame > pw_frame;
+    let (disp_oriented, ow, oh, focus_x, focus_y) = if is_portrait {
+        let (r, w2, h2) = rotate_cw90(raw_plane, 1024, 768);
+        let fx = if dim_minor > 0.0 && pos_minor > 0.0 {
+            (pos_minor / dim_minor).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let fy = if dim_major > 0.0 && pos_major > 0.0 {
+            (pos_major / dim_major).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        (r, w2 as u32, h2 as u32, fx, fy)
+    } else {
+        let rotate_180 = mode_flags == 0x2200;
+        let r = if rotate_180 {
+            raw_plane.iter().rev().copied().collect()
+        } else {
+            raw_plane.to_vec()
+        };
+        let (fx, fy) = if dim_major > 0.0 && dim_minor > 0.0 && pos_major > 0.0 {
+            if rotate_180 {
+                (
+                    ((dim_major - pos_major) / dim_major).clamp(0.0, 1.0),
+                    ((dim_minor - pos_minor) / dim_minor).clamp(0.0, 1.0),
+                )
+            } else {
+                (
+                    (pos_major / dim_major).clamp(0.0, 1.0),
+                    (pos_minor / dim_minor).clamp(0.0, 1.0),
+                )
+            }
+        } else {
+            (0.5, 0.5)
+        };
+        (r, 1024u32, 768u32, fx, fy)
+    };
+    let fx_px = (focus_x * ow as f64).clamp(0.0, (ow - 1) as f64) as usize;
+    let fy_px = (focus_y * oh as f64).clamp(0.0, (oh - 1) as f64) as usize;
+    let mut window = Vec::with_capacity(25);
+    for dy in -2i32..=2i32 {
+        let y = (fy_px as i32 + dy).clamp(0, oh as i32 - 1) as usize;
+        for dx in -2i32..=2i32 {
+            let x = (fx_px as i32 + dx).clamp(0, ow as i32 - 1) as usize;
+            window.push(disp_oriented[y * ow as usize + x]);
+        }
+    }
+    window.sort_unstable();
+    let focus_rank = window[window.len() / 2] as f64;
+    let matte = derive_huawei_portrait_matte(
+        raw_plane,
+        &rf_payload,
+        &disp_oriented,
+        ow as usize,
+        oh as usize,
+        dim_major,
+        dim_minor,
+        focus_rank,
+    );
+    Some((matte, ow, oh))
+}
+
 /// Convert a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
 pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     let top = top_level_boxes(source)?;

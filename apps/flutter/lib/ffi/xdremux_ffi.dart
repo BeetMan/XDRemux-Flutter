@@ -294,6 +294,17 @@ class XdRemuxFFI {
         'xdremux_attach_styles',
       );
 
+  static final _attachStyleLayers = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Uint64,
+        ffi.Uint32,
+      ),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int, int)>(
+        'xdremux_attach_style_layers',
+      );
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -313,6 +324,10 @@ class XdRemuxFFI {
   static final _verifyPortraitOutput = _lib.lookupFunction<
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_portrait_output');
+
+  static final _verifyHuaweiPortraitOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_huawei_portrait_output');
 
   static final _writebackReturnedPhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
@@ -498,6 +513,15 @@ class XdRemuxFFI {
     final ptr = path.toNativeUtf8();
     try {
       return _verifyStylesOutput(ptr);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  static bool verifyHuaweiPortraitOutput(String path) {
+    final ptr = path.toNativeUtf8();
+    try {
+      return _verifyHuaweiPortraitOutput(ptr);
     } finally {
       calloc.free(ptr);
     }
@@ -721,6 +745,44 @@ class XdRemuxFFI {
     } catch (_) {
       return false;
     } finally {
+      calloc.free(a);
+      calloc.free(b);
+    }
+  }
+
+  /// 2023 styles item. Photographic Styles 3 adds the other two bits.
+  static const int styleLayerStyles = 1;
+  static const int styleLayerTexture = 2;
+  static const int styleLayerMattes = 4;
+
+  /// Attach selected Photographic Styles layers onto an existing HEIC.
+  ///
+  /// Used after the Huawei portrait remux so portrait and styles share one
+  /// output. Returns {status, added, message?}.
+  static Map<String, dynamic> attachStyleLayers(
+    String inputPath,
+    String outputPath,
+    int grainSeed,
+    int flags,
+  ) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _attachStyleLayers(a, b, grainSeed, flags);
+      if (ptr == ffi.nullptr) {
+        return {'status': 'error', 'message': 'attach style layers returned null'};
+      }
+      final json = ptr.toDartString();
+      final decoded = jsonDecode(json);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return {'status': 'error', 'message': 'attach style layers returned malformed JSON'};
+    } catch (e) {
+      return {'status': 'error', 'message': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
       calloc.free(a);
       calloc.free(b);
     }
