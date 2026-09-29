@@ -547,7 +547,7 @@ fn build_matte_xmp() -> Vec<u8> {
 /// The Apple MakerNote observed in the golden scaffold:
 /// "Apple iOS\0\0\x01" + MM magic(2) + entries (tag 43 UUID, tag 84 flags
 /// bplist) + zero terminator. Offsets are relative to the MakerNote start.
-fn build_maker_note() -> Vec<u8> {
+pub(crate) fn build_maker_note() -> Vec<u8> {
     let uuid = uuid_v4_upper();
     // 91 bytes, copied verbatim from the golden scaffold (keys '0'..'7').
     let flags_bplist: &[u8] = &[

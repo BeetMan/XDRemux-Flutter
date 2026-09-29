@@ -2,8 +2,8 @@
 //!
 //! Ported from upstream XDRemux v1.4 `xdremux_py/live_photo_mov.py` and
 //! `live_photo_still.py` (MIT, 21Z121Z1/XDRemux). No Apple framework is used:
-//! the still gets a minimal Apple MakerNote with the shared content
-//! identifier injected into its Exif IFD, and the video is rewritten as a
+//! the still gets the same Apple MakerNote the styles/portrait writers emit,
+//! with the shared content identifier appended, and the video is rewritten as a
 //! QuickTime MOV whose original media samples keep their exact bytes — only
 //! `moov` is rebuilt with a metadata track marking the cover frame
 //! (`com.apple.quicktime.still-image-time`) and the movie-level content
@@ -14,6 +14,7 @@ use crate::motion_photo::OppoMetadata;
 const QUICKTIME_EPOCH_OFFSET: u64 = 2_082_844_800;
 const METADATA_TIMESCALE: u32 = 600;
 const CONTENT_IDENTIFIER_KEY: &[u8] = b"com.apple.quicktime.content.identifier";
+const LIVE_PHOTO_AUTO_KEY: &[u8] = b"com.apple.quicktime.live-photo.auto";
 const STILL_IMAGE_KEY: &[u8] = b"com.apple.quicktime.still-image-time";
 const TRANSFORM_KEY: &[u8] = b"com.apple.quicktime.live-photo-still-image-transform";
 const REFERENCE_DIMENSIONS_KEY: &[u8] =
@@ -262,22 +263,45 @@ fn write_tiff(model: &TiffModel) -> Vec<u8> {
     out
 }
 
+/// Inject a MakerNote blob into the Exif IFD of a TIFF payload. The IFD1
+/// thumbnail chain is dropped; camera thumbnails are not needed for pairing.
+///
+/// Huawei stills repeat tag 0x927C for several private blobs (`AF_C`, a
+/// nested HUAWEI TIFF, `##**N5022`). Photos keeps one MakerNote from that
+/// tag. Replacing only the first leaves the vendor blobs in place, and the
+/// still imports without the Live Photo content identifier. The Apple note
+/// has to be the only 0x927C entry.
+fn inject_note(tiff: &[u8], note: &[u8]) -> Result<Vec<u8>, String> {
+    let mut model = read_tiff(tiff)?;
+    model.exif_ifd.retain(|e| e.tag != 0x927C);
+    let entry = TiffEntry {
+        tag: 0x927C,
+        type_id: 7,
+        data: note.to_vec(),
+    };
+    let pos = model
+        .exif_ifd
+        .iter()
+        .position(|e| e.tag > 0x927C)
+        .unwrap_or(model.exif_ifd.len());
+    model.exif_ifd.insert(pos, entry);
+    Ok(write_tiff(&model))
+}
+
 /// Inject the Apple MakerNote carrying the Live Photo content identifier
 /// into the Exif IFD of a TIFF payload (the part after the HEIF Exif item's
-/// 4-byte offset prefix). The IFD1 thumbnail chain is dropped; camera
-/// thumbnails are not needed for the pairing contract.
+/// 4-byte offset prefix).
 pub fn inject_makernote(tiff: &[u8], content_identifier: &str) -> Result<Vec<u8>, String> {
-    let mut model = read_tiff(tiff)?;
-    let note = build_apple_makernote(content_identifier)?;
-    match model.exif_ifd.iter_mut().find(|e| e.tag == 0x927C) {
-        Some(e) => e.data = note,
-        None => model.exif_ifd.push(TiffEntry {
-            tag: 0x927C,
-            type_id: 7,
-            data: note,
-        }),
-    }
-    Ok(write_tiff(&model))
+    let note = pairing_note_for_plain_still(content_identifier)?;
+    inject_note(tiff, &note)
+}
+
+/// Still with no Apple MakerNote (Huawei HDR passthrough). Use the same note
+/// the styles/portrait writers already emit, then append tag 0x0011 the way
+/// an OPPO still is paired. A one-entry note is not a Live Photo to Photos.
+fn pairing_note_for_plain_still(content_identifier: &str) -> Result<Vec<u8>, String> {
+    let base = crate::styles_scaffold::build_maker_note();
+    append_live_photo_entry(&base, content_identifier)
 }
 
 /// Live-photo pairing additions to an *existing* Apple iOS MakerNote.
@@ -880,7 +904,9 @@ fn metadata_key_atom(local_id: u32, name: &[u8], type_code: u32) -> Vec<u8> {
 }
 
 fn metadata_sample(transform: Option<[f64; 9]>, dimensions: Option<(f32, f32)>) -> Vec<u8> {
-    let mut out = make_box(&1u32.to_be_bytes(), b"\x00");
+    // iPhone Live Photos store still-image-time as int8 -1. The edit list
+    // places that sample at the cover frame. 0 is not a cover marker.
+    let mut out = make_box(&1u32.to_be_bytes(), b"\xff");
     if let Some(t) = transform {
         let mut payload = Vec::new();
         for v in t {
@@ -1055,15 +1081,29 @@ fn movie_metadata(content_identifier: &str) -> Result<Vec<u8>, String> {
     handler_payload.extend_from_slice(&[0u8; 14]);
     let handler = make_box(b"hdlr", &handler_payload);
     let mut keys_payload = Vec::new();
-    keys_payload.extend_from_slice(&1u32.to_be_bytes());
+    keys_payload.extend_from_slice(&2u32.to_be_bytes());
     keys_payload.extend_from_slice(&make_box(b"mdta", CONTENT_IDENTIFIER_KEY));
+    keys_payload.extend_from_slice(&make_box(b"mdta", LIVE_PHOTO_AUTO_KEY));
     let keys = full_box(b"keys", 0, 0, &keys_payload);
     let mut data_payload = Vec::new();
     data_payload.extend_from_slice(&1u32.to_be_bytes());
     data_payload.extend_from_slice(&0u32.to_be_bytes());
     data_payload.extend_from_slice(identifier);
     let data = make_box(b"data", &data_payload);
-    let ilst = make_box(b"ilst", &make_box(&1u32.to_be_bytes(), &data));
+    // com.apple.quicktime.live-photo.auto = 1, the flag on the iPhone pairs.
+    let mut auto_payload = Vec::new();
+    auto_payload.extend_from_slice(&22u32.to_be_bytes());
+    auto_payload.extend_from_slice(&0u32.to_be_bytes());
+    auto_payload.push(1);
+    let auto = make_box(b"data", &auto_payload);
+    let ilst = make_box(
+        b"ilst",
+        &[
+            make_box(&1u32.to_be_bytes(), &data),
+            make_box(&2u32.to_be_bytes(), &auto),
+        ]
+        .concat(),
+    );
     Ok(make_box(b"meta", &[handler, keys, ilst].concat()))
 }
 
@@ -1082,6 +1122,15 @@ fn rebuild_moov(
     let mut rebuilt: Vec<u8> = Vec::new();
     for child in scan_boxes(original, root.payload_offset(), root.end())? {
         if &child.kind == b"meta" {
+            continue;
+        }
+        // Vendor timed-metadata tracks (Huawei/OpenHarmony mebx) sit ahead of
+        // the Apple still-image-time track. Photos binds the still to the
+        // first meta track, so a full-duration vendor track pairs the cover
+        // still with time zero. Drop them; the track we append is the marker.
+        if &child.kind == b"trak"
+            && handler_type(original, &child).ok() == Some(*b"meta")
+        {
             continue;
         }
         let mut raw = original[child.offset..child.end()].to_vec();
@@ -1194,9 +1243,17 @@ pub fn write_live_photo_movie(
             }
         } else if &b.kind == b"ftyp" {
             let mut raw = source[b.offset..b.end()].to_vec();
-            // QuickTime brand, version 0.
-            raw[b.header_size..b.header_size + 4].copy_from_slice(b"qt  ");
-            raw[b.header_size + 4..b.header_size + 8].copy_from_slice(&[0, 0, 0, 0]);
+            // iPhone Live Photo ftyp is QuickTime only. Leaving iso2/mp42
+            // makes Photos import the movie as an ordinary video.
+            if raw.len() >= b.header_size + 8 {
+                raw[b.header_size..b.header_size + 4].copy_from_slice(b"qt  ");
+                raw[b.header_size + 4..b.header_size + 8].copy_from_slice(&[0, 0, 0, 0]);
+                let mut brand = b.header_size + 8;
+                while brand + 4 <= raw.len() {
+                    raw[brand..brand + 4].copy_from_slice(b"qt  ");
+                    brand += 4;
+                }
+            }
             out.extend_from_slice(&raw);
         } else {
             out.extend_from_slice(&source[b.offset..b.end()]);
@@ -1245,8 +1302,9 @@ pub fn make_live_photo(
     // Preferred: APPEND a content-identifier entry to the existing Apple note
     // (all other TIFF bytes stay identical — replacing the whole note makes
     // Photos drop the Photographic Styles editor, verified 2026-09-02).
-    // Fallback: no Apple note present — inject a minimal one via the rewrite
-    // path (identity styles then come from a vendor-free file).
+    // Fallback: no Apple note (Huawei passthrough). Install the same
+    // styles/portrait MakerNote, then append tag 0x0011. A one-entry note
+    // stays a separate photo and video in Photos.
     let mut tiff_mut: Option<Vec<u8>> = None;
     let mut paired = false;
     let apple_note = read_makernote_bytes(tiff)
@@ -1305,9 +1363,8 @@ pub fn make_live_photo(
     let tiff_mut = match tiff_mut {
         Some(t) => t,
         None => {
-            // No Apple iOS note to extend (e.g. vendor JSON MakerNote):
-            // inject a minimal Live Photo note via the rewrite path. This
-            // file has no style state to preserve, so the replace is safe.
+            // No Apple iOS note to extend (Huawei HDR still). Install the
+            // styles/portrait MakerNote and append the content identifier.
             inject_makernote(tiff, &content_id)?
         }
     };
@@ -1400,6 +1457,40 @@ mod tests {
             .expect("makernote present");
         assert!(note.data.starts_with(b"Apple iOS\0\0\x01MM"));
         assert!(note.data.windows(9).any(|w| w == b"ABCD-1234"));
+        // Same note the styles/portrait stills carry, plus the content id.
+        let count = u16::from_be_bytes([note.data[14], note.data[15]]);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn huawei_duplicate_makernotes_collapse_to_one_apple_note() {
+        // Huawei stills store several private blobs under tag 0x927C. Photos
+        // reads one MakerNote; leaving the vendor blobs in place hides the
+        // content identifier and the still imports as a separate photo.
+        let mut model = read_tiff(&minimal_tiff()).unwrap();
+        for blob in [b"AF_C\0".as_slice(), b"9\0\0\0", b"HUAWEI\0\0", b"##**N5022\0"] {
+            model.exif_ifd.push(TiffEntry {
+                tag: 0x927C,
+                type_id: 7,
+                data: blob.to_vec(),
+            });
+        }
+        model.exif_ifd.push(TiffEntry {
+            tag: 0xA002,
+            type_id: 4,
+            data: 100u32.to_le_bytes().to_vec(),
+        });
+        let tiff = write_tiff(&model);
+        let out = inject_makernote(&tiff, "ABCD-1234").expect("inject ok");
+        let back = read_tiff(&out).expect("read back");
+        let notes: Vec<_> = back.exif_ifd.iter().filter(|e| e.tag == 0x927C).collect();
+        assert_eq!(notes.len(), 1, "Exif IFD must carry a single MakerNote");
+        assert!(notes[0].data.starts_with(b"Apple iOS\0\0\x01"));
+        assert!(notes[0].data.windows(9).any(|w| w == b"ABCD-1234"));
+        assert!(!notes[0].data.windows(8).any(|w| w == b"##**N5022"));
+        let tags: Vec<u16> = back.exif_ifd.iter().map(|e| e.tag).collect();
+        assert!(tags.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(tags.contains(&0x9000) && tags.contains(&0xA002));
     }
 
     #[test]
@@ -1431,6 +1522,83 @@ mod tests {
         let model = read_tiff(&out).expect("read back");
         assert!(model.exif_ifd.iter().any(|e| e.tag == 0x9000));
         assert!(model.exif_ifd.iter().any(|e| e.tag == 0x927C));
+    }
+
+    fn tiny_track(track_id: u32, handler: &[u8; 4]) -> Vec<u8> {
+        let mut tkhd = Vec::new();
+        tkhd.extend_from_slice(&0u32.to_be_bytes());
+        tkhd.extend_from_slice(&0u32.to_be_bytes());
+        tkhd.extend_from_slice(&track_id.to_be_bytes());
+        tkhd.extend_from_slice(&0u32.to_be_bytes());
+        tkhd.extend_from_slice(&1000u32.to_be_bytes());
+        let tkhd = full_box(b"tkhd", 0, 0, &tkhd);
+        let mut hdlr = vec![0u8; 4];
+        hdlr.extend_from_slice(handler);
+        let hdlr = full_box(b"hdlr", 0, 0, &hdlr);
+        let mdia = make_box(b"mdia", &hdlr);
+        make_box(b"trak", &[tkhd, mdia].concat())
+    }
+
+    fn meta_track_count(mov: &[u8]) -> usize {
+        let top = scan_boxes(mov, 0, mov.len()).unwrap();
+        let moov_box = top.iter().find(|b| &b.kind == b"moov").unwrap();
+        let moov = &mov[moov_box.offset..moov_box.end()];
+        let root = MovBox {
+            offset: 0,
+            size: moov.len(),
+            kind: *b"moov",
+            header_size: 8,
+        };
+        scan_boxes(moov, root.payload_offset(), root.end())
+            .unwrap()
+            .into_iter()
+            .filter(|trak| &trak.kind == b"trak")
+            .filter(|trak| handler_type(moov, trak).ok() == Some(*b"meta"))
+            .count()
+    }
+
+    #[test]
+    fn vendor_metadata_track_does_not_precede_still_image_time() {
+        let mut mvhd = Vec::new();
+        mvhd.extend_from_slice(&0u32.to_be_bytes());
+        mvhd.extend_from_slice(&0u32.to_be_bytes());
+        mvhd.extend_from_slice(&1000u32.to_be_bytes());
+        mvhd.extend_from_slice(&1000u32.to_be_bytes());
+        mvhd.extend_from_slice(&0x00010000u32.to_be_bytes());
+        let mvhd = full_box(b"mvhd", 0, 0, &mvhd);
+        let moov = make_box(
+            b"moov",
+            &[mvhd, tiny_track(1, b"vide"), tiny_track(2, b"meta")].concat(),
+        );
+        let ftyp = make_box(b"ftyp", b"mp42\0\0\0\0mp42");
+        let mdat = make_box(b"mdat", b"x");
+        let mut source = Vec::new();
+        source.extend_from_slice(&ftyp);
+        source.extend_from_slice(&mdat);
+        source.extend_from_slice(&moov);
+
+        let mov = write_live_photo_movie(&source, "01234567-89AB-4DEF-8DEF-0123456789AB", 0.5, None)
+            .expect("rewrite");
+        assert_eq!(
+            meta_track_count(&mov),
+            1,
+            "Photos pairs the still with the first meta track"
+        );
+        let still_key = b"com.apple.quicktime.still-image-time";
+        assert_eq!(
+            mov.windows(still_key.len()).filter(|w| *w == still_key).count(),
+            1
+        );
+        assert!(
+            mov.windows(9)
+                .any(|window| window == b"\x00\x00\x00\x09\x00\x00\x00\x01\xff"),
+            "still-image-time sample must be int8 -1"
+        );
+        assert!(mov.windows(4).any(|window| window == b"qt  "));
+        assert!(!mov.windows(4).any(|window| window == b"mp42"));
+        assert!(mov.windows(b"com.apple.quicktime.live-photo.auto".len()).any(
+            |window| window == b"com.apple.quicktime.live-photo.auto"
+        ));
     }
 
     #[test]
