@@ -467,6 +467,11 @@ class ConversionConfig {
   bool strictTmap;
   bool applePhotographicStyles;
   bool applePortrait;
+
+  /// Photographic Styles 3 (texture + grain): when enabled, Apple output
+  /// carries a Standard `texture_styles` item so Photos offers the
+  /// texture/grain editing controls on it.
+  bool applePhotographicStyles3;
   bool skipExisting;
   int maxConcurrentJobs;
   String fileNameSuffix;
@@ -488,6 +493,7 @@ class ConversionConfig {
     this.strictTmap = false,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
+    this.applePhotographicStyles3 = false,
     this.skipExisting = true,
     this.maxConcurrentJobs = 4,
     this.fileNameSuffix = '_iso',
@@ -509,6 +515,7 @@ class ConversionConfig {
     'strictTmap': strictTmap,
     'applePhotographicStyles': applePhotographicStyles,
     'applePortrait': applePortrait,
+    'applePhotographicStyles3': applePhotographicStyles3,
     'skipExisting': skipExisting,
     'maxConcurrentJobs': maxConcurrentJobs,
     'fileNameSuffix': fileNameSuffix,
@@ -549,6 +556,8 @@ class ConversionConfig {
       applePhotographicStyles:
           json['applePhotographicStyles'] as bool? ?? false,
       applePortrait: json['applePortrait'] as bool? ?? false,
+      applePhotographicStyles3:
+          json['applePhotographicStyles3'] as bool? ?? false,
       skipExisting: json['skipExisting'] as bool? ?? true,
       maxConcurrentJobs: json['maxConcurrentJobs'] as int? ?? 4,
       fileNameSuffix: json['fileNameSuffix'] as String? ?? '_iso',
@@ -573,6 +582,7 @@ class ConversionConfig {
     strictTmap: strictTmap,
     applePhotographicStyles: applePhotographicStyles,
     applePortrait: applePortrait,
+    applePhotographicStyles3: applePhotographicStyles3,
     skipExisting: skipExisting,
     maxConcurrentJobs: maxConcurrentJobs,
     fileNameSuffix: fileNameSuffix,

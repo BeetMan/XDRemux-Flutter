@@ -148,6 +148,11 @@ Mate 70 原生 HEIC 已验证可以在 iPhone Apple Photos 中触发 HDR 显示�
 - 华为人像+动态照片与普通华为 HDR+动态照片均验证通过，可输出有效 Apple Live Photo 配对文件；
 - 自动化测试与回归用例全部通过。
 
+真机配对修复（2026-09-29，对照 iPhone Air / iOS 27 原片 `IMG_4091`、`IMG_4093`）：
+- 华为静帧的 Exif 里 `0x927C` 出现四次（`AF_C`、嵌套 HUAWEI TIFF、`##**N5022` 等）。只替换第一条时，Apple Photos 读到的是华为私有数据，静帧和 MOV 被导入成两个项目。现在只保留一条 Apple MakerNote（风格/人像模板 + tag `0x0011` content identifier）；
+- MOV 与 iPhone 原片对齐：`still-image-time` 样本值为 int8 `-1`，`ftyp` 只含 `qt  `，`moov/meta` 带 `com.apple.quicktime.live-photo.auto = 1`；
+- 五对样本（`021031`、`021033`、`021038`、`234224`、`001253`）已在 iPhone Photos 中识别为单张实况照片。
+
 工作：
 
 - 已用 Mate 70 拍摄原始动态照片，并通过文件管理器复制到 Docs；
@@ -249,7 +254,7 @@ Step 2 已完成「鲜艳/明快」样本差分及 Apple Photos 编辑、导出�
 - `RfDataB` 可从偏移 64 的观察布局读出 `1024×768`、每 sample 1 字节的平面；其中一张样本出现 `obp8` 标记，其余样本的对应 header 字节不同。该平面视觉上明显是分层/深度样式的图，但目前不赋予具体深度单位或通道语义；
 - `edof` tile 解码后为 10-bit 三通道声明的灰度辅助图。它与 `RfDataB` 的对应关系及 Apple Portrait 的目标编码仍未确认。
 
-因此当前结论是“已发现可研究的人像资源”，不是“已支持 Huawei 人像转换”。在深度方向、量化和坐标方向未验证前，不写入 Apple 人像图。
+以上是 2026-09-07 的采样结论。深度方向、量化和坐标方向后来已在 Step 3 验证，Huawei 人像转换已支持，见 Step 3。
 
 ### 6.5 Step 4：Mate 70 动态照片样本（2026-09-07）
 

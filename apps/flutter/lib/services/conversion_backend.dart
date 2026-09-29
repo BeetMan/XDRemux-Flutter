@@ -19,6 +19,7 @@ class ConversionRequest {
   final bool strictTmap;
   final bool applePhotographicStyles;
   final bool applePortrait;
+  final bool applePhotographicStyles3;
   final AppleWatermarkPolicy appleWatermarkPolicy;
   final int progressHandle;
 
@@ -33,6 +34,7 @@ class ConversionRequest {
     required this.strictTmap,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
+    this.applePhotographicStyles3 = false,
     this.appleWatermarkPolicy = AppleWatermarkPolicy.preserve,
     this.progressHandle = 0,
   });
@@ -161,6 +163,10 @@ class RustConversionBackend implements ConversionBackendAdapter {
     final effectiveOppoCameraTail = request.outputMode == OutputMode.apple
         ? 0
         : request.oppoCameraTail;
+    // Photographic Styles 3 builds on the 2023 styles item (the actual
+    // style-editing UI driver), so emit it whenever PS3 output is requested.
+    final effectiveStyles =
+        request.applePhotographicStyles || request.applePhotographicStyles3;
     final result = await Isolate.run(() {
       final ffiResult = request.progressHandle != 0
           ? XdRemuxFFI.convertWithProgress(
@@ -170,7 +176,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
-              applePhotographicStyles: request.applePhotographicStyles,
+              applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
             )
           : XdRemuxFFI.convert(
@@ -179,7 +185,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
               strictTmap: request.strictTmap,
-              applePhotographicStyles: request.applePhotographicStyles,
+              applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
             );
       try {
@@ -210,8 +216,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
       request.outputPath,
       applePhotographicStyles: request.applePhotographicStyles,
       applePortrait: request.applePortrait,
-    );
-    if (!outputValid) {
+    );    if (!outputValid) {
       return result.copyWith(
         success: false,
         outputValid: false,
@@ -225,7 +230,42 @@ class RustConversionBackend implements ConversionBackendAdapter {
             : t('Rust 输出验证失败', 'Rust output verification failed'),
       );
     }
+
+    // Photographic Styles 3: post-process the output to carry a Standard
+    // texture_styles item plus the 12 semantic part-matte placeholders so
+    // Photos offers texture/grain editing on it.
+    if (request.applePhotographicStyles3) {
+      final injected = XdRemuxFFI.injectTextureStyles(
+        request.outputPath,
+        request.outputPath,
+        _grainSeedFor(request.inputPath),
+      );
+      if (!injected) {
+        return result.copyWith(
+          success: false,
+          errorMessage: t('PS3 texture_styles 注入失败', 'PS3 texture_styles injection failed'),
+        );
+      }
+      final mattes = XdRemuxFFI.injectSemanticMattes(
+        request.outputPath,
+        request.outputPath,
+      );
+      if (!mattes) {
+        return result.copyWith(
+          success: false,
+          errorMessage: t('PS3 语义分区 matte 注入失败', 'PS3 semantic matte injection failed'),
+        );
+      }
+    }
     return result.copyWith(outputValid: true);
+  }
+
+  int _grainSeedFor(String inputPath) {
+    var h = 0;
+    for (final c in inputPath.codeUnits) {
+      h = (h * 31 + c) & 0x7fffffff;
+    }
+    return h;
   }
 
   @override
@@ -266,6 +306,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
 /// request/result contract.
 class SwiftConversionBackend implements ConversionBackendAdapter {
   static const MethodChannel _channel = MethodChannel('xdremux/swift-backend');
+
   static const EventChannel _progressChannel = EventChannel(
     'xdremux/swift-backend/progress',
   );

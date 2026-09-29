@@ -314,7 +314,11 @@ fn recognizes_huawei_portrait_resources_when_available() {
             sample.display()
         );
         assert_eq!(portrait.classification, "huawei-portrait");
-        assert!(!portrait.safe_to_transform);
+        assert!(
+            portrait.safe_to_transform,
+            "Huawei portrait should route to the Apple portrait remux: {}",
+            sample.display()
+        );
         assert_eq!(portrait.edof_tile_item_ids.len(), 12);
         assert!(portrait.edof_auxl_to_primary);
         assert!(portrait

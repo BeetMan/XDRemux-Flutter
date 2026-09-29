@@ -333,10 +333,11 @@ fn jpeg_gain_map_presence_matches_spec() {
     let Some(dir) = require_fixtures() else { return };
     for spec in FIXTURES.iter().filter(|s| s.filename.ends_with(".jpg")) {
         let data = std::fs::read(dir.join(spec.filename)).unwrap();
-        // uhdr_jpeg::parse returns Ok(None) when there is no MPF gain-map
-        // second image — which is exactly the expects_gain_map=false signal.
+        // A plain JPEG now yields a synthesized identity gain map so it can
+        // reach the styles pipeline; that is not a real gain map, so compare
+        // against the identity constant rather than mere presence.
         let has_gain_map = match uhdr_jpeg::parse(&data) {
-            Ok(Some(info)) => !info.gainmap_jpeg.is_empty(),
+            Ok(Some(info)) => info.gainmap_jpeg != uhdr_jpeg::IDENTITY_GAINMAP_JPEG,
             Ok(None) => false,
             Err(e) => panic!("{}: uhdr parse error: {e}", spec.filename),
         };

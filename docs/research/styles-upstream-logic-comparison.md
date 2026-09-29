@@ -273,3 +273,29 @@ JSON payload：
   输入格式；若能捕获同一编辑前后的 key1（库内文件或重渲染），可反推
   cast→key1 的确定性映射（后续研究方向）
 - sky matte 在本链路不参与（A/B 输出逐字节一致，详见 native-fidelity-gap）
+
+## PS3 上机结论（2026-09-15，iPhone 16e / iOS 27）
+
+### 门禁判定实验汇总
+
+| 探针 | 变量 | 结果 |
+|---|---|---|
+| A/B | identity vs learn-node 真 key1 | 老风格都可用（key1 内容非门槛）|
+| H | 原生容器 + 我们的 texture payload | **可用**（payload 内容无问题）|
+| I | 原生容器 + identity styles payload | **可用**（styles 状态无问题）|
+| E/G/J/K/L/N/T | 各种容器/命名/brands/Exif/上游底子 | 全部不可用 |
+| X | 剥掉全部 maker notes | **老风格入口也消失** → maker note 是风格编辑总开关 |
+| **V** | **注入 12 个纯黑 2026 分区 matte** | **新风格（质感/胶片/颗粒/光晕）解锁 ✓** |
+
+### 确认的 PS3 契约（最小可行集）
+
+1. `tag:apple.com,2026:photo:metadata:texture_styles`（uri metadata 项，cdsc → [主图, tmap]，payload 在 mdat 内）
+2. `tag:apple.com,2023:photo:metadata:styles`（2023 styles 项，PS3 开启时连带生成）
+3. 12 个 `tag:apple.com,2026:photo:aux:semantic*matte` 项（768×576 8-bit HEVC，auxl → [主图, tmap]）——**纯黑占位即可过门禁**
+4. Apple maker note 至少含 PhotoIdentifier（剥离则所有风格入口消失）
+
+### 已知边界
+
+- 纯黑占位 matte：质感/胶片/颗粒/光晕正常，**柔肤 no-op**（需要真实 skin mask）
+- **人像转换 + PS3 可同时开启**（旧「style+pair 编辑加载失败」结论限定于 Live Photo 组合；portrait+styles 组合现已正常）
+- 上游 Swift 转换器同样不生成 2026 matte（其 Vision 管线只出 sky/person/skin/hair/teeth/glasses，见 apple_vision_semantic_mattes.swift）
