@@ -13,4 +13,11 @@ void main() {
     expect(symbols.difference(retained), isEmpty,
         reason: 'DynamicLibrary.process needs -u retention on iOS');
   });
+
+  test('all iOS Runner configurations preserve global symbols when stripping', () {
+    final project = File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+    final configs = RegExp(r'OTHER_LDFLAGS = "\$\(inherited\) -Wl,-u,_xdremux_[^;]+;\s+STRIP_STYLE = "non-global";')
+        .allMatches(project);
+    expect(configs.length, 3, reason: 'Debug/Profile/Release must preserve runtime FFI exports');
+  });
 }

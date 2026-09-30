@@ -78,9 +78,7 @@ post_install do |installer|
     _xdremux_inject_texture_styles _xdremux_inject_semantic_mattes
     _xdremux_param_set_basic _xdremux_pic_set_planes _xdremux_pic_set_pts
   ]
-  # -u keeps code reachable; explicit exports also keep the entry points
-  # visible to dlsym/DynamicLibrary.process in stripped release archives.
-  keep = ffisyms.map { |s| "-u #{s} -Wl,-exported_symbol,#{s}" }.join(' ')
+  keep = ffisyms.map { |s| "-u #{s}" }.join(' ')
   force = "-force_load #{File.join(libdir, 'libx265.a')} -force_load #{File.join(libdir, 'libxdremux_core.a')} -lc++ -framework Security #{keep}"
   Dir.glob(File.join(File.expand_path('Pods', __dir__), 'Target Support Files', 'Pods-Runner', '*.xcconfig')).each do |f|
     content = File.read(f)
