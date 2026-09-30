@@ -83,8 +83,10 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            # workflow_dispatch (CI debugging): no tag, use a placeholder.
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -220,7 +222,8 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -402,8 +405,11 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
-            echo "APP_BUILD_NUMBER=0" >> "$GITHUB_ENV"
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
+            echo "APP_BUILD_NUMBER=${pubspec_version##*+}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
             return 2>/dev/null || exit 0
           fi
@@ -535,10 +541,12 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
@@ -638,10 +646,12 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
