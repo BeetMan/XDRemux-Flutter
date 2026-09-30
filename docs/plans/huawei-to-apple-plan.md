@@ -217,10 +217,12 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 - [x] `flutter test --no-pub`：56 项通过，含真实华为 FFI 的同目录配对、源文件字节保留与两次重试；`flutter analyze --no-pub --no-fatal-infos` 无问题。
 - [x] 本地 Windows release 编译通过。
 - [ ] 云端 Windows x64/ARM64、Android、macOS、iOS 完整发布构建与 OHOS 核心 smoke。
-- [ ] 本地更新后的 OHOS profile HAP 构建与 unsigned 资产归档。
+- [x] 本地更新后的 OHOS profile HAP 编译通过（0.4.3+37，AOT / debug:true）；全部 35 个 FFI 入口均由 OHOS 核心导出。
 - [ ] 合并 PR #2 到 main，发布 v0.4.3，并在 GitHub Release 使用手写更新说明。
 
 平台差异是系统文件/图库接口，不是华为转换算法：OHOS 使用原生图库桥和 `general.file` 分享（避免系统改写 HEIC 辅助图）；Android/iOS 使用 Gal，桌面使用文件保存。上述保存/单文件分享只包含静帧；Live Photo 仍需同时导入 HEIC + MOV。本轮不声称实现系统图库 Live 资产写入，也不声称已在 Windows 主机上做 Apple 设备 UI 验收。
+
+云端首轮出包额外发现 Windows ARM64 runner 已升级到 VS 2026，而 x265 的生成器仍锁 VS 2022；改为通过 vswhere 读取实际版本选择 CMake 生成器。该失败发生在编译前，并非华为算法差异；ARM64 路线原有实验性状态不变。
 
 ## 6. Step 0 执行记录（2026-09-07）
 

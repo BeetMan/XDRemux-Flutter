@@ -36,8 +36,8 @@ flutter build apk --release  # Android（需先 cargo ndk 更新 jniLibs）
 鸿蒙 hap（必须用 **PowerShell**，Git Bash 会触发嵌套 bat 递归炸弹）：
 
 ```powershell
-tools/ohos/build_hap.ps1          # 默认 profile 模式（AOT + debug:true，可侧载，~34MB）
-tools/ohos/build_hap.ps1 -Debug   # debug JIT（~118MB，仅调试用）
+tools/ohos/build_hap.ps1 -Profile # profile 模式（AOT + debug:true，可侧载，~34MB）
+tools/ohos/build_hap.ps1          # 默认 debug JIT（~118MB，仅调试用）
 tools/ohos/build_hap.ps1 -Release # release（~27MB，侧载不可签，仅供有发布证书场景）
 ```
 

@@ -177,9 +177,16 @@ jobs:
             xdremux/rust/vendor/x265/include/x265.h
           # x265's assembly only covers x86 (NASM) and aarch64-with-GNU-as;
           # MSVC ARM64 gets the portable C path.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vsVersion = & $vswhere -latest -products '*' -property installationVersion
+          $generator = switch ([int]($vsVersion.Split('.')[0])) {
+            18 { 'Visual Studio 18 2026' }
+            17 { 'Visual Studio 17 2022' }
+            default { throw "Unsupported Visual Studio version: $vsVersion" }
+          }
           cmake -S xdremux/rust/vendor/x265/source `
             -B xdremux/rust/vendor/x265/build_windows `
-            -G 'Visual Studio 17 2022' -A ARM64 `
+            -G $generator -A ARM64 `
             -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
             -DENABLE_ASSEMBLY=OFF `
             -DXDREMUX_SKIP_RC=ON
