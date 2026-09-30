@@ -663,16 +663,17 @@ jobs:
           APP=$(find "$ARCHIVE/Products/Applications" -name '*.app' | head -1)
           # Dart loads the core through DynamicLibrary.process(). A successful
           # archive alone does not prove its runtime FFI survived dead_strip.
-          SYMBOLS=$(nm -gU "$APP/Runner")
           # Keep diagnostics compact (set -x would print thousands of C++
           # symbols) while preserving the archive's actual export check.
           set +x
+          SYMBOLS=$(nm -gU "$APP/Runner")
           while read -r symbol; do
             if ! grep -Eq "[[:space:]]_${symbol}$" <<< "$SYMBOLS"; then
               echo "Missing iOS runtime FFI symbol: $symbol" >&2
               exit 1
             fi
           done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
+          echo 'Validated all Dart runtime FFI exports in the iOS archive.'
           mkdir -p apps/flutter/build/ios/ipa/Payload
           cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
           cd apps/flutter/build/ios/ipa

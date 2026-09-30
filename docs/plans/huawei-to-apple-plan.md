@@ -216,7 +216,7 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 - [x] 本地 `cargo test --workspace --locked`：231 项通过，4 项依赖私有样片/手工流程的测试 ignored；单独启用华为 corpus 测试 7 项通过（9 张 HDR、4 张人像、3 张动态、XMAGE v5/v6）。
 - [x] `flutter test --no-pub`：57 项通过，含真实华为 FFI 的同目录配对、源文件字节保留与两次重试；`flutter analyze --no-pub --no-fatal-infos` 无问题。
 - [x] 本地 Windows release 编译通过。
-- [ ] 云端 Windows x64/ARM64、Android、macOS、iOS 完整发布构建与 OHOS 核心 smoke。
+- [x] 云端 Windows x64、Android、macOS 完整出包（[首轮](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/36727912113)）；iOS 完整 IPA + FFI 导出检查（[修复后](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/36730122633)）；OHOS 核心 smoke 通过。ARM64 原有混合架构流程已加拦截，不将编译成功当作可发布依据。
 - [x] 本地更新后的 OHOS profile HAP 编译通过（0.4.3+37，AOT / debug:true）；全部 35 个 FFI 入口均由 OHOS 核心导出。
 - [ ] 合并 PR #2 到 main，发布 v0.4.3，并在 GitHub Release 使用手写更新说明。
 
@@ -227,6 +227,8 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 首轮 Windows x64、Android、macOS 发布构建通过；iOS archive 成功，但新增 `nm` 闸门检测到运行时 FFI 不可见，IPA 打包被阻止。在 `-u` 保留之外，按 [Flutter 官方静态 FFI 指引](https://docs.flutter.dev/platform-integration/legacy-ffi-plugin#stripping-symbols) 将 Runner 三个配置设为 `STRIP_STYLE=non-global`（不使用限制其它符号的导出白名单）。新增配置契约测试，单独重跑 iOS，不以 archive 编译成功冒充可用。
 
 ARM64 另有原有打包风险：工作流强制 x64 Flutter SDK，Flutter 3.44.5 按 Dart ABI 选择 x64 Runner，但 Rust 是 aarch64。即使编译任务成功也可能得到混合架构包。增加 EXE / Flutter DLL / Rust DLL 的 PE machine=0xAA64 检查，未通过时不上传 ARM64 安装器，不能通过重命名目录冒充 ARM64；普通 Windows x64 发布不受影响。
+
+正式 tag 构建会重新生成四个 CI 产物；OHOS 的 `XDRemux-HarmonyOS-0.4.3-unsigned.hap` 已从 profile 构建独立归档，版本 0.4.3 / code 37 / debug:true，包含 AOT libapp 及带新源文件保护的 Rust 核心。签名配置与未跟踪的 `apps/harmony/` 保留本地，不入此次合并。
 
 ## 6. Step 0 执行记录（2026-09-07）
 

@@ -25,3 +25,5 @@
 - iOS IPA 未签名；HarmonyOS 提供 profile/AOT unsigned HAP，需自行签名侧载。现有 Android 发布签名沿用，不更换密钥。
 
 本轮本地验证：Rust workspace 231 项通过；私有华为 corpus 7 项通过；Flutter 57 项通过；Windows release 编译通过。Apple Photos 真机记录沿用已归档验证，发布包编译检查不等同于所有机型安装验收。
+
+发布前完整出包验证：Windows x64 / Android / macOS 通过；iOS IPA 及全部 Dart FFI 导出检查通过；OHOS profile HAP（0.4.3+37，AOT / debug:true）构建通过。Windows ARM64 暂不发布混合架构包。

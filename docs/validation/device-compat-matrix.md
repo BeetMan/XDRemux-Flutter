@@ -24,7 +24,8 @@
 | iPhone Air / iOS 27 | 2026-09-29 已归档的五对 Live Photo 对照验证 | 已识别单一 Live Photo；不是本轮 Windows 主机重复验收 |
 | OHOS 应用 | 用户 2026-09-30 验证最新本机构建 | 用户反馈功能正常；本轮构建另行登记 |
 | Windows x64 应用 | 本轮 release 编译、57 项 Flutter 测试和 FFI 符号/版本检查 | 通过 |
-| Android / macOS / iOS 发布包 | 与上述相同 Rust 逻辑；云端完整构建待记录 | 不将静态逻辑核对等同于设备端安装验收 |
+| Android / macOS / iOS 发布包 | Android / macOS 首轮出包成功；iOS 修复剥离配置后 IPA + FFI 导出闸门通过 | 编译/打包通过；仍不等同于设备端安装验收 |
+| Windows ARM64 实验线 | x64 Flutter SDK 与 aarch64 Rust 的 ABI 差异 | 增加 PE 架构拦截；不发布混合架构安装器 |
 
 范围限制：其他华为系列机型没有逐机型背书；XMAGE v5/v6 只读诊断；图库保存/单文件分享并非系统 Live Photo 资产导入。
 
