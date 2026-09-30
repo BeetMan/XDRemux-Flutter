@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mergeHuaweiInspection, convertHuaweiPortrait, livePhotoStylesCompatible, verifyStillExtraction } from '../entry/src/main/ets/queue/HuaweiPhotoModel.ts';
+import { mergeHuaweiInspection, convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompatible, verifyStillExtraction } from '../entry/src/main/ets/queue/HuaweiPhotoModel.ts';
 import { QueueController } from '../entry/src/main/ets/queue/QueueController.ts';
 import { serializeQueueSnapshot, decodeQueueSnapshot } from '../entry/src/main/ets/queue/QueuePersistence.ts';
 
@@ -32,6 +32,9 @@ assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: false, applePh
 assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: true }), true);
 assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: false }), false);
 assert.equal(livePhotoStylesCompatible({}), false);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles-native","texture"]}'), true);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles"]}'), false);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"error","added":["styles-native"]}'), false);
 let attached = false;
 const badBase = { remux: async () => '{"success":true}', verify: async () => false,
   attach: async () => { attached = true; return '{"status":"attached"}'; } };

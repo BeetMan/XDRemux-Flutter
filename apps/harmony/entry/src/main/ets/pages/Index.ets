@@ -107,7 +107,8 @@ import {
 } from '../queue/LivePhotoPairExport';
 import type { LivePhotoExportEntry } from '../queue/LivePhotoPairExport';
 import { ps3OptionsFor, stableGrainSeed } from '../queue/Ps3Model';
-import { convertHuaweiPortrait, livePhotoStylesCompatible, mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
+import { convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompatible,
+  mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
 import { HarmonyGalleryLibrary } from '../gallery/HarmonyGalleryLibrary';
 import {
   galleryMimeTypeForExtension,
@@ -2540,17 +2541,47 @@ struct Index {
       return { success: true, mode: 'apple', family: 'huawei', edrScale: 0,
         gainMapMax: 0, errorMessage: null };
     }
-    if (details.huaweiHdr === true && mode.modeKey === 'apple' &&
-      mode.config.applePhotographicStyles === 0 && mode.applePhotographicStyles3 !== true) {
-      // The Huawei ISO HDR still is already Apple-compatible. Its Motion
-      // Photo trailer must not be included in a standalone HEIC result.
-      if (details.motionPhoto === true) {
-        verifyStillExtraction(await xdremuxNative.motionExtractStill(inputPath, outputPath) as string);
-      } else {
-        await this.copySandboxPath(inputPath, outputPath);
+    if (details.huaweiHdr === true && mode.modeKey === 'apple') {
+      const wantsStyles: boolean = mode.config.applePhotographicStyles === 1 ||
+        mode.applePhotographicStyles3 === true;
+      const basePath: string = wantsStyles ? outputPath + '.huawei-base.heic' : outputPath;
+      if (wantsStyles && queueItemId.length > 0) {
+        this.getController().registerOwnedPath(queueItemId, basePath);
+        await this.getController().persist();
       }
-      return { success: true, mode: 'apple', family: 'huawei', edrScale: 0,
-        gainMapMax: 0, errorMessage: null };
+      try {
+        // Preserve the source HEVC/gain map. Motion Photos must first shed
+        // their appended video before either grafting or a fallback convert.
+        if (details.motionPhoto === true) {
+          verifyStillExtraction(await xdremuxNative.motionExtractStill(inputPath, basePath) as string);
+        } else {
+          await this.copySandboxPath(inputPath, basePath);
+        }
+        if (wantsStyles) {
+          let grafted: boolean = false;
+          try {
+            const flags: number = mode.applePhotographicStyles3 === true ? 7 : 1;
+            const report: string = await xdremuxNative.attachStyleLayers(
+              basePath, outputPath, stableGrainSeed(inputPath), flags) as string;
+            const styledDetails: NativePhotoDetails = JSON.parse(
+              await xdremuxNative.inspect(outputPath) as string) as NativePhotoDetails;
+            grafted = hasNativeHuaweiStyleGraft(report) &&
+              styledDetails.success === true && styledDetails.applePhotographicStyles === true;
+          } catch (graftError) {
+            // An unsupported graph can still use the generic Apple path.
+          }
+          if (!grafted) {
+            return await xdremuxNative.convert(basePath, outputPath, mode.config, handle,
+              ps3OptionsFor(inputPath, mode.applePhotographicStyles3 === true)) as NativeConversionResult;
+          }
+        }
+        return { success: true, mode: 'apple', family: 'huawei', edrScale: 0,
+          gainMapMax: 0, errorMessage: null };
+      } finally {
+        if (wantsStyles) {
+          try { await fileIo.unlink(basePath); } catch (cleanupError) {}
+        }
+      }
     }
     return await xdremuxNative.convert(inputPath, outputPath, mode.config, handle,
       ps3OptionsFor(inputPath, mode.applePhotographicStyles3 === true)) as NativeConversionResult;

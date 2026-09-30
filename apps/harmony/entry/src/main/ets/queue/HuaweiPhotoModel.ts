@@ -20,6 +20,13 @@ interface HuaweiConversionReport {
 interface StyleLayerReport {
   status?: string;
   message?: string;
+  added?: Array<string>;
+}
+
+export function hasNativeHuaweiStyleGraft(json: string): boolean {
+  const report: StyleLayerReport = JSON.parse(json) as StyleLayerReport;
+  return report !== null && report.status === 'attached' &&
+    Array.isArray(report.added) && report.added.includes('styles-native');
 }
 
 interface StillExtractReport {

@@ -488,6 +488,13 @@ fn remuxes_huawei_portrait_samples_when_available() {
             "{}: portrait graph lost after styles attach",
             sample.display()
         );
+        let verify_dir = TempOutputDir::new().expect("temporary verification directory");
+        let styles_path = verify_dir.path.join("portrait-styles.heic");
+        fs::write(&styles_path, &styles_only.0).expect("write styles verification sample");
+        let inspected = xdremux_core::photo_details::inspect_photo_details(&styles_path)
+            .expect("inspect grafted portrait output");
+        assert!(inspected.apple_photographic_styles,
+            "{}: styles graft was not recognized", sample.display());
         assert!(
             !styles_only.0.windows(texture_uri.len()).any(|w| w == texture_uri),
             "{}: styles-only output contains texture_styles",
