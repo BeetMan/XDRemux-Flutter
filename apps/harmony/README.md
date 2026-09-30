@@ -1,4 +1,4 @@
-# XDRemux Native HarmonyOS P3
+# XDRemux for HarmonyOS
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
@@ -13,7 +13,7 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The project is configured for arm64 devices, the independent bundle ID `io.github.beetman.xdremux.arkui`, and native app version code `40019` (`0.4.9`). Use local DevEco signing for device tests and leave release packages unsigned.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.0-alpha1` and version code `50001`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
 
 The local gallery index is `filesDir/xdremux-gallery/library.json`; imported originals live under `filesDir/xdremux-gallery/items/`. Queue-owned inputs remain separate under the queue sandbox. Import copies are committed to the index only after the copied file is verified, and the index is replaced atomically.
 
