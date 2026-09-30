@@ -1,6 +1,7 @@
 # XDRemux 鸿蒙原生预览版
 
 **当前版本：0.5.0-alpha1** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
+
 Flutter 跨平台版：[v0.4.3](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.3)（功能等价）
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](apps/harmony/README.md) · [开发计划](docs/plans/harmony-native.md)
