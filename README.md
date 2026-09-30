@@ -95,6 +95,17 @@ v0.4.0 新增。导入 OPPO / Android 的 Motion Photo 后：
 
 iPhone 上的实况播放与声音需按机型验收；普通照片不受影响。
 
+### 华为 Mate 70 人像与动态照片（v0.4.3）
+
+- 原生 Huawei HDR 默认提示「无需转换」，保留原文件；开启摄影风格时可附加 Apple 风格层；
+- 支持已验证的 Mate 70 人像 HEIC 转为 Apple 人像，包含视差、对焦区域、人像光效与主体蒙版；
+- 识别 OpenHarmony 动态照片追加的视频及封面时刻，复用 Live Photo 配对或静帧/视频拆分；
+- 五平台统一调用 Rust 华为管线；Apple 平台即使选择 Swift，华为文件仍由 Rust 处理；
+- Live Photo 输出为同名 HEIC + MOV，需一起导入 Apple Photos。「保存图库」和单文件分享仅处理静帧，不会自动创建系统 Live Photo 资产；
+- XMAGE `xtstyle` 目前只读诊断，不代表已将华为色彩风格映射成 Apple 摄影风格。其他华为机型仍需原始样片验证。
+
+验证与边界见 [华为支持计划](docs/plans/huawei-to-apple-plan.md) 和 [设备兼容矩阵](docs/validation/device-compat-matrix.md)。
+
 ---
 
 ## Apple 摄影风格与人像模式

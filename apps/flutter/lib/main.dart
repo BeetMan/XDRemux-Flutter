@@ -28,6 +28,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/huawei_photo_policy.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
@@ -422,6 +423,7 @@ class _HomePageState extends State<HomePage> {
         outputPath: cpItem.outputPath,
         status: status,
         errorMessage: cpItem.error,
+        policyReason: cpItem.policyReason,
         outputPlanStatus: _computeOutputPlan(
           cpItem.inputPath,
           cpItem.outputPath,
@@ -706,16 +708,13 @@ class _HomePageState extends State<HomePage> {
   (QueueItemStatus, String?) _huaweiHdrAdmission({
     required bool reportedHuaweiHdr,
     required bool portraitReady,
+    bool motionPhoto = false,
   }) {
-    if (!reportedHuaweiHdr || portraitReady || _stylesRequested) {
-      return (QueueItemStatus.pending, null);
-    }
-    return (
-      QueueItemStatus.skippedPolicy,
-      t(
-        '华为 HDR 原生兼容 Apple Photos，无需转换',
-        'Huawei HDR is natively compatible with Apple Photos; no conversion needed',
-      ),
+    return HuaweiPhotoPolicy.admission(
+      huaweiHdr: reportedHuaweiHdr,
+      portraitReady: portraitReady,
+      stylesRequested: _stylesRequested,
+      motionPhoto: motionPhoto,
     );
   }
 
@@ -734,6 +733,7 @@ class _HomePageState extends State<HomePage> {
       final (status, reason) = _huaweiHdrAdmission(
         reportedHuaweiHdr: true,
         portraitReady: false,
+        motionPhoto: item.motionPhoto != null,
       );
       if (item.status == status && item.policyReason == reason) continue;
       item.status = status;
@@ -1275,6 +1275,16 @@ class _HomePageState extends State<HomePage> {
     // Rust diagnostic FFI is exposed.
     if (!Platform.isMacOS && !Platform.isIOS) return null;
 
+    // Huawei uses edof/RfDataB, not OPPO rear.depth. Inspect it before the
+    // OPPO-only diagnostic so Apple imports reach the shared Rust remux.
+    final huawei = await XdRemuxService.inspectHuawei(inputPath);
+    if (huawei['huaweiPortrait'] is Map &&
+        HuaweiPhotoPolicy.portraitReady(
+          Map<String, dynamic>.from(huawei['huaweiPortrait'] as Map),
+        )) {
+      return null;
+    }
+
     final report = await XdRemuxService.diagnosePortrait(inputPath);
     if (report['classification'] == 'missing-rear-depth') {
       return t('缺少 rear.depth（仅包含前置深度数据）', 'Missing rear.depth (only front depth data present)');
@@ -1688,6 +1698,11 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    // These dedicated Huawei paths are implemented in the portable Rust
+    // core, including when Swift is selected for other Apple conversions.
+    if (item.huaweiHdr || HuaweiPhotoPolicy.portraitReady(item.huaweiPortrait)) {
+      runConfig.backend = ConversionBackend.rust;
+    }
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
     // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
@@ -1719,6 +1734,12 @@ class _HomePageState extends State<HomePage> {
         : 0;
 
     try {
+      if ((item.huaweiHdr || item.huaweiPortrait != null) &&
+          (File(item.inputPath).absolute.path == File(item.outputPath).absolute.path ||
+              (File(item.outputPath).existsSync() &&
+                  FileSystemEntity.identicalSync(item.inputPath, item.outputPath)))) {
+        throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
+      }
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
@@ -1958,35 +1979,12 @@ class _HomePageState extends State<HomePage> {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
-            final outParent = File(item.outputPath).parent.path;
-            final report = XdRemuxFFI.makeLivePhoto(
+            await MotionPhotoService.composeLivePhoto(
               item.inputPath,
               item.outputPath,
-              outParent,
             );
-            if (report['success'] != true) {
-              throw report['errorMessage'] ?? 'live photo compose failed';
-            }
-            // Adopt the paired still (identical pixels + MakerNote) as the
-            // output, and place the MOV next to it under the output name.
-            final pairedStill = report['stillPath'] as String?;
-            final pairedMov = report['videoPath'] as String?;
-            if (pairedStill != null &&
-                pairedMov != null &&
-                File(pairedStill).existsSync()) {
-              final outFile = File(item.outputPath);
-              if (pairedStill != item.outputPath) {
-                await File(pairedStill).copy(item.outputPath);
-                await File(pairedStill).delete();
-              }
-              final movTarget = _sideOutputPath(
-                outFile.path.replaceAll(RegExp(r'\.[^.]+$'), '.mov'),
-              );
-              if (pairedMov != movTarget) {
-                await File(pairedMov).rename(movTarget);
-              }
-            }
           } catch (e) {
+            item.status = QueueItemStatus.failed;
             item.errorMessage = t('Live Photo 合成失败: $e', 'Live Photo composition failed: $e');
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
@@ -2224,24 +2222,12 @@ class _HomePageState extends State<HomePage> {
       final cpByPath = {for (final ci in cpItems) ci.inputPath: ci};
 
       for (final qItem in _queue) {
-        if (!cpByPath.containsKey(qItem.inputPath)) {
-          // New item not in checkpoint
-          cpItems.add(
-            CheckpointItem(
-              inputPath: qItem.inputPath,
-              outputPath: qItem.outputPath,
-              status: CheckpointItemStatus.pending,
-              inputSize: _fileSize(qItem.inputPath),
-              inputMtimeMs: _fileMtimeMs(qItem.inputPath),
-              captureModeKey: qItem.captureModeKey,
-              captureModeFolderName: qItem.captureModeFolderName,
-              classificationStatus: qItem.classificationStatus,
-              hdrKind: qItem.hdrKind,
-              family: qItem.family,
-              motionPhoto: qItem.motionPhoto?.toJson(),
-              motionPhotoMode: qItem.motionPhotoMode.name,
-            ),
-          );
+        final current = CheckpointService.createItemsFromQueue([qItem]).single;
+        final previous = cpByPath[qItem.inputPath];
+        if (previous == null) {
+          cpItems.add(current);
+        } else {
+          cpItems[cpItems.indexOf(previous)] = current;
         }
       }
     } else {
@@ -2366,24 +2352,6 @@ class _HomePageState extends State<HomePage> {
       return t('Swift 后端：$message', 'Swift backend: $message');
     }
     return message;
-  }
-
-  static int _fileSize(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.lengthSync() : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  static int _fileMtimeMs(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.statSync().modified.millisecondsSinceEpoch : 0;
-    } catch (_) {
-      return 0;
-    }
   }
 
   void _clearQueue() {
@@ -2684,23 +2652,6 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(snackText)));
-    }
-  }
-
-  /// Returns [target] with a sequence suffix (" 2", " 3", …) inserted before
-  /// the extension until a non-existing path is found. Side outputs (Live
-  /// Photo MOV, motion video exports) use this so a repeated conversion
-  /// never silently overwrites a previous side file.
-  String _sideOutputPath(String target) {
-    if (!File(target).existsSync()) return target;
-    final dir = File(target).parent.path;
-    final name = File(target).uri.pathSegments.last;
-    final dot = name.lastIndexOf('.');
-    final stem = dot > 0 ? name.substring(0, dot) : name;
-    final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 2;; i++) {
-      final candidate = '$dir${Platform.pathSeparator}$stem $i$ext';
-      if (!File(candidate).existsSync()) return candidate;
     }
   }
 
@@ -5353,7 +5304,7 @@ class _MobileQueueCard extends StatelessWidget {
     }
     if (item.status == QueueItemStatus.skippedExisting ||
         item.status == QueueItemStatus.skippedPolicy) {
-      return item.outputPlanStatus.displayName;
+      return item.policyReason ?? item.outputPlanStatus.displayName;
     }
     return item.outputPlanStatus.blocksConversion
         ? item.outputPlanStatus.displayName

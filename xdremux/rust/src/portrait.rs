@@ -1869,6 +1869,16 @@ pub fn huawei_person_contour(source: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Convert a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
 pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
+    // Huawei Motion Photos append a complete MP4 after the HEIC. Only remux
+    // the still container; carrying the movie boxes into the rebuilt HEIC
+    // leaves duplicate ftyp/mdat boxes and stale motion offsets.
+    let motion = crate::motion_photo::parse_motion_photo(source)?;
+    let source = match motion.as_ref() {
+        Some(asset) => source
+            .get(asset.still_range.start as usize..asset.still_range.end as usize)
+            .ok_or("motion still range is out of bounds")?,
+        None => source,
+    };
     let top = top_level_boxes(source)?;
     let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
     let mdat_hdr = find_top(&top, b"mdat").ok_or("no mdat box")?;

@@ -58,6 +58,16 @@ use container::OppoCameraTail;
 use exif::OppoCompat;
 use isobmff_write::PreparedOutput;
 
+fn paths_refer_to_same_file(input: &str, output: &str) -> bool {
+    if input == output {
+        return true;
+    }
+    match (std::fs::canonicalize(input), std::fs::canonicalize(output)) {
+        (Ok(input), Ok(output)) => input == output,
+        _ => false,
+    }
+}
+
 /// Opaque result struct returned to Dart. Dart must call `xdremux_free_result`.
 #[repr(C)]
 pub struct ConversionResult {
@@ -277,6 +287,11 @@ pub extern "C" fn xdremux_make_live_photo(
             .unwrap_or("livephoto");
         let still_out_path = format!("{out_dir}/{stem}.heic");
         let mov_path = format!("{out_dir}/{stem}.mov");
+        if paths_refer_to_same_file(source_path, &still_out_path)
+            || paths_refer_to_same_file(source_path, &mov_path)
+        {
+            return Err("Live Photo output must not overwrite the source".into());
+        }
         std::fs::write(&still_out_path, &still_out)
             .map_err(|e| format!("write still: {e}"))?;
         std::fs::write(&mov_path, &mov).map_err(|e| format!("write movie: {e}"))?;
@@ -1046,6 +1061,12 @@ pub extern "C" fn xdremux_remux_huawei_portrait(
                 .to_string()
             }
         };
+        if paths_refer_to_same_file(in_str, out_str) {
+            return serde_json::json!({
+                "success": false,
+                "error": "portrait output must not overwrite the source",
+            }).to_string();
+        }
         let data = match std::fs::read(in_str) {
             Ok(d) => d,
             Err(e) => {
@@ -1058,6 +1079,16 @@ pub extern "C" fn xdremux_remux_huawei_portrait(
         };
         match portrait::run_huawei_portrait(&data) {
             Ok(remuxed) => {
+                if let Some(parent) = std::path::Path::new(out_str).parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return serde_json::json!({
+                            "success": false,
+                            "error": format!("create output directory: {e}"),
+                        }).to_string();
+                    }
+                }
                 if let Err(e) = std::fs::write(out_str, remuxed) {
                     return serde_json::json!({
                         "success": false,

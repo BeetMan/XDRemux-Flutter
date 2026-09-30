@@ -396,6 +396,21 @@ fn remuxes_huawei_portrait_samples_when_available() {
         }
 
         assert!(!remuxed.is_empty());
+        let top = xdremux_core::isobmff::parse_boxes(&remuxed, 0, remuxed.len());
+        assert_eq!(top.iter().filter(|b| &b.btype == b"ftyp").count(), 1);
+        assert!(!top.iter().any(|b| &b.btype == b"moov"), "portrait still contains the appended movie");
+        let temp = TempOutputDir::new().expect("temp portrait output");
+        let nested = temp.path.join("portrait").join("nested").join("output.heic");
+        let input = CString::new(sample.to_string_lossy().as_bytes()).unwrap();
+        let output = CString::new(nested.to_string_lossy().as_bytes()).unwrap();
+        let result = xdremux_core::xdremux_remux_huawei_portrait(input.as_ptr(), output.as_ptr());
+        let json: serde_json::Value = serde_json::from_str(unsafe {
+            std::ffi::CStr::from_ptr(result).to_str().unwrap()
+        }).unwrap();
+        xdremux_core::xdremux_free_string(result);
+        assert_eq!(json["success"], true, "{json}");
+        assert_eq!(fs::read(&nested).unwrap(), remuxed, "FFI differs from the shared core");
+        assert_eq!(fs::read(sample).unwrap(), source_bytes, "source was modified");
         let meta = xdremux_core::isobmff::parse_source_meta(&remuxed).expect("parse output meta");
         let edof_item = meta
             .items
@@ -456,7 +471,7 @@ fn remuxes_huawei_portrait_samples_when_available() {
         )
         .unwrap_or_else(|e| panic!("{}: styles attach failed: {e}", sample.display()));
         assert!(
-            styles_only.1.added.iter().any(|s| *s == "styles"),
+            styles_only.1.added.iter().any(|s| *s == "styles-native"),
             "{}: styles layer was not added",
             sample.display()
         );
@@ -488,7 +503,7 @@ fn remuxes_huawei_portrait_samples_when_available() {
         )
         .unwrap_or_else(|e| panic!("{}: styles 3 attach failed: {e}", sample.display()));
         assert!(
-            styles3.1.added.iter().any(|s| *s == "styles"),
+            styles3.1.added.iter().any(|s| *s == "styles-native"),
             "{}: styles 3 attach missed the styles item",
             sample.display()
         );

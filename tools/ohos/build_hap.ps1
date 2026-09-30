@@ -19,6 +19,10 @@ $env:DEVECO_SDK_HOME = 'C:\Program Files\Huawei\DevEco Studio\sdk'
 
 Copy-Item pubspec.yaml pubspec.yaml.mainline.bak -Force
 if (Test-Path pubspec.lock) { Copy-Item pubspec.lock pubspec.lock.mainline.bak -Force }
+$registrantPath = Join-Path $app 'macos\Flutter\GeneratedPluginRegistrant.swift'
+$registrantBytes = if (Test-Path $registrantPath) {
+    [System.IO.File]::ReadAllBytes($registrantPath)
+} else { $null }
 try {
     Copy-Item pubspec.ohos.yaml pubspec.yaml -Force
     # Keep the app version in sync with the mainline pubspec so OHOS builds
@@ -40,14 +44,9 @@ try {
     if (Test-Path pubspec.lock.mainline.bak) {
         Move-Item pubspec.lock.mainline.bak pubspec.lock -Force
     }
-    # The OHOS pubspec has a different plugin set, so the build rewrites
-    # macos/Flutter/GeneratedPluginRegistrant.swift (it drops the plugins the
-    # OHOS variant does not use). Restore the tracked version with git: running
-    # `flutter pub get` here is not reliable because this script puts the OHOS
-    # Flutter SDK first on PATH and its bundled Dart version can differ from
-    # what the mainline pubspec requires.
-    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-    if (Get-Command git -ErrorAction SilentlyContinue) {
-        git -C $repoRoot checkout -- apps/flutter/macos/Flutter/GeneratedPluginRegistrant.swift 2>$null
+    # Preserve the caller's generated registrant, including local edits. Do
+    # not reset it to HEAD: building OHOS must not discard unrelated work.
+    if ($null -ne $registrantBytes) {
+        [System.IO.File]::WriteAllBytes($registrantPath, $registrantBytes)
     }
 }

@@ -307,7 +307,16 @@ class CheckpointService {
       return CheckpointItem(
         inputPath: item.inputPath,
         outputPath: item.outputPath,
-        status: CheckpointItemStatus.pending,
+        status: switch (item.status) {
+          QueueItemStatus.converted => CheckpointItemStatus.converted,
+          QueueItemStatus.skippedExisting => CheckpointItemStatus.skippedExisting,
+          QueueItemStatus.skippedPolicy => CheckpointItemStatus.skippedPolicy,
+          QueueItemStatus.failed => CheckpointItemStatus.failed,
+          _ => CheckpointItemStatus.pending,
+        },
+        policyReason: item.policyReason,
+        error: item.errorMessage,
+        finishedAt: item.finishedAt,
         inputSize: size,
         inputMtimeMs: mtimeMs,
         captureModeKey: item.captureModeKey,

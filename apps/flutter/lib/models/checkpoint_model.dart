@@ -73,6 +73,7 @@ class CheckpointItem {
   final int inputSize;
   final int inputMtimeMs;
   String? error;
+  final String? policyReason;
   DateTime? finishedAt;
 
   /// Classification metadata so a restored queue item keeps its capture-mode
@@ -98,6 +99,7 @@ class CheckpointItem {
     this.inputSize = 0,
     this.inputMtimeMs = 0,
     this.error,
+    this.policyReason,
     this.finishedAt,
     this.captureModeKey,
     this.captureModeFolderName,
@@ -119,6 +121,7 @@ class CheckpointItem {
         'inputSize': inputSize,
         'inputMtimeMs': inputMtimeMs,
         if (error != null) 'error': error,
+        if (policyReason != null) 'policyReason': policyReason,
         if (finishedAt != null) 'finishedAt': finishedAt!.toIso8601String(),
         if (captureModeKey != null) 'captureModeKey': captureModeKey,
         if (captureModeFolderName != null)
@@ -142,6 +145,7 @@ class CheckpointItem {
       inputSize: json['inputSize'] as int? ?? 0,
       inputMtimeMs: json['inputMtimeMs'] as int? ?? 0,
       error: json['error'] as String?,
+      policyReason: json['policyReason'] as String?,
       finishedAt: json['finishedAt'] != null
           ? DateTime.tryParse(json['finishedAt'] as String)
           : null,

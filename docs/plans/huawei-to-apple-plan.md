@@ -1,6 +1,6 @@
 # 华为 Mate 70 照片支持计划：识别、色彩风格、人像与 Live Photo
 
-> 分支：`research/huawei-xmage`。制定时间：2026-09-07，Step 0 已完成。
+> 集成分支：`integrate/huawei-portrait-live`，目标版本 `0.4.3+37`。研究起点：2026-09-07；发布核查：2026-09-30。
 > 规范样本：Mate 70 Pro 优享版（PLR-AL50）原始 HEIC，优先使用 hdc 直接拉取的文件。
 > 其他手机照片只作探索性线索，不作为实现依据。
 
@@ -202,6 +202,25 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 - 华为人像动态照片与普通动态照片均能正常完成配对与产出。
 
 下一步是完成 Step 5 的文档、设备矩阵与最终真机交付验证。
+
+### 5.1 0.4.3 合并/发版核查（2026-09-30）
+
+- [x] 用户已验证最新 OHOS 构建的华为功能正常（用户反馈，不冒充本轮独立真机验证）。
+- [x] 核对 Windows / Android / macOS / iOS / OHOS：识别、人像重封装、风格附加、Live 配对共用 Rust；华为文件明确路由 Rust，不受 Apple 的 Swift 选择影响。
+- [x] 修复 Apple 平台 OPPO `rear.depth` 预检误拒华为 `edof/RfDataB` 人像。
+- [x] iOS Podfile 补齐华为、动态照片和风格 FFI 的 `-u` 保留；增加 Dart/Podfile 契约测试及 IPA 二进制符号检查。
+- [x] 修复设置变更使华为动态照片重新「无需转换」的问题；修复 checkpoint 丢失跳过状态/原因，恢复保留华为元数据和处理策略。
+- [x] 人像 FFI 自动创建分类输出目录；人像 Motion 输入先切出静帧，不把追加 MP4 带入输出 HEIC。
+- [x] Live Photo 改为临时目录合成、验证后输出；避免同目录写回覆盖源照片。失败标记为失败，重试使用固定同名 MOV，便于恢复验证。
+- [x] 重建 Windows DLL 并检查核心/Flutter 版本一致；所有 Dart 使用的 FFI 符号均存在。
+- [x] 本地 `cargo test --workspace --locked`：231 项通过，4 项依赖私有样片/手工流程的测试 ignored；单独启用华为 corpus 测试 7 项通过（9 张 HDR、4 张人像、3 张动态、XMAGE v5/v6）。
+- [x] `flutter test --no-pub`：56 项通过，含真实华为 FFI 的同目录配对、源文件字节保留与两次重试；`flutter analyze --no-pub --no-fatal-infos` 无问题。
+- [x] 本地 Windows release 编译通过。
+- [ ] 云端 Windows x64/ARM64、Android、macOS、iOS 完整发布构建与 OHOS 核心 smoke。
+- [ ] 本地更新后的 OHOS profile HAP 构建与 unsigned 资产归档。
+- [ ] 合并 PR #2 到 main，发布 v0.4.3，并在 GitHub Release 使用手写更新说明。
+
+平台差异是系统文件/图库接口，不是华为转换算法：OHOS 使用原生图库桥和 `general.file` 分享（避免系统改写 HEIC 辅助图）；Android/iOS 使用 Gal，桌面使用文件保存。上述保存/单文件分享只包含静帧；Live Photo 仍需同时导入 HEIC + MOV。本轮不声称实现系统图库 Live 资产写入，也不声称已在 Windows 主机上做 Apple 设备 UI 验收。
 
 ## 6. Step 0 执行记录（2026-09-07）
 
