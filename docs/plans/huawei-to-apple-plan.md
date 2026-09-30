@@ -224,6 +224,8 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 
 云端首轮出包额外发现 Windows ARM64 runner 已升级到 VS 2026，而 x265 的生成器仍锁 VS 2022；改为通过 vswhere 读取实际版本选择 CMake 生成器。该失败发生在编译前，并非华为算法差异；ARM64 路线原有实验性状态不变。
 
+首轮 Windows x64、Android、macOS 发布构建通过；iOS archive 成功，但新增 `nm` 闸门检测到运行时 FFI 未导出，IPA 打包被阻止。Podfile 在 `-u` 保留之外补充显式 `-exported_symbol`，待重跑确认，不以 archive 编译成功冒充可用。
+
 ## 6. Step 0 执行记录（2026-09-07）
 
 ### 6.1 样本 manifest

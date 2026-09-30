@@ -633,7 +633,7 @@ jobs:
 
       - name: Build unsigned archive
         working-directory: apps/flutter
-        run: flutter build ipa --release --no-codesign
+        run: flutter build ipa --release --no-codesign --no-pub
 
       - name: Package unsigned IPA
         shell: bash
@@ -646,6 +646,9 @@ jobs:
           # Dart loads the core through DynamicLibrary.process(). A successful
           # archive alone does not prove its runtime FFI survived dead_strip.
           SYMBOLS=$(nm -gU "$APP/Runner")
+          # Keep diagnostics compact (set -x would print thousands of C++
+          # symbols) while preserving the archive's actual export check.
+          set +x
           while read -r symbol; do
             if ! grep -Eq "[[:space:]]_${symbol}$" <<< "$SYMBOLS"; then
               echo "Missing iOS runtime FFI symbol: $symbol" >&2
