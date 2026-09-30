@@ -47,7 +47,10 @@ fn main() {
     let (link_search, lib_name) = match target_os.as_str() {
         "android" => (format!("{x265_root}/build_android"), "x265".to_string()),
         "ios" => (format!("{x265_root}/build_ios"), "x265".to_string()),
-        "windows" => (format!("{x265_root}/build_windows/Release"), "x265-static".to_string()),
+        "windows" => (
+            format!("{x265_root}/build_windows/Release"),
+            "x265-static".to_string(),
+        ),
         _ if is_ohos => (format!("{x265_root}/build_ohos"), "x265".to_string()),
         _ => (format!("{x265_root}/build_desktop"), "x265".to_string()),
     };

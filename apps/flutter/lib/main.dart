@@ -28,6 +28,7 @@ import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/huawei_photo_policy.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
@@ -422,6 +423,7 @@ class _HomePageState extends State<HomePage> {
         outputPath: cpItem.outputPath,
         status: status,
         errorMessage: cpItem.error,
+        policyReason: cpItem.policyReason,
         outputPlanStatus: _computeOutputPlan(
           cpItem.inputPath,
           cpItem.outputPath,
@@ -432,6 +434,9 @@ class _HomePageState extends State<HomePage> {
         classificationStatus: cpItem.classificationStatus,
         hdrKind: cpItem.hdrKind,
         family: cpItem.family,
+        huaweiHdr: cpItem.huaweiHdr,
+        huaweiHasXtstyle: cpItem.huaweiHasXtstyle,
+        huaweiPortrait: cpItem.huaweiPortrait,
         motionPhoto:
             mpJson == null
                 ? null
@@ -693,6 +698,50 @@ class _HomePageState extends State<HomePage> {
 
   int get _skippedPolicyCount =>
       _queue.where((item) => item.status == QueueItemStatus.skippedPolicy).length;
+
+  bool get _stylesRequested =>
+      _config.applePhotographicStyles || _config.applePhotographicStyles3;
+
+  /// Ordinary Huawei HDR already displays in Photos, so it is skipped only
+  /// when Photographic Styles is off. Styles uses the generic HEIC encode,
+  /// which these files must be allowed to enter.
+  (QueueItemStatus, String?) _huaweiHdrAdmission({
+    required bool reportedHuaweiHdr,
+    required bool portraitReady,
+    bool motionPhoto = false,
+  }) {
+    return HuaweiPhotoPolicy.admission(
+      huaweiHdr: reportedHuaweiHdr,
+      portraitReady: portraitReady,
+      stylesRequested: _stylesRequested,
+      motionPhoto: motionPhoto,
+    );
+  }
+
+  void _syncHuaweiHdrPolicy() {
+    var changed = false;
+    for (final item in _queue) {
+      if (!item.huaweiHdr) continue;
+      final portraitReady =
+          item.huaweiPortrait != null &&
+          item.huaweiPortrait!['safeToTransform'] == true;
+      if (portraitReady) continue;
+      if (item.status != QueueItemStatus.pending &&
+          item.status != QueueItemStatus.skippedPolicy) {
+        continue;
+      }
+      final (status, reason) = _huaweiHdrAdmission(
+        reportedHuaweiHdr: true,
+        portraitReady: false,
+        motionPhoto: item.motionPhoto != null,
+      );
+      if (item.status == status && item.policyReason == reason) continue;
+      item.status = status;
+      item.policyReason = reason;
+      changed = true;
+    }
+    if (changed && mounted) setState(() {});
+  }
 
   int get _skippedCount => _skippedExistingCount + _skippedPolicyCount;
 
@@ -1045,6 +1094,10 @@ class _HomePageState extends State<HomePage> {
       if (summary == null) return;
       item.motionPhoto = summary;
       item.motionPhotoMode = _config.motionPhotoDefaultMode;
+      if (item.huaweiHdr) {
+        item.status = QueueItemStatus.pending;
+        item.policyReason = null;
+      }
       if (mounted) setState(() {});
     } finally {
       _motionInspectsInFlight--;
@@ -1129,6 +1182,22 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+        final admission = _huaweiHdrAdmission(
+          reportedHuaweiHdr: reportedHuaweiHdr,
+          portraitReady:
+              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
+        );
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -1140,6 +1209,11 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: admission.$1,
+            policyReason: admission.$2,
           ),
         );
         _inspectMotionPhoto(_queue.last);
@@ -1200,6 +1274,16 @@ class _HomePageState extends State<HomePage> {
     // Other platforms keep the existing conversion behavior until a portable
     // Rust diagnostic FFI is exposed.
     if (!Platform.isMacOS && !Platform.isIOS) return null;
+
+    // Huawei uses edof/RfDataB, not OPPO rear.depth. Inspect it before the
+    // OPPO-only diagnostic so Apple imports reach the shared Rust remux.
+    final huawei = await XdRemuxService.inspectHuawei(inputPath);
+    if (huawei['huaweiPortrait'] is Map &&
+        HuaweiPhotoPolicy.portraitReady(
+          Map<String, dynamic>.from(huawei['huaweiPortrait'] as Map),
+        )) {
+      return null;
+    }
 
     final report = await XdRemuxService.diagnosePortrait(inputPath);
     if (report['classification'] == 'missing-rear-depth') {
@@ -1614,6 +1698,11 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    // These dedicated Huawei paths are implemented in the portable Rust
+    // core, including when Swift is selected for other Apple conversions.
+    if (item.huaweiHdr || HuaweiPhotoPolicy.portraitReady(item.huaweiPortrait)) {
+      runConfig.backend = ConversionBackend.rust;
+    }
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
     // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
@@ -1645,6 +1734,12 @@ class _HomePageState extends State<HomePage> {
         : 0;
 
     try {
+      if ((item.huaweiHdr || item.huaweiPortrait != null) &&
+          (File(item.inputPath).absolute.path == File(item.outputPath).absolute.path ||
+              (File(item.outputPath).existsSync() &&
+                  FileSystemEntity.identicalSync(item.inputPath, item.outputPath)))) {
+        throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
+      }
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
@@ -1672,16 +1767,142 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Photographic Styles need the styles scaffold, which only the
-      // conversion pipeline generates. Non-ProXDR inputs are decoded and
-      // rebuilt into a standard container inside Rust (see sdr_source.rs), so
-      // no input special-casing is needed here.
+      // Photographic Styles on an ordinary photo go through the conversion
+      // pipeline. A Huawei portrait keeps its own remux, then the requested
+      // styles layers are written onto that output.
+
+      // Huawei Portrait fast path: uses the dedicated remux pipeline
+      // instead of the OPPO-based classify/extract/encode path.
+      // Styles / Styles 3, when enabled, are attached afterwards so both
+      // stay on together. Live Photo pairing already cleared styles-only
+      // above; Styles 3 is still applied.
+      final wantStyles = runConfig.applePhotographicStyles;
+      final wantStyles3 = runConfig.applePhotographicStyles3;
+      final styleFlags = (wantStyles || wantStyles3 ? XdRemuxFFI.styleLayerStyles : 0) |
+          (wantStyles3 ? XdRemuxFFI.styleLayerTexture | XdRemuxFFI.styleLayerMattes : 0);
+      var grainSeed = 0;
+      for (final c in item.inputPath.codeUnits) {
+        grainSeed = (grainSeed * 31 + c) & 0x7fffffff;
+      }
+      Map<String, dynamic>? result;
+      if (item.huaweiPortrait != null &&
+          item.huaweiPortrait!['safeToTransform'] == true) {
+        result = await Isolate.run(() {
+          final report = XdRemuxFFI.remuxHuaweiPortrait(
+            item.inputPath,
+            item.outputPath,
+          );
+          if (report['success'] == true) {
+            final outputValid = XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath);
+            if (!outputValid) {
+              return <String, dynamic>{
+                'success': false,
+                'outputValid': false,
+                'errorMessage': t(
+                  '华为人像输出验证失败',
+                  'Huawei portrait output verification failed',
+                ),
+              };
+            }
+            if (styleFlags != 0) {
+              final attached = XdRemuxFFI.attachStyleLayers(
+                item.outputPath,
+                item.outputPath,
+                grainSeed,
+                styleFlags,
+              );
+              if (attached['status'] == 'error') {
+                return <String, dynamic>{
+                  'success': false,
+                  'outputValid': false,
+                  'errorMessage': t(
+                    '华为人像摄影风格写入失败: ${attached['message'] ?? ''}',
+                    'Huawei portrait styles attach failed: ${attached['message'] ?? ''}',
+                  ),
+                };
+              }
+              if (!XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath)) {
+                return <String, dynamic>{
+                  'success': false,
+                  'outputValid': false,
+                  'errorMessage': t(
+                    '摄影风格写入后人像数据丢失',
+                    'Portrait data was lost while attaching styles',
+                  ),
+                };
+              }
+            }
+            return <String, dynamic>{
+              'success': true,
+              'outputValid': true,
+            };
+          }
+          return <String, dynamic>{
+            'success': false,
+            'errorMessage': report['error'] ?? t('华为人像转换失败', 'Huawei portrait conversion failed'),
+          };
+        });
+      } else if (item.huaweiHdr) {
+        // Huawei HDR already displays in Apple Photos. Styles are grafted onto
+        // that container. A full decode-and-reencode is only the fallback when
+        // the graft cannot see a gain-map graph. A Motion Photo still is
+        // materialized here so Live Photo pairing or video export can run.
+        result = await Isolate.run(() async {
+          try {
+            final inFile = File(item.inputPath);
+            final outFile = File(item.outputPath);
+            final parent = outFile.parent;
+            if (!parent.existsSync()) {
+              parent.createSync(recursive: true);
+            }
+            final stillBytes = item.motionPhoto?.stillBytes ?? 0;
+            if (stillBytes > 0 && stillBytes < inFile.lengthSync()) {
+              final raf = await inFile.open(mode: FileMode.read);
+              try {
+                final bytes = await raf.read(stillBytes);
+                await outFile.writeAsBytes(bytes, flush: true);
+              } finally {
+                await raf.close();
+              }
+            } else if (item.inputPath != item.outputPath) {
+              await inFile.copy(item.outputPath);
+            }
+            if (styleFlags != 0) {
+              final attached = XdRemuxFFI.attachStyleLayers(
+                item.outputPath,
+                item.outputPath,
+                grainSeed,
+                styleFlags,
+              );
+              final added = attached['added'];
+              final grafted = attached['status'] != 'error' &&
+                  added is List &&
+                  added.contains('styles-native');
+              if (!grafted) {
+                return <String, dynamic>{'fallback': true};
+              }
+            }
+            return <String, dynamic>{
+              'success': true,
+              'outputValid': true,
+            };
+          } catch (e) {
+            return <String, dynamic>{
+              'success': false,
+              'errorMessage': t('华为静帧提取失败: $e', 'Huawei still extraction failed: $e'),
+            };
+          }
+        });
+        if (result != null && result['fallback'] == true) {
+          result = null;
+        }
+      }
 
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
-      Map<String, dynamic>? result;
-      if (runConfig.backend == ConversionBackend.rust &&
+      if (result == null &&
+          runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
           !runConfig.applePhotographicStyles3 &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
@@ -1758,35 +1979,12 @@ class _HomePageState extends State<HomePage> {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
-            final outParent = File(item.outputPath).parent.path;
-            final report = XdRemuxFFI.makeLivePhoto(
+            await MotionPhotoService.composeLivePhoto(
               item.inputPath,
               item.outputPath,
-              outParent,
             );
-            if (report['success'] != true) {
-              throw report['errorMessage'] ?? 'live photo compose failed';
-            }
-            // Adopt the paired still (identical pixels + MakerNote) as the
-            // output, and place the MOV next to it under the output name.
-            final pairedStill = report['stillPath'] as String?;
-            final pairedMov = report['videoPath'] as String?;
-            if (pairedStill != null &&
-                pairedMov != null &&
-                File(pairedStill).existsSync()) {
-              final outFile = File(item.outputPath);
-              if (pairedStill != item.outputPath) {
-                await File(pairedStill).copy(item.outputPath);
-                await File(pairedStill).delete();
-              }
-              final movTarget = _sideOutputPath(
-                outFile.path.replaceAll(RegExp(r'\.[^.]+$'), '.mov'),
-              );
-              if (pairedMov != movTarget) {
-                await File(pairedMov).rename(movTarget);
-              }
-            }
           } catch (e) {
+            item.status = QueueItemStatus.failed;
             item.errorMessage = t('Live Photo 合成失败: $e', 'Live Photo composition failed: $e');
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
@@ -2024,24 +2222,12 @@ class _HomePageState extends State<HomePage> {
       final cpByPath = {for (final ci in cpItems) ci.inputPath: ci};
 
       for (final qItem in _queue) {
-        if (!cpByPath.containsKey(qItem.inputPath)) {
-          // New item not in checkpoint
-          cpItems.add(
-            CheckpointItem(
-              inputPath: qItem.inputPath,
-              outputPath: qItem.outputPath,
-              status: CheckpointItemStatus.pending,
-              inputSize: _fileSize(qItem.inputPath),
-              inputMtimeMs: _fileMtimeMs(qItem.inputPath),
-              captureModeKey: qItem.captureModeKey,
-              captureModeFolderName: qItem.captureModeFolderName,
-              classificationStatus: qItem.classificationStatus,
-              hdrKind: qItem.hdrKind,
-              family: qItem.family,
-              motionPhoto: qItem.motionPhoto?.toJson(),
-              motionPhotoMode: qItem.motionPhotoMode.name,
-            ),
-          );
+        final current = CheckpointService.createItemsFromQueue([qItem]).single;
+        final previous = cpByPath[qItem.inputPath];
+        if (previous == null) {
+          cpItems.add(current);
+        } else {
+          cpItems[cpItems.indexOf(previous)] = current;
         }
       }
     } else {
@@ -2168,24 +2354,6 @@ class _HomePageState extends State<HomePage> {
     return message;
   }
 
-  static int _fileSize(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.lengthSync() : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  static int _fileMtimeMs(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.statSync().modified.millisecondsSinceEpoch : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
   void _clearQueue() {
     if (!_canEditQueue) return;
     final oldCheckpoint = _checkpoint;
@@ -2304,8 +2472,10 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   Widget _buildDropTarget(BuildContext context, Widget child) {
-    // Drag & drop is desktop-only; on mobile just return the child directly.
-    if (Platform.isAndroid || Platform.isIOS) return child;
+    // Drag & drop is desktop-only. On touch platforms the DragTarget joins
+    // the gesture arena and can swallow the tap that should open the
+    // output menu.
+    if (PlatformX.isMobile) return child;
     return DragTarget<List<String>>(
       onWillAcceptWithDetails: (_) => _canEditQueue,
       onAcceptWithDetails: (details) => _handleDrop(details.data),
@@ -2396,6 +2566,22 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+        final admission = _huaweiHdrAdmission(
+          reportedHuaweiHdr: reportedHuaweiHdr,
+          portraitReady:
+              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
+        );
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -2407,6 +2593,11 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: admission.$1,
+            policyReason: admission.$2,
           ),
         );
         _inspectMotionPhoto(_queue.last);
@@ -2461,23 +2652,6 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(snackText)));
-    }
-  }
-
-  /// Returns [target] with a sequence suffix (" 2", " 3", …) inserted before
-  /// the extension until a non-existing path is found. Side outputs (Live
-  /// Photo MOV, motion video exports) use this so a repeated conversion
-  /// never silently overwrites a previous side file.
-  String _sideOutputPath(String target) {
-    if (!File(target).existsSync()) return target;
-    final dir = File(target).parent.path;
-    final name = File(target).uri.pathSegments.last;
-    final dot = name.lastIndexOf('.');
-    final stem = dot > 0 ? name.substring(0, dot) : name;
-    final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 2;; i++) {
-      final candidate = '$dir${Platform.pathSeparator}$stem $i$ext';
-      if (!File(candidate).existsSync()) return candidate;
     }
   }
 
@@ -2609,6 +2783,9 @@ class _HomePageState extends State<HomePage> {
               ListTile(
                 leading: const Icon(Icons.share),
                 title: Text(t('分享', 'Share')),
+                subtitle: PlatformX.isOhos
+                    ? Text(t('以文件发送原件', 'Send the original as a file'))
+                    : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
               ListTile(
@@ -3338,7 +3515,10 @@ class _HomePageState extends State<HomePage> {
               },
               onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
               onRevealOutput: () {
-                if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+                if (Platform.isAndroid ||
+                    Platform.isIOS ||
+                    Platform.isMacOS ||
+                    PlatformX.isOhos) {
                   _showOutputActions(_queue[index]);
                 } else {
                   _revealInExplorer(_queue[index].outputPath);
@@ -3517,7 +3697,10 @@ class _HomePageState extends State<HomePage> {
   /// - Running → select only
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
-      if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      if (Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isMacOS ||
+          PlatformX.isOhos) {
         _showOutputActions(item);
       } else {
         _revealInExplorer(item.outputPath);
@@ -3616,6 +3799,7 @@ class _HomePageState extends State<HomePage> {
         onChanged: () {
           _scheduleConfigSave();
           _refreshOutputPaths(refreshAll: true);
+          _syncHuaweiHdrPolicy();
         },
       ),
     );
@@ -5120,7 +5304,7 @@ class _MobileQueueCard extends StatelessWidget {
     }
     if (item.status == QueueItemStatus.skippedExisting ||
         item.status == QueueItemStatus.skippedPolicy) {
-      return item.outputPlanStatus.displayName;
+      return item.policyReason ?? item.outputPlanStatus.displayName;
     }
     return item.outputPlanStatus.blocksConversion
         ? item.outputPlanStatus.displayName

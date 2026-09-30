@@ -21,6 +21,16 @@ String get _libraryPath {
 }
 
 void main() {
+  test('packaged core exports every runtime symbol used by Flutter', () {
+    final lib = DynamicLibrary.open(_libraryPath);
+    final source = File('lib/ffi/xdremux_ffi.dart').readAsStringSync();
+    final symbols = RegExp(r"'((?:xdremux_)[a-z_]+)'")
+        .allMatches(source).map((match) => match.group(1)!).toSet();
+    for (final symbol in symbols) {
+      expect(lib.providesSymbol(symbol), isTrue, reason: 'Missing $symbol');
+    }
+  });
+
   test('version returns non-null', () {
     final lib = DynamicLibrary.open(_libraryPath);
     final versionFn = lib.lookupFunction<
@@ -34,7 +44,10 @@ void main() {
         Void Function(Pointer<Utf8>),
         void Function(Pointer<Utf8>)>('xdremux_free_string');
     freeFn(ptr);
-    expect(ver.contains('.'), true);
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    final appVersion = RegExp(r'^version: ([^+\s]+)', multiLine: true)
+        .firstMatch(pubspec)!.group(1);
+    expect(ver, appVersion, reason: 'Packaged core and Flutter versions must match');
   });
 
   test('verify junk data returns false', () {

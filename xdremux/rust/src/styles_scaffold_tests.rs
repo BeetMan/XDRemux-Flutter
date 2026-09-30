@@ -338,3 +338,50 @@ fn metadata_rejects_invalid_headers_directories_and_payload_bounds() {
         assert!(merge_styles_note(&unsupported, &build_maker_note()).is_err());
     }
 }
+
+#[test]
+fn inject_maker_note_renames_duplicate_927c_entries() {
+    // Huawei cameras (e.g. Mate 70 Pro) can emit several 0x927c entries;
+    // the Apple MakerNote insert must not fail on the duplicates and the
+    // surplus vendor entries must be renamed so ImageIO cannot overwrite
+    // the Apple MakerNote afterwards.
+    for bo in [Bo(false), Bo(true)] {
+        let mut tiff = vec![0u8; 128];
+        tiff[..2].copy_from_slice(if bo.0 { b"MM" } else { b"II" });
+        bo.put_u16(&mut tiff[2..4], 42);
+        bo.put_u32(&mut tiff[4..8], 8);
+        // IFD0: only the ExifIFD pointer.
+        bo.put_u16(&mut tiff[8..10], 1);
+        bo.put_u16(&mut tiff[10..12], 0x8769);
+        bo.put_u16(&mut tiff[12..14], 4);
+        bo.put_u32(&mut tiff[14..18], 1);
+        bo.put_u32(&mut tiff[18..22], 30);
+        bo.put_u32(&mut tiff[22..26], 0);
+        // ExifIFD: three 0x927c entries (undefined, 8 bytes at offset 96).
+        let exif_ifd = 30;
+        bo.put_u16(&mut tiff[exif_ifd..exif_ifd + 2], 3);
+        for i in 0..3u32 {
+            let e = exif_ifd + 2 + 12 * i as usize;
+            bo.put_u16(&mut tiff[e..e + 2], 0x927c);
+            bo.put_u16(&mut tiff[e + 2..e + 4], 7);
+            bo.put_u32(&mut tiff[e + 4..e + 8], 8);
+            bo.put_u32(&mut tiff[e + 8..e + 12], 96);
+        }
+        bo.put_u32(&mut tiff[exif_ifd + 2 + 36..exif_ifd + 2 + 40], 0);
+        tiff[96..104].copy_from_slice(b"ven\0data");
+        let mut exif = b"\0\0\0\x06Exif\0\0".to_vec();
+        exif.extend(tiff);
+
+        let injected = inject_maker_note(&exif, b"apple").unwrap();
+        let prefix = exif_prefix_len(&injected).unwrap();
+        let out_tiff = &injected[prefix..];
+        let (_, ifd0) = tiff_header(out_tiff).unwrap();
+        let (_, entries, _) = exif_directory(out_tiff, bo, ifd0).unwrap();
+        let apple = entries.iter().find(|e| e.tag == 0x927c).expect("Apple MakerNote");
+        assert_eq!(entry_bytes(out_tiff, apple).unwrap(), b"apple");
+        for tag in [0x927du16, 0x927e] {
+            let renamed = entries.iter().find(|e| e.tag == tag).expect("renamed duplicate");
+            assert_eq!(entry_bytes(out_tiff, renamed).unwrap(), b"ven\0data");
+        }
+    }
+}

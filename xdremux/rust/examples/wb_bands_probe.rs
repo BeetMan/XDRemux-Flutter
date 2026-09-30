@@ -9,10 +9,14 @@ fn main() {
 
     let dimg = heif_oxide::decode_bytes(&donor).unwrap();
     let rimg = heif_oxide::decode_bytes(&returned).unwrap();
-    println!("donor {}x{} returned {}x{}", dimg.width, dimg.height, rimg.width, rimg.height);
+    println!(
+        "donor {}x{} returned {}x{}",
+        dimg.width, dimg.height, rimg.width, rimg.height
+    );
 
     let donor_rgba = dimg.to_rgba8();
-    let bands = xdremux_core::watermark_codec::detect_frame_bands(&donor_rgba, dimg.width, dimg.height);
+    let bands =
+        xdremux_core::watermark_codec::detect_frame_bands(&donor_rgba, dimg.width, dimg.height);
     println!("bands: {:?}", bands);
 
     // Simulate the composite on the returned raster and check band pixels.
@@ -30,8 +34,11 @@ fn main() {
         for y in [100u32, 4100, 4200, 4419] {
             let x = 2134usize;
             let base = y as usize * stride + x * 4;
-            println!("y={y} x={x}: donor={:?} returned_after={:?}",
-                &donor_rgba[base..base + 3], &ret[base..base + 3]);
+            println!(
+                "y={y} x={x}: donor={:?} returned_after={:?}",
+                &donor_rgba[base..base + 3],
+                &ret[base..base + 3]
+            );
         }
     }
 }

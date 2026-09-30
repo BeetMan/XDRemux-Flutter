@@ -547,7 +547,7 @@ fn build_matte_xmp() -> Vec<u8> {
 /// The Apple MakerNote observed in the golden scaffold:
 /// "Apple iOS\0\0\x01" + MM magic(2) + entries (tag 43 UUID, tag 84 flags
 /// bplist) + zero terminator. Offsets are relative to the MakerNote start.
-fn build_maker_note() -> Vec<u8> {
+pub(crate) fn build_maker_note() -> Vec<u8> {
     let uuid = uuid_v4_upper();
     // 91 bytes, copied verbatim from the golden scaffold (keys '0'..'7').
     let flags_bplist: &[u8] = &[
@@ -994,18 +994,49 @@ pub(crate) fn normalize_primary_orientation(exif: &[u8]) -> Result<Vec<u8>, Stri
 /// its Apple-specific meaning still requires device validation. Append a new
 /// directory when absent, leaving all TIFF payload/thumbnail/GPS offsets intact.
 pub(crate) fn set_portrait_custom_rendered(exif: &[u8]) -> Result<Vec<u8>, String> {
-    let prefix = exif_prefix_len(exif)?;
+    let exif = rename_extra_maker_notes(exif)?;
+    let prefix = exif_prefix_len(&exif)?;
     let (bo, _) = tiff_header(&exif[prefix..]).ok_or("bad TIFF header")?;
     let mut value = [0; 2];
     bo.put_u16(&mut value, 9);
-    upsert_exif_field(exif, 0xa401, 3, 1, &value)
+    upsert_exif_field(&exif, 0xa401, 3, 1, &value)
 }
 
 /// Append payloads/directories rather than shifting TIFF data: MakerNotes,
 /// thumbnails, GPS and other IFDs keep their original offset bases.
 pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
     let count = u32::try_from(maker_note.len()).map_err(|_| "MakerNote too large")?;
-    upsert_exif_field(exif, 0x927c, 7, count, maker_note)
+    let exif = rename_extra_maker_notes(exif)?;
+    upsert_exif_field(&exif, 0x927c, 7, count, maker_note)
+}
+
+/// Rename surplus `0x927c` Exif entries to unused tags (`0x927d`, `0x927e`, ...).
+/// Huawei cameras (e.g. Mate 70 Pro) can emit up to four `0x927c` entries;
+/// `upsert_exif_field` rejects duplicates, and Apple's ImageIO would otherwise
+/// overwrite the Apple MakerNote with a later vendor entry.
+fn rename_extra_maker_notes(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let (_, entries, _) = exif_directory(tiff, bo, ifd0)?;
+    let maker_notes: Vec<&IfdEntry> = entries.iter().filter(|e| e.tag == 0x927c).collect();
+    if maker_notes.len() <= 1 {
+        return Ok(exif.to_vec());
+    }
+    let used: Vec<u16> = entries.iter().map(|e| e.tag).collect();
+    let mut patched = tiff.to_vec();
+    let mut extra_tag = 0x927du16;
+    for dup in &maker_notes[1..] {
+        while used.contains(&extra_tag) {
+            extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
+        }
+        let tag_pos = dup.value_field_pos - 8;
+        bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
+        extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
+    }
+    let mut out = exif[..prefix].to_vec();
+    out.extend_from_slice(&patched);
+    Ok(out)
 }
 
 fn upsert_exif_field(exif: &[u8], tag: u16, typ: u16, count: u32, value: &[u8]) -> Result<Vec<u8>, String> {

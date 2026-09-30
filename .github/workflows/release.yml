@@ -7,6 +7,12 @@ on:
   # Manual runs for CI debugging: asset builds run, the publish job stays
   # tag-gated so a dispatch can never cut a release.
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Preflight build scope (tag releases always build all platforms)'
+        type: choice
+        default: all
+        options: [all, ios]
 
 permissions:
   contents: write
@@ -17,6 +23,7 @@ env:
 
 jobs:
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Windows installer
     runs-on: windows-2022
     steps:
@@ -76,8 +83,10 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            # workflow_dispatch (CI debugging): no tag, use a placeholder.
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -144,6 +153,7 @@ jobs:
           if-no-files-found: error
 
   windows-arm64:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Windows ARM64 installer (experimental)
     # Flutter 3.44.5 currently emits an x64 Windows runner even on the
     # windows-11-arm host, so do not block the public release on this job.
@@ -177,9 +187,16 @@ jobs:
             xdremux/rust/vendor/x265/include/x265.h
           # x265's assembly only covers x86 (NASM) and aarch64-with-GNU-as;
           # MSVC ARM64 gets the portable C path.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vsVersion = & $vswhere -latest -products '*' -property installationVersion
+          $generator = switch ([int]($vsVersion.Split('.')[0])) {
+            18 { 'Visual Studio 18 2026' }
+            17 { 'Visual Studio 17 2022' }
+            default { throw "Unsupported Visual Studio version: $vsVersion" }
+          }
           cmake -S xdremux/rust/vendor/x265/source `
             -B xdremux/rust/vendor/x265/build_windows `
-            -G 'Visual Studio 17 2022' -A ARM64 `
+            -G $generator -A ARM64 `
             -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
             -DENABLE_ASSEMBLY=OFF `
             -DXDREMUX_SKIP_RC=ON
@@ -205,7 +222,8 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -241,16 +259,24 @@ jobs:
         working-directory: apps/flutter
         run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
-      # Flutter's x64-emulated SDK on windows-11-arm still writes to the x64
-      # path, but the runner.exe inside is native ARM64. Mirror it to the
-      # arm64 path the installer script expects.
-      - name: Mirror ARM64 output path
+      # Emulated x64 Dart may build an x64 runner even on an ARM64 host.
+      # A directory rename must never disguise a mixed-architecture bundle.
+      - name: Stage and validate ARM64 output
         shell: pwsh
         run: |
           $src = 'apps/flutter/build/windows/x64'
           $dst = 'apps/flutter/build/windows/arm64'
           if ((Test-Path $src) -and -not (Test-Path $dst)) {
             Copy-Item $src $dst -Recurse
+          }
+          foreach ($name in @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')) {
+            $path = Join-Path $dst "runner/Release/$name"
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Refusing mixed ARM64 installer: {0} is PE machine 0x{1:X4}" -f $name, $machine)
+            }
           }
 
       - name: Build Inno Setup installer
@@ -281,6 +307,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Android APK
     runs-on: ubuntu-latest
     steps:
@@ -378,8 +405,11 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
-            echo "APP_BUILD_NUMBER=0" >> "$GITHUB_ENV"
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
+            echo "APP_BUILD_NUMBER=${pubspec_version##*+}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
             return 2>/dev/null || exit 0
           fi
@@ -464,6 +494,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: macOS DMG
     runs-on: macos-latest
     steps:
@@ -510,10 +541,12 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
@@ -613,10 +646,12 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
@@ -626,7 +661,7 @@ jobs:
 
       - name: Build unsigned archive
         working-directory: apps/flutter
-        run: flutter build ipa --release --no-codesign
+        run: flutter build ipa --release --no-codesign --no-pub
 
       - name: Package unsigned IPA
         shell: bash
@@ -636,6 +671,19 @@ jobs:
           # wrap Products/Applications/<App>.app into Payload/ ourselves.
           ARCHIVE="apps/flutter/build/ios/archive/Runner.xcarchive"
           APP=$(find "$ARCHIVE/Products/Applications" -name '*.app' | head -1)
+          # Dart loads the core through DynamicLibrary.process(). A successful
+          # archive alone does not prove its runtime FFI survived dead_strip.
+          # Keep diagnostics compact (set -x would print thousands of C++
+          # symbols) while preserving the archive's actual export check.
+          set +x
+          SYMBOLS=$(nm -gU "$APP/Runner")
+          while read -r symbol; do
+            if ! grep -Eq "[[:space:]]_${symbol}$" <<< "$SYMBOLS"; then
+              echo "Missing iOS runtime FFI symbol: $symbol" >&2
+              exit 1
+            fi
+          done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
+          echo 'Validated all Dart runtime FFI exports in the iOS archive.'
           mkdir -p apps/flutter/build/ios/ipa/Payload
           cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
           cd apps/flutter/build/ios/ipa

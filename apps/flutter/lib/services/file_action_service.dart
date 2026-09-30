@@ -18,11 +18,9 @@ class FileActionService {
 
   static const _nativeShareChannel = MethodChannel('xdremux/native-share');
 
-  // OHOS-only channels registered by the vendored gallery_saver/share_extend
-  // forks (invoked by name so stock platforms never import those packages).
+  // OHOS-only channel registered by the vendored gallery_saver fork
+  // (invoked by name so stock platforms never import that package).
   static const _ohosGalleryChannel = MethodChannel('gallery_saver');
-  static const _ohosShareChannel =
-      MethodChannel('com.zt.shareextend/share_extend');
 
   /// Save an image/video file to the system gallery (MediaStore on Android).
   ///
@@ -93,12 +91,13 @@ class FileActionService {
             : null,
       );
       if (_isOhos) {
-        // share_plus has no OHOS implementation; the share_extend fork
-        // registers this channel (system share sheet with file paths).
-        await _ohosShareChannel.invokeMethod<void>('share', {
-          'list': [filePath],
-          'type': isHeic ? 'image' : 'file',
-        });
+        // An image share goes through Harmony's compatible-format path and
+        // rewrites HEIC, dropping portrait auxiliary images. Send the sandbox
+        // file as general.file instead.
+        await const MethodChannel('xdremux/share').invokeMethod<void>(
+          'shareFile',
+          {'path': filePath},
+        );
         return;
       }
       // Share.shareXFiles exists on both share_plus v10 (OHOS variant) and

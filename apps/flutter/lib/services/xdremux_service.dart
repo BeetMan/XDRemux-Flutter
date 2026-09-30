@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
+import '../platform_x.dart';
 import '../models/app_models.dart';
 import '../l10n/l10n.dart';
 import 'conversion_backend.dart';
@@ -144,7 +145,10 @@ class XdRemuxService {
           'schema': 'xdremux-portrait-calibration-research-v1',
           'researchOnly': true,
           'safeToTransform': false,
-          'error': t('Apple 人像模式研究报告无效', 'Invalid Apple Portrait research report'),
+          'error': t(
+            'Apple 人像模式研究报告无效',
+            'Invalid Apple Portrait research report',
+          ),
         };
       }
       return raw.map((key, value) => MapEntry(key.toString(), value));
@@ -267,6 +271,37 @@ class XdRemuxService {
     }
   }
 
+  static Future<Map<String, dynamic>> inspectHuawei(String inputPath) async {
+    try {
+      return XdRemuxFFI.inspectHuawei(inputPath);
+    } catch (error) {
+      // Older platform bundles may not have the new diagnostic symbol yet.
+      // Recognition is advisory, so never reject an otherwise supported file.
+      return <String, dynamic>{
+        'schema': 'xdremux-huawei-heic-v1',
+        'status': 'diagnostic-unavailable',
+        'isHuaweiHdr': false,
+        'applePhotosHdrCompatible': false,
+        'recommendedAction': 'inspect',
+        'error': error.toString(),
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> remuxHuaweiPortrait(
+    String inputPath,
+    String outputPath,
+  ) async {
+    try {
+      return XdRemuxFFI.remuxHuaweiPortrait(inputPath, outputPath);
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'error': error.toString(),
+      };
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Capture-mode classification
   // -----------------------------------------------------------------------
@@ -361,14 +396,11 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// macOS/iOS/Android/Windows: native decode (ImageIO / Android ImageDecoder /
-  /// Windows WIC) of the full-resolution HEIC primary image, tone-mapped to
-  /// SDR, so the photo wall is crisp and full-colour. On Android/macOS the
-  /// Rust FFI fallback would scan for embedded JPEGs, which picks up the
-  /// grayscale gain map (black-and-white preview) or a corrupt fragment, so
-  /// the system decoder is preferred. On Windows, WIC decodes the primary
-  /// image for files that carry no EXIF thumbnail (older OPPO X6-series),
-  /// where the FFI fallback returned a broken JPEG fragment.
+  /// macOS/iOS/Android/Windows/OHOS: native decode (ImageIO / Android
+  /// ImageDecoder / Windows WIC / Harmony ImageKit) of the full-resolution
+  /// HEIC primary image, so the photo wall is the picture itself. The Rust
+  /// FFI fallback scans for embedded JPEGs, which picks up the grayscale
+  /// gain map (black-and-white preview) or a corrupt fragment.
   /// Other platforms (Linux): Rust FFI extracts the embedded EXIF JPEG
   /// thumbnail.
   static Future<Uint8List?> generateThumbnail(
@@ -378,7 +410,8 @@ class XdRemuxService {
     if (Platform.isMacOS ||
         Platform.isIOS ||
         Platform.isAndroid ||
-        Platform.isWindows) {
+        Platform.isWindows ||
+        PlatformX.isOhos) {
       try {
         const channel = MethodChannel('xdremux/thumbnail');
         final bytes = await channel.invokeMethod<Uint8List>('render', {

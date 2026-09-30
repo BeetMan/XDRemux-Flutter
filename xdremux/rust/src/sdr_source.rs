@@ -34,10 +34,99 @@ pub fn decode_to_rgb(data: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), String> {
         return Ok((rgb, w, h, true));
     }
     // HEIF/HEIC (and anything else heif-oxide can make sense of).
-    let image =
-        heif_oxide::decode_bytes(data).map_err(|e| format!("HEIF decode failed: {e:?}"))?;
+    // `clli` / `mdcv` describe the light level. They do not change the pixels.
+    // Huawei marks them essential; the decoder only knows transforms, so it
+    // refuses the file. Drop that essential bit before decoding.
+    let decodable = relax_descriptive_essential(data);
+    let image = heif_oxide::decode_bytes(&decodable)
+        .map_err(|e| format!("HEIF decode failed: {e:?}"))?;
     let (rgb, w, h) = heif_pixels_to_rgb8(&image)?;
     Ok((rgb, w, h, true))
+}
+
+/// Clear the essential flag on `clli` and `mdcv` associations. Size stays
+/// the same, so the rest of the container is untouched.
+fn relax_descriptive_essential(data: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    let Ok(meta) = crate::isobmff::parse_source_meta(&out) else {
+        return out;
+    };
+    let indexes: Vec<u32> = meta
+        .props
+        .iter()
+        .filter(|p| p.ptype == "clli" || p.ptype == "mdcv")
+        .map(|p| p.index)
+        .collect();
+    if indexes.is_empty() {
+        return out;
+    }
+    let top = crate::isobmff::parse_boxes(&out, 0, out.len());
+    let Some(meta_box) = top.iter().find(|b| &b.btype == b"meta") else {
+        return data.to_vec();
+    };
+    let kids = crate::isobmff::parse_boxes(&out, meta_box.data_start + 4, meta_box.data_end);
+    let Some(iprp) = kids.iter().find(|b| &b.btype == b"iprp") else {
+        return data.to_vec();
+    };
+    let iprp_kids = crate::isobmff::parse_boxes(&out, iprp.data_start, iprp.data_end);
+    let Some(ipma) = iprp_kids.iter().find(|b| &b.btype == b"ipma") else {
+        return data.to_vec();
+    };
+    if !clear_essential_bits(&mut out, ipma.data_start, ipma.data_end, &indexes) {
+        return data.to_vec();
+    }
+    out
+}
+
+/// `ipma` layout from ISO/IEC 14496-12: version >= 1 uses 32-bit item ids;
+/// flags bit 0 uses a 15-bit property index. The essential flag is the high bit.
+fn clear_essential_bits(data: &mut [u8], start: usize, end: usize, indexes: &[u32]) -> bool {
+    if start + 8 > end || end > data.len() {
+        return false;
+    }
+    let version = data[start];
+    let flags = u32::from_be_bytes([data[start + 1], data[start + 2], data[start + 3], 0]) >> 8;
+    let large_id = version >= 1;
+    let large_index = flags & 1 != 0;
+    let count = u32::from_be_bytes([
+        data[start + 4],
+        data[start + 5],
+        data[start + 6],
+        data[start + 7],
+    ]) as usize;
+    let mut pos = start + 8;
+    for _ in 0..count {
+        pos += if large_id { 4 } else { 2 };
+        if pos >= end {
+            return false;
+        }
+        let assoc_count = data[pos] as usize;
+        pos += 1;
+        for _ in 0..assoc_count {
+            if large_index {
+                if pos + 2 > end {
+                    return false;
+                }
+                let raw = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                let index = (raw & 0x7fff) as u32;
+                if indexes.contains(&index) {
+                    let cleared = raw & 0x7fff;
+                    data[pos..pos + 2].copy_from_slice(&cleared.to_be_bytes());
+                }
+                pos += 2;
+            } else {
+                if pos >= end {
+                    return false;
+                }
+                let index = (data[pos] & 0x7f) as u32;
+                if indexes.contains(&index) {
+                    data[pos] &= 0x7f;
+                }
+                pos += 1;
+            }
+        }
+    }
+    pos <= end
 }
 
 /// HEIF pixels are 8- or 10/12-bit, with or without alpha. The pipeline stores
@@ -277,6 +366,85 @@ mod tests {
         // DateTimeOriginal must survive so the XMP dates are not 1970.
         let text = String::from_utf8_lossy(&injected);
         assert!(text.contains("2026:01:02 03:04:05"));
+    }
+
+    #[test]
+    fn huawei_exif_offset_zero_still_yields_tiff() {
+        let mut payload = vec![0, 0, 0, 0];
+        payload.extend_from_slice(b"II*\0\x08\0\0\0");
+        let tiff = crate::styles_attach::exif_tiff_bytes(&payload);
+        assert!(tiff.starts_with(b"II"));
+        assert!(!tiff.starts_with(&[0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn essential_bit_on_descriptive_property_is_cleared() {
+        // version 0, flags 0: 16-bit item id, 7-bit index. Index 2 is essential.
+        let mut body = vec![0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0x82];
+        let end = body.len();
+        assert!(clear_essential_bits(&mut body, 0, end, &[2]));
+        assert_eq!(body[11], 0x02);
+    }
+
+    #[test]
+    fn huawei_hdr_234311_exif_survives_synthesis() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\run-20260930-0104\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("sample");
+        let parsed = crate::isobmff::parse_source_meta(&data).expect("meta");
+        let exif = parsed
+            .items
+            .iter()
+            .find(|item| item.itype == "Exif")
+            .expect("exif item");
+        let loc = parsed
+            .iloc_entries
+            .iter()
+            .find(|entry| entry.item_id == exif.item_id)
+            .expect("exif iloc");
+        eprintln!(
+            "exif id {} method {} extents {:?}",
+            exif.item_id, loc.construction_method, loc.extents
+        );
+        let extracted = crate::styles_attach::extract_exif_tiff(&data);
+        if let Some(tiff) = &extracted {
+            let n = tiff.len().min(24);
+            eprintln!("extracted len {} head {:02x?}", tiff.len(), &tiff[..n]);
+        } else {
+            eprintln!("extracted none");
+        }
+        let (synth, _) = synthesize_sdr_source(&data, None).expect("synthesize");
+        let sp = crate::isobmff::parse_source_meta(&synth).expect("synth meta");
+        let top = crate::isobmff::parse_boxes(&synth, 0, synth.len());
+        let meta = top.iter().find(|b| &b.btype == b"meta").unwrap();
+        let kids = crate::isobmff::parse_boxes(&synth, meta.data_start + 4, meta.data_end);
+        let idat = kids.iter().find(|b| &b.btype == b"idat");
+        let orient = crate::exif::read_heif_exif_orientation(
+            &synth,
+            &sp.items,
+            &sp.iloc_entries,
+            idat,
+        );
+        assert!(orient.is_ok(), "synthesized exif: {orient:?}");
+    }
+
+    #[test]
+    fn huawei_hdr_sample_decodes_when_present() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\fail-20260930\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("sample");
+        let (rgb, w, h, oriented) = decode_to_rgb(&data).expect("huawei hdr decode");
+        assert!(oriented);
+        assert!(w > 0 && h > 0);
+        assert_eq!(rgb.len(), w as usize * h as usize * 3);
     }
 
     #[test]

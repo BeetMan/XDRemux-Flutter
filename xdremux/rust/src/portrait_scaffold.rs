@@ -360,6 +360,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         crate::portrait_graft::build_output_pub(
             None,
+            None,
             Some(&ipma_base),
             standard,
             &std_top,
@@ -791,18 +792,31 @@ pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8
         .map(|e| bo.u32(&tiff[e.value_field_pos..e.value_field_pos + 4]))
         .ok_or("no ExifIFD pointer")?;
     let (exif_entries, _) = read_ifd(&tiff, bo, exif_ifd_off).ok_or("bad ExifIFD")?;
-    if let Some(existing) = exif_entries.iter().find(|e| e.tag == 0x927c) {
-        // The source camera's own MakerNote (e.g. OPPO's JSON blob) — replace
-        // it with the Apple MakerNote: patch the entry in place and append
-        // the new payload at the end of the TIFF (old bytes become dead
-        // space). No insertion, so no offset fixups are needed.
+    let existing_mns: Vec<_> = exif_entries.iter().filter(|e| e.tag == 0x927c).collect();
+    if !existing_mns.is_empty() {
+        let first = existing_mns[0];
+        // The source camera's own MakerNote (e.g. OPPO's JSON blob or Huawei's MakerNote)
+        // — replace it with the Apple MakerNote: patch the first entry in place and append
+        // the new payload at the end of the TIFF (old bytes become dead space).
+        // No insertion, so no offset fixups are needed.
         let mut patched = tiff.clone();
         let mn_off = patched.len() as u32;
-        let vp = existing.value_field_pos;
+        let vp = first.value_field_pos;
         bo.put_u16(&mut patched[vp - 6..vp - 4], 7); // type = undefined
         bo.put_u32(&mut patched[vp - 4..vp], maker_note.len() as u32);
         bo.put_u32(&mut patched[vp..vp + 4], mn_off);
         patched.extend_from_slice(maker_note);
+
+        // Rename any duplicate 0x927c entries (e.g. Huawei Mate 70 Pro writes up to 4
+        // separate 0x927c entries) to unused tags (0x927d, 0x927e, ...) so that standard
+        // Exif parsers like Apple's ImageIO do not overwrite the Apple MakerNote.
+        let mut extra_tag = 0x927du16;
+        for dup in &existing_mns[1..] {
+            let tag_pos = dup.value_field_pos - 8;
+            bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
+            extra_tag += 1;
+        }
+
         let mut result = exif[..prefix_len].to_vec();
         result.extend_from_slice(&patched);
         return Ok(result);

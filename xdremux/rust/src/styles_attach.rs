@@ -14,7 +14,7 @@
 
 use crate::isobmff;
 use crate::isobmff_write::replace_item_payload;
-use crate::semantic_mattes::inject_semantic_mattes;
+use crate::semantic_mattes::inject_semantic_mattes_with;
 use crate::styles_native::{build_style_metadata_with, StyleStateOverride};
 use crate::styles_scaffold::compose_styles_maker_note;
 use crate::texture_styles::{inject_uri_metadata_item, texture_info_payload, TEXTURE_STYLES_URI};
@@ -49,14 +49,43 @@ pub fn extract_exif_tiff(data: &[u8]) -> Option<Vec<u8>> {
     let parsed = isobmff::parse_source_meta(data).ok()?;
     let item = parsed.items.iter().find(|i| i.itype == "Exif")?;
     let payload = item_payload_bytes(data, &parsed, item.item_id)?;
-    let tiff = if payload.len() > 10 && &payload[4..10] == b"Exif\0\0" {
-        &payload[10..]
-    } else if payload.len() > 6 && &payload[..6] == b"Exif\0\0" {
-        &payload[6..]
-    } else {
-        &payload[..]
-    };
+    let tiff = exif_tiff_bytes(&payload);
     Some(strip_note_from_tiff(tiff))
+}
+
+/// TIFF bytes inside an HEIF Exif item.
+///
+/// Writers use a 4-byte offset, sometimes followed by `Exif\0\0`. Huawei HDR
+/// stores offset 0 and puts the TIFF (`II*`/`MM*`) in the next four bytes.
+/// The offset value itself does not point at the header, so both bases are
+/// tried. Callers that wrap a TIFF again need the bare header, not the
+/// offset field.
+pub(crate) fn exif_tiff_bytes(payload: &[u8]) -> &[u8] {
+    if payload.len() > 10 && &payload[4..10] == b"Exif\0\0" {
+        return &payload[10..];
+    }
+    if payload.len() > 6 && &payload[..6] == b"Exif\0\0" {
+        return &payload[6..];
+    }
+    if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+        return payload;
+    }
+    if payload.len() >= 8 {
+        let offset = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        let mut starts = vec![offset];
+        if let Some(next) = offset.checked_add(4) {
+            starts.push(next);
+        }
+        for start in starts {
+            if payload
+                .get(start..start + 2)
+                .is_some_and(|mark| mark == b"II" || mark == b"MM")
+            {
+                return &payload[start..];
+            }
+        }
+    }
+    payload
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -431,9 +460,46 @@ fn find_makernote_offset(exif_payload: &[u8]) -> Option<usize> {
     Some(prefix + off)
 }
 
-/// Attach the styles contract to `data`. Returns the patched bytes and a
-/// report of what happened.
+/// Which Photographic Styles layers to add. Unset layers are left absent
+/// even when the file does not already carry them.
+#[derive(Clone, Copy, Debug)]
+pub struct StyleLayers {
+    pub styles: bool,
+    pub texture: bool,
+    pub mattes: bool,
+}
+
+impl StyleLayers {
+    /// 2023 styles item, texture/grain, and the 12 semantic part mattes.
+    pub const ALL: Self = Self {
+        styles: true,
+        texture: true,
+        mattes: true,
+    };
+
+    /// 2023 styles item only. Photographic Styles 3 stays off.
+    pub const STYLES_ONLY: Self = Self {
+        styles: true,
+        texture: false,
+        mattes: false,
+    };
+}
+
+/// Attach the full styles + Photographic Styles 3 contract to `data`.
 pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachReport), String> {
+    attach_style_layers(data, grain_seed, StyleLayers::ALL)
+}
+
+/// Attach the requested styles layers to `data`.
+///
+/// Huawei portrait output already carries the portrait aux graph. Styles on
+/// that file go through the full styles writer so Photos can open the editor.
+/// Other files still get the URI item grafted on.
+pub fn attach_style_layers(
+    data: &[u8],
+    grain_seed: u64,
+    layers: StyleLayers,
+) -> Result<(Vec<u8>, AttachReport), String> {
     let parsed = isobmff::parse_source_meta(data)?;
     let has_styles = find_item(&parsed, STYLES_URI).is_some();
     let has_texture = find_item(&parsed, TEXTURE_STYLES_URI).is_some();
@@ -442,7 +508,10 @@ pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachRep
     let mut added: Vec<&'static str> = Vec::new();
     let mut out = data.to_vec();
 
-    if has_styles && has_texture && has_mattes {
+    let styles_done = !layers.styles || has_styles;
+    let texture_done = !layers.texture || has_texture;
+    let mattes_done = !layers.mattes || has_mattes;
+    if styles_done && texture_done && mattes_done {
         return Ok((
             out,
             AttachReport {
@@ -452,30 +521,54 @@ pub fn attach_styles(data: &[u8], grain_seed: u64) -> Result<(Vec<u8>, AttachRep
         ));
     }
 
-    if !has_styles {
-        // Non-Apple capture: inject the styles item with the identity state.
-        let payload = build_style_metadata_with(&StyleStateOverride::identity());
-        out = inject_uri_metadata_item(&out, STYLES_URI, &payload)?;
-        added.push("styles");
-        // Maker-note merge: only when the source has no MakerNote entry at
-        // all (clean add — verified on device). In-place replacement of
-        // existing notes (native camera or vendor) produced files that
-        // crash Photos; those inputs need the full re-encode path instead.
-        let has_mn = merge_maker_note(&mut out)?;
-        if has_mn {
-            added.push("maker-note");
+    if layers.styles && !has_styles {
+        // A Huawei portrait remux already has the portrait aux graph. Bolting
+        // on only a `metadata` URI item leaves Photographic Styles incomplete,
+        // and Photos then refuses to load the editor — portrait included.
+        // The full styles writer keeps those aux items and adds the same
+        // styleMetadata graph Apple accepted on ordinary Huawei HDR.
+        // Portrait remux and ordinary Huawei HDR already carry a Photos-readable
+        // gain map and the original HEVC. Re-encoding those pixels is what makes
+        // the generic styles path slow. The full styles writer only adds the
+        // style graph on top.
+        if has_bytes(&out, "portraiteffectsmatte")
+            || crate::huawei_heic::inspect_bytes(&out).is_huawei_hdr
+        {
+            out = crate::styles_native::styles_native(&out)?;
+            added.push("styles-native");
         } else {
-            added.push("maker-note-skipped");
+            let payload = build_style_metadata_with(&StyleStateOverride::identity());
+            out = inject_uri_metadata_item(&out, STYLES_URI, &payload)?;
+            added.push("styles");
+            // Maker-note merge: only when the source has no MakerNote entry at
+            // all (clean add — verified on device). In-place replacement of
+            // existing notes (native camera or vendor) produced files that
+            // crash Photos; those inputs need the full re-encode path instead.
+            // The styles-native branch above already writes its own note.
+            let has_mn = merge_maker_note(&mut out)?;
+            if has_mn {
+                added.push("maker-note");
+            } else {
+                added.push("maker-note-skipped");
+            }
         }
     }
-    if !has_texture {
+    if layers.texture && !has_texture {
         let payload = texture_info_payload(grain_seed);
         out = inject_uri_metadata_item(&out, TEXTURE_STYLES_URI, &payload)?;
         added.push("texture");
     }
-    if !has_mattes {
-        out = inject_semantic_mattes(&out)?;
-        added.push("mattes");
+    if layers.mattes && !has_mattes {
+        // Huawei portrait contour is the person silhouette. PS3 has no
+        // contour slot of its own; it belongs on semanticpersonmatte.
+        // Read it from the input, before styles_native rewrites the file.
+        let contour = crate::portrait::huawei_person_contour(data);
+        out = inject_semantic_mattes_with(&out, contour.as_ref())?;
+        added.push(if contour.is_some() {
+            "mattes-person"
+        } else {
+            "mattes"
+        });
     }
 
     Ok((
