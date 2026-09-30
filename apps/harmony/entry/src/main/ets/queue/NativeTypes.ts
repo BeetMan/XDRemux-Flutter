@@ -26,6 +26,10 @@ export interface NativePhotoDetails {
   height?: number;
   applePhotographicStyles?: boolean;
   applePortrait?: boolean;
+  huaweiHdr?: boolean;
+  huaweiPortrait?: boolean;
+  huaweiPortraitReady?: boolean;
+  motionPhoto?: boolean;
   hdrKind?: string;
   edrScale?: number;
   gainMapMax?: number;

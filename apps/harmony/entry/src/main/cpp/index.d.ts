@@ -75,6 +75,7 @@ export const attachStyleLayers: (
 export const verifyHuaweiPortraitOutput: (path: string) => Promise<boolean>;
 export const motionInspect: (path: string) => Promise<string>;
 export const motionSplit: (path: string, outputDirectory: string) => Promise<string>;
+export const motionExtractStill: (inputPath: string, outputPath: string) => Promise<string>;
 export const livePhotoMake: (sourcePath: string, stillPath: string, outputDirectory: string) => Promise<string>;
 export const livePhotoPairValid: (stillPath: string, movPath: string) => Promise<boolean>;
 export const convert: (

@@ -106,7 +106,8 @@ import {
   summarizeLivePhotoExport
 } from '../queue/LivePhotoPairExport';
 import type { LivePhotoExportEntry } from '../queue/LivePhotoPairExport';
-import { ps3OptionsFor } from '../queue/Ps3Model';
+import { ps3OptionsFor, stableGrainSeed } from '../queue/Ps3Model';
+import { convertHuaweiPortrait, livePhotoStylesCompatible, mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
 import { HarmonyGalleryLibrary } from '../gallery/HarmonyGalleryLibrary';
 import {
   galleryMimeTypeForExtension,
@@ -1004,8 +1005,7 @@ struct Index {
               : '分享导入未完成，请重新分享图片或在应用内重新选择照片。');
             failed += 1;
           } else {
-            const detailsJson: string = await xdremuxNative.inspect(incoming.inputPath);
-            const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+            const details: NativePhotoDetails = await this.inspectNativePhoto(incoming.inputPath);
             if (!details.success) throw new Error(this.display(details.errorMessage));
             const classification: NativeClassificationResult =
               await xdremuxNative.classify(incoming.inputPath) as NativeClassificationResult;
@@ -1120,7 +1120,29 @@ struct Index {
       if (!validPairKeys.has(key)) this.livePhotoPairCache.delete(key);
     }
     this.syncMotionSelection();
+    void this.refreshSelectedPhotoCapabilities();
     this.scheduleShareInboxDrain();
+  }
+
+  private readonly capabilityRefreshKeys: Set<string> = new Set<string>();
+
+  private async refreshSelectedPhotoCapabilities(): Promise<void> {
+    const item: QueueItem | undefined = this.selectedItem();
+    if (item === undefined || item.inputPath.length === 0 || !this.queueReady ||
+      this.queueRunning || this.pageBusy || item.externalBusy ||
+      item.details?.huaweiPortraitReady !== undefined) return;
+    const key: string = this.motionCacheKey(item);
+    if (this.capabilityRefreshKeys.has(key)) return;
+    this.capabilityRefreshKeys.add(key);
+    try {
+      const details: NativePhotoDetails = await this.inspectNativePhoto(item.inputPath);
+      const controller: QueueController = this.getController();
+      if (controller.get(item.id)?.inputPath !== item.inputPath) return;
+      controller.updatePhotoDetails(item.id, item.inputPath, details);
+      await controller.persist();
+    } catch (error) {
+      console.warn('Queue capability refresh failed: ' + this.errorMessage(error));
+    }
   }
 
   private selectedItem(): QueueItem | undefined {
@@ -1174,6 +1196,7 @@ struct Index {
     }
     this.selectedItemId = id;
     this.syncMotionSelection();
+    void this.refreshSelectedPhotoCapabilities();
   }
 
   private motionInspectButtonLabel(): string {
@@ -1195,6 +1218,7 @@ struct Index {
   private canMakeLivePhotoPair(): boolean {
     const item: QueueItem | undefined = this.selectedItem();
     return item !== undefined && this.livePhotoPairCacheKey(item).length > 0 &&
+      item.result !== undefined && livePhotoStylesCompatible(item.result) &&
       this.motionInspection.state === 'motion' && this.motionInspection.inputPath === item.inputPath &&
       this.motionInspection.report !== undefined;
   }
@@ -1409,6 +1433,25 @@ struct Index {
     }
   }
 
+  private async inspectNativePhoto(path: string): Promise<NativePhotoDetails> {
+    let details: NativePhotoDetails = JSON.parse(await xdremuxNative.inspect(path)) as NativePhotoDetails;
+    if (!details.success) throw new Error(this.display(details.errorMessage));
+    try {
+      details = mergeHuaweiInspection(details, await xdremuxNative.huaweiInspect(path));
+    } catch (error) {
+      console.warn('Huawei inspection unavailable: ' + this.errorMessage(error));
+    }
+    try {
+      const stat: fileIo.Stat = await fileIo.stat(path);
+      const motion: MotionPhotoInspection = parseMotionPhotoJson(
+        await xdremuxNative.motionInspect(path), path, stat.size);
+      details.motionPhoto = motion.state === 'motion';
+    } catch (error) {
+      console.warn('Motion inspection unavailable: ' + this.errorMessage(error));
+    }
+    return details;
+  }
+
   private async prepareQueueItem(item: QueueItem, allowFreshShareUri: boolean = false): Promise<QueuePrepared> {
     let newPath: string = '';
     try {
@@ -1422,8 +1465,7 @@ struct Index {
       // The path must be durable before metadata/classification can publish
       // details for a task that may outlive this process.
       await this.getController().persist();
-      const detailsJson: string = await xdremuxNative.inspect(newPath);
-      const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+      const details: NativePhotoDetails = await this.inspectNativePhoto(newPath);
       if (!details.success) {
         throw new Error(this.display(details.errorMessage));
       }
@@ -2087,7 +2129,7 @@ struct Index {
       return;
     }
     if (item === undefined || !this.canMakeLivePhotoPair() || this.motionInspection.report === undefined) {
-      this.operationStatus = '请先识别当前 Motion Photo，并转换出与该原图绑定的 Apple HEIC 结果';
+      this.operationStatus = '请先识别 Motion Photo，并转换 Apple HEIC；旧版摄影风格单独开启时不支持 Live Photo 配对，需改用摄影风格 3 或关闭风格并重新转换';
       return;
     }
     const result: QueueResult | undefined = item.result;
@@ -2164,6 +2206,24 @@ struct Index {
       this.livePhotoPairItemId = '';
       this.pageBusy = false;
       this.syncQueue();
+    }
+  }
+
+  private async prepareAndExportLivePhoto(): Promise<void> {
+    const item: QueueItem | undefined = this.selectedItem();
+    if (item === undefined || this.pageBusy || this.queueRunning) return;
+    const key: string = this.livePhotoPairCacheKey(item);
+    if (key.length === 0) return;
+    if (this.motionInspection.state !== 'motion' || this.motionInspection.inputPath !== item.inputPath) {
+      await this.inspectSelectedMotionPhoto();
+    }
+    if (this.selectedItemId !== item.id || !this.canMakeLivePhotoPair()) {
+      this.operationStatus = '旧版摄影风格单独开启时不支持 Live Photo 配对；请选择摄影风格 3 或关闭风格后重新转换';
+      return;
+    }
+    if (!this.livePhotoPairCache.has(key)) await this.makeSelectedLivePhotoPair();
+    if (this.selectedItemId === item.id && this.livePhotoPairCache.has(key)) {
+      await this.exportSelectedLivePhotoPair();
     }
   }
 
@@ -2439,6 +2499,63 @@ struct Index {
     }
   }
 
+  private async convertPhotoWithCapabilities(
+    inputPath: string, outputPath: string, mode: QueueModeSnapshot, handle: number,
+    details: NativePhotoDetails, queueItemId: string = ''
+  ): Promise<NativeConversionResult> {
+    if (details.huaweiPortraitReady === true) {
+      const basePath: string = outputPath + '.portrait.heic';
+      if (queueItemId.length > 0) {
+        this.getController().registerOwnedPath(queueItemId, basePath);
+        await this.getController().persist();
+      }
+      try {
+        const resultPath: string = await convertHuaweiPortrait({
+          remux: async (source: string, target: string): Promise<string> =>
+            await xdremuxNative.remuxHuaweiPortrait(source, target),
+          verify: async (path: string): Promise<boolean> => await xdremuxNative.verifyHuaweiPortraitOutput(path),
+          attach: async (source: string, target: string, seed: number, flags: number): Promise<string> =>
+            await xdremuxNative.attachStyleLayers(source, target, seed, flags)
+        }, inputPath, basePath, outputPath, stableGrainSeed(inputPath),
+          mode.config.applePhotographicStyles === 1, mode.applePhotographicStyles3 === true);
+        if (resultPath === basePath) await fileIo.rename(basePath, outputPath);
+        else await fileIo.unlink(basePath);
+      } catch (error) {
+        // Publish only the verified base portrait as a recovery image. The
+        // requested styled conversion still fails explicitly.
+        if (await xdremuxNative.verifyHuaweiPortraitOutput(basePath) && this.galleryLibrary !== undefined) {
+          const recovered: GalleryLibraryItem = await this.galleryLibrary.importPhoto(
+            basePath, '华为人像-基础恢复-' + String(Date.now()) + '-apple.heic');
+          this.galleryPhotos = [{ item: recovered, path: this.galleryLibrary.pathFor(recovered) }, ...this.galleryPhotos];
+          this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
+          this.galleryMediaCount = this.galleryPhotos.length;
+          await fileIo.unlink(basePath);
+          throw new Error(this.errorMessage(error) + '；基础人像已保存到本地图库');
+        }
+        if (queueItemId.length === 0) {
+          try { await fileIo.unlink(basePath); } catch (cleanupError) {}
+        }
+        throw new Error(this.errorMessage(error));
+      }
+      return { success: true, mode: 'apple', family: 'huawei', edrScale: 0,
+        gainMapMax: 0, errorMessage: null };
+    }
+    if (details.huaweiHdr === true && mode.modeKey === 'apple' &&
+      mode.config.applePhotographicStyles === 0 && mode.applePhotographicStyles3 !== true) {
+      // The Huawei ISO HDR still is already Apple-compatible. Its Motion
+      // Photo trailer must not be included in a standalone HEIC result.
+      if (details.motionPhoto === true) {
+        verifyStillExtraction(await xdremuxNative.motionExtractStill(inputPath, outputPath) as string);
+      } else {
+        await this.copySandboxPath(inputPath, outputPath);
+      }
+      return { success: true, mode: 'apple', family: 'huawei', edrScale: 0,
+        gainMapMax: 0, errorMessage: null };
+    }
+    return await xdremuxNative.convert(inputPath, outputPath, mode.config, handle,
+      ps3OptionsFor(inputPath, mode.applePhotographicStyles3 === true)) as NativeConversionResult;
+  }
+
   private async executeQueueItem(
     item: QueueItem,
     mode: QueueModeSnapshot,
@@ -2449,6 +2566,13 @@ struct Index {
     let handle: number = 0;
     let timer: number = -1;
     try {
+      // Reinspect restored records as well: their older metadata did not carry
+      // Huawei capabilities, and must never select the OPPO portrait route.
+      const details: NativePhotoDetails = await this.inspectNativePhoto(item.inputPath);
+      this.getController().updatePhotoDetails(item.id, item.inputPath, details);
+      item.details = details;
+      mode = this.modeSnapshotForSettings(this.queuePhotoSettingsForItem(
+        item, this.settingsFromModeSnapshot(mode)));
       const paths: Array<string> = this.nextOutputPaths(item.id);
       temporaryPath = paths[0];
       finalPath = paths[1];
@@ -2475,13 +2599,8 @@ struct Index {
           // a late empty poll is expected and does not decide success.
         }
       }, 250);
-      const conversion: NativeConversionResult = await xdremuxNative.convert(
-        item.inputPath,
-        temporaryPath,
-        mode.config,
-        handle,
-        ps3OptionsFor(item.inputPath, mode.applePhotographicStyles3 === true)
-      ) as NativeConversionResult;
+      const conversion: NativeConversionResult = await this.convertPhotoWithCapabilities(
+        item.inputPath, temporaryPath, mode, handle, details, item.id);
       if (!conversion.success) {
         const message: string = this.display(conversion.errorMessage);
         throw new Error(message === '—' ? 'Rust 转换失败' : message);
@@ -2499,6 +2618,8 @@ struct Index {
         outputPath: finalPath,
         modeKey: mode.modeKey,
         modeLabel: mode.modeLabel,
+        applePhotographicStyles: mode.config.applePhotographicStyles === 1,
+        applePhotographicStyles3: mode.applePhotographicStyles3 === true,
         conversion: conversion
       };
     } catch (error) {
@@ -2694,6 +2815,7 @@ struct Index {
   }
 
   private gallerySupportedOutputModes(): Array<SettingsOutputMode> {
+    if (this.galleryDetails?.huaweiPortraitReady === true) return ['apple'];
     if (this.gallerySupportsNativeConversion()) return ['oppo', 'apple'];
     return this.galleryPhotoSupportsAppleStyles() ? ['apple'] : [];
   }
@@ -2703,6 +2825,7 @@ struct Index {
   }
 
   private gallerySupportsPortraitData(): boolean {
+    if (this.galleryDetails?.huaweiPortraitReady === true) return true;
     return this.gallerySupportsNativeConversion() && this.galleryPhotoIsHeif() &&
       this.galleryClassification?.modeKey === 'portrait';
   }
@@ -2722,11 +2845,16 @@ struct Index {
         settings.oppoCameraTail = 0;
       }
       if (!this.gallerySupportsPortraitData()) settings.applePortrait = false;
+      if (this.galleryDetails?.huaweiPortraitReady === true) {
+        settings.outputMode = 'apple'; settings.oppoCompat = 0; settings.oppoCameraTail = 0;
+        settings.applePortrait = true;
+      }
     }
     return normalizeSettings(settings);
   }
 
   private galleryCanConvertInSelectedMode(): boolean {
+    if (this.galleryDetails?.huaweiPortraitReady === true || this.galleryDetails?.huaweiHdr === true) return true;
     if (this.gallerySupportsNativeConversion()) return true;
     if (!this.gallerySupportsApplePhotoData()) return false;
     const settings: NativeSettings = this.galleryEffectiveSettings();
@@ -3057,8 +3185,7 @@ struct Index {
         try {
           let inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(tile.item.id);
           if (inspection === undefined) {
-            const detailsJson: string = await xdremuxNative.inspect(tile.path);
-            const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+            const details: NativePhotoDetails = await this.inspectNativePhoto(tile.path);
             if (!details.success) throw new Error(this.display(details.errorMessage));
             const classification: NativeClassificationResult =
               await xdremuxNative.classify(tile.path) as NativeClassificationResult;
@@ -3072,24 +3199,24 @@ struct Index {
           }
 
           const hdrKind: string = (inspection.classification.hdrKind ?? inspection.details.hdrKind ?? '').toLowerCase();
-          if (hdrKind !== 'lhdr' && hdrKind !== 'uhdr') {
-            skipped += 1;
-            continue;
-          }
-
           const savedSettings: NativeSettings | undefined = this.galleryPhotoSettings.get(tile.item.id);
           const settings: NativeSettings = normalizeSettings(cloneSettings(
             savedSettings ?? this.committedSettings
           ));
           const extension: string = tile.item.extension.toLowerCase();
           const isHeif: boolean = extension === '.heic' || extension === '.heif';
-          if (!isHeif) {
-            settings.applePhotographicStyles = false;
-            settings.applePhotographicStyles3 = false;
-            settings.applePortrait = false;
-          } else if (inspection.classification.modeKey !== 'portrait') {
-            settings.applePortrait = false;
+          const supportsStyles: boolean = isHeif || ['.jpg', '.jpeg', '.png'].includes(extension);
+          if (hdrKind !== 'lhdr' && hdrKind !== 'uhdr' &&
+            inspection.details.huaweiPortraitReady !== true && inspection.details.huaweiHdr !== true &&
+            !(supportsStyles && (settings.applePhotographicStyles || settings.applePhotographicStyles3))) {
+            skipped += 1;
+            continue;
           }
+          if (!isHeif || inspection.classification.modeKey !== 'portrait') settings.applePortrait = false;
+          if (hdrKind !== 'lhdr' && hdrKind !== 'uhdr') {
+            settings.outputMode = 'apple'; settings.oppoCompat = 0; settings.oppoCameraTail = 0;
+          }
+          if (inspection.details.huaweiPortraitReady === true) settings.applePortrait = true;
 
           item = queue.add({
             displayName: tile.item.displayName,
@@ -3130,7 +3257,7 @@ struct Index {
       this.syncQueue();
     }
 
-    this.operationStatus = '本地图库加入队列：新增 ' + String(added) + ' 张，已存在或不含可转换 HDR 数据 ' +
+    this.operationStatus = '本地图库加入队列：新增 ' + String(added) + ' 张，已存在或当前设置不可转换 ' +
       String(skipped) + ' 张' + (failed > 0 ? '，失败 ' + String(failed) + ' 张' : '');
     this.galleryStatus = this.operationStatus;
   }
@@ -3233,6 +3360,7 @@ struct Index {
       }
     }
     if (cachedInspection !== undefined) {
+      this.galleryPhotoSettingsView = this.galleryEffectiveSettings();
       this.galleryCopiedBytes = tile.item.size;
       this.scheduleGalleryPhotoHeaderRefresh(tile.item.id, selectionSerial);
       if (shouldOpenDetail) {
@@ -3248,11 +3376,11 @@ struct Index {
       }
       if (selectionSerial !== this.gallerySelectionSerial) return;
       this.galleryCopiedBytes = stat.size;
-      const detailsJson: string = await xdremuxNative.inspect(tile.path);
-      const details: NativePhotoDetails = JSON.parse(detailsJson) as NativePhotoDetails;
+      const details: NativePhotoDetails = await this.inspectNativePhoto(tile.path);
       if (!details.success) throw new Error(this.display(details.errorMessage));
       if (selectionSerial !== this.gallerySelectionSerial) return;
       this.galleryDetails = details;
+      this.galleryPhotoSettingsView = this.galleryEffectiveSettings();
       if (shouldOpenDetail) {
         this.galleryHeroMetadataReady = true;
         this.tryStartGalleryHeroTransition(tile.item.id);
@@ -4373,13 +4501,8 @@ struct Index {
         }
       }, 250);
 
-      const conversion: NativeConversionResult = await xdremuxNative.convert(
-        sourcePath,
-        temporaryPath,
-        mode.config,
-        handle,
-        ps3OptionsFor(sourcePath, mode.applePhotographicStyles3 === true)
-      ) as NativeConversionResult;
+      const conversion: NativeConversionResult = await this.convertPhotoWithCapabilities(
+        sourcePath, temporaryPath, mode, handle, await this.inspectNativePhoto(sourcePath));
       if (!conversion.success) {
         const message: string = this.display(conversion.errorMessage);
         throw new Error(message === '—' ? 'Rust 转换失败' : message);
@@ -4497,6 +4620,9 @@ struct Index {
       return features.join(' · ');
     }
 
+    if (this.galleryDetails?.huaweiPortrait === true) return '华为 · 人像' +
+      (this.galleryDetails?.motionPhoto === true ? ' · Live Photo' : '');
+    if (this.galleryDetails?.motionPhoto === true) return '动态照片 · Live Photo';
     const classification: NativeClassificationResult | undefined = this.galleryClassification;
     const folderName: string = (classification?.folderName ?? '').trim();
     if (folderName.length > 0) {
@@ -5374,6 +5500,20 @@ struct Index {
         }
 
         Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
+        if (this.galleryDetails?.motionPhoto === true) {
+          Text('Live Photo · 转换后可在队列详情中成对导出 HEIC + MOV')
+            .fontSize(13)
+            .fontColor(this.galleryInfoPanelPrimaryTextColor())
+            .width('100%')
+            .margin({ bottom: 10 });
+        }
+        if (this.galleryDetails?.huaweiPortrait === true && this.galleryDetails?.huaweiPortraitReady !== true) {
+          Text('已识别华为人像，但当前结构暂不支持转换为 Apple 人像。')
+            .fontSize(12)
+            .fontColor(this.galleryInfoPanelSecondaryTextColor())
+            .width('100%')
+            .margin({ bottom: 10 });
+        }
         Text('转换方式')
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
@@ -5627,7 +5767,11 @@ struct Index {
               }
             });
         } else {
-          Text(this.gallerySupportsApplePhotoData()
+          Text(this.galleryDetails?.huaweiPortraitReady === true
+            ? '华为人像 → Apple 人像；可在同一张照片上附加摄影风格。'
+            : this.galleryDetails?.huaweiHdr === true
+            ? '华为 HDR 已兼容 Apple；可保存新图或附加摄影风格。'
+            : this.gallerySupportsApplePhotoData()
             ? (this.gallerySupportsNativeConversion()
               ? '本图可使用 Apple 标准输出及摄影数据选项。'
               : '普通照片将重建为 Apple 标准 HEIC；开启摄影风格后即可转换。')
@@ -5664,7 +5808,7 @@ struct Index {
             .width('100%')
             .height(46);
           }
-          if (this.gallerySupportsPortraitData()) {
+          if (this.gallerySupportsPortraitData() && this.galleryDetails?.huaweiPortraitReady !== true) {
             Row() {
               Text('Apple 人像数据')
                 .fontSize(14)
@@ -5680,6 +5824,7 @@ struct Index {
           }
         }
 
+        if (this.galleryDetails?.huaweiPortraitReady !== true) {
         Row() {
           Text('严格 ISO 兼容')
             .fontSize(14)
@@ -5693,6 +5838,7 @@ struct Index {
         .width('100%')
         .height(46)
         .margin({ top: 8 });
+        }
       }
 
       Text('当前转换：' + this.galleryPhotoSettingsSummary())
@@ -6264,12 +6410,14 @@ struct Index {
   }
 
   private queueItemSupportsPortraitData(item: QueueItem): boolean {
+    if (item.details?.huaweiPortraitReady === true) return true;
     const extension: string = this.queueItemExtension(item);
     return this.queueItemSupportsNativeConversion(item) &&
       (extension === '.heic' || extension === '.heif') && item.classification?.modeKey === 'portrait';
   }
 
   private queueItemSupportedOutputModes(item: QueueItem): Array<SettingsOutputMode> {
+    if (item.details?.huaweiPortraitReady === true) return ['apple'];
     if (this.queueItemSupportsNativeConversion(item)) return ['oppo', 'apple'];
     return this.queueItemSupportsApplePhotoData(item) ? ['apple'] : [];
   }
@@ -6287,6 +6435,10 @@ struct Index {
       settings.oppoCameraTail = 0;
     }
     if (!this.queueItemSupportsPortraitData(item)) settings.applePortrait = false;
+    if (item.details?.huaweiPortraitReady === true) {
+      settings.outputMode = 'apple'; settings.oppoCompat = 0; settings.oppoCameraTail = 0;
+      settings.applePortrait = true;
+    }
     return normalizeSettings(settings);
   }
 
@@ -6444,7 +6596,7 @@ struct Index {
               }
             });
         } else if (this.queueItemSupportsApplePhotoData(item)) {
-          Text('Apple 摄影数据')
+          Text(item.details?.huaweiPortraitReady === true ? '华为人像 → Apple 人像' : 'Apple 摄影数据')
             .fontSize(13)
             .fontColor($r('sys.color.font_primary'))
             .width('100%')
@@ -6490,7 +6642,7 @@ struct Index {
           }
           .width('100%')
           .height(42);
-          if (this.queueItemSupportsPortraitData(item)) {
+          if (this.queueItemSupportsPortraitData(item) && item.details?.huaweiPortraitReady !== true) {
             Row() {
               Text('Apple 人像数据')
                 .fontSize(14)
@@ -6514,6 +6666,7 @@ struct Index {
           }
         }
 
+        if (item.details?.huaweiPortraitReady !== true) {
         Row() {
           Text('严格 ISO 兼容')
             .fontSize(14)
@@ -6530,8 +6683,9 @@ struct Index {
         .width('100%')
         .height(42)
         .margin({ top: 4 });
-        if (!this.queueItemSupportsNativeConversion(item) &&
-          !this.queuePhotoSettingsView.applePhotographicStyles &&
+        }
+        if (!this.queueItemSupportsNativeConversion(item) && item.details?.huaweiPortraitReady !== true &&
+          item.details?.huaweiHdr !== true && !this.queuePhotoSettingsView.applePhotographicStyles &&
           !this.queuePhotoSettingsView.applePhotographicStyles3) {
           Text('普通照片请至少开启一种摄影风格，才能生成 Apple 标准 HEIC。')
             .fontSize(12)
@@ -6637,6 +6791,19 @@ struct Index {
   @Builder
   private motionPhotoPanel(): void {
     Column() {
+      if (this.selectedItem()?.details?.motionPhoto === true &&
+        this.selectedItem()?.result?.modeKey === 'apple') {
+        Button('导出 Live Photo')
+          .width('100%')
+          .height(44)
+          .enabled(!this.pageBusy && !this.queueRunning && !this.livePhotoPairExporting)
+          .onClick((): void => { void this.prepareAndExportLivePhoto(); });
+        Text('自动生成并校验 HEIC + MOV 配对文件；配对失败时保留已转换的照片。')
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 6, bottom: 8 });
+      }
       Text('Motion Photo（按需识别）')
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
@@ -6781,7 +6948,10 @@ struct Index {
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 12, bottom: 4 });
-        Text(this.canMakeLivePhotoPair()
+        Text(this.selectedItem()?.result?.applePhotographicStyles === true &&
+          this.selectedItem()?.result?.applePhotographicStyles3 !== true
+          ? '当前结果只含旧版摄影风格，不能配对 Live Photo；请改用摄影风格 3 或关闭风格后重新转换。'
+          : this.canMakeLivePhotoPair()
           ? '来源已绑定：当前 Motion Photo 原图 + 同一原图对应的 Apple HEIC 转换结果。'
           : '请先将当前 Motion Photo 原图转换为 Apple HEIC；旧转换记录缺少来源绑定时需重新转换。')
           .fontSize(12)
@@ -7418,6 +7588,14 @@ struct Index {
           }
           .width('100%');
 
+          if (item.details?.huaweiPortrait === true || item.details?.motionPhoto === true) {
+            Text((item.details?.huaweiPortrait === true ? '华为人像' : '') +
+              (item.details?.huaweiPortrait === true && item.details?.motionPhoto === true ? ' · ' : '') +
+              (item.details?.motionPhoto === true ? 'Live Photo' : ''))
+              .fontSize(11)
+              .fontColor($r('sys.color.ohos_id_color_activated'))
+              .margin({ top: 4 });
+          }
           Text(this.queueItemModeLabel(item))
             .fontSize(12)
             .fontColor($r('sys.color.font_secondary'))
@@ -7490,6 +7668,12 @@ struct Index {
   }
 
   private queueItemModeLabel(item: QueueItem): string {
+    if (item.details?.huaweiPortraitReady === true) {
+      const settings: NativeSettings = this.queuePhotoSettingsForItem(item, item.modeOverride === undefined
+        ? this.committedSettings : this.settingsFromModeSnapshot(item.modeOverride));
+      return 'Apple 人像' + (settings.applePhotographicStyles3 ? ' · 摄影风格 3' :
+        (settings.applePhotographicStyles ? ' · 摄影风格' : ''));
+    }
     if (item.modeOverride !== undefined) {
       return this.queuePhotoModeLabel(this.settingsFromModeSnapshot(item.modeOverride));
     }

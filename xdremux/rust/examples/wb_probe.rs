@@ -9,8 +9,16 @@ fn main() {
     let donor = CString::new(args[1].as_str()).unwrap();
     let returned = CString::new(args[2].as_str()).unwrap();
     let output = CString::new(args[3].as_str()).unwrap();
-    let mode: u8 = if args.get(4).map(|s| s.as_str()) == Some("apple") { 0 } else { 1 };
-    let restore: u8 = if args.get(5).map(|s| s.as_str()) == Some("0") { 0 } else { 1 };
+    let mode: u8 = if args.get(4).map(|s| s.as_str()) == Some("apple") {
+        0
+    } else {
+        1
+    };
+    let restore: u8 = if args.get(5).map(|s| s.as_str()) == Some("0") {
+        0
+    } else {
+        1
+    };
     let report = xdremux_core::xdremux_writeback_returned_photo(
         donor.as_ptr(),
         returned.as_ptr(),

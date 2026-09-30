@@ -494,3 +494,10 @@ P0 补充检查（本批并行进行）：
 - 照片详情使用 ArkUI `Stack` 与 `Image` 构造单张大幅、圆角预览卡，采用 `ImageFit.Contain` 保持照片比例；顶部操作和底部信息/转换区域使用模糊材质呈现，完整 EXIF 摘要和操作可滚动查看。保留现有 HDS 浮动 Tab。
 - 控件评估：`HdsListItemCard` 的设计目标是设置/列表行，不适合承载大照片；`HdsVisualComponent` 用于专门的边缘流光等复杂视效，本场景也不需要。普通 ArkUI `Stack`、`Image`、`Scroll` 加 `backgroundBlurStyle` 更适合照片主视觉；HDS `hdsMaterial` 推荐使用系统自适应等级，本批玻璃效果限制在小面积操作/信息区。
 - 已完成 API 26 debug 编译、14 份 Node 回归与 5 份 HAP verifier 单测。0.4.6 已安装到设备，但锁屏时启动失败（10106102），尚未做设备视觉检查。参考华为[PhotoPickerComponent API](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ohos-file-photopickercomponent)、[窗口沉浸式指南](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/immersive-window-feature)、[Tabs 沉浸式 FAQ](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-arkui-1584)、[HdsListItemCard API](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/ui-design-hdslistitem) 与[ArkUI 背景/模糊 API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references-V13/ts-universal-attributes-background-V13)。
+
+## 华为人像与动态照片集成（2026-09-30）
+
+- 将 `integrate/huawei-portrait-live` 的 Rust 人像、动态照片、Live Photo 与摄影风格叠加改进接入原生鸿蒙工作树；保留原生照片详情里既有的 Apple 摄影风格/人像识别。核心继续由 `xdremux/rust/build_ohos.sh` 产出，使用 `tools/ohos/prepare_harmony_native.ps1` 暂存到 Harmony 工程；`.so` 不入 Git。
+- 队列和本地图库照片在沙箱物化后识别华为 HDR、人像与 Motion Photo。华为人像先生成并验证 Apple 人像，再按单张设置追加摄影风格或摄影风格 3，追加后再次校验人像；两档风格可与人像同开，摄影风格 3 包含完整的风格、纹理和语义蒙版。普通华为 HDR 不重编码，动态照片导出静态图前截掉追加的视频尾部。
+- 转换结果记录实际使用的风格开关并随队列持久化。Live Photo 的 HEIC/MOV 配对只接受当前原图绑定的 Apple 结果；旧版摄影风格单独开启时拒绝配对并提示重新转换，摄影风格 3 可配对。缺少风格记录的旧结果也需重新转换。文件分享继续使用文件语义，避免系统按图片分享时改写 HEIC。
+- 本地样本的人像 remux、动态照片配对与静帧逐字节抽取通过，Harmony Node 回归、API 26 构建及真机安装/启动通过。当前设备检查时处于锁屏，未做本次 UI 点击转换和跨设备 Apple Photos 播放实测；这两项仍需在解锁后验证。签名仅用于 DevEco 本地安装，发布 HAP 保持 unsigned。

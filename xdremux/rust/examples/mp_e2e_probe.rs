@@ -37,7 +37,9 @@ fn main() {
             if r.error_message.is_null() {
                 String::new()
             } else {
-                std::ffi::CStr::from_ptr(r.error_message).to_string_lossy().into_owned()
+                std::ffi::CStr::from_ptr(r.error_message)
+                    .to_string_lossy()
+                    .into_owned()
             }
         };
         let out_size = fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);

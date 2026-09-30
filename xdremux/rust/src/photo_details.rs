@@ -479,7 +479,7 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
     // 2. HEIF / ISO BMFF path
     else if data.len() >= 12 && &data[4..8] == b"ftyp" {
         details.apple_photographic_styles = crate::verify_photographic_styles(data);
-        details.apple_portrait = crate::verify_portrait_graph(data);
+        details.apple_portrait = crate::verify_portrait_graph(data) || crate::huawei_portrait_output_ok(data);
         if let Ok(Some(exif_bytes)) = isobmff_write::read_exif_payload(data) {
             if let Some(tiff) = find_tiff_slice(&exif_bytes) {
                 parse_tiff_exif(tiff, &mut details);

@@ -53,6 +53,8 @@ export interface PersistedResult {
   modeKey: string;
   modeLabel: string;
   sourceInputPath?: string;
+  applePhotographicStyles?: boolean;
+  applePhotographicStyles3?: boolean;
   conversion: PersistedConversion;
 }
 
@@ -213,6 +215,12 @@ function cloneDetails(details: NativePhotoDetails): NativePhotoDetails {
   if (details.hdrKind !== undefined) copy.hdrKind = details.hdrKind;
   if (details.edrScale !== undefined) copy.edrScale = details.edrScale;
   if (details.gainMapMax !== undefined) copy.gainMapMax = details.gainMapMax;
+  if (details.applePhotographicStyles !== undefined) copy.applePhotographicStyles = details.applePhotographicStyles;
+  if (details.applePortrait !== undefined) copy.applePortrait = details.applePortrait;
+  if (details.huaweiHdr !== undefined) copy.huaweiHdr = details.huaweiHdr;
+  if (details.huaweiPortrait !== undefined) copy.huaweiPortrait = details.huaweiPortrait;
+  if (details.huaweiPortraitReady !== undefined) copy.huaweiPortraitReady = details.huaweiPortraitReady;
+  if (details.motionPhoto !== undefined) copy.motionPhoto = details.motionPhoto;
   return copy;
 }
 
@@ -236,7 +244,9 @@ function decodeDetails(value: Object | undefined): NativePhotoDetails {
   }
   const raw = value as { success?: Object; errorMessage?: Object; make?: Object; model?: Object; dateTime?: Object;
     exposureTime?: Object; fNumber?: Object; iso?: Object; focalLength?: Object; focalLength35mm?: Object;
-    exposureBias?: Object; width?: Object; height?: Object; hdrKind?: Object; edrScale?: Object; gainMapMax?: Object };
+    exposureBias?: Object; width?: Object; height?: Object; hdrKind?: Object; edrScale?: Object; gainMapMax?: Object;
+    applePhotographicStyles?: Object; applePortrait?: Object; huaweiHdr?: Object;
+    huaweiPortrait?: Object; huaweiPortraitReady?: Object; motionPhoto?: Object };
   const details: NativePhotoDetails = { success: requiredBoolean(raw.success, 'details.success') };
   if (raw.errorMessage !== undefined) details.errorMessage = requiredString(raw.errorMessage, 'details.errorMessage', true);
   if (raw.make !== undefined) details.make = requiredString(raw.make, 'details.make', true);
@@ -253,6 +263,12 @@ function decodeDetails(value: Object | undefined): NativePhotoDetails {
   if (raw.height !== undefined) details.height = requiredNumber(raw.height, 'details.height');
   if (raw.edrScale !== undefined) details.edrScale = requiredNumber(raw.edrScale, 'details.edrScale');
   if (raw.gainMapMax !== undefined) details.gainMapMax = requiredNumber(raw.gainMapMax, 'details.gainMapMax');
+  if (raw.applePhotographicStyles !== undefined) details.applePhotographicStyles = requiredBoolean(raw.applePhotographicStyles, 'details.applePhotographicStyles');
+  if (raw.applePortrait !== undefined) details.applePortrait = requiredBoolean(raw.applePortrait, 'details.applePortrait');
+  if (raw.huaweiHdr !== undefined) details.huaweiHdr = requiredBoolean(raw.huaweiHdr, 'details.huaweiHdr');
+  if (raw.huaweiPortrait !== undefined) details.huaweiPortrait = requiredBoolean(raw.huaweiPortrait, 'details.huaweiPortrait');
+  if (raw.huaweiPortraitReady !== undefined) details.huaweiPortraitReady = requiredBoolean(raw.huaweiPortraitReady, 'details.huaweiPortraitReady');
+  if (raw.motionPhoto !== undefined) details.motionPhoto = requiredBoolean(raw.motionPhoto, 'details.motionPhoto');
   return details;
 }
 
@@ -368,6 +384,8 @@ function encodeResult(result: QueueResult): PersistedResult {
     outputPath: result.outputPath,
     modeKey: result.modeKey,
     modeLabel: result.modeLabel,
+    applePhotographicStyles: result.applePhotographicStyles,
+    applePhotographicStyles3: result.applePhotographicStyles3,
     conversion: encodeConversion(result.conversion)
   };
   if (result.sourceInputPath !== undefined) {
@@ -382,6 +400,7 @@ function encodeResult(result: QueueResult): PersistedResult {
 function decodeResult(value: Object | undefined): QueueResult {
   if (!isRecord(value)) throw new Error('result 必须是对象');
   const raw = value as { outputPath?: Object; modeKey?: Object; modeLabel?: Object; sourceInputPath?: Object;
+    applePhotographicStyles?: Object; applePhotographicStyles3?: Object;
     conversion?: Object };
   const outputPath: string = requiredString(raw.outputPath, 'result.outputPath');
   const modeKey: string = requiredString(raw.modeKey, 'result.modeKey');
@@ -399,6 +418,14 @@ function decodeResult(value: Object | undefined): QueueResult {
   };
   if (raw.sourceInputPath !== undefined) {
     decoded.sourceInputPath = requiredString(raw.sourceInputPath, 'result.sourceInputPath');
+  }
+  if (raw.applePhotographicStyles !== undefined) {
+    if (typeof raw.applePhotographicStyles !== 'boolean') throw new Error('result.applePhotographicStyles 无效');
+    decoded.applePhotographicStyles = raw.applePhotographicStyles;
+  }
+  if (raw.applePhotographicStyles3 !== undefined) {
+    if (typeof raw.applePhotographicStyles3 !== 'boolean') throw new Error('result.applePhotographicStyles3 无效');
+    decoded.applePhotographicStyles3 = raw.applePhotographicStyles3;
   }
   return decoded;
 }
@@ -655,6 +682,8 @@ function restoreItem(item: QueueItem, probe: QueuePathProbe, warnings: Array<str
       modeKey: item.result.modeKey,
       modeLabel: item.result.modeLabel,
       sourceInputPath: item.result.sourceInputPath,
+      applePhotographicStyles: item.result.applePhotographicStyles,
+      applePhotographicStyles3: item.result.applePhotographicStyles3,
       conversion: { ...item.result.conversion }
     };
   }

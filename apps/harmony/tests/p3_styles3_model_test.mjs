@@ -9,7 +9,7 @@ import { ps3OptionsFor, stableGrainSeed } from '../entry/src/main/ets/queue/Ps3M
 
 const ps3Mode = (enabled) => ({
   modeKey: 'apple',
-  modeLabel: enabled ? 'Apple 标准 · 摄影风格 · 摄影风格 3' : 'Apple 标准',
+  modeLabel: enabled ? 'Apple 标准 · 摄影风格 3' : 'Apple 标准',
   applePhotographicStyles3: enabled,
   config: {
     oppoCompat: 0,
@@ -49,7 +49,7 @@ const styles3 = normalizeSettings({
 });
 assert.equal(styles3.applePhotographicStyles, true);
 assert.equal(styles3.outputMode, 'apple');
-assert.equal(modeLabel(styles3), 'Apple 标准 · 摄影风格 · 摄影风格 3');
+assert.equal(modeLabel(styles3), 'Apple 标准 · 摄影风格 3');
 
 const firstSeed = stableGrainSeed('/sandbox/inputs/a😀.photo');
 assert.equal(firstSeed, stableGrainSeed('/sandbox/inputs/a😀.photo'));
@@ -91,7 +91,7 @@ assert.deepEqual(snapshots, [
   { id: first.id, ps3: true },
   { id: second.id, ps3: false }
 ]);
-assert.equal(first.result.modeLabel, 'Apple 标准 · 摄影风格 · 摄影风格 3');
+assert.equal(first.result.modeLabel, 'Apple 标准 · 摄影风格 3');
 
 let attempt = 0;
 const failureController = new QueueController({

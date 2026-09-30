@@ -64,6 +64,7 @@ char *xdremux_attach_style_layers(
     std::uint32_t flags);
 char *xdremux_motion_photo_inspect(const char *input_path);
 char *xdremux_motion_photo_split(const char *input_path, const char *output_directory);
+char *xdremux_motion_photo_extract_still(const char *input_path, const char *output_path);
 char *xdremux_make_live_photo(const char *source_path, const char *still_path, const char *out_dir);
 std::uint8_t xdremux_live_photo_pair_valid(const char *still_path, const char *mov_path);
 XdremuxConversionResult xdremux_convert_with_progress(
@@ -184,6 +185,7 @@ struct AsyncContext {
         VERIFY_HUAWEI_PORTRAIT,
         MOTION_INSPECT,
         MOTION_SPLIT,
+        MOTION_EXTRACT_STILL,
         LIVE_PHOTO_MAKE,
         LIVE_PHOTO_PAIR_VALID,
         CONVERT,
@@ -344,6 +346,17 @@ void execute_operation(napi_env, void *data)
                 return;
             }
             context->motion_split_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::MOTION_EXTRACT_STILL: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_motion_photo_extract_still(
+                    context->input_path.c_str(), context->output_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_motion_photo_extract_still returned a null report");
+                return;
+            }
+            context->motion_json.assign(value.get());
             return;
         }
         case AsyncContext::Operation::LIVE_PHOTO_MAKE: {
@@ -624,7 +637,8 @@ void complete_operation(napi_env env, napi_status status, void *data)
         } else {
             reject_with_message(env, context->deferred, "unable to create Huawei portrait validation result");
         }
-    } else if (context->operation == AsyncContext::Operation::MOTION_INSPECT) {
+    } else if (context->operation == AsyncContext::Operation::MOTION_INSPECT ||
+               context->operation == AsyncContext::Operation::MOTION_EXTRACT_STILL) {
         napi_value value = nullptr;
         if (napi_create_string_utf8(env, context->motion_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
             napi_resolve_deferred(env, context->deferred, value);
@@ -1112,6 +1126,30 @@ napi_value motion_split(napi_env env, napi_callback_info info)
     return queue_operation(env, context);
 }
 
+napi_value motion_extract_still(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+        napi_throw_type_error(env, nullptr, "motionExtractStill(inputPath, outputPath) requires two paths");
+        return nullptr;
+    }
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    context->operation = AsyncContext::Operation::MOTION_EXTRACT_STILL;
+    if (!read_local_path(env, args[0], context->input_path) ||
+        !read_local_path(env, args[1], context->output_path) ||
+        context->input_path == context->output_path) {
+        delete context;
+        napi_throw_type_error(env, nullptr, "motionExtractStill requires distinct local paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
 napi_value live_photo_make(napi_env env, napi_callback_info info)
 {
     size_t argc = 3;
@@ -1326,6 +1364,7 @@ napi_value initialize(napi_env env, napi_value exports)
         {"verifyHuaweiPortraitOutput", nullptr, verify_huawei_portrait, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"motionInspect", nullptr, motion_inspect, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"motionSplit", nullptr, motion_split, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"motionExtractStill", nullptr, motion_extract_still, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"livePhotoMake", nullptr, live_photo_make, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"livePhotoPairValid", nullptr, live_photo_pair_valid, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"convert", nullptr, convert, nullptr, nullptr, nullptr, napi_default, nullptr},

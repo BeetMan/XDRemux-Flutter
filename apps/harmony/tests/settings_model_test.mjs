@@ -59,7 +59,7 @@ const assertModeTransitions = () => {
     applePhotographicStyles: true,
     applePhotographicStyles3: true
   });
-  assert.equal(modeLabel(styles3), 'Apple 标准 · 摄影风格 · 摄影风格 3');
+  assert.equal(modeLabel(styles3), 'Apple 标准 · 摄影风格 3');
 
   const explicitOff = normalizeSettings({ ...DEFAULT_SETTINGS, oppoCompat: 0, oppoCameraTail: 9 });
   assert.equal(explicitOff.outputMode, 'oppo');

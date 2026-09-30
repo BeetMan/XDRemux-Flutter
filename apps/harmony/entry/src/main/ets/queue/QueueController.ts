@@ -26,6 +26,8 @@ export interface QueueResult {
   conversion: NativeConversionResult;
   /** Exact imported input used by this successful conversion; older records may omit it. */
   sourceInputPath?: string;
+  applePhotographicStyles?: boolean;
+  applePhotographicStyles3?: boolean;
 }
 
 export interface QueueItemInput {
@@ -325,6 +327,13 @@ export class QueueController {
     if (changed.length > 0) {
       this.notifyItems(changed, true);
     }
+  }
+
+  public updatePhotoDetails(id: string, inputPath: string, details: NativePhotoDetails): void {
+    const item = this.require(id);
+    if (item.inputPath !== inputPath) return;
+    item.details = details;
+    this.notify(item, true);
   }
 
   public setPrepared(
@@ -758,6 +767,8 @@ export class QueueController {
         modeKey: item.result.modeKey,
         modeLabel: item.result.modeLabel,
         sourceInputPath: item.result.sourceInputPath,
+        applePhotographicStyles: item.result.applePhotographicStyles,
+        applePhotographicStyles3: item.result.applePhotographicStyles3,
         conversion: {
           success: item.result.conversion.success,
           mode: item.result.conversion.mode,

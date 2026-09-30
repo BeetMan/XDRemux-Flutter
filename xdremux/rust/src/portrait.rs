@@ -1291,6 +1291,7 @@ fn attach_portrait_graph(
         portrait_graft::build_output_pub(
             None,
             None,
+            None,
             base,
             &top,
             &meta_hdr,
@@ -1525,6 +1526,37 @@ fn make_xmp_infe(item_id: u32) -> Vec<u8> {
     isobmff::make_box(b"infe", &payload)
 }
 
+fn item_dims(meta: &ParsedMeta, item_id: u32) -> Result<(u32, u32), String> {
+    let entry = meta
+        .ipma_entries
+        .iter()
+        .find(|e| e.item_id == item_id)
+        .ok_or_else(|| format!("item {item_id} has no ipma entry"))?;
+    for (idx, _) in &entry.associations {
+        if let Some(p) = meta.props.iter().find(|p| p.index == *idx) {
+            if p.ptype == "ispe" && p.raw.len() >= 20 {
+                let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
+                let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
+                if w > 512 && h > 512 {
+                    return Ok((w, h));
+                }
+            }
+        }
+    }
+    Err(format!("item {item_id} ispe not found"))
+}
+
+fn make_primary_xmp_infe(item_id: u32) -> Vec<u8> {
+    // Golden-exact primary mime XMP infe (hdrgm-xmp name).
+    let mut payload = vec![2u8, 0, 0, 1]; // version 2, flags = hidden
+    payload.extend_from_slice(&(item_id as u16).to_be_bytes());
+    payload.extend_from_slice(&[0, 0]); // protection index
+    payload.extend_from_slice(b"mime");
+    payload.extend_from_slice(b"hdrgm-xmp\0");
+    payload.extend_from_slice(b"application/rdf+xml\0\0");
+    isobmff::make_box(b"infe", &payload)
+}
+
 fn find_meta_child(data: &[u8], meta_hdr: &BoxHeader, target: &[u8; 4]) -> Option<BoxHeader> {
     isobmff::parse_boxes(
         data,
@@ -1533,6 +1565,53 @@ fn find_meta_child(data: &[u8], meta_hdr: &BoxHeader, target: &[u8; 4]) -> Optio
     )
     .into_iter()
     .find(|b| &b.btype == target)
+}
+
+fn extract_exif_fnumber(payload: &[u8]) -> Option<f64> {
+    let tiff_start = if payload.starts_with(b"II") || payload.starts_with(b"MM") {
+        0usize
+    } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
+        10usize
+    } else if payload.len() >= 4 {
+        let off = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        4 + off
+    } else {
+        0usize
+    };
+    let tiff = payload.get(tiff_start..)?;
+    let le = tiff.starts_with(b"II");
+    let u16v = |o: usize| -> Option<u16> {
+        let b: [u8; 2] = tiff.get(o..o + 2)?.try_into().ok()?;
+        Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+    };
+    let u32v = |o: usize| -> Option<u32> {
+        let b: [u8; 4] = tiff.get(o..o + 4)?.try_into().ok()?;
+        Some(if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+    };
+    let ifd0 = u32v(4)? as usize;
+    let n0 = u16v(ifd0)? as usize;
+    let mut exif_ifd = None;
+    for k in 0..n0 {
+        let pos = ifd0 + 2 + k * 12;
+        if u16v(pos)? == 0x8769 {
+            exif_ifd = Some(u32v(pos + 8)? as usize);
+            break;
+        }
+    }
+    let exif_ifd = exif_ifd?;
+    let ne = u16v(exif_ifd)? as usize;
+    for k in 0..ne {
+        let pos = exif_ifd + 2 + k * 12;
+        if u16v(pos)? == 0x829d { // FNumber
+            let off = u32v(pos + 8)? as usize;
+            let num = u32v(off)? as f64;
+            let den = u32v(off + 4)? as f64;
+            if den > 0.0 {
+                return Some(num / den);
+            }
+        }
+    }
+    None
 }
 
 fn extract_exif_datetime(base: &[u8], meta: &ParsedMeta) -> Option<String> {
@@ -1583,5 +1662,831 @@ pub(crate) fn cmd_portrait(args: &[String]) -> Result<(), String> {
     let out = run_portrait(&input, &base, origin)?;
     std::fs::write(&args[2], &out).map_err(|e| format!("write {}: {e}", args[2]))?;
     println!("portrait: {} -> {} bytes", args[2], out.len());
+    Ok(())
+}
+
+/// Derive a smooth Apple Portrait Effects Matte (foreground person segmentation mask)
+/// from Huawei disparity map and face detection bounding box / focus point.
+fn derive_huawei_portrait_matte(
+    raw_plane: &[u8],
+    rf_payload: &[u8],
+    disp_oriented: &[u8],
+    ow: usize,
+    oh: usize,
+    dim_major: f64,
+    dim_minor: f64,
+    focus_rank: f64,
+) -> Vec<u8> {
+    let p1_end = 64 + 1024 * 768;
+    let mut subj_depth_opt = None;
+
+    // 1. Check for face / subject bounding box in RfDataB subsegment (tag 0x00007b07)
+    if rf_payload.len() >= p1_end + 64 {
+        let sub = &rf_payload[p1_end..];
+        if sub.len() >= 64 && u32::from_le_bytes([sub[0], sub[1], sub[2], sub[3]]) == 0x7b07 {
+            let u32_at = |o: usize| u32::from_le_bytes([sub[o], sub[o + 1], sub[o + 2], sub[o + 3]]);
+            let c1_x = u32_at(20);
+            let c1_y = u32_at(24);
+            let c2_x = u32_at(28);
+            let c3_y = u32_at(40);
+            let (xmin, xmax) = (c1_x.min(c2_x), c1_x.max(c2_x));
+            let (ymin, ymax) = (c1_y.min(c3_y), c1_y.max(c3_y));
+            let d_major = if dim_major > 0.0 { dim_major } else { 4096.0 };
+            let d_minor = if dim_minor > 0.0 { dim_minor } else { 3072.0 };
+            if xmax > xmin && ymax > ymin && xmax <= 8192 && ymax <= 8192 {
+                let d_xmin = ((xmin as f64 / d_major) * 1024.0).clamp(0.0, 1023.0) as usize;
+                let d_xmax = ((xmax as f64 / d_major) * 1024.0).clamp(0.0, 1023.0) as usize;
+                let d_ymin = ((ymin as f64 / d_minor) * 768.0).clamp(0.0, 767.0) as usize;
+                let d_ymax = ((ymax as f64 / d_minor) * 768.0).clamp(0.0, 767.0) as usize;
+                let mut box_vals = Vec::new();
+                for y in d_ymin..=d_ymax {
+                    for x in d_xmin..=d_xmax {
+                        let v = raw_plane[y * 1024 + x];
+                        if v > 60 {
+                            box_vals.push(v);
+                        }
+                    }
+                }
+                if box_vals.len() >= 30 {
+                    box_vals.sort_unstable();
+                    let m = box_vals[box_vals.len() / 2];
+                    subj_depth_opt = Some(m);
+                }
+            }
+        }
+    }
+
+    // 2. Fallbacks if bounding box not present or empty
+    let subj_depth = if let Some(m) = subj_depth_opt {
+        m
+    } else if focus_rank >= 80.0 {
+        focus_rank as u8
+    } else {
+        // Histogram cluster search: find foreground cluster (disparity >= 90)
+        let mut hist = [0u32; 256];
+        for &b in disp_oriented {
+            hist[b as usize] += 1;
+        }
+        let min_cluster_size = (ow * oh / 20) as u32; // >= 5% of pixels
+        let mut fg_vals = Vec::new();
+        for d in 90..=255 {
+            if hist[d] > 500 {
+                fg_vals.push((d as u8, hist[d]));
+            }
+        }
+        let total_fg: u32 = fg_vals.iter().map(|(_, c)| *c).sum();
+        if total_fg >= min_cluster_size {
+            let mut acc = 0;
+            let mut med = 170u8;
+            for &(d, c) in &fg_vals {
+                acc += c;
+                if acc >= total_fg / 2 {
+                    med = d;
+                    break;
+                }
+            }
+            med
+        } else {
+            focus_rank.max(80.0) as u8
+        }
+    };
+
+    let delta = 30.0f32;
+    let thresh_high = (subj_depth as f32 - 15.0).max(35.0);
+    let thresh_low = (thresh_high - delta).max(10.0);
+
+    let mut matte_oriented = vec![0u8; ow * oh];
+    for i in 0..ow * oh {
+        let d = disp_oriented[i] as f32;
+        if d >= thresh_high {
+            matte_oriented[i] = 255;
+        } else if d <= thresh_low {
+            matte_oriented[i] = 0;
+        } else {
+            let t = (d - thresh_low) / (thresh_high - thresh_low);
+            let s = t * t * (3.0 - 2.0 * t);
+            matte_oriented[i] = (s * 255.0).round() as u8;
+        }
+    }
+
+    matte_oriented
+}
+
+/// Person silhouette from Huawei `RfDataB`, in the same orientation as the
+/// primary frame. This is the contour `derive_huawei_portrait_matte` writes
+/// onto `portraiteffectsmatte`, before the 2× upscale.
+///
+/// Photographic Styles 3 has no separate contour item. Callers place this
+/// plane on `semanticpersonmatte`.
+pub fn huawei_person_contour(source: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    let edof_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"edof"))
+        .map(|i| i.item_id);
+    let primary = edof_item.unwrap_or(meta.primary_id);
+    let (pw_frame, ph_frame) = item_dims(&meta, primary).ok()?;
+    let rf_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "mime" && i.raw_infe.windows(7).any(|w| w == b"RfDataB"))?;
+    let rf_payload = read_item_payload(source, &meta, rf_item.item_id)?;
+    if rf_payload.len() < 64 + 1024 * 768 {
+        return None;
+    }
+    let raw_plane = &rf_payload[64..64 + 1024 * 768];
+    let u16_at = |off: usize| -> u16 {
+        u16::from_le_bytes([rf_payload[off], rf_payload[off + 1]])
+    };
+    let mode_flags = u16_at(2);
+    let dim_major = u16_at(24) as f64;
+    let dim_minor = u16_at(26) as f64;
+    let pos_major = u16_at(28) as f64;
+    let pos_minor = u16_at(30) as f64;
+    let is_portrait = ph_frame > pw_frame;
+    let (disp_oriented, ow, oh, focus_x, focus_y) = if is_portrait {
+        let (r, w2, h2) = rotate_cw90(raw_plane, 1024, 768);
+        let fx = if dim_minor > 0.0 && pos_minor > 0.0 {
+            (pos_minor / dim_minor).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let fy = if dim_major > 0.0 && pos_major > 0.0 {
+            (pos_major / dim_major).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        (r, w2 as u32, h2 as u32, fx, fy)
+    } else {
+        let rotate_180 = mode_flags == 0x2200;
+        let r = if rotate_180 {
+            raw_plane.iter().rev().copied().collect()
+        } else {
+            raw_plane.to_vec()
+        };
+        let (fx, fy) = if dim_major > 0.0 && dim_minor > 0.0 && pos_major > 0.0 {
+            if rotate_180 {
+                (
+                    ((dim_major - pos_major) / dim_major).clamp(0.0, 1.0),
+                    ((dim_minor - pos_minor) / dim_minor).clamp(0.0, 1.0),
+                )
+            } else {
+                (
+                    (pos_major / dim_major).clamp(0.0, 1.0),
+                    (pos_minor / dim_minor).clamp(0.0, 1.0),
+                )
+            }
+        } else {
+            (0.5, 0.5)
+        };
+        (r, 1024u32, 768u32, fx, fy)
+    };
+    let fx_px = (focus_x * ow as f64).clamp(0.0, (ow - 1) as f64) as usize;
+    let fy_px = (focus_y * oh as f64).clamp(0.0, (oh - 1) as f64) as usize;
+    let mut window = Vec::with_capacity(25);
+    for dy in -2i32..=2i32 {
+        let y = (fy_px as i32 + dy).clamp(0, oh as i32 - 1) as usize;
+        for dx in -2i32..=2i32 {
+            let x = (fx_px as i32 + dx).clamp(0, ow as i32 - 1) as usize;
+            window.push(disp_oriented[y * ow as usize + x]);
+        }
+    }
+    window.sort_unstable();
+    let focus_rank = window[window.len() / 2] as f64;
+    let matte = derive_huawei_portrait_matte(
+        raw_plane,
+        &rf_payload,
+        &disp_oriented,
+        ow as usize,
+        oh as usize,
+        dim_major,
+        dim_minor,
+        focus_rank,
+    );
+    Some((matte, ow, oh))
+}
+
+/// Convert a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
+pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
+    let top = top_level_boxes(source)?;
+    let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
+    let mdat_hdr = find_top(&top, b"mdat").ok_or("no mdat box")?;
+    let meta = isobmff::parse_source_meta(source).map_err(|e| format!("meta parse: {e}"))?;
+
+    let edof_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"edof"))
+        .map(|i| i.item_id);
+    let use_base = std::env::var("XDREMUX_PORTRAIT_USE_BASE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let primary = if use_base {
+        meta.primary_id
+    } else {
+        edof_item.unwrap_or(meta.primary_id)
+    };
+    let (pw_frame, ph_frame) = item_dims(&meta, primary)?;
+
+    // Gain-map grid item (must target the gain map grid, not edof or primary).
+    let tmap_item = meta.items.iter().find(|i| i.itype == "tmap").map(|i| i.item_id);
+    let gain_grid = tmap_item
+        .and_then(|tmap_id| {
+            meta.refs
+                .iter()
+                .find(|r| r.rtype == "dimg" && r.from == tmap_id)
+                .and_then(|r| r.to.iter().copied().find(|id| *id != meta.primary_id && *id != primary))
+        })
+        .or_else(|| {
+            meta.items
+                .iter()
+                .find(|i| {
+                    i.itype == "grid"
+                        && i.item_id != meta.primary_id
+                        && i.item_id != primary
+                        && !i.raw_infe.windows(4).any(|w| w == b"edof")
+                })
+                .map(|i| i.item_id)
+        })
+        .ok_or("no gain-map grid item found")?;
+
+    // Find RfDataB item.
+    let rf_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "mime" && i.raw_infe.windows(7).any(|w| w == b"RfDataB"))
+        .ok_or("no RfDataB item found in Huawei HEIC")?;
+
+    let rf_payload = read_item_payload(source, &meta, rf_item.item_id)
+        .ok_or("RfDataB payload unreadable")?;
+    if rf_payload.len() < 64 + 1024 * 768 {
+        return Err("RfDataB payload too short for 1024x768 plane".into());
+    }
+    let raw_plane = &rf_payload[64..64 + 1024 * 768];
+
+    // RfDataB header parsing (64 bytes):
+    // Offset 2 (u16le): mode_flags (0x2300 for portrait, 0x2200 for landscape)
+    // Offset 24 (u16le): dim_major (e.g. 4096)
+    // Offset 26 (u16le): dim_minor (e.g. 3072)
+    // Offset 28 (u16le): pos_major (focus coordinate along major dimension)
+    // Offset 30 (u16le): pos_minor (focus coordinate along minor dimension)
+    let u16_at = |off: usize| -> u16 {
+        u16::from_le_bytes([rf_payload[off], rf_payload[off + 1]])
+    };
+    let mode_flags = u16_at(2);
+    let dim_major = u16_at(24) as f64;
+    let dim_minor = u16_at(26) as f64;
+    let pos_major = u16_at(28) as f64;
+    let pos_minor = u16_at(30) as f64;
+
+    let is_portrait = ph_frame > pw_frame;
+    let (disp_oriented, ow, oh, focus_x, focus_y) = if is_portrait {
+        let (r, w2, h2) = rotate_cw90(raw_plane, 1024, 768);
+        let fx = if dim_minor > 0.0 && pos_minor > 0.0 {
+            (pos_minor / dim_minor).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        let fy = if dim_major > 0.0 && pos_major > 0.0 {
+            (pos_major / dim_major).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        (r, w2 as u32, h2 as u32, fx, fy)
+    } else {
+        let rotate_180 = mode_flags == 0x2200;
+        let r = if rotate_180 {
+            raw_plane.iter().rev().copied().collect()
+        } else {
+            raw_plane.to_vec()
+        };
+        let (fx, fy) = if dim_major > 0.0 && dim_minor > 0.0 && pos_major > 0.0 {
+            if rotate_180 {
+                (
+                    ((dim_major - pos_major) / dim_major).clamp(0.0, 1.0),
+                    ((dim_minor - pos_minor) / dim_minor).clamp(0.0, 1.0),
+                )
+            } else {
+                (
+                    (pos_major / dim_major).clamp(0.0, 1.0),
+                    (pos_minor / dim_minor).clamp(0.0, 1.0),
+                )
+            }
+        } else {
+            (0.5, 0.5)
+        };
+        (r, 1024u32, 768u32, fx, fy)
+    };
+
+    // Upscale 2x: e.g. 768x1024 -> 1536x2048 (matches half of 3072x4096 primary, matching gain map)
+    let (disp_final, disp_fw, disp_fh) = upscale2x(&disp_oriented, ow as usize, oh as usize);
+
+    // Encode disparity mono8 stream
+    let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
+
+    let exif_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .ok_or("no Exif item in base")?
+        .item_id;
+    let exif_payload =
+        read_item_payload(source, &meta, exif_item).ok_or("Exif payload unreadable")?;
+    let aperture = extract_exif_fnumber(&exif_payload).unwrap_or(2.0);
+
+    let fx_px = (focus_x * ow as f64).clamp(0.0, (ow - 1) as f64) as usize;
+    let fy_px = (focus_y * oh as f64).clamp(0.0, (oh - 1) as f64) as usize;
+
+    let mut window = Vec::with_capacity(25);
+    for dy in -2i32..=2i32 {
+        let y = (fy_px as i32 + dy).clamp(0, oh as i32 - 1) as usize;
+        for dx in -2i32..=2i32 {
+            let x = (fx_px as i32 + dx).clamp(0, ow as i32 - 1) as usize;
+            window.push(disp_oriented[y * ow as usize + x]);
+        }
+    }
+    window.sort_unstable();
+    let focus_rank = window[window.len() / 2] as f64;
+    let focus_normalized = (focus_rank / 255.0).clamp(0.0, 1.0);
+
+    // Apple Disparity parameters:
+    // Typical Apple portrait scene absolute disparity span is ~2.1 diopters (0.005 to 2.105),
+    // matching APPLE_REFERENCE_SPAN. This ensures Apple Photos' CIDepthBlurEffect
+    // calculates a realistic Circle of Confusion across the simulated aperture
+    // range (f/1.4 - f/16), rather than a compressed, flat blur.
+    let float_min = 0.005f64;
+    let float_max = 2.105f64;
+    let headroom = 1.0f64;
+    let headroom_normalized = (headroom / 4.0).min(1.0);
+    let lux_normalized = 0.5f64;
+    let fitted_primary_gain = (0.02
+        + 0.17 * focus_normalized
+        + 0.04 * headroom_normalized
+        + 0.02 * lux_normalized)
+        .clamp(0.005, 0.25);
+    let activation = (fitted_primary_gain / 0.25).clamp(0.1, 1.0);
+    let dynamic = xhlrb_dynamic_values(activation, headroom, true);
+    let rend = patch_rend(&dynamic)?;
+    let rend_b64 = base64_encode(&rend);
+    let disparity_xmp = disparity_xmp(float_min, float_max, &rend_b64, aperture);
+
+    // Derive portrait effects / person matte from disparity and bounding box / focus
+    let matte_oriented = derive_huawei_portrait_matte(
+        raw_plane,
+        &rf_payload,
+        &disp_oriented,
+        ow as usize,
+        oh as usize,
+        dim_major,
+        dim_minor,
+        focus_rank,
+    );
+    let (person_matte, _, _) = upscale2x(&matte_oriented, ow as usize, oh as usize);
+    let (person_stream, person_hvcc) = encode_mono(&person_matte, disp_fw, disp_fh)?;
+    let hair_stream = person_stream.clone();
+    let hair_hvcc = person_hvcc.clone();
+
+    // ID allocation
+    let mut next_id = meta
+        .items
+        .iter()
+        .map(|i| i.item_id)
+        .max()
+        .unwrap_or(0)
+        .max(crate::portrait_scaffold::max_group_id_pub(source, &meta_hdr).unwrap_or(0))
+        + 1;
+    let mut alloc = move || {
+        let id = next_id;
+        next_id += 1;
+        id
+    };
+
+    let disparity_id = alloc();
+    let disparity_xmp_id = alloc();
+    let portrait_matte_id = alloc();
+    let portrait_matte_xmp_id = alloc();
+    let skin_id = alloc();
+    let skin_xmp_id = alloc();
+    let hair_id = alloc();
+    let hair_xmp_id = alloc();
+    let teeth_id = alloc();
+    let teeth_xmp_id = alloc();
+    let glasses_id = alloc();
+    let glasses_xmp_id = alloc();
+
+    // Check if primary XMP already exists
+    let existing_primary_xmp = find_primary_xmp_item(&meta, primary).ok().and_then(|id| {
+        let payload = read_item_payload(source, &meta, id)?;
+        if payload.starts_with(b"<?xml") || payload.starts_with(b"<x:xmpmeta") {
+            Some(id)
+        } else {
+            None
+        }
+    });
+    let primary_xmp_id = existing_primary_xmp.unwrap_or_else(&mut alloc);
+
+    // Properties:
+    let mut new_props: Vec<Vec<u8>> = Vec::new();
+    let mut add_prop = |raw: Vec<u8>| -> u32 {
+        new_props.push(raw);
+        (meta.props.len() + new_props.len()) as u32
+    };
+    let pixi_mono_idx = meta
+        .props
+        .iter()
+        .find(|p| p.raw == isobmff::PIXI_MONO8_BOX)
+        .map(|p| p.index)
+        .unwrap_or_else(|| add_prop(isobmff::PIXI_MONO8_BOX.to_vec()));
+    let ispe_disp_idx = add_prop(isobmff::make_ispe_box(disp_fw, disp_fh));
+    let ispe_matte_idx = add_prop(isobmff::make_ispe_box(disp_fw, disp_fh));
+    let auxc_disp_idx = add_prop(make_auxc(AUXC_DISPARITY));
+    let auxc_portrait_idx = add_prop(make_auxc(AUXC_PORTRAIT_MATTE));
+    let auxc_skin_idx = add_prop(make_auxc(AUXC_SKIN));
+    let auxc_hair_idx = add_prop(make_auxc(AUXC_HAIR));
+    let auxc_teeth_idx = add_prop(make_auxc(AUXC_TEETH));
+    let auxc_glasses_idx = add_prop(make_auxc(AUXC_GLASSES));
+    let hvcc_disp_idx = add_prop(isobmff::make_box(b"hvcC", &disparity_hvcc));
+    let hvcc_person_idx = add_prop(isobmff::make_box(b"hvcC", &person_hvcc));
+    let hvcc_hair_idx = add_prop(isobmff::make_box(b"hvcC", &hair_hvcc));
+
+    // Ensure edof primary inherits the Display P3 colr property from the original primary
+    let colr_idx = meta
+        .ipma_entries
+        .iter()
+        .find(|e| e.item_id == meta.primary_id)
+        .and_then(|e| {
+            e.associations.iter().find(|(idx, _)| {
+                meta.props
+                    .iter()
+                    .any(|p| p.index == *idx && p.ptype == "colr")
+            })
+        })
+        .map(|(idx, _)| *idx);
+
+    let mut base_ipma = meta.ipma_entries.clone();
+    if let Some(colr) = colr_idx {
+        if let Some(entry) = base_ipma.iter_mut().find(|e| e.item_id == primary) {
+            if !entry.associations.iter().any(|(idx, _)| *idx == colr) {
+                entry.associations.push((colr, false));
+            }
+        }
+    }
+
+    // infes: ensure the primary item has flags = 0 (visible) and old blurred primary has flags = 1 (hidden)
+    let mut new_infes: Vec<Vec<u8>> = meta
+        .items
+        .iter()
+        .map(|i| {
+            if i.item_id == primary {
+                isobmff::make_infe_box(primary, &i.itype, 0)
+            } else if edof_item.is_some() && i.item_id == meta.primary_id {
+                isobmff::make_infe_box(i.item_id, &i.itype, 1)
+            } else {
+                i.raw_infe.clone()
+            }
+        })
+        .collect();
+    for id in [
+        disparity_id,
+        portrait_matte_id,
+        skin_id,
+        hair_id,
+        teeth_id,
+        glasses_id,
+    ] {
+        new_infes.push(isobmff::make_infe_box(id, "hvc1", 1)); // hidden
+    }
+    for id in [
+        disparity_xmp_id,
+        portrait_matte_xmp_id,
+        skin_xmp_id,
+        hair_xmp_id,
+        teeth_xmp_id,
+        glasses_xmp_id,
+    ] {
+        new_infes.push(make_xmp_infe(id));
+    }
+    if existing_primary_xmp.is_none() {
+        new_infes.push(make_primary_xmp_infe(primary_xmp_id));
+    }
+
+    // ipma
+    let mut extra_ipma: Vec<IpmaEntry> = Vec::new();
+    let image_assocs = |ispe_idx: u32, auxc_idx: u32, hvcc_idx: u32| {
+        vec![
+            (ispe_idx, false),
+            (pixi_mono_idx, false),
+            (auxc_idx, true),
+            (hvcc_idx, true),
+        ]
+    };
+    extra_ipma.push(IpmaEntry {
+        item_id: disparity_id,
+        associations: image_assocs(ispe_disp_idx, auxc_disp_idx, hvcc_disp_idx),
+    });
+    extra_ipma.push(IpmaEntry {
+        item_id: portrait_matte_id,
+        associations: image_assocs(ispe_matte_idx, auxc_portrait_idx, hvcc_person_idx),
+    });
+    extra_ipma.push(IpmaEntry {
+        item_id: skin_id,
+        associations: image_assocs(ispe_matte_idx, auxc_skin_idx, hvcc_person_idx),
+    });
+    extra_ipma.push(IpmaEntry {
+        item_id: hair_id,
+        associations: image_assocs(ispe_matte_idx, auxc_hair_idx, hvcc_hair_idx),
+    });
+    extra_ipma.push(IpmaEntry {
+        item_id: teeth_id,
+        associations: image_assocs(ispe_matte_idx, auxc_teeth_idx, hvcc_person_idx),
+    });
+    extra_ipma.push(IpmaEntry {
+        item_id: glasses_id,
+        associations: image_assocs(ispe_matte_idx, auxc_glasses_idx, hvcc_person_idx),
+    });
+
+    // Exif item ID
+    let exif_item = meta
+        .items
+        .iter()
+        .find(|i| i.itype == "Exif")
+        .ok_or("no Exif item in base")?
+        .item_id;
+
+    // iref: drop any vendor auxl (e.g. Huawei edof unrefocusmap) so only Apple's
+    // aux disparity and semantic mattes attach to the primary image and tmap.
+    let mut new_refs: Vec<IrefEntry> = meta
+        .refs
+        .iter()
+        .filter(|r| r.rtype != "auxl")
+        .cloned()
+        .collect();
+
+    let auxl_targets = if let Some(tmap) = tmap_item {
+        vec![primary, tmap]
+    } else {
+        vec![primary]
+    };
+
+    // Repoint existing tmap, Exif and vendor metadata to the chosen primary
+    for r in &mut new_refs {
+        if let Some(tmap) = tmap_item {
+            if r.from == tmap && r.rtype == "dimg" {
+                r.to = vec![primary, gain_grid];
+            }
+        }
+        if r.from == exif_item && r.rtype == "cdsc" {
+            r.to = auxl_targets.clone();
+        } else if r.rtype == "cdsc" && r.to.contains(&meta.primary_id) {
+            r.to = vec![primary];
+        }
+    }
+
+    for image_id in [
+        disparity_id,
+        portrait_matte_id,
+        skin_id,
+        hair_id,
+        teeth_id,
+        glasses_id,
+    ] {
+        new_refs.push(IrefEntry {
+            rtype: "auxl".into(),
+            from: image_id,
+            to: auxl_targets.clone(),
+        });
+    }
+    new_refs.push(IrefEntry {
+        rtype: "cdsc".into(),
+        from: disparity_xmp_id,
+        to: vec![disparity_id],
+    });
+    new_refs.push(IrefEntry {
+        rtype: "cdsc".into(),
+        from: portrait_matte_xmp_id,
+        to: vec![portrait_matte_id],
+    });
+    for (xmp_id, image_id) in [
+        (skin_xmp_id, skin_id),
+        (hair_xmp_id, hair_id),
+        (teeth_xmp_id, teeth_id),
+        (glasses_xmp_id, glasses_id),
+    ] {
+        new_refs.push(IrefEntry {
+            rtype: "cdsc".into(),
+            from: xmp_id,
+            to: vec![image_id],
+        });
+    }
+    if existing_primary_xmp.is_none() {
+        new_refs.push(IrefEntry {
+            rtype: "cdsc".into(),
+            from: primary_xmp_id,
+            to: auxl_targets.clone(),
+        });
+    }
+    let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
+
+    // Primary XMP with Focus region
+    let datetime = extract_exif_datetime(source, &meta).unwrap_or_else(|| "1970:01:01 00:00:00".into());
+    let base_xmp = match existing_primary_xmp {
+        Some(id) => read_item_payload(source, &meta, id).ok_or("existing XMP unreadable")?,
+        None => {
+            let iso = if datetime.len() >= 19 {
+                format!(
+                    "{}-{}-{}T{}",
+                    &datetime[0..4],
+                    &datetime[5..7],
+                    &datetime[8..10],
+                    &datetime[11..19]
+                )
+            } else {
+                "1970-01-01T00:00:00".to_string()
+            };
+            format!(
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n   <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n      <rdf:Description rdf:about=\"\"\n            xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n            xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\">\n         <xmp:CreateDate>{iso}</xmp:CreateDate>\n         <xmp:ModifyDate>{iso}</xmp:ModifyDate>\n         <photoshop:DateCreated>{iso}</photoshop:DateCreated>\n      </rdf:Description>\n   </rdf:RDF>\n</x:xmpmeta>\n"
+            ).into_bytes()
+        }
+    };
+    let merged_main_xmp = merge_focus_into_xmp(
+        &base_xmp,
+        focus_x,
+        focus_y,
+        pw_frame,
+        ph_frame,
+        &datetime,
+    )?;
+
+    // Appended mdat
+    let std_idat = idat_payload(source, &meta_hdr).unwrap_or_default();
+    let std_mdat_payload = source[mdat_hdr.data_start..mdat_hdr.data_end].to_vec();
+    let mut appended_mdat = Vec::new();
+    let mut mdat_items: Vec<(u32, u64, u64)> = Vec::new();
+    let mut push_mdat = |id: u32, payload: &[u8], buf: &mut Vec<u8>| {
+        let off = buf.len() as u64;
+        buf.extend_from_slice(payload);
+        mdat_items.push((id, off, payload.len() as u64));
+    };
+
+    let semantic_xmp = crate::portrait_scaffold::matte_xmp_pub();
+    push_mdat(disparity_xmp_id, &disparity_xmp, &mut appended_mdat);
+    let (hdrgm_rel, hdrgm_len) = if existing_primary_xmp.is_some() {
+        let rel = appended_mdat.len() as u64;
+        appended_mdat.extend_from_slice(&merged_main_xmp);
+        (rel, merged_main_xmp.len() as u64)
+    } else {
+        push_mdat(primary_xmp_id, &merged_main_xmp, &mut appended_mdat);
+        (0, 0)
+    };
+
+    let exif_rel = appended_mdat.len() as u64;
+    appended_mdat.extend_from_slice(&patched_exif);
+    let exif_len = patched_exif.len() as u64;
+
+    push_mdat(
+        portrait_matte_xmp_id,
+        &portrait_matte_xmp(),
+        &mut appended_mdat,
+    );
+    for xmp_id in [skin_xmp_id, hair_xmp_id, teeth_xmp_id, glasses_xmp_id] {
+        push_mdat(xmp_id, &semantic_xmp, &mut appended_mdat);
+    }
+
+    push_mdat(disparity_id, &disparity_stream, &mut appended_mdat);
+    push_mdat(portrait_matte_id, &person_stream, &mut appended_mdat);
+    push_mdat(skin_id, &person_stream, &mut appended_mdat);
+    push_mdat(hair_id, &hair_stream, &mut appended_mdat);
+    push_mdat(teeth_id, &person_stream, &mut appended_mdat);
+    push_mdat(glasses_id, &person_stream, &mut appended_mdat);
+
+    // Two-pass assembly
+    let new_ipco: Vec<u8> = meta
+        .props
+        .iter()
+        .flat_map(|p| p.raw.clone())
+        .chain(new_props.iter().flatten().copied())
+        .collect();
+
+    let primary_override = if edof_item.is_some() { Some(primary) } else { None };
+    let drop_auxc = if edof_item.is_some() { Some(primary) } else { None };
+    let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
+        portrait_graft::build_output_pub(
+            primary_override,
+            drop_auxc,
+            Some(&base_ipma),
+            source,
+            &top,
+            &meta_hdr,
+            &mdat_hdr,
+            &meta,
+            &new_infes,
+            iloc_entries,
+            &new_ipco,
+            &extra_ipma,
+            &new_refs,
+            &std_idat,
+            &std_mdat_payload,
+            &appended_mdat,
+        )
+    };
+
+    let mut placeholder_iloc = meta.iloc_entries.clone();
+    for (id, _, _) in mdat_items.iter() {
+        placeholder_iloc.push(IlocEntry {
+            item_id: *id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(0, 0)],
+        });
+    }
+    let preliminary = build(&placeholder_iloc);
+    let prelim_top = top_level_boxes(&preliminary)?;
+    let prelim_meta_hdr = find_top(&prelim_top, b"meta").ok_or("prelim: no meta")?;
+    let prelim_meta_size = prelim_meta_hdr.size;
+    let mut prefix = 0usize;
+    for hdr in &top {
+        if hdr.box_start == mdat_hdr.box_start {
+            break;
+        }
+        prefix += if hdr.box_start == meta_hdr.box_start {
+            prelim_meta_size
+        } else {
+            hdr.size
+        };
+    }
+    let new_mdat_data_start = prefix + 8;
+    let file_delta = new_mdat_data_start as i64 - mdat_hdr.data_start as i64;
+
+    let mut final_iloc: Vec<IlocEntry> = meta
+        .iloc_entries
+        .iter()
+        .map(|entry| {
+            if entry.item_id == exif_item {
+                return IlocEntry {
+                    item_id: entry.item_id,
+                    construction_method: 0,
+                    data_reference_index: 0,
+                    extents: vec![(
+                        (new_mdat_data_start + std_mdat_payload.len()) as u64 + exif_rel,
+                        exif_len,
+                    )],
+                };
+            }
+            if let Some(existing_xmp_id) = existing_primary_xmp {
+                if entry.item_id == existing_xmp_id {
+                    return IlocEntry {
+                        item_id: entry.item_id,
+                        construction_method: 0,
+                        data_reference_index: 0,
+                        extents: vec![(
+                            (new_mdat_data_start + std_mdat_payload.len()) as u64 + hdrgm_rel,
+                            hdrgm_len,
+                        )],
+                    };
+                }
+            }
+            let extents = entry
+                .extents
+                .iter()
+                .map(|&(offset, length)| {
+                    let off = offset as i64;
+                    let shift = entry.construction_method == 0
+                        && off >= mdat_hdr.data_start as i64
+                        && off < mdat_hdr.data_end as i64;
+                    let new_off = if shift { off + file_delta } else { off };
+                    (new_off as u64, length)
+                })
+                .collect();
+            IlocEntry {
+                extents,
+                ..entry.clone()
+            }
+        })
+        .collect();
+
+    for (id, rel, len) in &mdat_items {
+        final_iloc.push(IlocEntry {
+            item_id: *id,
+            construction_method: 0,
+            data_reference_index: 0,
+            extents: vec![(
+                (new_mdat_data_start + std_mdat_payload.len()) as u64 + rel,
+                *len,
+            )],
+        });
+    }
+
+    Ok(build(&final_iloc))
+}
+
+pub fn cmd_huawei_portrait(args: &[String]) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err("huawei_portrait: expected <source.heic> <output.heic>".into());
+    }
+    let input = std::fs::read(&args[0]).map_err(|e| format!("read {}: {e}", args[0]))?;
+    let out = run_huawei_portrait(&input)?;
+    std::fs::write(&args[1], &out).map_err(|e| format!("write {}: {e}", args[1]))?;
+    println!("huawei_portrait: {} -> {} bytes", args[1], out.len());
     Ok(())
 }
