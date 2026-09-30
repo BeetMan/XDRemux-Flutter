@@ -15,6 +15,7 @@
 - Live Photo 在临时目录合成并验证后输出，不覆盖同目录原图；失败不再报告成功，重试及 checkpoint 按同名 MOV 验证配对。
 - OHOS 原图分享采用文件通道，避免系统兼容格式路径丢失 HEIC 人像辅助数据。
 - 更新版本一致性、跨平台 FFI 契约及私有华为样片回归检查。
+- Windows ARM64 增加混合架构拦截：只有 EXE / Flutter DLL / Rust DLL 都是 ARM64 才发布该实验性安装器；不再仅重命名 x64 输出目录。
 
 ## 使用说明与边界
 
@@ -23,4 +24,4 @@
 - Apple 人像、摄影风格和摄影风格 3 仍属于实验能力，不保证与 Apple 原生结果逐像素等价。
 - iOS IPA 未签名；HarmonyOS 提供 profile/AOT unsigned HAP，需自行签名侧载。现有 Android 发布签名沿用，不更换密钥。
 
-本轮本地验证：Rust workspace 231 项通过；私有华为 corpus 7 项通过；Flutter 56 项通过；Windows release 编译通过。Apple Photos 真机记录沿用已归档验证，发布包编译检查不等同于所有机型安装验收。
+本轮本地验证：Rust workspace 231 项通过；私有华为 corpus 7 项通过；Flutter 57 项通过；Windows release 编译通过。Apple Photos 真机记录沿用已归档验证，发布包编译检查不等同于所有机型安装验收。

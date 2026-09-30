@@ -214,7 +214,7 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 - [x] Live Photo 改为临时目录合成、验证后输出；避免同目录写回覆盖源照片。失败标记为失败，重试使用固定同名 MOV，便于恢复验证。
 - [x] 重建 Windows DLL 并检查核心/Flutter 版本一致；所有 Dart 使用的 FFI 符号均存在。
 - [x] 本地 `cargo test --workspace --locked`：231 项通过，4 项依赖私有样片/手工流程的测试 ignored；单独启用华为 corpus 测试 7 项通过（9 张 HDR、4 张人像、3 张动态、XMAGE v5/v6）。
-- [x] `flutter test --no-pub`：56 项通过，含真实华为 FFI 的同目录配对、源文件字节保留与两次重试；`flutter analyze --no-pub --no-fatal-infos` 无问题。
+- [x] `flutter test --no-pub`：57 项通过，含真实华为 FFI 的同目录配对、源文件字节保留与两次重试；`flutter analyze --no-pub --no-fatal-infos` 无问题。
 - [x] 本地 Windows release 编译通过。
 - [ ] 云端 Windows x64/ARM64、Android、macOS、iOS 完整发布构建与 OHOS 核心 smoke。
 - [x] 本地更新后的 OHOS profile HAP 编译通过（0.4.3+37，AOT / debug:true）；全部 35 个 FFI 入口均由 OHOS 核心导出。
@@ -225,6 +225,8 @@ Step 4 华为动态照片 → Apple Live Photo 合成已完成（2026-09-27）�
 云端首轮出包额外发现 Windows ARM64 runner 已升级到 VS 2026，而 x265 的生成器仍锁 VS 2022；改为通过 vswhere 读取实际版本选择 CMake 生成器。该失败发生在编译前，并非华为算法差异；ARM64 路线原有实验性状态不变。
 
 首轮 Windows x64、Android、macOS 发布构建通过；iOS archive 成功，但新增 `nm` 闸门检测到运行时 FFI 不可见，IPA 打包被阻止。在 `-u` 保留之外，按 [Flutter 官方静态 FFI 指引](https://docs.flutter.dev/platform-integration/legacy-ffi-plugin#stripping-symbols) 将 Runner 三个配置设为 `STRIP_STYLE=non-global`（不使用限制其它符号的导出白名单）。新增配置契约测试，单独重跑 iOS，不以 archive 编译成功冒充可用。
+
+ARM64 另有原有打包风险：工作流强制 x64 Flutter SDK，Flutter 3.44.5 按 Dart ABI 选择 x64 Runner，但 Rust 是 aarch64。即使编译任务成功也可能得到混合架构包。增加 EXE / Flutter DLL / Rust DLL 的 PE machine=0xAA64 检查，未通过时不上传 ARM64 安装器，不能通过重命名目录冒充 ARM64；普通 Windows x64 发布不受影响。
 
 ## 6. Step 0 执行记录（2026-09-07）
 

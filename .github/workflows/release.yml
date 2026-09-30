@@ -256,16 +256,24 @@ jobs:
         working-directory: apps/flutter
         run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
-      # Flutter's x64-emulated SDK on windows-11-arm still writes to the x64
-      # path, but the runner.exe inside is native ARM64. Mirror it to the
-      # arm64 path the installer script expects.
-      - name: Mirror ARM64 output path
+      # Emulated x64 Dart may build an x64 runner even on an ARM64 host.
+      # A directory rename must never disguise a mixed-architecture bundle.
+      - name: Stage and validate ARM64 output
         shell: pwsh
         run: |
           $src = 'apps/flutter/build/windows/x64'
           $dst = 'apps/flutter/build/windows/arm64'
           if ((Test-Path $src) -and -not (Test-Path $dst)) {
             Copy-Item $src $dst -Recurse
+          }
+          foreach ($name in @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')) {
+            $path = Join-Path $dst "runner/Release/$name"
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Refusing mixed ARM64 installer: {0} is PE machine 0x{1:X4}" -f $name, $machine)
+            }
           }
 
       - name: Build Inno Setup installer
