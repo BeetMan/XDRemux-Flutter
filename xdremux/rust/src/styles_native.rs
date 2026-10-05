@@ -900,7 +900,9 @@ fn primary_dims(meta: &ParsedMeta, primary: u32) -> Result<(u32, u32), String> {
             if p.ptype == "ispe" && p.raw.len() >= 20 {
                 let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
                 let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
-                if w > 512 && h > 512 {
+                // This is the primary item's own ispe, not a codec tile.
+                // Small photos and narrow screenshots are valid sources too.
+                if w > 0 && h > 0 {
                     return Ok((w, h));
                 }
             }
@@ -982,6 +984,16 @@ mod tests {
     fn fitted_size_landscape_matches_golden() {
         let (w, h) = fitted_size(4096, 3512, 2880, 2560);
         assert_eq!((w, h), (2880, 2470));
+    }
+
+    #[test]
+    fn primary_dimensions_accept_small_and_narrow_images() {
+        for (w, h) in [(128, 96), (512, 384), (400, 1200)] {
+            let source = crate::uhdr_jpeg::synthesize_source_container_from_rgb(
+                &vec![80; w as usize * h as usize * 3], w, h, None, true).unwrap();
+            let meta = crate::isobmff::parse_source_meta(&source).unwrap();
+            assert_eq!(primary_dims(&meta, meta.primary_id).unwrap(), (w, h));
+        }
     }
 
     #[test]

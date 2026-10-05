@@ -218,6 +218,20 @@ pub fn write_uhdr_iso_output(
     strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
+    write_uhdr_iso_output_with_color_space(source_data, gainmap_jpeg, meta_floats, true,
+        oppo_compat, tail_policy, strict_tmap, output_path)
+}
+
+pub fn write_uhdr_iso_output_with_color_space(
+    source_data: &[u8],
+    gainmap_jpeg: &[u8],
+    meta_floats: &[f32],
+    use_base_color_space: bool,
+    oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
+    output_path: &str,
+) -> Result<(), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
     let ftyp = find(&top, b"ftyp")?;
     let meta = find(&top, b"meta")?;
@@ -266,8 +280,9 @@ pub fn write_uhdr_iso_output(
     )?;
 
     // ISO metadata from UHDR 20-float info
-    let iso_meta = crate::iso21496::build_iso_metadata_from_uhdr(meta_floats)
+    let mut iso_meta = crate::iso21496::build_iso_metadata_from_uhdr(meta_floats)
         .map_err(|e| format!("UHDR metadata: {e}"))?;
+    iso_meta.use_base_color_space = use_base_color_space;
     let xmp_bytes: Vec<u8> = if oppo_compat.wants_oppo_rgb() {
         crate::iso21496::format_minimal_xmp().into_bytes()
     } else {
@@ -278,7 +293,7 @@ pub fn write_uhdr_iso_output(
     let tmap_payload = if oppo_compat.wants_oppo_rgb() {
         crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
-        crate::iso21496::make_apple_tmap_payload(&iso_meta)
+        crate::iso21496::make_clean_tmap_payload(&iso_meta)
     };
     let tmap_payload = if strict_tmap {
         crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
@@ -343,6 +358,7 @@ pub fn write_uhdr_iso_output(
 pub struct PreparedOutput {
     pub source: Vec<u8>,
     pub meta_floats: Vec<f32>,
+    pub gainmap_use_base_color_space: bool,
     pub edr_scale: f32,
     pub mode_key: String,
     pub family: String,
@@ -481,6 +497,7 @@ pub fn prepare_lhdr_tiles(
         PreparedOutput {
             source: source_data.to_vec(),
             meta_floats: meta_floats.to_vec(),
+            gainmap_use_base_color_space: true,
             edr_scale,
             mode_key: "lhdr".into(),
             family: family.into(),
@@ -504,6 +521,19 @@ pub fn prepare_uhdr_tiles(
     source_data: &[u8],
     gainmap_jpeg: &[u8],
     meta_floats: &[f32],
+    oppo_compat: OppoCompat,
+    tail_policy: OppoCameraTail,
+    strict_tmap: bool,
+) -> Result<(PreparedOutput, Vec<u8>), String> {
+    prepare_uhdr_tiles_with_color_space(source_data, gainmap_jpeg, meta_floats, true,
+        oppo_compat, tail_policy, strict_tmap)
+}
+
+pub fn prepare_uhdr_tiles_with_color_space(
+    source_data: &[u8],
+    gainmap_jpeg: &[u8],
+    meta_floats: &[f32],
+    use_base_color_space: bool,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
     strict_tmap: bool,
@@ -541,6 +571,7 @@ pub fn prepare_uhdr_tiles(
             meta_floats: meta_floats.to_vec(),
             edr_scale: meta_floats.get(18).copied().unwrap_or(1.0),
             mode_key: "uhdr".into(),
+            gainmap_use_base_color_space: use_base_color_space,
             family: "x7".into(),
             oppo_compat,
             tail_policy,
@@ -591,12 +622,13 @@ pub fn assemble_prepared_tiles(
         crate::progress::set_progress(4, (i + 1) as u32, tile_streams.len() as u32);
     }
 
-    let iso_meta = if prepared.mode_key == "uhdr" {
+    let mut iso_meta = if prepared.mode_key == "uhdr" {
         crate::iso21496::build_iso_metadata_from_uhdr(&prepared.meta_floats)
             .map_err(|e| format!("UHDR metadata: {e}"))?
     } else {
         crate::iso21496::build_iso_metadata(prepared.edr_scale)
     };
+    iso_meta.use_base_color_space = prepared.gainmap_use_base_color_space;
     // tmap/xmp format follows the user's OPPO compat mode, exactly like the
     // software path (`write_uhdr_iso_output`). `oppo_rgb` (UHDR 3-channel
     // layout) must NOT drive this: an OPPO-native 142-byte tmap paired with a
@@ -611,7 +643,7 @@ pub fn assemble_prepared_tiles(
     let tmap_payload = if oppo_meta {
         crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
-        crate::iso21496::make_apple_tmap_payload(&iso_meta)
+        crate::iso21496::make_clean_tmap_payload(&iso_meta)
     };
     let tmap_payload = if prepared.strict_tmap {
         crate::iso21496::make_strict_tmap_payload(&tmap_payload)?

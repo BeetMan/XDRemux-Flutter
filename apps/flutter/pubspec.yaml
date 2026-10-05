@@ -62,6 +62,8 @@ dependencies:
   # Win32 ShowWindow/FindWindow for tray hide/restore (Windows)
 
 dev_dependencies:
+  # Source-integrity hashing for the packaged Windows FFI smoke test.
+  crypto: 3.0.7
   flutter_test:
     sdk: flutter
   integration_test:

@@ -483,7 +483,7 @@ fn primary_ispe(meta: &ParsedMeta, primary: u32) -> Result<(u32, u32), String> {
                 // raw includes the box header: size(4)+type(4)+verflags(4)
                 let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
                 let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
-                if w > 512 && h > 512 {
+                if w > 0 && h > 0 {
                     return Ok((w, h));
                 }
             }

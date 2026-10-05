@@ -59,7 +59,13 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
-include(flutter/generated_plugins.cmake)
+# Android path_provider's JNI FFI plugin must not introduce a desktop JVM.
+# Filter a build-directory copy, preserving Flutter's generated source file.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/flutter/generated_plugins.cmake" XDREMUX_WINDOWS_PLUGINS)
+string(REGEX REPLACE "\n[ \t]+jni[ \t]*\r?\n" "\n"
+  XDREMUX_WINDOWS_PLUGINS "${XDREMUX_WINDOWS_PLUGINS}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/xdremux_windows_plugins.cmake" "${XDREMUX_WINDOWS_PLUGINS}")
+include("${CMAKE_CURRENT_BINARY_DIR}/xdremux_windows_plugins.cmake")
 
 # flutter_local_notifications_windows 2.x compiles WinRT headers under C++17,
 # which trips VS2026's hard error on deprecated <experimental/coroutine>.
@@ -102,10 +108,41 @@ endif()
 
 # Copy the Rust core DLL next to the executable so dart:ffi can load it.
 set(XDREMUX_RUST_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../../../target/release/xdremux_core.dll")
+if(DEFINED ENV{XDREMUX_WINDOWS_RUST_DLL} AND NOT "$ENV{XDREMUX_WINDOWS_RUST_DLL}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{XDREMUX_WINDOWS_RUST_DLL}" XDREMUX_RUST_DLL)
+  if(NOT EXISTS "${XDREMUX_RUST_DLL}")
+    message(FATAL_ERROR "Explicit Rust DLL does not exist: ${XDREMUX_RUST_DLL}")
+  endif()
+endif()
 if(EXISTS "${XDREMUX_RUST_DLL}")
   install(FILES "${XDREMUX_RUST_DLL}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 else()
   message(WARNING "Rust core DLL not found at ${XDREMUX_RUST_DLL}. Build it with: cargo build --release")
+endif()
+
+# Explicit opt-in packaging only; ordinary builds retain their existing setup.
+if(DEFINED ENV{XDREMUX_WINDOWS_LIBHEIF_PREFIX} AND NOT "$ENV{XDREMUX_WINDOWS_LIBHEIF_PREFIX}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{XDREMUX_WINDOWS_LIBHEIF_PREFIX}" XDREMUX_HEIF_PREFIX)
+  foreach(codec_dll heif.dll libde265.dll)
+    if(NOT EXISTS "${XDREMUX_HEIF_PREFIX}/bin/${codec_dll}")
+      message(FATAL_ERROR "Native decode dependency missing: ${codec_dll}")
+    endif()
+    install(FILES "${XDREMUX_HEIF_PREFIX}/bin/${codec_dll}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+  endforeach()
+  if(NOT EXISTS "${XDREMUX_HEIF_PREFIX}/licenses")
+    message(FATAL_ERROR "Native decode dependency license notices missing")
+  endif()
+  install(DIRECTORY "${XDREMUX_HEIF_PREFIX}/licenses/"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/licenses" COMPONENT Runtime)
+  # App-local MSVC runtime: do not require a developer machine or global VC install.
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+  include(InstallRequiredSystemLibraries)
+  if(NOT CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    message(FATAL_ERROR "MSVC redistributable runtime files were not found")
+  endif()
+  install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 endif()
 
 # ffmpeg is no longer bundled: HEVC encoding uses static-linked x265 and

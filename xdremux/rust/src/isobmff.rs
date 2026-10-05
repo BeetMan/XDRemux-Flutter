@@ -573,7 +573,7 @@ pub fn parse_iloc(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<IlocEntry>, St
             if index_size > 0 {
                 pos += index_size;
             }
-            let mut offset: u64 = base_offset;
+            let mut offset: u64 = 0;
             for _ in 0..offset_size {
                 offset = (offset << 8) | data[pos] as u64;
                 pos += 1;
@@ -583,6 +583,7 @@ pub fn parse_iloc(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<IlocEntry>, St
                 length = (length << 8) | data[pos] as u64;
                 pos += 1;
             }
+            let offset = base_offset.checked_add(offset).ok_or("iloc extent offset overflow")?;
             extents.push((offset, length));
         }
 
@@ -1008,6 +1009,23 @@ mod tests {
         let entry = make_ipma_entry(1, &assocs, 0);
         // 16-bit item_id (2 bytes) + count(1) + 2 associations * 1 byte each
         assert!(entry.len() > 4);
+    }
+
+    #[test]
+    fn iloc_adds_nonzero_base_offset_instead_of_shifting_it() {
+        let mut payload = vec![1, 0, 0, 0, 0x44, 0x40];
+        payload.extend(1u16.to_be_bytes()); // item count
+        payload.extend(2u16.to_be_bytes()); // item ID
+        payload.extend(0u16.to_be_bytes()); // construction method
+        payload.extend(0u16.to_be_bytes()); // data reference
+        payload.extend(1000u32.to_be_bytes()); // base offset
+        payload.extend(1u16.to_be_bytes()); // extent count
+        payload.extend(50u32.to_be_bytes()); // extent offset
+        payload.extend(32u32.to_be_bytes()); // extent length
+        let data = make_box(b"iloc", &payload);
+        let boxes = parse_boxes(&data, 0, data.len());
+        let parsed = parse_iloc(&data, &boxes[0]).unwrap();
+        assert_eq!(parsed[0].extents, vec![(1050, 32)]);
     }
 
     #[test]

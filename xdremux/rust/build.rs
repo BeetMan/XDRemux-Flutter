@@ -19,6 +19,7 @@ fn main() {
     // + env=... distinction); detect via env so the x265 path picks build_ohos.
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let is_ohos = target_env == "ohos";
+    build_libheif_decoder(&target_os);
 
     let use_x265 = target_os == "android" || std::env::var_os("XDREMUX_USE_FFMPEG").is_none();
     if !use_x265 {
@@ -127,4 +128,50 @@ fn main() {
     println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
     println!("cargo:rerun-if-changed=src/x265_helper.c");
     println!("cargo:rerun-if-changed={lib_file}");
+}
+
+fn build_libheif_decoder(target_os: &str) {
+    println!("cargo:rerun-if-env-changed=XDREMUX_LIBHEIF_PREFIX");
+    println!("cargo:rerun-if-changed=src/libheif_helper.cpp");
+    if std::env::var_os("CARGO_FEATURE_LIBHEIF_DECODER").is_none() {
+        return;
+    }
+    let prefix = std::env::var_os("XDREMUX_LIBHEIF_PREFIX")
+        .map(std::path::PathBuf::from)
+        .expect("libheif-decoder requires XDREMUX_LIBHEIF_PREFIX (target-built libheif >= 1.23.4; see tools/native/README.md)");
+    let include = prefix.join("include");
+    let lib = prefix.join("lib");
+    assert!(
+        include.join("libheif/heif.h").is_file(),
+        "libheif header missing in {}",
+        include.display()
+    );
+    let library = if target_os == "windows" {
+        "heif.lib"
+    } else if target_os == "macos" || target_os == "ios" {
+        "libheif.dylib"
+    } else {
+        "libheif.so"
+    };
+    assert!(
+        lib.join(library).is_file(),
+        "libheif shared/import library missing in {}",
+        lib.display()
+    );
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .file("src/libheif_helper.cpp")
+        .include(include)
+        .compile("xdremux_heif_decode");
+    println!("cargo:rustc-link-search=native={}", lib.display());
+    println!("cargo:rustc-link-lib=dylib=heif");
+    if target_os == "android" || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("ohos") {
+        println!("cargo:rustc-link-lib=c++_shared");
+    } else if target_os == "linux" {
+        println!("cargo:rustc-link-lib=stdc++");
+    } else if target_os == "macos" || target_os == "ios" {
+        println!("cargo:rustc-link-lib=c++");
+    }
+    println!("cargo:rerun-if-changed={}", lib.join(library).display());
 }
