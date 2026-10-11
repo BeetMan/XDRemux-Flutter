@@ -60,9 +60,39 @@
 
 默认 gamma 表在 `assets/hdrtransform/`，各 1028 字节，即 257 个无符号整数。native 读取下标 1、50、100、255、256。范围是 10-bit：`srgb.gamma`、`dolbyHlg.gamma`、`dolbySrgb.gamma` 收到 1023，`hlg.gamma` 收到 897。四条曲线起点不同。
 
-紧凑尾策略留下 `hdr.transform.data` 和 `src.local.hdr.linear.mask` 是符合相册编辑方式的：滤镜、水印、人像虚化声明为 `independent` 时，不把这些效果烤进 gainmap。丢掉变换数据之后，标准 gainmap 仍可能发亮，但按拍摄场景做的 CCM、锐化和提亮不在了。
+紧凑尾策略留下 `hdr.transform.data` 和 `src.local.hdr.linear.mask` 是符合相册编辑方式的：滤镜、水印、人像虚化声明为 `independent` 时，不把这些效果烤进 gainmap。丢掉变换数据之后，标准 gainmap 仍可能发亮，但按拍摄场景做的矩阵、锐化和提亮不在了。
 
-`toBytes()` 的字段顺序还没有从字节布局上拆开。DEX 字段表按名字排序，不能当成文件顺序。
+DEX 字段表按名字排序，不能当成文件顺序。下面的顺序来自本地原片，不是来自 `toBytes()` 的反编译。
+
+### 本地原片上的字节顺序
+
+Find X10 与 Downloads 里带这条尾数据的 50 个文件，三种长度全部符合同一套对齐，没有例外：
+
+| 版本 float | 长度 | 文件数 | 后面有什么 |
+| --- | --- | --- | --- |
+| 1.2 | 2164 字节，541 个 uint32 | 19 | 两张表，然后 19 个词 |
+| 1.3 | 4220 字节，1055 个 uint32 | 11 | 再重复两张表 |
+| 1.4 | 4300 字节，1075 个 uint32 | 20 | 与 1.3 相同，末尾再加 20 个 0 |
+
+共同前缀，按 uint32 下标：
+
+- 0：版本 float，1.2 / 1.3 / 1.4
+- 1：恒为 0
+- 2：整数，这批里只出现 1、2、4、8
+- 3：整数，抽查在 280 到 330
+- 4：float。同一张人像样张里，这个值和 `fb.param` 的对应 float 相同
+- 5：整数 1
+- 6：float 1.0
+- 7：整数 1
+- 8 到 264：257 个数，从 0 单调升到 1023 以下。50 张里这一段的末端是 850 到 895
+- 265 到 521：257 个数，从 0 单调升到 1023
+- 522 到 540：19 个词。其中下标 526 到 534 是 9 个 float，排成 3×3。1.2 和抽到的 1.3 是单位阵；一张 1.4 的对角线是 0.952783，非对角线是 0.0236086。这一块末尾还有几个标量，抽到的值包括 1.51、0.80 和 1.63
+
+1.3 和 1.4 在这 19 个词之后还有两段 257 个数：第一段末端与第一张表相同，第二段末端是 1023。这和完整结构里的预览表数量一致。1.2 没有这两段。
+
+这 19 个 1.2 文件的 `capture.mode` 都是 `portrait`。人像文件并不只有 1.2：同一批里还有 1.3 和 1.4 的人像。所以“人像副本去掉预览表”只覆盖这批里的 1.2，不能当成所有人像文件。
+
+表长 257、第二张表收到 1023，和 `assets/hdrtransform/` 的默认表相同。文件里的曲线不是把资源原样拷进来：资源里的 `hlg.gamma` 收到 897，原片第一张表收到的是每张照片自己的末端。类字段里与这两张表对应的名字是 `hlgDstGammaTable` 和 `srgbDstGammaTable`；与那 9 个 float 对应的名字是 `ccmData`。这是按字段含义做的对应，还没有逐项对上 `toBytes()` 的写入语句。
 
 ## 编辑插件
 
@@ -78,7 +108,14 @@
 
 大师水印样式在 `assets/watermark_master_styles/`，由 `WatermarkMasterStyle` 解释。`hassel_style_1` 以 360 为基准边长，底边留白 60，文字用系统字体，`textSource` 指向拍摄信息。系列包括哈苏、Lumo、个性化和 realme。
 
-合成在 `MasterWatermarkAssembler.watermarkComposite`。水印插件支持 `local_hdr` 和 `ultra_hdr`，方式是 `independent`。照片里留下的是已画好的 PNG 和 `watermark.config`。现有几何对齐对的是这块结果，不是 JSON 模板。
+合成在 `MasterWatermarkAssembler.watermarkComposite`。水印插件支持 `local_hdr` 和 `ultra_hdr`，方式是 `independent`。相册编辑结果可以留下已画好的 PNG 和 `watermark.config`。这批相机原片里没有这两项。原片留下的是 `watermark.master.params` 和 `watermark.device`。
+
+`portrait.rs` 只认一种大师水印：长度正好 14185，版本 float 为 1，样式字符串正好是 `hassel_style_1`。这批原片里的样式是：
+
+- `hassel_style_4`，长度 23487，7 个文件
+- `hassel_style_master_mode_1`，长度 6492，1 个文件
+
+两条都会在现有判断的长度和样式比较上直接返回，几何不会被读出来。`watermark.device` 长 80 字节，开头是 float 1.2，后面是机型字符串，这批里是 `OPPO Find X10` 或 `OPPO Find X8 Ultra`。
 
 ## 人像
 
@@ -114,12 +151,30 @@
 
 普通模糊插件是圆形、椭圆和区域模糊，不支持 HDR，和人像景深不是一条链。
 
+## 这批原片还核对过的尾数据
+
+范围是 `Desktop\Find X10` 和 `Downloads` 里已经带 OPPO 尾的照片。没有把照片放进仓库。
+
+`local.hdr.meta.data` 仍是 144 字节。抽到的前几个 float 是 2.0626、0、144、0、1、-1，和现有 float144 判断一致：下标 2 是长度 144，下标 5 是 -1。`local.hdr.linear.mask` 的载荷以 JPEG 头开始。带这条 mask 的是较早的 Find N3 那类文件。Find X10 的 HEIC 另有 `local.uhdr.gainmap.data` 和 `.info`，info 是 80 字节、20 个 float。抽到的四张相同：`ratioMin` 为 1、1、1，下标 3 为 1，`ratioMax` 为 4.92611，`gamma` 为 1，两组 epsilon 为 0，`displayRatioSdr` 为 1，`displayRatioHdr` 和 `scale` 都是 4.92611，`baseImageType` 为 0。字段顺序和 `parse_oppo_uhdr_info` 一致。下标 3 在这四张上是 1.0，不能再把它当成必须为 0 的空洞。gainmap 载荷也是 JPEG。没有把 mask 像素和 gainmap 像素做数值对照。
+
+`filter.info` 长 140 或 228 字节。开头是版本 float 4.0 或 5.1，接着是整数 100，再是 90 或 0。偏移 28 处是 LUT 文件名，例如 `qing_tou.bin`、`fuji-nc.bin`、`fuji_cc.bin`，以及逗号分开的 `portra400_hdr_normal_a_1.bin,portra400_hdr_normal_d_1.bin`。查找表本体不在照片里。
+
+三张大师模式照片的 `basictone.info`（8216 字节）和 `basictone.vig.table`（884 字节）各自整段相同。这是一套共享预设，不是每张照片单独算出来的系数。
+
+`mesh.coord.config` 长 16 字节：版本 float 2.0、人脸数、0、常数 592。`mesh.coord` 按人脸数成倍增长，一张脸 28512 字节，开头是 float 对 `(-1, 1)`、`(0, 1)`、`(1, -1)`、`(1, 0)`。
+
+一张 Find X10 的 `rear.depth.config` 与 `portrait_depth.rs` 已有布局一致：版本 4，float 5 到 26 是 16 到 1.4 的光圈表，float 38 到 58 的虚化曲线升到 145。
+
+`capture.mode` 是短字符串：`common`、`master`、`portrait`、`aiHighPixel`。`fb.param` 长 88 字节，版本 float 1.0，里面有镜头字符串 `uranusmain`、`uranustele`、`zftele`。
+
+这批里没有 `front.depth`、`front.hair.mask`、`front.segment`、`front.matter.info`、`front.negevimg`，也没有 `rear.spotlight`。带 `live.subVideo` 的几张没有 `rear.depth`。
+
 ## 还需要样张才能做的事
 
-1. 用一张原片把 `HdrTransformData.toBytes()` 的字段顺序对出来。
-2. 用一张只有线性 mask 的 Local HDR，对照 `oplus_uhdr_mask2map` 和相册实际 gainmap。
-3. 用一张 17.10 时代的 Find 或 Reno 原片列出尾键，看有没有 `PORTRAIT_EDITING_ENTRY_NAMES` 尚未覆盖的新名字。
-4. 实况、人像和 HDR 叠在同一张图上时，确认 `hdr.transform.data` 与视频 HDR 谁生效。相册里有 `updateLivePhotoHdrTransformData`。
-5. 认出被相册以 `combine` 改过的 gainmap，避免再合成一次。
+1. 前置人像原片，用来核对 `front.depth`、头发、分割和 matte 是否按插件字段那样分开存放。
+2. 尾里真有 `rear.spotlight` 的后摄人像。这批后摄人像都没有这一项。
+3. 同一张上同时有实况视频和 `rear.depth` 的原片。
+4. 相机原片，以及同一张被相册以 `combine` 保存之后的副本，用来看 gainmap 有没有被重写。
+5. mask 像素和 `oplus_uhdr_mask2map` 结果的数值对照。这批里 mask 和独立 gainmap 不在同一条文件上。
 
-没有这些样张时，上面五项保持未验证。不要用本说明里的结构名代替字节级测试。
+`hdr.transform.data` 的表边界已经在 50 张上对过。字段名和 `toBytes()` 写入语句的逐项对应还没有。
