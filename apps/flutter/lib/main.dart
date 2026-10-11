@@ -105,33 +105,12 @@ void main() {
   runApp(const XdRemuxApp());
 }
 
-/// Remove persisted Apple feature flags when the current native capability
-/// probe cannot support them. OutputMode.apple remains independent: it is a
-/// clean output target. Rust Photographic Styles and the R5 Portrait graph are
-/// implemented in the Rust core; Swift remains available for Apple-native paths.
-bool _sanitizeConfigForCapabilities(
-  ConversionConfig config,
-  BackendCapabilities capabilities,
-) {
-  var changed = false;
-  if (!capabilities.isAvailable(config.backend)) {
-    config.backend = ConversionBackend.rust;
-    changed = true;
-  }
-  if (config.backend != ConversionBackend.swift) {
-    // Rust now includes the R5 native Portrait graph writer.
-  } else {
-    if (config.applePhotographicStyles &&
-        !capabilities.swiftPhotographicStyles) {
-      config.applePhotographicStyles = false;
-      changed = true;
-    }
-    if (config.applePortrait && !capabilities.swiftPortrait) {
-      config.applePortrait = false;
-      changed = true;
-    }
-  }
-  return changed;
+/// Product conversions run on Rust. A previously saved Swift engine selection
+/// is discarded; Apple Photographic Styles and Portrait stay on the Rust path.
+bool _sanitizeConfigForCapabilities(ConversionConfig config) {
+  if (config.backend == ConversionBackend.rust) return false;
+  config.backend = ConversionBackend.rust;
+  return true;
 }
 
 class XdRemuxApp extends StatelessWidget {
@@ -314,10 +293,9 @@ class _HomePageState extends State<HomePage> {
     _config = await XdRemuxService.loadConfig();
     setUiLanguage(_config.language);
     _backendCapabilities = await XdRemuxService.getBackendCapabilities();
-    // Swift is intentionally not exposed on Windows/Android. If a shared
-    // preferences store contains an unavailable backend or Apple-only choice,
-    // normalize it before any conversion can start.
-    if (_sanitizeConfigForCapabilities(_config, _backendCapabilities)) {
+    // A previously saved Swift engine selection is discarded. Product
+    // conversions stay on Rust.
+    if (_sanitizeConfigForCapabilities(_config)) {
       _scheduleConfigSave();
     }
     try {
@@ -1472,28 +1450,6 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-    if (_config.applePhotographicStyles &&
-        _config.backend == ConversionBackend.swift &&
-        !_backendCapabilities.swiftPhotographicStyles) {
-      issues.add(
-        _PreflightIssue(
-          severity: _PreflightSeverity.blocking,
-          title: t('Apple 照片摄影风格不可用', 'Apple Photographic Styles unavailable'),
-          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
-        ),
-      );
-    }
-    if (_config.applePortrait &&
-        _config.backend == ConversionBackend.swift &&
-        !_backendCapabilities.swiftPortrait) {
-      issues.add(
-        _PreflightIssue(
-          severity: _PreflightSeverity.blocking,
-          title: t('Apple 人像模式不可用', 'Apple Portrait unavailable'),
-          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
-        ),
-      );
-    }
     return issues;
   }
 
@@ -1698,11 +1654,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
-    // These dedicated Huawei paths are implemented in the portable Rust
-    // core, including when Swift is selected for other Apple conversions.
-    if (item.huaweiHdr || HuaweiPhotoPolicy.portraitReady(item.huaweiPortrait)) {
-      runConfig.backend = ConversionBackend.rust;
-    }
+    runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
     // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
@@ -2319,8 +2271,8 @@ class _HomePageState extends State<HomePage> {
       if (mounted) {
         final outcome = _failedCount > 0 ? t('完成（有失败）', 'Done (with failures)') : t('完成', 'Done');
         final summary = t(
-          '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个',
-          '${_config.backend.appTitle}: $outcome, $_convertedCount succeeded',
+          '$outcome，成功 $_convertedCount 个',
+          '$outcome, $_convertedCount succeeded',
         );
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -3865,8 +3817,6 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   late ConversionConfig _cfg;
   late final TextEditingController _suffixController;
-  BackendCapabilities _backendCapabilities =
-      BackendCapabilities.forCurrentPlatform();
 
   /// Hardware-encoding availability probe result (null = not yet known).
   /// Only probed on Android, where the MediaCodec path exists.
@@ -3880,15 +3830,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   void initState() {
     super.initState();
     _cfg = widget.config.copy();
+    _sanitizeConfigForCapabilities(_cfg);
     _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
-    if (Platform.isMacOS || Platform.isIOS) {
-      XdRemuxService.getBackendCapabilities().then((capabilities) {
-        if (!mounted) return;
-        final changed = _sanitizeConfigForCapabilities(_cfg, capabilities);
-        setState(() => _backendCapabilities = capabilities);
-        if (changed) _emit();
-      });
-    }
     if (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) {
       HardwareEncodeService.isAvailable().then((ok) {
         if (mounted) setState(() => _hwAvailable = ok);
@@ -4209,116 +4152,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Swift is visible only on Apple platforms. It remains
-                    // disabled until the embedded Swift Core capability probe
-                    // reports a linked and verified implementation.
-                    if (Platform.isMacOS || Platform.isIOS) ...[
-                      Text(
-                        _t('转换引擎', 'Conversion engine'),
-                        style: theme.textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<ConversionBackend>(
-                        initialValue: _cfg.backend,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          DropdownMenuItem(
-                            value: ConversionBackend.rust,
-                            child: Text(_t('Rust（推荐）', 'Rust (Recommended)')),
-                          ),
-                          DropdownMenuItem(
-                            value: ConversionBackend.swift,
-                            enabled: _backendCapabilities.swiftAvailable,
-                            child: Text('Swift'),
-                          ),
-                        ],
-                        onChanged: (backend) {
-                          if (backend == null ||
-                              !_backendCapabilities.isAvailable(backend)) {
-                            return;
-                          }
-                          setState(() {
-                            _cfg.backend = backend;
-                            if (backend != ConversionBackend.swift) {
-                              _cfg.applePhotographicStyles = false;
-                              _cfg.applePortrait = false;
-                            } else {
-                              // PS3 injection is Rust-only.
-                              _cfg.applePhotographicStyles3 = false;
-                            }
-                          });
-                          _emit();
-                        },
-                      ),
-                      if (_cfg.backend == ConversionBackend.swift &&
-                          _backendCapabilities.swiftAppleFeatures) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          _t(
-                            'Apple 照片功能（实验性）',
-                            'Apple Photos features (Experimental)',
-                          ),
-                          style: theme.textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _t(
-                            '这里写入的是可继续调节的数据，不会把风格直接烘焙进照片。',
-                            'These options write editable data; the look is not baked into the photo.',
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        if (_backendCapabilities.swiftPhotographicStyles)
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              _t(
-                                'Apple 照片摄影风格（Swift）',
-                                'Apple Photos Photographic Styles (Swift)',
-                              ),
-                            ),
-                            subtitle: Text(
-                              _t(
-                                '使用 Swift 生成可在 Apple 照片中继续调节的摄影风格数据；仅 Apple 原生能力可用时显示。',
-                                'Uses Swift to generate Photographic Styles data editable in Apple Photos; available only with Apple-native capabilities.',
-                              ),
-                            ),
-                            value: _cfg.applePhotographicStyles,
-                            onChanged: (value) {
-                              setState(() {
-                                _cfg.applePhotographicStyles = value;
-                                if (value) {
-                                  _cfg.outputMode = OutputMode.apple;
-                                  _cfg.oppoCompatibility = OppoCompatMode.off;
-                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                                }
-                              });
-                              _emit();
-                            },
-                          ),
-                        if (_backendCapabilities.swiftPortrait)
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple 人像模式（Swift）'),
-                            value: _cfg.applePortrait,
-                            onChanged: (value) {
-                              setState(() {
-                                _cfg.applePortrait = value;
-                                if (value) {
-                                  _cfg.outputMode = OutputMode.apple;
-                                  _cfg.oppoCompatibility = OppoCompatMode.off;
-                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                                }
-                              });
-                              _emit();
-                            },
-                          ),
-                      ],
-                      const SizedBox(height: 20),
-                    ],
-
                     if (_cfg.backend == ConversionBackend.rust) ...[
                       Text(
                         _t(
@@ -4339,8 +4172,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            'Apple 照片摄影风格（Rust）',
-                            'Apple Photos Photographic Styles (Rust)',
+                            'Apple 照片摄影风格',
+                            'Apple Photos Photographic Styles',
                           ),
                         ),
                         subtitle: Text(
@@ -4350,8 +4183,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   'Included in Photographic Styles 3; turn that off to change this.',
                                 )
                               : _t(
-                                 '使用 Rust 生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                                 'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                                 '生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                 'Generates Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
                                ),
                         ),
                         value: _cfg.applePhotographicStyles,
@@ -4405,7 +4238,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          _t('Apple 人像模式（Rust）', 'Apple Portrait Mode (Rust)'),
+                          _t('Apple 人像模式', 'Apple Portrait Mode'),
                         ),
                         value: _cfg.applePortrait,
                         onChanged: (value) {

@@ -121,12 +121,32 @@ fn src_image_base_maps_depth_by_plain_proportional_scaling() {
 
 #[test]
 fn framed_watermark_tail_is_not_a_content_rect() {
-    // Find X10 framed/irregular watermark layout (hassel_style_4, 23487 bytes)
-    // has no supported geometry: the caller falls back to the full frame.
+    // A style id alone is not geometry. An empty hassel_style_4 tail still
+    // falls back to the full frame.
     let mut tail = vec![0u8; 23487];
     tail[..4].copy_from_slice(&1f32.to_le_bytes());
     tail[4..19].copy_from_slice(b"hassel_style_4\0");
     assert_eq!(parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None), None);
+}
+
+#[test]
+fn hassel_style_4_end_rect_is_the_content_frame() {
+    let mut tail = vec![0u8; 23487];
+    tail[..4].copy_from_slice(&1f32.to_le_bytes());
+    tail[4..19].copy_from_slice(b"hassel_style_4\0");
+    let origin = tail.len() - 56;
+    tail[origin + 20..origin + 24].copy_from_slice(&[0xff; 4]);
+    for (step, value) in [(24, 136.0f32), (28, 1082.0), (32, 5064.0), (36, 7642.0)] {
+        tail[origin + step..origin + step + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    assert_eq!(
+        parse_watermark_rect(&tail, (5200, 8724), (3280, 2464), 1, None),
+        Some((136, 1082, 5064, 7642))
+    );
+    assert_eq!(
+        parse_watermark_rect(&tail, (3244, 5444), (3280, 2464), 1, None),
+        None
+    );
 }
 
 #[test]
@@ -310,4 +330,68 @@ fn curve_scale_is_bounded_and_version_gated() {
     let mut wrong_version = depth_config_with_curve(&[3.0, 150.0]);
     wrong_version[0..4].copy_from_slice(&99.0f32.to_le_bytes());
     assert_eq!(pd::scale_from_depth_curve(&wrong_version), None);
+}
+
+fn manifest_file(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    let mut starts = Vec::new();
+    for (_, bytes) in entries {
+        starts.push(payload.len());
+        payload.extend_from_slice(bytes);
+    }
+    let payload_length = payload.len();
+    let mut manifest = String::from("[");
+    for (index, ((name, bytes), start)) in entries.iter().zip(starts).enumerate() {
+        if index > 0 {
+            manifest.push(',');
+        }
+        let offset = payload_length - start;
+        manifest.push_str(&format!(
+            r#"{{"length":{},"name":"{name}","offset":{offset},"version":1}}"#,
+            bytes.len()
+        ));
+    }
+    manifest.push(']');
+    let manifest_bytes = manifest.into_bytes();
+    payload.extend_from_slice(&manifest_bytes);
+    payload.push(0);
+    let footer_size = (manifest_bytes.len() + 9) as u32;
+    payload.extend_from_slice(b"jxrs");
+    payload.extend_from_slice(&footer_size.to_le_bytes());
+    let mut file = vec![0u8; 32];
+    file.extend(payload);
+    file
+}
+
+#[test]
+fn front_depth_inverts_near_values_and_keeps_the_person_mask() {
+    let mut config = vec![0u8; 544];
+    config[..4].copy_from_slice(&1.2f32.to_le_bytes());
+    config[4..8].copy_from_slice(&4u32.to_le_bytes());
+    config[8..12].copy_from_slice(&2u32.to_le_bytes());
+    config[540..544].copy_from_slice(&4.5f32.to_le_bytes());
+    let depth = [56u8, 56, 250, 250, 56, 56, 250, 250];
+    let mut segment = vec![0u8; 4 * 4];
+    segment[..8].copy_from_slice(&[0, 0, 254, 254, 0, 0, 254, 254]);
+    let file = manifest_file(&[
+        ("front.depth", &depth),
+        ("front.depth.config", &config),
+        ("front.segment", &segment),
+    ]);
+    let parsed = parse_depth(&file).expect("front depth");
+    assert_eq!((parsed.width, parsed.height), (4, 2));
+    assert_eq!(parsed.ranks, vec![199, 199, 5, 5, 199, 199, 5, 5]);
+    assert_eq!(
+        parsed.portrait.as_deref(),
+        Some(&[0u8, 0, 254, 254, 0, 0, 254, 254][..])
+    );
+    assert!(matches!(parsed.decision, pd::ScaleDecision::FrontStretch(_)));
+    assert_eq!(
+        parsed.config.as_ref().and_then(|cfg| cfg.current_f_number),
+        Some(4.5)
+    );
+    let report = pd::portrait_depth_report(&file).expect("report");
+    assert_eq!(report["classification"], "front-depth");
+    assert_eq!(report["available"], true);
+    assert_eq!(report["safeToTransform"], true);
 }
