@@ -117,6 +117,15 @@ Find X10 与 Downloads 里带这条尾数据的 50 个文件，三种长度全�
 
 两条都会在现有判断的长度和样式比较上直接返回，几何不会被读出来。`watermark.device` 长 80 字节，开头是 float 1.2，后面是机型字符串，这批里是 `OPPO Find X10` 或 `OPPO Find X8 Ultra`。
 
+`IMG20261011120934.heic` 也是这块大水印：同样 `hassel_style_4`、长度 23487、版本 float 1。和 `IMG20260912002953.heic` 比，只有 40 个字节不同。样式字符串之后能读出 `#FFFFFF`、`hasselblad_watermark_dark` 和 `hasselblad_watermark_dark.png`。
+
+块尾和 `hassel_style_1` 的槽位对齐。几何从 `长度 - 56` 开始，第 6 个词仍是 `0xffffffff`。这张图的 HEIC 尺寸是 5200×8724，尾部 float 是：
+
+- 7642、5064、8724、0、0、哨兵
+- 接着是矩形 136、1082、5064、7642
+
+136 + 5064 = 5200，1082 + 7642 = 8724。画面贴齐右边和底边，左边空 136，上边空 1082。这块 1082 像素就是这张 8724 高的图上的大水印。现有解析还要求长度 14185、样式 `hassel_style_1`、原点为 0，并且要有 `crop.region`。这张图原点不是 0，也没有 `crop.region`。
+
 ## 人像
 
 相册人像编辑是用相机已经写入的深度和遮罩重新虚化。插件 `PortraitBlurAlgoImpl` 支持全部四种 HDR 编码，方式是 `independent`。
@@ -136,6 +145,20 @@ Find X10 与 Downloads 里带这条尾数据的 50 个文件，三种长度全�
 参数还有 `version`（结构常量 `VERSION_V1_1`）、`fNumber`、`blurStrength`、`lightStrength`、人脸框、`refocusModeAps`。引擎是 `FrontPortraitBlurEngine`，native 为 `libportraitblurjni.so` 和 `libOPAlgoCamSinglePortrait.so`（路径字符串含 `oppo_selfiebokeh`）。单摄链是分割与深度、头发 matting、景深遮罩，再做虚化渲染。
 
 只保留前置深度、不保留头发和分割时，不能按相册的方式重虚化。当前 Rust 人像实验室消费的是后摄 `rear.depth`。
+
+`IMG20261011120934.heic` 是 Find X8 Ultra 的前置人像原片，五项都在，没有 `rear.depth`，也没有 `rear.spotlight`。`src.image` 是 3280×2464 的 JPEG。配置 `front.depth.config` 544 字节，版本 float 1.2，末尾 float 是光圈 4.5。中间有一张和后摄相同的光圈表，从 16 排到 1.4。
+
+各缓冲的字节数正好是配置里相邻整数的乘积：
+
+| 尾条目 | 配置里的宽高 | 像素 |
+| --- | --- | --- |
+| `front.depth` | 820×616 | 相对 3280×2464 每边四分之一。141 个灰阶，背景大量是 56，主体集中在 240 以上 |
+| `front.hair.mask` | 820×616 | 大部分是 0，约 2.2 万个字节是 254 |
+| `front.segment` | 820×618 | 几乎只有 0 和 254 |
+| `front.matter.info` | 1536×1152 | 灰度 matte，没有单独的文件头 |
+| `front.negevimg` | 1640×1232 | 相对原图每边二分之一，最大值 161 |
+
+`mesh.coord.config` 仍是版本 2、1 张脸、常数 592，`mesh.coord` 28512 字节。`hdr.transform.data` 是版本 1.4、4300 字节。`local.uhdr.gainmap.info` 仍是那组 20 float，`ratioMax` 为 4.92611。
 
 ### 后摄
 
@@ -167,14 +190,16 @@ Find X10 与 Downloads 里带这条尾数据的 50 个文件，三种长度全�
 
 `capture.mode` 是短字符串：`common`、`master`、`portrait`、`aiHighPixel`。`fb.param` 长 88 字节，版本 float 1.0，里面有镜头字符串 `uranusmain`、`uranustele`、`zftele`。
 
-这批里没有 `front.depth`、`front.hair.mask`、`front.segment`、`front.matter.info`、`front.negevimg`，也没有 `rear.spotlight`。带 `live.subVideo` 的几张没有 `rear.depth`。
+较早那批没有 `front.depth`。前置五项出现在后来的 `IMG20261011120934.heic`。这批仍然没有 `rear.spotlight`。带 `live.subVideo` 的几张没有 `rear.depth`。
 
 ## 还需要样张才能做的事
 
-1. 前置人像原片，用来核对 `front.depth`、头发、分割和 matte 是否按插件字段那样分开存放。
-2. 尾里真有 `rear.spotlight` 的后摄人像。这批后摄人像都没有这一项。
-3. 同一张上同时有实况视频和 `rear.depth` 的原片。
-4. 相机原片，以及同一张被相册以 `combine` 保存之后的副本，用来看 gainmap 有没有被重写。
-5. mask 像素和 `oplus_uhdr_mask2map` 结果的数值对照。这批里 mask 和独立 gainmap 不在同一条文件上。
+当前这台手机写不出下面三项，先停在这里：
+
+1. 尾里真有 `rear.spotlight` 的后摄人像。
+2. 同一张上同时有实况视频和 `rear.depth` 的原片。
+3. 相机原片，以及同一张被相册以 `combine` 保存之后的副本。
+
+mask 像素和 `oplus_uhdr_mask2map` 的数值对照也还没有。这批里线性 mask 和独立 gainmap 不在同一条文件上。
 
 `hdr.transform.data` 的表边界已经在 50 张上对过。字段名和 `toBytes()` 写入语句的逐项对应还没有。
