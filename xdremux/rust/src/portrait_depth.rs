@@ -175,6 +175,10 @@ pub(crate) enum ScaleDecision {
     /// observed Apple disparity span. Preferred over the physical
     /// reconstruction whenever the curve is present.
     CurveDerived(f64),
+    /// Front-camera depth is an 8-bit map, not a rear rank plane. Stretch it
+    /// across the Apple reference span; there is no producer scale to pass
+    /// through.
+    FrontStretch(f64),
     /// Cannot calibrate (missing config / distance / focus data).
     Unavailable(String),
 }
@@ -183,7 +187,10 @@ impl ScaleDecision {
     /// The chosen scale value, when available.
     pub(crate) fn scale(&self) -> Option<f64> {
         match self {
-            Self::Passthrough(v) | Self::CalibratedP50(v) | Self::CurveDerived(v) => Some(*v),
+            Self::Passthrough(v)
+            | Self::CalibratedP50(v)
+            | Self::CurveDerived(v)
+            | Self::FrontStretch(v) => Some(*v),
             Self::Unavailable(_) => None,
         }
     }
@@ -204,6 +211,11 @@ impl ScaleDecision {
                 "mode": "curve-derived",
                 "scale": s,
                 "rationale": "per-photo rear.depth.config blur-strength curve maximum mapped onto the observed Apple absolute disparity span",
+            }),
+            Self::FrontStretch(s) => json!({
+                "mode": "front-stretch",
+                "scale": s,
+                "rationale": "front.depth 8-bit map stretched across the Apple reference disparity span",
             }),
             Self::Unavailable(reason) => json!({
                 "mode": "unavailable",
@@ -358,6 +370,33 @@ pub(crate) fn percentile(sorted: &[u8], fraction: f64) -> f64 {
     sorted[idx.min(sorted.len() - 1)] as f64
 }
 
+/// Front-camera portrait: `front.depth` is raw 8-bit gray whose byte count
+/// equals the width and height stored as integers at offsets 4 and 8.
+fn front_depth_diagnostic(data: &[u8]) -> Option<Value> {
+    let depth = crate::container::extract_tail_entry(data, "front.depth")?;
+    let config = crate::container::extract_tail_entry(data, "front.depth.config")?;
+    let version = read_f32le(&config, 0)?;
+    if !version.is_finite() || !(1.0..3.0).contains(&version) {
+        return None;
+    }
+    let width = read_u32le(&config, 4)? as usize;
+    let height = read_u32le(&config, 8)? as usize;
+    if width == 0 || height == 0 || depth.len() != width.checked_mul(height)? {
+        return None;
+    }
+    let f_number = read_f32le(&config, config.len().saturating_sub(4))
+        .filter(|v| v.is_finite() && (1.0..=22.0).contains(v));
+    Some(json!({
+        "version": version,
+        "width": width,
+        "height": height,
+        "bytes": depth.len(),
+        "segmentBytes": crate::container::extract_tail_entry(data, "front.segment").map(|b| b.len()),
+        "hairBytes": crate::container::extract_tail_entry(data, "front.hair.mask").map(|b| b.len()),
+        "currentFNumber": f_number,
+    }))
+}
+
 /// Full diagnostic + calibration report for one OPPO HEIC.
 pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
     let names = crate::container::tail_entry_names(data);
@@ -370,6 +409,17 @@ pub(crate) fn portrait_depth_report(data: &[u8]) -> Result<Value, String> {
 
     let Some(compressed) = crate::container::extract_tail_entry(data, "rear.depth")
     else {
+        if let Some(front) = front_depth_diagnostic(data) {
+            report.insert("available".into(), json!(true));
+            report.insert("safeToTransform".into(), json!(true));
+            report.insert("classification".into(), json!("front-depth"));
+            report.insert("front".into(), front);
+            let scale = APPLE_REFERENCE_SPAN / 255.0;
+            report.insert(
+                "calibration".into(),
+                json!({ "decision": ScaleDecision::FrontStretch(scale).json() }),
+            );
+        }
         return Ok(Value::Object(report));
     };
     let config_data = crate::container::extract_tail_entry(data, "rear.depth.config");

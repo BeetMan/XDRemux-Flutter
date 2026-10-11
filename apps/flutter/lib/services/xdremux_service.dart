@@ -546,10 +546,7 @@ class XdRemuxService {
         (e) => e.name == prefs.getString(_keyFamily),
         orElse: () => Family.auto,
       ),
-      backend: ConversionBackend.values.firstWhere(
-        (e) => e.name == prefs.getString(_keyBackend),
-        orElse: () => ConversionBackend.rust,
-      ),
+      backend: ConversionBackend.rust,
       outputMode: OutputMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyOutputMode),
         orElse: () => OutputMode.oppo,

@@ -26,11 +26,10 @@ enum Family {
   }
 }
 
-/// Conversion implementation selected by the user.
+/// Conversion implementation.
 ///
-/// Rust remains the cross-platform default. Swift is only exposed on Apple
-/// platforms, where it will eventually provide the Apple-specific library
-/// path without launching a CLI subprocess.
+/// Product conversions use Rust. [ConversionBackend.swift] remains for the
+/// in-process research lab and is not offered as a user-selectable engine.
 enum ConversionBackend {
   rust,
   swift;
@@ -45,9 +44,8 @@ enum ConversionBackend {
   }
 }
 
-/// High-level output target. This is independent from the implementation
-/// backend: Rust can still produce the default OPPO-compatible output, while
-/// Swift can produce Apple output with the experimental Apple features.
+/// High-level output target. Independent from the conversion engine: Rust
+/// produces both the OPPO-compatible file and the Apple-standard file.
 enum OutputMode {
   oppo,
   apple;
@@ -113,9 +111,8 @@ enum AppleWatermarkPolicy {
 
 /// Runtime capability snapshot for the conversion backends.
 ///
-/// Visibility and availability are deliberately separate: the Swift option
-/// is visible on macOS/iOS while the native bridge is being integrated. Its
-/// availability is controlled by the platform capability probe.
+/// Swift capability flags remain for the in-process research lab. Product
+/// conversion does not offer a Swift engine.
 class BackendCapabilities {
   final bool rustAvailable;
   final bool swiftVisible;
@@ -535,10 +532,7 @@ class ConversionConfig {
         (e) => e.name == json['family'],
         orElse: () => Family.auto,
       ),
-      backend: ConversionBackend.values.firstWhere(
-        (e) => e.name == json['backend'],
-        orElse: () => ConversionBackend.rust,
-      ),
+      backend: ConversionBackend.rust,
       outputMode: OutputMode.values.firstWhere(
         (e) => e.name == json['outputMode'],
         orElse: () => OutputMode.oppo,
