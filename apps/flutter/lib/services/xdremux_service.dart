@@ -447,6 +447,12 @@ class XdRemuxService {
   /// spawning N identical WIC decodes that contend on the platform channel.
   static final Map<String, Future<Uint8List?>> _thumbnailInFlight = {};
 
+  /// Queue tests must not depend on the host OS providing a native renderer.
+  /// Production leaves this null and uses the native/FFI pipeline as usual.
+  @visibleForTesting
+  static Future<Uint8List?> Function(String path, int maxPixelSize)?
+      thumbnailRendererForTesting;
+
   /// Throttle concurrent native decodes. Dragging in 20 HEICs fires 20
   /// `getThumbnail` calls at once; running them all concurrently makes the
   /// photo wall janky while every thumbnail decodes on the same channel.
@@ -508,9 +514,12 @@ class XdRemuxService {
     if (inflight != null) return inflight;
 
     final epoch = _thumbnailEpoch;
+    final renderer = thumbnailRendererForTesting;
     final future =
         _scheduleThumbnail(
-          () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
+          () => renderer != null
+              ? renderer(inputPath, maxPixelSize)
+              : generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
         ).then((r) {
           if (r != null && epoch == _thumbnailEpoch && r.length <= _thumbnailCacheByteLimit) {
             while (_thumbnailCache.isNotEmpty && (_thumbnailCache.length >= 128 ||

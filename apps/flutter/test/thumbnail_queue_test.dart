@@ -6,7 +6,17 @@ import 'package:xdremux/services/xdremux_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('xdremux/thumbnail');
+  setUp(() {
+    // Exercise queue/cache behavior with the same controlled channel on Linux
+    // CI too, without accidentally entering the platform-specific FFI loader.
+    XdRemuxService.thumbnailRendererForTesting = (path, size) =>
+        channel.invokeMethod<Uint8List>('render', {
+          'path': path,
+          'maxPixelSize': size,
+        });
+  });
   tearDown(() {
+    XdRemuxService.thumbnailRendererForTesting = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     XdRemuxService.clearThumbnailCache();
