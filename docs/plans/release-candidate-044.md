@@ -38,6 +38,7 @@ iOS PhotoKit 的单资产双资源保存、macOS/iOS 原生编译需 Mac/iPhone 
 
 - 代码提交 83307381 的云端 [CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/38766699401) 与 [Conformance](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/38766699226) 全部通过；Flutter 139 passed / 2 fixture-dependent skipped。此前 2 项 Linux 队列测试失败已修复，不再跳过。
 - 首轮云端 pub get 因默认 pub.dev 与已提交镜像 lockfile 不一致，重新解析 115 依赖。补充固定 PUB_HOSTED_URL 并在 1 处 CI、5 处主流平台发布构建使用 --enforce-lockfile，禁止无意改变插件版本；本地新 SDK 下同锁强制检查已通过。
+- 锁定依赖补丁 59e493e3 的[云端 CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/38767430211)已成功：Rust tests 与 Flutter analyze/test 均通过，Flutter 139 passed / 2 fixture-dependent skipped，强制 lockfile 安装成功且不再报告重新解析 115 依赖。本轮 Conformance 等待 runner，之前 83307381 的同一产品源码已通过 Conformance；不把队列状态记为已通过。
 - Windows ZIP 解压到新目录后 37 个 manifest 文件哈希全部相符；从解压包再执行 11/11 真实 FFI 转换、预览、Styles 和原图不变检查通过。
 
 - Android：`dist/XDRemux-Android-candidate-Flutter-3.47.7.apk`，SHA256 `8A337A401AAE66F4B07D2EDD5A3BBA25B9C475BE992B3C0C69A04502F0C6B38A`。发布证书与现有安装一致，debuggable，版本仍为 0.4.3+37；可保留数据覆盖安装，但会重启并可能丢失未开始转换的内存队列。本次未自动安装。
