@@ -6,9 +6,10 @@
 //! are one; anything else has to be rebuilt into one.
 //!
 //! This module decodes any supported input (HEIC/HEIF via heif-oxide, JPEG via
-//! jpeg-decoder, PNG via the png crate) **in Rust** and synthesizes that
-//! container with an identity gain map, so no platform codec is involved and
-//! every platform behaves identically.
+//! jpeg-decoder, PNG via the png crate) in Rust and synthesizes that container
+//! with an identity gain map. The opt-in `libheif-decoder` feature adds a native
+//! SDR fallback for heif-oxide's unsupported-chroma error only; default builds
+//! have no native HEIF dependency.
 //!
 //! Orientation: heif-oxide returns display-oriented pixels (it applies both
 //! `irot` and the Exif orientation), matching what a platform codec hands back.
@@ -38,8 +39,18 @@ pub fn decode_to_rgb(data: &[u8]) -> Result<(Vec<u8>, u32, u32, bool), String> {
     // Huawei marks them essential; the decoder only knows transforms, so it
     // refuses the file. Drop that essential bit before decoding.
     let decodable = relax_descriptive_essential(data);
-    let image = heif_oxide::decode_bytes(&decodable)
-        .map_err(|e| format!("HEIF decode failed: {e:?}"))?;
+    let image = match heif_oxide::decode_bytes(&decodable) {
+        Ok(image) => image,
+        Err(error) => {
+            #[cfg(feature = "libheif-decoder")]
+            if crate::heif_decode::is_chroma_gap(&error) {
+                return crate::heif_decode::native_rgb(&decodable)
+                    .map(|(rgb, w, h)| (rgb, w, h, true))
+                    .map_err(|native| format!("HEIF decode failed: {error:?}; libheif fallback failed: {native}"));
+            }
+            return Err(format!("HEIF decode failed: {error:?}"));
+        }
+    };
     let (rgb, w, h) = heif_pixels_to_rgb8(&image)?;
     Ok((rgb, w, h, true))
 }
@@ -232,7 +243,7 @@ pub fn exif_datetime_from_system(t: std::time::SystemTime) -> String {
 /// The styles scaffold needs an Exif item: it patches the ExifIFD to inject the
 /// Apple MakerNote and reads DateTimeOriginal for the XMP dates. A bare IFD0
 /// with an ExifIFD pointer (holding DateTimeOriginal) is enough.
-fn minimal_exif_tiff(datetime: &str) -> Vec<u8> {
+pub(crate) fn minimal_exif_tiff(datetime: &str) -> Vec<u8> {
     let mut dt = datetime.as_bytes().to_vec();
     dt.truncate(19);
     dt.resize(20, 0); // NUL-terminated ASCII
@@ -318,6 +329,7 @@ pub fn synthesize_sdr_source(
     let exif_tiff = Some(match exif_tiff {
         Some(mut tiff) => {
             exif::normalize_tiff_orientation(&mut tiff);
+            exif::ensure_exif_ifd(&mut tiff)?;
             tiff
         }
         None => minimal_exif_tiff(fallback_datetime.unwrap_or("1970:01:01 00:00:00")),
@@ -329,6 +341,7 @@ pub fn synthesize_sdr_source(
         mode: "uhdr".into(),
         meta_bytes: Vec::new(),
         meta_floats: uhdr_jpeg::neutral_meta_floats(),
+        gainmap_use_base_color_space: true,
         mask_data: None,
         gainmap_data: Some(uhdr_jpeg::IDENTITY_GAINMAP_JPEG.to_vec()),
         manifest_entries: None,

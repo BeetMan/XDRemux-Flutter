@@ -26,11 +26,10 @@ enum Family {
   }
 }
 
-/// Conversion implementation selected by the user.
+/// Conversion implementation.
 ///
-/// Rust remains the cross-platform default. Swift is only exposed on Apple
-/// platforms, where it will eventually provide the Apple-specific library
-/// path without launching a CLI subprocess.
+/// Product conversions use Rust. [ConversionBackend.swift] remains for the
+/// in-process research lab and is not offered as a user-selectable engine.
 enum ConversionBackend {
   rust,
   swift;
@@ -45,9 +44,8 @@ enum ConversionBackend {
   }
 }
 
-/// High-level output target. This is independent from the implementation
-/// backend: Rust can still produce the default OPPO-compatible output, while
-/// Swift can produce Apple output with the experimental Apple features.
+/// High-level output target. Independent from the conversion engine: Rust
+/// produces both the OPPO-compatible file and the Apple-standard file.
 enum OutputMode {
   oppo,
   apple;
@@ -113,9 +111,8 @@ enum AppleWatermarkPolicy {
 
 /// Runtime capability snapshot for the conversion backends.
 ///
-/// Visibility and availability are deliberately separate: the Swift option
-/// is visible on macOS/iOS while the native bridge is being integrated. Its
-/// availability is controlled by the platform capability probe.
+/// Swift capability flags remain for the in-process research lab. Product
+/// conversion does not offer a Swift engine.
 class BackendCapabilities {
   final bool rustAvailable;
   final bool swiftVisible;
@@ -535,10 +532,7 @@ class ConversionConfig {
         (e) => e.name == json['family'],
         orElse: () => Family.auto,
       ),
-      backend: ConversionBackend.values.firstWhere(
-        (e) => e.name == json['backend'],
-        orElse: () => ConversionBackend.rust,
-      ),
+      backend: ConversionBackend.rust,
       outputMode: OutputMode.values.firstWhere(
         (e) => e.name == json['outputMode'],
         orElse: () => OutputMode.oppo,
@@ -818,6 +812,7 @@ class QueueItem {
   QueueItemStatus status;
   OutputPlanStatus outputPlanStatus;
   String? errorMessage;
+  String? policyReason;
   String? captureModeKey;
   String? captureModeFolderName;
   String? classificationStatus;
@@ -828,8 +823,19 @@ class QueueItem {
   /// "x6" or "x7" family, null when unknown.
   String? family;
 
+  /// Huawei Mate-series HDR HEIC recognized as already compatible with Apple
+  /// Photos. Such originals are informational queue entries and are never
+  /// sent through the OPPO conversion path. A Huawei Motion Photo is kept
+  /// out of this native-HDR-only flag so its motion policy remains usable.
+  bool huaweiHdr;
+  bool huaweiHasXtstyle;
+
+  /// Read-only Huawei portrait resource observations from the Rust HEIF
+  /// inspector.
+  Map<String, dynamic>? huaweiPortrait;
+
   /// Non-null when the input is a Motion Photo (Android V1 / MicroVideo /
-  /// HEIF mpvd / OPPO Live Photo). Filled asynchronously after ingest.
+  /// HEIF mpvd / OPPO Live Photo / Huawei OpenHarmony). Filled asynchronously after ingest.
   MotionPhotoSummary? motionPhoto;
 
   /// Per-card handling for Motion Photos. Defaults from the configured
@@ -872,11 +878,15 @@ class QueueItem {
     this.status = QueueItemStatus.pending,
     this.outputPlanStatus = OutputPlanStatus.ready,
     this.errorMessage,
+    this.policyReason,
     this.captureModeKey,
     this.captureModeFolderName,
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.huaweiHdr = false,
+    this.huaweiHasXtstyle = false,
+    this.huaweiPortrait,
     this.motionPhoto,
     this.motionPhotoMode = MotionPhotoMode.livePhotoPair,
     this.backend = ConversionBackend.rust,
@@ -884,6 +894,7 @@ class QueueItem {
     this.finishedAt,
     this.progress,
   });
+
 
   String get fileName {
     final uri = Uri.parse(inputPath);
@@ -893,6 +904,12 @@ class QueueItem {
   String? get captureModeLabel => captureModeFolderName;
 
   String get classificationLabel {
+    if (huaweiPortrait != null && huaweiPortrait!['safeToTransform'] == true) {
+      return t('华为人像 → Apple 人像', 'Huawei Portrait → Apple Portrait');
+    }
+    if (huaweiHdr) {
+      return t('华为 HDR', 'Huawei HDR');
+    }
     switch (classificationStatus) {
       case 'missing-user-comment':
         return t('无拍摄模式', 'No capture mode');
@@ -908,6 +925,13 @@ class QueueItem {
   }
 
   bool get isSuccessful => status.isSuccessful;
+
+  /// A native Huawei HDR skipped by policy has no converted output; file
+  /// actions must target the original input. A Huawei portrait that was
+  /// successfully converted has an output and should use it.
+  bool get actionUsesInput =>
+      (huaweiHdr && status == QueueItemStatus.skippedPolicy) ||
+      (motionPhoto != null && status == QueueItemStatus.skippedPolicy);
 
   Duration? get duration {
     if (startedAt == null || finishedAt == null) return null;

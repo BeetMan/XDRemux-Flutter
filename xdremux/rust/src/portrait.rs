@@ -78,6 +78,138 @@ struct DepthData {
 }
 
 fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
+    if crate::container::extract_tail_entry(source, "rear.depth").is_some() {
+        return parse_rear_depth(source);
+    }
+    parse_front_depth(source)
+}
+
+/// Front-camera portrait. `front.depth` is raw 8-bit gray (high = near),
+/// `front.segment` is the person mask, and `front.hair.mask` is the hair
+/// mask. The config's first two integers are the depth width and height.
+fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
+    let depth = crate::container::extract_tail_entry(source, "front.depth")
+        .ok_or("no rear.depth or front.depth tail entry (not an OPPO portrait photo?)")?;
+    let config_bytes = crate::container::extract_tail_entry(source, "front.depth.config")
+        .ok_or("front.depth is present but front.depth.config is missing")?;
+    let version = pd::read_f32le(&config_bytes, 0).ok_or("front.depth.config truncated")?;
+    if !version.is_finite() || !(1.0..3.0).contains(&version) {
+        return Err(format!(
+            "front.depth.config version {version} is not a front-camera layout"
+        ));
+    }
+    let width = pd::read_u32le(&config_bytes, 4).ok_or("front.depth.config truncated")? as usize;
+    let height = pd::read_u32le(&config_bytes, 8).ok_or("front.depth.config truncated")? as usize;
+    if width == 0 || height == 0 || width > 8_192 || height > 8_192 {
+        return Err("front.depth dimensions invalid".into());
+    }
+    let plane = width * height;
+    if depth.len() != plane {
+        return Err(format!(
+            "front.depth is {} bytes, config says {width}x{height}",
+            depth.len()
+        ));
+    }
+    // Rear ranks use 0 as near. Front gray uses high values as near.
+    let ranks: Vec<u8> = depth.iter().map(|value| 255 - value).collect();
+    let portrait = match crate::container::extract_tail_entry(source, "front.segment") {
+        Some(segment) if segment.len() == plane => Some(segment),
+        // Observed segment is the depth size plus two trailing rows.
+        Some(segment) if segment.len() == width * (height + 2) => Some(segment[..plane].to_vec()),
+        Some(segment) => {
+            return Err(format!(
+                "front.segment is {} bytes, expected {plane} or {}",
+                segment.len(),
+                width * (height + 2)
+            ));
+        }
+        None => Some(person_mask_from_near_depth(&depth)),
+    };
+    let hair = crate::container::extract_tail_entry(source, "front.hair.mask")
+        .filter(|mask| mask.len() == plane);
+    let src_dims = crate::container::extract_tail_entry(source, "src.image")
+        .and_then(|bytes| pd::image_dimensions(&bytes))
+        .or_else(|| {
+            let w = pd::read_u32le(&config_bytes, 64)?;
+            let h = pd::read_u32le(&config_bytes, 68)?;
+            (w > 100 && h > 100 && w < 20_000 && h < 20_000).then_some((w, h))
+        })
+        .unwrap_or((width as u32, height as u32));
+    let f_number = pd::read_f32le(&config_bytes, config_bytes.len().saturating_sub(4))
+        .filter(|value| value.is_finite() && (1.0..=22.0).contains(value));
+    let (focus_x, focus_y) = person_focus(
+        portrait.as_deref().unwrap_or(&[]),
+        width,
+        height,
+        src_dims,
+    );
+    let person_fraction = portrait
+        .as_deref()
+        .map(|mask| mask.iter().filter(|byte| **byte >= 128).count() as f64 / plane as f64)
+        .unwrap_or(0.0);
+    let scale = pd::APPLE_REFERENCE_SPAN / 255.0;
+    Ok(DepthData {
+        width,
+        height,
+        ranks,
+        hair,
+        portrait,
+        embedded_scale: 0.0,
+        exponentiation: 1,
+        disparity_minimum: 0,
+        disparity_maximum: 0,
+        near_object_detected: person_fraction > 0.08,
+        focal_length: 0.0,
+        stereo_baseline: 0.0,
+        config: Some(pd::ConfigSummary {
+            version,
+            canvas_width: src_dims.0 as i32,
+            canvas_height: src_dims.1 as i32,
+            focus_x,
+            focus_y,
+            current_f_number: f_number,
+            object_distance: None,
+            focus_roi_type: None,
+        }),
+        decision: pd::ScaleDecision::FrontStretch(scale),
+        src_dims,
+    })
+}
+
+/// Pixels brighter than the far background become the person mask.
+fn person_mask_from_near_depth(depth: &[u8]) -> Vec<u8> {
+    depth
+        .iter()
+        .map(|value| if *value >= 160 { 254 } else { 0 })
+        .collect()
+}
+
+/// Focus point in source pixels, at the centroid of the person mask.
+fn person_focus(mask: &[u8], width: usize, height: usize, src: (u32, u32)) -> (i32, i32) {
+    let mut count = 0u64;
+    let mut sum_x = 0u64;
+    let mut sum_y = 0u64;
+    for y in 0..height {
+        for x in 0..width {
+            if mask.get(y * width + x).copied().unwrap_or(0) >= 128 {
+                sum_x += x as u64;
+                sum_y += y as u64;
+                count += 1;
+            }
+        }
+    }
+    if count == 0 || width == 0 || height == 0 {
+        return (src.0 as i32 / 2, src.1 as i32 / 2);
+    }
+    let cx = sum_x as f64 / count as f64;
+    let cy = sum_y as f64 / count as f64;
+    (
+        (cx * src.0 as f64 / width as f64).round() as i32,
+        (cy * src.1 as f64 / height as f64).round() as i32,
+    )
+}
+
+fn parse_rear_depth(source: &[u8]) -> Result<DepthData, String> {
     let compressed = crate::container::extract_tail_entry(source, "rear.depth")
         .ok_or("no rear.depth tail entry (not an OPPO portrait photo?)")?;
     let config_bytes =
@@ -423,6 +555,45 @@ fn watermark_content_rect(
     parse_watermark_rect(&tail, (primary_w, primary_h), source_dims, orientation, crop.as_deref())
 }
 
+/// Content rect stored at `len - 56` by `hassel_style_4` and
+/// `hassel_style_master_mode_1`. `x + width` and `y + height` equal the
+/// primary frame. `hassel_style_1` keeps its own checked layout.
+fn hassel_end_content_rect(
+    tail: &[u8],
+    primary_w: u32,
+    primary_h: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if tail.len() < 80 || tail.get(..4) != Some(&1f32.to_le_bytes()) {
+        return None;
+    }
+    if tail.get(4..10) != Some(b"hassel") {
+        return None;
+    }
+    let origin = tail.len() - 56;
+    if tail.get(origin + 20..origin + 24) != Some(&[0xff; 4]) {
+        return None;
+    }
+    let integer = |offset: usize| -> Option<u32> {
+        let value = pd::read_f32le(tail, offset)?;
+        (value.is_finite() && value >= 0.0 && value <= 1_000_000.0 && value.fract() == 0.0)
+            .then_some(value as u32)
+    };
+    let x = integer(origin + 24)?;
+    let y = integer(origin + 28)?;
+    let w = integer(origin + 32)?;
+    let h = integer(origin + 36)?;
+    if w == 0
+        || h == 0
+        || x.checked_add(w)? != primary_w
+        || y.checked_add(h)? != primary_h
+        || w < primary_w / 2
+        || h < primary_h / 2
+    {
+        return None;
+    }
+    Some((x, y, w, h))
+}
+
 fn parse_watermark_rect(
     tail: &[u8],
     primary: (u32, u32),
@@ -434,12 +605,13 @@ fn parse_watermark_rect(
     // This exact version/style/length was observed in both 192113 and 192141.
     // Its geometry starts at byte 14129 (unaligned); never scan arbitrary bytes.
     if tail.len() % 4 != 0 || tail.get(4..10) == Some(b"hassel") {
-        if tail.len() != 14185 || tail.get(..4) != Some(&1f32.to_le_bytes())
-            || tail.get(4..19) != Some(b"hassel_style_1\0")
-            || tail[19..68].iter().any(|&b| b != 0)
-            || tail[14149..14153] != [0xff; 4]
-        {
-            return None;
+        let style_1 = tail.len() == 14185
+            && tail.get(..4) == Some(&1f32.to_le_bytes())
+            && tail.get(4..19) == Some(b"hassel_style_1\0")
+            && tail[19..68].iter().all(|&b| b == 0)
+            && tail[14149..14153] == [0xff; 4];
+        if !style_1 {
+            return hassel_end_content_rect(tail, primary_w, primary_h);
         }
         let integer = |offset| -> Option<u32> {
             let value = pd::read_f32le(tail, offset)?;
@@ -829,7 +1001,9 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
     let mut scale = match &depth.decision {
         // Producer-supplied and producer-curve values are already in the
         // absolute range; only the physical reconstruction is rescaled.
-        pd::ScaleDecision::Passthrough(value) | pd::ScaleDecision::CurveDerived(value) => *value,
+        pd::ScaleDecision::Passthrough(value)
+        | pd::ScaleDecision::CurveDerived(value)
+        | pd::ScaleDecision::FrontStretch(value) => *value,
         pd::ScaleDecision::CalibratedP50(value) => *value * ZERO_QUANTIZATION_CALIBRATION,
         pd::ScaleDecision::Unavailable(reason) => {
             return Err(format!("no usable disparity scale: {reason}"));
@@ -848,7 +1022,10 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
     );
 
     // ---- disparity pixels + apdi range ------------------------------------
-    let stretch_to_span = matches!(depth.decision, pd::ScaleDecision::CurveDerived(_));
+    let stretch_to_span = matches!(
+        depth.decision,
+        pd::ScaleDecision::CurveDerived(_) | pd::ScaleDecision::FrontStretch(_)
+    );
     let (disparity_u8, float_min, float_max, norm_range) =
         build_disparity(&depth.ranks, depth.exponentiation, scale, stretch_to_span);
 
@@ -1869,6 +2046,16 @@ pub fn huawei_person_contour(source: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Convert a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
 pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
+    // Huawei Motion Photos append a complete MP4 after the HEIC. Only remux
+    // the still container; carrying the movie boxes into the rebuilt HEIC
+    // leaves duplicate ftyp/mdat boxes and stale motion offsets.
+    let motion = crate::motion_photo::parse_motion_photo(source)?;
+    let source = match motion.as_ref() {
+        Some(asset) => source
+            .get(asset.still_range.start as usize..asset.still_range.end as usize)
+            .ok_or("motion still range is out of bounds")?,
+        None => source,
+    };
     let top = top_level_boxes(source)?;
     let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
     let mdat_hdr = find_top(&top, b"mdat").ok_or("no mdat box")?;

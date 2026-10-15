@@ -247,6 +247,44 @@ pub fn normalize_tiff_orientation(tiff: &mut [u8]) -> bool {
     false
 }
 
+/// Add an empty ExifIFD when a valid TIFF only has IFD0 (e.g. orientation).
+/// Append a new directory without relocating any original payload or IFD chain.
+/// Existing pointers, including malformed ones, are left for normal validation.
+pub(crate) fn ensure_exif_ifd(tiff: &mut Vec<u8>) -> Result<(), String> {
+    let (be, ifd0) = tiff_ifd0_offset(tiff).ok_or("invalid TIFF header")?;
+    let count = read_u16(tiff, ifd0, be).ok_or("truncated IFD0")?;
+    let start = ifd0.checked_add(2).ok_or("IFD0 offset overflow")?;
+    let end = start.checked_add(usize::from(count) * 12).ok_or("IFD0 size overflow")?;
+    let directory = tiff.get(start..end).ok_or("truncated IFD0 entries")?;
+    let next: [u8; 4] = tiff.get(end..end.checked_add(4).ok_or("IFD0 overflow")?)
+        .ok_or("truncated IFD0 chain pointer")?.try_into().unwrap();
+    let mut entries: Vec<[u8; 12]> = directory.chunks_exact(12)
+        .map(|entry| entry.try_into().unwrap()).collect();
+    if entries.iter().any(|e| read_u16(e, 0, be) == Some(0x8769)) {
+        return Ok(());
+    }
+    let count = count.checked_add(1).ok_or("IFD0 entry count overflow")?;
+    let u16bytes = |v: u16| if be { v.to_be_bytes() } else { v.to_le_bytes() };
+    let u32bytes = |v: u32| if be { v.to_be_bytes() } else { v.to_le_bytes() };
+    let aligned = tiff.len().checked_add(tiff.len() % 2).ok_or("TIFF size overflow")?;
+    let exif_offset = u32::try_from(aligned).map_err(|_| "TIFF exceeds 32-bit offsets")?;
+    let new_ifd0 = exif_offset.checked_add(6).ok_or("TIFF directory offset overflow")?;
+    let mut pointer = [0; 12];
+    pointer[..2].copy_from_slice(&u16bytes(0x8769));
+    pointer[2..4].copy_from_slice(&u16bytes(4));
+    pointer[4..8].copy_from_slice(&u32bytes(1));
+    pointer[8..].copy_from_slice(&u32bytes(exif_offset));
+    entries.push(pointer);
+    entries.sort_by_key(|e| read_u16(e, 0, be).unwrap());
+    tiff.resize(aligned, 0);
+    tiff.extend([0; 6]); // empty ExifIFD + next-IFD pointer
+    tiff.extend(u16bytes(count));
+    for entry in entries { tiff.extend(entry); }
+    tiff.extend(next);
+    tiff[4..8].copy_from_slice(&u32bytes(new_ifd0));
+    Ok(())
+}
+
 fn tiff_ifd0_offset(tiff: &[u8]) -> Option<(bool, usize)> {
     if tiff.len() < 8 {
         return None;
@@ -856,6 +894,31 @@ mod tests {
             parse_exif_orientation(&heif_exif_blob(None)).unwrap(),
             ExifOrientation::Normal
         );
+    }
+
+    #[test]
+    fn adding_exif_directory_preserves_orientation_and_original_bytes() {
+        let mut tiff = tiff_with_orientation(Some(6));
+        let original = tiff.clone();
+        ensure_exif_ifd(&mut tiff).unwrap();
+        assert_eq!(&tiff[8..original.len()], &original[8..]);
+        assert_eq!(parse_exif_orientation(&tiff).unwrap(), ExifOrientation::Rotate90Clockwise);
+        let (be, ifd0) = tiff_ifd0_offset(&tiff).unwrap();
+        assert_eq!(read_u16(&tiff, ifd0, be), Some(2));
+        let unchanged = tiff.clone();
+        ensure_exif_ifd(&mut tiff).unwrap();
+        assert_eq!(tiff, unchanged);
+        assert!(ensure_exif_ifd(&mut vec![0; 8]).is_err());
+    }
+
+    #[test]
+    fn adding_exif_directory_supports_big_endian_empty_ifd() {
+        let mut tiff = b"MM\0*\0\0\0\x08\0\0\0\0\0\0".to_vec();
+        ensure_exif_ifd(&mut tiff).unwrap();
+        let (be, ifd0) = tiff_ifd0_offset(&tiff).unwrap();
+        assert!(be);
+        assert_eq!(read_u16(&tiff, ifd0, be), Some(1));
+        assert_eq!(read_u16(&tiff, ifd0 + 2, be), Some(0x8769));
     }
 
     /// OPPO X9s Pro exports write Orientation=0 with no irot; ImageIO and the

@@ -501,3 +501,13 @@ P0 补充检查（本批并行进行）：
 - 队列和本地图库照片在沙箱物化后识别华为 HDR、人像与 Motion Photo。华为人像先生成并验证 Apple 人像，再按单张设置追加摄影风格或摄影风格 3，追加后再次校验人像；两档风格可与人像同开，摄影风格 3 包含完整的风格、纹理和语义蒙版。普通华为 HDR 先保存独立静帧，开启风格时优先在原 HEVC/HDR 容器上无损写入风格；结构校验不通过才回退通用转换。动态照片导出静态图前截掉追加的视频尾部。
 - 转换结果记录实际使用的风格开关并随队列持久化。Live Photo 的 HEIC/MOV 配对只接受当前原图绑定的 Apple 结果；旧版摄影风格单独开启时拒绝配对并提示重新转换，摄影风格 3 可配对。缺少风格记录的旧结果也需重新转换。文件分享继续使用文件语义，避免系统按图片分享时改写 HEIC。
 - 本地样本的人像 remux、动态照片配对与静帧逐字节抽取通过，Harmony Node 回归、API 26 构建及真机安装/启动通过。当前设备检查时处于锁屏，未做本次 UI 点击转换和跨设备 Apple Photos 播放实测；这两项仍需在解锁后验证。签名仅用于 DevEco 本地安装，发布 HAP 保持 unsigned。
+
+## 2026-10-16 主线同步
+
+- 将远端 `main` 的 `9ee2431f` 合入 `feat/harmony-native`；同步前先快进原生远端到 `dc6b6b59`，保留用户在 GitHub 编辑的原生 README 和截图。未修改其他工作区的未提交内容。
+- 共享核心接入 OPPO 前置人像景深、华为动态人像静帧隔离、JPEG HDR 元数据/色彩空间、Apple MakerNote 保留和 Live Photo 输出安全修复。合并冲突保留原生 `xdremux_motion_photo_extract_still`、Apple 风格/人像信息字段及相关回归；既有 C ABI 和对应 free 函数的所有权约定不变。
+- libheif 解码器仍为可选 feature，本次 OHOS 默认构建不启用、不打包第三方新依赖。Flutter 的 PhotoKit/多文件导出与诊断 UI 不作为原生 UI 接入；原生继续使用现有成对文档导出和系统预览。
+- Rust workspace 回归通过（核心 226 passed / 3 ignored，host 测试使用既有 FFmpeg fallback）；6 项显式启用的私有华为样片回归通过；16 份 Node、5 项 HAP verifier 和 C++ PS3 helper 通过。host 版本/分类 FFI 冒烟通过，分别使用 `xdremux_free_string` 和 `xdremux_free_classification_result` 释放。
+- OHOS 核心仅通过既有 `build_ohos.sh` 重建并由 `prepare_harmony_native.ps1` 暂存；输入 SHA-256 `1A53A5131603B3530C9B47B06637A451F2D40293BE27CBF87343981A928D04D8`。`devecocli build --product default --build-mode release` 成功。
+- unsigned HAP 6,160,191 字节，SHA-256 `A4E19C1BF1247E0E71AA079EEF18EEDBEFB49083A0C4372C37A59AE9FB2A48D1`；包内剥离后的 core SHA-256 `5C52A356C2BC9B1B918D09B90D338F1FC51BCD4CCFAE6A415A07B541AF1C95E8`。包名 `.arkui`、版本 `0.5.0-alpha1` / `50001`、目标 API26、兼容 API18 均保留；发布交付取 unsigned 产物，本地签名配置不入库。
+- 日志、校验 JSON 与 HAP 外置 `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/main-sync-20261016/`。本次未安装设备、未做新的 Apple Photos/HDR/人像光圈真机验收，旧版验收不替代本次验收；未创建 tag 或发布 Release。

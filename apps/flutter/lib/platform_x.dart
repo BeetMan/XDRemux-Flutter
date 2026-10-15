@@ -20,7 +20,11 @@ class PlatformX {
       Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
   /// Platforms where the native MethodChannel thumbnail decode exists
-  /// (ImageIO / ImageDecoder / WIC). OHOS has no such channel yet.
+  /// (ImageIO / ImageDecoder / WIC / Harmony ImageKit).
   static bool get hasNativeThumbnail =>
-      Platform.isMacOS || Platform.isIOS || Platform.isAndroid || Platform.isWindows;
+      Platform.isMacOS ||
+      Platform.isIOS ||
+      Platform.isAndroid ||
+      Platform.isWindows ||
+      isOhos;
 }

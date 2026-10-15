@@ -22,6 +22,12 @@ serde_json = "1.0"
 zstd = "0.13"
 png = "0.17"
 
+[features]
+default = []
+# Native SDR decode fallback only; not an alternate HDR/container engine.
+# Requires target-built shared libheif >= 1.23.4 at XDREMUX_LIBHEIF_PREFIX.
+libheif-decoder = []
+
 [dev-dependencies]
 sha2 = "0.10"
 

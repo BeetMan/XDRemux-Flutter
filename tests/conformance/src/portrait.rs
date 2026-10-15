@@ -36,18 +36,34 @@ const AUXC_GLASSES: &[u8] = b"urn:com:apple:photo:2020:aux:semanticglassesmatte"
 const INTRINSIC_REF_W: u32 = 4208;
 const INTRINSIC_REF_H: u32 = 3156;
 const INTRINSIC: [f64; 9] = [
-    2860.37890625, 0.0, 0.0,
-    0.0, 2860.37890625, 0.0,
-    2098.31103515625, 1591.0140380859375, 1.0,
+    2860.37890625,
+    0.0,
+    0.0,
+    0.0,
+    2860.37890625,
+    0.0,
+    2098.31103515625,
+    1591.0140380859375,
+    1.0,
 ];
 const INV_LENS_DISTORTION: [f64; 8] = [
-    0.0, 0.54487484693527222, -0.05080728605389595, 0.0016805990599095821,
-    7.3705832619452849e-06, -1.7933325580088422e-06, 3.9592695344481392e-08,
+    0.0,
+    0.54487484693527222,
+    -0.05080728605389595,
+    0.0016805990599095821,
+    7.3705832619452849e-06,
+    -1.7933325580088422e-06,
+    3.9592695344481392e-08,
     -2.6891447402199731e-10,
 ];
 const LENS_DISTORTION: [f64; 8] = [
-    0.0, -0.55521947145462036, 0.053949449211359024, -0.0018901334842666984,
-    -4.6210166146920528e-06, 1.9594019704527454e-06, -4.5183909946899803e-08,
+    0.0,
+    -0.55521947145462036,
+    0.053949449211359024,
+    -0.0018901334842666984,
+    -4.6210166146920528e-06,
+    1.9594019704527454e-06,
+    -4.5183909946899803e-08,
     3.1430857916348032e-10,
 ];
 const DISTORTION_CENTER_X: f64 = 2105.552734375;
@@ -76,10 +92,9 @@ struct DepthData {
 fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
     let compressed = xdremux_core::container::extract_tail_entry(source, "rear.depth")
         .ok_or("no rear.depth tail entry (not an OPPO portrait photo?)")?;
-    let config_bytes =
-        xdremux_core::container::extract_tail_entry(source, "rear.depth.config");
-    let decoded = zstd::decode_all(compressed.as_slice())
-        .map_err(|e| format!("rear.depth zstd: {e}"))?;
+    let config_bytes = xdremux_core::container::extract_tail_entry(source, "rear.depth.config");
+    let decoded =
+        zstd::decode_all(compressed.as_slice()).map_err(|e| format!("rear.depth zstd: {e}"))?;
     if decoded.len() < pd::HEADER_SIZE {
         return Err("rear.depth shorter than 768-byte header".into());
     }
@@ -188,11 +203,7 @@ fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
 
 /// Per-pixel disparity: near - pow(rank/255, exp) * span, quantized linearly
 /// to 0..=255; returns (u8 plane, float_min, float_max).
-fn build_disparity(
-    ranks: &[u8],
-    exponentiation: u8,
-    scale: f64,
-) -> (Vec<u8>, f64, f64) {
+fn build_disparity(ranks: &[u8], exponentiation: u8, scale: f64) -> (Vec<u8>, f64, f64) {
     let span = 255.0 * scale;
     let near = span;
     let exp = exponentiation.max(1) as f64; // zero-quant variant is patched to 1
@@ -378,8 +389,6 @@ fn portrait_matte_xmp() -> Vec<u8> {
         .to_vec()
 }
 
-
-
 /// Content rectangle from the OPPO watermark tail entry
 /// (`watermark.master.params`: a float array containing CORNER quads
 /// (x0, y0, x1, y1) with x1 = primary width - right pad and y1 = primary
@@ -395,9 +404,10 @@ fn watermark_content_rect(
         // extract the manifest region without the full LHDR machinery
         let json_start = input.windows(2).rposition(|w| w == b"[{")?;
         let json_end = input[json_start..].iter().position(|&b| b == b']')? + json_start;
-        let entries =
-            crate::scaffold::parse_manifest_entries(input, json_start, json_end)?;
-        let e = entries.into_iter().find(|e| e.name == "watermark.master.params")?;
+        let entries = crate::scaffold::parse_manifest_entries(input, json_start, json_end)?;
+        let e = entries
+            .into_iter()
+            .find(|e| e.name == "watermark.master.params")?;
         let start = (json_start as i64 - e.offset as i64) as usize;
         input.get(start..start + e.length as usize)?
     };
@@ -408,7 +418,10 @@ fn watermark_content_rect(
     }
     for k in 0..n.saturating_sub(4) {
         let quad = [f[k], f[k + 1], f[k + 2], f[k + 3]];
-        if !quad.iter().all(|v| *v > 1.0 && (v - v.round()).abs() < 0.01) {
+        if !quad
+            .iter()
+            .all(|v| *v > 1.0 && (v - v.round()).abs() < 0.01)
+        {
             continue;
         }
         let (x, y, w, h) = (
@@ -589,13 +602,15 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         .unwrap_or(0.0);
     let headroom_normalized = (headroom / 4.0).min(1.0);
     let lux_normalized = 0.5; // Swift default when aecLuxIndex is absent
-    let near_boost = if depth.near_object_detected { 1.15 } else { 1.0 };
-    let fitted_primary_gain = ((0.02
-        + 0.17 * focus_normalized
-        + 0.04 * headroom_normalized
-        + 0.02 * lux_normalized)
-        * near_boost)
-        .clamp(0.005, 0.25);
+    let near_boost = if depth.near_object_detected {
+        1.15
+    } else {
+        1.0
+    };
+    let fitted_primary_gain =
+        ((0.02 + 0.17 * focus_normalized + 0.04 * headroom_normalized + 0.02 * lux_normalized)
+            * near_boost)
+            .clamp(0.005, 0.25);
     let activation = fitted_primary_gain / 0.25;
     let dynamic = xhlrb_dynamic_values(activation, headroom, true);
     let rend = patch_rend(&dynamic)?;
@@ -606,12 +621,7 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         .as_ref()
         .and_then(|c| c.current_f_number)
         .unwrap_or(9.0) as f64;
-    let disparity_xmp = disparity_xmp(
-        f64::from(float_min).into(),
-        float_max,
-        &rend_b64,
-        aperture,
-    );
+    let disparity_xmp = disparity_xmp(f64::from(float_min).into(), float_max, &rend_b64, aperture);
 
     // ---- mattes -------------------------------------------------------------
     let person_plane = depth
@@ -638,17 +648,13 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         depth.width, depth.height
     );
     let content_rect = watermark_content_rect(input, pw_frame, ph_frame);
-    eprintln!(
-        "portrait: watermark content rect: {content_rect:?}"
-    );
+    eprintln!("portrait: watermark content rect: {content_rect:?}");
     let mut focus_x_norm: Option<f64> = None;
     let mut focus_y_norm: Option<f64> = None;
     if rotate {
         let cfg2 = depth.config.as_ref();
-        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5)
-            / depth.src_dims.0.max(1) as f64;
-        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5)
-            / depth.src_dims.1.max(1) as f64;
+        let nx = cfg2.map(|c| c.focus_x as f64).unwrap_or(0.5) / depth.src_dims.0.max(1) as f64;
+        let ny = cfg2.map(|c| c.focus_y as f64).unwrap_or(0.5) / depth.src_dims.1.max(1) as f64;
         // landscape (nx, ny) -> portrait content (1 - ny, nx), then into
         // the padded primary frame.
         match content_rect {
@@ -657,8 +663,8 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
                 // cover-cropped content window (center crop), then offset by
                 // the frame padding.
                 let (rx, ry) = (1.0 - ny, nx); // rotated normalized
-                let s_aspect = (depth.height as f64 / depth.width as f64)
-                    / (cw2 as f64 / ch2 as f64); // rotated-frame / content aspect
+                let s_aspect =
+                    (depth.height as f64 / depth.width as f64) / (cw2 as f64 / ch2 as f64); // rotated-frame / content aspect
                 let content_x;
                 let content_y;
                 if s_aspect > 1.0 {
@@ -740,7 +746,11 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         let (r, w2, h2) = rotate_cw90(&disparity_u8, depth.width, depth.height);
         place(&r, w2, h2, 0.5) // disparity at half the primary frame
     } else {
-        (disparity_u8.clone(), depth.width as u32, depth.height as u32)
+        (
+            disparity_u8.clone(),
+            depth.width as u32,
+            depth.height as u32,
+        )
     };
     let (matte_final, matte_fw, matte_fh) = if rotate {
         let (r, w2, h2) = rotate_cw90(&person_up, mu_w as usize, mu_h as usize);
@@ -795,8 +805,16 @@ fn base64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -907,12 +925,15 @@ fn attach_portrait_graph(
     // Focus XMP is NOT a separate mime item: the base converter already
     // emits an hdrgm-xmp mime item with cdsc->primary, and ImageIO merges
     // only that one as the primary XMP. We rewrite its payload in place.
-    let mut new_infes: Vec<Vec<u8>> = meta
-        .items
-        .iter()
-        .map(|i| i.raw_infe.clone())
-        .collect();
-    for id in [disparity_id, portrait_matte_id, skin_id, hair_id, teeth_id, glasses_id] {
+    let mut new_infes: Vec<Vec<u8>> = meta.items.iter().map(|i| i.raw_infe.clone()).collect();
+    for id in [
+        disparity_id,
+        portrait_matte_id,
+        skin_id,
+        hair_id,
+        teeth_id,
+        glasses_id,
+    ] {
         new_infes.push(isobmff::make_infe_box(id, "hvc1", 1)); // hidden
     }
     for id in [
@@ -967,7 +988,14 @@ fn attach_portrait_graph(
 
     // ---- refs ------------------------------------------------------------------
     let mut new_refs: Vec<IrefEntry> = meta.refs.clone();
-    for image_id in [disparity_id, portrait_matte_id, skin_id, hair_id, teeth_id, glasses_id] {
+    for image_id in [
+        disparity_id,
+        portrait_matte_id,
+        skin_id,
+        hair_id,
+        teeth_id,
+        glasses_id,
+    ] {
         new_refs.push(IrefEntry {
             rtype: "auxl".into(),
             from: image_id,
@@ -997,13 +1025,14 @@ fn attach_portrait_graph(
     let std_idat = idat_payload(base, &meta_hdr).unwrap_or_default();
     let new_idat = std_idat; // XMP payloads go to mdat (golden layout), idat stays untouched
     let semantic_xmp = crate::scaffold::matte_xmp_pub();
-    let datetime = extract_exif_datetime(base, &meta).unwrap_or_else(|| "1970:01:01 00:00:00".into());
+    let datetime =
+        extract_exif_datetime(base, &meta).unwrap_or_else(|| "1970:01:01 00:00:00".into());
     let cfg = depth.config.as_ref();
     // Merge the Focus region into the base converter's hdrgm-xmp mime item
     // (the only mime XMP ImageIO merges for the primary).
     let hdrgm_item = find_primary_xmp_item(&meta, primary)?;
-    let hdrgm_payload = read_item_payload(base, &meta, hdrgm_item)
-        .ok_or("hdrgm-xmp item payload unreadable")?;
+    let hdrgm_payload =
+        read_item_payload(base, &meta, hdrgm_item).ok_or("hdrgm-xmp item payload unreadable")?;
 
     // Portrait marker metadata: CustomRendered = 9 + the Apple portrait
     // MakerNote (Photos' portrait detection reads these; the golden pipeline
@@ -1014,26 +1043,21 @@ fn attach_portrait_graph(
         .find(|i| i.itype == "Exif")
         .ok_or("no Exif item in base")?
         .item_id;
-    let exif_payload = read_item_payload(base, &meta, exif_item)
-        .ok_or("Exif payload unreadable")?;
+    let exif_payload =
+        read_item_payload(base, &meta, exif_item).ok_or("Exif payload unreadable")?;
     let patched_exif = patch_exif_portrait_markers(&exif_payload, &PORTRAIT_MAKER_NOTE.to_vec())?;
     let (fx, fy, ap_w, ap_h) = match (focus_x_norm, focus_y_norm) {
         (Some(nx), Some(ny)) => (nx, ny, primary_frame.0, primary_frame.1),
         _ => (
-            cfg.map(|c| c.focus_x as f64).unwrap_or(depth.src_dims.0 as f64 / 2.0),
-            cfg.map(|c| c.focus_y as f64).unwrap_or(depth.src_dims.1 as f64 / 2.0),
+            cfg.map(|c| c.focus_x as f64)
+                .unwrap_or(depth.src_dims.0 as f64 / 2.0),
+            cfg.map(|c| c.focus_y as f64)
+                .unwrap_or(depth.src_dims.1 as f64 / 2.0),
             depth.src_dims.0,
             depth.src_dims.1,
         ),
     };
-    let merged_main_xmp = merge_focus_into_xmp(
-        &hdrgm_payload,
-        fx,
-        fy,
-        ap_w,
-        ap_h,
-        &datetime,
-    )?;
+    let merged_main_xmp = merge_focus_into_xmp(&hdrgm_payload, fx, fy, ap_w, ap_h, &datetime)?;
 
     let std_mdat_payload = base[mdat_hdr.data_start..mdat_hdr.data_end].to_vec();
     let mut appended_mdat = Vec::new();
@@ -1055,7 +1079,11 @@ fn attach_portrait_graph(
     let exif_rel = appended_mdat.len() as u64;
     appended_mdat.extend_from_slice(&patched_exif);
     let exif_len = patched_exif.len() as u64;
-    push_mdat(portrait_matte_xmp_id, &portrait_matte_xmp(), &mut appended_mdat);
+    push_mdat(
+        portrait_matte_xmp_id,
+        &portrait_matte_xmp(),
+        &mut appended_mdat,
+    );
     for xmp_id in [skin_xmp_id, hair_xmp_id, teeth_xmp_id, glasses_xmp_id] {
         push_mdat(xmp_id, &semantic_xmp, &mut appended_mdat);
     }
@@ -1182,7 +1210,6 @@ fn attach_portrait_graph(
     Ok(build(&final_iloc))
 }
 
-
 /// Find the base converter's primary-XMP mime item (the hdrgm-xmp mime with
 /// cdsc -> [primary, tmap]); ImageIO merges only this one as the primary's
 /// XMP metadata.
@@ -1205,10 +1232,7 @@ fn find_primary_xmp_item(meta: &ParsedMeta, primary: u32) -> Result<u32, String>
 
 /// Read an item payload handling both cm=0 (absolute) and cm=1 (idat).
 fn read_item_payload(data: &[u8], meta: &ParsedMeta, item_id: u32) -> Option<Vec<u8>> {
-    let entry = meta
-        .iloc_entries
-        .iter()
-        .find(|e| e.item_id == item_id)?;
+    let entry = meta.iloc_entries.iter().find(|e| e.item_id == item_id)?;
     let &(off, len) = entry.extents.first()?;
     let abs = if entry.construction_method == 1 {
         // idat-relative: locate idat via a fresh top-level scan
@@ -1219,7 +1243,8 @@ fn read_item_payload(data: &[u8], meta: &ParsedMeta, item_id: u32) -> Option<Vec
     } else {
         off
     };
-    data.get(abs as usize..(abs + len) as usize).map(|p| p.to_vec())
+    data.get(abs as usize..(abs + len) as usize)
+        .map(|p| p.to_vec())
 }
 
 /// Inject the MWG Focus region (+ dates/creator) into an existing XMP packet
@@ -1283,7 +1308,6 @@ fn merge_focus_into_xmp(
     Ok(out.into_bytes())
 }
 
-
 /// Set CustomRendered (0xA404) = 9 (portrait-rendered marker, golden layout:
 /// type 5 / count 1) and inject the Apple portrait MakerNote into the Exif
 /// item payload (Exif items carry a 4-byte big-endian TIFF offset prefix).
@@ -1335,12 +1359,19 @@ fn patch_exif_portrait_markers(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>
     let exif_count = rd16(&tiff[exif_ifd_off..exif_ifd_off + 2]);
     for k in 0..exif_count as usize {
         let e = exif_ifd_off + 2 + k * 12;
-        if rd16(&tiff[e..e + 2]) == 0xA404 {
-            // golden layout: type 5 (LONG), count 1, value 9 (portrait render)
-            wr16(&mut tiff[e + 2..e + 4], 5);
+        let tag = rd16(&tiff[e..e + 2]);
+        if tag == 0xA401 {
+            // CustomRendered = 8 (Portrait mode: portrait effect ON by default).
+            // In TIFF SHORT (type 3), count 1:
+            // LE inline value: [0x08, 0x00, 0x00, 0x00]
+            // BE inline value: [0x00, 0x08, 0x00, 0x00]
+            wr16(&mut tiff[e + 2..e + 4], 3);
             wr32(&mut tiff[e + 4..e + 8], 1);
-            wr32(&mut tiff[e + 8..e + 12], 9);
-            break;
+            if le {
+                tiff[e + 8..e + 12].copy_from_slice(&[0x08, 0x00, 0x00, 0x00]);
+            } else {
+                tiff[e + 8..e + 12].copy_from_slice(&[0x00, 0x08, 0x00, 0x00]);
+            }
         }
     }
     // Reassemble with the original prefix, then run the scaffold MakerNote
@@ -1394,7 +1425,9 @@ fn extract_exif_datetime(base: &[u8], meta: &ParsedMeta) -> Option<String> {
     // TIFF tag 0x9003 (DateTimeOriginal), ASCII "YYYY:MM:DD HH:MM:SS"
     let mut windows = payload.windows(4);
     let mut pos = 0;
-    while let Some(p) = windows.position(|w| w[0] == b'2' && w[1] == b'0' && w[2].is_ascii_digit() && w[3].is_ascii_digit()) {
+    while let Some(p) = windows.position(|w| {
+        w[0] == b'2' && w[1] == b'0' && w[2].is_ascii_digit() && w[3].is_ascii_digit()
+    }) {
         let at = pos + p;
         if let Some(slice) = payload.get(at..at + 19) {
             if slice[4] == b':' && slice[7] == b':' && slice[10] == b' ' {

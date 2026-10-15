@@ -10,6 +10,8 @@ permissions:
 
 env:
   X265_TAG: 4.2
+  # Match the committed lockfile's hosted source; do not re-resolve plugins.
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
 
 jobs:
   rust:
@@ -75,11 +77,11 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           cache: true
 
       - name: Install Dart dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Analyze Dart code
         run: flutter analyze --no-fatal-infos

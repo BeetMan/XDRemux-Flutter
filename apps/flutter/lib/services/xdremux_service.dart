@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../ffi/xdremux_ffi.dart';
+import '../platform_x.dart';
 import '../models/app_models.dart';
 import '../l10n/l10n.dart';
 import 'conversion_backend.dart';
@@ -144,7 +145,10 @@ class XdRemuxService {
           'schema': 'xdremux-portrait-calibration-research-v1',
           'researchOnly': true,
           'safeToTransform': false,
-          'error': t('Apple 人像模式研究报告无效', 'Invalid Apple Portrait research report'),
+          'error': t(
+            'Apple 人像模式研究报告无效',
+            'Invalid Apple Portrait research report',
+          ),
         };
       }
       return raw.map((key, value) => MapEntry(key.toString(), value));
@@ -267,6 +271,37 @@ class XdRemuxService {
     }
   }
 
+  static Future<Map<String, dynamic>> inspectHuawei(String inputPath) async {
+    try {
+      return XdRemuxFFI.inspectHuawei(inputPath);
+    } catch (error) {
+      // Older platform bundles may not have the new diagnostic symbol yet.
+      // Recognition is advisory, so never reject an otherwise supported file.
+      return <String, dynamic>{
+        'schema': 'xdremux-huawei-heic-v1',
+        'status': 'diagnostic-unavailable',
+        'isHuaweiHdr': false,
+        'applePhotosHdrCompatible': false,
+        'recommendedAction': 'inspect',
+        'error': error.toString(),
+      };
+    }
+  }
+
+  static Future<Map<String, dynamic>> remuxHuaweiPortrait(
+    String inputPath,
+    String outputPath,
+  ) async {
+    try {
+      return XdRemuxFFI.remuxHuaweiPortrait(inputPath, outputPath);
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'error': error.toString(),
+      };
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Capture-mode classification
   // -----------------------------------------------------------------------
@@ -361,24 +396,21 @@ class XdRemuxService {
 
   /// Generate a thumbnail PNG/JPEG data from a HEIC/JPG input file.
   ///
-  /// macOS/iOS/Android/Windows: native decode (ImageIO / Android ImageDecoder /
-  /// Windows WIC) of the full-resolution HEIC primary image, tone-mapped to
-  /// SDR, so the photo wall is crisp and full-colour. On Android/macOS the
-  /// Rust FFI fallback would scan for embedded JPEGs, which picks up the
-  /// grayscale gain map (black-and-white preview) or a corrupt fragment, so
-  /// the system decoder is preferred. On Windows, WIC decodes the primary
-  /// image for files that carry no EXIF thumbnail (older OPPO X6-series),
-  /// where the FFI fallback returned a broken JPEG fragment.
-  /// Other platforms (Linux): Rust FFI extracts the embedded EXIF JPEG
-  /// thumbnail.
+  /// macOS/iOS/Android/Windows/OHOS: native decode (ImageIO / Android
+  /// ImageDecoder / Windows WIC / Harmony ImageKit) of the full-resolution
+  /// HEIC primary image, so the photo wall is the picture itself. The Rust
+  /// Fallback renders primary SDR pixels in a background isolate, including
+  /// the opt-in libheif chroma decoder. Never display gain-map fragments.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
+    maxPixelSize = maxPixelSize.clamp(1, 2048);
     if (Platform.isMacOS ||
         Platform.isIOS ||
         Platform.isAndroid ||
-        Platform.isWindows) {
+        Platform.isWindows ||
+        PlatformX.isOhos) {
       try {
         const channel = MethodChannel('xdremux/thumbnail');
         final bytes = await channel.invokeMethod<Uint8List>('render', {
@@ -393,7 +425,8 @@ class XdRemuxService {
       // threw — fall through to the FFI embedded-thumbnail path.
     }
     try {
-      return XdRemuxFFI.extractThumbnail(inputPath);
+      final size = maxPixelSize;
+      return await Isolate.run(() => XdRemuxFFI.renderThumbnail(inputPath, maxPixelSize: size));
     } catch (e) {
       debugPrint('generateThumbnail FFI error: $e');
       return null;
@@ -405,11 +438,20 @@ class XdRemuxService {
   // -----------------------------------------------------------------------
 
   static final Map<String, Uint8List?> _thumbnailCache = {};
+  static int _thumbnailCacheBytes = 0;
+  static int _thumbnailEpoch = 0;
+  static const _thumbnailCacheByteLimit = 32 * 1024 * 1024;
 
   /// In-flight thumbnail generations, so concurrent requests for the same file
   /// (e.g. after dragging in many photos at once) share one decode instead of
   /// spawning N identical WIC decodes that contend on the platform channel.
   static final Map<String, Future<Uint8List?>> _thumbnailInFlight = {};
+
+  /// Queue tests must not depend on the host OS providing a native renderer.
+  /// Production leaves this null and uses the native/FFI pipeline as usual.
+  @visibleForTesting
+  static Future<Uint8List?> Function(String path, int maxPixelSize)?
+      thumbnailRendererForTesting;
 
   /// Throttle concurrent native decodes. Dragging in 20 HEICs fires 20
   /// `getThumbnail` calls at once; running them all concurrently makes the
@@ -430,8 +472,11 @@ class XdRemuxService {
     }
     final completer = Completer<Uint8List?>();
     _thumbnailQueue.add(() async {
-      final r = await _runThumbnailJob(job);
-      completer.complete(r);
+      try {
+        completer.complete(await _runThumbnailJob(job));
+      } catch (e, stack) {
+        completer.completeError(e, stack);
+      }
     });
     return completer.future;
   }
@@ -457,16 +502,33 @@ class XdRemuxService {
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
-    final key = '$inputPath@$maxPixelSize';
+    maxPixelSize = maxPixelSize.clamp(1, 2048);
+    var fingerprint = '';
+    try {
+      final stat = await File(inputPath).stat();
+      fingerprint = '${stat.size}:${stat.modified.microsecondsSinceEpoch}';
+    } catch (_) {}
+    final key = '$inputPath@$maxPixelSize@$fingerprint';
     if (_thumbnailCache.containsKey(key)) return _thumbnailCache[key];
     final inflight = _thumbnailInFlight[key];
     if (inflight != null) return inflight;
 
+    final epoch = _thumbnailEpoch;
+    final renderer = thumbnailRendererForTesting;
     final future =
         _scheduleThumbnail(
-          () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
+          () => renderer != null
+              ? renderer(inputPath, maxPixelSize)
+              : generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
         ).then((r) {
-          _thumbnailCache[key] = r;
+          if (r != null && epoch == _thumbnailEpoch && r.length <= _thumbnailCacheByteLimit) {
+            while (_thumbnailCache.isNotEmpty && (_thumbnailCache.length >= 128 ||
+                _thumbnailCacheBytes + r.length > _thumbnailCacheByteLimit)) {
+              _thumbnailCacheBytes -= _thumbnailCache.remove(_thumbnailCache.keys.first)?.length ?? 0;
+            }
+            _thumbnailCache[key] = r;
+            _thumbnailCacheBytes += r.length;
+          }
           _thumbnailInFlight.remove(key);
           return r;
         });
@@ -477,8 +539,9 @@ class XdRemuxService {
   /// Invalidate all cached thumbnails (e.g. after clearing queue).
   static void clearThumbnailCache() {
     _thumbnailCache.clear();
-    _thumbnailInFlight.clear();
-    _thumbnailQueue.clear();
+    _thumbnailCacheBytes = 0;
+    _thumbnailEpoch++;
+    // Let pending jobs complete: dropping queued jobs strands their Futures.
   }
 
   // -----------------------------------------------------------------------
@@ -513,10 +576,7 @@ class XdRemuxService {
         (e) => e.name == prefs.getString(_keyFamily),
         orElse: () => Family.auto,
       ),
-      backend: ConversionBackend.values.firstWhere(
-        (e) => e.name == prefs.getString(_keyBackend),
-        orElse: () => ConversionBackend.rust,
-      ),
+      backend: ConversionBackend.rust,
       outputMode: OutputMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyOutputMode),
         orElse: () => OutputMode.oppo,

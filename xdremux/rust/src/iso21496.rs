@@ -29,6 +29,7 @@ pub struct IsoMeta {
     pub base_rendition_is_hdr: bool,
     pub scale: f32,
     pub channel_count: usize,
+    pub use_base_color_space: bool,
 }
 
 /// Parsed OPPO UHDR 20-float info block.
@@ -117,7 +118,7 @@ pub fn build_iso_metadata_from_uhdr(floats: &[f32]) -> Result<IsoMeta, String> {
     let gain_map_min: Vec<f32> = info
         .ratio_min
         .iter()
-        .map(|&v| safe_log2(v).max(0.0))
+        .map(|&v| safe_log2(v))
         .collect();
     let gain_map_max: Vec<f32> = info.ratio_max.iter().map(|&v| safe_log2(v)).collect();
     let cap_min = safe_log2(info.display_ratio_sdr).max(0.0);
@@ -135,6 +136,7 @@ pub fn build_iso_metadata_from_uhdr(floats: &[f32]) -> Result<IsoMeta, String> {
         base_rendition_is_hdr: base_hdr,
         scale: info.scale,
         channel_count: 3,
+        use_base_color_space: true,
     })
 }
 
@@ -157,6 +159,7 @@ pub fn build_iso_metadata(edr_scale: f32) -> IsoMeta {
         base_rendition_is_hdr: false,
         scale: edr,
         channel_count: 1,
+        use_base_color_space: true,
     }
 }
 
@@ -378,7 +381,7 @@ fn _fixed_i32_zero_as_one(value: f32) -> i32 {
 pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
     let cap_min = meta.hdr_capacity_min.max(0.0);
     let cap_max = meta.hdr_capacity_max;
-    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0);
     let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
     let gamma = meta.gamma.first().copied().unwrap_or(1.0);
     let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
@@ -404,7 +407,8 @@ pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
 
     let mut out = Vec::with_capacity(62);
     // Header: 6 bytes
-    out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x40]);
+    out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00,
+        if meta.use_base_color_space { 0x40 } else { 0 }]);
     // 14 × i32be fixed-point values. Base/alternate offset use
     // zero_as_one — writing 1/100000 instead of 0/100000.
     for (i, v) in values.iter().enumerate() {
@@ -442,7 +446,7 @@ pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
 /// = 142 bytes
 /// ```
 pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
-    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0);
     let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
     let gamma = meta.gamma.first().copied().unwrap_or(1.0);
     let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
@@ -464,23 +468,24 @@ pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
     // Common header (21 bytes)
     append_u16be(0, &mut out); // minimum_version
     append_u16be(0, &mut out); // writer_version
-    out.push(0xC0); // flags: multichannel=1, use_base_colour_space=1
+    out.push(0x80 | if meta.use_base_color_space { 0x40 } else { 0 });
     append_u32be(fixed_u32(cap_min), &mut out); // base_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // base_hdr_headroom denominator
     append_u32be(fixed_u32(cap_max), &mut out); // alternate_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // alternate_hdr_headroom denominator
 
-    // 3 channels × 40 bytes (same values for all channels, matching 62B payload)
-    for _ in 0..3 {
-        append_i32be(fixed_i32(gain_min), &mut out);
+    // 3 channels × 40 bytes; retain imported per-channel metadata.
+    for c in 0..3 {
+        let channel = |v: &[f32], fallback| v.get(c).copied().unwrap_or(fallback);
+        append_i32be(fixed_i32(channel(&meta.gain_map_min, gain_min)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(gain_max), &mut out);
+        append_i32be(fixed_i32(channel(&meta.gain_map_max, gain_max)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_u32be(fixed_u32(gamma), &mut out);
+        append_u32be(fixed_u32(channel(&meta.gamma, gamma)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(base_num), &mut out);
+        append_i32be(fixed_i32(channel(&meta.offset_sdr, base_num)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(alt_num), &mut out);
+        append_i32be(fixed_i32(channel(&meta.offset_hdr, alt_num)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
     }
 
@@ -490,6 +495,16 @@ pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
         "ImageIO-native tmap payload must be exactly 142 bytes"
     );
     out
+}
+
+/// Keep the established 62-byte output for scalar metadata; do not discard
+/// distinct channel values when importing ISO JPEG metadata.
+pub fn make_clean_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
+    if channel_count_for_iso_meta(meta) == 3 {
+        make_imageio_native_tmap_payload(meta)
+    } else {
+        make_apple_tmap_payload(meta)
+    }
 }
 
 /// Convert a 62-byte Apple or 142-byte ImageIO tmap payload to ISO 21496-1
@@ -516,18 +531,12 @@ pub fn make_strict_tmap_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
 // Strict ISO 21496-1 GainMapMetadata (C.2.2)
 // ---------------------------------------------------------------------------
 
-/// Detect the channel count from a per-channel metadata block, mirroring
-/// Python's `_iso_channel_count` helper in `isobmff_patch.py`.
-///
-/// Returns 3 if any of the channel-valued fields has at least 3 values that
-/// differ by more than a small tolerance. Returns 1 otherwise. The two values
-/// in a 2-element list never trigger multichannel — only 3 differing values do.
+/// Returns 3 if any channel-valued field has 3 values and at least one
+/// differs from the first. A 2-element list never triggers multichannel.
 fn channel_count_for_iso_meta(meta: &IsoMeta) -> usize {
     let check = |v: &[f32]| {
         v.len() >= 3
-            && (v[0] - v[1]).abs() > 1e-6
-            && (v[0] - v[2]).abs() > 1e-6
-            && (v[1] - v[2]).abs() > 1e-6
+            && ((v[0] - v[1]).abs() > 1e-6 || (v[0] - v[2]).abs() > 1e-6)
     };
     if check(&meta.gain_map_min)
         || check(&meta.gain_map_max)
@@ -566,7 +575,7 @@ pub fn make_iso21496_metadata_payload(meta: &IsoMeta) -> Vec<u8> {
 
     let channel_count = channel_count_for_iso_meta(meta);
     let is_multichannel = channel_count == 3;
-    let use_base_color_space = true; // matches Python default
+    let use_base_color_space = meta.use_base_color_space;
     let flags: u8 =
         (if is_multichannel { 0x80 } else { 0 }) | (if use_base_color_space { 0x40 } else { 0 });
 
@@ -874,6 +883,26 @@ mod tests {
             144,
             "multichannel ISO 21496-1 must be 144 bytes"
         );
+    }
+
+    #[test]
+    fn imported_metadata_preserves_color_space_and_partially_distinct_channels() {
+        let mut meta = build_iso_metadata(8.0);
+        meta.gain_map_max = vec![1.0, 1.0, 3.0];
+        meta.gain_map_min = vec![-1.0; 3];
+        meta.use_base_color_space = false;
+        let clean = make_clean_tmap_payload(&meta);
+        assert_eq!(clean.len(), 142);
+        assert_eq!(clean[5], 0x80);
+        let value = |offset| i32::from_be_bytes(clean[offset..offset + 4].try_into().unwrap());
+        assert_eq!(value(22), -100000);
+        assert_eq!(value(30), 100000);
+        assert_eq!(value(110), 300000);
+        let iso = make_iso21496_metadata_payload(&meta);
+        assert_eq!(iso.len(), 144);
+        assert_eq!(iso[4], 0x80);
+        meta.gain_map_max = vec![3.0; 3];
+        assert_eq!(make_clean_tmap_payload(&meta)[5], 0);
     }
 
     #[test]
