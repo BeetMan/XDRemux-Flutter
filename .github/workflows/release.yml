@@ -20,6 +20,7 @@ permissions:
 env:
   X265_TAG: 4.2
   ANDROID_NDK_VERSION: 28.2.13676358
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
 
 jobs:
   windows:
@@ -112,7 +113,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # path_provider_android brings the jni FFI package into Flutter's
       # generated Windows plugin list, but Windows does not ship a JVM.
@@ -245,7 +246,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # path_provider_android brings the jni FFI package into Flutter's
       # generated Windows plugin list, but Windows does not ship a JVM.
@@ -452,7 +453,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Configure Android release signing
         shell: bash
@@ -555,7 +556,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build macOS app
         working-directory: apps/flutter
@@ -657,7 +658,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build unsigned archive
         working-directory: apps/flutter
