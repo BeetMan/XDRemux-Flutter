@@ -119,6 +119,7 @@ tools/research/*
 !tools/research/uhdr-control-metadata.cfg
 
 # Recreatable
+**/.fvm/
 final-output/
 .venv/
 

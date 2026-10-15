@@ -20,11 +20,16 @@ Copy-Item -LiteralPath (Join-Path $taskRelease 'data') -Destination $taskBundle 
 Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination $taskBundle
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows-test-README.md') -Destination (Join-Path $taskBundle 'TEST-BUILD-README.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/testing/windows-codec-test-02.md') -Destination (Join-Path $taskBundle 'TEST-CHECKLIST.md')
+$taskCandidateNotes = Join-Path $taskRoot 'docs/plans/release-candidate-044.md'
+if (Test-Path -LiteralPath $taskCandidateNotes) {
+    Copy-Item -LiteralPath $taskCandidateNotes -Destination (Join-Path $taskBundle 'CANDIDATE-NOTES.md')
+}
 $taskSourceInfo = Join-Path $taskBundle 'source-info'
 $null = New-Item -ItemType Directory -Path $taskSourceInfo
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'build-libheif.ps1') -Destination $taskSourceInfo
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination $taskSourceInfo
 $taskSourcePaths = @(
+    'apps/flutter/.fvmrc',
     'xdremux/rust/src/lib.rs', 'xdremux/rust/src/preview.rs', 'xdremux/rust/src/codec_capabilities.rs',
     'xdremux/rust/src/apple_note_payload.rs', 'xdremux/rust/src/styles_scaffold.rs',
     'xdremux/rust/src/libheif_helper.cpp', 'apps/flutter/lib/main.dart',
@@ -44,6 +49,7 @@ $taskFiles = @(Get-ChildItem -LiteralPath $taskBundle -Recurse -File | Sort-Obje
 })
 $taskManifest = [ordered]@{
     package = $Name; appVersion = '0.4.3+37'; coreVersion = '0.4.3'
+    flutterVersion = (Get-Content -LiteralPath (Join-Path $taskRoot 'apps/flutter/.fvmrc') -Raw | ConvertFrom-Json).flutter
     branch = (& git -C $taskRoot branch --show-current)
     baseCommit = (& git -C $taskRoot rev-parse HEAD)
     sourceWorktreeDirty = $true; officialRelease = $false

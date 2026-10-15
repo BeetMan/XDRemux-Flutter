@@ -76,7 +76,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           cache: true
 
       - name: Resolve release version
@@ -155,7 +155,7 @@ jobs:
   windows-arm64:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Windows ARM64 installer (experimental)
-    # Flutter 3.44.5 currently emits an x64 Windows runner even on the
+    # Flutter can emit an x64 Windows runner even on the
     # windows-11-arm host, so do not block the public release on this job.
     continue-on-error: true
     runs-on: windows-11-arm
@@ -212,7 +212,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           # The Windows Flutter SDK is x64-only and runs emulated on this
           # runner, but `flutter build windows` produces a native ARM64 app.
           architecture: x64
@@ -398,7 +398,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           cache: true
 
       - name: Resolve release version
@@ -535,7 +535,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
 
       - name: Resolve release version
         shell: bash
@@ -640,7 +640,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
 
       - name: Resolve release version
         shell: bash

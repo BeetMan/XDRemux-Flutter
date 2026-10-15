@@ -1,9 +1,12 @@
 # XDRemux Windows libheif test build
 
-Local Windows x64 portable test build 02, based on 0.4.3+37. Not an official release.
+Local Windows x64 portable test build, based on 0.4.3+37. Not an official release.
 Extract the entire ZIP into a new directory, then run `xdremux.exe`.
 Do not copy only the EXE or replace DLLs inside an existing installation.
 No development PATH or Python installation is required to run this app.
+
+For the Flutter 3.47.7 integrated candidate, see `CANDIDATE-NOTES.md` for
+the exact scope, validation status, and Live Photo/UI acceptance checklist.
 
 Enabled: pure-Rust Apple / ISO gain-map JPEG metadata compatibility, and opt-in
 libheif SDR HEIC fallback for unsupported 4:2:2 / 4:4:4 inputs (8/10/12-bit controls

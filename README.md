@@ -156,6 +156,8 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 ## 开发与技术文档
 
+当前主线常规 Flutter 构建固定 **Flutter 3.47.7 / Dart 3.13.5**，与 CI 一致；版本记录在 `apps/flutter/.fvmrc`。鸿蒙 Flutter 仍使用独立适配 SDK，不直接替换为官方 SDK。国内开发沿用 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`。
+
 产品说明与工程细节分开维护，构建和研究资料请从以下入口查阅：
 
 - [技术文档索引](docs/README.md)：架构、后端、FFI、照片格式与模块说明。
