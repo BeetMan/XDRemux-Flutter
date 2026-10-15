@@ -562,15 +562,21 @@ jobs:
         working-directory: apps/flutter
         run: flutter build macos --release
 
-      - name: Verify Rust dylib is bundled
+      - name: Verify Rust dylib is bundled and the app is sealed
         shell: bash
         run: |
+          set -euo pipefail
           APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
-          if [ ! -f "$APP/Contents/Frameworks/libxdremux_core.dylib" ]; then
-            echo "dylib missing from bundle; copying explicitly"
-            mkdir -p "$APP/Contents/Frameworks"
-            cp -f target/release/libxdremux_core.dylib "$APP/Contents/Frameworks/"
-          fi
+          DY="$APP/Contents/Frameworks/libxdremux_core.dylib"
+          # The Runner target's "Bundle Framework" copy phase must produce this;
+          # a missing dylib means the build silently produced an app that cannot
+          # load the Rust core. Fail here instead of patching it up afterwards.
+          test -f "$DY" || { echo "Rust dylib missing from the bundle" >&2; exit 1; }
+          test -x "$DY" || { echo "Rust dylib is not executable" >&2; exit 1; }
+          # The copy phase runs before CodeSign, so both the dylib and the app
+          # seal must be intact. A post-build copy would break the seal.
+          codesign -v --deep --strict "$APP"
+          echo "dylib bundled and app seal valid"
 
       - name: Package DMG
         shell: bash

@@ -4,9 +4,11 @@
 
 ## 1. macOS
 
-- **Rust dylib 打包**：`copy_dylib.sh` 由 Podfile post_install 自动调用，把 `target/release/libxdremux_core.dylib` 复制进 app 的 Frameworks/。脚本会**优先取更新的宿主构建**，防止 Flutter 重建时静默打包过期 FFI（历史 bug：打包过期 dylib，提交 `e95d88c`/`71bd443`）
-- `deploy_macos.sh`：flutter build macos + dylib 复制 + 整包拷到仓库根 `xdremux.app`
-- DMG 分发：本地构建；CI 尚未纳入 macOS 产物（待办）
+- **Rust dylib 打包**：Runner target 的 `Bundle Framework` 拷贝阶段（`dstSubfolderSpec = 10`，即 `Contents/Frameworks`）直接引用 `target/release/libxdremux_core.dylib`，并带 `CodeSignOnCopy`。所以 `flutter build macos` 产出的就是完整且签名有效的 app，**不需要任何构建后的补救步骤**。拷贝阶段在 Xcode 的 CodeSign 之前执行，dylib 既被签名也被计入封印。
+  - 该阶段引用的是 cargo 的构建产物本身（单一来源），因此不存在「打包过期 dylib」的可能（历史 bug：`e95d88c`/`71bd443`）。
+  - 先跑 `cargo build --release -p xdremux-core`：dylib 缺失时**构建期报错**，而不是产出一个加载不了 Rust core 的 app。
+- `deploy_macos.sh`：flutter build macos + 整包拷到仓库根 `xdremux.app`
+- DMG 分发：本地构建；CI 另跑 `flutter build macos --release` 并**断言** dylib 已在包内
 - FFI 加载：多级回退（rpath 裸名 -> 可执行文件旁 -> Frameworks），见 `architecture/ffi-contract.md`
 - Swift 后端 `XDremuxMacBackend`：研究路径（写回桥/水印尾部桥/人像标定），默认不调用
 

@@ -29,7 +29,8 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 ```bash
 cd apps/flutter
 flutter build windows        # x64 安装包前体
-flutter build macos          # + copy_dylib.sh 自动进 Podfile post_install
+flutter build macos          # 需先跑上面的 cargo build：dylib 由 Runner 的
+                             # Bundle Framework 阶段随构建打包并签名
 flutter build apk --release  # Android（需先 cargo ndk 更新 jniLibs）
 ```
 
