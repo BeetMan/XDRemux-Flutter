@@ -75,38 +75,59 @@ class FileActionService {
   /// Share a file via the system share sheet (ACTION_SEND on Android).
   static Future<void> shareFile(String filePath) async {
     try {
-      if (!File(filePath).existsSync()) return;
-      if (Platform.isIOS) {
-        await _nativeShareChannel.invokeMethod<void>('shareFile', {
-          'path': filePath,
-        });
-        return;
-      }
-      final lower = filePath.toLowerCase();
-      final isHeic = lower.endsWith('.heic') || lower.endsWith('.heif');
-      final xFile = XFile(
-        filePath,
-        mimeType: isHeic
-            ? (lower.endsWith('.heif') ? 'image/heif' : 'image/heic')
-            : null,
-      );
-      if (_isOhos) {
-        // An image share goes through Harmony's compatible-format path and
-        // rewrites HEIC, dropping portrait auxiliary images. Send the sandbox
-        // file as general.file instead.
-        await const MethodChannel('xdremux/share').invokeMethod<void>(
-          'shareFile',
-          {'path': filePath},
-        );
-        return;
-      }
-      // Share.shareXFiles exists on both share_plus v10 (OHOS variant) and
-      // v13 (mainline); SharePlus.instance is v11+ only.
-      // ignore: deprecated_member_use
-      await Share.shareXFiles([xFile]);
+      await shareFiles([filePath]);
     } catch (e) {
       debugPrint('shareFile error: $e');
     }
+  }
+
+  /// Strict multi-file export for Live Photo originals. Errors must reach the
+  /// caller instead of silently sharing only the still image.
+  static Future<void> shareFiles(
+    List<String> paths, {
+    bool asOriginalFiles = false,
+  }) async {
+    if (paths.isEmpty) throw ArgumentError('No files to share');
+    for (final path in paths) {
+      if (!await File(path).exists()) {
+        throw FileSystemException('Missing share resource', path);
+      }
+    }
+    if (Platform.isIOS) {
+      final ok = await _nativeShareChannel.invokeMethod<bool>(
+        paths.length == 1 ? 'shareFile' : 'shareFiles',
+        paths.length == 1 ? {'path': paths.single} : {'paths': paths},
+      );
+      if (ok != true) throw StateError('Could not present file sharing');
+      return;
+    }
+    if (_isOhos) {
+      if (paths.length != 1) {
+        throw UnsupportedError(
+          'Paired file sharing is not implemented on this platform',
+        );
+      }
+      await const MethodChannel(
+        'xdremux/share',
+      ).invokeMethod<void>('shareFile', {'path': paths.single});
+      return;
+    }
+    final files = paths.map((path) {
+      final lower = path.toLowerCase();
+      return XFile(
+        path,
+        mimeType: asOriginalFiles
+            ? 'application/octet-stream'
+            : lower.endsWith('.heif')
+            ? 'image/heif'
+            : lower.endsWith('.heic')
+            ? 'image/heic'
+            : null,
+      );
+    }).toList();
+    // Shared API supported by both mainline v13 and the OHOS v10 fork.
+    // ignore: deprecated_member_use
+    await Share.shareXFiles(files);
   }
 
   /// Save to a user-selected location on desktop, or to the system photo
@@ -122,8 +143,8 @@ class FileActionService {
         return saved ? filePath : null;
       }
       // file_picker v12: saveFile takes the bytes and writes them itself.
-      var fileName = suggestedName ??
-          filePath.split(Platform.pathSeparator).last;
+      var fileName =
+          suggestedName ?? filePath.split(Platform.pathSeparator).last;
       if (!fileName.toLowerCase().endsWith('.heic') &&
           !fileName.toLowerCase().endsWith('.heif')) {
         fileName = '$fileName.heic';
@@ -135,7 +156,9 @@ class FileActionService {
         mimeType: 'image/heic',
       );
       if (destUri == null) return null;
-      return destUri.scheme == 'file' ? destUri.toFilePath() : destUri.toString();
+      return destUri.scheme == 'file'
+          ? destUri.toFilePath()
+          : destUri.toString();
     } catch (e) {
       debugPrint('saveFile error: $e');
       return null;

@@ -26,6 +26,7 @@ import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
+import 'services/output_export_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
 import 'services/huawei_photo_policy.dart';
@@ -35,6 +36,8 @@ import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
+import 'widgets/codec_diagnostics_tile.dart';
+import 'services/codec_diagnostics.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -242,6 +245,8 @@ class _HomePageState extends State<HomePage> {
   BackendCapabilities _backendCapabilities =
       BackendCapabilities.forCurrentPlatform();
   Timer? _configSaveTimer;
+  final _outputExports = OutputExportService();
+  bool _savingGallery = false;
   Checkpoint? _checkpoint;
 
   /// Android: app-specific external directory for output (scoped storage).
@@ -2284,21 +2289,17 @@ class _HomePageState extends State<HomePage> {
     if ((Platform.isAndroid || Platform.isIOS) &&
         _config.autoSaveToGallery &&
         _convertedCount > 0) {
-      _saveAllConvertedToGallery().then((result) {
-        if (result == null) return;
-        final (saved, failed) = result;
-        if (failed > 0) {
-          debugPrint(
-            '[XDRemux][gallery] auto-save: $saved saved, $failed failed',
-          );
-        }
-      });
+      // Auto-save must surface incomplete pairs just like a manual save.
+      unawaited(_saveAllToGallery());
     }
 
     if (Platform.isWindows) TrayService.setToolTip('XDRemux');
   }
 
   String _backendError(ConversionBackend backend, String message) {
+    if (backend == ConversionBackend.rust) {
+      return CodecDiagnostics.describe(message, english: uiLanguage == AppLanguage.english);
+    }
     if (backend == ConversionBackend.swift &&
         !message.startsWith(t('Swift 后端', 'Swift backend'))) {
       return t('Swift 后端：$message', 'Swift backend: $message');
@@ -2648,51 +2649,36 @@ class _HomePageState extends State<HomePage> {
   /// Android: batch-save all converted outputs to the gallery.
   /// Uses per-item albums (capture mode folder) when categorize is on.
   Future<void> _saveAllToGallery() async {
-    final result = await _saveAllConvertedToGallery(showDeniedHint: true);
+    final result = await _saveAllConvertedToGallery();
     if (result == null || !mounted) return;
-    final (saved, failed) = result;
-    final msg = failed > 0
-        ? t('已保存 $saved 个到相册，$failed 个失败', 'Saved $saved to gallery, $failed failed')
-        : t('已保存 $saved 个到相册', 'Saved $saved to gallery');
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
-  /// Core of the gallery batch-save. Returns (saved, failed), or null when
-  /// there was nothing to save or gallery permission was denied.
-  Future<(int, int)?> _saveAllConvertedToGallery({
-    bool showDeniedHint = false,
-  }) async {
+  /// Every entry uses the bundle-aware save path, including auto-save.
+  Future<GalleryExportBatchResult?> _saveAllConvertedToGallery() async {
+    if (_savingGallery) return null;
     final items = _queue
         .where((item) => item.status == QueueItemStatus.converted)
         .toList();
     if (items.isEmpty) return null;
 
-    final hasAccess = await FileActionService.hasGalleryPermission();
-    if (!hasAccess) {
-      final granted = await FileActionService.requestGalleryPermission();
-      if (!granted) {
-        if (showDeniedHint && mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
-        }
-        return null;
-      }
+    _savingGallery = true;
+    try {
+      return await _outputExports.saveBatch(items, albumFor: _galleryAlbum);
+    } finally {
+      _savingGallery = false;
     }
+  }
 
-    int saved = 0, failed = 0;
-    for (final item in items) {
-      final ok = await FileActionService.saveToGallery(
-        item.outputPath,
-        album: _galleryAlbum(item),
-      );
-      if (ok) {
-        saved++;
-      } else {
-        failed++;
-      }
+  Future<void> _saveOutputToGallery(QueueItem item) async {
+    if (_savingGallery) return;
+    _savingGallery = true;
+    try {
+      final result = await _outputExports.save(item, album: _galleryAlbum(item));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+    } finally {
+      _savingGallery = false;
     }
-    return (saved, failed);
   }
 
   /// Gallery album for an output item: capture-mode folder name when
@@ -2707,6 +2693,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _galleryAlbumSubtitle(QueueItem item) {
+    if (hasLivePhotoOutput(item)) {
+      return Platform.isIOS
+          ? t('作为一个完整 Live Photo 保存到系统照片库', 'Save one complete Live Photo to the system photo library')
+          : t('保存 HEIF + MOV 两个独立文件；传输时请保留配对原件', 'Save separate HEIF + MOV files; transfer both originals');
+    }
     final album = _galleryAlbum(item) ?? 'XDRemux';
     if (Platform.isIOS) return t('相册「$album」', 'Album "$album"');
     // gal/MediaStore places image albums under Pictures/, not DCIM/.
@@ -2728,14 +2719,18 @@ class _HomePageState extends State<HomePage> {
               if (Platform.isAndroid || Platform.isIOS)
                 ListTile(
                   leading: const Icon(Icons.photo_library),
-                  title: Text(t('保存到相册', 'Save to gallery')),
+                  title: Text(hasLivePhotoOutput(item)
+                      ? (Platform.isIOS ? t('保存 Live Photo', 'Save Live Photo') : t('保存 HEIF + MOV', 'Save HEIF + MOV'))
+                      : t('保存到相册', 'Save to gallery')),
                   subtitle: Text(_galleryAlbumSubtitle(item)),
                   onTap: () => Navigator.pop(ctx, _OutputAction.save),
                 ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: Text(t('分享', 'Share')),
-                subtitle: PlatformX.isOhos
+                title: Text(hasLivePhotoOutput(item) ? t('分享配对原文件', 'Share paired originals') : t('分享', 'Share')),
+                subtitle: hasLivePhotoOutput(item)
+                    ? Text(t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
+                    : PlatformX.isOhos
                     ? Text(t('以文件发送原件', 'Send the original as a file'))
                     : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
@@ -2781,29 +2776,13 @@ class _HomePageState extends State<HomePage> {
       case _OutputAction.details:
         _showPhotoDetails(item);
       case _OutputAction.save:
-        final hasAccess = await FileActionService.hasGalleryPermission();
-        if (!hasAccess) {
-          final granted = await FileActionService.requestGalleryPermission();
-          if (!granted) {
-            if (mounted) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
-            }
-            return;
-          }
-        }
-        final ok = await FileActionService.saveToGallery(
-          item.outputPath,
-          album: _galleryAlbum(item),
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(ok ? t('已保存到相册', 'Saved to gallery') : t('保存失败', 'Save failed'))));
-        }
+        await _saveOutputToGallery(item);
       case _OutputAction.share:
-        await FileActionService.shareFile(item.outputPath);
+        try {
+          await _outputExports.share(item);
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('分享失败：$e', 'Share failed: $e'))));
+        }
       case _OutputAction.open:
         await FileActionService.openFile(item.outputPath);
       case _OutputAction.reconvert:
@@ -3025,31 +3004,35 @@ class _HomePageState extends State<HomePage> {
       ),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        child: Row(
-          children: [
-            IconButton.filledTonal(
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              tooltip: t('添加文件', 'Add files'),
-              onPressed: _canEditQueue ? _addFiles : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FilledButton.icon(
-                icon: Icon(primaryIcon),
-                label: Text(primaryLabel),
-                onPressed: primaryAction,
-              ),
-            ),
-            if (showSaveAll) ...[
-              const SizedBox(width: 12),
+        // SafeArea.minimum takes max(inset, minimum), not their sum.
+        // Keep the button's own spacing inside the system-safe region.
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: Row(
+            children: [
               IconButton.filledTonal(
-                icon: const Icon(Icons.photo_library_outlined),
-                tooltip: t('全部保存到相册', 'Save all to gallery'),
-                onPressed: _saveAllToGallery,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                tooltip: t('添加文件', 'Add files'),
+                onPressed: _canEditQueue ? _addFiles : null,
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  icon: Icon(primaryIcon),
+                  label: Text(primaryLabel),
+                  onPressed: primaryAction,
+                ),
+              ),
+              if (showSaveAll) ...[
+                const SizedBox(width: 12),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.photo_library_outlined),
+                  tooltip: t('全部保存到相册', 'Save all to gallery'),
+                  onPressed: _saveAllToGallery,
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -3409,7 +3392,7 @@ class _HomePageState extends State<HomePage> {
 
         final itemIndex = index - 1;
         final item = _queue[itemIndex];
-        return _MobileQueueCard(
+        return MobileQueueCard(
           item: item,
           isSelected: itemIndex == _selectedIndex,
           onTap: () {
@@ -3508,7 +3491,7 @@ class _HomePageState extends State<HomePage> {
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          child: _PhotoDetailsContent(
+          child: PhotoDetailsContent(
             item: item,
             details: details,
             fileSizeMb: fileSizeMb,
@@ -3525,7 +3508,7 @@ class _HomePageState extends State<HomePage> {
           ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 580, maxHeight: 720),
-            child: _PhotoDetailsContent(
+            child: PhotoDetailsContent(
               item: item,
               details: details,
               fileSizeMb: fileSizeMb,
@@ -4876,6 +4859,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ],
 
                     // Cache management (Android / iOS)
+                    const Divider(),
+                    CodecDiagnosticsTile(english: _cfg.language == AppLanguage.english),
+
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       const Divider(),
                       const SizedBox(height: 8),
@@ -5094,7 +5080,9 @@ class _FeatureChip extends StatelessWidget {
   }
 }
 
-class _MobileQueueCard extends StatelessWidget {
+/// Responsive queue item, public so layout regressions can be exercised with
+/// populated motion-photo data rather than only an empty home page.
+class MobileQueueCard extends StatelessWidget {
   final QueueItem item;
   final bool isSelected;
   final VoidCallback onTap;
@@ -5102,7 +5090,8 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
 
-  const _MobileQueueCard({
+  const MobileQueueCard({
+    super.key,
     required this.item,
     required this.isSelected,
     required this.onTap,
@@ -5189,19 +5178,19 @@ class _MobileQueueCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Expanded(
-                            child: Text(
-                              item.fileName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
+                          Text(
+                            item.fileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(width: 8),
                           _MobileStatusPill(
                             label: item.status.displayName,
                             color: statusColor,
@@ -5246,7 +5235,10 @@ class _MobileQueueCard extends StatelessWidget {
                           item.status != QueueItemStatus.running)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Row(
+                          child: Wrap(
+                            spacing: 10,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(
                                 item.motionPhoto!.resolutionLabel.isNotEmpty
@@ -5256,7 +5248,6 @@ class _MobileQueueCard extends StatelessWidget {
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
                               ),
-                              const SizedBox(width: 10),
                               _MotionModeMenu(
                                 value: item.motionPhotoMode,
                                 onChanged: onMotionModeChanged,
@@ -5401,12 +5392,21 @@ class _MotionModeMenu extends StatelessWidget {
           .map(
             (mode) => PopupMenuItem<MotionPhotoMode>(
               value: mode,
-              child: Text(mode.displayName),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(mode.displayName),
+                  if (mode == MotionPhotoMode.stillAndVideo)
+                    Text(t('仅提取视频，不生成 Apple 配对 ID', 'Extracts video only; no Apple pairing ID'),
+                        style: theme.textTheme.bodySmall),
+                ],
+              ),
             ),
           )
           .toList(),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        constraints: const BoxConstraints(minHeight: 36),
         decoration: BoxDecoration(
           color: theme.colorScheme.tertiary.withAlpha(24),
           borderRadius: BorderRadius.circular(6),
@@ -5415,11 +5415,23 @@ class _MotionModeMenu extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              value.displayName,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.tertiary,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              // Size against every option, but paint/expose only the selected
+              // one. Otherwise short labels can move this control between Wrap
+              // runs or remove a text line, shifting the card and queue below.
+              child: IndexedStack(
+                index: MotionPhotoMode.values.indexOf(value),
+                alignment: AlignmentDirectional.centerStart,
+                children: [
+                  for (final mode in MotionPhotoMode.values)
+                    Text(
+                      mode.displayName,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.tertiary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(width: 2),
@@ -6022,13 +6034,14 @@ class _ResumeCheckpointDialog extends StatelessWidget {
   }
 }
 
-class _PhotoDetailsContent extends StatelessWidget {
+class PhotoDetailsContent extends StatelessWidget {
   final QueueItem item;
   final PhotoDetailsModel details;
   final String fileSizeMb;
   final bool isBottomSheet;
 
-  const _PhotoDetailsContent({
+  const PhotoDetailsContent({
+    super.key,
     required this.item,
     required this.details,
     required this.fileSizeMb,
@@ -6235,22 +6248,29 @@ class _PhotoDetailsContent extends StatelessWidget {
         ),
         const Divider(height: 1),
         // Footer buttons
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton.icon(
-                icon: const Icon(Icons.copy, size: 16),
-                label: Text(t('复制全部信息', 'Copy Details')),
-                onPressed: () => _copyDetailsToClipboard(context),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(t('关闭', 'Close')),
-              ),
-            ],
+        // ModalBottomSheet.useSafeArea deliberately excludes the bottom.
+        SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          bottom: isBottomSheet,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: Text(t('复制全部信息', 'Copy Details')),
+                  onPressed: () => _copyDetailsToClipboard(context),
+                ),
+                const SizedBox(width: 10),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(t('关闭', 'Close')),
+                ),
+              ],
+            ),
           ),
         ),
       ],

@@ -399,14 +399,13 @@ class XdRemuxService {
   /// macOS/iOS/Android/Windows/OHOS: native decode (ImageIO / Android
   /// ImageDecoder / Windows WIC / Harmony ImageKit) of the full-resolution
   /// HEIC primary image, so the photo wall is the picture itself. The Rust
-  /// FFI fallback scans for embedded JPEGs, which picks up the grayscale
-  /// gain map (black-and-white preview) or a corrupt fragment.
-  /// Other platforms (Linux): Rust FFI extracts the embedded EXIF JPEG
-  /// thumbnail.
+  /// Fallback renders primary SDR pixels in a background isolate, including
+  /// the opt-in libheif chroma decoder. Never display gain-map fragments.
   static Future<Uint8List?> generateThumbnail(
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
+    maxPixelSize = maxPixelSize.clamp(1, 2048);
     if (Platform.isMacOS ||
         Platform.isIOS ||
         Platform.isAndroid ||
@@ -426,7 +425,8 @@ class XdRemuxService {
       // threw — fall through to the FFI embedded-thumbnail path.
     }
     try {
-      return XdRemuxFFI.extractThumbnail(inputPath);
+      final size = maxPixelSize;
+      return await Isolate.run(() => XdRemuxFFI.renderThumbnail(inputPath, maxPixelSize: size));
     } catch (e) {
       debugPrint('generateThumbnail FFI error: $e');
       return null;
@@ -438,6 +438,9 @@ class XdRemuxService {
   // -----------------------------------------------------------------------
 
   static final Map<String, Uint8List?> _thumbnailCache = {};
+  static int _thumbnailCacheBytes = 0;
+  static int _thumbnailEpoch = 0;
+  static const _thumbnailCacheByteLimit = 32 * 1024 * 1024;
 
   /// In-flight thumbnail generations, so concurrent requests for the same file
   /// (e.g. after dragging in many photos at once) share one decode instead of
@@ -463,8 +466,11 @@ class XdRemuxService {
     }
     final completer = Completer<Uint8List?>();
     _thumbnailQueue.add(() async {
-      final r = await _runThumbnailJob(job);
-      completer.complete(r);
+      try {
+        completer.complete(await _runThumbnailJob(job));
+      } catch (e, stack) {
+        completer.completeError(e, stack);
+      }
     });
     return completer.future;
   }
@@ -490,16 +496,30 @@ class XdRemuxService {
     String inputPath, {
     int maxPixelSize = 320,
   }) async {
-    final key = '$inputPath@$maxPixelSize';
+    maxPixelSize = maxPixelSize.clamp(1, 2048);
+    var fingerprint = '';
+    try {
+      final stat = await File(inputPath).stat();
+      fingerprint = '${stat.size}:${stat.modified.microsecondsSinceEpoch}';
+    } catch (_) {}
+    final key = '$inputPath@$maxPixelSize@$fingerprint';
     if (_thumbnailCache.containsKey(key)) return _thumbnailCache[key];
     final inflight = _thumbnailInFlight[key];
     if (inflight != null) return inflight;
 
+    final epoch = _thumbnailEpoch;
     final future =
         _scheduleThumbnail(
           () => generateThumbnail(inputPath, maxPixelSize: maxPixelSize),
         ).then((r) {
-          _thumbnailCache[key] = r;
+          if (r != null && epoch == _thumbnailEpoch && r.length <= _thumbnailCacheByteLimit) {
+            while (_thumbnailCache.isNotEmpty && (_thumbnailCache.length >= 128 ||
+                _thumbnailCacheBytes + r.length > _thumbnailCacheByteLimit)) {
+              _thumbnailCacheBytes -= _thumbnailCache.remove(_thumbnailCache.keys.first)?.length ?? 0;
+            }
+            _thumbnailCache[key] = r;
+            _thumbnailCacheBytes += r.length;
+          }
           _thumbnailInFlight.remove(key);
           return r;
         });
@@ -510,8 +530,9 @@ class XdRemuxService {
   /// Invalidate all cached thumbnails (e.g. after clearing queue).
   static void clearThumbnailCache() {
     _thumbnailCache.clear();
-    _thumbnailInFlight.clear();
-    _thumbnailQueue.clear();
+    _thumbnailCacheBytes = 0;
+    _thumbnailEpoch++;
+    // Let pending jobs complete: dropping queued jobs strands their Futures.
   }
 
   // -----------------------------------------------------------------------

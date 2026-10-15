@@ -698,6 +698,7 @@ fn make_oppo_native_tmap(
         base_rendition_is_hdr: false,
         scale: value(2).max(1.0),
         channel_count: 3,
+        use_base_color_space: payload[5] & 0x40 != 0,
     };
     Ok(Some(crate::iso21496::make_imageio_native_tmap_payload(&meta)))
 }

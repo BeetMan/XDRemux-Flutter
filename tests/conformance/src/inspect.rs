@@ -166,6 +166,7 @@ fn compute_metrics(
                         base_rendition_is_hdr: false,
                         scale,
                         channel_count: 3,
+                        use_base_color_space: e.gainmap_use_base_color_space,
                     })
                 }
             } else {

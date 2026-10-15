@@ -372,6 +372,19 @@ class XdRemuxFFI {
       void Function(int, int, int)>('xdremux_progress_report');
 
   /// Returns the Rust core version string (e.g. "0.1.1").
+  static Map<String, dynamic> codecCapabilities() {
+    final read = _lib.lookupFunction<ffi.Pointer<Utf8> Function(),
+        ffi.Pointer<Utf8> Function()>('xdremux_codec_capabilities');
+    final result = read();
+    if (result == ffi.nullptr) throw StateError('Empty capability report');
+    try {
+      return Map<String, dynamic>.from(jsonDecode(result.toDartString()) as Map);
+    } finally {
+      _freeString(result);
+    }
+  }
+
+  /// Returns the Rust core version string.
   static String version() {
     final ptr = _version();
     try {
@@ -910,6 +923,25 @@ class XdRemuxFFI {
   // -------------------------------------------------------------------------
   // Hardware-encoding split: prepare → Dart/MediaCodec encodes tiles → assemble
   // -------------------------------------------------------------------------
+
+  /// Primary SDR preview; missing additive API is handled by the service.
+  static Uint8List? renderThumbnail(String inputPath, {int maxPixelSize = 320}) {
+    final render = _lib.lookupFunction<
+        ThumbnailResult Function(ffi.Pointer<Utf8>, ffi.Uint32),
+        ThumbnailResult Function(ffi.Pointer<Utf8>, int)>('xdremux_render_thumbnail');
+    final path = inputPath.toNativeUtf8();
+    try {
+      final result = render(path, maxPixelSize.clamp(1, 2048));
+      try {
+        if (!result.success || result.data == ffi.nullptr || result.len == 0) return null;
+        return Uint8List.fromList(result.data.asTypedList(result.len));
+      } finally {
+        _freeThumbnail(result);
+      }
+    } finally {
+      calloc.free(path);
+    }
+  }
 
   /// Parse a HEIC, reconstruct the gain map, and pack each 512×512 tile as
   /// YUV420 (I420) into one contiguous buffer (Y,U,V per tile). Returns the

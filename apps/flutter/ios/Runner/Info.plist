@@ -36,7 +36,7 @@
 		<string>com.pravera.flutter_foreground_task.refresh</string>
 	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>保存转换后的 HDR 照片到相册</string>
+	<string>保存转换后的 HDR 照片和完整 Live Photo 到相册</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>读取相册中的 HEIC 照片进行 HDR 转换</string>
 	<key>CFBundleShortVersionString</key>

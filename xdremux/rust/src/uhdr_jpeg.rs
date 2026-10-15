@@ -1,4 +1,4 @@
-//! Ultra HDR JPEG (MPF + hdrgm XMP) input support.
+//! Gain-map JPEG input support: MPF with hdrgm / Apple XMP or ISO APP2 metadata.
 //!
 //! OPPO Motion Photo stills (and Google Ultra HDR photos in general) are
 //! JPEGs: the primary image plus an embedded gain-map JPEG referenced by an
@@ -21,6 +21,8 @@ pub struct UhdrJpeg {
     pub meta_floats: Vec<f32>,
     /// TIFF payload from the APP1 Exif segment (without the 6-byte prefix).
     pub exif_tiff: Option<Vec<u8>>,
+    /// ISO gain-map application color-space flag; must survive conversion.
+    pub use_base_color_space: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -29,6 +31,7 @@ pub struct UhdrJpeg {
 
 struct Segments {
     xmp: Option<Vec<u8>>,
+    iso_metadata: Option<Vec<u8>>,
     mpf_tiff_file_pos: Option<usize>,
     mpf_tiff_len: usize,
     exif_tiff: Option<Vec<u8>>,
@@ -56,6 +59,7 @@ fn walk_segments(data: &[u8]) -> Result<Segments, String> {
     }
     let mut out = Segments {
         xmp: None,
+        iso_metadata: None,
         mpf_tiff_file_pos: None,
         mpf_tiff_len: 0,
         exif_tiff: None,
@@ -92,6 +96,10 @@ fn walk_segments(data: &[u8]) -> Result<Segments, String> {
                 if payload.starts_with(b"MPF\0") {
                     out.mpf_tiff_file_pos = Some(pos + 4 + 4);
                     out.mpf_tiff_len = payload.len() - 4;
+                } else if let Some(iso) = payload.strip_prefix(crate::jpeg_gainmap_metadata::ISO_NAMESPACE) {
+                    if out.iso_metadata.replace(iso.to_vec()).is_some() {
+                        return Err("duplicate ISO gain-map APP2 metadata".into());
+                    }
                 }
             }
             _ => {}
@@ -316,8 +324,6 @@ fn hdrgm_to_meta_floats(h: &Hdrgm) -> Result<Vec<f32>, String> {
 // Public parse entry
 // ---------------------------------------------------------------------------
 
-/// Parse an Ultra HDR JPEG. Returns Ok(None) for files that are not JPEGs
-/// with an MPF gain map (plain JPEGs, HEICs, etc.).
 /// Minimal 1×1 gray JPEG used as an identity gain map for SDR inputs
 /// (gain 1.0 = no HDR boost, the pipeline treats it as base = HDR).
 pub const IDENTITY_GAINMAP_JPEG: &[u8] = &[
@@ -361,6 +367,8 @@ pub fn neutral_meta_floats() -> Vec<f32> {
     ]
 }
 
+/// Returns None for non-JPEG input and identity metadata for ordinary SDR JPEG.
+/// A malformed declared gain map is an error, not an SDR fallback.
 pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return Ok(None);
@@ -373,6 +381,7 @@ pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
             gainmap_jpeg: IDENTITY_GAINMAP_JPEG.to_vec(),
             meta_floats: neutral_meta_floats(),
             exif_tiff: segments.exif_tiff,
+            use_base_color_space: true,
         }));
     };
     let gainmap = extract_gainmap_jpeg(data, tiff_pos, segments.mpf_tiff_len)?;
@@ -380,16 +389,27 @@ pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
     // map JPEG's own XMP; fall back to the primary's XMP for producers that
     // put it there instead.
     let gm_segments = walk_segments(&gainmap)?;
-    let xmp = gm_segments
-        .xmp
-        .or(segments.xmp)
-        .ok_or("Ultra HDR JPEG lacks its hdrgm XMP block")?;
-    let hdrgm = parse_hdrgm_xmp(&xmp)?;
-    let meta_floats = hdrgm_to_meta_floats(&hdrgm)?;
+    // The primary ISO APP2 only advertises a version. Full gain-map metadata
+    // resides in the secondary image and takes precedence over legacy XMP.
+    let metadata = if let Some(iso) = gm_segments.iso_metadata {
+        crate::jpeg_gainmap_metadata::parse_iso(&iso)?
+    } else {
+        let xmp = gm_segments.xmp.or(segments.xmp)
+            .ok_or("Ultra HDR JPEG lacks ISO or XMP gain-map metadata")?;
+        match crate::jpeg_gainmap_metadata::parse_apple(&xmp, segments.exif_tiff.as_deref())? {
+            Some(metadata) => metadata,
+            None => {
+                let f = hdrgm_to_meta_floats(&parse_hdrgm_xmp(&xmp)?)?;
+                crate::jpeg_gainmap_metadata::validate(&f)?;
+                crate::jpeg_gainmap_metadata::Metadata { floats: f, use_base_color_space: true }
+            }
+        }
+    };
     Ok(Some(UhdrJpeg {
         gainmap_jpeg: gainmap,
-        meta_floats,
+        meta_floats: metadata.floats,
         exif_tiff: segments.exif_tiff,
+        use_base_color_space: metadata.use_base_color_space,
     }))
 }
 
@@ -427,7 +447,21 @@ pub fn synthesize_source_container(
         orientation,
     )
     .map_err(|e| format!("Ultra HDR base JPEG orientation failed: {e}"))?;
-    synthesize_source_container_from_rgb(&rgb, width, height, info.exif_tiff.clone(), use_420)
+    // A styles scaffold requires an Exif item even for metadata-free JPEGs.
+    // Path-based callers supply the source timestamp; byte-only callers use
+    // a deterministic fallback instead of inventing a capture time.
+    let mut exif = info.exif_tiff.clone().unwrap_or_else(||
+        crate::sdr_source::minimal_exif_tiff("1970:01:01 00:00:00"));
+    crate::exif::ensure_exif_ifd(&mut exif)?;
+    synthesize_source_container_from_rgb(&rgb, width, height, Some(exif), use_420)
+}
+
+pub(crate) fn inherit_missing_exif(info: &mut UhdrJpeg, input_path: &str) {
+    if info.exif_tiff.is_some() { return; }
+    let datetime = std::fs::metadata(input_path).ok().and_then(|m| m.modified().ok())
+        .map(crate::sdr_source::exif_datetime_from_system);
+    info.exif_tiff = Some(crate::sdr_source::minimal_exif_tiff(
+        datetime.as_deref().unwrap_or("1970:01:01 00:00:00")));
 }
 
 /// Build the same standard HEIC source container from pixels a caller already
@@ -802,6 +836,45 @@ mod tests {
         assert!(parse(b"\x00\x00\x00\x18ftypheic").expect("ok").is_none());
     }
 
+    fn jpeg_with_gainmap(gainmap: &[u8]) -> Vec<u8> {
+        let primary = tiny_jpeg(0x22, 10);
+        let probe = make_mpf(gainmap.len() as u32, 0);
+        let tiff_pos = 10usize;
+        let gainmap_pos = tiff_pos + (probe.len() - 4) + primary.len() - 2;
+        let mut file = vec![0xff, 0xd8];
+        file.extend(appseg(0xe2, &make_mpf(gainmap.len() as u32, (gainmap_pos - tiff_pos) as u32)));
+        file.extend(&primary[2..]);
+        file.extend(gainmap);
+        file
+    }
+
+    #[test]
+    fn jpeg_iso_secondary_metadata_takes_precedence_over_xmp() {
+        let mut gainmap = vec![0xff, 0xd8];
+        let mut iso = crate::jpeg_gainmap_metadata::ISO_NAMESPACE.to_vec();
+        // packed ISO scalar, shared denominator=100, headroom 0->2 stops.
+        iso.extend([0, 0, 0, 0, 0x48]);
+        for n in [100u32, 0, 200, 0, 200, 100, 0, 0] { iso.extend(n.to_be_bytes()); }
+        gainmap.extend(appseg(0xe2, &iso));
+        gainmap.extend(appseg(0xe1, b"http://ns.adobe.com/xap/1.0/\0<broken"));
+        gainmap.extend(&tiny_jpeg(0x11, 10)[2..]);
+        let info = parse(&jpeg_with_gainmap(&gainmap)).unwrap().unwrap();
+        assert_eq!(info.meta_floats[17], 4.0);
+        assert!(info.use_base_color_space);
+    }
+
+    #[test]
+    fn jpeg_rejects_bad_iso_instead_of_synthesizing_identity() {
+        let mut gainmap = vec![0xff, 0xd8];
+        gainmap.extend(appseg(0xe2, crate::jpeg_gainmap_metadata::ISO_NAMESPACE));
+        gainmap.extend(&tiny_jpeg(0x11, 10)[2..]);
+        assert!(parse(&jpeg_with_gainmap(&gainmap)).is_err());
+        let mut duplicate = vec![0xff, 0xd8];
+        for _ in 0..2 { duplicate.extend(appseg(0xe2, crate::jpeg_gainmap_metadata::ISO_NAMESPACE)); }
+        duplicate.extend(&tiny_jpeg(0x11, 10)[2..]);
+        assert!(parse(&jpeg_with_gainmap(&duplicate)).is_err());
+    }
+
     /// A real, decodable 16x8 RGB baseline JPEG (Pillow, quality 85). The
     /// orientation tests need decoded pixels, which the synthetic
     /// `tiny_jpeg` buffers above cannot provide.
@@ -885,6 +958,7 @@ mod tests {
             gainmap_jpeg: TINY_16X8_JPEG.to_vec(),
             meta_floats: vec![0.0f32; 20],
             exif_tiff: Some(tiff_with_orientation(6)),
+            use_base_color_space: true,
         };
         let container =
             synthesize_source_container(TINY_16X8_JPEG, &info, true).expect("synthesize container");

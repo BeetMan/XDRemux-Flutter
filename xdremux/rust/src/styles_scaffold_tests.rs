@@ -205,6 +205,83 @@ fn incomplete_note(bo: Bo) -> Vec<u8> {
 }
 
 #[test]
+fn zero_padding_allows_opaque_note_growth_without_payload_relocation() {
+    for bo in [Bo(false), Bo(true)] {
+        let mut note = incomplete_note(bo);
+        bo.put_u16(&mut note[30..32], 7);
+        let (entries, _) = read_ifd(&note, bo, 14).unwrap();
+        note.splice(68..68, [0; 24]);
+        for entry in entries {
+            bo.put_u32(&mut note[entry.value_field_pos..entry.value_field_pos+4], entry.payload_offset.unwrap() + 24);
+        }
+        let (original, _) = read_ifd(&note, bo, 14).unwrap();
+        let output = merge_styles_note(&note, &build_maker_note()).unwrap();
+        let (merged, _) = read_ifd(&output, bo, 14).unwrap();
+        for old in original {
+            let new = merged.iter().find(|e| e.tag == old.tag).unwrap();
+            assert_eq!(old.payload_offset, new.payload_offset);
+            assert_eq!(entry_bytes(&note, &old), entry_bytes(&output, new));
+        }
+        assert_eq!(merge_styles_note(&output, &build_maker_note()).unwrap(), output);
+    }
+}
+
+#[test]
+fn self_relative_plist_fields_preserve_bytes_and_unknown_tag_identity() {
+    for bo in [Bo(false), Bo(true)] {
+        let mut note = incomplete_note(bo);
+        let mut writer = crate::styles_bplist::BplistWriter::new();
+        let key = writer.add_str("unknown");
+        let value = writer.add_real(1.25);
+        let top = writer.add_dict(&[(key, value)]);
+        let plist = writer.finish(top);
+        let pos = 28;
+        bo.put_u16(&mut note[pos+2..pos+4], 7);
+        bo.put_u32(&mut note[pos+4..pos+8], plist.len() as u32);
+        let offset = note.len() as u32;
+        bo.put_u32(&mut note[pos+8..pos+12], offset);
+        note.extend(plist);
+        let (old, _) = read_ifd(&note, bo, 14).unwrap();
+        let output = merge_styles_note(&note, &build_maker_note()).unwrap();
+        let (new, _) = read_ifd(&output, bo, 14).unwrap();
+        for entry in old {
+            let merged = new.iter().find(|e| e.tag == entry.tag).unwrap();
+            assert_eq!((entry.typ, entry.count), (merged.typ, merged.count));
+            assert_eq!(entry_bytes(&note, &entry), entry_bytes(&output, merged));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires public libultrahdr Apple JPEG fixtures via XDREMUX_APPLE_JPEG_FIXTURES"]
+fn apple_jpeg_reference_notes_preserve_every_original_tag() {
+    let root = std::env::var("XDREMUX_APPLE_JPEG_FIXTURES").expect("set fixture directory");
+    for name in ["apple_gainmap_old.jpg", "apple_gainmap_new.jpg"] {
+        let jpeg = std::fs::read(std::path::Path::new(&root).join(name)).unwrap();
+        let tiff = crate::uhdr_jpeg::extract_exif_tiff(&jpeg).unwrap();
+        let mut exif = vec![0; 4];
+        exif.extend(tiff);
+        let prefix = exif_prefix_len(&exif).unwrap();
+        let tiff = &exif[prefix..];
+        let (bo, ifd0) = tiff_header(tiff).unwrap();
+        let (_, entries, _) = exif_directory(tiff, bo, ifd0).unwrap();
+        let note = entry_bytes(tiff, entries.iter().find(|e| e.tag == 0x927c).unwrap()).unwrap();
+        let output = compose_styles_maker_note(&exif).unwrap();
+        let bo = Bo(true);
+        let (old, _) = read_ifd(note, bo, 14).unwrap();
+        let (new, _) = read_ifd(&output, bo, 14).unwrap();
+        assert_eq!(old.len(), 51);
+        assert_eq!(new.len(), 52);
+        for entry in old {
+            let merged = new.iter().find(|e| e.tag == entry.tag).unwrap();
+            assert_eq!((entry.typ, entry.count), (merged.typ, merged.count));
+            assert_eq!(entry_bytes(note, &entry), entry_bytes(&output, merged));
+        }
+        assert_eq!(merge_styles_note(&output, &build_maker_note()).unwrap(), output);
+    }
+}
+
+#[test]
 fn incomplete_apple_note_merge_le_be_preserves_uuid_and_note_relative_payloads() {
     for bo in [Bo(false), Bo(true)] {
         let note = incomplete_note(bo);
