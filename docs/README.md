@@ -83,6 +83,8 @@
 
 ## 路线图
 
+- [内置局域网文件传输开发计划](plans/local-transfer-plan.md)：LocalSend 互操作、独立 Rust 服务、Flutter 收发及照片资源分组（2026-10-17，计划阶段）。
+
 - [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
 - [`docs/plans/huawei-to-apple-plan.md`](plans/huawei-to-apple-plan.md)：Mate 70 原生 HDR 识别、XMAGE 风格、人像与 Live Photo 研究计划（普通 HDR 无需转换）
 - [`docs/plans/sample-collection-202608.md`](plans/sample-collection-202608.md)：样本采集计划（A~E 组状态见 v0.4-roadmap 与设备兼容矩阵）
