@@ -581,9 +581,20 @@ jobs:
       - name: Package DMG
         shell: bash
         run: |
-          mkdir -p apps/flutter/build/dmg
+          set -euo pipefail
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          STAGE="apps/flutter/build/dmg/stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          # Stage the app beside an /Applications symlink so the image supports
+          # the usual drag-to-install gesture. Copying keeps the code signature
+          # (it is embedded in the Mach-O, not in an extended attribute).
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
+          test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
           hdiutil create -volname XDRemux \
-            -srcfolder apps/flutter/build/macos/Build/Products/Release/XDRemux.app \
+            -srcfolder "$STAGE" \
             -ov -format UDZO \
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
 
