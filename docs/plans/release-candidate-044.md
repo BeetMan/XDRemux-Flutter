@@ -112,3 +112,35 @@ iOS PhotoKit 的单资产双资源保存、macOS/iOS 原生编译需 Mac/iPhone 
 3. Windows：单选/多选/中文路径/拖放、彩色预览与方向、摄影风格开关、codec 诊断复制/导出、批量取消重试；转换实况后输出同 stem HEIF/MOV，两文件一起传输。
 4. Apple：在 Mac 编译本次 main；iPhone 应用内直接保存后在照片中是一个可播放、有声音的 Live Photo；权限拒绝与再次保存、原件仍在；macOS Photos 导入和投送分别验收。此前一组产物经 Mac 投送到 iPhone 正常不替代这一步。
 5. 鸿蒙原生 0.5.1 暂未同步本次源码，Flutter OHOS 多文件分享暂不支持，不计入本次两个本地验收包完成范围。
+
+### Mac / iPhone 验收记录（2026-10-18）
+
+环境：macOS 27.0.1 (26A434)、Xcode 27.1 (27A9275)、Flutter 3.47.7 (framework `abaf9c5237`, Dart 3.13.5)、cargo 1.97.0；目标机 iPhone 16e (iPhone17,5)，iOS 27.2 (24B5099f)，开发者模式已启用。签名使用免费个人团队 `V4LA2Z97CJ`，描述文件有效期 7 天（本次至 2026-10-24）。
+
+源码：主线 `5d61576`（本次同步最新），叠加 macOS dylib 打包修复分支；iOS 侧源码与主线一致，该分支只改 macOS 工程、CI 和文档。
+
+自动检查：
+- Rust 核心 `cargo test --release -p xdremux-core`：226 passed / 3 ignored，其余套件 6+6+7+1 通过，合计 **246 passed / 5 ignored**，与上一轮记录一致。
+- `flutter analyze`：No issues found。
+- `flutter pub get --enforce-lockfile`：通过，未重新解析插件版本。
+
+构建：
+- macOS `flutter build macos --release` 成功，产物 61.1MB；`Contents/Frameworks/libxdremux_core.dylib` 存在且由 `Bundle Framework` 拷贝阶段随构建产出，`codesign -v --deep --strict` 通过（sealed files 29→30），经该 dylib 调用 `xdremux_version()` 返回 `0.4.3`。修复前该包 54.9MB 且不含 dylib、签名封印无效。
+- iOS `flutter build ipa --release --no-codesign` 归档成功；归档内 37/37 个 Dart 侧运行时 FFI 符号在 dead_strip 后仍导出。
+
+iPhone 实机（应用内转换，用户操作）：
+- 用户手动导入两张 **OPPO 实况原图**（单文件内嵌视频，`mp_probe` 判定 `oppoLivePhoto`、双码流），应用队列显示 `UHDR / 实况·双码流 / 1728×1296 / Live Photo 合成`，开始转换后输出到 `Documents/output/`。
+- 取回产物核对（两对）：HEIC 5.1MB / 4.6MB，MOV 8.2MB / 9.3MB，**同 stem 成对**；HEIC 解码 5888×4416、4416×5888；HEIC `[Apple] ContentIdentifier` 与同名 MOV 的 `ContentIdentifier` **逐对相同且两对互异**（`006DDDDA-…4BF07E` / `…0A34C9E6`）；MOV 含 audio+video 轨，时长 3.15s / 2.37s；HEIC 含 `hdrgm` XMP（Version 1.0、GainMapMin）与 tmap。
+- 用户确认：**保存到相册后在 iOS 上验证通过**（对应清单第 4 项“应用内保存后是可播放、有声音的 Live Photo”）。
+
+本轮未覆盖、不据此宣称通过：相册权限拒绝→允许→重试、原 HEIF/MOV 不被移动或删除、静帧/拆分模式不带残留 MOV、批量与自动保存、macOS Photos 导入与投送、以及清单第 4 项之外的其他平台项。
+
+环境问题与处理（供后续复用）：
+- `xcrun devicectl` 一度无输出卡死：包装脚本 `/Applications/Xcode.app/Contents/Developer/usr/bin/devicectl` 比对 CoreDevice 期望版本 `651.13.5` 与实装 `642.16`，不一致即执行 `xcodebuild -runFirstLaunch` 阻塞。执行 `sudo xcodebuild -runFirstLaunch` 更新组件后恢复；紧急时可直接调用 `/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl`。
+- Xcode 27 起 `Devices and Simulators` 更名为 `Xcode → Open Developer Tool → Device Hub`；免费个人团队的设备只有经 Xcode GUI 运行一次（⌘R）才会注册并生成描述文件，`-allowProvisioningDeviceRegistration` 命令行路径始终返回“Your team has no devices”。
+- macOS 上 `flutter test` 有 4 项既有失败（`ffi_smoke_test` ×3：裸文件名打开 dylib 但无步骤暂存到可搜索路径；`widget_test` 的 Settings bottom sheet ×1）。已在干净 main 上 stash 对照确认先于本轮改动存在；CI 的 Flutter 测试跑在 Linux（拷贝 `.so`），因此长期未暴露。按 `mac-acceptance-044.md` 的要求，应修正测试宿主加载路径而不是跳过。
+
+后续修复（承接上条，不属于本轮实机验收结论）：
+- `ffi_smoke_test` 的 3 项失败：新增 `apps/flutter/test/native_library.dart`，按「CI 拷贝到 Flutter 工程内 → Cargo `target/release|debug` → 已构建的 macOS bundle」顺序探测核心库并返回绝对路径，找不到时打印全部搜索路径；不再依赖 dlopen 的默认搜索（不含 target 目录）。
+- `widget_test` 的 Settings 失败：`6e6a184` 已退休 Swift「转换引擎」选择器，测试仍按 `Platform.isMacOS || isIOS` 断言其存在，Linux 上因断言 `findsNothing` 而长期掩盖。改为在所有平台断言该段落不存在。
+- 结果：macOS `flutter test` = **139 passed / 2 skipped / 0 failed**，`flutter analyze` 无问题。提交 `d642e31`（分支 `fix/macos-flutter-test-hosts`）。
