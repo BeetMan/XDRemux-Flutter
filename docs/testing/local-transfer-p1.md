@@ -41,7 +41,7 @@ Windows → Android P1 原生服务：5 个文件，共 **18,579,897 bytes**，�
 
 ADB 仅用于部署、启动、读取回执和独立磁盘校验；文件上传通过直接 LAN HTTPS。受控 harness 显式开启 `--accept-test-files`，只接受 `xdremux-poc-*` 名称，服务本身始终要求外部接收决策。
 
-Android → Windows P1：待重新验收。当前 Windows 防火墙有两条 `transfer.exe` 入站 Block 规则，当前进程无管理员权限；反向连接超时，Windows 没有接收到文件。没有改动、关闭或绕过这些规则。已请求用户允许该程序的专用网络访问后重试。该项不能用 P0 的双向结果替代。
+Android → Windows P1：待重新验收。首次测试因 Windows 防火墙的两条 `transfer.exe` 入站 Block 规则超时，Windows 没有接收到文件；没有改动、关闭或绕过这些规则。用户随后放行，2026-10-17 复查两条对应程序规则均为启用的 Allow。但手机无线 ADB 已断开，mDNS 未发现调试服务、旧地址不可达，正在等待重新连接。Windows/Android harness 的 SHA-256 均与原验证构建一致，尚未重跑双向实机测试。该项不能用 P0 的双向结果替代。
 
 P0 官方 Android LocalSend 双向互操作证据继续保留在 `local-transfer-p0-evidence.json`；本轮未重做官方客户端操作。P1 自动测试使用标准 v2 协议路径，但不据此宣称所有旧版客户端兼容。
 

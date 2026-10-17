@@ -47,8 +47,10 @@
   },
   "sourceFilesUnchanged": true,
   "androidToWindows": {
-    "status": "blocked",
-    "reason": "Enabled Windows Firewall inbound Block rules for transfer.exe; no administrator privileges. No rule changed or bypassed."
+    "status": "awaiting_device",
+    "reason": "User allowed inbound access; two matching program rules verified enabled Allow on 2026-10-17. Wireless ADB disconnected, no mDNS debug service found, previous device address unreachable. Bidirectional rerun has not started.",
+    "previousBlocker": "Enabled Windows Firewall inbound Block rules for transfer.exe; no administrator privileges. No rule changed or bypassed.",
+    "nativeHarnessHashesMatchRecordedBuilds": true
   },
   "artifacts": [
     {
