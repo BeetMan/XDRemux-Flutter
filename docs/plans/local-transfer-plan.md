@@ -1,6 +1,6 @@
 # 内置局域网文件传输开发计划
 
-日期：2026-10-18。状态：P1 独立服务已实现，15 项核心测试通过，Windows ↔ Android 已完成双向复验；P2 接入研究已完成，待开发。Apple 待验，鸿蒙验证延后。
+日期：2026-10-18。状态：P1 双向 native 验收完成；P2.0 模型与独立 C ABI 已实现，17 项核心测试、2 项 ABI 测试及 Windows DLL / Android 真机 `.so` 验证通过。下一步为 P2.1 Dart worker 与队列交接。Apple 待验，鸿蒙验证延后。
 
 ## 目标与开发基线
 
@@ -9,7 +9,7 @@
 - 分支：`codex/local-transfer`；独立工作树开发。
 - 起点：`integrate/huawei-portrait-live` 的已提交版本 `877047b87fda65ca5d8cc6bce3aa591ed1efd111`。
 - 原工作区未提交的 codec、界面、网站及鸿蒙原生代码不纳入本分支。开始接入应用前，先检查这些工作是否已合入，按需更新基线。
-- P0 使用隔离 harness；P1 新增独立 `crates/xdremux-transfer`，不改图像引擎、Flutter 应用、默认依赖或发布配置，不推送或发版。
+- P0 使用隔离 harness；P1 新增独立 `crates/xdremux-transfer`，P2.0 新增 `crates/xdremux-transfer-ffi`；图像引擎、Flutter 应用、默认依赖与发布配置保持独立。用户已要求推送开发分支；发布与主线合并仍另行安排。
 - 技术依据为 2026-10-15 的只读调研；开始 PoC 时重新核对上游版本、协议及平台要求，并记录实际提交哈希。
 
 ## 首版范围
@@ -69,7 +69,12 @@
 
 ### P2：Flutter 文件互传首版
 
-2026-10-18 [接入研究与切片计划](../research/local-transfer-p2-integration.md) 已完成；本轮未实现应用接入。优先补齐 P1 的发送文件 ID、活动状态快照和受管清理，再做独立 C ABI/runtime、Dart worker 与带原始文件名的流式队列交接，最后接页面。主线仍有未提交的 codec/preview/FFI 工作，接入前核对其最终接口。
+2026-10-18 [接入研究与切片计划](../research/local-transfer-p2-integration.md) 后，P2.0 已完成发送文件 ID、活动/终态快照、实例 ID、受管读取与删除，以及独立 C ABI/runtime。见 [P2.0 验证](../testing/local-transfer-p20.md) 和 [ABI 契约](../../crates/xdremux-transfer-ffi/README.md)。下一步为 P2.1 长期 Dart worker 与带原始文件名的流式队列交接。开始修改 Flutter 前核对主线 codec/preview/FFI 工作的最终接口。
+
+- [x] P2.0：补齐 native 模型、租约/删除、独立 ABI/runtime、状态恢复和有界调用；Windows/Android 动态库验证通过。
+- [ ] P2.1：Dart worker、缺库/版本降级、接收箱到 checkpoint 的流式副本和显式队列 ACK。
+- [ ] P2.2：Windows/Android 手动直连 UI 与正式应用双向验收。
+- [ ] P2.3：自动发现、失败兜底与完整 P2 退出验收。
 
 - [ ] 新建传输服务、设备/会话/文件状态模型和接收箱持久化；定义正在接收与可用文件的边界。
 - [ ] 接入“发送原文件/发送转换结果”和“接收文件”入口；展示设备、文件数、体积及目标保存位置。

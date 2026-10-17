@@ -3,10 +3,12 @@
 mod model;
 mod sender;
 mod service;
+mod snapshot;
 mod storage;
 pub use model::*;
 pub use sender::SendHandle;
 pub use service::Service;
 pub use storage::hash_file;
+pub use storage::ReceiptLease;
 #[cfg(test)]
 mod tests;

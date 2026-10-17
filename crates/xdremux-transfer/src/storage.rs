@@ -13,7 +13,39 @@ use uuid::Uuid;
 pub(crate) struct Storage {
     pub root: PathBuf,
     lease: std::sync::Mutex<Option<File>>,
-    publication: std::sync::Mutex<()>,
+    publication: std::sync::Mutex<Publication>,
+    readers_changed: tokio::sync::Notify,
+}
+#[derive(Default)]
+struct Publication {
+    readers: std::collections::HashMap<String, usize>,
+    closing: bool,
+}
+/// A read lease on immutable committed data. Drop before awaiting Service::shutdown.
+pub struct ReceiptLease {
+    storage: std::sync::Arc<Storage>,
+    receipt: Receipt,
+    path: PathBuf,
+}
+impl ReceiptLease {
+    pub fn receipt(&self) -> &Receipt {
+        &self.receipt
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+impl Drop for ReceiptLease {
+    fn drop(&mut self) {
+        let mut publication = self.storage.publication.lock().unwrap();
+        if let Some(count) = publication.readers.get_mut(&self.receipt.id) {
+            *count -= 1;
+            if *count == 0 {
+                publication.readers.remove(&self.receipt.id);
+            }
+        }
+        self.storage.readers_changed.notify_one();
+    }
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Identity {
@@ -193,7 +225,8 @@ impl Storage {
         let storage = Self {
             root,
             lease: std::sync::Mutex::new(Some(lease)),
-            publication: std::sync::Mutex::new(()),
+            publication: std::sync::Mutex::new(Publication::default()),
+            readers_changed: tokio::sync::Notify::new(),
         };
         storage.recover()?;
         Ok(storage)
@@ -230,8 +263,67 @@ impl Storage {
             .map_err(|_| ErrorCode::UnsafeStorage)?;
         Ok(id)
     }
-    pub fn release(&self) {
-        self.lease.lock().unwrap().take();
+    pub async fn close(&self) {
+        loop {
+            {
+                let mut publication = self.publication.lock().unwrap();
+                publication.closing = true;
+                if publication.readers.is_empty() {
+                    self.lease.lock().unwrap().take();
+                    return;
+                }
+            }
+            self.readers_changed.notified().await;
+        }
+    }
+    pub fn acquire(self: &std::sync::Arc<Self>, id: &str) -> Result<ReceiptLease> {
+        let mut publication = self.publication.lock().map_err(|_| ErrorCode::Io)?;
+        if publication.closing {
+            return Err(ErrorCode::Closed);
+        }
+        let dir = self.receipt_dir(id)?;
+        let receipt = self.read_receipt(&dir)?;
+        *publication.readers.entry(id.to_owned()).or_default() += 1;
+        Ok(ReceiptLease {
+            storage: self.clone(),
+            receipt,
+            path: dir.join("data"),
+        })
+    }
+    pub fn delete(&self, id: &str) -> Result<()> {
+        let publication = self.publication.lock().map_err(|_| ErrorCode::Io)?;
+        if publication.closing {
+            return Err(ErrorCode::Closed);
+        }
+        if publication.readers.contains_key(id) {
+            return Err(ErrorCode::Busy);
+        }
+        let dir = self.receipt_dir(id)?;
+        self.read_receipt(&dir)?;
+        // Validate all children before moving anything. Never recursively delete.
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if entry.file_name() != "data" && entry.file_name() != "receipt.json" {
+                return Err(ErrorCode::UnsafeStorage);
+            }
+            plain(&entry.path(), false)?;
+        }
+        let incoming = self.root.join(".incoming");
+        plain(&incoming, true)?;
+        let tombstone = incoming.join(format!("txn-{}", Uuid::new_v4()));
+        publish(&dir, &tombstone)?;
+        sync_dir(&self.root.join("received"))?;
+        sync_dir(&incoming)?;
+        self.remove_transaction(&tombstone)?;
+        sync_dir(&incoming)
+    }
+    fn receipt_dir(&self, id: &str) -> Result<PathBuf> {
+        if Uuid::parse_str(id).is_err() || Uuid::parse_str(id).unwrap().to_string() != id {
+            return Err(ErrorCode::InvalidInput);
+        }
+        plain(&self.root, true)?;
+        plain(&self.root.join("received"), true)?;
+        Ok(self.root.join("received").join(format!("file-{id}")))
     }
     fn recover(&self) -> Result<()> {
         for dir in [".incoming", ".outgoing"] {
@@ -366,10 +458,7 @@ impl Storage {
     }
     pub fn data_path(&self, id: &str) -> Result<PathBuf> {
         let _publication = self.publication.lock().map_err(|_| ErrorCode::Io)?;
-        if Uuid::parse_str(id).is_err() {
-            return Err(ErrorCode::InvalidInput);
-        }
-        let dir = self.root.join("received").join(format!("file-{id}"));
+        let dir = self.receipt_dir(id)?;
         self.read_receipt(&dir)?;
         Ok(dir.join("data"))
     }
