@@ -2,6 +2,8 @@
 
 日期：2026-10-17。分支：`codex/local-transfer`。实现位于 `crates/xdremux-transfer/`，与图像引擎、Flutter 应用及根 Cargo workspace 隔离。
 
+2026-10-18 复验：用户放行 Windows 防火墙、无线 ADB 恢复后，Windows ↔ Android 原生服务双向全部通过；每方向 5 个文件、18,579,897 bytes，两端最终文件均独立核对长度与 SHA-256，源文件保持不变。
+
 ## 实现与契约
 
 独立服务提供地址绑定、HTTPS 双向证书、明确接收确认、PIN、发送快照、流式写入、进度、取消、超时、分页回执及稳定错误码。应用入口和 FFI 在 P2 接入。常规构建直接使用固定的 LocalSend 源码副本，不再需要克隆上游；版本、原文件校验值和补丁生成器见 crate 的 `UPSTREAM.md`。
@@ -41,7 +43,7 @@ Windows → Android P1 原生服务：5 个文件，共 **18,579,897 bytes**，�
 
 ADB 仅用于部署、启动、读取回执和独立磁盘校验；文件上传通过直接 LAN HTTPS。受控 harness 显式开启 `--accept-test-files`，只接受 `xdremux-poc-*` 名称，服务本身始终要求外部接收决策。
 
-Android → Windows P1：待重新验收。首次测试因 Windows 防火墙的两条 `transfer.exe` 入站 Block 规则超时，Windows 没有接收到文件；没有改动、关闭或绕过这些规则。用户随后放行，2026-10-17 复查两条对应程序规则均为启用的 Allow。但手机无线 ADB 已断开，mDNS 未发现调试服务、旧地址不可达，正在等待重新连接。Windows/Android harness 的 SHA-256 均与原验证构建一致，尚未重跑双向实机测试。该项不能用 P0 的双向结果替代。
+Android → Windows P1：2026-10-18 已复验通过，同时重跑 Windows → Android，两方向各 5 个文件、18,579,897 bytes。两个发送程序及限时接收程序退出成功；接收回执、独立 Windows `Get-FileHash` 与 Android `sha256sum`/`stat` 均匹配素材清单。Windows/Android harness 的 SHA-256 与原验证构建一致。首次测试因 Windows 防火墙阻止失败，用户放行后曾因无线 ADB 断开暂停；本轮连接恢复后完成复验。没有修改或绕过防火墙策略。
 
 P0 官方 Android LocalSend 双向互操作证据继续保留在 `local-transfer-p0-evidence.json`；本轮未重做官方客户端操作。P1 自动测试使用标准 v2 协议路径，但不据此宣称所有旧版客户端兼容。
 
