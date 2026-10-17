@@ -139,3 +139,8 @@ iPhone 实机（应用内转换，用户操作）：
 - `xcrun devicectl` 一度无输出卡死：包装脚本 `/Applications/Xcode.app/Contents/Developer/usr/bin/devicectl` 比对 CoreDevice 期望版本 `651.13.5` 与实装 `642.16`，不一致即执行 `xcodebuild -runFirstLaunch` 阻塞。执行 `sudo xcodebuild -runFirstLaunch` 更新组件后恢复；紧急时可直接调用 `/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl`。
 - Xcode 27 起 `Devices and Simulators` 更名为 `Xcode → Open Developer Tool → Device Hub`；免费个人团队的设备只有经 Xcode GUI 运行一次（⌘R）才会注册并生成描述文件，`-allowProvisioningDeviceRegistration` 命令行路径始终返回“Your team has no devices”。
 - macOS 上 `flutter test` 有 4 项既有失败（`ffi_smoke_test` ×3：裸文件名打开 dylib 但无步骤暂存到可搜索路径；`widget_test` 的 Settings bottom sheet ×1）。已在干净 main 上 stash 对照确认先于本轮改动存在；CI 的 Flutter 测试跑在 Linux（拷贝 `.so`），因此长期未暴露。按 `mac-acceptance-044.md` 的要求，应修正测试宿主加载路径而不是跳过。
+
+后续修复（承接上条，不属于本轮实机验收结论）：
+- `ffi_smoke_test` 的 3 项失败：新增 `apps/flutter/test/native_library.dart`，按「CI 拷贝到 Flutter 工程内 → Cargo `target/release|debug` → 已构建的 macOS bundle」顺序探测核心库并返回绝对路径，找不到时打印全部搜索路径；不再依赖 dlopen 的默认搜索（不含 target 目录）。
+- `widget_test` 的 Settings 失败：`6e6a184` 已退休 Swift「转换引擎」选择器，测试仍按 `Platform.isMacOS || isIOS` 断言其存在，Linux 上因断言 `findsNothing` 而长期掩盖。改为在所有平台断言该段落不存在。
+- 结果：macOS `flutter test` = **139 passed / 2 skipped / 0 failed**，`flutter analyze` 无问题。提交 `d642e31`（分支 `fix/macos-flutter-test-hosts`）。
