@@ -154,3 +154,39 @@ iPhone 实机（应用内转换，用户操作）：
 - macOS DMG 打包改为先暂存 `XDRemux.app` + `/Applications` 软链再 `hdiutil create`，让镜像支持拖拽安装（此前只有 app 本体）。
 - 发布门槛提醒：`publish` 的 `if` 只要求 `windows` + `android` 成功，macOS/iOS job 失败不会阻塞发布，因此发布后必须逐项核对资产（v0.4.3 就缺少 Windows ARM64 包，对应 job 在 “Stage and validate ARM64 output” 失败）。
 
+### `release.yml` 预演结果（workflow_dispatch，run [39061015513](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/39061015513)）
+
+在分支 `release/0.4.4-prep` 上手动触发（`publish` 因无 tag 被跳过，未发布任何东西）：
+
+| Job | 结果 |
+|---|---|
+| Windows installer (x64) | ✅ 通过 |
+| Android APK | ✅ 通过（4 个签名 secret 有效） |
+| macOS DMG | ✅ 通过（含新的暂存 + 软链步骤与 dylib 断言） |
+| iOS unsigned IPA | ✅ 通过（FFI 符号检查通过） |
+| Windows ARM64 (experimental) | ❌ 失败，同 v0.4.3 的 “Stage and validate ARM64 output” |
+
+产物核对（直接取 CI artifact 校验，非本地构建）：
+
+- macOS DMG 25,889,533 B：含 `Applications -> /Applications` 软链；包内 app `codesign -v --deep --strict` 通过（sealed files 30）；包内核心 `xdremux_version()` = `0.4.4`。
+- iOS IPA：`CFBundleShortVersionString 0.4.4` / `CFBundleVersion 38` / `io.github.beetman.xdremux`，无 `embedded.mobileprovision`（未签名）。
+- Android APK：manifest 内含 `0.4.4`、无 `debuggable` 标记，存在 APK Signing Block（v2/v3 已签名）。
+- Windows 安装器 12,443,522 B：PE 文件，内含 `0.4.4` / `XDRemux` / `Inno Setup`。
+
+ARM64 失败原因（日志实证）：runner 上的 Flutter 是 `stable-3.47.7-x64`（`FLUTTER_ROOT` 可见），因此 `flutter build windows` 产出的是 x64 runner，校验按设计拒绝打 ARM64 包：`Refusing mixed ARM64 installer: xdremux.exe is PE machine 0x8664`。这不是本次改动引入的，v0.4.3 同样失败。要真正出 ARM64 包需要 ARM64 的 Flutter 工具链（待验证上游是否提供），否则应明确 ARM64 用户使用 x64 安装器（模拟运行）。
+
+### 未决：macOS 包在 Intel Mac 上不可用（本轮新发现）
+
+CI（`macos-latest`，arm64 主机）产出的 app 主体是 universal，但 Rust 核心只有 arm64：
+
+```
+XDRemux                x86_64 arm64
+FlutterMacOS           x86_64 arm64
+App.framework          x86_64 arm64
+libxdremux_core.dylib  arm64            <-- 仅此一项
+```
+
+在 Intel Mac 上 app 能启动，但 `_openMacOS()` 的 4 条加载路径都会失败（架构不兼容），转换不可用。已核对 **v0.4.3 的已发布 DMG 同样如此**（app universal、dylib 仅 arm64），属既有缺陷，不是本轮引入。
+
+处理方式待维护者决定：(a) 明确只支持 Apple Silicon 并写进发布说明；(b) macOS job 增加 `x86_64-apple-darwin` 构建 + universal `libx265.a`（`-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"`）+ `lipo -create`，把 dylib 做成 universal（本机无 Rosetta，x86_64 侧只能靠 CI/Intel 机器验证）；(c) 把 macOS 构建限制为 arm64，让不支持变成明确的“无法打开”。
+
