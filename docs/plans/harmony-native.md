@@ -511,3 +511,11 @@ P0 补充检查（本批并行进行）：
 - OHOS 核心仅通过既有 `build_ohos.sh` 重建并由 `prepare_harmony_native.ps1` 暂存；输入 SHA-256 `1A53A5131603B3530C9B47B06637A451F2D40293BE27CBF87343981A928D04D8`。`devecocli build --product default --build-mode release` 成功。
 - unsigned HAP 6,160,191 字节，SHA-256 `A4E19C1BF1247E0E71AA079EEF18EEDBEFB49083A0C4372C37A59AE9FB2A48D1`；包内剥离后的 core SHA-256 `5C52A356C2BC9B1B918D09B90D338F1FC51BCD4CCFAE6A415A07B541AF1C95E8`。包名 `.arkui`、版本 `0.5.0-alpha1` / `50001`、目标 API26、兼容 API18 均保留；发布交付取 unsigned 产物，本地签名配置不入库。
 - 日志、校验 JSON 与 HAP 外置 `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/main-sync-20261016/`。本次未安装设备、未做新的 Apple Photos/HDR/人像光圈真机验收，旧版验收不替代本次验收；未创建 tag 或发布 Release。
+
+
+## 2026-10-17 图库返回后的点击锁定修复
+
+- 复现图库照片点击被忽略，而主页面左右滑动、队列项目点击仍可响应。图库读取与导入共用 `galleryImporting`；预加载期间返回或读取期间关闭详情会递增选择序号，使旧请求的 finally 跳过清理，从而遗留全局点击锁。
+- 将失效选择序号与释放读取状态合并为 `cancelGalleryInspection`，用于预加载返回、关闭详情及删除最后一张照片。过期异步回调仍不能覆盖后续选择。
+- 直接执行页面返回处理器的回归检查重现旧提交 `d53e65c3` 的锁定；修复后预加载取消和关闭详情均允许下一次打开。Release 构建、unsigned HAP 校验通过；同一 Rust 核心无需重建。
+- Pura X View 本地签名覆盖安装后，验证了照片打开、系统返回后重新打开、设置 Tab、队列筛选点击。未执行照片转换或改动全局转换设置。证据在外部 `harmony-native/home-interaction-20261017/`。

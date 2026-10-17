@@ -400,7 +400,7 @@ struct Index {
       this.galleryHeroPlaceholderReady = false;
       this.galleryHeroMetadataReady = false;
       this.galleryHeroOpening = false;
-      this.gallerySelectionSerial += 1;
+      this.cancelGalleryInspection();
       this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
         this.galleryHeroBackdropOpacity = 0;
       });
@@ -3451,6 +3451,13 @@ struct Index {
     return extension.length > 1 && extension.length <= 13 ? extension : '.img';
   }
 
+  private cancelGalleryInspection(): void {
+    // Invalidate stale reads and release their UI lock together. Their finally
+    // blocks intentionally cannot clear a newer selection's loading state.
+    this.gallerySelectionSerial += 1;
+    this.galleryImporting = false;
+  }
+
   private openGalleryTile(tile: GalleryPhotoTile): void {
     if (this.galleryImporting) return;
     this.galleryStatus = '正在读取 ' + tile.item.displayName + '…';
@@ -3504,7 +3511,7 @@ struct Index {
     this.clearGalleryPhotoHeaderRefreshTimer();
     if (!this.galleryDetailVisible) return;
     this.endGallerySdrCompare();
-    this.gallerySelectionSerial += 1;
+    this.cancelGalleryInspection();
     if (this.galleryStatusBarResetTimer >= 0) clearTimeout(this.galleryStatusBarResetTimer);
     if (this.galleryHeroBackdropResetTimer >= 0) {
       clearTimeout(this.galleryHeroBackdropResetTimer);
@@ -4873,7 +4880,7 @@ struct Index {
         this.galleryCurrentItem = nextTile.item;
         void this.inspectGallerySelection(nextTile, false, true);
       } else {
-        this.gallerySelectionSerial += 1;
+        this.cancelGalleryInspection();
         this.galleryCurrentItem = undefined;
         this.galleryDetails = undefined;
         this.galleryClassification = undefined;
