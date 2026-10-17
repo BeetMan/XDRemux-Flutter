@@ -1,6 +1,6 @@
 # 内置局域网文件传输开发计划
 
-日期：2026-10-17。状态：P1 独立服务已实现，15 项核心测试及 Windows → Android 通过；Android → Windows 被本机防火墙阻止，待放行后复验。Apple 待验，鸿蒙验证延后。
+日期：2026-10-17。状态：P1 独立服务已实现，15 项核心测试及 Windows → Android 通过；防火墙已放行，Android → Windows 等待手机重新连接后复验。Apple 待验，鸿蒙验证延后。
 
 ## 目标与开发基线
 
@@ -63,7 +63,7 @@
 - [x] 默认显式接收确认；校验证书身份，禁用未经用户选择的明文降级；不把同名设备视为同一可信身份。
 - [x] 日志不记录文件内容、PIN、会话 token 和完整私人路径。
 
-2026-10-17 记录：[P1 验证](../testing/local-transfer-p1.md)。15 项本机 HTTPS 核心测试、Windows junction 防护及两平台 release 构建通过；Windows → Android 5 文件、18,579,897 bytes 独立磁盘长度/哈希一致。Android → Windows 的 P1 原生程序被本机明确的入站 Block 规则拦截，尚待复验。P2 应先处理防火墙放行与桥接生命周期，再接文件收发 UI。
+2026-10-17 记录：[P1 验证](../testing/local-transfer-p1.md)。15 项核心测试（含本机 HTTPS）、Windows junction 防护及两平台 release 构建通过；Windows → Android 5 文件、18,579,897 bytes 独立磁盘长度/哈希一致。用户已放行防火墙，对应规则复查为 Allow；手机无线 ADB 已断开，Android → Windows 等待重新连接后复验。P2 应先补齐反向实机验收与桥接生命周期，再接文件收发 UI。
 
 退出条件：独立 harness 通过成功、拒绝、取消、超时、空间不足、错误哈希、截断输入及路径攻击用例；重启后不会把残缺文件识别为成功文件。
 
