@@ -144,3 +144,13 @@ iPhone 实机（应用内转换，用户操作）：
 - `ffi_smoke_test` 的 3 项失败：新增 `apps/flutter/test/native_library.dart`，按「CI 拷贝到 Flutter 工程内 → Cargo `target/release|debug` → 已构建的 macOS bundle」顺序探测核心库并返回绝对路径，找不到时打印全部搜索路径；不再依赖 dlopen 的默认搜索（不含 target 目录）。
 - `widget_test` 的 Settings 失败：`6e6a184` 已退休 Swift「转换引擎」选择器，测试仍按 `Platform.isMacOS || isIOS` 断言其存在，Linux 上因断言 `findsNothing` 而长期掩盖。改为在所有平台断言该段落不存在。
 - 结果：macOS `flutter test` = **139 passed / 2 skipped / 0 failed**，`flutter analyze` 无问题。提交 `d642e31`（分支 `fix/macos-flutter-test-hosts`）。
+
+## 发版准备（2026-10-18）
+
+上述记录描述的是 0.4.3+37 候选状态。本轮按维护者要求做发布准备，**未打 tag、未创建 Release**：
+
+- 版本号提升：`apps/flutter/pubspec.yaml` → `0.4.4+38`，`xdremux/rust/Cargo.toml` → `0.4.4`（`Cargo.lock` 同步），`tools/installer/xdremux.iss` 默认 `AppVersion` → `0.4.4`。tag 必须为 `v0.4.4`：`release.yml` 的 Windows job 会校验 tag 与 pubspec 名一致，`ffi_smoke_test` 会校验核心版本与 pubspec 一致。
+- 新增 `tools/installer/RELEASE_NOTES_v0.4.4.md`（`publish` 的 `body_path` 指向它，缺文件会导致发布步骤失败）。
+- macOS DMG 打包改为先暂存 `XDRemux.app` + `/Applications` 软链再 `hdiutil create`，让镜像支持拖拽安装（此前只有 app 本体）。
+- 发布门槛提醒：`publish` 的 `if` 只要求 `windows` + `android` 成功，macOS/iOS job 失败不会阻塞发布，因此发布后必须逐项核对资产（v0.4.3 就缺少 Windows ARM64 包，对应 job 在 “Stage and validate ARM64 output” 失败）。
+
