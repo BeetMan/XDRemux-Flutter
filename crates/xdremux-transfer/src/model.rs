@@ -152,6 +152,17 @@ pub struct Receipt {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EventKind {
+    SendStarted {
+        transfer_id: String,
+        file_count: usize,
+    },
+    FileSent {
+        transfer_id: String,
+        file: SentFile,
+    },
+    ReceiptDeleted {
+        receipt_id: String,
+    },
     Offer {
         offer: Offer,
     },
@@ -187,12 +198,14 @@ pub enum EventKind {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event {
+    pub instance_id: String,
     pub sequence: u64,
     #[serde(flatten)]
     pub kind: EventKind,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SentFile {
+    pub id: String,
     pub name: String,
     pub size: u64,
     pub sha256: String,
@@ -201,6 +214,70 @@ pub struct SentFile {
 pub struct SendReport {
     pub files: Vec<SentFile>,
     pub error: Option<ErrorCode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    Send,
+    Receive,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    Preparing,
+    Pending,
+    Accepted,
+    Transferring,
+    Completed,
+    Failed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilePhase {
+    Waiting,
+    Transferring,
+    Sent,
+    Committed,
+    Failed,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileState {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub sha256: Option<String>,
+    pub bytes: u64,
+    pub phase: FilePhase,
+    pub error: Option<ErrorCode>,
+    pub receipt_id: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransferSummary {
+    pub id: String,
+    pub direction: Direction,
+    pub phase: Phase,
+    pub file_count: usize,
+    pub error: Option<ErrorCode>,
+    pub alias: Option<String>,
+    pub peer_fingerprint: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapshotPage {
+    pub instance_id: String,
+    pub sequence: u64,
+    /// Terminal history is bounded; this count makes eviction explicit.
+    pub evicted: u64,
+    pub transfers: Vec<TransferSummary>,
+    pub next: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransferPage {
+    pub instance_id: String,
+    pub sequence: u64,
+    pub transfer: TransferSummary,
+    pub files: Vec<FileState>,
+    pub next: Option<String>,
 }
 
 pub(crate) fn safe_name(name: &str) -> bool {

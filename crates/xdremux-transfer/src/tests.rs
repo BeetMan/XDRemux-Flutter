@@ -148,7 +148,8 @@ async fn explicit_accept_snapshot_ack_and_restart() {
     let job = a
         .start_send(peer(&b), vec![source.clone(), empty], None)
         .unwrap();
-    next(&mut sent_events, |e| {
+    let send_id = job.id.clone();
+    let prepared = next(&mut sent_events, |e| {
         matches!(e, EventKind::Prepared { .. })
     })
     .await;
@@ -164,6 +165,19 @@ async fn explicit_accept_snapshot_ack_and_restart() {
     let report = job.wait().await;
     assert_eq!(report.error, None);
     assert_eq!(report.files.len(), 2);
+    let EventKind::Prepared { files, .. } = prepared else {
+        unreachable!()
+    };
+    for f in &report.files {
+        assert!(files.iter().any(|p| p.id == f.id && p.name == f.name));
+    }
+    let state = a.transfer_snapshot(&send_id, None, 64).unwrap();
+    assert_eq!(state.transfer.phase, Phase::Completed);
+    assert_eq!(state.files.len(), 2);
+    assert!(state
+        .files
+        .iter()
+        .all(|f| f.phase == FilePhase::Sent && f.bytes == f.size));
     // A successful sender ACK already implies committed data and its receipt.
     let receipts = b.receipts(10).await.unwrap();
     assert_eq!(receipts.len(), 2);
@@ -176,6 +190,7 @@ async fn explicit_accept_snapshot_ack_and_restart() {
         }
     }
     let fingerprint = b.fingerprint().to_owned();
+    let instance = b.instance_id();
     let port = b.address().port();
     a.shutdown().await;
     b.shutdown().await;
@@ -183,6 +198,7 @@ async fn explicit_accept_snapshot_ack_and_restart() {
     cfg.bind.set_port(port);
     let restarted = Service::start(cfg).await.unwrap();
     assert_eq!(restarted.fingerprint(), fingerprint);
+    assert_ne!(restarted.instance_id(), instance);
     assert_eq!(restarted.receipts(10).await.unwrap().len(), 2);
     restarted.shutdown().await;
 }
@@ -797,6 +813,88 @@ async fn sender_cancel_and_outgoing_limit() {
     third.cancel();
     let _ = second.wait().await;
     let _ = third.wait().await;
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test]
+async fn snapshot_recovers_accepted_progress_after_event_overflow() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let session = prepare(&a, &b, file("recover.bin", 3, None)).await;
+    let mut slow = b.subscribe();
+    for _ in 0..300 {
+        b.inner.emit(EventKind::Progress {
+            transfer_id: session.session_id.clone(),
+            file_id: "test-file".into(),
+            bytes: 2,
+            total: 3,
+        });
+    }
+    assert!(matches!(
+        slow.recv().await,
+        Err(broadcast::error::RecvError::Lagged(_))
+    ));
+    let snapshot = b.snapshot(None, 1).unwrap();
+    let file = b.transfer_snapshot(&session.session_id, None, 1).unwrap();
+    assert_eq!(snapshot.sequence, file.sequence);
+    assert_eq!(snapshot.instance_id, b.instance_id());
+    assert_eq!(file.transfer.phase, Phase::Transferring);
+    assert_eq!(file.files[0].bytes, 2);
+    assert_eq!(file.files[0].name, "recover.bin");
+    assert!(b.pending_offers().is_empty());
+    upload(&a, &b, &session, b"abc".to_vec()).await.unwrap();
+    let file = b.transfer_snapshot(&session.session_id, None, 1).unwrap();
+    assert_eq!(file.files[0].phase, FilePhase::Committed);
+    assert!(file.files[0].receipt_id.is_some());
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test]
+async fn managed_delete_leases_and_shutdown_are_coordinated() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let session = prepare(&a, &b, file("leased.bin", 3, None)).await;
+    upload(&a, &b, &session, b"abc".to_vec()).await.unwrap();
+    let receipt = b.receipts(1).await.unwrap().remove(0);
+    let first = b.acquire_receipt(&receipt.id).await.unwrap();
+    let second = b.acquire_receipt(&receipt.id).await.unwrap();
+    assert_eq!(b.delete_receipt(&receipt.id).await, Err(ErrorCode::Busy));
+    drop(first);
+    assert_eq!(b.delete_receipt(&receipt.id).await, Err(ErrorCode::Busy));
+    assert_eq!(fs::read(second.path()).unwrap(), b"abc");
+    let cfg = b.inner.config.clone();
+    let closing = tokio::spawn(b.shutdown());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!closing.is_finished());
+    assert!(matches!(
+        Service::start(cfg.clone()).await,
+        Err(ErrorCode::Busy)
+    ));
+    drop(second);
+    tokio::time::timeout(Duration::from_secs(3), closing)
+        .await
+        .unwrap()
+        .unwrap();
+    let b = Service::start(cfg).await.unwrap();
+    let path = b.received_path(&receipt.id).await.unwrap();
+    // Unknown contents fail closed before atomic deletion is attempted.
+    fs::write(path.parent().unwrap().join("unknown"), b"keep").unwrap();
+    assert_eq!(
+        b.delete_receipt(&receipt.id).await,
+        Err(ErrorCode::UnsafeStorage)
+    );
+    assert!(path.exists());
+    fs::remove_file(path.parent().unwrap().join("unknown")).unwrap();
+    b.delete_receipt(&receipt.id).await.unwrap();
+    assert!(!path.exists());
+    assert!(b.receipts(1).await.unwrap().is_empty());
+    assert!(b.acquire_receipt(&receipt.id).await.is_err());
+    assert_eq!(
+        b.delete_receipt("../escape").await,
+        Err(ErrorCode::InvalidInput)
+    );
     a.shutdown().await;
     b.shutdown().await;
 }

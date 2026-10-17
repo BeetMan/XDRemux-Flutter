@@ -85,6 +85,10 @@ impl Service {
         let inner = self.inner.clone();
         let task_id = id.clone();
         let token = cancel.clone();
+        self.inner.emit(EventKind::SendStarted {
+            transfer_id: id.clone(),
+            file_count: paths.len(),
+        });
         // Insert and spawn under the same lock so shutdown sees every accepted job.
         self.inner.tasks.spawn(async move{
             let mut report=SendReport::default();
@@ -293,11 +297,16 @@ async fn send(
             .await
             .map_err(map_error)?;
         report.files.push(sent_file(file));
+        inner.emit(EventKind::FileSent {
+            transfer_id: id.to_owned(),
+            file: sent_file(file),
+        });
     }
     Ok(())
 }
 fn sent_file(file: &FileDto) -> SentFile {
     SentFile {
+        id: file.id.clone(),
         name: file.file_name.clone(),
         size: file.size,
         sha256: file.sha256.clone().unwrap_or_default(),

@@ -22,13 +22,10 @@ use localsend::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -50,8 +47,7 @@ pub(crate) struct Inner {
     pub tasks: TaskTracker,
     pub state: Mutex<State>,
     events: broadcast::Sender<Event>,
-    history: Mutex<VecDeque<Event>>,
-    sequence: AtomicU64,
+    journal: Mutex<crate::snapshot::Journal>,
     files: Arc<Semaphore>,
     stopped: tokio::sync::watch::Sender<bool>,
 }
@@ -81,16 +77,19 @@ impl Drop for Service {
 impl Inner {
     pub fn emit(&self, kind: EventKind) {
         // Serialize allocation and publication so observers see increasing sequence IDs.
-        let mut history = self.history.lock().unwrap();
+        let mut journal = self.journal.lock().unwrap();
+        journal.sequence += 1;
+        journal.apply(&kind);
         let event = Event {
-            sequence: self.sequence.fetch_add(1, Ordering::SeqCst) + 1,
+            instance_id: journal.instance_id.clone(),
+            sequence: journal.sequence,
             kind,
         };
         if !matches!(event.kind, EventKind::Progress { .. }) {
-            if history.len() == self.config.event_capacity {
-                history.pop_front();
+            if journal.history.len() == self.config.event_capacity {
+                journal.history.pop_front();
             }
-            history.push_back(event.clone());
+            journal.history.push_back(event.clone());
         }
         let _ = self.events.send(event);
     }
@@ -183,8 +182,7 @@ impl Service {
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
             state: Mutex::new(State::default()),
-            history: Mutex::new(VecDeque::new()),
-            sequence: AtomicU64::new(0),
+            journal: Mutex::new(crate::snapshot::Journal::new()),
         });
         tokio::spawn(supervise(inner.clone(), rx, stop_tx));
         Ok(Self { inner })
@@ -201,7 +199,63 @@ impl Service {
     }
     /// Bounded recent control/terminal events; progress is deliberately excluded.
     pub fn recent_events(&self) -> Vec<Event> {
-        self.inner.history.lock().unwrap().iter().cloned().collect()
+        self.inner
+            .journal
+            .lock()
+            .unwrap()
+            .history
+            .iter()
+            .cloned()
+            .collect()
+    }
+    pub fn instance_id(&self) -> String {
+        self.inner.journal.lock().unwrap().instance_id.clone()
+    }
+    pub fn send_report(&self, id: &str) -> Result<SendReport> {
+        self.inner.journal.lock().unwrap().report(id)
+    }
+    /// Pages are individually atomic with event publication. Rescan on lost events.
+    pub fn snapshot(&self, after: Option<&str>, limit: usize) -> Result<SnapshotPage> {
+        self.inner.journal.lock().unwrap().page(after, limit)
+    }
+    pub fn transfer_snapshot(
+        &self,
+        id: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<TransferPage> {
+        self.inner.journal.lock().unwrap().files(id, after, limit)
+    }
+    pub fn cancel_send(&self, id: &str) -> Result<()> {
+        let state = self.inner.state.lock().unwrap();
+        let outgoing = state.outgoing.get(id).ok_or(ErrorCode::InvalidInput)?;
+        outgoing.cancel.cancel();
+        Ok(())
+    }
+    /// Keep this guard for the entire read/copy. Deletion returns Busy while leased.
+    pub async fn acquire_receipt(&self, id: &str) -> Result<crate::ReceiptLease> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ErrorCode::Closed);
+        }
+        let storage = self.inner.storage.clone();
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || storage.acquire(&id))
+            .await
+            .map_err(|_| ErrorCode::Io)?
+    }
+    pub async fn delete_receipt(&self, id: &str) -> Result<()> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ErrorCode::Closed);
+        }
+        let storage = self.inner.storage.clone();
+        let owned = id.to_owned();
+        tokio::task::spawn_blocking(move || storage.delete(&owned))
+            .await
+            .map_err(|_| ErrorCode::Io)??;
+        self.inner.emit(EventKind::ReceiptDeleted {
+            receipt_id: id.to_owned(),
+        });
+        Ok(())
     }
     pub fn pending_offers(&self) -> Vec<Offer> {
         self.inner
@@ -327,7 +381,7 @@ async fn supervise(
     inner.server.wait_stopped().await;
     inner.tasks.close();
     inner.tasks.wait().await;
-    inner.storage.release();
+    inner.storage.close().await;
     inner.emit(EventKind::Stopped);
     inner.stopped.send_replace(true);
 }
@@ -392,6 +446,10 @@ async fn handle_event(inner: Arc<Inner>, event: ServerEventV2) {
             decision_tx,
             ..
         } => {
+            if inner.state.lock().unwrap().sessions.len() >= 16 {
+                let _ = decision_tx.send(PrepareUploadDecisionV2::Decline);
+                return;
+            }
             let validated = offer(
                 &inner.config,
                 session_id.clone(),
