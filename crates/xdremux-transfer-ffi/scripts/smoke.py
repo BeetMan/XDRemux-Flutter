@@ -29,7 +29,7 @@ def main():
         fn = getattr(lib, "xdremux_transfer_" + name)
         fn.restype, fn.argtypes = result, parameters
         api[name] = fn
-    assert api["abi_version"]() == 65536
+    assert api["abi_version"]() == 65537
     assert api["stop"](0) == 2
     bad = c.c_uint64()
     assert api["create"](None, 1, c.byref(bad)) == 1
@@ -173,7 +173,7 @@ def main():
             assert call("release", h) == 0
             assert call("release", h) == 2
             del handles[h]
-    report = {"passed": True, "abi": 65536, "files": len(expected),
+    report = {"passed": True, "abi": api["abi_version"](), "files": len(expected),
               "bytes": sum(s for s, _ in expected.values()), "independentHashes": True,
               "checks": ["unicode_and_empty", "prepared_progress_terminal_ids", "snapshot_paging", "operation_recovery",
                          "lease_delete_busy", "managed_delete", "buffer_cap_and_free", "invalid_input_handle",

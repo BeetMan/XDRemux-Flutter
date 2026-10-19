@@ -1,10 +1,10 @@
-# Transfer C ABI 1.0 (P2.0)
+# Transfer C ABI 1.1 (P2.0 / P2.1)
 
 Independent adapter for `../xdremux-transfer`, built with Rust 1.97.1. Outputs `xdremux_transfer.dll` (Windows x64) or `libxdremux_transfer.so` (Android ARM64). It owns a background Tokio runtime per handle. It does not load the image engine, implement Flutter UI, package an APK, grant network permissions or enable discovery. Core provenance/license obligations are in [UPSTREAM.md](../xdremux-transfer/UPSTREAM.md).
 
 ## Calls and ownership
 
-The exact C signatures are in [include/xdremux_transfer.h](include/xdremux_transfer.h). `abi_version()` returns `0x00010000` (major in the upper 16 bits). Callers must reject an unsupported major version and tolerate additional JSON fields. Requests reject unknown fields; invalid UTF-8/JSON, oversized input and invalid limits return `InvalidInput`.
+The exact C signatures are in [include/xdremux_transfer.h](include/xdremux_transfer.h). `abi_version()` returns `0x00010001` (major in the upper 16 bits). Version 1.1 adds the advisory `check_space` command; exported signatures are unchanged. Callers must reject an unsupported major version and tolerate additional JSON fields. The Dart copy worker requires minor ≥1. Requests reject unknown fields; invalid UTF-8/JSON, oversized input and invalid limits return `InvalidInput`.
 
 | Status | Meaning |
 |---|---|
@@ -41,12 +41,13 @@ Every request has `"command"` plus the listed fields. Optional fields can be omi
 | `transfer` | `transfer_id`, optional `after`, `limit` 1–64 | summary plus file page (IDs, names, hash, bytes, phase, error, receipt ID) |
 | `send_report` | `transfer_id` | ACKed files with IDs and terminal error; Busy while active |
 | `receipts` | optional `after`, `limit` 1–64 | committed receipt array; pass last receipt ID for another page |
+| `check_space` | `bytes`, `reserve` (unsigned integers) | null if the service-root filesystem has sufficient free bytes; advisory only, OS write errors still apply |
 | `acquire_receipt` | `receipt_id` | `{lease_id,path,receipt}`; lease ID equals the known operation ID |
 | `release_receipt` | `lease_id` | null; unknown/already released lease is InvalidInput |
 | `delete_receipt` | `receipt_id` | null; Busy while any reader lease exists |
 | `operation` | `operation_id` | cached result or `{status:"unknown"}`; this query does not consume cache entries |
 
-`acquire_receipt` protects the immutable, extensionless `data` file until explicit release or stop. The caller may stream-read/copy it, must not mutate or rename it, and must not delete private directories. Do not assume a cached acquire result means the lease remains live after release/stop. If its output was lost, release using the acquire operation ID. A completed independent copy belongs to the application's checkpoint/export system. Queue intake, user-file export, Android document URIs, extension-preserving copies and disk-space budgeting are P2.1 work.
+`acquire_receipt` protects the immutable, extensionless `data` file until explicit release or stop. The caller may stream-read/copy it, must not mutate or rename it, and must not delete private directories. Do not assume a cached acquire result means the lease remains live after release/stop. If its output was lost, release using the acquire operation ID. A completed independent copy belongs to the application's checkpoint/export system. P2.1 now supplies the [Dart worker and checkpoint handoff](../../apps/flutter/lib/services/transfer/README.md). User-file export and Android document URI handling remain P2.2 work.
 
 Deletion validates the receipt and exactly the owned data/receipt children, atomically moves the directory into owned transaction storage, then removes its files. A crash after the move leaves an invisible tombstone cleaned at startup. A disk error after the move can report Io although the file is already absent; refresh receipts before retrying. Repeated delete of a missing receipt reports Io. Unknown children and links fail closed.
 

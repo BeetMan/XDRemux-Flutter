@@ -245,6 +245,10 @@ async fn execute(entry: &Entry, service: &Service, id: u64, request: Request) ->
         return Err(ErrorCode::Closed);
     }
     match request {
+        Request::CheckSpace { bytes, reserve } => {
+            service.check_space(bytes, reserve).await?;
+            Ok(Value::Null)
+        }
         Request::SendReport { transfer_id } => Ok(json!(service.send_report(&transfer_id)?)),
         Request::Probe { address } => tokio::select! {
             _ = entry.stop.cancelled() => Err(ErrorCode::Closed),

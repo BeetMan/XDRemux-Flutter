@@ -39,6 +39,10 @@ impl Create {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    CheckSpace {
+        bytes: u64,
+        reserve: u64,
+    },
     SendReport {
         transfer_id: String,
     },
@@ -99,6 +103,7 @@ impl Request {
             (1..=64).contains(&limit) && after.as_ref().is_none_or(|s| id_ok(s))
         };
         let valid = match self {
+            Self::CheckSpace { .. } => true,
             Self::Send { peer, paths, pin } => {
                 !paths.is_empty()
                     && paths.len() <= 1024
