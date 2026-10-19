@@ -1,6 +1,6 @@
 # 内置局域网文件传输开发计划
 
-日期：2026-10-18。状态：P1 双向 native 验收完成；P2.0 模型与独立 C ABI 已实现，17 项核心测试、2 项 ABI 测试及 Windows DLL / Android 真机 `.so` 验证通过。下一步为 P2.1 Dart worker 与队列交接。Apple 待验，鸿蒙验证延后。
+日期：2026-10-19。状态：P1 双向 native 验收完成；P2.0 与 P2.1 已实现，独立 C ABI、Dart worker、接收箱到 checkpoint/队列交接已通过测试。下一步为 P2.2 手动直连 UI、发布打包及应用互操作验收。Apple 待验，鸿蒙验证延后。
 
 ## 目标与开发基线
 
@@ -69,10 +69,10 @@
 
 ### P2：Flutter 文件互传首版
 
-2026-10-18 [接入研究与切片计划](../research/local-transfer-p2-integration.md) 后，P2.0 已完成发送文件 ID、活动/终态快照、实例 ID、受管读取与删除，以及独立 C ABI/runtime。见 [P2.0 验证](../testing/local-transfer-p20.md) 和 [ABI 契约](../../crates/xdremux-transfer-ffi/README.md)。下一步为 P2.1 长期 Dart worker 与带原始文件名的流式队列交接。开始修改 Flutter 前核对主线 codec/preview/FFI 工作的最终接口。
+2026-10-18 [接入研究与切片计划](../research/local-transfer-p2-integration.md) 后，P2.0 已完成发送文件 ID、活动/终态快照、实例 ID、受管读取与删除，以及独立 C ABI/runtime。见 [P2.0 验证](../testing/local-transfer-p20.md) 和 [ABI 契约](../../crates/xdremux-transfer-ffi/README.md)。2026-10-19 P2.1 完成长驻 Dart worker、缺库/版本降级、保留原名的流式副本、队列 checkpoint 持久 ACK、清理串行与默认独立输出目录，见 [P2.1 验证](../testing/local-transfer-p21.md)。主线仍有未提交的 codec/preview/FFI 工作，本分支只修改已提交基线的少量入口，未复制其未提交文件；P2.2 接入前再核对最终接口。
 
 - [x] P2.0：补齐 native 模型、租约/删除、独立 ABI/runtime、状态恢复和有界调用；Windows/Android 动态库验证通过。
-- [ ] P2.1：Dart worker、缺库/版本降级、接收箱到 checkpoint 的流式副本和显式队列 ACK。
+- [x] P2.1：Dart worker、缺库/版本降级、接收箱到 checkpoint 的流式副本和显式队列 ACK。
 - [ ] P2.2：Windows/Android 手动直连 UI 与正式应用双向验收。
 - [ ] P2.3：自动发现、失败兜底与完整 P2 退出验收。
 

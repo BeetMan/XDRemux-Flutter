@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/app_models.dart';
 import '../models/checkpoint_model.dart';
+import 'transfer/transfer_queue.dart';
 
 class CheckpointService {
   CheckpointService._();
@@ -115,6 +116,13 @@ class CheckpointService {
   static Future<void> cleanupMaterializedInputs(
     Checkpoint checkpoint, {
     Set<String> retainedPaths = const {},
+  }) => TransferQueue.withInputAccess(
+    () => _cleanupMaterializedInputs(checkpoint, retainedPaths: retainedPaths),
+  );
+
+  static Future<void> _cleanupMaterializedInputs(
+    Checkpoint checkpoint, {
+    Set<String> retainedPaths = const {},
   }) async {
     final supportDir = await getApplicationSupportDirectory();
     final dir = Directory(
@@ -127,6 +135,7 @@ class CheckpointService {
         final file = File(item.inputPath);
         if (file.existsSync()) await file.delete();
         final parent = file.parent;
+        await _removeTransferMarker(parent);
         if (parent.existsSync() && parent.listSync().isEmpty) {
           await parent.delete();
         }
@@ -145,7 +154,11 @@ class CheckpointService {
   }
 
   /// Remove a persistent picker copy for a single path when removed from queue.
-  static Future<void> cleanupSingleMaterializedInput(String inputPath) async {
+  static Future<void> cleanupSingleMaterializedInput(String inputPath) =>
+      TransferQueue.withInputAccess(
+        () => _cleanupSingleMaterializedInput(inputPath),
+      );
+  static Future<void> _cleanupSingleMaterializedInput(String inputPath) async {
     try {
       final supportDir = await getApplicationSupportDirectory();
       final dir = Directory(
@@ -155,6 +168,7 @@ class CheckpointService {
       final file = File(inputPath);
       if (file.existsSync()) await file.delete();
       final parent = file.parent;
+      await _removeTransferMarker(parent);
       if (parent.existsSync() && parent.listSync().isEmpty) {
         await parent.delete();
       }
@@ -162,16 +176,35 @@ class CheckpointService {
   }
 
   /// Remove all persistent picker copies.
-  static Future<void> cleanupAllMaterializedInputs() async {
+  static Future<void> cleanupAllMaterializedInputs() =>
+      TransferQueue.withInputAccess(_cleanupAllMaterializedInputs);
+  static Future<void> _cleanupAllMaterializedInputs() async {
     try {
       final supportDir = await getApplicationSupportDirectory();
       final dir = Directory(
         '${supportDir.path}${Platform.pathSeparator}$_materializedInputDirName',
       );
       if (dir.existsSync()) {
-        await dir.delete(recursive: true);
+        // Transfer buckets have durable receipt/ACK records and may be mid-copy.
+        // Queue removal cleans their specific paths; clear-all only owns picker copies.
+        for (final child in dir.listSync(followLinks: false)) {
+          final name = child.path.split(RegExp(r'[/\\]')).last;
+          if (name.startsWith('transfer-')) continue;
+          if (child is Directory) await child.delete(recursive: true);
+        }
+        if (dir.listSync().isEmpty) await dir.delete();
       }
     } catch (_) {}
+  }
+
+  static Future<void> _removeTransferMarker(Directory bucket) async {
+    final name = bucket.path.split(RegExp(r'[/\\]')).last;
+    if (!RegExp(r'^transfer-[0-9a-f-]{36}$').hasMatch(name)) return;
+    final marker = File('${bucket.path}${Platform.pathSeparator}receipt.json');
+    if (await FileSystemEntity.type(marker.path, followLinks: false) ==
+        FileSystemEntityType.file) {
+      await marker.delete();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -205,14 +238,22 @@ class CheckpointService {
   /// races impossible.
   static Future<void> _saveChain = Future.value();
 
-  static Future<void> save(Checkpoint checkpoint) {
-    final task = _saveChain.then((_) => _saveNow(checkpoint));
+  static Future<void> save(
+    Checkpoint checkpoint, {
+    bool requirePersistence = false,
+  }) {
+    final task = _saveChain.then(
+      (_) => _saveNow(checkpoint, requirePersistence),
+    );
     // Keep the chain alive even if one save fails.
     _saveChain = task.catchError((_) {});
     return task;
   }
 
-  static Future<void> _saveNow(Checkpoint checkpoint) async {
+  static Future<void> _saveNow(
+    Checkpoint checkpoint,
+    bool requirePersistence,
+  ) async {
     final file = await _getFile();
     await file.parent.create(recursive: true);
     final tmpPath = '${file.path}.tmp';
@@ -226,6 +267,7 @@ class CheckpointService {
       if (await tmpFile.exists()) {
         await tmpFile.delete();
       }
+      if (requirePersistence) rethrow;
     }
   }
 
@@ -309,7 +351,8 @@ class CheckpointService {
         outputPath: item.outputPath,
         status: switch (item.status) {
           QueueItemStatus.converted => CheckpointItemStatus.converted,
-          QueueItemStatus.skippedExisting => CheckpointItemStatus.skippedExisting,
+          QueueItemStatus.skippedExisting =>
+            CheckpointItemStatus.skippedExisting,
           QueueItemStatus.skippedPolicy => CheckpointItemStatus.skippedPolicy,
           QueueItemStatus.failed => CheckpointItemStatus.failed,
           _ => CheckpointItemStatus.pending,

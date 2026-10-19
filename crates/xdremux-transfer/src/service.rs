@@ -296,6 +296,15 @@ impl Service {
     pub async fn receipts(&self, limit: usize) -> Result<Vec<Receipt>> {
         self.receipts_after(None, limit).await
     }
+    pub async fn check_space(&self, bytes: u64, reserve: u64) -> Result<()> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ErrorCode::Closed);
+        }
+        let storage = self.inner.storage.clone();
+        tokio::task::spawn_blocking(move || storage.space(bytes, reserve))
+            .await
+            .map_err(|_| ErrorCode::Io)?
+    }
     /// Ascending receipt IDs; pass the last ID as the cursor for the next page.
     pub async fn receipts_after(
         &self,

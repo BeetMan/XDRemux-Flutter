@@ -25,6 +25,8 @@ import 'services/tray_service.dart';
 import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
+import 'services/transfer/transfer_models.dart';
+import 'services/transfer/transfer_queue.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
@@ -255,6 +257,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    TransferQueue.register(this, _acceptTransferInput);
     _initAsync();
     _initDropChannel();
     _initShareIntake();
@@ -632,6 +635,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    TransferQueue.unregister(this);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
     _shareSubscription?.cancel();
@@ -650,12 +654,13 @@ class _HomePageState extends State<HomePage> {
   // Queue management
   // ---------------------------------------------------------------------------
 
-  bool get _canEditQueue => !_isProcessing;
+  bool get _canEditQueue => !_isProcessing && !TransferQueue.importing;
 
   // Keep the start action enabled when there are pending items with
   // blockers, so the user can see the preflight explanation instead of a
   // mysteriously disabled button.
   bool get _canStart =>
+      !TransferQueue.importing &&
       !_isProcessing &&
       _queue.any((item) => item.status == QueueItemStatus.pending);
 
@@ -2308,6 +2313,7 @@ class _HomePageState extends State<HomePage> {
 
   void _clearQueue() {
     if (!_canEditQueue) return;
+    final removedPaths = _queue.map((item) => item.inputPath).toList();
     final oldCheckpoint = _checkpoint;
     setState(() {
       _queue.clear();
@@ -2321,6 +2327,9 @@ class _HomePageState extends State<HomePage> {
       unawaited(CheckpointService.cleanupMaterializedInputs(oldCheckpoint));
     }
     unawaited(CheckpointService.cleanupAllMaterializedInputs());
+    for (final path in removedPaths) {
+      unawaited(CheckpointService.cleanupSingleMaterializedInput(path));
+    }
     unawaited(CheckpointService.delete());
   }
 
@@ -2461,11 +2470,15 @@ class _HomePageState extends State<HomePage> {
   /// Shared intake for desktop drop and Android share: classifies each
   /// supported path and appends it to the queue, then reports how many
   /// files were added and how many were ignored as non-HEIC.
-  Future<void> _enqueuePaths(
+  Future<TransferIntakeStatus> _enqueuePaths(
     List<String> paths, {
     required String verb,
     int ignored = 0,
+    TransferInput? transferInput,
   }) async {
+    if (transferInput == null && TransferQueue.importing) {
+      return TransferIntakeStatus.rejected;
+    }
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
@@ -2479,9 +2492,9 @@ class _HomePageState extends State<HomePage> {
       // Shared-media intake and some picker implementations hand us a cache
       // path. Use the same persistent materialization path as file picking so
       // share/drop and picker have identical resume semantics.
-      final path = await CheckpointService.materializeTemporaryInput(
-        resolvedPath,
-      );
+      final path = transferInput != null
+          ? resolvedPath
+          : await CheckpointService.materializeTemporaryInput(resolvedPath);
       if (existing.contains(path)) continue;
       if (_config.applePortrait) {
         final portraitReason = await _portraitImportRejection(path);
@@ -2491,7 +2504,7 @@ class _HomePageState extends State<HomePage> {
             resolvedPath.split(RegExp(r'[/\\]')).last,
           );
           debugPrint(
-            '[XDRemux][portrait] rejected $resolvedPath: $portraitReason',
+            '[XDRemux][portrait] input rejected',
           );
           continue;
         }
@@ -2500,7 +2513,9 @@ class _HomePageState extends State<HomePage> {
         String effectivePath = path;
         final inputIsConverted = await XdRemuxService.verifyOutput(path);
         if (inputIsConverted) {
-          final donor = _findOriginalDonorForConvertedFile(path);
+          final donor = transferInput == null
+              ? _findOriginalDonorForConvertedFile(path)
+              : null;
           if (donor != null && !existing.contains(donor)) {
             debugPrint(
               '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
@@ -2515,7 +2530,7 @@ class _HomePageState extends State<HomePage> {
         final folderName = classification['folderName'] as String?;
         final outputPath = _config.outputPathFor(
           effectivePath,
-          fallbackDir: _androidOutputDir,
+          fallbackDir: transferInput?.outputDirectory ?? _androidOutputDir,
           captureModeFolderName: folderName,
         );
         final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
@@ -2568,7 +2583,7 @@ class _HomePageState extends State<HomePage> {
         ignored == 0 &&
         skippedExisting == 0 &&
         skippedUnsupportedPortrait == 0) {
-      return;
+      return TransferIntakeStatus.failed;
     }
 
     final parts = <String>[];
@@ -2594,7 +2609,7 @@ class _HomePageState extends State<HomePage> {
         skippedExisting > 0 ||
         skippedUnsupportedPortrait > 0 ||
         verb == t('接收', 'Received')) {
-      if (!mounted) return;
+      if (!mounted) return TransferIntakeStatus.failed;
       final snackText = skippedExisting > 0
           ? t(
               '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
@@ -2605,6 +2620,39 @@ class _HomePageState extends State<HomePage> {
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(snackText)));
     }
+    return added > 0
+        ? TransferIntakeStatus.added
+        : ignored > 0
+        ? TransferIntakeStatus.unsupported
+        : TransferIntakeStatus.rejected;
+  }
+
+  Future<TransferIntakeAck> _acceptTransferInput(TransferInput input) async {
+    if (!mounted || _isProcessing) {
+      return const TransferIntakeAck(TransferIntakeStatus.rejected);
+    }
+    if (!isSupportedInputPath(input.path)) {
+      return const TransferIntakeAck(TransferIntakeStatus.unsupported);
+    }
+    final previous = _queue.where((q) => q.inputPath == input.path).toList();
+    final status = previous.isNotEmpty
+        ? TransferIntakeStatus.duplicate
+        : await _enqueuePaths([input.path],
+            verb: t('接收', 'Received'), transferInput: input);
+    final items = _queue.where((q) => q.inputPath == input.path).toList();
+    if (items.isEmpty) return TransferIntakeAck(status);
+    // ACK requires durable queue state, including imports made before a batch starts.
+    _checkpoint = Checkpoint(
+      header: CheckpointHeader(
+        configHash: CheckpointService.computeConfigHash(_config),
+        totalJobs: _queue.length,
+        startedAt: DateTime.now(),
+        appVersion: _version,
+      ),
+      items: CheckpointService.createItemsFromQueue(_queue),
+    );
+    await CheckpointService.save(_checkpoint!, requirePersistence: true);
+    return TransferIntakeAck(status, queueId: items.first.id);
   }
 
   void _revealInExplorer(String path) {

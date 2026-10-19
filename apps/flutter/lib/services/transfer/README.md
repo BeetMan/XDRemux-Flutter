@@ -1,0 +1,47 @@
+# Dart transfer worker and checkpoint handoff (P2.1)
+
+`TransferService` is an optional capability. Construction and the home queue's `TransferQueue.register` do not load native code or start a listener. Explicitly call `start` with the application support directory; it starts a persistent isolate that loads only the transfer library. The existing image FFI and conversion service remain independent. Windows loads `xdremux_transfer.dll` beside the executable; Android uses `libxdremux_transfer.so`. Missing libraries, unsupported platforms and ABI <1.1 return an unavailable capability. P2.2 must bundle the library and present that state in the UI.
+
+```dart
+final support = await getApplicationSupportDirectory();
+final transfer = TransferService();
+final capability = await transfer.start(supportRoot: support.path);
+if (!capability.available) {
+  await transfer.dispose();
+  return;
+}
+// Explicit trust and offer confirmation UI belong to P2.2.
+final inbox = await transfer.command({'command': 'receipts', 'limit': 64});
+final intake = TransferIntake(transfer); // uses the registered home queue
+final ack = await intake.importReceipt(selectedReceiptId);
+// When leaving/stopping, finish external reads, then:
+await transfer.dispose();
+```
+
+`command` follows the [native JSON contract](../../../../../crates/xdremux-transfer-ffi/README.md). `drainEvents` returns bounded events and a `resync` flag; when set, rescan native snapshot/file/receipt pages and apply subsequent events, using instance IDs and file IDs. The worker polls every 50 ms, even while copying, so operation results do not depend on UI polling. Buffered UI events are capped at 256 and 2 MiB. Native results are correlated by operation ID; missing results are queried from the bounded native operation cache without replaying the original mutation. After 30 seconds without an answer, return `outcome_unknown` with its operation ID and require reconciliation. Unknown lease operations trigger stop to revoke potentially orphaned leases.
+
+There are at most 24 normal pending native calls, 32 including cancellation/cleanup, and 40 owner-side RPCs. Stop has a separate path. Only one copy runs per worker. Dispose blocks new work, waits for its current copy and lease cleanup, then stops/releases the native handle and waits for isolate exit. Repeated dispose shares the same future. Native startup/disk I/O is allowed to finish; there is no hard shutdown deadline. Callers must await dispose rather than kill the isolate.
+
+The checkpoint handoff is explicit:
+
+1. `prepareInput` acquires a native read lease and checks service-volume free space for the declared bytes plus 64 MiB. Inbox and copies must remain under the same application support filesystem. This is advisory; the worker maps write failures to redacted errors. The check covers the extra input copy; conversion/output and user-selected export destinations need their own space check in P2.2.
+2. Accept only HEIC/HEIF/JPEG names with matching shallow container signatures. This is not a media decoder validation; the existing classifier/admission rules decide whether the file can join the queue. MOV and other opaque files remain in the inbox.
+3. Stream the leased `data` file to a private staging bucket, hashing incrementally, checking exact length and SHA-256, flushing, and publishing the completed directory as `xdremux_checkpoint_inputs/transfer-<receiptUUID>/<originalName>`. Never load a whole payload into Dart/UI memory. Same-name receipts use different buckets; repeat imports verify the existing copy and marker before reusing it. Owned partial staging is cleaned on the next prepare; unknown contents/links fail closed.
+4. `TransferIntake` calls the queue callback. The home queue reuses existing classification, portrait/Huawei policy and output planning, bypasses filename-based donor substitution for transfer imports, and persists a checkpoint **before** ACK. ACK states are added / duplicate / unsupported / rejected / failed. Successful ACKs require a queue ID. Existing converted-image skip policy can reject an otherwise valid received file.
+5. The receipt marker records the ACK. If a crash/persistence error occurs after queue insertion, keep the copy; retry uses its deterministic path and asks the queue again. A previous marker alone is not evidence the current queue contains the item. The queue restores from its checkpoint and deduplicates by input path. Valid abandoned marker writes can be retried. Error strings are stable codes and omit paths/PIN/native exceptions.
+
+The input file and marker belong to checkpoint storage after publication. Inbox deletion cannot remove them. Conversion output defaults to a separate `xdremux_transfer_outputs/<receiptUUID>/` directory (or the user's configured output/mobile fallback), including after settings refresh/restart. Import/callback/ACK and checkpoint cleanup share one serialized ownership gate; queue editing/start is blocked during handoff. Specific queue removal cleans the input/marker, while bulk picker cleanup skips transfer buckets. Rejected/prepared copies are retained for retry; a user-facing retention/orphan management screen remains P2.2 work. No automatic gallery import or deletion occurs.
+
+P2.1 registers the existing queue intake hook but adds no transfer page or network permission changes. P2.2 still owns trust/offer UI, lifecycle hooks for tray exit/backgrounding, APK/EXE packaging, generic file export/SAF, and release application interoperability. The Android native `.so` harness does not prove that loading it from a Dart isolate works inside a release APK; that application check is still required.
+
+Validation:
+
+```powershell
+flutter test --no-pub test/transfer_copy_test.dart
+dart run tool/transfer_worker_smoke.dart ABSOLUTE_DLL_PATH REPORT_PATH [ABI_1_0_DLL_PATH]
+# Optional real classifier/home queue test; fixture must be a readable HEIC:
+$env:XDREMUX_TRANSFER_QUEUE_FIXTURE = 'ABSOLUTE_HEIC_PATH'
+flutter test --no-pub test/transfer_queue_widget_test.dart
+```
+
+The DLL smoke uses real loopback HTTPS and persistent worker isolates, verifies copied hashes, tests unavailable/old ABI, operation errors, ACK loss, same-name receipts, native inbox deletion, stopping during a 64 MiB copy, and exact root/port reuse. The optional widget test uses the existing image classifier/home queue with a copied HEIC fixture; it disables the existing “skip converted” setting for that admission test. It never modifies the supplied fixture. Native payload fixtures and local reports are not committed.
