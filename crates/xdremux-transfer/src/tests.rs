@@ -898,3 +898,34 @@ async fn managed_delete_leases_and_shutdown_are_coordinated() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+#[tokio::test]
+async fn export_is_verified_no_replace_and_cannot_target_private_storage() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let session = prepare(&a, &b, file("opaque.bin", 3, None)).await;
+    upload(&a, &b, &session, b"abc".to_vec()).await.unwrap();
+    let receipt = b.receipts(1).await.unwrap().remove(0);
+    let destination = temp.path().join("export");
+    fs::create_dir(&destination).unwrap();
+    let path = b
+        .export_receipt(&receipt.id, destination.clone())
+        .await
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"abc");
+    assert_eq!(hash_file(&path).await.unwrap(), receipt.sha256);
+    assert_eq!(
+        b.export_receipt(&receipt.id, destination).await.err(),
+        Some(ErrorCode::AlreadyExists)
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"abc");
+    assert_eq!(
+        b.export_receipt(&receipt.id, temp.path().join("b/received"))
+            .await
+            .err(),
+        Some(ErrorCode::UnsafeStorage)
+    );
+    assert!(b.received_path(&receipt.id).await.unwrap().exists());
+    a.shutdown().await;
+    b.shutdown().await;
+}

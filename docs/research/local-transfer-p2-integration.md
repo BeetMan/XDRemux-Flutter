@@ -1,6 +1,6 @@
 # P2 接入研究：Flutter 文件互传
 
-日期：2026-10-18，进展更新：2026-10-19。本文保留研究阶段的选型与问题记录。后续 **P2.0、P2.1 已实现并验收**：模型、独立 ABI/runtime、读取租约与受管删除、Dart worker 与队列交接，见 [ABI 契约](../../crates/xdremux-transfer-ffi/README.md)、[Dart 契约](../../apps/flutter/lib/services/transfer/README.md) 和 [P2.1 验证](../testing/local-transfer-p21.md)。Flutter 互传页面和发布打包尚未实现。工作分支 `codex/local-transfer`，应用基线 `877047b8`。P1 的 Windows ↔ Android native/shell 双向复验已通过；应用级权限和生命周期仍未验收。
+日期：2026-10-18，进展更新：2026-10-19。本文保留研究阶段的选型与问题记录。后续 P2.0/P2.1 已实现模型、独立 ABI/runtime、读取租约与受管删除、Dart worker 与队列交接；**P2.2 又补齐 Windows/Android 手动直连页面、独立动态库打包、显式身份/接收确认及通用导出**。最新结果以 [P2.2 验证](../testing/local-transfer-p22.md)、[ABI 契约](../../crates/xdremux-transfer-ffi/README.md)、[Dart 契约](../../apps/flutter/lib/services/transfer/README.md) 为准。工作分支 `codex/local-transfer`，应用基线 `877047b8`。自动发现和完整权限/生命周期矩阵仍待验收。
 
 ## 结论与顺序
 
@@ -108,4 +108,4 @@ Rust runtime 与服务线程由库管理；Dart worker 负责 ABI 加载、发�
 | P2.2：Windows/Android 手动直连 | 接收开关、身份/文件清单确认、原图/结果发送、进度、取消、接收箱、通用导出 | release 应用 ↔ 官方 LocalSend / 另一应用双向；独立核对文件；权限拒绝/撤销、后台/恢复、防火墙、未知格式 |
 | P2.3：发现及完整退出验收 | 自动发现、地址可达性、端口冲突提示、失败文件重试和本地化 | 与 LocalSend 同机共存、多网卡/多播失败退回直连、输入/输出/转换回归；按平台记录支持范围 |
 
-P2.0、P2.1 已在后续开发完成；下一次从 **P2.2** 开始。先核对主线已完成的接口变更，再接互传页面、权限/身份确认、正式应用生命周期及打包；主线合并与发布仍独立安排。上文候选 ABI 以实际实现契约为准，例如 `release` 会等待已停止线程的收尾，`stop` 会撤销 adapter 持有的读取租约，因此应用必须先结束外部读取。Dart worker 会先等待正在进行的复制结束，再请求 native stop。
+P2.0/P2.1/P2.2 已在后续开发实现；下一切片是 **P2.3：发现、失败兜底与完整退出验收**。主线合并与发布仍独立安排，合并时继续核对主线正在变化的 UI/打包接口。上文候选 ABI 以实际实现契约为准，例如 `release` 会等待已停止线程的收尾，`stop` 会撤销 adapter 持有的读取租约，因此应用必须先结束外部读取。Dart worker/controller 会先等待正在进行的复制结束，再请求 native stop。

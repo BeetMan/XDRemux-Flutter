@@ -13,6 +13,7 @@ pub enum ErrorCode {
     Declined,
     NoSpace,
     Io,
+    AlreadyExists,
     Network,
     Cancelled,
     TimedOut,
@@ -32,6 +33,9 @@ impl std::fmt::Display for ErrorCode {
 impl std::error::Error for ErrorCode {}
 impl From<std::io::Error> for ErrorCode {
     fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            return Self::AlreadyExists;
+        }
         #[cfg(windows)]
         let full = matches!(error.raw_os_error(), Some(39 | 112));
         #[cfg(not(windows))]

@@ -148,6 +148,20 @@ endif()
 # ffmpeg is no longer bundled: HEVC encoding uses static-linked x265 and
 # thumbnails use Rust FFI (embedded EXIF JPEG extraction).
 
+# Optional transfer capability: build separately; never pull its runtime into the image engine.
+set(XDREMUX_TRANSFER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../../../crates/xdremux-transfer-ffi/target/release/xdremux_transfer.dll")
+if(DEFINED ENV{XDREMUX_WINDOWS_TRANSFER_DLL} AND NOT "$ENV{XDREMUX_WINDOWS_TRANSFER_DLL}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{XDREMUX_WINDOWS_TRANSFER_DLL}" XDREMUX_TRANSFER_DLL)
+  if(NOT EXISTS "${XDREMUX_TRANSFER_DLL}")
+    message(FATAL_ERROR "Explicit transfer DLL does not exist")
+  endif()
+endif()
+if(EXISTS "${XDREMUX_TRANSFER_DLL}")
+  install(FILES "${XDREMUX_TRANSFER_DLL}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../../crates/xdremux-transfer/vendor/localsend/LICENSE"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/licenses" RENAME "LocalSend-Apache-2.0.txt" COMPONENT Runtime)
+endif()
+
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"

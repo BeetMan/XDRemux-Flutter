@@ -286,7 +286,7 @@ Future<void> main(List<String> args) async {
     final report = {
       'passed': true,
       'date': '2026-10-19',
-      'abi': 65537,
+      'abi': 65538,
       'checks': checks,
       'transferredFiles': transferredFiles,
       'bytes': transferredBytes,

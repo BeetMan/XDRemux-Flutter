@@ -245,6 +245,10 @@ async fn execute(entry: &Entry, service: &Service, id: u64, request: Request) ->
         return Err(ErrorCode::Closed);
     }
     match request {
+        Request::ExportReceipt {
+            receipt_id,
+            directory,
+        } => Ok(json!({"path": service.export_receipt(&receipt_id, directory).await?})),
         Request::CheckSpace { bytes, reserve } => {
             service.check_space(bytes, reserve).await?;
             Ok(Value::Null)

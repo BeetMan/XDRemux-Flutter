@@ -305,6 +305,71 @@ impl Service {
             .await
             .map_err(|_| ErrorCode::Io)?
     }
+    /// Stream a committed file into an explicitly chosen directory; never overwrite.
+    pub async fn export_receipt(&self, id: &str, directory: PathBuf) -> Result<PathBuf> {
+        if self.inner.stop.is_cancelled() {
+            return Err(ErrorCode::Closed);
+        }
+        let storage = self.inner.storage.clone();
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            if !directory.is_absolute() {
+                return Err(ErrorCode::InvalidInput);
+            }
+            storage::plain(&directory, true)?;
+            let directory = std::fs::canonicalize(directory)?;
+            if directory.starts_with(&storage.root) {
+                return Err(ErrorCode::UnsafeStorage);
+            }
+            let lease = storage.acquire(&id)?;
+            let receipt = lease.receipt();
+            if fs2::available_space(&directory)?
+                < receipt
+                    .size
+                    .checked_add(64 * 1024 * 1024)
+                    .ok_or(ErrorCode::NoSpace)?
+            {
+                return Err(ErrorCode::NoSpace);
+            }
+            let staging = tempfile::Builder::new()
+                .prefix(".xdremux-export-")
+                .tempdir_in(&directory)?;
+            let temp = staging.path().join("data");
+            let mut input = std::fs::File::open(lease.path())?;
+            let mut output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temp)?;
+            let mut hash = Sha256::new();
+            let mut bytes = 0u64;
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                let n = input.read(&mut chunk)?;
+                if n == 0 {
+                    break;
+                }
+                bytes += n as u64;
+                if bytes > receipt.size {
+                    return Err(ErrorCode::ChecksumMismatch);
+                }
+                hash.update(&chunk[..n]);
+                output.write_all(&chunk[..n])?;
+            }
+            if bytes != receipt.size || storage::hex(hash.finalize()) != receipt.sha256 {
+                return Err(ErrorCode::ChecksumMismatch);
+            }
+            output.flush()?;
+            output.sync_all()?;
+            drop(output);
+            let destination = directory.join(&receipt.name);
+            storage::publish(&temp, &destination)?;
+            storage::sync_dir(&directory)?;
+            Ok(destination)
+        })
+        .await
+        .map_err(|_| ErrorCode::Io)?
+    }
     /// Ascending receipt IDs; pass the last ID as the cursor for the next page.
     pub async fn receipts_after(
         &self,

@@ -29,6 +29,17 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  transfer_lifecycle_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "xdremux/transfer-lifecycle",
+      &flutter::StandardMethodCodec::GetInstance());
+  transfer_lifecycle_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "ready") {
+      transfer_close_ready_ = true; result->Success();
+    } else if (call.method_name() == "approveClose") {
+      transfer_allow_close_ = true; result->Success();
+      PostMessage(GetHandle(), WM_CLOSE, 0, 0);
+    } else { result->NotImplemented(); }
+  });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -129,6 +140,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_CLOSE:
+      if (transfer_close_ready_ && !transfer_allow_close_) {
+        if (!transfer_close_requested_) {
+          transfer_close_requested_ = true;
+          transfer_lifecycle_->InvokeMethod("requestClose", nullptr);
+        }
+        return 0;
+      }
+      break;
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

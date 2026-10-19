@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-19",
+  "phase": "P2.2",
+  "abi": 65538,
+  "branch": "codex/local-transfer",
+  "parent": "2cec7c781c9b127772182ab73b2339c3ec3707ea",
+  "platforms": [
+    "Windows x64",
+    "Android ARM64 PKJ110 / Android 17 API37"
+  ],
+  "flutter": "3.44.5",
+  "dart": "3.12.2",
+  "rust": "1.97.1",
+  "androidTargetSdk": 36,
+  "network": "direct LAN HTTPS, no forwarding or firewall changes",
+  "applicationValidation": {
+    "windows": {
+      "stage": "done",
+      "files": 5,
+      "hashesMatch": true,
+      "exportVerified": true,
+      "role": "windows"
+    },
+    "android": {
+      "stage": "done",
+      "files": 5,
+      "hashesMatch": true,
+      "exportVerified": true,
+      "role": "android"
+    },
+    "filesPerDirection": 5,
+    "bytesPerDirection": 18579897,
+    "fixtures": [
+      {
+        "name": "xdremux-poc-clip.mov",
+        "size": 2194,
+        "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a"
+      },
+      {
+        "name": "xdremux-poc-empty.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "xdremux-poc-payload.bin",
+        "size": 16777216,
+        "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b"
+      },
+      {
+        "name": "xdremux-poc-photo.heic",
+        "size": 1800239,
+        "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+      },
+      {
+        "name": "xdremux-poc-photo.jpg",
+        "size": 248,
+        "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954"
+      }
+    ],
+    "resumedAcrossBuilds": true,
+    "confirmation": "production UI callbacks; separate widget tap tests",
+    "windowsExportsIndependentlyHashed": true,
+    "androidSafProviderReadback": true,
+    "androidSafExternalLength": 2194,
+    "androidSafExternalSha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a",
+    "androidSafExtension": ".mov",
+    "pickerExplicitlyStopsLan": true,
+    "androidMainEntry": {
+      "entrypoint": "lib/main.dart",
+      "package": "isolated .transferdev",
+      "toolbarOpenedByDeviceInput": true,
+      "explicitReceiveReachableOverLan": true,
+      "homeClosesListener": true,
+      "mainTestApkSha256": "636ba9a94bf61de4b8556d8007e5ddf077527b865ed63bc4ce41af04405d9caf",
+      "returningForegroundKeepsReceptionOff": true
+    }
+  },
+  "checks": {
+    "coreTests": 18,
+    "abiTests": 2,
+    "flutterTests": 68,
+    "realClassifierQueueAck": true,
+    "clippy": "passed",
+    "dartAnalyze": "passed",
+    "workerSmoke": {
+      "passed": true,
+      "date": "2026-10-19",
+      "abi": 65538,
+      "checks": [
+        "missing_library_degrades",
+        "no_space_propagates",
+        "worker_https_transfer",
+        "unicode_private_copy_hash",
+        "same_name_isolated",
+        "ack_loss_retry",
+        "concurrent_click_coalescing",
+        "opaque_mov_not_queued",
+        "inbox_delete_keeps_checkpoint",
+        "stop_waits_for_active_copy",
+        "restart_root_port_and_receipts"
+      ],
+      "transferredFiles": 4,
+      "bytes": 71303181,
+      "originalAndCopiesHashMatch": true,
+      "librarySha256": "efbf2323286f733b8a3b2740c2f5f350de5996c501e262fbd883f60bb8e8df9a"
+    }
+  },
+  "libraries": {
+    "windowsSha256": "efbf2323286f733b8a3b2740c2f5f350de5996c501e262fbd883f60bb8e8df9a",
+    "androidSha256": "1553edf6af631b611b1f37937f19e8609122909013edfe9576fdd24071499d7c"
+  },
+  "androidSafIntegrationApkSha256": "a54d3efd0208ea4418fefaf036cecc9074fa0ebb5732baa43066741d905facb1",
+  "deferred": [
+    "discovery",
+    "reachable interface filtering",
+    "full OS permission/network/window-close matrix",
+    "older and official clients in final UI",
+    "2GiB/1000-file stress",
+    "gallery/LivePhoto",
+    "mainline integration",
+    "Apple",
+    "HarmonyOS"
+  ],
+  "productionAndroidBuild": {
+    "entrypoint": "lib/main.dart",
+    "testSuffix": false,
+    "integrationPluginInDex": false,
+    "localSendLicenseBundled": true,
+    "transferLibraryBundled": true,
+    "transferLibraryApkSha256": "acc8242fc6b3ffe5df1ce5107bc7b7e1f51648359345cdc00e980122ee33ec97",
+    "apkSha256": "6edabeff317c0420d4810bc209783b88677f7e2b1311c56d49900839617c4108",
+    "apkBytes": 30262891,
+    "installedOverUserApp": false
+  },
+  "productionWindowsBuild": {
+    "entrypoint": "lib/main.dart",
+    "exeSha256": "5d58add89159b5a233e1552e9669015ec18d1d98b6656f1f300b50f759c16df4",
+    "aotSha256": "d3752969c37419b34b5401d6cde10cdd56d6409367dfffe5c274ab80a5209882",
+    "transferLibrarySha256": "efbf2323286f733b8a3b2740c2f5f350de5996c501e262fbd883f60bb8e8df9a",
+    "localSendLicenseBundled": true
+  }
+}

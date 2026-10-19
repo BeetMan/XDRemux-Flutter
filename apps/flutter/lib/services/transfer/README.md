@@ -1,6 +1,6 @@
-# Dart transfer worker and checkpoint handoff (P2.1)
+# Dart transfer worker, application controller and checkpoint handoff
 
-`TransferService` is an optional capability. Construction and the home queue's `TransferQueue.register` do not load native code or start a listener. Explicitly call `start` with the application support directory; it starts a persistent isolate that loads only the transfer library. The existing image FFI and conversion service remain independent. Windows loads `xdremux_transfer.dll` beside the executable; Android uses `libxdremux_transfer.so`. Missing libraries, unsupported platforms and ABI <1.1 return an unavailable capability. P2.2 must bundle the library and present that state in the UI.
+`TransferService` is an optional capability. Construction and the home queue's `TransferQueue.register` do not load native code or start a listener. Explicitly call `start` with the application support directory; it starts a persistent isolate that loads only the transfer library. The existing image FFI and conversion service remain independent. Windows loads `xdremux_transfer.dll` beside the executable; Android uses `libxdremux_transfer.so`. Missing libraries, unsupported platforms and ABI <1.2 return an unavailable capability, presented as an actionable error in the P2.2 page.
 
 ```dart
 final support = await getApplicationSupportDirectory();
@@ -10,7 +10,7 @@ if (!capability.available) {
   await transfer.dispose();
   return;
 }
-// Explicit trust and offer confirmation UI belong to P2.2.
+// Production callers use TransferController / TransferPage for confirmation.
 final inbox = await transfer.command({'command': 'receipts', 'limit': 64});
 final intake = TransferIntake(transfer); // uses the registered home queue
 final ack = await intake.importReceipt(selectedReceiptId);
@@ -32,7 +32,11 @@ The checkpoint handoff is explicit:
 
 The input file and marker belong to checkpoint storage after publication. Inbox deletion cannot remove them. Conversion output defaults to a separate `xdremux_transfer_outputs/<receiptUUID>/` directory (or the user's configured output/mobile fallback), including after settings refresh/restart. Import/callback/ACK and checkpoint cleanup share one serialized ownership gate; queue editing/start is blocked during handoff. Specific queue removal cleans the input/marker, while bulk picker cleanup skips transfer buckets. Rejected/prepared copies are retained for retry; a user-facing retention/orphan management screen remains P2.2 work. No automatic gallery import or deletion occurs.
 
-P2.1 registers the existing queue intake hook but adds no transfer page or network permission changes. P2.2 still owns trust/offer UI, lifecycle hooks for tray exit/backgrounding, APK/EXE packaging, generic file export/SAF, and release application interoperability. The Android native `.so` harness does not prove that loading it from a Dart isolate works inside a release APK; that application check is still required.
+P2.2 adds `TransferController` and `TransferPage`. The toolbar and original/converted-file action menus open the page on Windows/Android. Literal IP/port probe displays the complete certificate fingerprint; sending metadata requires explicit confirmation. Remembering a fingerprint remains advisory and never auto-accepts incoming files. Incoming offers require acceptance, progress uses file IDs, and committed receipts support queue import, verified export and managed deletion. Snapshot reconciliation preserves loaded receipt pages and out-of-window commits; overflow scans all receipt pages. Each transfer currently previews at most 64 files, explicitly labelled when truncated.
+
+`enableReceiving` binds LAN only after user action (default 53319, editable). Sending/inbox operations use loopback when reception is off. Leaving the page, Android pause/detach, tray exit and Windows close stop the service. Export/import reads finish and release leases before native disposal. Returning to the foreground never automatically re-enables LAN. Android file/document pickers explicitly await stop before launch, independently of OEM lifecycle delivery; the user must explicitly resume receiving afterwards. Android SAF export uses the filename's MIME (including explicit MOV/HEIC/HEIF mapping), consumes a one-shot selected URI, streams native 64 KiB chunks and verifies provider readback. Failure preserves the inbox; a provider can leave a partial external document. This is generic document export, not gallery insertion.
+
+Build the optional library with `tools/native/build-transfer.ps1 -Platform windows|android`, then build Flutter normally. Windows CMake and Android Gradle detect the canonical crate target outputs; explicit overrides are `XDREMUX_WINDOWS_TRANSFER_DLL` and `XDREMUX_ANDROID_TRANSFER_SO`. Missing optional libraries do not invoke Cargo or break ordinary image builds. LocalSend's Apache license is copied into the corresponding bundle. The isolated release integration target additionally uses `XDREMUX_TRANSFER_TEST_APP=true` to install `.transferdev` alongside the real app; never set this for production. See [P2.2 validation](../../../../../docs/testing/local-transfer-p22.md).
 
 Validation:
 

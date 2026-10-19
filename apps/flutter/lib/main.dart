@@ -27,6 +27,8 @@ import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/transfer/transfer_models.dart';
 import 'services/transfer/transfer_queue.dart';
+import 'services/transfer/transfer_controller.dart';
+import 'transfer_page.dart';
 import 'services/file_action_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
@@ -229,6 +231,13 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const _transferLifecycle = MethodChannel('xdremux/transfer-lifecycle');
+  TransferController? _transfer;
+  Future<void> _exitWithTransfer() async {
+    await _transfer?.stop();
+    exit(0);
+  }
+
   final List<QueueItem> _queue = [];
   ConversionConfig _config = ConversionConfig();
   String _statusText = t('就绪', 'Ready');
@@ -264,9 +273,18 @@ class _HomePageState extends State<HomePage> {
     NotificationService.init();
     ForegroundService.init();
     if (Platform.isWindows) {
+      _transferLifecycle.setMethodCallHandler((call) async {
+        if (call.method == 'requestClose') {
+          await _transfer?.stop();
+          await _transferLifecycle.invokeMethod<void>('approveClose');
+        }
+      });
+      unawaited(
+        _transferLifecycle.invokeMethod<void>('ready').catchError((_) {}),
+      );
       TrayService.init(
         onShowWindow: TrayService.showWindow,
-        onExit: () => exit(0),
+        onExit: () => unawaited(_exitWithTransfer()),
       );
     }
     _checkForUpdate();
@@ -635,6 +653,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    if (Platform.isWindows) _transferLifecycle.setMethodCallHandler(null);
     TransferQueue.unregister(this);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
@@ -2428,6 +2447,61 @@ class _HomePageState extends State<HomePage> {
     ).push(MaterialPageRoute(builder: (_) => const OrganizePage()));
   }
 
+  Future<void> _openTransfer({
+    List<String> paths = const [],
+    String? source,
+  }) async {
+    _transfer ??= TransferController.instance;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TransferPage(
+          controller: _transfer,
+          initialPaths: paths,
+          sourceLabel: source,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openTransferActions() async {
+    final index = _selectedIndex;
+    if (index == null || index >= _queue.length) {
+      await _openTransfer();
+      return;
+    }
+    final item = _queue[index];
+    final source = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(t('发送原文件', 'Send original file')),
+            onTap: () => Navigator.pop(ctx, false),
+          ),
+          if (item.isSuccessful)
+            ListTile(
+              title: Text(t('发送转换结果', 'Send converted file')),
+              onTap: () => Navigator.pop(ctx, true),
+            ),
+          ListTile(
+            title: Text(t('打开互传', 'Open local transfer')),
+            onTap: () {
+              Navigator.pop(ctx);
+              _openTransfer();
+            },
+          ),
+        ],
+      ),
+    );
+    if (!mounted || source == null) return;
+    await _openTransfer(
+      paths: [source ? item.outputPath : item.inputPath],
+      source: source ? t('转换结果', 'Converted file') : t('原文件', 'Original file'),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Drag & drop
   // ---------------------------------------------------------------------------
@@ -2788,6 +2862,18 @@ class _HomePageState extends State<HomePage> {
                     : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
+              if (Platform.isWindows || Platform.isAndroid) ...[
+                ListTile(
+                  leading: const Icon(Icons.send),
+                  title: Text(t('局域网发送原文件', 'Send original over LAN')),
+                  onTap: () => Navigator.pop(ctx, _OutputAction.sendOriginal),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.send_outlined),
+                  title: Text(t('局域网发送转换结果', 'Send converted file over LAN')),
+                  onTap: () => Navigator.pop(ctx, _OutputAction.sendOutput),
+                ),
+              ],
               ListTile(
                 leading: const Icon(Icons.open_in_new),
                 title: Text(t('打开', 'Open')),
@@ -2826,6 +2912,16 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     switch (action) {
+      case _OutputAction.sendOriginal:
+        await _openTransfer(
+          paths: [item.inputPath],
+          source: t('原文件', 'Original file'),
+        );
+      case _OutputAction.sendOutput:
+        await _openTransfer(
+          paths: [item.outputPath],
+          source: t('转换结果', 'Converted file'),
+        );
       case _OutputAction.details:
         _showPhotoDetails(item);
       case _OutputAction.save:
@@ -2906,6 +3002,13 @@ class _HomePageState extends State<HomePage> {
 
   AppBar _buildAppBar(ThemeData theme, bool compact) {
     final actions = <Widget>[
+      if (Platform.isWindows || Platform.isAndroid)
+        IconButton(
+          key: const ValueKey('open-local-transfer'),
+          icon: const Icon(Icons.wifi_tethering),
+          tooltip: t('局域网互传', 'Local transfer'),
+          onPressed: _openTransferActions,
+        ),
       if (!compact)
         IconButton(
           icon: const Icon(Icons.add_photo_alternate),
@@ -3657,6 +3760,13 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (Platform.isWindows || Platform.isAndroid)
+                ListTile(
+                  leading: const Icon(Icons.send),
+                  title: Text(t('局域网发送原文件', 'Send original over LAN')),
+                  onTap: () =>
+                      Navigator.pop(ctx, _PendingItemAction.sendOriginal),
+                ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: Text(t('照片详情', 'Photo details')),
@@ -3682,6 +3792,11 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
 
     switch (action) {
+      case _PendingItemAction.sendOriginal:
+        await _openTransfer(
+          paths: [item.inputPath],
+          source: t('原文件', 'Original file'),
+        );
       case _PendingItemAction.details:
         _showPhotoDetails(item);
       case _PendingItemAction.remove:
@@ -5397,9 +5512,17 @@ class _MobileQueueCard extends StatelessWidget {
 
 enum _ImportSource { photos, files }
 
-enum _OutputAction { save, share, open, details, reconvert }
+enum _OutputAction {
+  save,
+  share,
+  open,
+  details,
+  reconvert,
+  sendOriginal,
+  sendOutput,
+}
 
-enum _PendingItemAction { details, remove }
+enum _PendingItemAction { details, remove, sendOriginal }
 
 enum _MobileQueueAction { retry, remove }
 

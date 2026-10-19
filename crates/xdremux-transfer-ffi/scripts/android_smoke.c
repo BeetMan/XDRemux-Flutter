@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     CHECK(strspn(argv[2], "/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") == strlen(argv[2]));
     void *lib = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL); CHECK(lib);
     LOAD(abi_version); LOAD(create); LOAD(submit); LOAD(poll); LOAD(stop); LOAD(release); LOAD(free_string);
-    CHECK(abi_version() == 65537); CHECK(stop(0) == 2);
+    CHECK(abi_version() == 65538); CHECK(stop(0) == 2);
     uint64_t h = 0, op = 0;
     CHECK(create(NULL, 1, &h) == 1);
     CHECK(create((const uint8_t *)"{}", 65537, &h) == 1);
@@ -68,6 +68,6 @@ int main(int argc, char **argv) {
     }
     CHECK(free_string(NULL) == 0);
     CHECK(dlclose(lib) == 0);
-    puts("{\"passed\":true,\"abi\":65537,\"rounds\":3,\"samePortAndRootReopened\":true,\"stableCertificate\":true,\"newInstances\":true,\"snapshot\":true,\"invalidHandlesAndInputs\":true,\"pairedBufferFree\":true}");
+    puts("{\"passed\":true,\"abi\":65538,\"rounds\":3,\"samePortAndRootReopened\":true,\"stableCertificate\":true,\"newInstances\":true,\"snapshot\":true,\"invalidHandlesAndInputs\":true,\"pairedBufferFree\":true}");
     return 0;
 }
