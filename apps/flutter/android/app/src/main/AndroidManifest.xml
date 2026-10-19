@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Explicit for release TCP/TLS local transfers; current target SDK is 36. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Storage permissions for reading/writing HEIC files -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -20,7 +22,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
-        android:label="XDRemux"
+        android:label="${transferAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher_xdremux"
         android:roundIcon="@mipmap/ic_launcher_xdremux">

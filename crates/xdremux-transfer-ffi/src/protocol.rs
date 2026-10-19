@@ -39,6 +39,10 @@ impl Create {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    ExportReceipt {
+        receipt_id: String,
+        directory: PathBuf,
+    },
     CheckSpace {
         bytes: u64,
         reserve: u64,
@@ -103,6 +107,14 @@ impl Request {
             (1..=64).contains(&limit) && after.as_ref().is_none_or(|s| id_ok(s))
         };
         let valid = match self {
+            Self::ExportReceipt {
+                receipt_id,
+                directory,
+            } => {
+                uuid::Uuid::parse_str(receipt_id).is_ok()
+                    && directory.is_absolute()
+                    && directory.as_os_str().len() <= 4096
+            }
             Self::CheckSpace { .. } => true,
             Self::Send { peer, paths, pin } => {
                 !paths.is_empty()

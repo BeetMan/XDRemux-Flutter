@@ -29,7 +29,7 @@ def main():
         fn = getattr(lib, "xdremux_transfer_" + name)
         fn.restype, fn.argtypes = result, parameters
         api[name] = fn
-    assert api["abi_version"]() == 65537
+    assert api["abi_version"]() == 65538
     assert api["stop"](0) == 2
     bad = c.c_uint64()
     assert api["create"](None, 1, c.byref(bad)) == 1

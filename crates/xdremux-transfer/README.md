@@ -42,6 +42,8 @@ P2.0 adds `acquire_receipt(id)` returning a `ReceiptLease` with validated receip
 
 Logs never include payloads, PINs, tokens or full source paths. Events/receipts intentionally include display filenames and certificate identities; the UI must avoid forwarding them into telemetry. Paths returned by lease APIs are private and must likewise remain out of telemetry.
 
+P2.2 exposes explicit `export_receipt(id, directory)` for desktop documents. The destination is an existing plain directory outside private storage. Export holds a receipt lease, checks free space, streams a verified copy into destination-local staging, flushes/syncs and publishes without replacing an existing name (`AlreadyExists`). The private original remains available. There is no automatic export or gallery insertion; Android document URIs use the application's separate SAF bridge.
+
 ## Build, test and native harness
 
 ```powershell

@@ -85,7 +85,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     f.sync_all()?;
     Ok(())
 }
-fn sync_dir(path: &Path) -> Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     File::open(path)?.sync_all()?;
     #[cfg(not(unix))]
@@ -94,7 +94,7 @@ fn sync_dir(path: &Path) -> Result<()> {
 }
 
 /// Atomic publication with OS-enforced no-replace semantics (including directories).
-fn publish(source: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn publish(source: &Path, destination: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;

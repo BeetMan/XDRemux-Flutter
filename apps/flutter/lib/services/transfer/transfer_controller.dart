@@ -1,0 +1,438 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/widgets.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'transfer_intake.dart';
+import 'transfer_models.dart';
+import 'transfer_service.dart';
+
+/// Application-scoped owner. No sockets until an explicit receive/send/inbox action.
+class TransferController extends ChangeNotifier with WidgetsBindingObserver {
+  TransferController({
+    TransferService Function()? serviceFactory,
+    Future<Directory> Function()? supportDirectory,
+    bool observeLifecycle = true,
+  }) : _factory = serviceFactory ?? TransferService.new,
+       _support = supportDirectory ?? getApplicationSupportDirectory {
+    if (observeLifecycle) WidgetsBinding.instance.addObserver(this);
+    _observing = observeLifecycle;
+  }
+  static final instance = TransferController();
+  final TransferService Function() _factory;
+  final Future<Directory> Function() _support;
+  bool _observing = false;
+  TransferService? _service;
+  Future<void>? _startup, _stopTask;
+  Future<void>? _refreshTask, _inboxTask;
+  final Set<Future<dynamic>> _reads = {};
+  Timer? _timer;
+  bool _polling = false, receiving = false, starting = false, stopping = false;
+  String? error;
+  Map<String, dynamic>? ready;
+  final Map<String, Map<String, dynamic>> transfers = {};
+  final Map<String, List<Map<String, dynamic>>> files = {};
+  final Map<String, Map<String, dynamic>> inbox = {};
+  final Set<String> trusted = {}, _confirmed = {};
+  List<String> addresses = [];
+  bool moreInbox = false;
+  String? _receiptCursor;
+  int _receiptPages = 1;
+  final Map<String, Map<String, dynamic>> _newReceipts = {};
+  bool get running => _service != null && ready != null;
+  bool get busy => starting || stopping;
+  TransferService get service {
+    if (_service == null || stopping) throw const TransferException('closed');
+    return _service!;
+  }
+
+  static String code(Object e) => e is TransferException ? e.code : 'io';
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if ((Platform.isAndroid || Platform.isIOS) &&
+        (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.detached)) {
+      unawaited(stop());
+    }
+  }
+
+  Future<void> enableReceiving({int port = 53319}) async {
+    if (port < 1 || port > 65535) {
+      throw const TransferException('invalid_input');
+    }
+    if (busy) throw const TransferException('busy');
+    await stop();
+    await _start('0.0.0.0:$port', true);
+  }
+
+  Future<void> ensureLocal() async {
+    if (stopping) throw const TransferException('closed');
+    if (running) return;
+    await (_startup ?? _start('127.0.0.1:0', false));
+  }
+
+  Future<void> _start(String bind, bool receive) =>
+      _startup ??= _startNow(bind, receive).whenComplete(() => _startup = null);
+  Future<void> _startNow(String bind, bool receive) async {
+    starting = true;
+    error = null;
+    notifyListeners();
+    final native = _factory();
+    try {
+      final dir = await _support();
+      final available = await native.start(supportRoot: dir.path, bind: bind);
+      if (!available.available) {
+        throw TransferException(available.reason ?? 'closed');
+      }
+      _service = native;
+      ready = native.ready;
+      receiving = receive;
+      trusted.addAll(
+        (await SharedPreferences.getInstance()).getStringList(
+              'transfer.trusted.v1',
+            ) ??
+            [],
+      );
+      addresses = (await NetworkInterface.list(type: InternetAddressType.IPv4))
+          .expand((i) => i.addresses)
+          .where((a) => !a.isLoopback)
+          .map((a) => a.address)
+          .toSet()
+          .toList();
+      if (!stopping) {
+        await refresh();
+        _timer = Timer.periodic(
+          const Duration(milliseconds: 250),
+          (_) => unawaited(poll()),
+        );
+      }
+    } catch (e) {
+      error = code(e);
+      await native.dispose();
+      _service = null;
+      ready = null;
+      receiving = false;
+      throw TransferException(error!);
+    } finally {
+      starting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<Map<String, dynamic>> probe(String host, int port) async {
+    final ip = InternetAddress.tryParse(host.trim());
+    if (ip == null || port < 1 || port > 65535) {
+      throw const TransferException('invalid_input');
+    }
+    await ensureLocal();
+    final address = ip.type == InternetAddressType.IPv6
+        ? '[${ip.address}]:$port'
+        : '${ip.address}:$port';
+    return Map<String, dynamic>.from(
+      await service.command({'command': 'probe', 'address': address}) as Map,
+    );
+  }
+
+  Future<void> confirmPeer(
+    Map<String, dynamic> peer, {
+    required bool remember,
+  }) async {
+    final fp = (peer['fingerprint'] as String).toUpperCase();
+    if (!RegExp(r'^[0-9A-F]{64}$').hasMatch(fp)) {
+      throw const TransferException('identity_mismatch');
+    }
+    _confirmed.add(fp);
+    if (remember) {
+      trusted.add(fp);
+      if (trusted.length > 128) trusted.remove(trusted.first);
+      await (await SharedPreferences.getInstance()).setStringList(
+        'transfer.trusted.v1',
+        trusted.toList(),
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<void> forgetPeers() async {
+    trusted.clear();
+    _confirmed.clear();
+    await (await SharedPreferences.getInstance()).remove('transfer.trusted.v1');
+    notifyListeners();
+  }
+
+  Future<String> send(
+    Map<String, dynamic> peer,
+    List<String> paths, {
+    String? pin,
+  }) async {
+    if (!_confirmed.contains((peer['fingerprint'] as String).toUpperCase())) {
+      throw const TransferException('identity_mismatch');
+    }
+    await ensureLocal();
+    final result = await service.command({
+      'command': 'send',
+      'peer': peer,
+      'paths': paths,
+      'pin': pin,
+    });
+    return result['transfer_id'] as String;
+  }
+
+  Future<void> decide(String id, bool accept) async {
+    if (accept && !receiving) throw const TransferException('closed');
+    await service.command({
+      'command': 'decide',
+      'transfer_id': id,
+      'accept': accept,
+    });
+    await refresh();
+  }
+
+  Future<void> cancel(String id) async {
+    final kind = transfers[id]?['direction'] == 'send'
+        ? 'cancel_send'
+        : 'cancel_receive';
+    await service.command({'command': kind, 'transfer_id': id});
+    await refresh();
+  }
+
+  Future<void> poll() async {
+    if (_polling || !running || stopping) return;
+    _polling = true;
+    try {
+      final native = service;
+      final page = await native.drainEvents();
+      if (stopping || !identical(_service, native)) return;
+      var dirty = page['resync'] == true;
+      for (final body in page['events'] as List) {
+        if (body['kind'] == 'event') {
+          final e = body['event'] as Map;
+          if (e['kind'] == 'committed') {
+            final receipt = Map<String, dynamic>.from(e['receipt'] as Map);
+            _newReceipts[receipt['id'] as String] = receipt;
+            inbox[receipt['id'] as String] = receipt;
+          } else if (e['kind'] == 'receipt_deleted') {
+            inbox.remove(e['receipt_id']);
+            _newReceipts.remove(e['receipt_id']);
+          }
+          if (e['kind'] == 'progress') {
+            for (final file
+                in files[e['transfer_id']] ?? <Map<String, dynamic>>[]) {
+              if (file['id'] == e['file_id']) {
+                file['bytes'] = e['bytes'];
+                file['phase'] = 'transferring';
+              }
+            }
+          } else if (e['kind'] != 'stopped') {
+            dirty = true;
+          }
+        } else if (body['kind'] == 'fatal' || body['kind'] == 'stopped') {
+          error = 'closed';
+          unawaited(stop());
+          return;
+        }
+      }
+      if (dirty) {
+        await refresh();
+        // UUID order is not commit order. Recover every page after overflow.
+        if (page['resync'] == true) {
+          while (moreInbox && !stopping && identical(_service, native)) {
+            await loadInbox();
+          }
+        }
+      } else {
+        notifyListeners();
+      }
+    } catch (e) {
+      if (!stopping) {
+        error = code(e);
+        notifyListeners();
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  Future<void> refresh() =>
+      _refreshTask ??= _refreshNow().whenComplete(() => _refreshTask = null);
+  Future<void> _refreshNow() async {
+    final native = service;
+    final nextTransfers = <String, Map<String, dynamic>>{};
+    String? cursor;
+    do {
+      final page = await native.command({
+        'command': 'snapshot',
+        'after': cursor,
+        'limit': 64,
+      });
+      for (final row in page['transfers'] as List) {
+        nextTransfers[row['id'] as String] = Map<String, dynamic>.from(
+          row as Map,
+        );
+      }
+      cursor = page['next'] as String?;
+    } while (cursor != null);
+    final nextFiles = <String, List<Map<String, dynamic>>>{};
+    for (final id in nextTransfers.keys) {
+      try {
+        final page = await native.command({
+          'command': 'transfer',
+          'transfer_id': id,
+          'limit': 64,
+        });
+        nextFiles[id] = (page['files'] as List)
+            .map((f) => Map<String, dynamic>.from(f as Map))
+            .toList();
+      } on TransferException catch (e) {
+        if (e.code != 'invalid_input') rethrow;
+      }
+    }
+    if (stopping || !identical(_service, native)) return;
+    transfers
+      ..clear()
+      ..addAll(nextTransfers);
+    files
+      ..clear()
+      ..addAll(nextFiles);
+    await loadInbox(reset: true);
+    notifyListeners();
+  }
+
+  Future<void> loadInbox({bool reset = false}) async {
+    if (_inboxTask != null) await _inboxTask;
+    final task = _loadInbox(reset: reset);
+    _inboxTask = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_inboxTask, task)) _inboxTask = null;
+    }
+  }
+
+  Future<void> _loadInbox({required bool reset}) async {
+    final native = service;
+    final rows = <String, Map<String, dynamic>>{};
+    String? cursor = reset ? null : _receiptCursor;
+    var more = false;
+    var readPages = 0;
+    do {
+      final page =
+          await native.command({
+                'command': 'receipts',
+                'after': cursor,
+                'limit': 64,
+              })
+              as List;
+      for (final row in page) {
+        rows[row['id'] as String] = Map<String, dynamic>.from(row as Map);
+      }
+      cursor = page.isEmpty ? cursor : page.last['id'] as String;
+      more = page.length == 64;
+      readPages++;
+    } while (reset && more && readPages < _receiptPages);
+    if (stopping || !identical(_service, native)) return;
+    if (reset) inbox.clear();
+    inbox.addAll(rows);
+    // New commits may sort before/after the loaded window; keep them visible.
+    inbox.addAll(_newReceipts);
+    _receiptCursor = cursor;
+    moreInbox = more;
+    _receiptPages = reset ? readPages : _receiptPages + readPages;
+    notifyListeners();
+  }
+
+  Future<TransferIntakeAck> importReceipt(String id) async {
+    await ensureLocal();
+    return _hold(() => TransferIntake(service).importReceipt(id));
+  }
+
+  Future<void> deleteReceipt(String id) async {
+    await ensureLocal();
+    await service.command({'command': 'delete_receipt', 'receipt_id': id});
+    inbox.remove(id);
+    _newReceipts.remove(id);
+    notifyListeners();
+  }
+
+  Future<T> _hold<T>(Future<T> Function() work) async {
+    if (stopping) throw const TransferException('closed');
+    final task = work();
+    _reads.add(task);
+    try {
+      return await task;
+    } finally {
+      _reads.remove(task);
+    }
+  }
+
+  Future<T> withReceipt<T>(
+    String id,
+    Future<T> Function(Map<String, dynamic> lease) work,
+  ) async {
+    await ensureLocal();
+    final native = service;
+    return _hold(() async {
+      final lease = Map<String, dynamic>.from(
+        await native.command({'command': 'acquire_receipt', 'receipt_id': id})
+            as Map,
+      );
+      try {
+        return await work(lease);
+      } finally {
+        await native.command({
+          'command': 'release_receipt',
+          'lease_id': lease['lease_id'],
+        });
+      }
+    });
+  }
+
+  Future<void> exportDesktop(String id, String directory) async {
+    await ensureLocal();
+    final native = service;
+    await _hold(
+      () => native.command({
+        'command': 'export_receipt',
+        'receipt_id': id,
+        'directory': directory,
+      }),
+    );
+  }
+
+  Future<void> stop() =>
+      _stopTask ??= _stopNow().whenComplete(() => _stopTask = null);
+  Future<void> _stopNow() async {
+    stopping = true;
+    receiving = false;
+    _timer?.cancel();
+    notifyListeners();
+    try {
+      try {
+        await _startup;
+      } catch (_) {
+        /* startup already reports its error */
+      }
+      for (final read in _reads.toList()) {
+        try {
+          await read;
+        } catch (_) {}
+      }
+      final native = _service;
+      _service = null;
+      ready = null;
+      if (native != null) await native.dispose();
+    } finally {
+      stopping = false;
+      starting = false;
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_observing) WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    super.dispose();
+  }
+}
