@@ -220,8 +220,30 @@ fn dispatch(
     jobs: &mut tokio::task::JoinSet<()>,
     sends: &mut tokio::task::JoinSet<()>,
 ) {
-    if let Request::Send { peer, paths, pin } = cmd.request {
-        match service.start_send(peer, paths, pin) {
+    if matches!(
+        &cmd.request,
+        Request::Send { .. } | Request::SendBatch { .. } | Request::RetrySend { .. }
+    ) {
+        let result = match cmd.request {
+            Request::Send { peer, paths, pin } => service.start_send(peer, paths, pin),
+            Request::SendBatch {
+                peer,
+                directory,
+                names,
+                pin,
+            } => service.start_send(
+                peer,
+                names.into_iter().map(|n| directory.join(n)).collect(),
+                pin,
+            ),
+            Request::RetrySend {
+                transfer_id,
+                peer,
+                pin,
+            } => service.retry_send(&transfer_id, peer, pin),
+            _ => unreachable!(),
+        };
+        match result {
             Ok(send) => {
                 entry.complete(cmd.id, Ok(json!({"transfer_id":send.id})), true);
                 sends.spawn(async move {
@@ -245,6 +267,14 @@ async fn execute(entry: &Entry, service: &Service, id: u64, request: Request) ->
         return Err(ErrorCode::Closed);
     }
     match request {
+        Request::DiscoveryStart { interface } => {
+            Ok(json!(service.start_discovery(interface).await?))
+        }
+        Request::DiscoveryStatus => Ok(json!(service.discovery_snapshot())),
+        Request::DiscoveryStop => {
+            service.stop_discovery().await;
+            Ok(Value::Null)
+        }
         Request::ExportReceipt {
             receipt_id,
             directory,
@@ -330,6 +360,8 @@ async fn execute(entry: &Entry, service: &Service, id: u64, request: Request) ->
                 .map(|r| r.value.clone())
                 .unwrap_or(json!({"status":"unknown"})))
         }
-        Request::Send { .. } => unreachable!(),
+        Request::Send { .. } | Request::SendBatch { .. } | Request::RetrySend { .. } => {
+            unreachable!()
+        }
     }
 }

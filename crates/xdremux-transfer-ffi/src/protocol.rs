@@ -39,6 +39,22 @@ impl Create {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    SendBatch {
+        peer: Peer,
+        directory: PathBuf,
+        names: Vec<String>,
+        pin: Option<String>,
+    },
+    DiscoveryStart {
+        interface: Option<std::net::Ipv4Addr>,
+    },
+    DiscoveryStatus,
+    DiscoveryStop,
+    RetrySend {
+        transfer_id: String,
+        peer: Peer,
+        pin: Option<String>,
+    },
     ExportReceipt {
         receipt_id: String,
         directory: PathBuf,
@@ -98,7 +114,10 @@ impl Request {
     pub fn priority(&self) -> bool {
         matches!(
             self,
-            Self::CancelSend { .. } | Self::CancelReceive { .. } | Self::ReleaseReceipt { .. }
+            Self::CancelSend { .. }
+                | Self::CancelReceive { .. }
+                | Self::ReleaseReceipt { .. }
+                | Self::DiscoveryStop
         )
     }
     pub fn validate(&self) -> Result<()> {
@@ -107,6 +126,39 @@ impl Request {
             (1..=64).contains(&limit) && after.as_ref().is_none_or(|s| id_ok(s))
         };
         let valid = match self {
+            Self::SendBatch {
+                peer,
+                directory,
+                names,
+                pin,
+            } => {
+                directory.is_absolute()
+                    && directory.as_os_str().len() <= 4096
+                    && !names.is_empty()
+                    && names.len() <= 1024
+                    && names.iter().all(|n| transfer_core::safe_name(n))
+                    && peer.fingerprint.len() == 64
+                    && peer.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
+                    && peer.address.port() != 0
+                    && !peer.address.ip().is_unspecified()
+                    && pin.as_ref().is_none_or(|s| id_ok(s))
+            }
+            Self::DiscoveryStart { interface } => interface.is_none_or(|v| {
+                !v.is_unspecified() && !v.is_loopback() && !v.is_multicast() && !v.is_broadcast()
+            }),
+            Self::DiscoveryStatus | Self::DiscoveryStop => true,
+            Self::RetrySend {
+                transfer_id,
+                peer,
+                pin,
+            } => {
+                id_ok(transfer_id)
+                    && peer.fingerprint.len() == 64
+                    && peer.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
+                    && peer.address.port() != 0
+                    && !peer.address.ip().is_unspecified()
+                    && pin.as_ref().is_none_or(|s| id_ok(s))
+            }
             Self::ExportReceipt {
                 receipt_id,
                 directory,

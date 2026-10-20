@@ -29,7 +29,7 @@ def main():
         fn = getattr(lib, "xdremux_transfer_" + name)
         fn.restype, fn.argtypes = result, parameters
         api[name] = fn
-    assert api["abi_version"]() == 65538
+    assert api["abi_version"]() == 65539
     assert api["stop"](0) == 2
     bad = c.c_uint64()
     assert api["create"](None, 1, c.byref(bad)) == 1
@@ -142,6 +142,47 @@ def main():
             query(b, "delete_receipt", receipt_id=receipt["id"])
             assert not payload.exists()
         assert query(b, "receipts", limit=64) == []
+        # Same-folder names keep 1000 paths below the 64 KiB ABI input cap.
+        batch_dir = root / "batch"
+        batch_dir.mkdir()
+        batch_expected = {}
+        for i in range(1000):
+            path = batch_dir / f"p23-{i:04}.bin"
+            payload = i.to_bytes(4, "little") + bytes(1020)
+            path.write_bytes(payload)
+            batch_expected[path.name] = hashlib.sha256(payload).hexdigest()
+        for h in (a, b):
+            handles[h]["records"].clear()
+        batch_request = {"command": "send_batch", "peer": peer,
+                         "directory": str(batch_dir), "names": list(batch_expected)}
+        assert len(json.dumps(batch_request).encode()) < 65536
+        batch = result(a, submit(a, batch_request))
+        offer = event(b, "offer")["offer"]
+        assert {f["name"] for f in offer["files"]} == set(batch_expected)
+        query(b, "decide", transfer_id=offer["session_id"], accept=True)
+        sent = event(a, "sent")["report"]
+        assert sent["error"] is None and len(sent["files"]) == 1000, sent["error"]
+        after, observed = None, 0
+        while True:
+            page = query(a, "transfer", transfer_id=batch["transfer_id"], after=after, limit=64)
+            assert all(f["phase"] == "sent" for f in page["files"])
+            observed += len(page["files"])
+            after = page["next"]
+            if after is None:
+                break
+        assert observed == 1000
+        after, checked = None, 0
+        while True:
+            page = query(b, "receipts", after=after, limit=64)
+            for receipt in page:
+                lease = query(b, "acquire_receipt", receipt_id=receipt["id"])
+                assert hashlib.sha256(Path(lease["path"]).read_bytes()).hexdigest() == batch_expected[receipt["name"]]
+                query(b, "release_receipt", lease_id=lease["lease_id"])
+                checked += 1
+            if len(page) < 64:
+                break
+            after = page[-1]["id"]
+        assert checked == 1000
         # Outstanding output buffers are bounded and remain independently freeable.
         pointers = []
         for _ in range(64):
@@ -174,10 +215,11 @@ def main():
             assert call("release", h) == 2
             del handles[h]
     report = {"passed": True, "abi": api["abi_version"](), "files": len(expected),
-              "bytes": sum(s for s, _ in expected.values()), "independentHashes": True,
+              "bytes": sum(s for s, _ in expected.values()), "independentHashes": True, "batchFiles": 1000,
               "checks": ["unicode_and_empty", "prepared_progress_terminal_ids", "snapshot_paging", "operation_recovery",
                          "lease_delete_busy", "managed_delete", "buffer_cap_and_free", "invalid_input_handle",
-                         "pending_send_stop", "idempotent_stop", "stale_handle", "port_and_root_reopen"],
+                         "pending_send_stop", "idempotent_stop", "stale_handle", "port_and_root_reopen",
+                         "1000_send_batch", "1000_file_snapshot_pages", "1000_disk_hashes"],
               "maxCallMilliseconds": {name: round(max(t for n, t in timings if n == name), 3) for name in sorted({n for n, _ in timings})},
               "librarySha256": hashlib.sha256(args.library.read_bytes()).hexdigest(), "libraryBytes": args.library.stat().st_size}
     args.report.parent.mkdir(parents=True, exist_ok=True)

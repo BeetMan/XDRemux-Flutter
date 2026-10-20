@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'transfer_intake.dart';
@@ -28,6 +30,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   final Set<Future<dynamic>> _reads = {};
   Timer? _timer;
   bool _polling = false, receiving = false, starting = false, stopping = false;
+  bool discovering = false;
+  String? discoveryError;
+  final List<Map<String, dynamic>> peers = [];
+  final Map<String, String> interfaces = {};
+  String? discoveryInterface;
+  DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _multicast = MethodChannel('xdremux/transfer-discovery');
   String? error;
   Map<String, dynamic>? ready;
   final Map<String, Map<String, dynamic>> transfers = {};
@@ -63,7 +72,64 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (busy) throw const TransferException('busy');
     await stop();
-    await _start('0.0.0.0:$port', true);
+    await _start('${discoveryInterface ?? '0.0.0.0'}:$port', true);
+    if (!stopping) await discover();
+  }
+
+  Future<void> enumerateInterfaces() async {
+    final next = <String, String>{};
+    for (final network in await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+    )) {
+      for (final ip in network.addresses) {
+        if (!ip.isLoopback && !ip.isMulticast && ip.address != '0.0.0.0') {
+          next[ip.address] = network.name;
+        }
+      }
+    }
+    interfaces
+      ..clear()
+      ..addAll(next);
+    addresses = discoveryInterface == null
+        ? next.keys.toList()
+        : [discoveryInterface!];
+    notifyListeners();
+  }
+
+  Future<void> discover() async {
+    if (!receiving || stopping) throw const TransferException('closed');
+    final native = service;
+    discoveryError = null;
+    try {
+      if (Platform.isAndroid) await _multicast.invokeMethod<void>('acquire');
+      final result = await native.command({
+        'command': 'discovery_start',
+        'interface': discoveryInterface,
+      });
+      if (stopping || !identical(_service, native)) return;
+      _discoveryState(result as Map);
+    } catch (e) {
+      discoveryError = code(e);
+      discovering = false;
+      if (Platform.isAndroid) {
+        try {
+          await _multicast.invokeMethod<void>('release');
+        } catch (_) {}
+      }
+    }
+    notifyListeners();
+  }
+
+  void _discoveryState(Map result) {
+    discovering = result['enabled'] == true;
+    discoveryError = result['error'] as String?;
+    peers
+      ..clear()
+      ..addAll(
+        (result['peers'] as List).map(
+          (p) => Map<String, dynamic>.from(p as Map),
+        ),
+      );
   }
 
   Future<void> ensureLocal() async {
@@ -94,12 +160,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             ) ??
             [],
       );
-      addresses = (await NetworkInterface.list(type: InternetAddressType.IPv4))
-          .expand((i) => i.addresses)
-          .where((a) => !a.isLoopback)
-          .map((a) => a.address)
-          .toSet()
-          .toList();
+      await enumerateInterfaces();
       if (!stopping) {
         await refresh();
         _timer = Timer.periodic(
@@ -170,12 +231,26 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       throw const TransferException('identity_mismatch');
     }
     await ensureLocal();
-    final result = await service.command({
+    final parent = paths.isEmpty ? null : File(paths.first).parent.path;
+    final compact =
+        paths.length > 1 && paths.every((p) => File(p).parent.path == parent);
+    final request = <String, dynamic>{
       'command': 'send',
       'peer': peer,
       'paths': paths,
       'pin': pin,
-    });
+    };
+    if (compact) {
+      request
+        ..['command'] = 'send_batch'
+        ..remove('paths')
+        ..['directory'] = parent
+        ..['names'] = paths.map((p) => File(p).uri.pathSegments.last).toList();
+    }
+    if (utf8.encode(jsonEncode(request)).length > 64 * 1024) {
+      throw const TransferException('batch_too_large');
+    }
+    final result = await service.command(request);
     return result['transfer_id'] as String;
   }
 
@@ -187,6 +262,24 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       'accept': accept,
     });
     await refresh();
+  }
+
+  Future<String> retry(
+    String id,
+    Map<String, dynamic> peer, {
+    String? pin,
+  }) async {
+    if (!_confirmed.contains((peer['fingerprint'] as String).toUpperCase())) {
+      throw const TransferException('identity_mismatch');
+    }
+    final result = await service.command({
+      'command': 'retry_send',
+      'transfer_id': id,
+      'peer': peer,
+      'pin': pin,
+    });
+    await refresh();
+    return result['transfer_id'] as String;
   }
 
   Future<void> cancel(String id) async {
@@ -204,6 +297,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       final native = service;
       final page = await native.drainEvents();
       if (stopping || !identical(_service, native)) return;
+      if (receiving &&
+          DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
+        _lastDiscoveryPoll = DateTime.now();
+        final state = await native.command({'command': 'discovery_status'});
+        if (stopping || !identical(_service, native)) return;
+        _discoveryState(state as Map);
+      }
       var dirty = page['resync'] == true;
       for (final body in page['events'] as List) {
         if (body['kind'] == 'event') {
@@ -276,14 +376,26 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     final nextFiles = <String, List<Map<String, dynamic>>>{};
     for (final id in nextTransfers.keys) {
       try {
-        final page = await native.command({
-          'command': 'transfer',
-          'transfer_id': id,
-          'limit': 64,
-        });
-        nextFiles[id] = (page['files'] as List)
-            .map((f) => Map<String, dynamic>.from(f as Map))
-            .toList();
+        final rows = <Map<String, dynamic>>[];
+        String? fileCursor;
+        do {
+          final page = await native.command({
+            'command': 'transfer',
+            'transfer_id': id,
+            'after': fileCursor,
+            'limit': 64,
+          });
+          rows.addAll(
+            (page['files'] as List).map(
+              (f) => Map<String, dynamic>.from(f as Map),
+            ),
+          );
+          fileCursor = page['next'] as String?;
+          if (rows.length > 1024) {
+            throw const TransferException('invalid_input');
+          }
+        } while (fileCursor != null);
+        nextFiles[id] = rows;
       } on TransferException catch (e) {
         if (e.code != 'invalid_input') rethrow;
       }
@@ -405,6 +517,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _stopNow() async {
     stopping = true;
     receiving = false;
+    discovering = false;
+    peers.clear();
     _timer?.cancel();
     notifyListeners();
     try {
@@ -422,7 +536,14 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       _service = null;
       ready = null;
       if (native != null) await native.dispose();
+      transfers.clear();
+      files.clear();
     } finally {
+      if (Platform.isAndroid) {
+        try {
+          await _multicast.invokeMethod<void>('release');
+        } catch (_) {}
+      }
       stopping = false;
       starting = false;
       notifyListeners();

@@ -35,7 +35,7 @@ class TransferBindings {
           .lookupFunction<Uint32 Function(), int Function()>(
             'xdremux_transfer_abi_version',
           )();
-      if (version >> 16 != 1 || (version & 0xffff) < 2) {
+      if (version >> 16 != 1 || (version & 0xffff) < 3) {
         throw const TransferException('abi_mismatch');
       }
       _create = _library.lookupFunction<_CreateN, _CreateD>(

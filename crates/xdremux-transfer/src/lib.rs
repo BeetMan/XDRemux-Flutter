@@ -1,5 +1,6 @@
 //! LocalSend-compatible async service. Run on a Tokio runtime, off the UI thread.
 //! File payloads are opaque bytes; this crate never invokes a media converter.
+mod discovery;
 mod model;
 mod sender;
 mod service;

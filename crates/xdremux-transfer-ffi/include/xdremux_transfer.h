@@ -5,7 +5,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* ABI 1.2; status: 0 ok, 1 invalid input, 2 invalid handle, 3 busy,
+/* ABI 1.3; status: 0 ok, 1 invalid input, 2 invalid handle, 3 busy,
  * 4 closed, 5 output too small, 6 internal error. Input JSON is UTF-8,
  * length-delimited (no NUL required). Caller owns readable input and writable,
  * aligned out pointers for the duration of the call. They must not overlap.
