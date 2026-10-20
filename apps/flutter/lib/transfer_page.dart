@@ -7,6 +7,30 @@ import 'services/transfer/transfer_export.dart';
 import 'services/transfer/transfer_models.dart';
 
 String transferErrorText(String code) => switch (code) {
+  'batch_too_large' => t(
+    '文件路径清单过长，请减少文件数量后分批发送',
+    'The path list is too long; send fewer files per batch',
+  ),
+  'port_in_use' => t(
+    '接收端口已被占用，请换一个端口后重试',
+    'Receive port is in use; choose another port',
+  ),
+  'discovery_unavailable' => t(
+    '自动发现不可用，可继续使用下方 IP/端口直连',
+    'Discovery unavailable; use IP/port below',
+  ),
+  'source_changed' => t(
+    '源文件已变化，请重新选择文件并发送',
+    'Source changed; select the files again',
+  ),
+  'cancelled' => t(
+    '传输已取消，已接收成功的文件会保留',
+    'Cancelled; successfully received files are retained',
+  ),
+  'invalid_input' => t(
+    '请检查 IP 地址、端口或文件选择',
+    'Check the IP address, port or selected files',
+  ),
   'already_exists' => t(
     '目标目录已有同名文件，请选择其他目录',
     'The destination already contains that name; choose another folder',
@@ -74,6 +98,7 @@ class _TransferPageState extends State<TransferPage> {
   Map<String, dynamic>? _peer;
   bool _working = false, _canLeave = false;
   String? _message;
+  final Map<String, int> _visibleFiles = {};
   @override
   void initState() {
     super.initState();
@@ -81,6 +106,7 @@ class _TransferPageState extends State<TransferPage> {
     _paths = List.of(widget.initialPaths);
     _selectionSize = _measure(_paths);
     transfer.addListener(_changed);
+    transfer.enumerateInterfaces().catchError((_) {});
   }
 
   Future<int> _measure(List<String> paths) async {
@@ -134,13 +160,16 @@ class _TransferPageState extends State<TransferPage> {
     });
   }
 
-  Future<void> _connect() async {
+  Future<void> _connect({Map<String, dynamic>? expected}) async {
     final peer = await transfer.probe(
       _host.text,
       int.tryParse(_port.text) ?? 0,
     );
     if (!mounted) return;
     final fp = peer['fingerprint'] as String;
+    if (expected != null && fp != expected['fingerprint']) {
+      throw const TransferException('identity_mismatch');
+    }
     var remember = false;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -198,6 +227,49 @@ class _TransferPageState extends State<TransferPage> {
     if (confirmed == true) {
       await transfer.confirmPeer(peer, remember: remember);
       if (mounted) setState(() => _peer = peer);
+    }
+  }
+
+  Future<void> _selectPeer(Map<String, dynamic> peer) async {
+    final address = peer['address'] as String;
+    final colon = address.lastIndexOf(':');
+    _host.text = address.substring(0, colon).replaceAll(RegExp(r'^\[|\]$'), '');
+    _port.text = address.substring(colon + 1);
+    setState(() => _peer = null);
+    await _connect(expected: peer);
+  }
+
+  Future<void> _retry(String id) async {
+    if (_peer == null) throw const TransferException('identity_mismatch');
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(t('重试未确认成功的文件？', 'Retry unacknowledged files?')),
+        content: Text(
+          t(
+            '已收到成功回执的文件不会重发。回执丢失时，对端可能已经保存，重试可能产生副本。源文件必须与上次准备的内容一致。',
+            'Acknowledged files are excluded. A lost acknowledgement may leave an existing copy on the receiver. Retried sources must match the previous prepared content.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(t('取消', 'Cancel')),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-retry'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(t('重试', 'Retry')),
+          ),
+        ],
+      ),
+    );
+    if (yes == true) {
+      await transfer.retry(
+        id,
+        _peer!,
+        pin: _pin.text.isEmpty ? null : _pin.text,
+      );
     }
   }
 
@@ -266,8 +338,8 @@ class _TransferPageState extends State<TransferPage> {
             children: [
               Text(
                 t(
-                  '开启接收后，对方可通过下方地址连接。手机仅在前台接收；切后台或离开此页会停止。',
-                  'Enable receiving to connect at the addresses below. Mobile reception stops in the background or when leaving this page.',
+                  '开启接收时同时启动 IPv4 自动发现，可先选择网卡。手机仅在前台接收；切后台或离开此页会停止。',
+                  'Enable receiving and IPv4 discovery on the selected network. Mobile reception stops in the background or when leaving this page.',
                 ),
               ),
               if (disabled) const LinearProgressIndicator(),
@@ -323,6 +395,92 @@ class _TransferPageState extends State<TransferPage> {
                   ),
                 ],
               ),
+              DropdownButtonFormField<String>(
+                key: const ValueKey('discovery-interface'),
+                initialValue: transfer.discoveryInterface ?? '',
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: t(
+                    '接收和自动发现使用的网卡',
+                    'Network for receiving and discovery',
+                  ),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: '',
+                    child: Text(
+                      t(
+                        '所有网卡（含 VPN/虚拟网卡）',
+                        'All networks (including VPN/virtual)',
+                      ),
+                    ),
+                  ),
+                  for (final entry in transfer.interfaces.entries)
+                    DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(
+                        '${entry.value} · ${entry.key}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (transfer.discoveryInterface != null &&
+                      !transfer.interfaces.containsKey(
+                        transfer.discoveryInterface,
+                      ))
+                    DropdownMenuItem(
+                      value: transfer.discoveryInterface,
+                      child: Text(
+                        t(
+                          '原网卡已断开，请重新选择',
+                          'Previous network disconnected; choose again',
+                        ),
+                      ),
+                    ),
+                ],
+                onChanged: disabled || transfer.receiving
+                    ? null
+                    : (value) => setState(() {
+                        transfer.discoveryInterface = value == ''
+                            ? null
+                            : value;
+                      }),
+              ),
+              Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    transfer.discovering
+                        ? t('自动发现已开启', 'Discovery enabled')
+                        : t('自动发现已关闭', 'Discovery disabled'),
+                  ),
+                  TextButton(
+                    key: const ValueKey('refresh-discovery'),
+                    onPressed: disabled || !transfer.receiving
+                        ? null
+                        : () => _run(transfer.discover),
+                    child: Text(t('重新发现', 'Discover again')),
+                  ),
+                ],
+              ),
+              if (transfer.discoveryError != null)
+                Text(transferErrorText(transfer.discoveryError!)),
+              if (transfer.receiving && transfer.peers.isEmpty)
+                Text(
+                  t(
+                    '暂未找到设备。多播可能被网络阻止；可使用下方 IP/端口直连。',
+                    'No devices yet. Multicast may be blocked; direct IP/port remains available.',
+                  ),
+                ),
+              for (final peer in transfer.peers)
+                ListTile(
+                  key: ValueKey('peer-${peer['fingerprint']}'),
+                  leading: const Icon(Icons.devices),
+                  title: Text(peer['alias'] as String),
+                  subtitle: Text(peer['address'] as String),
+                  trailing: Text(t('核对', 'Verify')),
+                  onTap: disabled ? null : () => _run(() => _selectPeer(peer)),
+                ),
               if (transfer.receiving && transfer.ready != null) ...[
                 const SizedBox(height: 8),
                 for (final ip in transfer.addresses)
@@ -435,7 +593,7 @@ class _TransferPageState extends State<TransferPage> {
                 ),
               const Divider(height: 32),
               Text(
-                t('传输记录', 'Transfers'),
+                t('本次开启的传输记录', 'Transfers during this session'),
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               for (final row in transfer.transfers.values)
@@ -487,6 +645,15 @@ class _TransferPageState extends State<TransferPage> {
     final id = row['id'] as String;
     final phase = row['phase'] as String;
     final pending = phase == 'pending' && row['direction'] == 'receive';
+    final allFiles = transfer.files[id] ?? <Map<String, dynamic>>[];
+    final shown = _visibleFiles[id] ?? 64;
+    final total = allFiles.fold<int>(0, (sum, f) => sum + (f['size'] as int));
+    final moved = allFiles.fold<int>(0, (sum, f) => sum + (f['bytes'] as int));
+    final complete = allFiles
+        .where((f) => ['sent', 'committed'].contains(f['phase']))
+        .length;
+    final canRetry =
+        _peer != null && _peer!['fingerprint'] == row['peer_fingerprint'];
     const labels = {
       'preparing': ['准备文件', 'Preparing'],
       'pending': ['等待确认', 'Waiting for confirmation'],
@@ -510,9 +677,28 @@ class _TransferPageState extends State<TransferPage> {
               SelectableText(_fingerprint(row['peer_fingerprint'] as String)),
             if (row['error'] != null)
               Text(transferErrorText(row['error'] as String)),
-            for (final file
-                in transfer.files[id] ?? <Map<String, dynamic>>[]) ...[
+            if (allFiles.isNotEmpty) ...[
+              Text(
+                '${t('整批进度', 'Batch progress')}: $complete/${row['file_count']} · ${_bytes(moved)} / ${_bytes(total)}',
+              ),
+              LinearProgressIndicator(
+                value: total == 0
+                    ? complete / allFiles.length
+                    : (moved / total).clamp(0, 1),
+              ),
+            ],
+            for (final file in allFiles.take(shown)) ...[
               Text('${file['name']} · ${_bytes(file['size'] as int)}'),
+              Text(
+                file['error'] != null
+                    ? transferErrorText(file['error'] as String)
+                    : switch (file['phase']) {
+                        'sent' => t('已发送', 'Sent'),
+                        'committed' => t('已接收', 'Received'),
+                        'transferring' => t('传输中', 'Transferring'),
+                        _ => t('等待', 'Waiting'),
+                      },
+              ),
               LinearProgressIndicator(
                 value: file['size'] == 0
                     ? (['sent', 'committed'].contains(file['phase']) ? 1 : 0)
@@ -521,13 +707,32 @@ class _TransferPageState extends State<TransferPage> {
                           .toDouble(),
               ),
             ],
-            if ((row['file_count'] as int) > (transfer.files[id]?.length ?? 0))
-              Text(
-                t(
-                  '仅显示前 64 项，确认将接收整批文件',
-                  'Showing first 64; acceptance applies to the entire batch',
+            if (allFiles.length > shown)
+              TextButton(
+                onPressed: () => setState(() => _visibleFiles[id] = shown + 64),
+                child: Text(
+                  t(
+                    '显示更多文件（已显示 $shown / ${allFiles.length}），接收确认适用于整批',
+                    'Show more ($shown / ${allFiles.length}); acceptance applies to the entire batch',
+                  ),
                 ),
               ),
+            if (row['retry_available'] == true) ...[
+              if (!canRetry)
+                Text(
+                  t(
+                    '先连接并核对原接收设备，再重试',
+                    'Connect and verify the original receiver before retrying',
+                  ),
+                ),
+              TextButton(
+                key: ValueKey('retry-$id'),
+                onPressed: disabled || !canRetry
+                    ? null
+                    : () => _run(() => _retry(id)),
+                child: Text(t('重试未确认成功的文件', 'Retry unacknowledged files')),
+              ),
+            ],
             if (pending)
               Wrap(
                 spacing: 12,

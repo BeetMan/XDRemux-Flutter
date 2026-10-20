@@ -1,3 +1,4 @@
+use crate::snapshot::{RetryPlan, RetrySource};
 use crate::{
     model::*,
     service::{Inner, Outgoing, Service},
@@ -53,6 +54,28 @@ impl Service {
         paths: Vec<PathBuf>,
         pin: Option<String>,
     ) -> Result<SendHandle> {
+        let sources = paths
+            .into_iter()
+            .map(|path| RetrySource {
+                path,
+                file_id: None,
+                expected: None,
+            })
+            .collect();
+        self.start_plan(RetryPlan { peer, sources }, pin)
+    }
+    /// Explicit retry of only unacknowledged files. PINs are never retained.
+    pub fn retry_send(&self, id: &str, peer: Peer, pin: Option<String>) -> Result<SendHandle> {
+        let plan = self.inner.journal.lock().unwrap().claim_retry(id, &peer)?;
+        let result = self.start_plan(plan, pin);
+        if result.is_err() {
+            self.inner.journal.lock().unwrap().restore_retry(id);
+        }
+        result
+    }
+    fn start_plan(&self, plan: RetryPlan, pin: Option<String>) -> Result<SendHandle> {
+        let peer = plan.peer.clone();
+        let paths: Vec<_> = plan.sources.iter().map(|s| s.path.clone()).collect();
         if paths.is_empty()
             || paths.len() > self.inner.config.max_files
             || !valid_hash(&peer.fingerprint)
@@ -89,13 +112,18 @@ impl Service {
             transfer_id: id.clone(),
             file_count: paths.len(),
         });
+        self.inner
+            .journal
+            .lock()
+            .unwrap()
+            .sources(&id, plan.clone());
         // Insert and spawn under the same lock so shutdown sees every accepted job.
         self.inner.tasks.spawn(async move{
             let mut report=SendReport::default();
             let result=tokio::select! {
                 biased;
                 _=token.cancelled()=>Err(ErrorCode::Cancelled),
-                result=tokio::time::timeout(inner.config.session_timeout,send(&inner,&task_id,&peer,paths,pin.as_deref(),token.clone(),&mut report))=>result.unwrap_or(Err(ErrorCode::TimedOut)),
+                result=tokio::time::timeout(inner.config.session_timeout,send(&inner,&task_id,&plan,pin.as_deref(),token.clone(),&mut report))=>result.unwrap_or(Err(ErrorCode::TimedOut)),
             };
             report.error=result.err();
             if report.error.is_some() {
@@ -137,18 +165,20 @@ pub(crate) fn map_error(error: ClientError) -> ErrorCode {
 async fn send(
     inner: &Arc<Inner>,
     id: &str,
-    peer: &Peer,
-    paths: Vec<PathBuf>,
+    plan: &RetryPlan,
     pin: Option<&str>,
     cancel: CancellationToken,
     report: &mut SendReport,
 ) -> Result<()> {
+    let peer = &plan.peer;
     let staging = inner.storage.transaction(true)?;
     let mut sources = HashMap::new();
     let mut files = HashMap::new();
     let mut names = HashSet::new();
     let mut total = 0u64;
-    for path in paths {
+    let mut retry_sources = Vec::new();
+    for original in &plan.sources {
+        let path = &original.path;
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -157,7 +187,7 @@ async fn send(
         if !safe_name(&name) || !names.insert(name.to_lowercase()) {
             return Err(ErrorCode::InvalidInput);
         }
-        storage::plain(&path, false)?;
+        storage::plain(path, false)?;
         let mut input = tokio::fs::File::open(&path).await?;
         let before = input.metadata().await?;
         if !before.is_file() || before.len() > inner.config.max_file_bytes {
@@ -203,6 +233,19 @@ async fn send(
         {
             return Err(ErrorCode::SourceChanged);
         }
+        let sha256 = hex(hasher.finalize());
+        if original
+            .expected
+            .as_ref()
+            .is_some_and(|(size, hash)| *size != copied || *hash != sha256)
+        {
+            return Err(ErrorCode::SourceChanged);
+        }
+        retry_sources.push(RetrySource {
+            path: path.clone(),
+            file_id: Some(file_id.clone()),
+            expected: Some((copied, sha256.clone())),
+        });
         files.insert(
             file_id.clone(),
             FileDto {
@@ -210,13 +253,20 @@ async fn send(
                 file_name: name,
                 size: copied,
                 file_type: "application/octet-stream".into(),
-                sha256: Some(hex(hasher.finalize())),
+                sha256: Some(sha256),
                 preview: None,
                 metadata: None,
             },
         );
         sources.insert(file_id, saved);
     }
+    inner.journal.lock().unwrap().sources(
+        id,
+        RetryPlan {
+            peer: peer.clone(),
+            sources: retry_sources,
+        },
+    );
     inner.emit(EventKind::Prepared {
         transfer_id: id.into(),
         files: files.values().map(sent_file).collect(),

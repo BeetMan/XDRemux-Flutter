@@ -285,8 +285,8 @@ Future<void> main(List<String> args) async {
     check(await fileHash(photo) == originalHash, 'original unchanged');
     final report = {
       'passed': true,
-      'date': '2026-10-19',
-      'abi': 65538,
+      'date': DateTime.now().toIso8601String().split('T').first,
+      'abi': 65539,
       'checks': checks,
       'transferredFiles': transferredFiles,
       'bytes': transferredBytes,

@@ -104,18 +104,28 @@ pub(crate) fn publish(source: &Path, destination: &Path) -> Result<()> {
             .encode_wide()
             .chain(Some(0))
             .collect();
-        // SAFETY: both buffers are valid NUL-terminated paths for the call.
-        let ok = unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
-                source.as_ptr(),
-                destination.as_ptr(),
-                windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error().into());
+        // A scanner or a closing OS handle may briefly deny a directory rename.
+        // Retry only sharing/access/lock errors with 450 ms total backoff. Every attempt
+        // retains the same atomic no-replace operation; persistent failures fail closed.
+        for attempt in 0..8 {
+            // SAFETY: both buffers are valid NUL-terminated paths for the call.
+            let ok = unsafe {
+                windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+                    source.as_ptr(),
+                    destination.as_ptr(),
+                    windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
+                )
+            };
+            if ok != 0 {
+                return Ok(());
+            }
+            let error = std::io::Error::last_os_error();
+            if attempt == 7 || !matches!(error.raw_os_error(), Some(5 | 32 | 33)) {
+                return Err(error.into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis((10 << attempt).min(100)));
         }
-        Ok(())
+        unreachable!()
     }
     #[cfg(unix)]
     {

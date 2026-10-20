@@ -1,10 +1,25 @@
 use crate::model::*;
 use std::collections::{BTreeMap, VecDeque};
+use std::path::PathBuf;
+
+#[derive(Clone)]
+pub(crate) struct RetrySource {
+    pub path: PathBuf,
+    pub file_id: Option<String>,
+    pub expected: Option<(u64, String)>,
+}
+#[derive(Clone)]
+pub(crate) struct RetryPlan {
+    pub peer: Peer,
+    pub sources: Vec<RetrySource>,
+}
 
 pub(crate) const TERMINAL_LIMIT: usize = 32;
 pub(crate) struct Transfer {
     summary: TransferSummary,
     files: BTreeMap<String, FileState>,
+    retry: Option<RetryPlan>,
+    retry_claimed: bool,
 }
 pub(crate) struct Journal {
     pub instance_id: String,
@@ -48,6 +63,15 @@ impl Journal {
                     .or(Some(ErrorCode::RemoteFailure));
             }
         }
+        t.summary.retry_available = t.summary.phase == Phase::Failed
+            && !t.retry_claimed
+            && t.retry.as_ref().is_some_and(|plan| {
+                plan.sources.iter().any(|s| {
+                    s.file_id
+                        .as_ref()
+                        .is_none_or(|id| t.files.get(id).is_none_or(|f| f.phase != FilePhase::Sent))
+                })
+            });
         self.terminals.push_back(id.to_owned());
         while self.terminals.len() > TERMINAL_LIMIT {
             self.transfers.remove(&self.terminals.pop_front().unwrap());
@@ -71,8 +95,11 @@ impl Journal {
                             error: None,
                             alias: None,
                             peer_fingerprint: None,
+                            retry_available: false,
                         },
                         files: BTreeMap::new(),
+                        retry: None,
+                        retry_claimed: false,
                     },
                 );
             }
@@ -88,7 +115,10 @@ impl Journal {
                             error: None,
                             alias: Some(offer.alias.clone()),
                             peer_fingerprint: Some(offer.peer_fingerprint.clone()),
+                            retry_available: false,
                         },
+                        retry: None,
+                        retry_claimed: false,
                         files: offer
                             .files
                             .iter()
@@ -243,6 +273,44 @@ impl Journal {
             transfers,
             next,
         })
+    }
+    pub fn sources(&mut self, id: &str, plan: RetryPlan) {
+        if let Some(t) = self.transfers.get_mut(id) {
+            t.summary.peer_fingerprint = Some(plan.peer.fingerprint.clone());
+            t.retry = Some(plan);
+        }
+    }
+    pub fn claim_retry(&mut self, id: &str, peer: &Peer) -> Result<RetryPlan> {
+        let t = self.transfers.get_mut(id).ok_or(ErrorCode::InvalidInput)?;
+        if !t.summary.retry_available || t.retry_claimed {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut plan = t.retry.clone().ok_or(ErrorCode::InvalidInput)?;
+        if !plan
+            .peer
+            .fingerprint
+            .eq_ignore_ascii_case(&peer.fingerprint)
+        {
+            return Err(ErrorCode::IdentityMismatch);
+        }
+        plan.sources.retain(|s| {
+            s.file_id
+                .as_ref()
+                .is_none_or(|id| t.files.get(id).is_none_or(|f| f.phase != FilePhase::Sent))
+        });
+        if plan.sources.is_empty() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        plan.peer = peer.clone();
+        t.retry_claimed = true;
+        t.summary.retry_available = false;
+        Ok(plan)
+    }
+    pub fn restore_retry(&mut self, id: &str) {
+        if let Some(t) = self.transfers.get_mut(id) {
+            t.retry_claimed = false;
+            t.summary.retry_available = true;
+        }
     }
     pub fn report(&self, id: &str) -> Result<SendReport> {
         let t = self.transfers.get(id).ok_or(ErrorCode::InvalidInput)?;

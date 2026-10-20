@@ -12,6 +12,11 @@ class _Native extends TransferService {
   final calls = <Map<String, dynamic>>[];
   bool ended = false;
   String phase = 'pending';
+  bool multicastUnavailable = false;
+  String direction = 'receive';
+  bool retryAvailable = false;
+  List<Map<String, dynamic>>? fileRows;
+  final discovered = <Map<String, dynamic>>[];
   final receipts = <Map<String, dynamic>>[];
   final events = <Map<String, dynamic>>[];
   @override
@@ -36,7 +41,20 @@ class _Native extends TransferService {
     switch (command['command']) {
       case 'probe':
         return {'address': command['address'], 'fingerprint': 'B' * 64};
+      case 'discovery_start':
+        if (multicastUnavailable) {
+          throw const TransferException('discovery_unavailable');
+        }
+        return {'enabled': true, 'error': null, 'peers': discovered};
+      case 'discovery_status':
+        return {
+          'enabled': !multicastUnavailable,
+          'error': multicastUnavailable ? 'discovery_unavailable' : null,
+          'peers': discovered,
+        };
       case 'send':
+      case 'send_batch':
+      case 'retry_send':
         return {'transfer_id': 'send-1'};
       case 'decide':
         phase = command['accept'] == true ? 'accepted' : 'failed';
@@ -47,8 +65,9 @@ class _Native extends TransferService {
             {
               'id': 'receive-1',
               'phase': phase,
-              'direction': 'receive',
-              'file_count': 1,
+              'direction': direction,
+              'retry_available': retryAvailable,
+              'file_count': fileRows?.length ?? 1,
               'alias': 'Test',
               'peer_fingerprint': 'B' * 64,
             },
@@ -56,6 +75,20 @@ class _Native extends TransferService {
           'next': null,
         };
       case 'transfer':
+        if (fileRows != null) {
+          final filtered = fileRows!
+              .where(
+                (f) =>
+                    command['after'] == null ||
+                    (f['id'] as String).compareTo(command['after'] as String) >
+                        0,
+              )
+              .toList();
+          return {
+            'files': filtered.take(64).toList(),
+            'next': filtered.length > 64 ? filtered[63]['id'] : null,
+          };
+        }
         return {
           'files': [
             {
@@ -188,6 +221,158 @@ void main() {
       expect(controller.moreInbox, isFalse);
       await controller.refresh();
       expect(controller.inbox.length, 141);
+    },
+  );
+  test(
+    'multicast failure leaves receiving and manual sends available',
+    () async {
+      native.multicastUnavailable = true;
+      await controller.enableReceiving();
+      expect(controller.receiving, isTrue);
+      expect(controller.discovering, isFalse);
+      expect(controller.discoveryError, 'discovery_unavailable');
+      final peer = await controller.probe('127.0.0.1', 53319);
+      await controller.confirmPeer(peer, remember: false);
+      expect(await controller.send(peer, ['/photo.jpg']), 'send-1');
+      await controller.stop();
+      expect(controller.receiving, isFalse);
+      expect(controller.discovering, isFalse);
+    },
+  );
+  test(
+    '1000 sibling paths fit the bounded request and every file page is loaded',
+    () async {
+      final peer = await controller.probe('127.0.0.1', 53319);
+      await controller.confirmPeer(peer, remember: false);
+      await controller.send(
+        peer,
+        List.generate(
+          1000,
+          (i) =>
+              '${Directory.systemTemp.path}/a-very-long-test-directory/p23-$i.bin',
+        ),
+      );
+      final batch = native.calls.lastWhere((c) => c['command'] == 'send_batch');
+      expect((batch['names'] as List).length, 1000);
+      expect(batch.containsKey('paths'), isFalse);
+      native.fileRows = List.generate(
+        130,
+        (i) => {
+          'id': i.toString().padLeft(4, '0'),
+          'name': 'p23-$i.bin',
+          'size': 0,
+          'bytes': 0,
+          'phase': 'waiting',
+        },
+      );
+      await controller.refresh();
+      expect(controller.files['receive-1']!.length, 130);
+      await controller.send(peer, [
+        '/a.bin',
+      ]); // regular single-file command remains supported
+      await expectLater(
+        controller.send(
+          peer,
+          List.generate(
+            1000,
+            (i) =>
+                '${Directory.systemTemp.path}/unique-folder-$i/${'x' * 100}.bin',
+          ),
+        ),
+        throwsA(
+          isA<TransferException>().having(
+            (e) => e.code,
+            'code',
+            'batch_too_large',
+          ),
+        ),
+      );
+    },
+  );
+  testWidgets(
+    'a changed discovery identity cannot reach confirmation or send',
+    (tester) async {
+      native.discovered.add({
+        'alias': 'Discovered',
+        'address': '192.168.31.53:53319',
+        'fingerprint': 'C' * 64,
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: TransferPage(controller: controller)),
+      );
+      await tester.runAsync(() => controller.enableReceiving());
+      await tester.pump();
+      final device = find.byKey(ValueKey('peer-${'C' * 64}'));
+      await tester.ensureVisible(device);
+      await tester.tap(device);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('confirm-peer')), findsNothing);
+      expect(
+        native.calls.where(
+          (c) => ['send', 'send_batch', 'retry_send'].contains(c['command']),
+        ),
+        isEmpty,
+      );
+      expect(controller.trusted, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+  testWidgets(
+    'retry requires verified identity and an explicit replay decision',
+    (tester) async {
+      native.phase = 'failed';
+      native.direction = 'send';
+      native.retryAvailable = true;
+      native.discovered.add({
+        'alias': 'Discovered',
+        'address': '192.168.31.53:53319',
+        'fingerprint': 'B' * 64,
+      });
+      await tester.pumpWidget(
+        MaterialApp(home: TransferPage(controller: controller)),
+      );
+      await tester.runAsync(() => controller.enableReceiving());
+      await tester.pump();
+      final retry = find.byKey(const ValueKey('retry-receive-1'));
+      await tester.scrollUntilVisible(
+        retry,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<TextButton>(retry).onPressed, isNull);
+      final device = find.byKey(ValueKey('peer-${'B' * 64}'));
+      await tester.scrollUntilVisible(
+        device,
+        -300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(device);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('confirm-peer')));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.scrollUntilVisible(
+        retry,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('confirm-retry')), findsOneWidget);
+      expect(native.calls.any((c) => c['command'] == 'retry_send'), isFalse);
+      await tester.tap(find.byKey(const ValueKey('confirm-retry')));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(native.calls.where((c) => c['command'] == 'retry_send').length, 1);
+      await controller.stop();
+      expect(controller.transfers, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
   testWidgets(

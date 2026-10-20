@@ -45,9 +45,10 @@ pub(crate) struct Inner {
     pub server: ServerHandle,
     pub stop: CancellationToken,
     pub tasks: TaskTracker,
+    pub discovery: crate::discovery::Discovery,
     pub state: Mutex<State>,
     events: broadcast::Sender<Event>,
-    journal: Mutex<crate::snapshot::Journal>,
+    pub(crate) journal: Mutex<crate::snapshot::Journal>,
     files: Arc<Semaphore>,
     stopped: tokio::sync::watch::Sender<bool>,
 }
@@ -168,7 +169,18 @@ impl Service {
             stop_rx,
         )
         .await
-        .map_err(|_| ErrorCode::Network)?;
+        .map_err(|e| {
+            e.chain()
+                .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .map(|io| {
+                    if io.kind() == std::io::ErrorKind::AddrInUse {
+                        ErrorCode::PortInUse
+                    } else {
+                        ErrorCode::Network
+                    }
+                })
+                .unwrap_or(ErrorCode::Network)
+        })?;
         let (events, _) = broadcast::channel(config.event_capacity);
         let (stopped, _) = tokio::sync::watch::channel(false);
         let inner = Arc::new(Inner {
@@ -181,6 +193,7 @@ impl Service {
             stopped,
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
+            discovery: crate::discovery::Discovery::default(),
             state: Mutex::new(State::default()),
             journal: Mutex::new(crate::snapshot::Journal::new()),
         });
@@ -189,6 +202,18 @@ impl Service {
     }
     pub fn address(&self) -> SocketAddr {
         SocketAddr::new(self.inner.config.bind.ip(), self.inner.server.port())
+    }
+    pub async fn start_discovery(
+        &self,
+        interface: Option<std::net::Ipv4Addr>,
+    ) -> Result<DiscoverySnapshot> {
+        crate::discovery::Discovery::start(&self.inner, interface).await
+    }
+    pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
+        self.inner.discovery.snapshot()
+    }
+    pub async fn stop_discovery(&self) {
+        self.inner.discovery.stop().await;
     }
     pub fn fingerprint(&self) -> &str {
         &self.inner.identity.fingerprint
@@ -437,6 +462,7 @@ async fn supervise(
         }
     }
     inner.stop.cancel();
+    inner.discovery.stop().await;
     let ids: Vec<_> = inner
         .state
         .lock()
@@ -695,7 +721,7 @@ async fn handle_event(inner: Arc<Inner>, event: ServerEventV2) {
             });
             inner.stop.cancel();
         }
-        ServerEventV2::Register { .. } => {}
+        ServerEventV2::Register { ip, info } => inner.discovery.registered(ip.ip, &info),
     }
 }
 
@@ -761,8 +787,16 @@ async fn receive(
         return Err(ErrorCode::ChecksumMismatch);
     }
     output.flush().await?;
-    output.sync_all().await?;
-    drop(output);
+    // Wait for Tokio's blocking operations to relinquish their file references.
+    // Closing the owned OS handle before renaming the directory matters on Windows.
+    let output = output.into_std().await;
+    tokio::task::spawn_blocking(move || {
+        let result = output.sync_all();
+        drop(output);
+        result
+    })
+    .await
+    .map_err(|_| ErrorCode::Io)??;
     let gate = session.gate.lock().await;
     if !*gate || session.cancel.is_cancelled() {
         return Err(ErrorCode::Cancelled);

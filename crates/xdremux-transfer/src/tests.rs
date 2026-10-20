@@ -624,6 +624,39 @@ fn atomic_publication_refuses_existing_target() {
     assert_eq!(fs::read(second.path().join("data")).unwrap(), b"new");
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_publication_waits_for_short_locks_and_bounds_persistent_failure() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let destination = temp.path().join("published");
+    fs::create_dir(&source).unwrap();
+    let data = source.join("data");
+    fs::write(&data, b"opaque bytes").unwrap();
+    let locked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&data)
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert_eq!(storage::publish(&source, &destination), Err(ErrorCode::Io));
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(source.is_dir());
+    assert!(!destination.exists());
+    let unlock = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        drop(locked);
+    });
+    storage::publish(&source, &destination).unwrap();
+    unlock.join().unwrap();
+    assert_eq!(fs::read(destination.join("data")).unwrap(), b"opaque bytes");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("data"), b"replacement").unwrap();
+    assert!(storage::publish(&source, &destination).is_err());
+    assert_eq!(fs::read(destination.join("data")).unwrap(), b"opaque bytes");
+}
+
 #[tokio::test]
 async fn accepted_idle_session_expires_and_accept_cancel_race_does_not_leak_slot() {
     let temp = tempfile::tempdir().unwrap();
@@ -926,6 +959,139 @@ async fn export_is_verified_no_replace_and_cannot_target_private_storage() {
         Some(ErrorCode::UnsafeStorage)
     );
     assert!(b.received_path(&receipt.id).await.unwrap().exists());
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test]
+async fn port_collision_is_actionable_and_releases_the_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut cfg = config(&temp.path().join("collision"));
+    cfg.bind = occupied.local_addr().unwrap();
+    assert!(matches!(
+        Service::start(cfg.clone()).await,
+        Err(ErrorCode::PortInUse)
+    ));
+    cfg.bind = "127.0.0.1:0".parse().unwrap();
+    let service = Service::start(cfg).await.unwrap();
+    service.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn many_small_files_close_handles_before_directory_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let mut paths = Vec::new();
+    for i in 0..128u32 {
+        let path = temp.path().join(format!("small-{i}.bin"));
+        fs::write(&path, i.to_le_bytes()).unwrap();
+        paths.push(path);
+    }
+    let peer = a.probe(b.address()).await.unwrap();
+    let mut events = b.subscribe();
+    let job = a.start_send(peer, paths, None).unwrap();
+    let EventKind::Offer { offer } =
+        next(&mut events, |e| matches!(e, EventKind::Offer { .. })).await
+    else {
+        unreachable!()
+    };
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    let sent = job.wait().await;
+    assert_eq!(sent.error, None);
+    assert_eq!(sent.files.len(), 128);
+    let mut cursor = None;
+    let mut checked = 0;
+    loop {
+        let page = b.receipts_after(cursor, 64).await.unwrap();
+        let more = page.len() == 64;
+        cursor = page.last().map(|r| r.id.clone());
+        for r in page {
+            let lease = b.acquire_receipt(&r.id).await.unwrap();
+            assert_eq!(hash_file(lease.path()).await.unwrap(), r.sha256);
+            checked += 1;
+        }
+        if !more {
+            break;
+        }
+    }
+    assert_eq!(checked, 128);
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_excludes_acked_files_pins_identity_and_rejects_changed_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let first = temp.path().join("重试-1.bin");
+    let second = temp.path().join("重试-2.bin");
+    fs::write(&first, vec![1u8; 8 * 1024 * 1024]).unwrap();
+    fs::write(&second, vec![2u8; 8 * 1024 * 1024]).unwrap();
+    let peer = a.probe(b.address()).await.unwrap();
+    let mut offers = b.subscribe();
+    let mut sender = a.subscribe();
+    let job = a
+        .start_send(peer.clone(), vec![first.clone(), second.clone()], None)
+        .unwrap();
+    let id = job.id.clone();
+    let EventKind::Offer { offer } =
+        next(&mut offers, |e| matches!(e, EventKind::Offer { .. })).await
+    else {
+        unreachable!()
+    };
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    next(&mut sender, |e| matches!(e, EventKind::FileSent { .. })).await;
+    a.cancel_send(&id).unwrap();
+    let report = job.wait().await;
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.error, Some(ErrorCode::Cancelled));
+    let acked = &report.files[0].name;
+    let remaining = if acked == "重试-1.bin" {
+        &second
+    } else {
+        &first
+    };
+    let original = fs::read(remaining).unwrap();
+    let forged = Peer {
+        address: peer.address,
+        fingerprint: "0".repeat(64),
+    };
+    assert!(matches!(
+        a.retry_send(&id, forged, None),
+        Err(ErrorCode::IdentityMismatch)
+    ));
+    fs::write(remaining, vec![3u8; original.len()]).unwrap();
+    let changed = a.retry_send(&id, peer.clone(), None).unwrap();
+    let changed_id = changed.id.clone();
+    assert!(matches!(
+        a.retry_send(&id, peer.clone(), None),
+        Err(ErrorCode::InvalidInput)
+    ));
+    assert_eq!(changed.wait().await.error, Some(ErrorCode::SourceChanged));
+    fs::write(remaining, original).unwrap();
+    let retry = a.retry_send(&changed_id, peer, None).unwrap();
+    let EventKind::Offer { offer } =
+        next(&mut offers, |e| matches!(e, EventKind::Offer { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(offer.files.len(), 1);
+    assert_ne!(&offer.files[0].name, acked);
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    let retry = retry.wait().await;
+    assert_eq!(retry.error, None);
+    assert_eq!(retry.files.len(), 1);
+    assert_ne!(&retry.files[0].name, acked);
+    assert_eq!(
+        b.receipts(8)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| &r.name == acked)
+            .count(),
+        1
+    );
     a.shutdown().await;
     b.shutdown().await;
 }

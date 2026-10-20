@@ -14,6 +14,8 @@ pub enum ErrorCode {
     NoSpace,
     Io,
     AlreadyExists,
+    PortInUse,
+    DiscoveryUnavailable,
     Network,
     Cancelled,
     TimedOut,
@@ -33,6 +35,9 @@ impl std::fmt::Display for ErrorCode {
 impl std::error::Error for ErrorCode {}
 impl From<std::io::Error> for ErrorCode {
     fn from(error: std::io::Error) -> Self {
+        if error.kind() == std::io::ErrorKind::AddrInUse {
+            return Self::PortInUse;
+        }
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             return Self::AlreadyExists;
         }
@@ -122,6 +127,18 @@ pub struct Peer {
     pub address: SocketAddr,
     /// Caller must confirm/trust this certificate before sending file data.
     pub fingerprint: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiscoveredPeer {
+    pub alias: String,
+    #[serde(flatten)]
+    pub peer: Peer,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiscoverySnapshot {
+    pub enabled: bool,
+    pub error: Option<ErrorCode>,
+    pub peers: Vec<DiscoveredPeer>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OfferedFile {
@@ -265,6 +282,8 @@ pub struct TransferSummary {
     pub error: Option<ErrorCode>,
     pub alias: Option<String>,
     pub peer_fingerprint: Option<String>,
+    #[serde(default)]
+    pub retry_available: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SnapshotPage {
@@ -284,7 +303,7 @@ pub struct TransferPage {
     pub next: Option<String>,
 }
 
-pub(crate) fn safe_name(name: &str) -> bool {
+pub fn safe_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     !name.is_empty()
         && name.len() <= 240

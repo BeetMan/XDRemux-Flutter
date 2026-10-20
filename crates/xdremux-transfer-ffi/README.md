@@ -1,10 +1,10 @@
-# Transfer C ABI 1.2 (P2.0 / P2.1 / P2.2)
+# Transfer C ABI 1.3 (P2.0–P2.3)
 
-Independent adapter for `../xdremux-transfer`, built with Rust 1.97.1. Outputs `xdremux_transfer.dll` (Windows x64) or `libxdremux_transfer.so` (Android ARM64). It owns a background Tokio runtime per handle. It does not load the image engine, implement Flutter UI, package an APK, grant network permissions or enable discovery. Core provenance/license obligations are in [UPSTREAM.md](../xdremux-transfer/UPSTREAM.md).
+Independent adapter for `../xdremux-transfer`, built with Rust 1.97.1. Outputs `xdremux_transfer.dll` (Windows x64) or `libxdremux_transfer.so` (Android ARM64). It owns a background Tokio runtime per handle. It does not load the image engine, implement Flutter UI, package an APK or grant network permissions. Discovery requires an explicit command. Core provenance/license obligations are in [UPSTREAM.md](../xdremux-transfer/UPSTREAM.md).
 
 ## Calls and ownership
 
-The exact C signatures are in [include/xdremux_transfer.h](include/xdremux_transfer.h). `abi_version()` returns `0x00010002` (major in the upper 16 bits). Version 1.1 added advisory `check_space`; 1.2 adds `export_receipt` and `already_exists`. Exported signatures are unchanged. Callers must reject an unsupported major version and tolerate additional JSON fields. The P2.2 Dart application requires minor ≥2. Requests reject unknown fields; invalid UTF-8/JSON, oversized input and invalid limits return `InvalidInput`.
+The exact C signatures are in [include/xdremux_transfer.h](include/xdremux_transfer.h). `abi_version()` returns `0x00010003` (major in the upper 16 bits). Version 1.1 added advisory `check_space`; 1.2 added `export_receipt`; 1.3 adds discovery, explicit retry and compact sibling batches. Exported signatures are unchanged. Callers must reject an unsupported major version and tolerate additional JSON fields. The P2.3 Dart application requires minor ≥3. Requests reject unknown fields; invalid UTF-8/JSON, oversized input and invalid limits return `InvalidInput`.
 
 | Status | Meaning |
 |---|---|
@@ -34,6 +34,11 @@ Every request has `"command"` plus the listed fields. Optional fields can be omi
 |---|---|---|
 | `probe` | `address` (`IP:port`) | `{address,fingerprint}` |
 | `send` | confirmed `peer`, absolute `paths`, optional `pin` | `{transfer_id}`; later `sent` event / `send_report` |
+| `send_batch` | confirmed `peer`, absolute `directory`, safe basename `names`, optional `pin` | same as `send`; no recursive enumeration |
+| `retry_send` | failed `transfer_id`, newly confirmed same-identity `peer`, optional `pin` | new `{transfer_id}`; excludes ACKed files, validates unchanged sources |
+| `discovery_start` | optional IPv4 `interface` | `{enabled,error,peers:[{alias,address,fingerprint}]}`; starts or requests announcement |
+| `discovery_status` | none | same snapshot, excluding expired peers |
+| `discovery_stop` | none | null after UDP workers close; HTTPS listener stays active |
 | `decide` | `transfer_id`, `accept` boolean | null |
 | `cancel_send` | `transfer_id` | null; await `sent` for final report |
 | `cancel_receive` | `transfer_id` | null after commit gate closes; already committed files remain |
@@ -55,6 +60,10 @@ Desktop export requires an existing plain directory outside private transfer sto
 Deletion validates the receipt and exactly the owned data/receipt children, atomically moves the directory into owned transaction storage, then removes its files. A crash after the move leaves an invisible tombstone cleaned at startup. A disk error after the move can report Io although the file is already absent; refresh receipts before retrying. Repeated delete of a missing receipt reports Io. Unknown children and links fail closed.
 
 ## Events and recovery
+
+Discovery uses IPv4 224.0.0.167:53317, independent of the HTTPS listener port. Only RFC1918/private or link-local unicast hints are eligible. Each hint must pass an HTTPS register probe and certificate match before appearing; callers still explicitly confirm the full fingerprint before sending. There is no subnet scan, automatic trust or automatic acceptance. Bounds: 128 peers, 90 s expiry, 64 queued hints, 256 endpoints per 10 s cooldown window, 1.2 s per probe. Optional `interface` selects the local IPv4 multicast interface; stop/restart to change it. Loopback listeners cannot discover. Multicast failure reports `discovery_unavailable` without stopping manual HTTPS transfers. Listener address collisions report `port_in_use`.
+
+`retry_available` is advisory snapshot state. `retry_send` claims a failed job once, retaining only original path/size/hash metadata inside the bounded 32-job runtime history. ACKed files are excluded. Sources prepared previously must match their earlier size and SHA-256 before metadata is sent; changes report `source_changed`. The peer must retain the same fingerprint, but its IP may change after a new confirmation. PINs are not retained. Retry creates a fresh transfer ID; no partial-byte resume. Lost ACKs can leave an existing remote copy, so explicit user confirmation is required. Stop/restart or eviction removes retry state. Never automatically replay a command with an unknown outcome.
 
 Poll returns `{instance_id, phase, ready, last_sequence, lost, records:[{sequence,body}]}`. Phases: 0 starting, 1 running, 2 stopping, 3 stopped. `ready` persists the actual listener address, certificate fingerprint and **core** instance ID even if the ready record is lost. `last_sequence` is the latest produced bridge record, **not** the cursor of the last drained record. Process each record's own sequence. `lost` is cumulative bridge overflow count. Body kinds include `ready`, `start_failed`, `event`, `result`, `resync_required`, `fatal`, `stopped`. A result is `{kind:"result",operation_id,data,error}`. A core event is nested as `{kind:"event",event:{instance_id,sequence,kind,...}}`.
 

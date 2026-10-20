@@ -70,7 +70,7 @@ unsafe fn parse<T: serde::de::DeserializeOwned>(
 
 #[no_mangle]
 pub extern "C" fn xdremux_transfer_abi_version() -> u32 {
-    (1 << 16) | 2
+    (1 << 16) | 3
 }
 
 /// # Safety
