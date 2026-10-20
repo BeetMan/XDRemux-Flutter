@@ -95,6 +95,8 @@
 - [x] P3.1：Windows 受控端口冲突、发现失效、TLS 连接切断和新端口恢复通过；Android 真机 release 多播锁释放／重新获取、runtime 停止清理及同根／同端口重启通过，见 [P3.1 记录](../testing/local-transfer-p31.md)。
 - [ ] P3.2：真实网络变化／VPN／多网卡、AP 隔离、权限撤销、锁屏强杀和窗口退出；完整平台矩阵继续下列项目。
 
+P3.2 首个 Android 生命周期切片已准备独立 release 入口和真实 mTLS 部分上传脚本，构建／静态检查通过；手机锁屏，Home／进程终止／锁屏的传输中验证等待解锁，尚未计为通过。见 [P3.2 记录](../testing/local-transfer-p32.md)。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。
