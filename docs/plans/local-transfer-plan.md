@@ -1,6 +1,6 @@
 # 内置局域网文件传输开发计划
 
-日期：2026-10-21。状态：P2.0–P2.3 的 Windows/Android 文件互传功能与首轮验收完成：手动直连、自动发现、显式重试、收件箱、独立 ABI 1.3 及 release 打包。2 GiB/1000 文件原生规模复验通过；P3.0 已通过最终 Windows release 传输组件与官方 Android LocalSend 1.18.2 双向五文件及发现验收；下一步 P3.1 受控网络故障和恢复。Apple 待验，鸿蒙验证延后。
+日期：2026-10-21。状态：P2.0–P2.3 的 Windows/Android 文件互传功能与首轮验收完成：手动直连、自动发现、显式重试、收件箱、独立 ABI 1.3 及 release 打包。2 GiB/1000 文件原生规模复验通过；P3.0 已通过最终 Windows release 传输组件与官方 Android LocalSend 1.18.2 双向五文件及发现验收；P3.1 已修复停止状态、多播锁清理和 Windows 独占端口错误提示，Windows 受控故障／恢复、26 core／2 ABI／80 Flutter 测试通过，Android release 已构建，真机复验等待解锁。Apple 待验，鸿蒙验证延后。
 
 ## 目标与开发基线
 
@@ -92,7 +92,8 @@
 ### P3：平台适配与互操作验收
 
 - [x] P3.0：最终 DLL/生产页面 release 入口 ↔ 官方 Android LocalSend 1.18.2，双向五件、18,579,897 bytes，发现和独立哈希通过；停服后 TCP/UDP 独占重绑定通过。见 [P3.0 记录](../testing/local-transfer-p30.md)。
-- [ ] P3.1：受控端口冲突、多播失败、断网与网卡变化后的恢复；完整真实网络与平台矩阵继续下列项目。
+- [ ] P3.1：Windows 受控端口冲突、发现失效、TLS 连接切断和新端口恢复已通过；Android 真机多播锁／runtime 复验等待解锁，见 [P3.1 记录](../testing/local-transfer-p31.md)。
+- [ ] P3.2：真实网络变化／VPN／多网卡、AP 隔离、权限撤销、锁屏强杀和窗口退出；完整平台矩阵继续下列项目。
 
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。

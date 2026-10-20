@@ -107,10 +107,11 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         'interface': discoveryInterface,
       });
       if (stopping || !identical(_service, native)) return;
-      _discoveryState(result as Map);
+      await _discoveryState(result as Map);
     } catch (e) {
       discoveryError = code(e);
       discovering = false;
+      peers.clear();
       if (Platform.isAndroid) {
         try {
           await _multicast.invokeMethod<void>('release');
@@ -120,16 +121,21 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void _discoveryState(Map result) {
+  Future<void> _discoveryState(Map result) async {
     discovering = result['enabled'] == true;
     discoveryError = result['error'] as String?;
     peers
       ..clear()
       ..addAll(
-        (result['peers'] as List).map(
+        (discovering ? result['peers'] as List : const []).map(
           (p) => Map<String, dynamic>.from(p as Map),
         ),
       );
+    if (!discovering && Platform.isAndroid) {
+      try {
+        await _multicast.invokeMethod<void>('release');
+      } catch (_) {}
+    }
   }
 
   Future<void> ensureLocal() async {
@@ -297,17 +303,12 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       final native = service;
       final page = await native.drainEvents();
       if (stopping || !identical(_service, native)) return;
-      if (receiving &&
-          DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
-        _lastDiscoveryPoll = DateTime.now();
-        final state = await native.command({'command': 'discovery_status'});
-        if (stopping || !identical(_service, native)) return;
-        _discoveryState(state as Map);
-      }
       var dirty = page['resync'] == true;
+      var ended = false;
       for (final body in page['events'] as List) {
         if (body['kind'] == 'event') {
           final e = body['event'] as Map;
+          if (e['kind'] == 'stopped') ended = true;
           if (e['kind'] == 'committed') {
             final receipt = Map<String, dynamic>.from(e['receipt'] as Map);
             _newReceipts[receipt['id'] as String] = receipt;
@@ -328,10 +329,21 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             dirty = true;
           }
         } else if (body['kind'] == 'fatal' || body['kind'] == 'stopped') {
-          error = 'closed';
-          unawaited(stop());
-          return;
+          ended = true;
         }
+      }
+      // Consume terminal events before issuing any query against that runtime.
+      if (ended) {
+        error = 'closed';
+        await stop();
+        return;
+      }
+      if (receiving &&
+          DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
+        _lastDiscoveryPoll = DateTime.now();
+        final state = await native.command({'command': 'discovery_status'});
+        if (stopping || !identical(_service, native)) return;
+        await _discoveryState(state as Map);
       }
       if (dirty) {
         await refresh();
@@ -347,7 +359,12 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     } catch (e) {
       if (!stopping) {
         error = code(e);
-        notifyListeners();
+        if (error == 'closed' || error == 'worker_stopped') {
+          error = 'closed';
+          await stop();
+        } else {
+          notifyListeners();
+        }
       }
     } finally {
       _polling = false;

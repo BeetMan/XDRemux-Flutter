@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "date": "2026-10-21",
+  "slice": "P3.1 controlled faults and recovery",
+  "baseCommit": "4d67f8fec7dbc3149913a18134772f9da8f22d8b",
+  "status": "Windows controlled validation passed; Android runtime pending unlock",
+  "checks": {
+    "rustCoreTests": 26,
+    "rustAbiTests": 2,
+    "flutterTests": 80,
+    "flutterAnalyze": "No issues found",
+    "strictClippy": [
+      "core",
+      "ffi"
+    ],
+    "rustFmt": [
+      "core",
+      "ffi"
+    ]
+  },
+  "fixes": [
+    "process terminal events before discovery queries; closed or worker_stopped clears reception even if a stopped event is missing",
+    "clear peers and release Android multicast lock when discovery becomes disabled",
+    "map Windows WSAEACCES 10013 for an explicit nonzero listen port to port_in_use with occupied/unavailable wording"
+  ],
+  "windowsWildcardExclusiveConflict": {
+    "independentSocketReproductionWinerror": 10013,
+    "beforeFixReleaseOutcome": "network instead of port_in_use",
+    "afterFix": true
+  },
+  "nativeTlsCutTest": {
+    "passed": true,
+    "files": 2,
+    "bytesPerFile": 2097152,
+    "cutCondition": "one ACK then receiver progress on second file, before its total",
+    "opaqueLoopbackTlsRelay": true,
+    "stagingCleanAfterShutdown": true,
+    "ackedFileRetainedAndExcludedFromRetry": true,
+    "newEndpointSamePersistedIdentity": true,
+    "differentRealCertificateRejectedBeforeOffer": true,
+    "independentFinalHashesAndSourceUnchanged": true
+  },
+  "realDllWorker": {
+    "passed": true,
+    "date": "2026-10-21",
+    "scope": "real Windows DLL and Dart worker; owned endpoint/interface configuration faults, not Wi-Fi interruption",
+    "checks": [
+      "port_collision_then_exact_root_port_recovery",
+      "real_discovery_failure_preserves_manual_https_and_bytes",
+      "explicit_discovery_recovery_on_available_interface",
+      "closed_endpoint_explicit_retry_same_identity_new_address"
+    ],
+    "independentHashes": true,
+    "receivedFiles": 2,
+    "librarySha256": "26b93b247dcdd83ec151178bbc5e13ff767853b3938ad2599e66729dd1bc7a3d"
+  },
+  "releaseApplication": {
+    "target": "integration_test/local_transfer_fault_test.dart",
+    "windows": {
+      "stage": "done",
+      "platform": "windows",
+      "portConflictVerified": true,
+      "discoveryStopPreservesReception": true,
+      "discoveryRestartVerified": true,
+      "runtimeStopClearsReception": true,
+      "sameRootPortRestartVerified": true,
+      "identityPersists": true,
+      "finalPortReleased": true,
+      "androidMulticastLockTransitionsVerified": false
+    },
+    "android": {
+      "status": "not_run",
+      "reason": "device locked; unlock requested",
+      "testApplicationId": "io.github.beetman.xdremux.transferdev",
+      "testApkBuilt": true,
+      "normalTestMainApkPrepared": true
+    }
+  },
+  "packaging": {
+    "windows": {
+      "mainReleaseBuilt": true,
+      "librarySha256": "26b93b247dcdd83ec151178bbc5e13ff767853b3938ad2599e66729dd1bc7a3d",
+      "licensePresent": true,
+      "matchesTestedDll": true
+    },
+    "android": {
+      "mainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "installed": false,
+      "apkSha256": "91eefa7b4ebf5c758a1f807611abcb8970c3cde42aafb47c3ba48477c9ff27f5",
+      "sourceLibrarySha256": "c43d3446ebb559a00bf7981d11b9f5a124d25ec43b18660ae66e42f44eec96eb",
+      "packagedLibrarySha256": "0df41d41986362e813e9f60bbd1a3fa862c40d52cd2753759de63609a731a147",
+      "matchesNdkStripUnneeded": true,
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true
+    }
+  },
+  "networkOrFirewallChanged": false,
+  "osPermissionChanged": false,
+  "mainWorkspaceChanged": false,
+  "scopeLimits": [
+    "interface selection failure and new port simulate reachability changes; not actual OS interface removal",
+    "TLS relay reset is not Wi-Fi interruption",
+    "release discovery failure observation stops real UDP subsystem explicitly; does not inject kernel SocketsFailed",
+    "runtime termination is controlled dispose, not process kill",
+    "Android multicast lock transitions still require device validation"
+  ],
+  "pending": [
+    "Android P3.1 release runtime after unlock",
+    "real Wi-Fi loss/network switch",
+    "VPN/multi-NIC/AP isolation",
+    "permission denial/revocation",
+    "lockscreen/process kill/window exit",
+    "older official and same-host official clients",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

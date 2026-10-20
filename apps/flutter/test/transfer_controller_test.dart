@@ -13,6 +13,8 @@ class _Native extends TransferService {
   bool ended = false;
   String phase = 'pending';
   bool multicastUnavailable = false;
+  bool commandsClosed = false;
+  String? startError;
   String direction = 'receive';
   bool retryAvailable = false;
   List<Map<String, dynamic>>? fileRows;
@@ -27,6 +29,7 @@ class _Native extends TransferService {
     String alias = 'XDRemux',
     String? pin,
   }) async {
+    if (startError != null) return TransferAvailability(false, startError);
     ready = {
       'address': bind,
       'fingerprint': 'A' * 64,
@@ -38,6 +41,7 @@ class _Native extends TransferService {
   @override
   Future<dynamic> command(Map<String, dynamic> command) async {
     calls.add(command);
+    if (commandsClosed) throw const TransferException('closed');
     switch (command['command']) {
       case 'probe':
         return {'address': command['address'], 'fingerprint': 'B' * 64};
@@ -240,6 +244,104 @@ void main() {
     },
   );
   test(
+    'stopped event wins over a discovery query on a closed runtime',
+    () async {
+      await controller.enableReceiving();
+      native.events.add({'kind': 'stopped'});
+      native.commandsClosed = true;
+      await controller.poll();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.receiving, isFalse);
+      expect(controller.running, isFalse);
+      expect(controller.discovering, isFalse);
+      expect(native.ended, isTrue);
+      expect(controller.error, 'closed');
+    },
+  );
+  test(
+    'closed command without a retained stopped event clears stale receiving',
+    () async {
+      await controller.enableReceiving();
+      native.commandsClosed = true;
+      await controller.poll();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.receiving, isFalse);
+      expect(controller.running, isFalse);
+      expect(native.ended, isTrue);
+    },
+  );
+  for (final body in [
+    {'kind': 'fatal'},
+    {
+      'kind': 'event',
+      'event': {'kind': 'stopped'},
+    },
+  ]) {
+    test('terminal ${body['kind']} does not query discovery again', () async {
+      await controller.enableReceiving();
+      native.calls.clear();
+      native.events.add(body);
+      native.commandsClosed = true;
+      await controller.poll();
+      expect(controller.receiving, isFalse);
+      expect(native.ended, isTrue);
+      expect(native.calls, isEmpty);
+    });
+  }
+  test(
+    'asynchronous discovery failure clears peers and explicit refresh recovers',
+    () async {
+      native.discovered.add({
+        'alias': 'Peer',
+        'address': '192.168.1.2:53319',
+        'fingerprint': 'B' * 64,
+      });
+      await controller.enableReceiving();
+      expect(controller.peers, hasLength(1));
+      native.multicastUnavailable = true;
+      await controller.poll();
+      expect(controller.receiving, isTrue);
+      expect(controller.discovering, isFalse);
+      expect(controller.peers, isEmpty);
+      expect(controller.discoveryError, 'discovery_unavailable');
+      native.multicastUnavailable = false;
+      await controller.discover();
+      expect(controller.discovering, isTrue);
+      expect(controller.discoveryError, isNull);
+      expect(controller.peers, hasLength(1));
+      expect(native.calls.any((c) => c['command'] == 'send'), isFalse);
+    },
+  );
+  test(
+    'a stopped controller waits for an explicit restart with a new runtime',
+    () async {
+      final created = <_Native>[];
+      final owner = TransferController(
+        serviceFactory: () {
+          final service = _Native();
+          created.add(service);
+          return service;
+        },
+        supportDirectory: () async => Directory.systemTemp,
+        observeLifecycle: false,
+      );
+      try {
+        await owner.enableReceiving();
+        created.single.commandsClosed = true;
+        await owner.poll();
+        expect(owner.running, isFalse);
+        expect(created, hasLength(1));
+        await owner.enableReceiving();
+        expect(created, hasLength(2));
+        expect(owner.receiving, isTrue);
+        expect(owner.error, isNull);
+      } finally {
+        await owner.stop();
+        owner.dispose();
+      }
+    },
+  );
+  test(
     '1000 sibling paths fit the bounded request and every file page is loaded',
     () async {
       final peer = await controller.probe('127.0.0.1', 53319);
@@ -375,6 +477,54 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('a terminated runtime returns the page to explicit enable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.runAsync(() => controller.enableReceiving());
+    await tester.pump();
+    expect(find.text('停止接收'), findsOneWidget);
+    native.commandsClosed = true;
+    native.events.add({'kind': 'stopped'});
+    await tester.runAsync(controller.poll);
+    await tester.pump();
+    expect(find.text('开启接收'), findsOneWidget);
+    expect(find.text('停止接收'), findsNothing);
+    expect(find.text('接收已关闭'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets('port collision leaves the listen port editable for retry', (
+    tester,
+  ) async {
+    native.startError = 'port_in_use';
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.runAsync(
+      () => tester.tap(find.byKey(const ValueKey('receive-toggle'))),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.textContaining('接收端口已被占用'), findsOneWidget);
+    expect(controller.receiving, isFalse);
+    await tester.enterText(find.byKey(const ValueKey('listen-port')), '53320');
+    native.startError = null;
+    await tester.runAsync(
+      () => tester.tap(find.byKey(const ValueKey('receive-toggle'))),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(controller.receiving, isTrue);
+    expect(native.ready!['address'], '0.0.0.0:53320');
+    await tester.runAsync(controller.stop);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets(
     'page requires identity confirmation and explicit offer acceptance',
     (tester) async {
