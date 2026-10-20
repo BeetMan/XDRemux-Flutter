@@ -12,8 +12,8 @@ String transferErrorText(String code) => switch (code) {
     'The path list is too long; send fewer files per batch',
   ),
   'port_in_use' => t(
-    '接收端口已被占用，请换一个端口后重试',
-    'Receive port is in use; choose another port',
+    '接收端口已被占用或被系统限制，请换一个端口后重试',
+    'Receive port is in use or unavailable; choose another port',
   ),
   'discovery_unavailable' => t(
     '自动发现不可用，可继续使用下方 IP/端口直连',

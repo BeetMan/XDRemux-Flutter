@@ -173,7 +173,12 @@ impl Service {
             e.chain()
                 .find_map(|cause| cause.downcast_ref::<std::io::Error>())
                 .map(|io| {
-                    if io.kind() == std::io::ErrorKind::AddrInUse {
+                    // Windows exclusive/reserved ports may return WSAEACCES,
+                    // rather than WSAEADDRINUSE. Both need a port-level hint.
+                    let port_denied = cfg!(windows)
+                        && config.bind.port() != 0
+                        && io.raw_os_error() == Some(10013);
+                    if io.kind() == std::io::ErrorKind::AddrInUse || port_denied {
                         ErrorCode::PortInUse
                     } else {
                         ErrorCode::Network

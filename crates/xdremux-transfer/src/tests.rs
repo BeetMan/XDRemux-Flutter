@@ -966,9 +966,34 @@ async fn export_is_verified_no_replace_and_cannot_target_private_storage() {
 #[tokio::test]
 async fn port_collision_is_actionable_and_releases_the_root() {
     let temp = tempfile::tempdir().unwrap();
-    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{
+            setsockopt, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+        };
+        let exclusive = 1i32;
+        // SAFETY: a live, unbound socket and a valid four-byte option buffer.
+        assert_eq!(
+            unsafe {
+                setsockopt(
+                    socket.as_raw_socket() as usize,
+                    SOL_SOCKET,
+                    SO_EXCLUSIVEADDRUSE,
+                    (&exclusive as *const i32).cast(),
+                    4,
+                )
+            },
+            0
+        );
+    }
+    socket.bind("0.0.0.0:0".parse().unwrap()).unwrap();
+    let occupied = socket.listen(1).unwrap();
     let mut cfg = config(&temp.path().join("collision"));
-    cfg.bind = occupied.local_addr().unwrap();
+    cfg.bind = format!("127.0.0.1:{}", occupied.local_addr().unwrap().port())
+        .parse()
+        .unwrap();
     assert!(matches!(
         Service::start(cfg.clone()).await,
         Err(ErrorCode::PortInUse)
@@ -1091,6 +1116,201 @@ async fn retry_excludes_acked_files_pins_identity_and_rejects_changed_sources() 
             .filter(|r| &r.name == acked)
             .count(),
         1
+    );
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test]
+async fn unavailable_discovery_interface_preserves_direct_https() {
+    let temp = tempfile::tempdir().unwrap();
+    let a = Service::start(config(&temp.path().join("a")))
+        .await
+        .unwrap();
+    let mut cfg = config(&temp.path().join("b"));
+    cfg.bind = "0.0.0.0:0".parse().unwrap();
+    let b = Service::start(cfg).await.unwrap();
+    // Select an IPv4 address the OS cannot bind; never modify an interface.
+    let absent = (1..=254)
+        .map(|n| std::net::Ipv4Addr::new(10, 254, 254, n))
+        .find(|ip| std::net::UdpSocket::bind((*ip, 0)).is_err())
+        .unwrap();
+    assert_eq!(
+        b.start_discovery(Some(absent)).await.err(),
+        Some(ErrorCode::DiscoveryUnavailable)
+    );
+    let discovery = b.discovery_snapshot();
+    assert!(!discovery.enabled);
+    assert_eq!(discovery.error, Some(ErrorCode::DiscoveryUnavailable));
+    let remote = format!("127.0.0.1:{}", b.address().port()).parse().unwrap();
+    let peer = a.probe(remote).await.unwrap();
+    let path = temp.path().join("fallback.bin");
+    fs::write(&path, b"direct HTTPS survives multicast failure").unwrap();
+    let mut events = b.subscribe();
+    let job = a.start_send(peer, vec![path.clone()], None).unwrap();
+    let EventKind::Offer { offer } =
+        next(&mut events, |e| matches!(e, EventKind::Offer { .. })).await
+    else {
+        unreachable!()
+    };
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    assert_eq!(job.wait().await.error, None);
+    let receipt = b.receipts(1).await.unwrap().remove(0);
+    let lease = b.acquire_receipt(&receipt.id).await.unwrap();
+    assert_eq!(
+        hash_file(lease.path()).await.unwrap(),
+        hash_file(&path).await.unwrap()
+    );
+    drop(lease);
+    b.stop_discovery().await;
+    assert!(b.discovery_snapshot().error.is_none());
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cut_tls_connection_retries_only_remaining_file_at_new_endpoint() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_util::sync::CancellationToken;
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let target = b.address();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = listener.local_addr().unwrap();
+    let cut = CancellationToken::new();
+    let stop = CancellationToken::new();
+    let cut_task = cut.clone();
+    let stop_task = stop.clone();
+    // Test-only opaque TLS relay. Slow client->server bytes so the cut occurs
+    // after a partial second file, without altering the host network or TLS.
+    let relay = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                _ = stop_task.cancelled() => break,
+                _ = connections.join_next(), if !connections.is_empty() => {},
+                accepted = listener.accept() => {
+                    let (mut client, _) = accepted.unwrap();
+                    let cut = cut_task.clone();
+                    let stop = stop_task.clone();
+                    connections.spawn(async move {
+                        let mut server = tokio::net::TcpStream::connect(target).await.unwrap();
+                        let (mut client_read, mut client_write) = client.split();
+                        let (mut server_read, mut server_write) = server.split();
+                        let forward = async {
+                            let mut buffer = [0u8; 16 * 1024];
+                            loop {
+                                let n = client_read.read(&mut buffer).await?;
+                                if n == 0 { return Ok::<(), std::io::Error>(()); }
+                                server_write.write_all(&buffer[..n]).await?;
+                                tokio::time::sleep(Duration::from_millis(1)).await;
+                            }
+                        };
+                        let reverse = tokio::io::copy(&mut server_read, &mut client_write);
+                        tokio::select! { _ = cut.cancelled() => {}, _ = stop.cancelled() => {}, _ = forward => {}, _ = reverse => {} }
+                    });
+                }
+            }
+        }
+        connections.shutdown().await;
+    });
+    let first = temp.path().join("link-first.bin");
+    let second = temp.path().join("link-second.bin");
+    fs::write(&first, vec![1u8; 2 * 1024 * 1024]).unwrap();
+    fs::write(&second, vec![2u8; 2 * 1024 * 1024]).unwrap();
+    let expected = HashMap::from([
+        ("link-first.bin", hash_file(&first).await.unwrap()),
+        ("link-second.bin", hash_file(&second).await.unwrap()),
+    ]);
+    let peer = a.probe(proxy).await.unwrap();
+    assert_eq!(peer.fingerprint, b.fingerprint());
+    let mut receive_events = b.subscribe();
+    let mut send_events = a.subscribe();
+    let job = a
+        .start_send(peer, vec![first.clone(), second.clone()], None)
+        .unwrap();
+    let failed_id = job.id.clone();
+    let EventKind::Offer { offer } = next(&mut receive_events, |e| {
+        matches!(e, EventKind::Offer { .. })
+    })
+    .await
+    else {
+        unreachable!()
+    };
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    let EventKind::FileSent { file: acked, .. } = next(&mut send_events, |e| {
+        matches!(e, EventKind::FileSent { .. })
+    })
+    .await
+    else {
+        unreachable!()
+    };
+    next(&mut receive_events, |e| matches!(e, EventKind::Progress { file_id, bytes, total, .. } if file_id != &acked.id && *bytes > 0 && bytes < total)).await;
+    cut.cancel();
+    let report = job.wait().await;
+    assert!(matches!(
+        report.error,
+        Some(ErrorCode::Network | ErrorCode::TimedOut)
+    ));
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.files[0].id, acked.id);
+    stop.cancel();
+    relay.await.unwrap();
+    b.shutdown().await;
+    assert_eq!(
+        fs::read_dir(temp.path().join("b/.incoming"))
+            .unwrap()
+            .count(),
+        0
+    );
+
+    // Same persisted identity at a different reachable address; the old endpoint
+    // remains occupied by a test listener so the OS cannot select its port again.
+    let _old_endpoint = tokio::net::TcpListener::bind(target).await.unwrap();
+    let b = Service::start(config(&temp.path().join("b")))
+        .await
+        .unwrap();
+    assert_ne!(b.address(), target);
+    let receipts = b.receipts(8).await.unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].name, acked.name);
+    let impostor = Service::start(Config::new(temp.path().join("other-identity")))
+        .await
+        .unwrap();
+    let wrong_peer = a.probe(impostor.address()).await.unwrap();
+    assert!(matches!(
+        a.retry_send(&failed_id, wrong_peer, None),
+        Err(ErrorCode::IdentityMismatch)
+    ));
+    assert!(impostor.pending_offers().is_empty());
+    impostor.shutdown().await;
+    let restored_peer = a.probe(b.address()).await.unwrap();
+    let mut events = b.subscribe();
+    let retry = a.retry_send(&failed_id, restored_peer, None).unwrap();
+    let EventKind::Offer { offer } =
+        next(&mut events, |e| matches!(e, EventKind::Offer { .. })).await
+    else {
+        unreachable!()
+    };
+    assert_eq!(offer.files.len(), 1);
+    assert_ne!(offer.files[0].name, acked.name);
+    b.decide(&offer.session_id, Decision::Accept).unwrap();
+    let report = retry.wait().await;
+    assert_eq!(report.error, None);
+    assert_eq!(report.files.len(), 1);
+    let receipts = b.receipts(8).await.unwrap();
+    assert_eq!(receipts.len(), 2);
+    for receipt in receipts {
+        let lease = b.acquire_receipt(&receipt.id).await.unwrap();
+        assert_eq!(
+            hash_file(lease.path()).await.unwrap(),
+            expected[receipt.name.as_str()]
+        );
+    }
+    assert_eq!(hash_file(&first).await.unwrap(), expected["link-first.bin"]);
+    assert_eq!(
+        hash_file(&second).await.unwrap(),
+        expected["link-second.bin"]
     );
     a.shutdown().await;
     b.shutdown().await;
