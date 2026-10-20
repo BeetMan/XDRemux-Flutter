@@ -29,7 +29,7 @@ TCP relay 为了稳定在第二件中途切断而限速，不是设备吞吐测�
 
 `integration_test/local_transfer_fault_test.dart` 是独立测试入口，使用生产页面／controller／worker 和打包动态库，在全新的测试私有根运行。它先占用端口导致真实启动失败，然后恢复同一根和端口；直接停止真实 UDP 子系统，让轮询观察到发现关闭；显式重新发现；最后从 controller 外部实际 dispose native runtime/worker，验证页面关闭接收、端口释放，再由用户路径显式重启，证书保持而实例 ID 更新。
 
-这里的 runtime 终止是受控 dispose，UDP 失效是显式停止真实子系统，没有声称强杀或注入内核 SocketsFailed。Widget 测试另外覆盖有错误码的异步发现失败和事件丢失。Windows release 测试最初复现了 network 而非 port_in_use，保留失败记录后修复并复验。Android 使用 `.transferdev` 测试包，不覆盖原 XDRemux；多播锁的获取、发现停止后释放、重新发现后获取、runtime 停止后释放由原生 isHeld 逐次断言。Windows 最终 release 通过。Android 测试 APK 与普通 main APK 已构建；因手机锁屏，已请求解锁但尚未运行这一轮真机断言，明确保留为待验。两端最终结果以机器记录为准。
+这里的 runtime 终止是受控 dispose，UDP 失效是显式停止真实子系统，没有声称强杀或注入内核 SocketsFailed。Widget 测试另外覆盖有错误码的异步发现失败和事件丢失。Windows release 测试最初复现了 network 而非 port_in_use，保留失败记录后修复并复验。Android 使用 `.transferdev` 测试包，不覆盖原 XDRemux；多播锁的获取、发现停止后释放、重新发现后获取、runtime 停止后释放由原生 isHeld 逐次断言。Windows 与 Android 最终 release 测试均通过，结果 stage 为 done。Android 真机为 PKJ110、Android 17／API 37；解锁后完成全部断言，包括同根／同端口重启、身份保持和最终端口释放。测试后已恢复普通 main 测试 APK，并停止测试包进程，未覆盖原应用。两端最终结果以机器记录为准；Windows 的 Android 多播锁字段为 false 表示不适用。
 
 ## 检查与复现
 

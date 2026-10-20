@@ -3,7 +3,7 @@
   "date": "2026-10-21",
   "slice": "P3.1 controlled faults and recovery",
   "baseCommit": "4d67f8fec7dbc3149913a18134772f9da8f22d8b",
-  "status": "Windows controlled validation passed; Android runtime pending unlock",
+  "status": "Windows and Android controlled validation passed",
   "checks": {
     "rustCoreTests": 26,
     "rustAbiTests": 2,
@@ -69,11 +69,25 @@
       "androidMulticastLockTransitionsVerified": false
     },
     "android": {
-      "status": "not_run",
-      "reason": "device locked; unlock requested",
+      "stage": "done",
+      "platform": "android",
+      "portConflictVerified": true,
+      "discoveryStopPreservesReception": true,
+      "discoveryRestartVerified": true,
+      "runtimeStopClearsReception": true,
+      "sameRootPortRestartVerified": true,
+      "identityPersists": true,
+      "finalPortReleased": true,
+      "androidMulticastLockTransitionsVerified": true,
+      "deviceModel": "PKJ110",
+      "androidVersion": 17,
+      "apiLevel": 37,
       "testApplicationId": "io.github.beetman.xdremux.transferdev",
       "testApkBuilt": true,
-      "normalTestMainApkPrepared": true
+      "normalTestMainApkPrepared": true,
+      "normalTestMainApkRestored": true,
+      "testPackageStoppedAfterRestore": true,
+      "originalApplicationOverwritten": false
     }
   },
   "packaging": {
@@ -102,11 +116,9 @@
     "interface selection failure and new port simulate reachability changes; not actual OS interface removal",
     "TLS relay reset is not Wi-Fi interruption",
     "release discovery failure observation stops real UDP subsystem explicitly; does not inject kernel SocketsFailed",
-    "runtime termination is controlled dispose, not process kill",
-    "Android multicast lock transitions still require device validation"
+    "runtime termination is controlled dispose, not process kill"
   ],
   "pending": [
-    "Android P3.1 release runtime after unlock",
     "real Wi-Fi loss/network switch",
     "VPN/multi-NIC/AP isolation",
     "permission denial/revocation",
