@@ -1,5 +1,13 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-10-22：0.5.1 GitHub 默认附件改为开发自签包
+
+- [x] 用户要求直接替换原生包；在既有隔离 tag 工作目录执行 `devecocli build --product default --build-mode debug` 成功，不修改业务源码、标签、包身份、版本或本机签名设置。
+- [x] 包内 `app.debug:true`、`app.buildMode:debug`；Rust 仍为 Release 优化，包内核心 SHA256 `3CAA2D3B3C3F56537BB2C4382787B781EF9E17011AEFF5E5627F0838E3B4A8EC` 与此前 Release HAP 相同。身份/API/版本、CRC 与签名工具的无 HAP Signing Block 检查通过，16 组 Node 回归和 5 项 verifier 单测通过。
+- [x] 新 HAP 6,811,477 bytes，SHA256 `61E2F0B5667B2B668E1AE3772AAE9825EDE62E3A2DC4D05EF1940B4621856BBC`。替换前云端 HAP 和校验文件已下载备份到忽略的 `target/native051-release-before-debug`。
+- [x] 已替换 `harmony-v0.5.1` 同名 HAP 和 `SHA256SUMS.txt`，同步发布正文；重新下载 HAP 与校验文件，确认下载哈希、GitHub 服务器 digest、文件大小及发布正文全部匹配，未改动其他发布附件。
+- [x] `BUILDING.md` 固化 GitHub 默认 debug unsigned、Rust release 优化及发布前核验规则，避免以后沿用正式发布签名产物。开发自签不是通用免签侧载；本轮未进行实际自签安装与照片实机验收。
+
 ## 2026-10-22：0.5.1 发布资产重编核验
 
 - 用户明确要求同时补 Flutter OHOS 0.4.4 与原生 0.5.1。原生固定 `harmony-v0.5.1` / `67ff09cd`；未改动原生业务源码、标签、`.arkui` 包身份或 `0.5.1+50100` 版本。

@@ -4,6 +4,8 @@ The host CI workflow at `.github/workflows/harmony-native-ci.yml` runs the deter
 
 ## Build an unsigned HAP
 
+GitHub's public unsigned HAP uses **debug** mode (`app.debug: true`) so users can sign it with a matching development certificate/Profile for registered devices. Keep the Rust core optimized with `cargo build --release`; the ArkTS packaging mode does not require rebuilding Rust in debug mode. Do not substitute a release-mode HAP under the same download name: that belongs to the separate release-signing/distribution workflow. Unsigned does not mean directly installable, and development signing does not enable unrestricted public installation.
+
 Run from the repository root in PowerShell. Use the Rust core already produced by `xdremux/rust/build_ohos.sh`; `prepare_harmony_native.ps1` stages that library and the matching DevEco C++ runtime but does not build Rust.
 
 ```powershell
@@ -35,6 +37,8 @@ python .\apps\harmony\tools\verify_harmony_hap.py `
 ```
 
 Record the Rust input library hash separately with `Get-FileHash` or the preparation script's JSON output. The HAP's core is toolchain-stripped, so its hash is expected to differ from the staged input. Pair the manifest report with the DevEco build log showing whether signing was skipped. Local device-test signing belongs in DevEco and must use the native bundle identity; release artifacts remain unsigned.
+
+Before replacing the GitHub download, also inspect `module.json` and require `app.debug == true` and `app.buildMode == "debug"`, check ZIP CRC, and use `hap-sign-tool verify-app` to confirm the absence of a HAP Signing Block. Back up the old asset, update its SHA256SUMS entry and Release signing instructions together, then download the uploaded asset again and verify its hash. Structural checks do not replace an actual signing/install test.
 
 ## Host regressions
 

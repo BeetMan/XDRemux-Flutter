@@ -11,7 +11,7 @@
 
 ## 安装与升级
 
-- 下载本页 `XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap`。发布包未签名，请用 DevEco Studio 完成本地签名后安装。
+- 下载本页 `XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap`。当前附件为 Debug / `debug:true` 未签名包，Rust 核心保持 Release 优化；请使用匹配原生包名、证书与目标设备的开发 Profile 自签后安装，不是免签安装包或应用市场上架包。
 - 应用名 **XDRemux**，包名 `io.github.beetman.xdremux.arkui`，版本 `0.5.1` / code `50100`，ARM64。
 - 现有 `.arkui` 用户使用相同签名可覆盖升级并保留数据；Flutter 版和早期 `.native` 版是独立应用身份。
 - 以 HarmonyOS 7 / API 26 为开发基准；清单最低兼容 API 18，旧系统适配仍需按设备验证。
@@ -33,7 +33,15 @@
 - `devecocli` Release 构建、unsigned HAP 身份/API/核心库校验与归档 CRC 检查通过；发布页附 `SHA256SUMS.txt`。
 - 本次未连接调试设备，未做 0.5.1 的新一轮安装和 Apple Photos 真机验收。此前已验证原生界面基础流程与图库返回修复；构建及结构校验不替代目标相册的实际编辑验收。
 
-## 2026-10-22 重新编译补充
+## 2026-10-22 开发自签包替换（当前附件）
+
+- 按用户要求直接替换同名 HAP，不另开版本、不移动 `harmony-v0.5.1` 标签；继续使用该标签 `67ff09cd` 的业务源码、`.arkui` 身份和 `0.5.1` / code `50100`。
+- 使用 `devecocli build --product default --build-mode debug`，包内确认 `app.debug:true`、`app.buildMode:debug`。Rust 核心继续使用 Release 优化，包内 SHA256 `3caa2d3b3c3f56537bb2c4382787b781ef9e17011aeff5e5627f0838e3b4a8ec` 与先前 Release HAP 完全一致。
+- 当前 HAP 为 6,811,477 bytes，SHA256 `61e2f0b5667b2b668e1ae3772aae9825ede62e3a2dc4d05ef1940b4621856bbc`，对应 `SHA256SUMS.txt` 一并更新；之前 Release HAP 已本地备份。重新下载后的 HAP、校验文件、GitHub 服务器摘要与发布正文均核对通过。
+- DevEco Debug 完整编译、身份/版本/API/核心一致性、ZIP CRC、无 HAP Signing Block、16 组模型/队列测试与 5 项 HAP 校验器测试通过。本轮未进行实际自签安装或照片转换验收，不声称所有自签工具已测试。
+- 此节替代下方历史记录中的 Release/`debug:false` 安装要求。开发签名仍受证书、包名、设备范围和有效期约束；未上传本机签名材料。
+
+## 2026-10-22 重新编译补充（历史，已被上方 Debug 包替换）
 
 - 从同一发布标签 `harmony-v0.5.1` / `67ff09cd` 重新构建，仍为 `.arkui`、`0.5.1` / code `50100`、ARM64、最低 API 18、目标 API 26，不移动标签或改变业务源码。
 - 单独重新编译该标签的 Rust `0.4.4` 核心，不混用 Flutter 标签核心；包内核心 SHA256 `3caa2d3b3c3f56537bb2c4382787b781ef9e17011aeff5e5627f0838e3b4a8ec` 与上一份已上传包一致。桥接库、资源清单来自本次干净构建。
