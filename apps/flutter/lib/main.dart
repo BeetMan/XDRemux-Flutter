@@ -28,6 +28,7 @@ import 'services/checkpoint_service.dart';
 import 'services/transfer/transfer_models.dart';
 import 'services/transfer/transfer_queue.dart';
 import 'services/transfer/transfer_controller.dart';
+import 'services/transfer/transfer_desktop_lifecycle.dart';
 import 'transfer_page.dart';
 import 'services/file_action_service.dart';
 import 'services/output_export_service.dart';
@@ -265,12 +266,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static const _transferLifecycle = MethodChannel('xdremux/transfer-lifecycle');
+  TransferDesktopLifecycle? _transferLifecycle;
   TransferController? _transfer;
-  Future<void> _exitWithTransfer() async {
-    await _transfer?.stop();
-    exit(0);
-  }
 
   final List<QueueItem> _queue = [];
   ConversionConfig _config = ConversionConfig();
@@ -312,18 +309,15 @@ class _HomePageState extends State<HomePage> {
     NotificationService.init();
     ForegroundService.init();
     if (Platform.isWindows) {
-      _transferLifecycle.setMethodCallHandler((call) async {
-        if (call.method == 'requestClose') {
-          await _transfer?.stop();
-          await _transferLifecycle.invokeMethod<void>('approveClose');
-        }
+      _transferLifecycle = TransferDesktopLifecycle(stop: () async {
+        await _transfer?.stop();
       });
       unawaited(
-        _transferLifecycle.invokeMethod<void>('ready').catchError((_) {}),
+        _transferLifecycle!.register().catchError((_) {}),
       );
       TrayService.init(
         onShowWindow: TrayService.showWindow,
-        onExit: () => unawaited(_exitWithTransfer()),
+        onExit: () => unawaited(_transferLifecycle!.exitApplication()),
       );
     }
     _checkForUpdate();
@@ -692,7 +686,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    if (Platform.isWindows) _transferLifecycle.setMethodCallHandler(null);
+    _transferLifecycle?.dispose();
     TransferQueue.unregister(this);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();

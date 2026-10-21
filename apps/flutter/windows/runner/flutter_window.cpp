@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <shellapi.h>
+#include <flutter/method_result_functions.h>
 
 #include <optional>
 #include <thread>
@@ -144,7 +145,19 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       if (transfer_close_ready_ && !transfer_allow_close_) {
         if (!transfer_close_requested_) {
           transfer_close_requested_ = true;
-          transfer_lifecycle_->InvokeMethod("requestClose", nullptr);
+          // A failed/unhandled Dart cleanup must not permanently latch WM_CLOSE.
+          // Keep duplicate requests suppressed only while the reply is pending.
+          auto reset_request = [this]() {
+            if (!transfer_allow_close_) transfer_close_requested_ = false;
+          };
+          transfer_lifecycle_->InvokeMethod(
+              "requestClose", nullptr,
+              std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+                  [reset_request](const auto*) { reset_request(); },
+                  [reset_request](const std::string&, const std::string&, const auto*) {
+                    reset_request();
+                  },
+                  reset_request));
         }
         return 0;
       }
