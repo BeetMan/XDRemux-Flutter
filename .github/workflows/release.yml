@@ -156,8 +156,12 @@ jobs:
   windows-arm64:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Windows ARM64 installer (experimental)
-    # Flutter can emit an x64 Windows runner even on the
-    # windows-11-arm host, so do not block the public release on this job.
+    # Flutter publishes no Windows ARM64 SDK for the pinned version (verified
+    # 2026-10-21: "Unable to determine Flutter version for channel: stable
+    # version: 3.47.7 architecture: arm64"), so this job fails in setup within
+    # seconds and ships no installer. continue-on-error keeps the release green;
+    # the staging guard below still refuses a mislabeled x64 bundle if an ARM64
+    # SDK appears in a later Flutter release.
     continue-on-error: true
     runs-on: windows-11-arm
     steps:
