@@ -1,8 +1,8 @@
-# XDRemux 鸿蒙原生预览版
+# XDRemux 鸿蒙原生版
 
-**当前版本：0.5.0-alpha1** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
+**当前版本：0.5.1** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
 
-Flutter 跨平台版：[v0.4.3](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.3)（功能等价）
+[下载鸿蒙原生版 0.5.1](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.1) · Flutter 跨平台版：[v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](apps/harmony/README.md) · [开发计划](docs/plans/harmony-native.md)
 
@@ -10,21 +10,21 @@ Flutter 跨平台版：[v0.4.3](https://github.com/BeetMan/XDRemux-Flutter/relea
 
 XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，采用 ArkTS / ArkUI 构建原生界面，搭配 Rust 图像处理引擎，将照片导入、浏览、信息查看、转换与导出整合到一个应用中。
 
-它支持将 OPPO、一加、realme 拍摄的 ProXDR 照片转换为标准 HDR HEIC，并根据后续使用场景选择「OPPO 兼容」或「Apple 标准」输出。当前预览版还加入了华为照片识别、符合条件的华为人像转换、Apple 摄影风格数据写入，以及动态照片拆分和 Live Photo 配对等能力，让不同设备拍摄的照片拥有更多跨平台使用方式。
+它支持将 OPPO、一加、realme 拍摄的 ProXDR 照片转换为标准 HDR HEIC，并根据后续使用场景选择「OPPO 兼容」或「Apple 标准」输出。原生版还提供了华为照片识别、符合条件的华为人像转换、Apple 摄影风格数据写入，以及动态照片拆分和 Live Photo 配对等能力，让不同设备拍摄的照片拥有更多跨平台使用方式。
 
 <img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/12e107f2-1c13-4bd3-a8dc-77277cb77919" />
 
 应用围绕 **图库、队列、设置** 三个 Tab 展开：在图库中浏览和处理单张照片，在队列中管理批量任务，在设置中调整默认转换选项。界面采用鸿蒙原生组件，并在支持的系统上呈现沉浸式导航与材质效果。
 
-> 当前为原生预览版，功能和设备兼容性仍在持续完善。Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果以照片结构、系统版本和目标设备为准。
+> 原生版的功能和设备兼容性仍在持续完善。Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果以照片结构、系统版本和目标设备为准。
 
-## Flutter 版 0.4.3：功能等价的跨平台版本
+## Flutter 版 0.4.4：共享转换核心的跨平台版本
 
-除本原生预览版外，XDRemux 的 Flutter 跨平台版本同步发布 [v0.4.3](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.3)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
+除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本提供 [v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
 
-两个版本**共用同一套 Rust 转换引擎，核心功能等价**：ProXDR 转标准 HDR HEIC、「OPPO 兼容」与「Apple 标准」两种输出模式、华为照片识别与人像转换、摄影风格（含摄影风格 3）数据写入、动态照片拆分与 Live Photo 配对等能力在两个版本中行为一致，输出结果可以互相印证。差异主要在界面实现（ArkUI 原生组件与 Flutter 跨平台界面）与平台覆盖范围。
+原生 0.5.1 同步 Flutter 0.4.4 的 Rust 转换核心，包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
 
-在 HarmonyOS 设备上，原生版提供更贴近系统的交互体验；需要在桌面或其他移动平台处理照片时，可选择功能等价的 Flutter 版。
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.1 更新说明](apps/harmony/RELEASE_NOTES_v0.5.1.md)列出了本轮变化和使用范围。
 
 ## 图库：从浏览照片开始
 
@@ -87,7 +87,7 @@ Apple 相关选项包括：
 
 这些选项用于生成可继续编辑的照片文件。人像转换需要源照片提供可用的景深信息，应用会根据照片条件决定可用功能。
 
-当前预览版也加入了符合条件的华为人像照片向 Apple 人像转换的路径，并支持在该路径上追加摄影风格。对于已兼容 Apple 的华为 HDR 照片，可保存独立静帧或按条件附加风格数据。
+原生版也提供了符合条件的华为人像照片向 Apple 人像转换的路径，并支持在该路径上追加摄影风格。对于已兼容 Apple 的华为 HDR 照片，可保存独立静帧或按条件附加风格数据。
 
 高级设置中提供「严格 ISO 兼容」选项，用于特定标准兼容性测试；普通使用建议保持默认配置。
 

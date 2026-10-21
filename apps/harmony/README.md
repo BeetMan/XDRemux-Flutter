@@ -2,6 +2,12 @@
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
+## Native 0.5.1 release (2026-10-22)
+
+Native `0.5.1` / code `50100` synchronizes the shared Rust `0.4.4` core at main `6c34ed42` and retains the gallery inspection-cancellation fix. The `.arkui` bundle identity and queue/settings schemas remain unchanged. See [release notes](RELEASE_NOTES_v0.5.1.md) for scope and signing instructions. The release uses the independent `harmony-v0.5.1` tag and an unsigned HAP; it does not use the Flutter `v*` tag workflow or replace the cross-platform Latest release.
+
+The following synchronization entries are historical build records.
+
 ## Main synchronization (2026-10-16)
 
 This branch merges `origin/main` at `9ee2431f` while preserving the native README/screenshots, ArkUI app, `.arkui` identity and `0.5.0-alpha1` / code `50001`. Shared-core updates include OPPO front-camera portrait depth, Huawei Motion Photo still isolation, JPEG HDR metadata/color-space handling, Apple MakerNote preservation, and Live Photo source/output safety. Native-specific still-extraction FFI and Apple editing metadata inspection remain available.
@@ -21,7 +27,7 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.0-alpha1` and version code `50001`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.1` and version code `50100`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
 
 The local gallery index is `filesDir/xdremux-gallery/library.json`; imported originals live under `filesDir/xdremux-gallery/items/`. Queue-owned inputs remain separate under the queue sandbox. Import copies are committed to the index only after the copied file is verified, and the index is replaced atomically.
 

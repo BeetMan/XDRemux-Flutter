@@ -204,6 +204,3 @@ libxdremux_core.dylib  arm64            <-- 仅此一项
 ### 第二次预演的 runner 容量问题（2026-10-21）
 
 同一次预演里 macOS DMG 与 iOS IPA 两个 job 被取消，check-run annotation 原文：`The job was not acquired by Runner of type hosted even after multiple attempts`，并附 `Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.` —— 这是 GitHub 托管 macOS 队列容量问题，不是代码问题。macOS/iOS 的构建与产物验证以第一次预演（run 39061015513）为准，其后分支改动只涉及文档、ARM64 job 的 Flutter 架构与注释，不触及 macOS/iOS job。
-
-
-

@@ -519,3 +519,15 @@ P0 补充检查（本批并行进行）：
 - 将失效选择序号与释放读取状态合并为 `cancelGalleryInspection`，用于预加载返回、关闭详情及删除最后一张照片。过期异步回调仍不能覆盖后续选择。
 - 直接执行页面返回处理器的回归检查重现旧提交 `d53e65c3` 的锁定；修复后预加载取消和关闭详情均允许下一次打开。Release 构建、unsigned HAP 校验通过；同一 Rust 核心无需重建。
 - Pura X View 本地签名覆盖安装后，验证了照片打开、系统返回后重新打开、设置 Tab、队列筛选点击。未执行照片转换或改动全局转换设置。证据在外部 `harmony-native/home-interaction-20261017/`。
+
+
+## 2026-10-22 原生 0.5.1 发布
+
+- 按用户要求同步主线 0.4.4 发布进度。合并 `origin/main` 的 `6c34ed42`，Rust 核心版本为 `0.4.4`，同步 OPPO bit 33 分类修复；保留原生图库取消读取时释放锁定状态的修复。
+- 原生 app 改为 `0.5.1` / code `50100`，包名 `io.github.beetman.xdremux.arkui`、API26 目标 / API18 清单最低兼容、图库与队列/设置数据 schema 均不变。原生 README 更新版本和下载入口，用户上传的五张截图保持不变。
+- 使用独立标签 `harmony-v0.5.1` 和 unsigned HAP，避免触发 Flutter 的 `v*` 多平台发布工作流；GitHub 原生 Release 不接管跨平台 Latest。版本说明位于 `apps/harmony/RELEASE_NOTES_v0.5.1.md`。
+- Rust workspace 测试通过（核心 226 passed / 3 ignored，host 使用现有 FFmpeg fallback）；6 项显式启用的私有华为 corpus、16 份 Node、5 项 HAP verifier 与 C++ PS3 helper 通过。host FFI 版本 `0.4.4`、bit 33 分类均通过，分配按对应 free 函数释放；OHOS 核心导出全部 24 个桥接符号。
+- 核心仅用现有 `build_ohos.sh` 构建，由 `prepare_harmony_native.ps1` 暂存；staged core SHA-256 `E02295E386410F37E5EF633B2D4833439D4C9F22D85306B823D992E5203A2B99`。未启用可选 libheif feature，未打入新的第三方共享库。
+- `devecocli build --product default --build-mode release` 成功。unsigned HAP 6,160,479 字节，SHA-256 `7E39C8B5B288ADE0E11D4A5573E87B409658F2D688D1E4B19C6B4EE2B1DB7BC1`；包内 stripped core SHA-256 `3CAA2D3B3C3F56537BB2C4382787B781EF9E17011AEFF5E5627F0838E3B4A8EC`。release/debug 标记、包名、版本、API、归档 CRC、app 图标和文档链接检查通过。
+- 本轮无连接的调试设备，未重新安装 0.5.1 或进行新一轮 Apple Photos 真机验收；此前设备基础流程及图库返回修复不扩展为本版本全面验收。发布说明保留这一边界。
+- 交付文件、SHA256SUMS 与验证日志外置 `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/release-0.5.1-20261022/`。本机 DevEco 调试签名仅用于本地测试，上传 GitHub 的制品为 unsigned。
