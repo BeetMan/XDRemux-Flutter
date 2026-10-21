@@ -48,3 +48,11 @@
 - 鸿蒙：Profile/AOT 未签名 HAP 构建通过，签名覆盖安装后启动 smoke 通过；完整功能未验收。
 
 未覆盖、不据此宣称通过：macOS 端完整 UI 流程（多选 / 中文路径 / 拖放、摄影风格、人像、批量取消与重试、Photos 导入与投送）、iPhone 相册权限拒绝后重试与批量/自动保存、Windows 人工验收、鸿蒙完整功能。
+
+## 2026-10-22 补充：Flutter OHOS 0.4.4
+
+- 已追加资产 `XDRemux-HarmonyOS-0.4.4-unsigned.hap`，37,359,949 bytes；发布标签 `v0.4.4` / 源码 `6c34ed42`，应用 `0.4.4+38`，包名 `io.github.beetman.xdremux`，ARM64，最低 API 18、目标 API 26。
+- 使用独立 OHOS Flutter SDK（框架提交 `62357a93`、Dart 3.11.5）及启动修复后的平台内核缓存。Profile/AOT、清单 `debug: true`、未签名，可用匹配设备的 Development Profile 自签；不是官方 Flutter 3.47.7 构建的鸿蒙包。
+- 重新编译该标签的 Rust 核心，未启用可选 libheif。37 个 Dart FFI 符号、包身份/版本、ARM64 AOT/引擎/核心/运行库、ZIP CRC 与无签名块检查通过；本轮未重新安装或进行转换/图库实机验收。
+- **Flutter OHOS 统一相册保存入口目前未接入（普通静图也受影响），HEIF/MOV 双文件分享尚未实现**。转换生成文件不等于已保存到系统相册；成对文档导出请用独立的鸿蒙原生 0.5.1。
+- SHA256 `e33fcf692c3b7810579a065e2b627e4bb5ae16ea93697e3ee32037ca60bfbe96`，附 `SHA256SUMS-HarmonyOS-0.4.4.txt`；GitHub 服务器摘要已回读核对。发布页保留现有正文，追加构建与限制说明，不移动标签或修改其他平台资产。

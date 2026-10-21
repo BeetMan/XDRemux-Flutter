@@ -1,5 +1,22 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-22：正式标签鸿蒙资产补编
+
+用户已在 Mac 发布 `v0.4.4`，并明确要求同时补齐 Flutter OHOS 0.4.4 与鸿蒙原生 0.5.1。以下构建使用各自正式标签，不移动标签，不混用两条分支的 Rust 核心，也不将本机签名上传。
+
+- [x] 主线快进到 `v0.4.4` / `6c34ed42`（Flutter `0.4.4+38`，Rust `0.4.4`）。原生按 `harmony-v0.5.1` / `67ff09cd`（app `0.5.1+50100`）构建，保留原生专用静帧提取等 API。
+- [x] 两份 Rust 核心分别执行 locked、release、aarch64-unknown-linux-ohos 构建，默认 x265，未启用 libheif 或 FFmpeg fallback；复用相同 OHOS 目标 x265 静态库和 SDK libc++。
+- [x] Flutter 使用之前校验通过的独立干净 OHOS SDK，profile 平台内核 SHA256 `6BB2231472FC399BD1BC75E6344D4380CFB94B1DB21705A7B1A36F1EA1C914B8`。隔离目录使用 OHOS pubspec 变体并只同步版本行；业务 Dart 源自 tag，不更改官方主线 pubspec/lock。
+- [x] 首次 Flutter 打包遇到路径长度超过 259 的限制，改用短隔离目录 `target/oh044-1022` 后 `devecocli build --product default --build-mode profile` 成功；原生在独立目录执行 release 构建成功。Flutter 仅隔离构建移除不可拉取的 Hvigor 6.24.4 显式依赖，并过滤 x64 库，使用 DevEco 自带工具链。
+- [x] Flutter HAP：`XDRemux-HarmonyOS-0.4.4-unsigned.hap`，37,359,949 bytes，SHA256 `E33FCF692C3B7810579A065E2B627E4BB5AE16EA93697E3EE32037CA60BFBE96`；37 个运行时 FFI 符号、ARM64 AOT/引擎/核心/运行库、包名/版本与 ZIP CRC 校验通过，签名工具确认无 HAP Signing Block。
+- [x] 原生 HAP：`XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap`，5,903,559 bytes，SHA256 `0DF31311F3EEC6D743BBBF51007D63AF34FCD863BD2A4835B7512D5AA31E8648`；24 个桥接符号、包身份/API/版本、ZIP CRC 与无签名块检查通过。16 组模型/队列测试和 5 项 HAP 校验器测试再次通过。
+- 独立快速 ArkTS 检查存在错误（Flutter 22 项类型推导/any 等，原生 1 项 `@Available` 导出），但两份完整 DevEco 构建的 CompileArkTS 与打包均通过；不冒称独立快速检查已通过，也不为本轮资产补编改写发布标签业务源码。
+- [x] 两条 Release 的 HAP 与校验文件均已上传，GitHub 服务器 SHA256 与本地一致。原生旧 HAP（SHA256 `7E39C8B5B288ADE0E11D4A5573E87B409658F2D688D1E4B19C6B4EE2B1DB7BC1`）和旧 SHA256SUMS 已先下载留存；仅替换指定原生 HAP 和对应校验文件。两条发布页保留手写正文，只追加重编信息、校验值、签名要求和限制；未覆盖其他平台资产。
+- 本轮不自动安装手机、不使用用户照片、不声称完成新的图库或 Apple Photos 实机验收。Flutter Profile/`debug:true` 可开发自签；原生仍是 Release/`debug:false`，需发布签名或从源码构建 debug 包，不混用安装说明。
+- Flutter OHOS 统一相册保存入口仍排除 OHOS，双文件分享尚未接入；本轮只补发布资产，不扩展为功能修复或完整验收通过。原生配对文档导出仍是独立实现。
+
+日志与可恢复产物保存在各工作区忽略的 target，以及 `dist/harmony-release-20261022`；不提交 HAP、签名配置、SDK 缓存或本机原始日志。后续各段为当时的候选整合历史记录。
+
 日期：2026-10-15。用户授权：整合候选代码、将本次修复提交主线，再升级 Flutter，交付验收；不创建 tag、不发布 Release。
 
 ## 范围
