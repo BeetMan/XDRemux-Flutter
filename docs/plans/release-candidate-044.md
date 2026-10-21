@@ -1,5 +1,13 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-22：原生 0.5.1 自签分发更正
+
+- 用户要求直接替换原生同名 HAP。使用 `harmony-v0.5.1` / `67ff09cd` 业务源码执行 DevEco debug 构建，确认 `app.debug:true`、`app.buildMode:debug`，供匹配包名、证书和设备的开发 Profile 自签；Rust 保持 Release 优化，核心 SHA256 与此前包相同。
+- 新原生 HAP 6,811,477 bytes，SHA256 `61E2F0B5667B2B668E1AE3772AAE9825EDE62E3A2DC4D05EF1940B4621856BBC`。原 Release HAP 与校验和已本地备份；包身份、`0.5.1+50100`、标签均不变。此节替代下方“原生仍为 release/debug:false”的当前状态描述，早先数字仅作历史记录。
+- 完整 debug 编译、24 个桥接符号、版本/API/身份/核心一致性、CRC、无 HAP Signing Block、16 组模型/队列测试及 5 项 HAP verifier 测试通过。本轮未执行实际自签安装或照片实机验收；unsigned 不是免签安装，开发签名仍受设备范围与有效期约束。
+- 原生 `BUILDING.md` 和发布说明已补充 GitHub 默认 debug unsigned、Rust release 优化的规则；Flutter OHOS 0.4.4 附件与其他平台资产不变。
+- 已替换 `harmony-v0.5.1` 同名 HAP 与 SHA256SUMS，更新 Release 正文；重新下载验证 HAP 哈希、校验文件、GitHub 服务器 digest/大小及正文全部匹配。旧附件可从原生工作区 target 备份恢复。
+
 ## 2026-10-22：正式标签鸿蒙资产补编
 
 用户已在 Mac 发布 `v0.4.4`，并明确要求同时补齐 Flutter OHOS 0.4.4 与鸿蒙原生 0.5.1。以下构建使用各自正式标签，不移动标签，不混用两条分支的 Rust 核心，也不将本机签名上传。
