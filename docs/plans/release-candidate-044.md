@@ -144,3 +144,66 @@ iPhone 实机（应用内转换，用户操作）：
 - `ffi_smoke_test` 的 3 项失败：新增 `apps/flutter/test/native_library.dart`，按「CI 拷贝到 Flutter 工程内 → Cargo `target/release|debug` → 已构建的 macOS bundle」顺序探测核心库并返回绝对路径，找不到时打印全部搜索路径；不再依赖 dlopen 的默认搜索（不含 target 目录）。
 - `widget_test` 的 Settings 失败：`6e6a184` 已退休 Swift「转换引擎」选择器，测试仍按 `Platform.isMacOS || isIOS` 断言其存在，Linux 上因断言 `findsNothing` 而长期掩盖。改为在所有平台断言该段落不存在。
 - 结果：macOS `flutter test` = **139 passed / 2 skipped / 0 failed**，`flutter analyze` 无问题。提交 `d642e31`（分支 `fix/macos-flutter-test-hosts`）。
+
+## 发版准备（2026-10-18）
+
+上述记录描述的是 0.4.3+37 候选状态。本轮按维护者要求做发布准备，**未打 tag、未创建 Release**：
+
+- 版本号提升：`apps/flutter/pubspec.yaml` → `0.4.4+38`，`xdremux/rust/Cargo.toml` → `0.4.4`（`Cargo.lock` 同步），`tools/installer/xdremux.iss` 默认 `AppVersion` → `0.4.4`。tag 必须为 `v0.4.4`：`release.yml` 的 Windows job 会校验 tag 与 pubspec 名一致，`ffi_smoke_test` 会校验核心版本与 pubspec 一致。
+- 新增 `tools/installer/RELEASE_NOTES_v0.4.4.md`（`publish` 的 `body_path` 指向它，缺文件会导致发布步骤失败）。
+- macOS DMG 打包改为先暂存 `XDRemux.app` + `/Applications` 软链再 `hdiutil create`，让镜像支持拖拽安装（此前只有 app 本体）。
+- 发布门槛提醒：`publish` 的 `if` 只要求 `windows` + `android` 成功，macOS/iOS job 失败不会阻塞发布，因此发布后必须逐项核对资产（v0.4.3 就缺少 Windows ARM64 包，对应 job 在 “Stage and validate ARM64 output” 失败）。
+
+### `release.yml` 预演结果（workflow_dispatch，run [39061015513](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/39061015513)）
+
+在分支 `release/0.4.4-prep` 上手动触发（`publish` 因无 tag 被跳过，未发布任何东西）：
+
+| Job | 结果 |
+|---|---|
+| Windows installer (x64) | ✅ 通过 |
+| Android APK | ✅ 通过（4 个签名 secret 有效） |
+| macOS DMG | ✅ 通过（含新的暂存 + 软链步骤与 dylib 断言） |
+| iOS unsigned IPA | ✅ 通过（FFI 符号检查通过） |
+| Windows ARM64 (experimental) | ❌ 失败，同 v0.4.3 的 “Stage and validate ARM64 output” |
+
+产物核对（直接取 CI artifact 校验，非本地构建）：
+
+- macOS DMG 25,889,533 B：含 `Applications -> /Applications` 软链；包内 app `codesign -v --deep --strict` 通过（sealed files 30）；包内核心 `xdremux_version()` = `0.4.4`。
+- iOS IPA：`CFBundleShortVersionString 0.4.4` / `CFBundleVersion 38` / `io.github.beetman.xdremux`，无 `embedded.mobileprovision`（未签名）。
+- Android APK：manifest 内含 `0.4.4`、无 `debuggable` 标记，存在 APK Signing Block（v2/v3 已签名）。
+- Windows 安装器 12,443,522 B：PE 文件，内含 `0.4.4` / `XDRemux` / `Inno Setup`。
+
+ARM64 失败原因（日志实证）：runner 上的 Flutter 是 `stable-3.47.7-x64`（`FLUTTER_ROOT` 可见），因此 `flutter build windows` 产出的是 x64 runner，校验按设计拒绝打 ARM64 包：`Refusing mixed ARM64 installer: xdremux.exe is PE machine 0x8664`。这不是本次改动引入的，v0.4.3 同样失败。要真正出 ARM64 包需要 ARM64 的 Flutter 工具链（待验证上游是否提供），否则应明确 ARM64 用户使用 x64 安装器（模拟运行）。
+
+### 未决：macOS 包在 Intel Mac 上不可用（本轮新发现）
+
+CI（`macos-latest`，arm64 主机）产出的 app 主体是 universal，但 Rust 核心只有 arm64：
+
+```
+XDRemux                x86_64 arm64
+FlutterMacOS           x86_64 arm64
+App.framework          x86_64 arm64
+libxdremux_core.dylib  arm64            <-- 仅此一项
+```
+
+在 Intel Mac 上 app 能启动，但 `_openMacOS()` 的 4 条加载路径都会失败（架构不兼容），转换不可用。已核对 **v0.4.3 的已发布 DMG 同样如此**（app universal、dylib 仅 arm64），属既有缺陷，不是本轮引入。
+
+处理方式待维护者决定：(a) 明确只支持 Apple Silicon 并写进发布说明；(b) macOS job 增加 `x86_64-apple-darwin` 构建 + universal `libx265.a`（`-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"`）+ `lipo -create`，把 dylib 做成 universal（本机无 Rosetta，x86_64 侧只能靠 CI/Intel 机器验证）；(c) 把 macOS 构建限制为 arm64，让不支持变成明确的“无法打开”。
+
+**决定（2026-10-21，维护者）：选 (a)** —— 0.4.4 明确只支持 Apple Silicon，构建流水线不变，限制写进 `RELEASE_NOTES_v0.4.4.md` 的「使用说明与边界」。后续如要支持 Intel，按 (b) 另开改动。
+
+### Windows ARM64：尝试 ARM64 工具链的结论（2026-10-21）
+
+维护者决定先试一次 ARM64 Flutter 工具链。在该 job 的 `flutter-action` 上显式指定 `architecture: arm64` 后（run [39628385537](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/39628385537)）：
+
+- 失败发生在 `Set up Flutter`，耗时约 **4 秒**，错误为 `Unable to determine Flutter version for channel: stable version: 3.47.7 architecture: arm64` —— Flutter 没有为这个版本发布 Windows ARM64 SDK。
+- 相比原来（x64 SDK 跑满约 12 分钟 Windows 构建后才在 “Stage and validate ARM64 output” 被守卫拒绝），现在是快速失败，且日志直接说明原因。
+- 该 job 原本就有 `continue-on-error: true`，所以不阻塞发布；保留混合架构守卫，等上游将来发布 ARM64 SDK 时自动生效。
+- 结论：**0.4.4 不提供 Windows ARM64 安装器**，ARM64 用户使用 x64 安装器（模拟运行），发布说明已写明。
+
+### 第二次预演的 runner 容量问题（2026-10-21）
+
+同一次预演里 macOS DMG 与 iOS IPA 两个 job 被取消，check-run annotation 原文：`The job was not acquired by Runner of type hosted even after multiple attempts`，并附 `Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.` —— 这是 GitHub 托管 macOS 队列容量问题，不是代码问题。macOS/iOS 的构建与产物验证以第一次预演（run 39061015513）为准，其后分支改动只涉及文档、ARM64 job 的 Flutter 架构与注释，不触及 macOS/iOS job。
+
+
+

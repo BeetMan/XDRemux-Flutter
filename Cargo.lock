@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "xdremux-core"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "cc",
  "heif-oxide",

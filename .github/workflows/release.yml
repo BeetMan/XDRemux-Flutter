@@ -156,8 +156,12 @@ jobs:
   windows-arm64:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Windows ARM64 installer (experimental)
-    # Flutter can emit an x64 Windows runner even on the
-    # windows-11-arm host, so do not block the public release on this job.
+    # Flutter publishes no Windows ARM64 SDK for the pinned version (verified
+    # 2026-10-21: "Unable to determine Flutter version for channel: stable
+    # version: 3.47.7 architecture: arm64"), so this job fails in setup within
+    # seconds and ships no installer. continue-on-error keeps the release green;
+    # the staging guard below still refuses a mislabeled x64 bundle if an ARM64
+    # SDK appears in a later Flutter release.
     continue-on-error: true
     runs-on: windows-11-arm
     steps:
@@ -214,9 +218,13 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.47.7
-          # The Windows Flutter SDK is x64-only and runs emulated on this
-          # runner, but `flutter build windows` produces a native ARM64 app.
-          architecture: x64
+          # The windows-11-arm image reports an x64 runner arch, so the default
+          # resolves to the x64 SDK; the preflight proved that the resulting
+          # `flutter build windows` output is x64 too (PE 0x8664), which the
+          # staging guard below refuses. Ask for the arm64 SDK explicitly: if
+          # Flutter publishes no ARM64 build for this version the action fails
+          # here instead of producing a mislabeled installer.
+          architecture: arm64
           cache: true
 
       - name: Resolve release version
@@ -581,9 +589,20 @@ jobs:
       - name: Package DMG
         shell: bash
         run: |
-          mkdir -p apps/flutter/build/dmg
+          set -euo pipefail
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          STAGE="apps/flutter/build/dmg/stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          # Stage the app beside an /Applications symlink so the image supports
+          # the usual drag-to-install gesture. Copying keeps the code signature
+          # (it is embedded in the Mach-O, not in an extended attribute).
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
+          test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
           hdiutil create -volname XDRemux \
-            -srcfolder apps/flutter/build/macos/Build/Products/Release/XDRemux.app \
+            -srcfolder "$STAGE" \
             -ov -format UDZO \
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
 
