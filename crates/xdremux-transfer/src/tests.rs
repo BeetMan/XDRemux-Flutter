@@ -277,14 +277,23 @@ async fn pin_and_certificate_identity_fail_without_offer() {
 async fn hash_mismatch_truncation_and_retry_never_expose_partial() {
     let temp = tempfile::tempdir().unwrap();
     let (a, b) = pair(temp.path()).await;
+    let mut events = b.subscribe();
     let session = prepare(&a, &b, file("file.bin", 3, Some("0".repeat(64)))).await;
     let error = upload(&a, &b, &session, b"abc".to_vec()).await.unwrap_err();
     assert_eq!(sender::map_error(error), ErrorCode::ChecksumMismatch);
-    assert!(b.receipts(10).await.unwrap().is_empty());
     b.cancel_receive(&session.session_id).await;
+    next(&mut events, |e| matches!(e, EventKind::SessionEnded { session_id } if session_id == &session.session_id)).await;
+    let snapshot = b.transfer_snapshot(&session.session_id, None, 64).unwrap();
+    assert_eq!(snapshot.transfer.error, Some(ErrorCode::Cancelled));
+    assert_eq!(snapshot.files[0].error, Some(ErrorCode::ChecksumMismatch));
+    assert!(b.receipts(10).await.unwrap().is_empty());
     // Failed-file retry is a new explicit session, retaining no partial data.
     let session = prepare(&a, &b, file("file.bin", 3, None)).await;
     assert!(upload(&a, &b, &session, b"ab".to_vec()).await.is_err());
+    next(&mut events, |e| matches!(e, EventKind::SessionEnded { session_id } if session_id == &session.session_id)).await;
+    let snapshot = b.transfer_snapshot(&session.session_id, None, 64).unwrap();
+    assert_eq!(snapshot.transfer.error, Some(ErrorCode::Truncated));
+    assert_eq!(snapshot.files[0].error, Some(ErrorCode::Truncated));
     assert!(b.receipts(10).await.unwrap().is_empty());
     let session = prepare(&a, &b, file("file.bin", 3, None)).await;
     upload(&a, &b, &session, b"abc".to_vec()).await.unwrap();
@@ -297,6 +306,138 @@ async fn hash_mismatch_truncation_and_retry_never_expose_partial() {
     );
     a.shutdown().await;
     b.shutdown().await;
+}
+
+fn terminal_journal() -> crate::snapshot::Journal {
+    let mut journal = crate::snapshot::Journal::new();
+    journal.apply(&EventKind::Offer {
+        offer: Offer {
+            session_id: "terminal-session".into(),
+            alias: "Owned fixture".into(),
+            peer_fingerprint: "0".repeat(64),
+            files: ["bad", "pending", "kept"]
+                .into_iter()
+                .map(|id| OfferedFile {
+                    id: id.into(),
+                    name: format!("{id}.bin"),
+                    size: 3,
+                    sha256: None,
+                })
+                .collect(),
+        },
+    });
+    journal
+}
+
+#[test]
+fn terminal_file_error_survives_session_end() {
+    for code in [
+        ErrorCode::ChecksumMismatch,
+        ErrorCode::Truncated,
+        ErrorCode::TimedOut,
+        ErrorCode::NoSpace,
+        ErrorCode::Io,
+    ] {
+        let mut journal = terminal_journal();
+        journal.apply(&EventKind::Failed {
+            transfer_id: "terminal-session".into(),
+            file_id: Some("bad".into()),
+            code,
+        });
+        journal.apply(&EventKind::SessionEnded {
+            session_id: "terminal-session".into(),
+        });
+        let page = journal.files("terminal-session", None, 64).unwrap();
+        assert_eq!(page.transfer.error, Some(code));
+        assert_eq!(
+            page.files.iter().find(|f| f.id == "bad").unwrap().error,
+            Some(code)
+        );
+    }
+}
+
+#[test]
+fn terminal_batch_failure_preserves_file_cause_and_committed_receipt() {
+    for code in [ErrorCode::Cancelled, ErrorCode::TimedOut] {
+        let mut journal = terminal_journal();
+        journal.apply(&EventKind::Committed {
+            receipt: Receipt {
+                id: "owned-receipt".into(),
+                session_id: "terminal-session".into(),
+                file_id: "kept".into(),
+                name: "kept.bin".into(),
+                size: 3,
+                sha256: "0".repeat(64),
+                peer_hash_present: false,
+            },
+        });
+        journal.apply(&EventKind::Failed {
+            transfer_id: "terminal-session".into(),
+            file_id: Some("bad".into()),
+            code: ErrorCode::ChecksumMismatch,
+        });
+        journal.apply(&EventKind::Failed {
+            transfer_id: "terminal-session".into(),
+            file_id: None,
+            code,
+        });
+        journal.apply(&EventKind::SessionEnded {
+            session_id: "terminal-session".into(),
+        });
+        let page = journal.files("terminal-session", None, 64).unwrap();
+        assert_eq!(page.transfer.error, Some(code));
+        let get = |id| page.files.iter().find(|f| f.id == id).unwrap();
+        assert_eq!(get("bad").error, Some(ErrorCode::ChecksumMismatch));
+        assert_eq!(get("pending").error, Some(code));
+        assert_eq!(get("kept").phase, FilePhase::Committed);
+        assert_eq!(get("kept").error, None);
+        assert_eq!(get("kept").receipt_id.as_deref(), Some("owned-receipt"));
+    }
+}
+
+#[test]
+fn terminal_unknown_failure_falls_back_without_poisoning_commits() {
+    let mut journal = terminal_journal();
+    journal.apply(&EventKind::SessionEnded {
+        session_id: "terminal-session".into(),
+    });
+    assert_eq!(
+        journal
+            .files("terminal-session", None, 64)
+            .unwrap()
+            .transfer
+            .error,
+        Some(ErrorCode::RemoteFailure)
+    );
+    let mut journal = terminal_journal();
+    for id in ["bad", "pending", "kept"] {
+        journal.apply(&EventKind::Committed {
+            receipt: Receipt {
+                id: format!("receipt-{id}"),
+                session_id: "terminal-session".into(),
+                file_id: id.into(),
+                name: format!("{id}.bin"),
+                size: 3,
+                sha256: "0".repeat(64),
+                peer_hash_present: false,
+            },
+        });
+    }
+    journal.apply(&EventKind::Failed {
+        transfer_id: "terminal-session".into(),
+        file_id: Some("kept".into()),
+        code: ErrorCode::ChecksumMismatch,
+    });
+    journal.apply(&EventKind::SessionEnded {
+        session_id: "terminal-session".into(),
+    });
+    let page = journal.files("terminal-session", None, 64).unwrap();
+    assert_eq!(page.transfer.phase, Phase::Completed);
+    assert_eq!(page.transfer.error, None);
+    assert!(page
+        .files
+        .iter()
+        .all(|f| f.phase == FilePhase::Committed && f.error.is_none()));
 }
 
 #[tokio::test]

@@ -339,10 +339,26 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             _newReceipts.remove(e['receipt_id']);
           }
           if (e['kind'] == 'progress') {
+            // A refreshed snapshot may already be newer than queued progress.
+            // Terminal snapshots/ACKs win, and live progress cannot go backwards.
+            if ([
+              'completed',
+              'failed',
+            ].contains(transfers[e['transfer_id']]?['phase'])) {
+              continue;
+            }
             for (final file
                 in files[e['transfer_id']] ?? <Map<String, dynamic>>[]) {
-              if (file['id'] == e['file_id']) {
-                file['bytes'] = e['bytes'];
+              if (file['id'] == e['file_id'] && file['phase'] == 'failed') {
+                // A peer may retry a checksum failure in the same live session.
+                // Only a fresh native snapshot can distinguish that from lag.
+                dirty = true;
+                continue;
+              }
+              if (file['id'] == e['file_id'] &&
+                  !['sent', 'committed'].contains(file['phase'])) {
+                final bytes = (e['bytes'] as int).clamp(0, file['size'] as int);
+                if (bytes > (file['bytes'] as int)) file['bytes'] = bytes;
                 file['phase'] = 'transferring';
               }
             }

@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "date": "2026-10-22",
+  "baseCommit": "b087151116a964352b839f049e2b706b34226de8",
+  "scope": "Per-file terminal error retention and queued Flutter progress reconciliation",
+  "status": "covered local cases passed; full device/network matrix remains pending",
+  "regressionBeforeFix": {
+    "coreTargetedFailed": 2,
+    "coreTargetedPassed": 1,
+    "flutterTargetedFailed": 7
+  },
+  "checks": {
+    "coreTests": 29,
+    "ffiTests": 2,
+    "flutterTests": 101,
+    "newFlutterRegressions": 8,
+    "realDllTestsEnabled": true,
+    "classifierHomeQueueFixtureEnabled": true,
+    "ownedCrateClippyNoDepsWarningsDenied": true,
+    "rustFormat": true,
+    "flutterAnalyze": "No issues found"
+  },
+  "coreHttpsChecks": [
+    "wrong_hash_then_explicit_cancel_preserves_checksum_cause",
+    "truncated_body_then_protocol_session_end_preserves_truncation",
+    "failed_attempts_publish_no_receipts_and_fresh_retry_hash_matches"
+  ],
+  "stateChecks": [
+    "batch_cancel_and_timeout_preserve_file_cause_and_committed_receipt",
+    "generic_session_end_uses_file_cause_or_remote_failure",
+    "all_committed_files_stay_successful_after_late_failure",
+    "terminal_snapshots_and_acked_files_win_over_queued_progress",
+    "live_progress_is_monotonic_and_bounded",
+    "active_failed_file_reconciles_snapshot_for_peer_same_session_retry"
+  ],
+  "realDllWorker": {
+    "passed": true,
+    "date": "2026-10-22",
+    "abi": 65539,
+    "checks": [
+      "missing_library_degrades",
+      "no_space_propagates",
+      "worker_https_transfer",
+      "unicode_private_copy_hash",
+      "same_name_isolated",
+      "ack_loss_retry",
+      "concurrent_click_coalescing",
+      "opaque_mov_not_queued",
+      "inbox_delete_keeps_checkpoint",
+      "stop_waits_for_active_copy",
+      "restart_root_port_and_receipts"
+    ],
+    "transferredFiles": 4,
+    "bytes": 71303181,
+    "originalAndCopiesHashMatch": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "realDllConfirmationRegression": {
+    "passed": true,
+    "scope": "Windows real DLL and Dart worker over owned loopback HTTPS",
+    "checks": [
+      "revocation_before_dispatch_sends_no_metadata_or_content",
+      "selected_receiver_and_source_snapshot_survive_async_startup"
+    ],
+    "receivedFiles": 1,
+    "receivedBytes": 65536,
+    "independentSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+    "sourceUnchanged": true,
+    "unselectedReceiverReceivedNothing": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "a0485fae6ea4f6cdeaa430b567c5defbeeea08336ed837c6b5d217f7ad5155e1",
+      "aotSha256": "bb706b93d8ce29270d576be954a65c2016b28fe51eb0c7fca5f36ac00426beac",
+      "transferLibrarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+      "sameLibraryAsNativeTests": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "minSdk": 24,
+      "targetSdk": 36,
+      "installed": false,
+      "apkSha256": "a54c683c477321a63af8a1ec812f1077ab87991199273b286900a157e6305867",
+      "rawTransferLibrarySha256": "3d4b8c7787761797a42fe0b3e56def24ef55258a5254e81a4bbfd235617eaf81",
+      "packagedTransferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "matchesNdkStrippedBuiltLibrary": true,
+      "integrationTestPluginAbsent": true,
+      "licensePresent": true
+    }
+  },
+  "transferAbi": "1.3",
+  "lockfilesChanged": false,
+  "mainWorkspaceChanged": false,
+  "phoneOperated": false,
+  "osNetworkOrFirewallChanged": false,
+  "limits": [
+    "summary provides one hint when multiple file causes exist; inspect each file",
+    "real DLL worker uses owned loopback HTTPS, not a real device or network transition",
+    "dependency-inclusive core clippy reports 76 existing vendored LocalSend lints; owned crates pass --no-deps -D warnings"
+  ],
+  "pending": [
+    "Android device lifecycle and partial-upload validation",
+    "real Wi-Fi/network switch",
+    "VPN/multi-NIC/AP isolation and permission revocation",
+    "older/same-host official clients",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

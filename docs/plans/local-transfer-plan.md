@@ -99,6 +99,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 
 后续收敛设备确认边界：重新连接失败／取消和忘记指纹不再保留可用的旧确认；发送在异步启动前固定设备与路径，提交前重查撤销。七项回归、两项真实 DLL／loopback HTTPS 检查及完整 Flutter 93 项通过，见 [确认状态记录](../testing/local-transfer-confirmation.md)。这些本机结果不补记手机或真实网络矩阵为通过。
 
+2026-10-22 继续收敛终态：保留逐文件具体错误，区分整批取消／超时；旧进度事件不能将完成文件改回传输中，活动会话内对端重传通过快照确认。Core 29 项、ABI 2 项、Flutter 101 项通过，新 Windows DLL 的 worker／loopback HTTPS 与副本哈希检查通过，Windows／Android 普通 release 包完成库一致性核对。见 [终态记录](../testing/local-transfer-terminal.md)。这些本机结果不替代待执行的 Android 生命周期及网络矩阵。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。
