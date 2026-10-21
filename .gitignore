@@ -87,6 +87,7 @@ docs/plans/*
 !docs/plans/codec-library-poc-20261005.md
 !docs/plans/live-photo-export-fix.md
 !docs/plans/release-candidate-044.md
+!docs/plans/mac-acceptance-044.md
 !docs/testing/
 docs/testing/*
 !docs/testing/windows-codec-test-02.md
@@ -105,6 +106,10 @@ test-samples/
 tmp-samples/
 tmp/
 tools/*
+# OHOS build/SDK validation scripts are source, not downloaded SDK artifacts.
+!tools/ohos/
+tools/ohos/*
+!tools/ohos/*.ps1
 # Packaging scripts under tools/ are source, not artifacts - keep them tracked.
 !tools/installer/
 # Research corpus generator (Apple-features Rust port reference outputs).

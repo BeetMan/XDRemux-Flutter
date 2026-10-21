@@ -109,7 +109,15 @@ const MODE_PRIORITY: [CaptureMode; 14] = [
 
 /// Every flag currently understood by the upstream classifier, including
 /// flags that do not map to a user-visible mode yet.
-pub const KNOWN_FLAGS_MASK: u64 = ((1u64 << 33) - 1) | (1u64 << 62);
+///
+/// Bit 33 is included on our own evidence rather than upstream's: across 58
+/// OPPO samples it is the only bit that ever falls outside this mask, and it
+/// appears in 48 of them — including files that classify fine as Master. Left
+/// out, a capture carrying it *and* no recognised mode bit (OPPO live photos,
+/// e.g. `oplus_8601468928`) is reported as `unknown-flags` with no mode, which
+/// drops the capture-mode folder from the output path. Captures that do have a
+/// mode bit were unaffected, which is why this went unnoticed.
+pub const KNOWN_FLAGS_MASK: u64 = ((1u64 << 34) - 1) | (1u64 << 62);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassificationStatus {
@@ -468,6 +476,14 @@ mod tests {
         let known_non_mode = classify_user_comment(Some("oppo_1"));
         assert_eq!(known_non_mode.status, ClassificationStatus::Categorized);
         assert_eq!(known_non_mode.mode, Some(CaptureMode::Normal));
+
+        // Real OPPO UserComment value seen on imported originals: bit 33 is set
+        // together with bits 20/21/23. Every bit is known, so the file stays
+        // categorized instead of being reported as "unknown-flags".
+        let bit33 = classify_user_comment(Some("oplus_8601468928"));
+        assert_eq!(bit33.unknown_flags, 0);
+        assert_eq!(bit33.status, ClassificationStatus::Categorized);
+        assert_eq!(bit33.mode, Some(CaptureMode::Normal));
     }
 
     #[test]

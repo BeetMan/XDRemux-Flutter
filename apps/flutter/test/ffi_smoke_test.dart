@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ffi/ffi.dart';
 
+import 'native_library.dart';
+
 final class ConversionResult extends Struct {
   @Bool() external bool success;
   external Pointer<Utf8> mode;
@@ -13,12 +15,9 @@ final class ConversionResult extends Struct {
   external Pointer<Utf8> errorMessage;
 }
 
-String get _libraryPath {
-  if (Platform.isMacOS) return 'libxdremux_core.dylib';
-  if (Platform.isWindows) return 'xdremux_core.dll';
-  // Linux does not search the current directory for a bare library name.
-  return './libxdremux_core.so';
-}
+// Resolved once: the loader does not search the Cargo target directory, so the
+// path is probed explicitly (see native_library.dart).
+final String _libraryPath = nativeCoreLibraryPath();
 
 void main() {
   test('packaged core exports every runtime symbol used by Flutter', () {

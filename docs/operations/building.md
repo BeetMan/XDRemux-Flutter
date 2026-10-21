@@ -29,7 +29,8 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 ```bash
 cd apps/flutter
 flutter build windows        # x64 安装包前体
-flutter build macos          # + copy_dylib.sh 自动进 Podfile post_install
+flutter build macos          # 需先跑上面的 cargo build：dylib 由 Runner 的
+                             # Bundle Framework 阶段随构建打包并签名
 flutter build apk --release  # Android（需先 cargo ndk 更新 jniLibs）
 ```
 
@@ -42,6 +43,10 @@ tools/ohos/build_hap.ps1 -Release # release（~27MB，侧载不可签，仅供�
 ```
 
 脚本自动从主线 pubspec 同步版本行到 `pubspec.ohos.yaml` 变体；插件为 vendored path 依赖（`tools/ohos/fetch_plugins.sh` 重建，file_picker 除外——vendored v12 门面已入库）。签名材料本机注入（DevEco 自动签名，不入库）。
+
+鸿蒙 SDK 与官方 Flutter SDK 分开管理。可用 `-FlutterSdk C:\SDKs\flutter-ohos-clean` 或环境变量 `XDREMUX_OHOS_FLUTTER_SDK` 指定 OHOS SDK；未指定时仍兼容旧路径 `C:\flutter-ohos`。不要只替换 PATH 后复用另一版本的 cache。准备独立 SDK 后，先用该 SDK 执行 `flutter precache --ohos`，保留 `PUB_HOSTED_URL=https://pub.flutter-io.cn` 与 `FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn` 的项目镜像配置；不要复制旧 SDK 的 `bin/cache`。
+
+`tools/ohos/check_sdk.ps1 -SdkPath C:\SDKs\flutter-ohos-clean -BuildMode profile` 可单独校验，构建脚本也在替换 pubspec 前自动执行。针对框架提交 `62357a93` 固定干净下载的 profile/debug 与 release 平台内核 SHA256；这是已验证稳定线的兼容性防护，不是所有 SDK 的真实性验证。其他框架提交只给出尚未验证的警告，须另行建立基线。发现 checksum mismatch 时停止构建并准备独立干净 SDK，不要跳过校验：2026-10-17 曾出现版本号一致、但 `platform_strong.dill` 缓存不匹配，编译和签名均成功而真机在 `SetNeedsReportTimings` 初始化时崩溃的情况。
 
 桌面开发注意：macOS 用 `deploy_macos.sh` 产出"固定版本" app；Windows 开发目录需能找到 Rust DLL（FFI 搜索安装目录/开发目录）。
 
