@@ -42,6 +42,8 @@ XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 
 macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 按 runner 实际 VS 版本选择 CMake 生成器。
 
+`publish` 要求 **windows / android / macos / ios 四个 job 全部成功**，并额外校验四类产物文件都已落地，缺任何一个都不创建 Release（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。
+
 ## 3.5 鸿蒙 hap（本地发布流程）
 
 鸿蒙不进 CI（见 `operations/ci.md` §2.5）。本地发布：
@@ -60,6 +62,8 @@ macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 �
 - Windows ARM runner 的 x265 汇编不支持 -> `-DENABLE_ASSEMBLY=OFF`（`d24aecc`）
 - publish job 漏 needs windows-arm64 -> pre.2 缺 ARM64 包（`0eb097b` 修）
 - Release 失败但 tag 已推：**先征得维护者同意再移动 tag**（v0.3.0 曾强移到修复提交）
+- v0.4.4：托管 macOS arm64 runner 容量不足，iOS job 排队 15 分钟后被判 `The job was not acquired by Runner of type hosted`，而 publish 当时只 gate windows+android，于是 Release 缺 iOS IPA。补救方式：本机用同一 Flutter/Xcode 线 `flutter build ipa --release --no-codesign`，校验 Dart FFI 符号后打包上传到已有 Release；同时给 publish 加上 macOS/iOS 成功门禁与产物校验（见 §3）。
+- v0.4.4：Windows ARM64 job 用 `architecture: arm64` 请求 Flutter SDK 会在 setup 阶段 4 秒失败（`Unable to determine Flutter version ... architecture: arm64`），说明上游没有该版本的 Windows ARM64 SDK；`continue-on-error` 保证不阻塞发布。
 
 ## 5. 发版后验证
 
