@@ -192,4 +192,18 @@ libxdremux_core.dylib  arm64            <-- 仅此一项
 
 **决定（2026-10-21，维护者）：选 (a)** —— 0.4.4 明确只支持 Apple Silicon，构建流水线不变，限制写进 `RELEASE_NOTES_v0.4.4.md` 的「使用说明与边界」。后续如要支持 Intel，按 (b) 另开改动。
 
+### Windows ARM64：尝试 ARM64 工具链的结论（2026-10-21）
+
+维护者决定先试一次 ARM64 Flutter 工具链。在该 job 的 `flutter-action` 上显式指定 `architecture: arm64` 后（run [39628385537](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/39628385537)）：
+
+- 失败发生在 `Set up Flutter`，耗时约 **4 秒**，错误为 `Unable to determine Flutter version for channel: stable version: 3.47.7 architecture: arm64` —— Flutter 没有为这个版本发布 Windows ARM64 SDK。
+- 相比原来（x64 SDK 跑满约 12 分钟 Windows 构建后才在 “Stage and validate ARM64 output” 被守卫拒绝），现在是快速失败，且日志直接说明原因。
+- 该 job 原本就有 `continue-on-error: true`，所以不阻塞发布；保留混合架构守卫，等上游将来发布 ARM64 SDK 时自动生效。
+- 结论：**0.4.4 不提供 Windows ARM64 安装器**，ARM64 用户使用 x64 安装器（模拟运行），发布说明已写明。
+
+### 第二次预演的 runner 容量问题（2026-10-21）
+
+同一次预演里 macOS DMG 与 iOS IPA 两个 job 被取消，check-run annotation 原文：`The job was not acquired by Runner of type hosted even after multiple attempts`，并附 `Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.` —— 这是 GitHub 托管 macOS 队列容量问题，不是代码问题。macOS/iOS 的构建与产物验证以第一次预演（run 39061015513）为准，其后分支改动只涉及文档、ARM64 job 的 Flutter 架构与注释，不触及 macOS/iOS job。
+
+
 
