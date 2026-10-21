@@ -205,7 +205,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     Map<String, dynamic> peer, {
     required bool remember,
   }) async {
-    final fp = (peer['fingerprint'] as String).toUpperCase();
+    final value = peer['fingerprint'];
+    if (value is! String) throw const TransferException('identity_mismatch');
+    final fp = value.toUpperCase();
     if (!RegExp(r'^[0-9A-F]{64}$').hasMatch(fp)) {
       throw const TransferException('identity_mismatch');
     }
@@ -221,6 +223,18 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  bool isPeerConfirmed(Map<String, dynamic> peer) {
+    final fingerprint = peer['fingerprint'];
+    return fingerprint is String &&
+        _confirmed.contains(fingerprint.toUpperCase());
+  }
+
+  void _requirePeerConfirmation(Map<String, dynamic> peer) {
+    if (!isPeerConfirmed(peer)) {
+      throw const TransferException('identity_mismatch');
+    }
+  }
+
   Future<void> forgetPeers() async {
     trusted.clear();
     _confirmed.clear();
@@ -233,17 +247,23 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     List<String> paths, {
     String? pin,
   }) async {
-    if (!_confirmed.contains((peer['fingerprint'] as String).toUpperCase())) {
-      throw const TransferException('identity_mismatch');
-    }
+    // The caller can change its selection while startup awaits disk/native I/O.
+    // Keep this request fixed, and honor revocation before dispatching metadata.
+    final selectedPeer = Map<String, dynamic>.unmodifiable(peer);
+    final selectedPaths = List<String>.unmodifiable(paths);
+    _requirePeerConfirmation(selectedPeer);
     await ensureLocal();
-    final parent = paths.isEmpty ? null : File(paths.first).parent.path;
+    _requirePeerConfirmation(selectedPeer);
+    final parent = selectedPaths.isEmpty
+        ? null
+        : File(selectedPaths.first).parent.path;
     final compact =
-        paths.length > 1 && paths.every((p) => File(p).parent.path == parent);
+        selectedPaths.length > 1 &&
+        selectedPaths.every((p) => File(p).parent.path == parent);
     final request = <String, dynamic>{
       'command': 'send',
-      'peer': peer,
-      'paths': paths,
+      'peer': selectedPeer,
+      'paths': selectedPaths,
       'pin': pin,
     };
     if (compact) {
@@ -251,7 +271,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         ..['command'] = 'send_batch'
         ..remove('paths')
         ..['directory'] = parent
-        ..['names'] = paths.map((p) => File(p).uri.pathSegments.last).toList();
+        ..['names'] = selectedPaths
+            .map((p) => File(p).uri.pathSegments.last)
+            .toList();
     }
     if (utf8.encode(jsonEncode(request)).length > 64 * 1024) {
       throw const TransferException('batch_too_large');
@@ -275,13 +297,12 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     Map<String, dynamic> peer, {
     String? pin,
   }) async {
-    if (!_confirmed.contains((peer['fingerprint'] as String).toUpperCase())) {
-      throw const TransferException('identity_mismatch');
-    }
+    final selectedPeer = Map<String, dynamic>.unmodifiable(peer);
+    _requirePeerConfirmation(selectedPeer);
     final result = await service.command({
       'command': 'retry_send',
       'transfer_id': id,
-      'peer': peer,
+      'peer': selectedPeer,
       'pin': pin,
     });
     await refresh();

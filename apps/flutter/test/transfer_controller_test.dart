@@ -15,6 +15,8 @@ class _Native extends TransferService {
   bool multicastUnavailable = false;
   bool commandsClosed = false;
   String? startError;
+  String? probeError;
+  Future<void>? probeGate;
   String direction = 'receive';
   bool retryAvailable = false;
   List<Map<String, dynamic>>? fileRows;
@@ -44,6 +46,8 @@ class _Native extends TransferService {
     if (commandsClosed) throw const TransferException('closed');
     switch (command['command']) {
       case 'probe':
+        await probeGate;
+        if (probeError != null) throw TransferException(probeError!);
         return {'address': command['address'], 'fingerprint': 'B' * 64};
       case 'discovery_start':
         if (multicastUnavailable) {
@@ -156,6 +160,199 @@ void main() {
     await controller.stop();
     controller.dispose();
   });
+  Future<Completer<Directory>> gateStartup() async {
+    await controller.stop();
+    controller.dispose();
+    final gate = Completer<Directory>();
+    controller = TransferController(
+      serviceFactory: () => native,
+      supportDirectory: () => gate.future,
+      observeLifecycle: false,
+    );
+    return gate;
+  }
+
+  test(
+    'confirmation boundary: revocation during startup prevents metadata dispatch',
+    () async {
+      final gate = await gateStartup();
+      final peer = {'address': '127.0.0.1:53319', 'fingerprint': 'B' * 64};
+      await controller.confirmPeer(peer, remember: false);
+      final sending = controller.send(peer, ['/original.bin']);
+      await controller.forgetPeers();
+      final rejected = expectLater(
+        sending,
+        throwsA(
+          isA<TransferException>().having(
+            (e) => e.code,
+            'code',
+            'identity_mismatch',
+          ),
+        ),
+      );
+      gate.complete(Directory.systemTemp);
+      await rejected;
+      expect(
+        native.calls.where(
+          (c) => ['send', 'send_batch'].contains(c['command']),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'confirmation boundary: startup keeps the selected recipient and source list',
+    () async {
+      final gate = await gateStartup();
+      final peer = {'address': '127.0.0.1:53319', 'fingerprint': 'B' * 64};
+      final paths = ['/original.bin'];
+      await controller.confirmPeer(peer, remember: false);
+      final sending = controller.send(peer, paths);
+      peer['address'] = '127.0.0.1:53320';
+      peer['fingerprint'] = 'C' * 64;
+      paths[0] = '/replacement.bin';
+      gate.complete(Directory.systemTemp);
+      await sending;
+      final request = native.calls.singleWhere((c) => c['command'] == 'send');
+      expect(request['peer'], {
+        'address': '127.0.0.1:53319',
+        'fingerprint': 'B' * 64,
+      });
+      expect(request['paths'], ['/original.bin']);
+    },
+  );
+
+  test(
+    'confirmation boundary: malformed identity returns the stable error',
+    () async {
+      await expectLater(
+        controller.send({'fingerprint': null}, ['/original.bin']),
+        throwsA(
+          isA<TransferException>().having(
+            (e) => e.code,
+            'code',
+            'identity_mismatch',
+          ),
+        ),
+      );
+    },
+  );
+
+  Future<void> showConfirmedPage(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TransferPage(
+          controller: controller,
+          initialPaths: const ['/photo.jpg'],
+        ),
+      ),
+    );
+    await tester.runAsync(controller.ensureLocal);
+    await tester.enterText(
+      find.byKey(const ValueKey('peer-host')),
+      '127.0.0.1',
+    );
+    await tester.tap(find.byKey(const ValueKey('connect-peer')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('confirm-peer')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('已确认设备身份'), findsOneWidget);
+  }
+
+  for (final outcome in ['cancelled', 'network']) {
+    testWidgets(
+      'confirmation boundary: reconnect $outcome clears the previous selection',
+      (tester) async {
+        await showConfirmedPage(tester);
+        if (outcome == 'network') native.probeError = 'network';
+        await tester.tap(find.byKey(const ValueKey('connect-peer')));
+        await tester.pump(const Duration(milliseconds: 400));
+        if (outcome == 'cancelled') {
+          await tester.tap(
+            find.descendant(
+              of: find.byType(AlertDialog),
+              matching: find.text('取消'),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 400));
+        }
+        expect(find.text('已确认设备身份'), findsNothing);
+        expect(
+          tester
+              .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
+              .onPressed,
+          isNull,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
+  testWidgets(
+    'confirmation boundary: pending probe locks the displayed endpoint',
+    (tester) async {
+      await showConfirmedPage(tester);
+      final gate = Completer<void>();
+      native.probeGate = gate.future;
+      await tester.tap(find.byKey(const ValueKey('connect-peer')));
+      await tester.pump();
+      final hostEnabled = tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-host')))
+          .enabled;
+      final portEnabled = tester
+          .widget<TextField>(find.byKey(const ValueKey('peer-port')))
+          .enabled;
+      gate.complete();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('取消'),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(hostEnabled, isFalse);
+      expect(portEnabled, isFalse);
+    },
+  );
+
+  testWidgets(
+    'confirmation boundary: forgetting removes the identity badge and send action',
+    (tester) async {
+      native.direction = 'send';
+      native.phase = 'failed';
+      native.retryAvailable = true;
+      await showConfirmedPage(tester);
+      await tester.tap(find.byTooltip('忘记设备指纹'));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('已确认设备身份'), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('retry-receive-1')))
+            .onPressed,
+        isNull,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
   test(
     'file metadata cannot be sent before fingerprint confirmation; forgetting revokes trust',
     () async {
