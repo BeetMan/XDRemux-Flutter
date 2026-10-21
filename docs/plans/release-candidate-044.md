@@ -1,5 +1,12 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-22：主 README 发布后更新
+
+- [x] 首页增加官网 `https://xdremux.app`，HTTP HEAD 返回 200；跨平台/原生版本更新为 `0.4.4` / `0.5.1`，六个平台下载入口逐一与 GitHub 实际 Release 附件 URL 核对通过。
+- [x] 新增本轮更新摘要，更正已退役的 Swift 产品后端切换说明、OPPO 前摄支持、Live Photo 跨平台保存与传输机制、鸿蒙两种 HAP 的开发自签方式，以及 macOS Apple Silicon 限制。
+- [x] 明确 Flutter OHOS 当前统一图库保存和配对双文件分享未接入，不以共享核心替代各平台实际验收；保留原有产品介绍、截图和研究边界。
+- [x] README 本地链接存在性与 `git diff --check` 通过。用户随后授权提交并推送 main；本提交仅含 README 和此完成记录，不重编应用、不改动发布资产或其他本地文件。
+
 ## 2026-10-22：原生 0.5.1 自签分发更正
 
 - 用户要求直接替换原生同名 HAP。使用 `harmony-v0.5.1` / `67ff09cd` 业务源码执行 DevEco debug 构建，确认 `app.debug:true`、`app.buildMode:debug`，供匹配包名、证书和设备的开发 Profile 自签；Rust 保持 Release 优化，核心 SHA256 与此前包相同。
