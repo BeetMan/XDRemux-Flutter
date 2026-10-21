@@ -2,7 +2,7 @@
   "schema": 1,
   "date": "2026-10-21",
   "baseCommit": "b6859457d9d822f5f39b008054f296a3aa3fe406",
-  "status": "Windows covered exit scenarios passed; full P3.2 remains pending",
+  "status": "Windows covered exit and Android Home/force-stop/lock scenarios passed; full P3.2 remains pending",
   "fixes": [
     "reset native pending close flag after a failed or unhandled Dart close reply, preserving explicit retry",
     "share pending cleanup between production window and tray exit; retry cleanup after approval failure"
@@ -75,13 +75,20 @@
   "transferAbi": "1.3",
   "transferCoreAndAbiSourceChanged": false,
   "networkOrFirewallSettingsChanged": false,
-  "phoneOperatedThisRound": false,
+  "phoneOperatedThisRound": true,
   "mainWorkspaceChanged": false,
   "androidLifecycle": {
-    "status": "not_run",
-    "reason": "user unavailable for device interaction; deferred",
-    "releaseFixturePreparedPreviously": true,
-    "testApplicationId": "io.github.beetman.xdremux.transferdev"
+    "status": "covered_cases_passed",
+    "date": "2026-10-22",
+    "previousStatus": "not_run; user unavailable on 2026-10-21",
+    "testApplicationId": "io.github.beetman.xdremux.transferdev",
+    "cases": [
+      "home",
+      "kill",
+      "lock"
+    ],
+    "unlockRecovery": "not_run",
+    "report": "local-transfer-p32-android-report.json"
   },
   "scopeLimits": [
     "injected cleanup failure is controlled fixture behavior, not OS disk failure",
@@ -92,7 +99,7 @@
     "graceful window close is not process kill or OS shutdown/logoff"
   ],
   "pending": [
-    "Android partial upload Home/force-stop/lock/recovery device validation",
+    "Android unlock recovery and other OEM reclaim modes",
     "real Wi-Fi loss/network switch",
     "VPN/multi-NIC/AP isolation",
     "permission denial/revocation",
@@ -102,5 +109,6 @@
     "Android large batch",
     "Apple",
     "HarmonyOS deferred"
-  ]
+  ],
+  "lastUpdated": "2026-10-22"
 }

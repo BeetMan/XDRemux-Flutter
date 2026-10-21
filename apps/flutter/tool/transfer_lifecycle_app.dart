@@ -142,7 +142,19 @@ Future<void> main() async {
                     final file = File(lease['path'] as String);
                     final hash = (await sha256.bind(file.openRead()).first)
                         .toString();
-                    await file.copy('${exports.path}/$name');
+                    // File.copy preserves the private inbox mode (0600), which
+                    // prevents shell/ADB readback even in this fixture directory.
+                    // Create a separate synthetic export with normal app-external
+                    // file permissions, without changing the managed source.
+                    final exported = File('${exports.path}/$name');
+                    if (await exported.exists()) await exported.delete();
+                    final output = exported.openWrite();
+                    try {
+                      await output.addStream(file.openRead());
+                      await output.flush();
+                    } finally {
+                      await output.close();
+                    }
                     audited.add({
                       'name': name,
                       'size': await file.length(),
