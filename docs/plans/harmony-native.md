@@ -1,5 +1,15 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-10-22：0.5.1 发布资产重编核验
+
+- 用户明确要求同时补 Flutter OHOS 0.4.4 与原生 0.5.1。原生固定 `harmony-v0.5.1` / `67ff09cd`；未改动原生业务源码、标签、`.arkui` 包身份或 `0.5.1+50100` 版本。
+- 独立重编 native 标签 Rust `0.4.4` OHOS 核心，默认 x265、无 libheif；隔离复制 tag 中 apps/harmony 并清空签名配置后执行 `devecocli build --product default --build-mode release` 成功。保留源工作区签名设置、截图及其他未跟踪文件。
+- 16 组 Node 模型/队列回归及 5 项 HAP verifier 测试通过；24 个桥接导出、包身份/版本/API、CRC 与签名工具的无 HAP Signing Block 检查通过。独立快速 ArkTS 检查仍对 `@Available` 导出报错；完整工具链编译通过，不将快速检查记为成功。
+- 新 HAP 5,903,559 bytes，SHA256 `0DF31311F3EEC6D743BBBF51007D63AF34FCD863BD2A4835B7512D5AA31E8648`；包内核心 SHA256 `3CAA2D3B3C3F56537BB2C4382787B781EF9E17011AEFF5E5627F0838E3B4A8EC` 与此前 Release 核心一致，构建路径/资源编号等产物元数据重新生成。
+- 已更新 GitHub `harmony-v0.5.1` 的指定 HAP、SHA256SUMS 与发布正文补充，服务器摘要匹配。原 HAP `7E39C8B5B288ADE0E11D4A5573E87B409658F2D688D1E4B19C6B4EE2B1DB7BC1` 及原校验文件已先下载留存，未更改 Latest/标签或其他平台资产。
+- 签名边界明确：此原生包为 release/debug:false，需要发布证书与发布 Profile；Development Profile 不能直接签它，只有开发签名时应从源码构建 debug 包。未上传本机签名材料，未进行新一轮设备安装或用户照片/Apple Photos 验收。
+- 构建日志、HAP verifier 报告和 16+5 主机测试日志均保存在忽略的 target；Flutter 发布记录见 main 的 release-candidate-044.md。本节是最新发布资产记录，下面早期版本状态仅作历史记录。
+
 状态：2026-09-25 图库首页已取消自定义标题和页边距，让 API 26 `PhotoPickerComponent` 单选网格铺满图库页；`PickerOptions` 请求 CURRENT 原格式偏好和高分辨率 HEIC，选中 URI 先物理复制到应用沙箱再交 Rust 检查。照片详情改为一张超大圆角预览卡，使用 ArkUI `Stack`/`Image` 和沉浸光感模糊面板展示信息与转换操作。三 Tab HDS 导航保持不变。当前版本 `0.4.6` / code40016；DevEco debug 构建、14 份 Node 回归和 5 份 HAP verifier 单测通过。0.4.6 已安装到 Pura X View，但设备锁屏导致无法启动（10106102），所以新视觉仍待解锁后的真机目视验收；P4 其余跨端、分享、前后台、低存储/低内存验收也待完成。
 当前开发分支 `feat/harmony-native`，独立工作目录 `C:/Users/Beet/Documents/XDRemux-Harmony-Native`；原目录当前为 main，不在原目录修改鸿蒙代码。
 

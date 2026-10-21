@@ -32,3 +32,11 @@
 - FFI 版本读取为 `0.4.4`，bit 33 分类冒烟通过，OHOS 核心保留全部 24 个原生桥接符号，并按对应 free 函数释放主机冒烟中的 Rust 分配。
 - `devecocli` Release 构建、unsigned HAP 身份/API/核心库校验与归档 CRC 检查通过；发布页附 `SHA256SUMS.txt`。
 - 本次未连接调试设备，未做 0.5.1 的新一轮安装和 Apple Photos 真机验收。此前已验证原生界面基础流程与图库返回修复；构建及结构校验不替代目标相册的实际编辑验收。
+
+## 2026-10-22 重新编译补充
+
+- 从同一发布标签 `harmony-v0.5.1` / `67ff09cd` 重新构建，仍为 `.arkui`、`0.5.1` / code `50100`、ARM64、最低 API 18、目标 API 26，不移动标签或改变业务源码。
+- 单独重新编译该标签的 Rust `0.4.4` 核心，不混用 Flutter 标签核心；包内核心 SHA256 `3caa2d3b3c3f56537bb2c4382787b781ef9e17011aeff5e5627f0838e3b4a8ec` 与上一份已上传包一致。桥接库、资源清单来自本次干净构建。
+- DevEco release 构建、全部 24 个桥接符号、身份/版本/API、ZIP CRC 与无签名块校验通过；16 组模型/队列测试与 5 项 HAP 校验器测试再次通过。独立快速 ArkTS 检查对 `@Available` 报错，实际编译通过，不将快速检查记为通过。
+- 已重新上传 `XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap`，5,903,559 bytes，SHA256 `0df31311f3eec6d743bbbf51007d63af34fcd863bd2a4835b7512d5aa31e8648`，同步 `SHA256SUMS.txt`，GitHub 服务器摘要匹配；旧发布资产已下载留存。
+- **此包为 Release / `debug:false`，需要匹配的发布证书和发布 Profile，不能直接用 Development Profile 签名**。只有开发签名时请从源码构建 debug 包；这与 Flutter OHOS 的 Profile/`debug:true` 包不同。未上传本机证书、Profile 或密钥，未进行新一轮安装和照片实机验收。
