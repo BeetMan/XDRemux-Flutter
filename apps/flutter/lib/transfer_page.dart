@@ -161,6 +161,7 @@ class _TransferPageState extends State<TransferPage> {
   }
 
   Future<void> _connect({Map<String, dynamic>? expected}) async {
+    setState(() => _peer = null);
     final peer = await transfer.probe(
       _host.text,
       int.tryParse(_port.text) ?? 0,
@@ -312,6 +313,7 @@ class _TransferPageState extends State<TransferPage> {
   @override
   Widget build(BuildContext context) {
     final disabled = _working || transfer.busy;
+    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
     return PopScope(
       canPop: _canLeave,
       onPopInvokedWithResult: (didPop, _) {
@@ -519,6 +521,7 @@ class _TransferPageState extends State<TransferPage> {
                     child: TextField(
                       key: const ValueKey('peer-host'),
                       controller: _host,
+                      enabled: !disabled,
                       onChanged: (_) => setState(() => _peer = null),
                       decoration: InputDecoration(
                         labelText: t('对方 IP 地址', 'Peer IP address'),
@@ -530,6 +533,7 @@ class _TransferPageState extends State<TransferPage> {
                     child: TextField(
                       key: const ValueKey('peer-port'),
                       controller: _port,
+                      enabled: !disabled,
                       keyboardType: TextInputType.number,
                       onChanged: (_) => setState(() => _peer = null),
                       decoration: InputDecoration(
@@ -544,10 +548,11 @@ class _TransferPageState extends State<TransferPage> {
                   ),
                 ],
               ),
-              if (_peer != null)
+              if (confirmedPeer)
                 Text(t('已确认设备身份', 'Device identity confirmed')),
               TextField(
                 controller: _pin,
+                enabled: !disabled,
                 obscureText: true,
                 maxLength: 128,
                 decoration: InputDecoration(
@@ -565,7 +570,7 @@ class _TransferPageState extends State<TransferPage> {
                     key: const ValueKey('send-files'),
                     icon: const Icon(Icons.send),
                     label: Text(t('发送所列文件', 'Send listed files')),
-                    onPressed: disabled || _peer == null || _paths.isEmpty
+                    onPressed: disabled || !confirmedPeer || _paths.isEmpty
                         ? null
                         : () => _run(() async {
                             await transfer.send(
@@ -653,7 +658,9 @@ class _TransferPageState extends State<TransferPage> {
         .where((f) => ['sent', 'committed'].contains(f['phase']))
         .length;
     final canRetry =
-        _peer != null && _peer!['fingerprint'] == row['peer_fingerprint'];
+        _peer != null &&
+        transfer.isPeerConfirmed(_peer!) &&
+        _peer!['fingerprint'] == row['peer_fingerprint'];
     const labels = {
       'preparing': ['准备文件', 'Preparing'],
       'pending': ['等待确认', 'Waiting for confirmation'],
