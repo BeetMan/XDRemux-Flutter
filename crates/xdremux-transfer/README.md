@@ -28,6 +28,8 @@ Events carry a fresh `instance_id` per service start, increasing sequence number
 
 `SendStarted` establishes the preparing job. `SentFile.id` links `Prepared`, `Progress.file_id`, `FileSent` and terminal `SendReport.files`; file order is not an identity. `Prepared` identifies completed immutable snapshots; `FileSent` marks each receiver ACK. `Committed` means available in the private inbox; it does not imply gallery import. `Sent` means protocol ACKs from the receiver; third-party receiver durability is controlled by that application. `cancel_send(id)` exposes cancellation without requiring the original `SendHandle`.
 
+Terminal snapshots retain each file's own failure code when a batch is cancelled or times out; an explicit batch cause remains in the summary. A generic receive session end uses an observed file cause before falling back to `remote_failure`. With multiple causes, the summary is one hint; inspect each file for its own result. ACKed/committed files retain success. This changes status reporting only, not publication or retry rules.
+
 ## File and storage contract
 
 The root must be an application-private directory on a local filesystem supporting atomic no-replace rename and filesystem leases. Use app data, never a user-selected general photo directory or a network share. An exclusive filesystem lease prevents a second service from using/cleaning the same root. New Unix roots use mode 0700 and identities use 0600; Windows inherits the app directory's ACL. Existing parent/root privacy is the caller's responsibility. Concurrent malicious local writers with permission to alter that directory are outside this contract; link checks are defense in depth, not a directory-handle sandbox.

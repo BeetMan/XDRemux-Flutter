@@ -22,6 +22,8 @@ await transfer.dispose();
 
 There are at most 24 normal pending native calls, 32 including cancellation/cleanup, and 40 owner-side RPCs. Stop has a separate path. Only one copy runs per worker. Dispose blocks new work, waits for its current copy and lease cleanup, then stops/releases the native handle and waits for isolate exit. Repeated dispose shares the same future. Native startup/disk I/O is allowed to finish; there is no hard shutdown deadline. Callers must await dispose rather than kill the isolate.
 
+The controller treats completed/failed transfer snapshots and ACKed/committed files as authoritative over queued progress. Live progress is bounded by file size and cannot regress from an older event. A progress event for a failed file in a still-active session triggers snapshot reconciliation, allowing a peer's same-session checksum retry without reviving the file from an old event alone. Native file errors remain separate from batch cancellation/timeout. See [terminal state validation](../../../../../docs/testing/local-transfer-terminal.md).
+
 The checkpoint handoff is explicit:
 
 1. `prepareInput` acquires a native read lease and checks service-volume free space for the declared bytes plus 64 MiB. Inbox and copies must remain under the same application support filesystem. This is advisory; the worker maps write failures to redacted errors. The check covers the extra input copy; conversion/output and user-selected export destinations need their own space check in P2.2.

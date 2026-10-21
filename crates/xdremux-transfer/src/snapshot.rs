@@ -56,10 +56,10 @@ impl Journal {
         for f in t.files.values_mut() {
             if !matches!(f.phase, FilePhase::Sent | FilePhase::Committed) {
                 f.phase = FilePhase::Failed;
-                f.error = t
-                    .summary
+                // Batch cancellation/closure must not erase a file's own cause.
+                f.error = f
                     .error
-                    .or(f.error)
+                    .or(t.summary.error)
                     .or(Some(ErrorCode::RemoteFailure));
             }
         }
@@ -235,11 +235,20 @@ impl Journal {
                 }
             }
             EventKind::SessionEnded { session_id } => {
-                let incomplete = self
-                    .transfers
-                    .get(session_id)
-                    .is_some_and(|t| t.files.values().any(|f| f.phase != FilePhase::Committed));
-                self.finish(session_id, incomplete.then_some(ErrorCode::RemoteFailure));
+                let error = self.transfers.get(session_id).and_then(|t| {
+                    t.files
+                        .values()
+                        .any(|f| f.phase != FilePhase::Committed)
+                        .then(|| {
+                            // The protocol's session end is less specific than
+                            // a checksum/truncation/disk failure already observed.
+                            t.files
+                                .values()
+                                .find_map(|f| f.error)
+                                .unwrap_or(ErrorCode::RemoteFailure)
+                        })
+                });
+                self.finish(session_id, error);
             }
             EventKind::Sent {
                 transfer_id,

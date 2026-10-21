@@ -160,6 +160,120 @@ void main() {
     await controller.stop();
     controller.dispose();
   });
+  for (final state in [
+    ('completed', 'sent'),
+    ('completed', 'committed'),
+    ('failed', 'failed'),
+    ('transferring', 'sent'),
+    ('transferring', 'failed'),
+  ]) {
+    test(
+      'terminal boundary: late progress preserves ${state.$1}/${state.$2}',
+      () async {
+        native.phase = state.$1;
+        native.fileRows = [
+          {
+            'id': 'file-1',
+            'name': 'photo.heic',
+            'size': 3,
+            'bytes': 3,
+            'phase': state.$2,
+            'error': state.$2 == 'failed' ? 'checksum_mismatch' : null,
+          },
+        ];
+        await controller.ensureLocal();
+        native.events.add({
+          'kind': 'event',
+          'event': {
+            'kind': 'progress',
+            'transfer_id': 'receive-1',
+            'file_id': 'file-1',
+            'bytes': 1,
+            'total': 3,
+          },
+        });
+        await controller.poll();
+        final file = controller.files['receive-1']!.single;
+        expect(file['phase'], state.$2);
+        expect(file['bytes'], 3);
+        if (state.$2 == 'failed') expect(file['error'], 'checksum_mismatch');
+      },
+    );
+  }
+  for (final bytes in [1, 9]) {
+    test(
+      'terminal boundary: live progress $bytes stays monotonic and bounded',
+      () async {
+        native.phase = 'transferring';
+        native.fileRows = [
+          {
+            'id': 'file-1',
+            'name': 'photo.heic',
+            'size': 3,
+            'bytes': 2,
+            'phase': 'transferring',
+          },
+        ];
+        await controller.ensureLocal();
+        native.events.add({
+          'kind': 'event',
+          'event': {
+            'kind': 'progress',
+            'transfer_id': 'receive-1',
+            'file_id': 'file-1',
+            'bytes': bytes,
+            'total': 3,
+          },
+        });
+        await controller.poll();
+        expect(
+          controller.files['receive-1']!.single['bytes'],
+          bytes == 1 ? 2 : 3,
+        );
+      },
+    );
+  }
+  test(
+    'terminal boundary: live failed file refreshes for a peer retry',
+    () async {
+      native.phase = 'transferring';
+      native.fileRows = [
+        {
+          'id': 'file-1',
+          'name': 'photo.heic',
+          'size': 3,
+          'bytes': 3,
+          'phase': 'failed',
+          'error': 'checksum_mismatch',
+        },
+      ];
+      await controller.ensureLocal();
+      native.fileRows = [
+        {
+          'id': 'file-1',
+          'name': 'photo.heic',
+          'size': 3,
+          'bytes': 1,
+          'phase': 'transferring',
+          'error': 'checksum_mismatch',
+        },
+      ];
+      native.events.add({
+        'kind': 'event',
+        'event': {
+          'kind': 'progress',
+          'transfer_id': 'receive-1',
+          'file_id': 'file-1',
+          'bytes': 1,
+          'total': 3,
+        },
+      });
+      await controller.poll();
+      expect(controller.files['receive-1']!.single['phase'], 'transferring');
+      expect(controller.files['receive-1']!.single['bytes'], 1);
+    },
+  );
+
   Future<Completer<Directory>> gateStartup() async {
     await controller.stop();
     controller.dispose();
