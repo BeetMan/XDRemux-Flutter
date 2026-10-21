@@ -23,6 +23,7 @@
 
 ## 使用说明与边界
 
+- **macOS 包仅支持 Apple Silicon（M 系列）**：包内 Rust 核心目前只有 arm64 切片（app 主体虽是 universal），Intel Mac 上可以启动，但转换会因核心无法加载而失败。请 Apple Silicon 用户使用本包；Intel Mac 用户请保留 0.4.3 或等待后续版本。这一限制在 0.4.3 同样存在，不是本版引入的。
 - **macOS 包未签名、未公证**：从 GitHub 下载的 DMG 首次打开会被 Gatekeeper 拦截，请在「系统设置 → 隐私与安全性」中允许，或右键点击 app 选择「打开」。本次已保证 app 的签名封印有效，因此不会再出现「已损坏」提示；但要让 macOS 完全放行仍需 Apple 开发者账号的 Developer ID 与公证，本轮未做。
 - **iOS 包未签名 IPA**：需要用侧载工具（AltStore / Sideloadly / 自签）安装；免费个人团队的描述文件 7 天有效。安装后首次打开需在「设置 → 通用 → VPN 与设备管理」信任。
 - **Windows ARM64 安装器为实验性**：该 job 失败不会阻塞发布，因此部分版本可能不提供 ARM64 安装器；请优先使用 x64 安装器（ARM64 机器可通过 x64 模拟运行）。

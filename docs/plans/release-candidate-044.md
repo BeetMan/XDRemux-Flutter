@@ -190,3 +190,6 @@ libxdremux_core.dylib  arm64            <-- 仅此一项
 
 处理方式待维护者决定：(a) 明确只支持 Apple Silicon 并写进发布说明；(b) macOS job 增加 `x86_64-apple-darwin` 构建 + universal `libx265.a`（`-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"`）+ `lipo -create`，把 dylib 做成 universal（本机无 Rosetta，x86_64 侧只能靠 CI/Intel 机器验证）；(c) 把 macOS 构建限制为 arm64，让不支持变成明确的“无法打开”。
 
+**决定（2026-10-21，维护者）：选 (a)** —— 0.4.4 明确只支持 Apple Silicon，构建流水线不变，限制写进 `RELEASE_NOTES_v0.4.4.md` 的「使用说明与边界」。后续如要支持 Intel，按 (b) 另开改动。
+
+
