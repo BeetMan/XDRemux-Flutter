@@ -1,6 +1,31 @@
 # P3.2：真实系统与网络边界验证
 
-日期：2026-10-21。隔离分支 `codex/local-transfer`，接续 `03c04a21`。本轮先准备 Android 生命周期切片；完整 P3.2 尚未完成，鸿蒙继续延后。
+日期：2026-10-21。隔离分支 `codex/local-transfer`。Android 入口准备接续 `03c04a21`；桌面退出切片接续 `b6859457`，现已通过下述覆盖项。完整 P3.2 尚未完成，鸿蒙继续延后。机器结果见 [local-transfer-p32-report.json](local-transfer-p32-report.json)。
+
+## Windows 退出切片
+
+真实 release 窗口复现了关闭锁死：第一次 Dart 清理返回错误后，原生 `transfer_close_requested_` 一直为 true，第二次关闭既不退出也不重新请求清理。修复为接收 `requestClose` 的成功／错误／未实现回复，未获关闭批准时释放该标记；清理仍在进行时继续合并重复请求，不提前关闭。
+
+生产 main 的窗口／托盘清理现在共用 `TransferDesktopLifecycle`。它只合并正在等待的 stop；如果清理或批准关闭失败，下次显式关闭会重新清理，防止窗口留存期间新启动的接收服务被跳过。仍需完整等待读取租约和 native dispose，没有新增强制超时或退出回退。
+
+`tool/transfer_desktop_close_app.dart` 使用相同生产页面、controller、桌面退出 owner、worker、打包 DLL 和真实 Win32 runner，所有目录与 loopback socket 属于单次测试。没有操作手机或修改系统网络。使用 computer-use 的实际标题栏关闭／Alt+F4，未通过直接调用 approveClose 代替窗口消息。
+
+| 验证 | 结果 |
+|---|---|
+| 修复前错误回复 | 第一次注入自有清理失败后，第二次标题栏关闭仍为 stopCalls=1；保留失败记录，再终止该自有测试进程 |
+| 修复后显式重试 | 第一次安全保留窗口；第二次 Alt+F4 使 stopCalls=2，完成清理并退出；主机独占重绑定接收端口成功 |
+| 真实部分上传与读取租约 | 基线文件 65,536 bytes 已 ACK；第二件声明 2,097,152 bytes。opaque TLS relay 保留部分请求，关闭等待期间主机独立观察到 `.incoming` 有 180,217 bytes，且租约仍持有 |
+| 重复关闭 | 在读取尚未释放时再次 Alt+F4，窗口仍在，stopCalls=1，部分字节仍存在，没有第二份清理 |
+| 读取释放后退出 | 仅通过测试文件释放自有读取：复制完成，租约释放，停服及 worker 结束后窗口退出；主机核对暂存为空、端口可独占重用 |
+| 同根重启 | native 打开之前暂存即为空；只存在一个已完成基线回执，证书身份保持、runtime ID 更新、接收保持关闭。应用租约读取及主机独立磁盘 SHA-256 均正确 |
+
+基线、读取副本及接收落盘件 SHA-256 均为 `4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2`。首轮读取等待试验中，部分上传在窗口操作前已超时；该次只证明读取等待，不计作“关闭清理活跃残件”。随后使用新目录连续操作，单独确认两次关闭等待期间残件均存在，以上表格采用后一次证据。
+
+读取阻塞由测试主动持有真实 lease，并在释放后复制自有基线文件；不是模拟磁盘损坏。TLS relay 不解密，仅用于固定部分上传状态；这不是实际断网／切网。窗口关闭真实经过 OS 消息与生产退出 owner，但入口为隔离 fixture，不代表普通 main 全部交互、系统关机／注销、进程强杀或托盘菜单 UI 已验收；托盘并发／失败分支由单元测试覆盖。
+
+Flutter **84** 项通过，包含真实 classifier／首页 checkpoint ACK 与新增四项桌面退出测试；完整 analyze 无问题。Windows／Android 普通 `lib/main.dart` release 重新构建通过，许可及库哈希核对通过；生产 APK 不含 integration-test 插件，未安装到手机。Rust core／ABI 及传输动态库未改动，沿用 P3.1 已验证库。
+
+复现时创建空的绝对 `p32-desktop-<16位hex>` 目录，设置 `scenario.json` 为 `{"case":"retry-after"}`，以 `--dart-define=P32_DESKTOP_ROOT=ABSOLUTE_DIRECTORY` 构建该 tool release 入口。第一次关闭故意失败，第二次应退出。使用新子目录的 `drain` 场景时，等待 status 的 ready-to-close，连续关闭两次；确认 close-requested／leaseHeld／stopCalls=1 后再创建根下的 `release-read` 文件。退出后将场景改为 `recover` 并重启同一二进制，它会校验并自行退出。工具启动应使用精确进程路径，避免同名已安装应用被匹配。
 
 ## Android 生命周期切片
 
@@ -18,12 +43,12 @@
 
 `am force-stop` 不代表低内存回收、滑走最近任务或全部 OEM 杀后台方式。该入口直接调用生产 controller 的显式操作，不替代普通 main 页面的完整人工体验；原入口 Home 行为已有 P2.3 记录。
 
-## 当前结果
+## Android 当前结果
 
 - 独立测试 APK release 构建通过，包名 `.transferdev`、target SDK 36，未覆盖原 XDRemux。
 - 新 Dart 入口 analyze 无问题；Python 脚本语法解析通过。
 - 普通 `lib/main.dart` 生产 APK 已重新构建并核对生产包名；未安装到手机。
-- 真机当前锁屏，已请求解锁。上述完整文件／部分上传／Home／终止／锁屏序列 **尚未执行**，不能标为通过。
+- 用户暂时无法配合手机操作，真机验证延后。上述完整文件／部分上传／Home／终止／锁屏序列 **尚未执行**，不能标为通过。
 - 等待期间已恢复普通 main 测试 APK 并确认测试包进程停止；解锁后可直接重新安装已归档入口运行。
 
 运行前使用 `android layout` 检查解锁和前台状态，再以 Android CLI 启动已归档测试 APK。脚本需要明确的 ADB 路径、设备 ID、16 位十六进制 run、已存在的 `p32-app-<run>` 主机目录、手机私网 IPv4 和端口：
@@ -42,4 +67,4 @@ python tool/transfer_lifecycle_host.py --adb ADB --device DEVICE --run RUN --dir
 
 ## 后续边界
 
-真实断网／切网、VPN／多网卡、AP 隔离、权限拒绝／撤销、Windows 窗口退出、锁屏恢复、Android 大批次以及旧版／同机官方客户端仍待验。当前通过的是 P3.1 的受控故障与恢复，不能用其替代这些真实系统场景。
+真实断网／切网、VPN／多网卡、AP 隔离、权限拒绝／撤销、Windows 普通 main／托盘菜单完整体验及系统关机／注销、Android 生命周期与大批次、旧版／同机官方客户端仍待验。桌面窗口退出覆盖项及 P3.1 受控故障不能替代其余真实系统场景。
