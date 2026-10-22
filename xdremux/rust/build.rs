@@ -47,6 +47,13 @@ fn main() {
     // Static libx265 location per platform.
     let (link_search, lib_name) = match target_os.as_str() {
         "android" => (format!("{x265_root}/build_android"), "x265".to_string()),
+        // The iOS simulator reports os=ios + env=sim and needs a library built
+        // against the iphonesimulator SDK; linking the device archive fails with
+        // "building for 'iOS-simulator', but linking in object file ... built
+        // for 'iOS'".
+        "ios" if target_env == "sim" => {
+            (format!("{x265_root}/build_ios_sim"), "x265".to_string())
+        }
         "ios" => (format!("{x265_root}/build_ios"), "x265".to_string()),
         "windows" => (
             format!("{x265_root}/build_windows/Release"),

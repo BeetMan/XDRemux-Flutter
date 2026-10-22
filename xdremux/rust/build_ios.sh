@@ -10,6 +10,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"   # -> xdremux/rust
 
+# rustc links the iOS staticlib at its own default minimum (iOS 10) while the C
+# dependencies (zstd, x265 helper) are compiled against the installed SDK. With
+# a modern SDK that mismatch fails the cdylib link with
+# "Undefined symbols ... ___chkstk_darwin". Pin the deployment target so a clean
+# rebuild matches the app's iOS 15 minimum.
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
+
 DEST="../../apps/flutter/ios/Runner/Frameworks"
 mkdir -p "$DEST"
 
