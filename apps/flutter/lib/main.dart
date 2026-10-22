@@ -3128,10 +3128,35 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Vertical tool bar drawn inside the system-reserved trailing strip
-  /// (iPhone Duo). Icons are bottom-aligned so they stay clear of the status
-  /// bar items at the top of the strip and within thumb reach.
+  /// (iPhone Duo). The strip is paintable, so the bar occupies it edge-to-edge
+  /// and continues the app-bar surface; actions are bottom-aligned (thumb
+  /// reach) and split into a secondary group above a divider plus the primary
+  /// intake action closest to the thumb.
   Widget _buildTrailingBar(ThemeData theme) {
     final width = MediaQuery.paddingOf(context).right;
+    Widget item(
+      IconData icon,
+      String label,
+      String english,
+      VoidCallback? onPressed, {
+      bool primary = false,
+    }) {
+      final tooltip = t(label, english);
+      return primary
+          ? IconButton.filledTonal(
+              icon: Icon(icon),
+              tooltip: tooltip,
+              onPressed: onPressed,
+              visualDensity: VisualDensity.compact,
+            )
+          : IconButton(
+              icon: Icon(icon),
+              tooltip: tooltip,
+              onPressed: onPressed,
+              visualDensity: VisualDensity.compact,
+            );
+    }
+
     return SizedBox(
       width: width,
       child: DecoratedBox(
@@ -3145,34 +3170,41 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              IconButton(
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                tooltip: t('添加文件', 'Add files'),
-                onPressed: _canEditQueue ? _addFiles : null,
-              ),
               if (!_isProcessing && _convertedCount > 0)
-                IconButton(
-                  icon: const Icon(Icons.photo_library_outlined),
-                  tooltip: t('全部保存到相册', 'Save all to gallery'),
-                  onPressed: _saveAllToGallery,
+                item(
+                  Icons.photo_library_outlined,
+                  '全部保存到相册',
+                  'Save all to gallery',
+                  _saveAllToGallery,
                 ),
               if (Platform.isMacOS ||
                   Platform.isIOS ||
                   Platform.isWindows ||
                   Platform.isAndroid ||
                   PlatformX.isOhos)
-                IconButton(
-                  icon: const Icon(Icons.auto_awesome_motion_outlined),
-                  tooltip: t('一帧影像，动用两台手机', 'One photo, two phones'),
-                  onPressed: _openAppleOppoWorkflow,
+                item(
+                  Icons.auto_awesome_motion_outlined,
+                  '一帧影像，动用两台手机',
+                  'One photo, two phones',
+                  _openAppleOppoWorkflow,
                 ),
-              IconButton(
-                icon: const Icon(Icons.tune),
-                tooltip: t('设置', 'Settings'),
-                onPressed: () => _openSettings(context),
-              ),
+              item(Icons.tune, '设置', 'Settings', () => _openSettings(context)),
               _buildQueueOverflowMenu(),
-              const SizedBox(height: 6),
+              Divider(
+                height: 9,
+                indent: 18,
+                endIndent: 18,
+                color: theme.dividerColor,
+              ),
+              // Primary intake action: filled, closest to the thumb.
+              item(
+                Icons.add_photo_alternate_outlined,
+                '添加文件',
+                'Add files',
+                _canEditQueue ? _addFiles : null,
+                primary: true,
+              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
