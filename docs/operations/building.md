@@ -7,10 +7,13 @@
 ```bash
 cargo build --release -p xdremux-core          # Windows/macOS/Linux 宿主
 cargo ndk -t arm64-v8a -o apps/flutter/android/app/src/main/jniLibs build --release -p xdremux-core   # Android
-xdremux/rust/build_ios.sh                        # iOS（见脚本头注释，产物进 ios/Runner/Frameworks）
+xdremux/rust/build_ios.sh                        # iOS 真机（见脚本头注释，产物进 ios/Runner/Frameworks）
+xdremux/rust/build_ios_sim.sh                    # iOS 模拟器（同上，供模拟器/UI 验收用）
 bash xdremux/rust/build_ohos.sh                  # 鸿蒙（产物在仓库根 target/aarch64-unknown-linux-ohos/，
                                                  # 拷到 apps/flutter/ohos/entry/libs/arm64-v8a/）
 ```
+
+真机与模拟器的归档不能混用：Podfile 通过 `$HOME/xdremux_ios_libs` 强制链接，两个脚本都会覆盖同一份暂存目录，切回真机时重跑 `build_ios.sh` 即可（否则链接报 `building for 'iOS', but linking in object file ... built for 'iOS-simulator'`，反之亦然）。
 
 x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 
@@ -49,6 +52,30 @@ tools/ohos/build_hap.ps1 -Release # release（~27MB，侧载不可签，仅供�
 `tools/ohos/check_sdk.ps1 -SdkPath C:\SDKs\flutter-ohos-clean -BuildMode profile` 可单独校验，构建脚本也在替换 pubspec 前自动执行。针对框架提交 `62357a93` 固定干净下载的 profile/debug 与 release 平台内核 SHA256；这是已验证稳定线的兼容性防护，不是所有 SDK 的真实性验证。其他框架提交只给出尚未验证的警告，须另行建立基线。发现 checksum mismatch 时停止构建并准备独立干净 SDK，不要跳过校验：2026-10-17 曾出现版本号一致、但 `platform_strong.dill` 缓存不匹配，编译和签名均成功而真机在 `SetNeedsReportTimings` 初始化时崩溃的情况。
 
 桌面开发注意：macOS 用 `deploy_macos.sh` 产出"固定版本" app；Windows 开发目录需能找到 Rust DLL（FFI 搜索安装目录/开发目录）。
+
+### 2.1 iOS 模拟器（含 iPhone Duo）
+
+模拟器跑真机归档会链接失败（`building for 'iOS-simulator', but linking in object file ... built for 'iOS'`），所以需要单独的模拟器归档：
+
+```bash
+xdremux/rust/build_ios_sim.sh      # x265 模拟器版（vendor/x265/build_ios_sim）+ aarch64-apple-ios-sim 静态库
+cd apps/flutter
+flutter run -d <simulator-udid>
+```
+
+- `build.rs` 用 `CARGO_CFG_TARGET_ENV == "sim"` 区分模拟器与真机，各自链接 `build_ios_sim` / `build_ios`。
+- 两个脚本都写同一份 `$HOME/xdremux_ios_libs` 暂存目录，切换真机前重跑 `build_ios.sh`。
+- 前置：`rustup target add aarch64-apple-ios-sim`、iOS 模拟器 runtime（iPhone Duo 需要 **iOS 27.1**，`xcodebuild -downloadPlatform iOS -buildVersion 27.1`）。
+
+iPhone Duo（`iPhone19,4`，iOS 27.1 模拟器实测）几何，供布局验证参考：
+
+| 项 | 数值 |
+|---|---|
+| 主屏 | 1398×2034 px @3x → **466×678 pt**，安全区右 84pt、下 34pt、上/左 0 |
+| 第二块集成屏 | 2007×2853 px @3x → **669×951 pt**（系统不会自动把 app 放上去） |
+| Flutter 视角 | `views=1`、`displayFeatures=[]`（iOS 不暴露折痕）、`textScale=1.0` |
+
+主屏走 `compact(<600)` 与 `narrow(<480)` 分支，不会触发 800/1120 网格断点；风险在纵向空间（678pt 高）和右侧 84pt 不可用区。
 
 ## 3. 构建变体
 
