@@ -95,13 +95,13 @@
 - [x] P3.1：Windows 受控端口冲突、发现失效、TLS 连接切断和新端口恢复通过；Android 真机 release 多播锁释放／重新获取、runtime 停止清理及同根／同端口重启通过，见 [P3.1 记录](../testing/local-transfer-p31.md)。
 - [ ] P3.2：真实网络变化／VPN／多网卡、AP 隔离、权限撤销、锁屏强杀和窗口退出；完整平台矩阵继续下列项目。
 
-P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；真实 release 窗口重复关闭、读取租约等待、部分上传清理、端口释放和同根恢复通过，Flutter 84 项及 analyze 通过。Android 生命周期切片已准备独立 release 入口和真实 mTLS 部分上传脚本；2026-10-22 用户手机恢复可用后，Home、强停、锁屏三项真机部分上传清理／TCP 与多播锁释放通过，Home／强停后的显式重启及基线独立哈希通过。锁屏后的解锁恢复和其余真实网络矩阵仍待执行。见 [P3.2 记录](../testing/local-transfer-p32.md) 与 [Android 真机记录](../testing/local-transfer-p32-android.md)。
+P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；真实 release 窗口重复关闭、读取租约等待、部分上传清理、端口释放和同根恢复通过，Flutter 84 项及 analyze 通过。Android 生命周期切片已准备独立 release 入口和真实 mTLS 部分上传脚本；2026-10-22 Home、强停、锁屏三项真机部分上传清理／TCP 与多播锁释放通过，Home／强停后的显式重启及基线独立哈希通过。2026-10-24 补验同进程手动解锁恢复和新版启动取消；其余真实网络矩阵仍待执行。见 [P3.2 记录](../testing/local-transfer-p32.md)、[Android 真机记录](../testing/local-transfer-p32-android.md) 与 [启动／解锁补验](../testing/local-transfer-startup-android.md)。
 
 后续收敛设备确认边界：重新连接失败／取消和忘记指纹不再保留可用的旧确认；发送在异步启动前固定设备与路径，提交前重查撤销。七项回归、两项真实 DLL／loopback HTTPS 检查及完整 Flutter 93 项通过，见 [确认状态记录](../testing/local-transfer-confirmation.md)。这些本机结果不补记手机或真实网络矩阵为通过。
 
 2026-10-22 继续收敛终态：保留逐文件具体错误，区分整批取消／超时；旧进度事件不能将完成文件改回传输中，活动会话内对端重传通过快照确认。Core 29 项、ABI 2 项、Flutter 101 项通过，新 Windows DLL 的 worker／loopback HTTPS 与副本哈希检查通过，Windows／Android 普通 release 包完成库一致性核对。见 [终态记录](../testing/local-transfer-terminal.md)。这些本机结果不替代待执行的 Android 生命周期及网络矩阵。
 
-2026-10-24 修复启动与停止竞态：每次停止都会撤销更早的待完成启动，包含等待目录、原生初始化和旧读取清理期间的接收请求；已开始的原生初始化仍等完成后释放。5 项新增竞态回归及 2 项真实 DLL 端口／同根恢复检查通过，完整 Flutter 108 项和 analyze 通过；Windows／Android 普通 release 包完成库一致性核对。见 [启动取消记录](../testing/local-transfer-startup.md)。本轮未操作手机，不替代新增版本的 Android 真机启动／退后台竞态验证。
+2026-10-24 修复启动与停止竞态：每次停止都会撤销更早的待完成启动，包含等待目录、原生初始化和旧读取清理期间的接收请求；已开始的原生初始化仍等完成后释放。5 项新增竞态回归及 2 项真实 DLL 端口／同根恢复检查通过，完整 Flutter 108 项和 analyze 通过；Windows／Android 普通 release 包完成库一致性核对。见 [启动取消记录](../testing/local-transfer-startup.md)。同日后续以生产 controller 完成 Android 目录／native 等待点下实际 Home 取消，以及部分上传 Home／强停／锁屏和手动解锁恢复。启动等待点在返回前台、确认真实 pause/resume 后才释放，不计作后台即时清理或自然慢启动耗时证明；见 [补验边界](../testing/local-transfer-startup-android.md)。
 
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。

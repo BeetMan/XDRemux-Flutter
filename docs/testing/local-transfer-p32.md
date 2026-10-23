@@ -1,6 +1,6 @@
 # P3.2：真实系统与网络边界验证
 
-日期：2026-10-21；Android 结果更新于 2026-10-22。隔离分支 `codex/local-transfer`。Android 入口准备接续 `03c04a21`；桌面退出切片接续 `b6859457`。下述 Windows 退出和 Android Home／强停／锁屏覆盖项已通过。完整 P3.2 尚未完成，鸿蒙继续延后。机器结果见 [local-transfer-p32-report.json](local-transfer-p32-report.json)。
+日期：2026-10-21；Android 结果更新于 2026-10-24。隔离分支 `codex/local-transfer`。Android 入口准备接续 `03c04a21`；桌面退出切片接续 `b6859457`。下述 Windows 退出和 Android Home／强停／锁屏覆盖项已通过，同日后续增加启动取消及手动解锁补验。完整 P3.2 尚未完成，鸿蒙继续延后。机器结果见 [local-transfer-p32-report.json](local-transfer-p32-report.json)。
 
 ## Windows 退出切片
 
@@ -50,7 +50,7 @@ Flutter **84** 项通过，包含真实 classifier／首页 checkpoint ACK 与�
 - 普通 `lib/main.dart` 生产 APK 已重新构建并核对生产包名；未安装到手机。
 - 此前因用户无法配合而延后的完整文件／部分上传／Home／终止／锁屏序列，现已在 PKJ110、Android 17／SDK 37 真机完成。每个用例先实传 256 KiB／声明 2 MiB，确认尚未发布；实际系统操作后 TCP 关闭、多播锁释放。Home 和强停后同根重启、显式接收、基线哈希及身份保留通过；锁屏时记录到实际 keyguard／休眠、controller 停止、暂存已清理且仅有基线发布。详见 [Android 真机记录](local-transfer-p32-android.md) 和 [JSON](local-transfer-p32-android-report.json)。
 - 首次执行因测试导出副本保留 0600 权限而无法 ADB 拉回，未计通过。修复仅涉及测试入口的合成导出副本写法，不改变生产收件箱权限；随后三项完整序列通过。
-- 测试结束恢复普通 main 独立测试 APK 并停止 `.transferdev`；原 XDRemux 未覆盖。锁屏后的解锁恢复仍未执行，不能从 Home／强停恢复推断。
+- 测试结束恢复普通 main 独立测试 APK 并停止 `.transferdev`；原 XDRemux 未覆盖。此轮未验证解锁恢复，后续 2026-10-24 已完成同进程手动解锁与新版启动取消，见 [补验记录](local-transfer-startup-android.md)；其中启动等待点在返回前台后才释放，不计作后台即时清理。
 
 运行前使用 `android layout` 检查解锁和前台状态，再以 Android CLI 启动已归档测试 APK。脚本需要明确的 ADB 路径、设备 ID、16 位十六进制 run、已存在的 `p32-app-<run>` 主机目录、手机私网 IPv4 和端口：
 
@@ -62,10 +62,13 @@ flutter build apk --release --no-pub --target-platform android-arm64 -t tool/tra
 # 先归档此 APK；普通构建恢复 lib/main.dart 和生产环境变量。
 android run --apks=TEST_APK --device=DEVICE --activity=com.example.xdremux.MainActivity
 python tool/transfer_lifecycle_host.py --adb ADB --device DEVICE --run RUN --directory OWNED_RUN_DIRECTORY --host PHONE_IPV4 --port 53326
+# 新版启动取消及手动解锁：最后一项会等待人手解锁，不自动消除 keyguard。
+# 上一条完整流程与此条选其一，使用新 run，勿并行控制同一入口。
+python tool/transfer_lifecycle_host.py --adb ADB --device DEVICE --run RUN --directory OWNED_RUN_DIRECTORY --host PHONE_IPV4 --port 53326 --cases startup-directory startup-native home kill lock --unlock-recovery
 ```
 
 运行报告保存在自有主机目录的 `host-result.json`。私钥仅用于测试，脚本退出时删除；不提交 APK、个人文件或测试身份。结束后安装归档的普通 main 测试 APK，再停止 `.transferdev`；不安装生产包。
 
 ## 后续边界
 
-真实断网／切网、VPN／多网卡、AP 隔离、权限拒绝／撤销、Windows 普通 main／托盘菜单完整体验及系统关机／注销、Android 解锁恢复／其他 OEM 回收方式与大批次、旧版／同机官方客户端仍待验。桌面窗口退出、Android 本轮覆盖项及 P3.1 受控故障不能替代其余真实系统场景。
+真实断网／切网、VPN／多网卡、AP 隔离、权限拒绝／撤销、Windows 普通 main／托盘菜单完整体验及系统关机／注销、Android 其他 OEM 回收方式与大批次、旧版／同机官方客户端仍待验。桌面窗口退出、Android 本轮覆盖项及 P3.1 受控故障不能替代其余真实系统场景。

@@ -7,14 +7,43 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:xdremux/services/transfer/transfer_controller.dart';
+import 'package:xdremux/services/transfer/transfer_models.dart';
+import 'package:xdremux/services/transfer/transfer_service.dart';
 import 'package:xdremux/transfer_page.dart';
 
 class LifecycleLog with WidgetsBindingObserver {
   final events = <String>[];
+  int sequence = 0;
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    sequence++;
     events.add(state.name);
     if (events.length > 32) events.removeAt(0);
+  }
+}
+
+class LifecycleNative extends TransferService {
+  LifecycleNative(this.onStart, this.afterStart);
+  final void Function() onStart;
+  final Future<void> Function(Map<String, dynamic>) afterStart;
+  @override
+  Future<TransferAvailability> start({
+    required String supportRoot,
+    String? libraryPath,
+    String bind = '127.0.0.1:0',
+    String alias = 'XDRemux',
+    String? pin,
+  }) async {
+    onStart();
+    final result = await super.start(
+      supportRoot: supportRoot,
+      libraryPath: libraryPath,
+      bind: bind,
+      alias: alias,
+      pin: pin,
+    );
+    if (result.available) await afterStart(ready!);
+    return result;
   }
 }
 
@@ -57,7 +86,34 @@ Future<void> main() async {
   final boot = DateTime.now().microsecondsSinceEpoch.toString();
   final lifecycle = LifecycleLog();
   WidgetsBinding.instance.addObserver(lifecycle);
-  final controller = TransferController(supportDirectory: () async => support);
+  String? requestedGate, reachedGate, startupError;
+  Map<String, dynamic>? gateReady;
+  var gateWaiting = false, startupCompleted = false, nativeStarts = 0;
+  Future<void>? startupTask;
+  final release = File('${root.path}/startup-release');
+  Future<void> startupGate(String stage, [Map<String, dynamic>? ready]) async {
+    if (requestedGate != stage) return;
+    reachedGate = stage;
+    gateReady = ready;
+    gateWaiting = true;
+    while (!await release.exists()) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await release.delete();
+    requestedGate = null;
+    gateWaiting = false;
+  }
+
+  final controller = TransferController(
+    serviceFactory: () => LifecycleNative(
+      () => nativeStarts++,
+      (ready) => startupGate('native', ready),
+    ),
+    supportDirectory: () async {
+      await startupGate('directory');
+      return support;
+    },
+  );
   controller.discoveryInterface = interface;
   const multicast = MethodChannel('xdremux/transfer-discovery');
   runApp(MaterialApp(home: TransferPage(controller: controller)));
@@ -77,9 +133,19 @@ Future<void> main() async {
       'acknowledged': acknowledged,
       'error': error,
       'lifecycle': lifecycle.events,
+      'lifecycleSequence': lifecycle.sequence,
+      'startup': {
+        'stage': reachedGate,
+        'waiting': gateWaiting,
+        'completed': startupCompleted,
+        'error': startupError,
+        'nativeStarts': nativeStarts,
+        'nativeReady': gateReady,
+      },
       'running': controller.running,
       'receiving': controller.receiving,
       'busy': controller.busy,
+      'stopping': controller.stopping,
       'discovering': controller.discovering,
       'multicastHeld': await multicast.invokeMethod<bool>('isHeld'),
       'ready': controller.ready,
@@ -109,6 +175,31 @@ Future<void> main() async {
             switch (command['action']) {
               case 'start':
                 await controller.enableReceiving(port: port);
+              case 'start_paused':
+                if (controller.running ||
+                    controller.busy ||
+                    startupTask != null ||
+                    !['directory', 'native'].contains(command['stage'])) {
+                  throw StateError('Explicit idle startup gate required');
+                }
+                if (await release.exists()) await release.delete();
+                requestedGate = command['stage'] as String;
+                reachedGate = null;
+                gateReady = null;
+                startupCompleted = false;
+                startupError = null;
+                startupTask = controller
+                    .enableReceiving(port: port)
+                    .then<void>(
+                      (_) {},
+                      onError: (Object e, StackTrace _) {
+                        startupError = TransferController.code(e);
+                      },
+                    )
+                    .whenComplete(() {
+                      startupCompleted = true;
+                      startupTask = null;
+                    });
               case 'stop':
                 await controller.stop();
               case 'accept':
