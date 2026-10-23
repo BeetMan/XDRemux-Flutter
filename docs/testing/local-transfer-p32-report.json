@@ -2,7 +2,7 @@
   "schema": 1,
   "date": "2026-10-21",
   "baseCommit": "b6859457d9d822f5f39b008054f296a3aa3fe406",
-  "status": "Windows covered exit and Android Home/force-stop/lock scenarios passed; full P3.2 remains pending",
+  "status": "Windows covered exit and Android controlled startup/Home/force-stop/lock/unlock cases passed; full P3.2 remains pending",
   "fixes": [
     "reset native pending close flag after a failed or unhandled Dart close reply, preserving explicit retry",
     "share pending cleanup between production window and tray exit; retry cleanup after approval failure"
@@ -79,16 +79,19 @@
   "mainWorkspaceChanged": false,
   "androidLifecycle": {
     "status": "covered_cases_passed",
-    "date": "2026-10-22",
-    "previousStatus": "not_run; user unavailable on 2026-10-21",
+    "date": "2026-10-24",
+    "previousStatus": "Home/force-stop/lock covered on 2026-10-22; unlock recovery was not run",
     "testApplicationId": "io.github.beetman.xdremux.transferdev",
     "cases": [
       "home",
       "kill",
-      "lock"
+      "lock",
+      "startup-directory",
+      "startup-native"
     ],
-    "unlockRecovery": "not_run",
-    "report": "local-transfer-p32-android-report.json"
+    "unlockRecovery": "passed_same_process_human_unlock",
+    "startupGateRelease": "after_foreground_return; no background-immediate cleanup claim",
+    "report": "local-transfer-startup-android-report.json"
   },
   "scopeLimits": [
     "injected cleanup failure is controlled fixture behavior, not OS disk failure",
@@ -99,7 +102,7 @@
     "graceful window close is not process kill or OS shutdown/logoff"
   ],
   "pending": [
-    "Android unlock recovery and other OEM reclaim modes",
+    "Android other OEM reclaim modes",
     "real Wi-Fi loss/network switch",
     "VPN/multi-NIC/AP isolation",
     "permission denial/revocation",
@@ -110,5 +113,5 @@
     "Apple",
     "HarmonyOS deferred"
   ],
-  "lastUpdated": "2026-10-22"
+  "lastUpdated": "2026-10-24"
 }

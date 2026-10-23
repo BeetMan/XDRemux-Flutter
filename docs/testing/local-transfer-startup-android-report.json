@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "baseCommit": "4379cf81f454ecd632474383911f585240e5211a",
+  "status": "covered Android startup cancellation, Home/force-stop/lock and human unlock recovery passed; full P3.2 remains pending",
+  "device": {
+    "model": "PKJ110",
+    "android": "17",
+    "sdk": 37
+  },
+  "scope": "Release fixture using unchanged production controller, worker, page, Android runner and native transfer library",
+  "deviceValidation": {
+    "schema": 1,
+    "run": "bdfec0fedb8a48f9",
+    "passed": true,
+    "date": "2026-10-23T19:08:49.874434+00:00",
+    "cases": {
+      "startup-directory": {
+        "controlledGate": "directory",
+        "actualHomePause": true,
+        "sameProcessBoot": true,
+        "cancelledError": "closed",
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "nativeStartCountCorrect": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true,
+        "gateReleasedAfterForegroundReturn": true,
+        "pauseObservedInBackgroundSnapshot": false,
+        "nativeListenerObservedBeforePause": false
+      },
+      "startup-native": {
+        "controlledGate": "native",
+        "actualHomePause": true,
+        "sameProcessBoot": true,
+        "cancelledError": "closed",
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "nativeStartCountCorrect": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true,
+        "gateReleasedAfterForegroundReturn": true,
+        "pauseObservedInBackgroundSnapshot": true,
+        "nativeListenerObservedBeforePause": true
+      },
+      "home": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "stagingClean": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true
+      },
+      "kill": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "crashLeftoversObserved": true,
+        "newProcessBoot": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "stagingClean": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true
+      },
+      "lock": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "powerPolicyEvidence": [
+          "showing=true",
+          "inputRestricted=true",
+          "interactiveState=INTERACTIVE_STATE_SLEEP"
+        ],
+        "pausedAndControllerStopped": true,
+        "stagingCleanBeforeProcessStop": true,
+        "onlyBaselinePublished": true,
+        "unlockRecoveryNotRun": false,
+        "unlockRecoveryPassed": true,
+        "sameProcessBoot": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "stagingClean": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true
+      }
+    },
+    "networkSettingsChanged": false,
+    "originalApplicationTouched": false,
+    "baseline": {
+      "name": "p32-complete.bin",
+      "size": 65536,
+      "sha256": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2"
+    }
+  },
+  "earlyHarnessAttempts": {
+    "failedObservationDeadlines": 3,
+    "countedAsPass": false,
+    "observation": "background snapshots sometimes stopped at inactive or gated paused; exact cause not established",
+    "finalProcedure": "return to foreground, require real pause/resume and stopping before releasing the controlled gate"
+  },
+  "checks": {
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true,
+    "hostPythonSyntax": true,
+    "independentHostHash": true,
+    "originalApplicationMetadataUnchanged": true,
+    "independentMainRestoredAndStopped": true,
+    "temporaryClientIdentityRemoved": true
+  },
+  "packaging": {
+    "lifecycle": {
+      "applicationId": "io.github.beetman.xdremux.transferdev",
+      "sha256": "ae5c18036ef617089a10ebbd80fe1f21bd281956175e722d4c13f6fba4ad702d",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": true
+    },
+    "main-test": {
+      "applicationId": "io.github.beetman.xdremux.transferdev",
+      "sha256": "4f7048e0e45e8ff2f64158c8be5190e8dc385cdaaa36d7754117d2c3d3c82ab2",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": true
+    },
+    "main-production": {
+      "applicationId": "io.github.beetman.xdremux",
+      "sha256": "339578199487fb32dd1833702a0f0e5714f3fed130af52f310608fd56e745076",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    }
+  },
+  "transferAbi": "1.3",
+  "productionControllerCoreAndAbiSourceChanged": false,
+  "networkOrFirewallSettingsChanged": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "limits": [
+    "startup gates are controlled waits, not measured natural slow startup",
+    "startup gates released after foreground return; no background-immediate initialization cleanup claim",
+    "pending native listener can persist until gate release; startup no-auto-reopen is checked after cancellation completes",
+    "background snapshot stalling cause was not established",
+    "force-stop is not low-memory reclaim, recent-task swipe or every OEM termination mode",
+    "explicit fixture commands do not replace full ordinary main UI acceptance"
+  ],
+  "pending": [
+    "real network change/VPN/multi-NIC/AP isolation/permission revocation",
+    "other OEM reclaim modes and Android large batch",
+    "older/same-host official clients",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}
