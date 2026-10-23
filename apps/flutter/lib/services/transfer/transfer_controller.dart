@@ -26,6 +26,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   bool _observing = false;
   TransferService? _service;
   Future<void>? _startup, _stopTask;
+  int _stopGeneration = 0;
   Future<void>? _refreshTask, _inboxTask;
   final Set<Future<dynamic>> _reads = {};
   Timer? _timer;
@@ -71,9 +72,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       throw const TransferException('invalid_input');
     }
     if (busy) throw const TransferException('busy');
-    await stop();
+    final cleanup = stop();
+    final generation = _stopGeneration;
+    await cleanup;
+    _checkStartup(generation);
     await _start('${discoveryInterface ?? '0.0.0.0'}:$port', true);
-    if (!stopping) await discover();
+    _checkStartup(generation);
+    await discover();
   }
 
   Future<void> enumerateInterfaces() async {
@@ -141,19 +146,30 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> ensureLocal() async {
     if (stopping) throw const TransferException('closed');
     if (running) return;
+    final generation = _stopGeneration;
     await (_startup ?? _start('127.0.0.1:0', false));
+    _checkStartup(generation);
+  }
+
+  void _checkStartup(int generation) {
+    if (stopping || generation != _stopGeneration) {
+      throw const TransferException('closed');
+    }
   }
 
   Future<void> _start(String bind, bool receive) =>
       _startup ??= _startNow(bind, receive).whenComplete(() => _startup = null);
   Future<void> _startNow(String bind, bool receive) async {
+    final generation = _stopGeneration;
     starting = true;
     error = null;
     notifyListeners();
     final native = _factory();
     try {
       final dir = await _support();
+      _checkStartup(generation);
       final available = await native.start(supportRoot: dir.path, bind: bind);
+      _checkStartup(generation);
       if (!available.available) {
         throw TransferException(available.reason ?? 'closed');
       }
@@ -167,13 +183,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             [],
       );
       await enumerateInterfaces();
-      if (!stopping) {
-        await refresh();
-        _timer = Timer.periodic(
-          const Duration(milliseconds: 250),
-          (_) => unawaited(poll()),
-        );
-      }
+      _checkStartup(generation);
+      await refresh();
+      _checkStartup(generation);
+      _timer = Timer.periodic(
+        const Duration(milliseconds: 250),
+        (_) => unawaited(poll()),
+      );
     } catch (e) {
       error = code(e);
       await native.dispose();
@@ -566,8 +582,12 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  Future<void> stop() =>
-      _stopTask ??= _stopNow().whenComplete(() => _stopTask = null);
+  Future<void> stop() {
+    // Every request revokes pending starts, even when cleanup is already shared.
+    _stopGeneration++;
+    return _stopTask ??= _stopNow().whenComplete(() => _stopTask = null);
+  }
+
   Future<void> _stopNow() async {
     stopping = true;
     receiving = false;

@@ -101,6 +101,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 
 2026-10-22 继续收敛终态：保留逐文件具体错误，区分整批取消／超时；旧进度事件不能将完成文件改回传输中，活动会话内对端重传通过快照确认。Core 29 项、ABI 2 项、Flutter 101 项通过，新 Windows DLL 的 worker／loopback HTTPS 与副本哈希检查通过，Windows／Android 普通 release 包完成库一致性核对。见 [终态记录](../testing/local-transfer-terminal.md)。这些本机结果不替代待执行的 Android 生命周期及网络矩阵。
 
+2026-10-24 修复启动与停止竞态：每次停止都会撤销更早的待完成启动，包含等待目录、原生初始化和旧读取清理期间的接收请求；已开始的原生初始化仍等完成后释放。5 项新增竞态回归及 2 项真实 DLL 端口／同根恢复检查通过，完整 Flutter 108 项和 analyze 通过；Windows／Android 普通 release 包完成库一致性核对。见 [启动取消记录](../testing/local-transfer-startup.md)。本轮未操作手机，不替代新增版本的 Android 真机启动／退后台竞态验证。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。
