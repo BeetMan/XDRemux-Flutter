@@ -154,6 +154,7 @@ Future<void> main() async {
       'published': await inventory(received),
       'transfers': controller.transfers.values.toList(),
       'files': controller.files,
+      'inbox': controller.inbox,
       'audited': audited,
     };
     final temp = File('${root.path}/status.tmp');
@@ -174,6 +175,15 @@ Future<void> main() async {
           try {
             switch (command['action']) {
               case 'start':
+                await controller.enableReceiving(port: port);
+              case 'network_start':
+                final selected = command['interface'] as String;
+                await controller.enumerateInterfaces();
+                if (!controller.interfaces.containsKey(selected)) {
+                  throw StateError('Explicit assigned IPv4 interface required');
+                }
+                await controller.stop();
+                controller.discoveryInterface = selected;
                 await controller.enableReceiving(port: port);
               case 'start_paused':
                 if (controller.running ||
@@ -216,6 +226,35 @@ Future<void> main() async {
                   );
                 }
                 await controller.decide(command['transferId'] as String, true);
+              case 'accept_network':
+                final transfer = controller.transfers[command['transferId']];
+                final offered = controller.files[command['transferId']];
+                final expected = (command['expected'] as List).cast<Map>();
+                const names = {'pnet-one.bin', 'pnet-two.bin'};
+                if (transfer?['peer_fingerprint'] != command['fingerprint'] ||
+                    expected.isEmpty ||
+                    expected.length > 2 ||
+                    offered?.length != expected.length ||
+                    expected.map((f) => f['name']).toSet().length !=
+                        expected.length ||
+                    expected.any(
+                      (f) =>
+                          !names.contains(f['name']) ||
+                          f['size'] != 2 * 1024 * 1024,
+                    ) ||
+                    offered!.any(
+                      (f) => !expected.any(
+                        (e) =>
+                            e['name'] == f['name'] &&
+                            e['size'] == f['size'] &&
+                            e['sha256'] == f['sha256'],
+                      ),
+                    )) {
+                  throw StateError(
+                    'Only explicitly pinned network fixtures allowed',
+                  );
+                }
+                await controller.decide(command['transferId'] as String, true);
               case 'audit':
                 await controller.ensureLocal();
                 await controller.loadInbox(reset: true);
@@ -224,7 +263,9 @@ Future<void> main() async {
                 await exports.create();
                 for (final receipt in controller.inbox.values) {
                   final name = receipt['name'] as String;
-                  if (!RegExp(r'^p32-[a-z]+\.bin$').hasMatch(name)) {
+                  if (!RegExp(
+                    r'^(p32-[a-z]+|pnet-(one|two))\.bin$',
+                  ).hasMatch(name)) {
                     throw StateError('Unexpected fixture');
                   }
                   await controller.withReceipt(receipt['id'] as String, (

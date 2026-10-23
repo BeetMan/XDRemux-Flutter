@@ -46,6 +46,8 @@ Build the optional library with `tools/native/build-transfer.ps1 -Platform windo
 
 Every controller `stop()` revokes earlier pending starts, including a receive request still waiting for shared read cleanup. Startup rechecks that cancellation after directory selection, native startup and initial refresh. A cancelled call reports `closed`; already-started native initialization is awaited and disposed before stop completes, with no forced worker kill or automatic LAN restart. A later explicit action can start a new runtime using the same storage/identity. See [startup cancellation validation](../../../../../docs/testing/local-transfer-startup.md).
 
+`tool/transfer_network_host.py` prepares a staged Windows-native-to-Android interruption check with nonce-bound manual confirmation, network-down, reconnect and retry checkpoints. It never changes OS network settings or auto-selects a reconnected ADB device. Its self-test uses owned loopback services and an injected opaque-relay cut; that result is explicitly `realNetworkValidation=not_run`. The manual workflow, one-direction scope and settings/background-policy limitations are in [network script preparation](../../../../../docs/testing/local-transfer-network.md).
+
 Validation:
 
 ```powershell

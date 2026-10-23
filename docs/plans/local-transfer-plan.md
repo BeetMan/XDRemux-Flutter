@@ -103,6 +103,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 
 2026-10-24 修复启动与停止竞态：每次停止都会撤销更早的待完成启动，包含等待目录、原生初始化和旧读取清理期间的接收请求；已开始的原生初始化仍等完成后释放。5 项新增竞态回归及 2 项真实 DLL 端口／同根恢复检查通过，完整 Flutter 108 项和 analyze 通过；Windows／Android 普通 release 包完成库一致性核对。见 [启动取消记录](../testing/local-transfer-startup.md)。同日后续以生产 controller 完成 Android 目录／native 等待点下实际 Home 取消，以及部分上传 Home／强停／锁屏和手动解锁恢复。启动等待点在返回前台、确认真实 pause/resume 后才释放，不计作后台即时清理或自然慢启动耗时证明；见 [补验边界](../testing/local-transfer-startup-android.md)。
 
+2026-10-24 按用户安排仅准备真实网络变化脚本，未操作手机或网络。新增分阶段人工 checkpoint、无线 ADB 重连信息交接、同身份显式重试及独立哈希核对；先覆盖 Windows 原生发送 → Android 接收。7 项离线检查、真实 DLL 的回环 relay 切断／换端口演练及测试 APK 构建通过；真机断网、反向及官方客户端共存不计通过。复现与边界见 [网络脚本准备](../testing/local-transfer-network.md)。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。
