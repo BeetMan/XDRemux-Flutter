@@ -44,6 +44,8 @@ Reconnecting clears the selected peer before probing, including failure or cance
 
 Build the optional library with `tools/native/build-transfer.ps1 -Platform windows|android`, then build Flutter normally. Windows CMake and Android Gradle detect the canonical crate target outputs; explicit overrides are `XDREMUX_WINDOWS_TRANSFER_DLL` and `XDREMUX_ANDROID_TRANSFER_SO`. Missing optional libraries do not invoke Cargo or break ordinary image builds. LocalSend's Apache license is copied into the corresponding bundle. The isolated release integration target additionally uses `XDREMUX_TRANSFER_TEST_APP=true` to install `.transferdev` alongside the real app; never set this for production. See [P2.2 validation](../../../../../docs/testing/local-transfer-p22.md).
 
+Every controller `stop()` revokes earlier pending starts, including a receive request still waiting for shared read cleanup. Startup rechecks that cancellation after directory selection, native startup and initial refresh. A cancelled call reports `closed`; already-started native initialization is awaited and disposed before stop completes, with no forced worker kill or automatic LAN restart. A later explicit action can start a new runtime using the same storage/identity. See [startup cancellation validation](../../../../../docs/testing/local-transfer-startup.md).
+
 Validation:
 
 ```powershell

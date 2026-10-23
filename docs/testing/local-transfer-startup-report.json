@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "baseCommit": "5f5c0ea053ed86500ff5f94713a53f0e96c47d77",
+  "scope": "Controller startup cancellation and stop ordering",
+  "status": "covered local startup/stop cases passed; full device/network matrix remains pending",
+  "beforeFix": {
+    "targetedFailed": 5
+  },
+  "checks": {
+    "newControlledRegressions": 5,
+    "newRealDllTests": 2,
+    "existingRealDllConfirmationTests": 2,
+    "flutterTests": 108,
+    "realDllTestsEnabled": true,
+    "classifierHomeQueueFixtureEnabled": true,
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true
+  },
+  "controlledCases": [
+    "stop_during_directory_selection_for_local_and_receive",
+    "stop_during_native_start_for_local_and_receive",
+    "second_stop_revokes_receive_waiting_for_read_cleanup"
+  ],
+  "behavior": [
+    "every_stop_invalidates_older_start_requests_even_when_sharing_cleanup",
+    "cancelled_start_returns_closed_without_discovery_or_metadata_dispatch",
+    "already_started_native_initialization_is_awaited_then_disposed",
+    "new_explicit_action_can_reuse_root_identity_and_start_new_runtime"
+  ],
+  "realDllStartup": {
+    "passed": true,
+    "scope": "Real Windows DLL and worker, owned loopback HTTPS",
+    "checks": [
+      "local_start_cancelled_port_and_root_reusable",
+      "receive_start_cancelled_port_and_root_reusable"
+    ],
+    "stopWaitedForNativeStartup": true,
+    "receiveAndDiscoveryRemainOff": true,
+    "noMetadataDispatch": true,
+    "receivePortRebound": true,
+    "sameRootIdentityPreserved": true,
+    "explicitRestartNewRuntime": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "existingConfirmationRegression": {
+    "passed": true,
+    "scope": "Windows real DLL and Dart worker over owned loopback HTTPS",
+    "checks": [
+      "revocation_before_dispatch_sends_no_metadata_or_content",
+      "selected_receiver_and_source_snapshot_survive_async_startup"
+    ],
+    "receivedFiles": 1,
+    "receivedBytes": 65536,
+    "independentSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+    "sourceUnchanged": true,
+    "unselectedReceiverReceivedNothing": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "707a720509536e50068f915b6c955fc61af985ef9e27e561fcb4531f54291815",
+      "aotSha256": "c79586c7943fcd80e8fa285feb76b3fdb3ee10415cd72837da25113f9dde667e",
+      "transferLibrarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+      "sameLibraryAsRealDllTests": true,
+      "imageLibraryUnchanged": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "targetSdk": 36,
+      "apkSha256": "0f123042cf693362bc96fbe415c731ead85b54ee1d87cc497b22ca7903546fcb",
+      "packagedTransferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "transferLibraryUnchanged": true,
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    }
+  },
+  "transferAbi": "1.3",
+  "nativeLibrariesChanged": false,
+  "coreAndAbiSourceChanged": false,
+  "lockfilesChanged": false,
+  "phoneOperated": false,
+  "networkOrFirewallSettingsChanged": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "limits": [
+    "real DLL checks bind owned loopback HTTPS, not a LAN device",
+    "no hard deadline or forced termination for native initialization/disk operations",
+    "previous Android lifecycle evidence is historical; this controller change was not device-retested"
+  ],
+  "pending": [
+    "Android startup/background race on device",
+    "unlock recovery",
+    "real Wi-Fi/network switch",
+    "VPN/multi-NIC/AP isolation and permission revocation",
+    "older/same-host official clients",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

@@ -17,6 +17,9 @@ class _Native extends TransferService {
   String? startError;
   String? probeError;
   Future<void>? probeGate;
+  Future<void>? startGate;
+  Completer<void>? startEntered;
+  int startCalls = 0;
   String direction = 'receive';
   bool retryAvailable = false;
   List<Map<String, dynamic>>? fileRows;
@@ -31,6 +34,9 @@ class _Native extends TransferService {
     String alias = 'XDRemux',
     String? pin,
   }) async {
+    startCalls++;
+    startEntered?.complete();
+    await startGate;
     if (startError != null) return TransferAvailability(false, startError);
     ready = {
       'address': bind,
@@ -285,6 +291,90 @@ void main() {
     );
     return gate;
   }
+
+  for (final receive in [false, true]) {
+    test(
+      'startup boundary: stop during directory selection receive=$receive',
+      () async {
+        final gate = await gateStartup();
+        final opening = receive
+            ? controller.enableReceiving()
+            : controller.ensureLocal();
+        final rejected = expectLater(
+          opening,
+          throwsA(
+            isA<TransferException>().having((e) => e.code, 'code', 'closed'),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.starting, isTrue);
+        final closing = controller.stop();
+        gate.complete(Directory.systemTemp);
+        await Future.wait([rejected, closing]);
+        expect(controller.running, isFalse);
+        expect(controller.receiving, isFalse);
+        expect(native.startCalls, 0);
+        expect(native.ended, isTrue);
+        expect(native.calls, isEmpty);
+      },
+    );
+    test(
+      'startup boundary: stop during native startup receive=$receive',
+      () async {
+        final gate = Completer<void>();
+        native.startGate = gate.future;
+        native.startEntered = Completer<void>();
+        final opening = receive
+            ? controller.enableReceiving()
+            : controller.ensureLocal();
+        final rejected = expectLater(
+          opening,
+          throwsA(
+            isA<TransferException>().having((e) => e.code, 'code', 'closed'),
+          ),
+        );
+        await native.startEntered!.future;
+        final closing = controller.stop();
+        expect(native.ended, isFalse);
+        gate.complete();
+        await Future.wait([rejected, closing]);
+        expect(controller.running, isFalse);
+        expect(controller.receiving, isFalse);
+        expect(native.startCalls, 1);
+        expect(native.ended, isTrue);
+        expect(native.calls, isEmpty);
+      },
+    );
+  }
+  test(
+    'startup boundary: a second stop revokes receive waiting for read cleanup',
+    () async {
+      await controller.ensureLocal();
+      final entered = Completer<void>(), finish = Completer<void>();
+      final reading = controller.withReceipt('id', (_) async {
+        entered.complete();
+        await finish.future;
+      });
+      await entered.future;
+      final opening = controller.enableReceiving();
+      final rejected = expectLater(
+        opening,
+        throwsA(
+          isA<TransferException>().having((e) => e.code, 'code', 'closed'),
+        ),
+      );
+      final closing = controller.stop();
+      finish.complete();
+      await Future.wait([reading, closing, rejected]);
+      expect(controller.running, isFalse);
+      expect(controller.receiving, isFalse);
+      expect(native.startCalls, 1);
+      expect(
+        native.calls.where((c) => c['command'] == 'discovery_start'),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'confirmation boundary: revocation during startup prevents metadata dispatch',
