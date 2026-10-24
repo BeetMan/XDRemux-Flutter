@@ -40,7 +40,11 @@ MAX_GLIBC="2.35"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 # Ubuntu 22.04 (jammy) libnuma1, built against glibc 2.35. Bundled because the
 # Rust core NEEDs libnuma.so.1, which stock Ubuntu 22.04 desktop does not ship.
-LIBNUMA_DEB_URL="http://archive.ubuntu.com/ubuntu/pool/main/n/numactl/libnuma1_2.0.14-3ubuntu2_amd64.deb"
+LIBNUMA_DEB_URL="https://archive.ubuntu.com/ubuntu/pool/main/n/numactl/libnuma1_2.0.14-3ubuntu2_amd64.deb"
+# Pinned from the Ubuntu archive over HTTPS. Verify both the package and its
+# extracted library so caches created by earlier, unverified versions are not trusted.
+LIBNUMA_DEB_SHA256="0721c89001fbbd1ada23e89da5d60e762763c1a7b3dc814a2e9a518480a8043d"
+LIBNUMA_SO_SHA256="3582bce922d99959ee3eb6b7d686c0b99e14c2135616ad4d9d608b2118a7e78c"
 
 version=""
 output_dir="$repo_root/build/linux-packages"
@@ -126,6 +130,10 @@ download_with_proxy_fallback() {
   else
     return 1
   fi
+}
+
+verify_sha256() {
+  [[ -f "$1" ]] && printf '%s  %s\n' "$2" "$1" | sha256sum --check --status
 }
 
 # --- libnuma -----------------------------------------------------------------
@@ -225,7 +233,7 @@ resolve_libnuma() {
   fi
 
   local cached="$cache_dir/libnuma-ubuntu22.04.so.1"
-  if [[ -f "$cached" ]] && libnuma_is_compatible "$cached"; then
+  if verify_sha256 "$cached" "$LIBNUMA_SO_SHA256" && libnuma_is_compatible "$cached"; then
     printf '%s\n' "$cached"
     return 0
   fi
@@ -239,13 +247,19 @@ resolve_libnuma() {
 
   local deb="$cache_dir/libnuma1_2.0.14-3ubuntu2_amd64.deb"
   mkdir -p "$cache_dir"
-  if [[ ! -f "$deb" ]]; then
+  if ! verify_sha256 "$deb" "$LIBNUMA_DEB_SHA256"; then
     log "fetching Ubuntu 22.04 libnuma1 (glibc $MAX_GLIBC baseline)"
-    download_with_proxy_fallback "$LIBNUMA_DEB_URL" "$deb" \
-      || { rm -f "$deb"; die "could not download $LIBNUMA_DEB_URL"; }
+    local partial="$deb.part"
+    download_with_proxy_fallback "$LIBNUMA_DEB_URL" "$partial" \
+      || { rm -f "$partial"; die "could not download $LIBNUMA_DEB_URL"; }
+    verify_sha256 "$partial" "$LIBNUMA_DEB_SHA256" \
+      || { rm -f "$partial"; die "libnuma1 package SHA256 mismatch"; }
+    mv -f "$partial" "$deb"
   fi
   extract_deb_libnuma "$deb" "$cached" \
     || die "could not extract libnuma.so.1 from $deb (need ar and tar with zstd support)"
+  verify_sha256 "$cached" "$LIBNUMA_SO_SHA256" \
+    || die "extracted libnuma.so.1 SHA256 mismatch"
   libnuma_is_compatible "$cached" \
     || die "extracted libnuma.so.1 is not compatible with glibc $MAX_GLIBC"
   printf '%s\n' "$cached"

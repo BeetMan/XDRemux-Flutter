@@ -46,8 +46,24 @@ exec "$XDREMUX_HOME/xdremux" "$@"
 EOF
 chmod 755 "$launcher"
 
-sed "s|^Exec=.*|Exec=$launcher %F|" "$here/xdremux.desktop" \
-  > "$desktop_dir/xdremux.desktop"
+# Desktop entries use command-line quoting followed by string-value escaping,
+# not shell or sed quoting. Keep spaces, ampersands and literal field codes safe.
+desktop_exec="$launcher"
+desktop_exec="${desktop_exec//\\/\\\\}"
+desktop_exec="${desktop_exec//\"/\\\"}"
+desktop_exec="${desktop_exec//\$/\\\$}"
+desktop_exec="${desktop_exec//\`/\\\`}"
+desktop_exec="${desktop_exec//\\/\\\\}"
+desktop_exec="${desktop_exec//%/%%}"
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if [[ "$line" == Exec=* ]]; then
+    # Use a fixed executable: GLib checks that it exists before expanding %%
+    # in arguments, so a launcher path containing a literal percent otherwise fails.
+    printf 'Exec=/bin/sh "%s" %%F\n' "$desktop_exec"
+  else
+    printf '%s\n' "$line"
+  fi
+done < "$here/xdremux.desktop" > "$desktop_dir/xdremux.desktop"
 cp -f "$here/xdremux.png" "$icon_dir/xdremux.png"
 chmod a+r "$desktop_dir/xdremux.desktop" "$icon_dir/xdremux.png"
 

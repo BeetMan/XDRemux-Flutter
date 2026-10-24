@@ -1,5 +1,15 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-24：Linux PR #12 审查整合（0.4.5，不发布）
+
+- 用户授权审查并合并 Linux 适配 PR #12；保留主线 JPEG HDR/ICC 修复和 Flutter `0.4.5+39` / Rust `0.4.5`，不创建标签、发布版本或改动已有 Release 资产。
+- [x] 同步最新 main 到候选，审查 Linux runner、GTK 拖放/命令行导入、FFI、插件筛选、glibc 兼容 shim、AppImage/tar.gz 与用户级安装。Linux 仍标注为预览平台，不将作者的 Arch 验证扩展为本轮全发行版验收。
+- [x] 修复 FFI 从 `apps/flutter` 查找 Cargo 产物时多一级父目录；libnuma 改用 HTTPS，固定并核对 Ubuntu 原始 deb 与提取库的 SHA256，拒绝旧缓存污染和错误下载。
+- [x] 修复桌面入口路径的空格、引号、反斜杠、美元符、反引号、百分号及 `&` / `|` 转义；以真实 GLib 桌面入口启动临时目录中的测试应用。所有测试安装仅在临时目录，不触及实际用户安装。
+- [x] Linux CI 新增相关 PR 自动构建，Ubuntu 22.04 专属 x265 缓存，Rust locked 构建；构建 job 只读，Release 上传拆成仅手动执行的独立写权限 job，并校验附件版本与标签一致。未运行发布任务。
+- [x] WSL Ubuntu 上 Bash 语法、两项回归套件（共 7 个子场景）通过；Windows 宿主 Rust 258 passed / 7 ignored。实际 Ubuntu 22.04 桌面构建由新增 CI 检查，完整 GUI/图库和多发行版验收仍需后续进行。
+- [ ] 最新 PR CI 通过后合并 main，并记录实际结果。PR：<https://github.com/BeetMan/XDRemux-Flutter/pull/12>。
+
 ## 2026-10-24：JPEG 修复合入主线并准备 0.4.5（不发布）
 
 - 用户授权把 Issue #11 HDR 识别修复与 JPEG RGB ICC 保真修复合回 main，版本提升为 0.4.5，暂不发版。

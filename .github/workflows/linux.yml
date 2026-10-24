@@ -9,6 +9,14 @@ name: Linux
 # first-class release platform, add this job to release.yml instead of
 # uploading from here.
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/linux.yml'
+      - 'apps/flutter/**'
+      - 'xdremux/rust/**'
+      - 'Cargo.*'
+      - 'tools/linux/**'
   workflow_dispatch:
     inputs:
       version:
@@ -21,7 +29,7 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   X265_TAG: 4.2
@@ -35,6 +43,8 @@ jobs:
     # glibc baseline that also runs on newer distributions (Ubuntu 22.04 =
     # glibc 2.35).
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -50,12 +60,16 @@ jobs:
           clang --version
           cmake --version
 
+      - name: Test packaging helpers and user-level installer
+        run: python3 -m unittest discover -s tools/linux -p 'test_*.py' -v
+
       - name: Restore x265 build
         id: x265-cache
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-linux-${{ env.X265_TAG }}-asm
+          # Never reuse objects compiled on ubuntu-latest with a newer glibc.
+          key: x265-linux-jammy-${{ env.X265_TAG }}-asm
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -83,7 +97,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Rust core
-        run: cargo build -p xdremux-core --release
+        run: cargo build --locked -p xdremux-core --release
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -95,9 +109,11 @@ jobs:
       - name: Resolve release version
         id: version
         shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$REQUESTED_VERSION"
           if [ -z "$version" ]; then
             version="$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' \
               apps/flutter/pubspec.yaml | head -n 1)"
@@ -160,12 +176,29 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  attach-release:
+    name: Attach to existing release (manual only)
+    needs: linux-x64
+    if: github.event_name == 'workflow_dispatch' && inputs.attach_release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-release
+          path: dist
       - name: Attach artifacts to existing release
-        if: inputs.attach_release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.attach_release_tag }}
+          ASSET_VERSION: ${{ needs.linux-x64.outputs.version }}
         run: |
-          gh release upload "${{ inputs.attach_release_tag }}" \
+          # Do not accidentally replace another version's assets.
+          test "$RELEASE_TAG" = "v$ASSET_VERSION"
+          gh release upload "$RELEASE_TAG" \
             dist/XDRemux-Linux-*.AppImage \
             dist/XDRemux-Linux-*.tar.gz \
             dist/XDRemux-Linux-*.sha256 \

@@ -229,8 +229,8 @@ class XdRemuxFFI {
     candidates.add('build/linux/arm64/debug/bundle/lib/$name');
     candidates.add('build/linux/arm64/release/bundle/lib/$name');
     // Cargo output, relative to apps/flutter.
-    candidates.add('../../../target/release/$name');
-    candidates.add('../../../target/debug/$name');
+    candidates.add('../../target/release/$name');
+    candidates.add('../../target/debug/$name');
     // Cargo output, resolved from the bundle dir
     // (apps/flutter/build/linux/<arch>/<mode>/bundle -> repo root).
     candidates.add('$exeDir/../../../../../../../target/release/$name');

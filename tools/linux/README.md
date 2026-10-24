@@ -3,6 +3,12 @@
 Publishable Linux artifacts are produced from an existing Flutter release bundle.
 Nothing here publishes or uploads anything.
 
+The main development version is 0.4.5 (not yet released). The 0.4.4 names below
+describe the existing preview assets; use the checked-out pubspec version when
+building new candidates. The Linux workflow runs on matching pull requests and
+manual dispatch, with read-only build permissions. Only a separate, explicitly
+requested manual attachment job can write to an existing matching release.
+
 ## Build the bundle first
 
 ```bash
@@ -62,6 +68,15 @@ on the target, so the packager resolves a compatible copy in this order:
 3. the host's `libnuma.so.1`, if it only needs glibc <= 2.35
 4. download `libnuma1` from the Ubuntu 22.04 archive and cache the extracted
    library
+
+Archive downloads use HTTPS and a pinned SHA256. The extracted Ubuntu library
+also has a pinned SHA256, including when reusing an existing cache. Old,
+unverified cached files are not trusted. `XDREMUX_LIBNUMA` remains an explicit
+trusted override. Regression tests (Bash/sha256sum and GLib required):
+
+```bash
+python3 -m unittest discover -s tools/linux -p 'test_*.py' -v
+```
 
 libnuma is LGPL-2.1-or-later (numactl); the notice is included in the packaged
 `README.txt`.

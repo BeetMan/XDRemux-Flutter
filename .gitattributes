@@ -4,3 +4,6 @@ apps/flutter/ios/SwiftBackend/** linguist-vendored
 
 # Third-party Zstandard C implementation used for Apple rear.depth decoding.
 apps/flutter/ios/SwiftBackend/Sources/CZstdDecompress/** linguist-vendored
+
+# Linux packaging scripts must also run from a Windows checkout under WSL.
+tools/linux/*.sh text eol=lf
