@@ -89,4 +89,70 @@ void main() {
       });
     }
   }
+
+  // iPhone Duo (iOS 27.1 simulator) reports 466x678pt with the safe area on the
+  // right edge (84pt, a side-mounted status/camera strip). Apple's own apps keep
+  // surfaces edge-to-edge and inset only the content, so the Scaffold must stay
+  // 466pt wide while the header/actions stay out of the strip.
+  testWidgets('Duo side inset keeps the app bar and progress header inside', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1398, 2034);
+    tester.view.devicePixelRatio = 3;
+    tester.view.padding = FakeViewPadding(right: 252, bottom: 102);
+    tester.view.viewPadding = FakeViewPadding(right: 252, bottom: 102);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const XdRemuxApp());
+    await tester.pumpAndSettle();
+
+    const usableWidth = 466.0 - 84.0;
+    // Surfaces stay edge-to-edge: only the content is inset.
+    final scaffold = tester.getSize(find.byType(Scaffold).first);
+    expect(scaffold.width, moreOrLessEquals(466.0, epsilon: 0.5));
+
+    final bar = tester.getRect(find.byType(LinearProgressIndicator).first);
+    expect(bar.right, greaterThan(0));
+    expect(bar.right, lessThanOrEqualTo(usableWidth + 0.5));
+
+    final iconButtons = find.byType(IconButton);
+    expect(iconButtons, findsWidgets);
+    final rightMost = tester.getRect(iconButtons.last);
+    expect(rightMost.right, lessThanOrEqualTo(usableWidth + 0.5));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // When the platform reports a trailing vertical bar (iOS 27
+  // `UITraitCollection.verticalBarEdge`, which iPhone Duo reports as trailing),
+  // the actions move into the reserved strip and the content keeps 382pt.
+  testWidgets('Duo trailing vertical bar holds actions inside the strip', (
+    tester,
+  ) async {
+    PlatformLayoutTraits.verticalBarEdge = 'trailing';
+    addTearDown(() => PlatformLayoutTraits.verticalBarEdge = 'unspecified');
+    tester.view.physicalSize = const Size(1398, 2034);
+    tester.view.devicePixelRatio = 3;
+    tester.view.padding = FakeViewPadding(right: 252, bottom: 102);
+    tester.view.viewPadding = FakeViewPadding(right: 252, bottom: 102);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const XdRemuxApp());
+    await tester.pumpAndSettle();
+
+    const stripLeft = 466.0 - 84.0;
+    for (final tooltip in ['添加文件', '设置']) {
+      final finder = find.byTooltip(tooltip);
+      expect(finder, findsOneWidget, reason: tooltip);
+      final rect = tester.getRect(finder);
+      expect(rect.left, greaterThanOrEqualTo(stripLeft - 0.5), reason: tooltip);
+      expect(rect.right, lessThanOrEqualTo(466.0 + 0.5), reason: tooltip);
+    }
+
+    // Content still stops before the strip.
+    final bar = tester.getRect(find.byType(LinearProgressIndicator).first);
+    expect(bar.right, lessThanOrEqualTo(stripLeft + 0.5));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
