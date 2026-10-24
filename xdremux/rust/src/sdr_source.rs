@@ -290,6 +290,11 @@ pub fn synthesize_sdr_source(
     data: &[u8],
     fallback_datetime: Option<&str>,
 ) -> Result<(Vec<u8>, ExtractedLhdr), String> {
+    // jpeg-decoder preserves device RGB coordinates. Other decoders may
+    // color-convert, so do not attach their original profiles blindly.
+    let icc = if data.starts_with(b"\xff\xd8") {
+        crate::jpeg_color::read_rgb_icc(data)?
+    } else { None };
     let (mut rgb, mut w, mut h, oriented) = decode_to_rgb(data)?;
 
     // Exif is read independently of Ultra HDR support: a vendor JPEG with an
@@ -336,7 +341,7 @@ pub fn synthesize_sdr_source(
     });
 
     let container =
-        uhdr_jpeg::synthesize_source_container_from_rgb(&rgb, w, h, exif_tiff, true)?;
+        uhdr_jpeg::synthesize_source_container_from_rgb_with_icc(&rgb, w, h, exif_tiff, true, icc.as_deref())?;
     let extracted = ExtractedLhdr {
         mode: "uhdr".into(),
         meta_bytes: Vec::new(),

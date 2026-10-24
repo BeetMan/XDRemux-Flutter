@@ -6154,10 +6154,10 @@ class PhotoDetailsContent extends StatelessWidget {
                   _detailRow(
                     theme,
                     t('HDR 格式', 'HDR Format'),
-                    details.hdrKind != null
-                        ? 'ProXDR (${details.hdrKind!.toUpperCase()})'
-                        : (item.hdrKind != null ? 'ProXDR (${item.hdrKind!.toUpperCase()})' : t('无 (SDR)', 'None (SDR)')),
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
                   ),
+                  if (details.hdrParseError != null)
+                    _detailRow(theme, t('解析原因', 'Parse error'), details.hdrParseError!),
                   _detailRow(
                     theme,
                     t('EDR 亮度倍率', 'EDR Headroom'),
@@ -6299,11 +6299,11 @@ class PhotoDetailsContent extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _chip(theme, '$fileSizeMb MB'),
-                if (details.hdrKind != null || item.hdrKind != null)
+                if (details.hdrParseError != null || details.hdrKind != null || item.hdrKind != null)
                   _chip(
                     theme,
-                    'ProXDR (${(details.hdrKind ?? item.hdrKind!).toUpperCase()})',
-                    color: Colors.orange,
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
+                    color: details.hdrParseError != null ? Colors.red : Colors.orange,
                   ),
                 if (item.motionPhoto != null)
                   _chip(theme, t('实况照片', 'Live Photo'), color: Colors.blue),
@@ -6407,7 +6407,10 @@ class PhotoDetailsContent extends StatelessWidget {
     buffer.writeln('拍摄时间: ${details.dateTime ?? "-"}');
     buffer.writeln('图像分辨率: ${details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : "-"}');
     buffer.writeln('--- HDR & 动态范围 ---');
-    buffer.writeln('HDR 格式: ${details.hdrKind?.toUpperCase() ?? item.hdrKind?.toUpperCase() ?? "None"}');
+    buffer.writeln('HDR 格式: ${details.hdrFormatLabel(fallbackKind: item.hdrKind)}');
+    if (details.hdrParseError != null) {
+      buffer.writeln('HDR 解析原因: ${details.hdrParseError}');
+    }
     if (details.edrScale != null) {
       buffer.writeln('EDR Headroom: ${details.edrScale!.toStringAsFixed(2)}x');
     }

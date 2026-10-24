@@ -955,6 +955,7 @@ class PhotoDetailsModel {
   final int? width;
   final int? height;
   final String? hdrKind;
+  final String? hdrParseError;
   final double? edrScale;
   final double? gainMapMax;
 
@@ -973,6 +974,7 @@ class PhotoDetailsModel {
     this.width,
     this.height,
     this.hdrKind,
+    this.hdrParseError,
     this.edrScale,
     this.gainMapMax,
   });
@@ -993,9 +995,17 @@ class PhotoDetailsModel {
       width: json['width'] as int?,
       height: json['height'] as int?,
       hdrKind: json['hdrKind'] as String?,
+      hdrParseError: json['hdrParseError'] as String?,
       edrScale: (json['edrScale'] as num?)?.toDouble(),
       gainMapMax: (json['gainMapMax'] as num?)?.toDouble(),
     );
+  }
+
+  String hdrFormatLabel({String? fallbackKind}) {
+    if (hdrParseError != null) return t('HDR 解析失败', 'HDR parse failed');
+    if (!success) return t('无法读取', 'Unable to read');
+    final kind = hdrKind ?? fallbackKind;
+    return kind == null ? t('无 (SDR)', 'None (SDR)') : 'ProXDR (${kind.toUpperCase()})';
   }
 
   String get focalLengthSummary {

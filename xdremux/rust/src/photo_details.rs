@@ -32,6 +32,7 @@ pub struct PhotoDetails {
 
     // HDR GainMap Properties
     pub hdr_kind: Option<String>,
+    pub hdr_parse_error: Option<String>,
     pub edr_scale: Option<f64>,
     pub gain_map_max: Option<f64>,
 }
@@ -78,6 +79,9 @@ impl PhotoDetails {
         }
         if let Some(v) = &self.hdr_kind {
             map.insert("hdrKind".into(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = &self.hdr_parse_error {
+            map.insert("hdrParseError".into(), serde_json::Value::String(v.clone()));
         }
         if let Some(v) = self.edr_scale {
             if let Some(n) = serde_json::Number::from_f64(v) {
@@ -488,7 +492,24 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
     }
 
     // 3. HDR GainMap inspection (UHDR or LHDR)
-    if let Ok(extracted) = crate::extract_lhdr_or_uhdr_from_bytes(data) {
+    let extracted = if data.starts_with(b"\xff\xd8") {
+        match crate::uhdr_jpeg::parse(data) {
+            Ok(Some(info)) if info.gainmap_jpeg != crate::uhdr_jpeg::IDENTITY_GAINMAP_JPEG => {
+                Some(container::ExtractedLhdr {
+                    mode: "uhdr".into(), meta_bytes: Vec::new(),
+                    meta_floats: info.meta_floats,
+                    gainmap_use_base_color_space: info.use_base_color_space,
+                    mask_data: None, gainmap_data: Some(info.gainmap_jpeg),
+                    manifest_entries: None,
+                })
+            }
+            Err(error) => { details.hdr_parse_error = Some(error); None }
+            _ => None, // Identity metadata for styles is not evidence of HDR.
+        }
+    } else {
+        crate::extract_lhdr_or_uhdr_from_bytes(data).ok()
+    };
+    if let Some(extracted) = extracted {
         details.hdr_kind = Some(extracted.mode.clone());
         let (edr_scale, gain_map_max) = if extracted.mode == "uhdr" {
             let scale = if extracted.meta_floats.len() >= 19 {
