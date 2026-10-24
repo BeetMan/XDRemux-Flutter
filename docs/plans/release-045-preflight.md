@@ -38,7 +38,7 @@ Android 修正版 `XDRemux-Android-ci-c33bd59.apk`，11,931,701 bytes；本地�
 - [x] 六平台候选已下载/集中留存在忽略目录 `target/preflight-045/cloud/`：Windows Setup、Android APK、macOS DMG、iOS unsigned IPA、Linux AppImage/tar.gz/sha256、Flutter OHOS unsigned HAP。没有提交二进制。
 - [x] 下载后的 iOS IPA 版本、设备 ARM64、Mach-O SDK 27.1/最低系统 15.0、ZIP CRC 通过；Linux 两个资产 SHA256 与校验文件一致，主程序/核心/引擎/libnuma 为 x64 ELF，无 JNI JVM 库。Windows installer ProductVersion 为 0.4.5。
 - 文件大小与 SHA256、iOS/Linux 实包验证结果记录在 `target/preflight-045/cloud-verification.json`。OHOS 完整静态证据在 `target/oh045-1025/BUILD-REPORT.md`。本轮没有签名或安装 iOS/HAP，没有启动候选 app 或操作手机。
-- 准备改动同步 main，不创建 v0.4.5 标签，不发布或修改任何 GitHub Release；全平台构建/静态检查完成不等于下面的人工验收已通过。
+- [x] 准备改动已同步 main（代码/验证记录提交 `7484f018`）；其 [CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40125969937) 与 [Conformance](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40125969938) 全部通过，包含新增 SDK/APK 门禁测试。不创建 v0.4.5 标签，不发布或修改任何 GitHub Release；全平台构建/静态检查完成不等于下面的人工验收已通过。
 
 Windows ARM64 不可交付，不计入六平台门禁；本次实验任务在 Flutter SDK setup 按预期失败。鸿蒙原生已由独立流程发布 `harmony-v0.5.2`（2026-10-25 本地时间），本轮未修改或重打原生包。云端预检产物可能使用 `ci-<sha>` 文件名，但应用内部版本必须是 0.4.5；正式发布才使用标签版本文件名。
 
