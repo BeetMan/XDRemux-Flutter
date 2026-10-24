@@ -203,7 +203,12 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
     return Scaffold(
       appBar: AppBar(title: Text(t('Rust 人像模式实验室', 'Rust Portrait Lab'))),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).right,
+          32,
+        ),
         children: [
           Card(
             color: theme.colorScheme.secondaryContainer,

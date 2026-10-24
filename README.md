@@ -8,27 +8,41 @@ XDRemux 是一款跨平台照片格式转换工具。它将 OPPO、一加、real
 
 Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS。HarmonyOS 另有共用 Rust 引擎的 ArkUI 原生预览版。
 
-[下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native)
+[官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native)
 
-> 当前跨平台版本：**v0.4.3**。鸿蒙原生预览版：**0.5.0-alpha1**。
+> 当前已发布跨平台版本：**v0.4.4**。鸿蒙原生版：**0.5.1**，使用独立发布标签与安装包。
+> 主线开发版本：**0.4.5+39（尚未发布）**，包含 JPEG HDR 兼容性与 ICC 色彩配置保留修复，见 [0.4.5 待发布更新说明](tools/installer/RELEASE_NOTES_v0.4.5.md)。下方仍为已发布版本的下载链接。
 > Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果取决于原始照片结构、系统版本和目标设备。请保留原图，先用少量照片验证自己的工作流。
 
 ## 下载与安装
 
-[v0.4.3 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.3) 同时提供跨平台版和鸿蒙原生预览版。请选择对应平台的文件：
+跨平台版下载见 [v0.4.4 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)，鸿蒙原生版下载见 [harmony-v0.5.1 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.1)。请选择对应平台的文件：
 
 | 平台 / 版本 | 安装包 | 安装方式 |
 |---|---|---|
-| Windows x64 · Flutter | [Setup.exe](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-Windows-0.4.3-Setup.exe) | 运行安装器，无需另装 ffmpeg |
-| macOS · Flutter | [DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-macOS-0.4.3.dmg) | 将应用拖入 Applications |
-| Android · Flutter | [APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-Android-0.4.3.apk) | 安装 APK |
-| iOS · Flutter | [未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-iOS-0.4.3-unsigned.ipa) | 需自行签名侧载 |
-| HarmonyOS · Flutter | [未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-HarmonyOS-0.4.3-unsigned.hap) | 需本地签名安装 |
-| HarmonyOS · ArkUI 原生预览版 | [0.5.0-alpha1 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.3/XDRemux-HarmonyOS-Native-0.5.0-alpha1-unsigned.hap) | 需本地签名安装，详情见[原生分支说明](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md) |
+| Windows x64 · Flutter | [0.4.4 Setup.exe](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Windows-0.4.4-Setup.exe) | 运行安装器，无需另装 ffmpeg |
+| macOS · Apple Silicon · Flutter | [0.4.4 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-macOS-0.4.4.dmg) | 将应用拖入 Applications；当前包不支持 Intel Mac 转换 |
+| Linux x64 · Flutter（预览） | [0.4.4 AppImage](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Linux-0.4.4-x64.AppImage) · [tar.gz](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Linux-0.4.4-x64.tar.gz) | AppImage 单文件即用；tar.gz 解压后运行 `./run.sh` 或 `./install.sh`（用户级安装）。需 GTK3 与 glibc ≥ 2.35（Ubuntu 22.04+） |
+| Android · Flutter | [0.4.4 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Android-0.4.4.apk) | 安装 APK，使用相同签名可覆盖升级 |
+| iOS · Flutter | [0.4.4 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-iOS-0.4.4-unsigned.ipa) | 需自行签名侧载 |
+| HarmonyOS · Flutter | [0.4.4 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-HarmonyOS-0.4.4-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
+| HarmonyOS · ArkUI 原生版 | [0.5.1 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.1/XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
 
-当前发布不提供 Windows ARM64 安装包，也未创建 Flutter Linux 桌面目标。
+当前发布不提供 Windows ARM64 安装包。Linux x64 以预览资产形式随 v0.4.4 提供（AppImage / tar.gz，见上表），属于本地开发与验证可用、尚未纳入正式发布验收的平台；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。
 
-iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 请通过 DevEco Studio 配置本地签名；iOS 请使用适合自己设备的签名与侧载方式。
+iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 两个当前附件都供开发自签使用，证书与 Profile 需匹配包名和目标设备，且受设备范围与有效期约束；它们不是免签包或应用市场上架包。Flutter 与原生版包名不同，签名配置不能直接混用。iOS 请使用适合自己设备的签名与侧载方式。
+
+macOS 包未做 Developer ID 签名与公证，首次打开可能需要在「系统设置 → 隐私与安全性」中手动允许。下载后也可对照各 Release 提供的校验文件核对附件。
+
+## 0.4.4 / 原生 0.5.1 本轮更新
+
+- **Live Photo 完整导出**：Flutter 不再只导出静图；iOS 可在应用内保存为系统 Live Photo，Android 保存 HEIF + MOV 两份原文件，配对缺失或不匹配会明确报错。
+- **OPPO 前置人像**：支持符合条件的前摄深度数据，并修复 bit 33 拍摄分类；继续同步华为人像、HDR 与 Apple MakerNote 等核心修复。
+- **预览与诊断**：Flutter 增加 Rust 主图预览路径和编解码诊断，便于定位输入格式与解码能力问题；可选 libheif 默认未启用，不代表所有 HEIC 均可解码。
+- **移动端与打包**：修复 Live Photo 选项布局、底栏安全区及 macOS 核心库打包；常规 Flutter 工具链升级到 3.47.7，鸿蒙 Flutter 继续使用独立适配 SDK。
+- **鸿蒙原生 0.5.1**：同步转换核心修复，修复读取照片时返回造成的图库忙碌状态；当前 GitHub HAP 已改为开发自签用 Debug 包。
+
+完整变化与验证范围见 [Flutter 0.4.4 更新记录](tools/installer/RELEASE_NOTES_v0.4.4.md)和[鸿蒙原生 0.5.1 更新记录](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/apps/harmony/RELEASE_NOTES_v0.5.1.md)。
 
 ## 选择照片的输出方式
 
@@ -49,15 +63,15 @@ Flutter 版以转换队列为主要入口：导入照片、查看详情、选择
 2. **查看详情**：检查文件格式、尺寸、EXIF、HDR 类型、拍摄模式，以及识别到的动态照片信息。
 3. **选择转换方式**：在设置中选择输出模式，按需开启摄影风格、人像或动态照片处理。
 4. **开始转换**：在队列中查看进度与结果，失败项目可重试，也可调整设置后重新转换。
-5. **导出结果**：桌面端使用输出目录；移动端可保存静帧到图库或分享文件。Live Photo 请保留并一起导入配对文件。
+5. **导出结果**：桌面端使用输出目录；Android / iOS 可保存到相册或分享原文件。Live Photo 的系统保存方式因平台而异，见下方说明；鸿蒙 Flutter 当前仍有导出限制。
 
 应用还提供队列检查点恢复、分类输出、完成通知和中英文界面。移动端采用紧凑队列与底部操作栏，桌面端提供更宽的队列和详情布局；文件访问与后台运行能力按平台有所不同。
 
 ### 界面预览
 
-| Windows | macOS |
-|---|---|
-| ![Windows 主界面](screenshots/windows.png) | ![macOS 主界面](screenshots/macos.png) |
+| Windows | macOS | Linux（本地开发目标） |
+|---|---|---|
+| ![Windows 主界面](screenshots/windows.png) | ![macOS 主界面](screenshots/macos.png) | ![Linux 主界面](screenshots/linux.png) |
 
 | Android | iOS |
 |---|---|
@@ -71,7 +85,7 @@ Flutter 版以转换队列为主要入口：导入照片、查看详情、选择
 - **摄影风格 3（质感 + 颗粒）**：在基础摄影风格上加入用于质感、胶片颗粒与光晕编辑的数据；开启时会同时启用基础摄影风格。
 - **普通照片也可使用**：支持的普通 HEIC / HEIF / JPEG 可通过重编码生成完整风格容器，不限于 OPPO ProXDR。
 
-Rust 为默认实现；macOS / iOS 还保留可选的 Swift 后端。华为照片的专用处理路径始终使用 Rust，即使 Apple 平台选择了 Swift。
+当前产品转换统一使用 Rust 引擎，不再提供 Swift 转换后端切换。仓库中的 Apple 平台原生接口与研究代码不等于另一个可选产品引擎。
 
 需要注意：
 
@@ -85,13 +99,13 @@ Rust 为默认实现；macOS / iOS 还保留可选的 Swift 后端。华为照�
 
 ### OPPO 人像
 
-支持带 `rear.depth` 的 OPPO 人像照片，包括受支持的 HEIC 与 JPEG 导出结构。转换时优先使用尾部 `src.image` 中未虚化、未裁切、无品牌水印的相机底图，结合每张照片的深度标定数据生成 Apple 人像结构。
+支持带 `rear.depth` 的 OPPO 后摄人像照片，以及带受支持 `front.depth` / 标定信息的前摄人像原图（0.4.4 新增），包括受支持的 HEIC 与 JPEG 结构。后摄转换优先使用尾部 `src.image` 中未虚化、未裁切、无品牌水印的相机底图，结合每张照片的深度标定数据生成 Apple 人像结构。前摄与后摄结构不同，并非所有导出或重编码后的照片都保留所需数据。
 
 在 Apple 照片中关闭人像效果时可查看清晰底图，开启后由景深数据渲染虚化。**人像效果通常需要在 Apple 照片中手动开启**。缺少可用 `src.image` 时会回退到 OPPO 主图；缺少受支持深度数据则跳过人像转换。
 
-### 华为人像 · v0.4.3
+### 华为人像
 
-新增已验证的 **Mate 70 人像 HEIC → Apple 人像** 路径，包含视差、对焦区域、人像光效与主体蒙版，并支持在该路径上追加摄影风格数据。
+支持已验证的 **Mate 70 人像 HEIC → Apple 人像** 路径，包含视差、对焦区域、人像光效与主体蒙版，并支持在该路径上追加摄影风格数据。
 
 这项支持以现有 Mate 70 原始样片为依据，不代表所有华为机型与拍摄模式都已适配。实现与验证范围见[人像管线](docs/modules/portrait-pipeline.md)和[设备兼容矩阵](docs/validation/device-compat-matrix.md)。
 
@@ -107,7 +121,17 @@ XDRemux 可识别受支持的 OPPO / Android Motion Photo，以及华为 OpenHar
 
 已支持的结构包括 Android V1 / legacy MicroVideo、HEIF `mpvd`、OPPO LPEX，以及已验证的华为追加视频结构。
 
-> **Live Photo 是两个文件，不是一张 HEIC。** 请将 HEIC 和 MOV 一起导入 Apple 照片。当前「保存图库」与单文件分享只处理静帧，不会自动创建系统 Live Photo 资产；实况播放与声音仍需在目标设备上验证。
+**Live Photo 配对包含 HEIC + MOV 两份资源，不是一张 HEIC。** 「拆分静帧 + 视频」只是提取资源，不等于生成 Apple 配对标识。
+
+| 平台 | 当前保存与传输方式 |
+|---|---|
+| iOS · Flutter | 在应用内「保存到相册」通过 PhotoKit 将照片与配对视频写入同一个 Live Photo 资产；需要相册添加权限。 |
+| Android · Flutter | 保存 HEIF + MOV 两个独立媒体文件，或一起分享配对原文件；不承诺 Android 图库将其显示为本机实况。 |
+| Windows / macOS · Flutter | 保留输出目录中的配对文件，一起导入 macOS「照片」；文件存在不代表任意接收软件都会识别配对。 |
+| HarmonyOS · Flutter | 当前统一相册保存入口尚未接入（包括普通静图），双文件分享也未实现；成对文档导出建议使用鸿蒙原生版。 |
+| HarmonyOS · 原生 | 可从队列导出配对 HEIC + MOV 文档；与 Flutter 的 iOS PhotoKit 保存不是同一机制。 |
+
+向 iPhone 传输时不要只发静图，也不要经会压缩、重编码或丢弃元数据的途径。iPhone「文件」App 中选中两个文件后保存，不保证自动合成 Live Photo；已验证可通过 macOS「照片」导入配对后再 AirDrop 到 iPhone。实际播放、声音与编辑能力仍以目标设备验收为准。
 
 ## 华为 HDR：已经兼容的照片，不必重复转换
 
@@ -134,15 +158,16 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 跨平台版共用 Rust 核心，导入、预览、导出与后台运行则使用各平台的集成方式：
 
-- **Windows**：支持原生拖放。HEIC 队列预览使用系统 WIC，预览不可用时需检查系统 HEIF / HEVC 解码支持；转换本身不依赖这些预览扩展。
-- **macOS**：支持 Rust / Swift 后端选择，保留 Apple 原生 ImageIO 相关路径。
+- **Windows**：支持原生拖放；缩略图涉及系统 WIC，另有 Rust 主图预览与编解码诊断。预览失败不等于转换一定失败，系统预览解码能力与 Rust 转换能力应分别检查。
+- **macOS**：使用 Rust 转换核心，并通过 ImageIO 等原生接口集成预览；当前发布包的转换核心仅支持 Apple Silicon。
 - **Android**：使用系统文件选择器导入，支持分享接收、保存图库与前台服务后台转换；系统省电策略仍可能影响任务运行。
-- **iOS**：支持相册、文件与分享扩展导入，可选择 Rust / Swift 后端；提供自行签名的 IPA，未通过 App Store / TestFlight 分发。
-- **HarmonyOS（Flutter）**：通过鸿蒙 Flutter 引擎与插件接入系统选择器、分享和图库，使用同一套 Rust 转换核心。
+- **iOS**：支持相册、文件与分享扩展导入，使用 Rust 转换核心，PhotoKit 保存 Live Photo；提供自行签名的 IPA，未通过 App Store / TestFlight 分发。
+- **HarmonyOS（Flutter）**：通过独立鸿蒙 Flutter 引擎与插件接入系统选择器和单文件分享，使用 Rust 转换核心；当前统一相册保存与配对双文件分享仍未接入。
+- **Linux（本地开发 / 预览）**：使用 GTK 拖放与命令行参数导入照片，Rust FFI + 静态链接 x265 完成转换；文件选择走 XDG Desktop Portal。已提供 AppImage 与 tar.gz 预览包；系统托盘与完成通知暂未接入。
 
 **鸿蒙原生预览版**在 [`feat/harmony-native`](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native) 分支开发，采用 ArkTS / ArkUI，围绕「图库、队列、设置」组织界面。它共用 Rust 引擎，提供 HDR、摄影风格、人像与动态照片等核心能力；图库浏览、任务管理和导出交互则采用原生实现。
 
-原生版使用独立包名，可与 Flutter 版共存。当前版本为 **0.5.0-alpha1**，不意味着跨平台主线已经升级到 0.5.0。原生界面、构建方式与兼容边界请以[原生版 README](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md)为准。
+原生版使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版 `io.github.beetman.xdremux` 共存。当前版本为 **0.5.1**，独立标签 `harmony-v0.5.1` 不代表跨平台主线已经升级到 0.5.1。两端共享转换核心，但界面、预览、相册和文件导出分别集成，不能把一端的验收视为另一端已经通过。原生界面、构建方式与兼容边界请以[原生版 README](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md)为准。
 
 ## 使用前需要了解
 
@@ -158,14 +183,16 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 当前主线常规 Flutter 构建固定 **Flutter 3.47.7 / Dart 3.13.5**，与 CI 一致；版本记录在 `apps/flutter/.fvmrc`。鸿蒙 Flutter 仍使用独立适配 SDK，不直接替换为官方 SDK。国内开发沿用 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`。
 
+Linux 桌面本地开发使用同一 Flutter 3.47.7。系统依赖为 clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator 与 libnotify；Rust 核心按 CI 方式静态链接 x265 4.2，再由 `apps/flutter/linux/CMakeLists.txt` 打包进 `bundle/lib`。构建与运行步骤见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)；发布用 AppImage / tar.gz 由 `tools/linux/package_linux.sh` 生成（详见 [tools/linux/README.md](tools/linux/README.md)），产物保持 glibc 2.35（Ubuntu 22.04+）基线。
+
 产品说明与工程细节分开维护，构建和研究资料请从以下入口查阅：
 
 - [技术文档索引](docs/README.md)：架构、后端、FFI、照片格式与模块说明。
-- [五平台构建指南](docs/operations/building.md)：Rust、x265、Flutter 与鸿蒙构建。
+- [构建指南（Flutter / Rust / 鸿蒙，含 Linux 本地开发）](docs/operations/building.md)：Rust、x265、Flutter 与鸿蒙构建。
 - [发版指南](docs/operations/releasing.md)：打包、签名边界与发布检查。
 - [一致性测试](docs/testing/conformance-suite.md)：结构验证、样片回归与测试流程。
 - [设备兼容矩阵](docs/validation/device-compat-matrix.md)：已验证样片、平台证据和已知问题。
-- [v0.4.3 更新记录](tools/installer/RELEASE_NOTES_v0.4.3.md)：本次华为支持与可靠性改进。
+- [v0.4.4 更新记录](tools/installer/RELEASE_NOTES_v0.4.4.md)：Live Photo 导出、前摄人像、诊断、工具链与打包修复。
 - [鸿蒙原生工程说明](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/apps/harmony/README.md)：原生版构建、本地签名与设备安装。
 
 主线仓库结构：
@@ -173,7 +200,7 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 | 路径 | 用途 |
 |---|---|
 | `xdremux/rust/` | Rust 图像处理核心、容器解析、风格 / 人像 / 动态照片与 FFI |
-| `apps/flutter/` | Flutter App 与五平台集成 |
+| `apps/flutter/` | Flutter App 与各平台集成 |
 | `tests/conformance/` | 一致性与结构验证 |
 | `docs/` | 技术文档、研究计划与验证记录 |
 | `tools/` | 平台构建、安装器与发布工具 |
