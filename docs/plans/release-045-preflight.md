@@ -4,6 +4,13 @@
 
 ## 正式发布（2026-10-25）
 
+### 发布后维护者调整
+
+- 维护者手工精简了 Release 更新记录，当前页面已移除两份校验附件；保留这一安排，不恢复之前的长文或校验文件。下方“9 个资产”的记录是首次发布时的历史快照，不代表当前附件列表。
+- [x] 按用户要求把已发布的原生 0.5.2 HAP 原样附到 v0.4.5；源文件 SHA256 `0CD9DE1A81BAAFB54EC473F0115AF1DE4065A2CFC35C92F0FA8E100CF0DED96C`，6,823,863 bytes，身份 .arkui / 0.5.2+50200 / debug:true，ARM64 与 ZIP CRC 已核对。v0.4.5 新附件的服务器 SHA256/大小与原始发布文件一致，原生独立 Release 和标签不改动。
+- [x] 保留用户手写 Release 正文，只追加安装说明；写入前复查正文未变，写入后逐字核对保留的原文前缀和新增段落。macOS 沿用早期 0.3.2 Release 的限定 App 授权命令 `sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"`，iOS 和两种鸿蒙 HAP 明确签名侧载。主线 Release notes 与线上正文一致，README 和[独立安装说明](../operations/installing.md)同步；未修改 v0.4.5 标签。
+- [x] 当前 v0.4.5 为 8 个安装附件（含两个 Linux 格式、两种鸿蒙 HAP），不恢复被移除的校验附件。README 的 8 个直接下载 URL 与实际资产逐一匹配。更新后快照位于忽略目录 `target/release-045-20261025/maintainer-updated-release.json`。
+
 - [x] 维护者确认本轮验收无问题并授权发布 v0.4.5；未逐项提供设备、系统或用例结果，下面的明细不由代理自行补勾。
 - [x] 主线 `c0cf1228` 的 CI / Conformance 全绿，Flutter/Rust/安装器版本一致。正式说明移除候选状态，保留完整更新记录和支持限制。
 - [x] 从说明整理后的 main 提交 `408fd3ce` 创建并原子推送 v0.4.5 注释标签；未移动已有标签，未复用被拒绝的 Android 初版。

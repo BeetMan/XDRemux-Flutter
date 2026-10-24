@@ -16,7 +16,7 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 
 ## 下载与安装
 
-跨平台版下载见 [v0.4.5 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.5)，鸿蒙原生版下载见 [harmony-v0.5.2 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.2)。请选择对应平台的文件：
+[v0.4.5 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.5)同时提供 Flutter 跨平台版和鸿蒙原生 0.5.2；原生版的[独立发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.2)仍保留。请选择对应平台的文件，侧载和 macOS 授权步骤见[安装说明](docs/operations/installing.md)：
 
 | 平台 / 版本 | 安装包 | 安装方式 |
 |---|---|---|
@@ -26,13 +26,19 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 | Android ARM64 · Flutter | [0.4.5 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.5/XDRemux-Android-0.4.5.apk) | Android API 24+，相同签名可覆盖升级；不支持 32 位或 x86_64 设备 |
 | iOS · Flutter | [0.4.5 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.5/XDRemux-iOS-0.4.5-unsigned.ipa) | iOS 15+，需自行签名侧载；Duo 功能要求相应新系统 |
 | HarmonyOS · Flutter | [0.4.5 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.5/XDRemux-HarmonyOS-0.4.5-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
-| HarmonyOS · ArkUI 原生版 | [0.5.2 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.2/XDRemux-HarmonyOS-Native-0.5.2-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
+| HarmonyOS · ArkUI 原生版 | [0.5.2 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.5/XDRemux-HarmonyOS-Native-0.5.2-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
 
-当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.5 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。全平台文件可对照发布页的 `SHA256SUMS.txt` 校验。
+当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.5 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。请从上述官方发布页下载安装包。
 
 iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 两个当前附件都供开发自签使用，证书与 Profile 需匹配包名和目标设备，且受设备范围与有效期约束；它们不是免签包或应用市场上架包。Flutter 与原生版包名不同，签名配置不能直接混用。iOS 请使用适合自己设备的签名与侧载方式。
 
-macOS 包未做 Developer ID 签名与公证，首次打开可能需要在「系统设置 → 隐私与安全性」中手动允许。下载后也可对照各 Release 提供的校验文件核对附件。
+macOS 包未做 Developer ID 签名与公证。将应用拖入「应用程序」并确认下载来源可信后，在 Mac 终端执行，再打开应用：
+
+```bash
+sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
+```
+
+此命令仅清除该 App 的下载隔离标记；照片、文件访问权限仍需按系统提示单独授权。也可在「系统设置 → 隐私与安全性」中选择「仍要打开」。完整步骤见[安装与侧载说明](docs/operations/installing.md)。
 
 ## 0.4.5 / 原生 0.5.2 本轮更新
 
