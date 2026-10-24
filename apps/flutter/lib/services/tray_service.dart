@@ -23,19 +23,33 @@ typedef _ShowWindowDart = int Function(int hWnd, int nCmdShow);
 typedef _SetForegroundWindowNative = Int32 Function(IntPtr hWnd);
 typedef _SetForegroundWindowDart = int Function(int hWnd);
 
-final _user32 = DynamicLibrary.open('user32.dll');
-final _findWindow =
-    _user32.lookupFunction<_FindWindowNative, _FindWindowDart>(
-      'FindWindowW',
-    );
-final _showWindow =
-    _user32.lookupFunction<_ShowWindowNative, _ShowWindowDart>(
-      'ShowWindow',
-    );
-final _setForegroundWindow = _user32
-    .lookupFunction<_SetForegroundWindowNative, _SetForegroundWindowDart>(
-      'SetForegroundWindow',
-    );
+// User32 is opened lazily and only on Windows. Doing this at import time
+// throws on Linux/macOS ("user32.dll" cannot be loaded), which would crash
+// app startup as soon as main.dart imports this service.
+class _User32 {
+  _User32._(DynamicLibrary library)
+    : findWindow = library.lookupFunction<_FindWindowNative, _FindWindowDart>(
+        'FindWindowW',
+      ),
+      showWindow = library.lookupFunction<_ShowWindowNative, _ShowWindowDart>(
+        'ShowWindow',
+      ),
+      setForegroundWindow = library
+          .lookupFunction<
+            _SetForegroundWindowNative,
+            _SetForegroundWindowDart
+          >('SetForegroundWindow');
+
+  static _User32? _instance;
+
+  /// Only call on Windows; TrayService's initialized flag gates every caller.
+  static _User32 get instance =>
+      _instance ??= _User32._(DynamicLibrary.open('user32.dll'));
+
+  final _FindWindowDart findWindow;
+  final _ShowWindowDart showWindow;
+  final _SetForegroundWindowDart setForegroundWindow;
+}
 
 const int _swHide = 0;
 const int _swRestore = 9;
@@ -100,21 +114,21 @@ class TrayService {
 
   /// Hide the main window: remove it from the taskbar, keep the tray icon.
   static void hideWindow() {
-    if (!_initialized || _hidden) return;
+    if (!Platform.isWindows || !_initialized || _hidden) return;
     final hwnd = _findMainWindow();
     if (hwnd != 0) {
-      _showWindow(hwnd, _swHide);
+      _User32.instance.showWindow(hwnd, _swHide);
       _hidden = true;
     }
   }
 
   /// Restore the main window from the tray.
   static void showWindow() {
-    if (!_initialized || !_hidden) return;
+    if (!Platform.isWindows || !_initialized || !_hidden) return;
     final hwnd = _findMainWindow();
     if (hwnd != 0) {
-      _showWindow(hwnd, _swRestore);
-      _setForegroundWindow(hwnd);
+      _User32.instance.showWindow(hwnd, _swRestore);
+      _User32.instance.setForegroundWindow(hwnd);
       _hidden = false;
     }
   }
@@ -125,7 +139,7 @@ class TrayService {
   static int _findMainWindow() {
     final className = 'FLUTTER_RUNNER_WIN32_WINDOW'.toNativeUtf16();
     try {
-      return _findWindow(className, nullptr);
+      return _User32.instance.findWindow(className, nullptr);
     } finally {
       malloc.free(className);
     }

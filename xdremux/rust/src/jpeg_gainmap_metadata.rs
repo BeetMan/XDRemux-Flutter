@@ -10,6 +10,29 @@ pub(crate) struct Metadata {
     pub use_base_color_space: bool,
 }
 
+#[derive(Debug)]
+pub(crate) enum IsoParseError {
+    UnsupportedVersion(u16),
+    Invalid(String),
+}
+
+impl std::fmt::Display for IsoParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedVersion(version) => write!(f, "unsupported ISO JPEG minimum version {version}"),
+            Self::Invalid(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for IsoParseError {
+    fn from(message: String) -> Self { Self::Invalid(message) }
+}
+
+impl From<&str> for IsoParseError {
+    fn from(message: &str) -> Self { Self::Invalid(message.into()) }
+}
+
 pub(crate) fn validate(f: &[f32]) -> Result<(), String> {
     if f.len() != 20 || f.iter().any(|v| !v.is_finite()) {
         return Err("gain-map metadata must contain 20 finite values".into());
@@ -63,16 +86,14 @@ impl Cursor<'_> {
     }
 }
 
-pub(crate) fn parse_iso(data: &[u8]) -> Result<Metadata, String> {
+pub(crate) fn parse_iso(data: &[u8]) -> Result<Metadata, IsoParseError> {
     let mut r = Cursor { data, pos: 0 };
     let min_version = u16::from_be_bytes(r.take()?);
     let writer_version = u16::from_be_bytes(r.take()?);
-    if min_version != 0 {
-        return Err(format!(
-            "unsupported ISO JPEG minimum version {min_version}"
-        ));
-    }
     let flags = r.take::<1>()?[0];
+    if min_version != 0 {
+        return Err(IsoParseError::UnsupportedVersion(min_version));
+    }
     if flags & 4 != 0 {
         return Err("HDR-base ISO JPEG gain maps are not supported".into());
     }
@@ -106,6 +127,92 @@ pub(crate) fn parse_iso(data: &[u8]) -> Result<Metadata, String> {
         floats: f,
         use_base_color_space: flags & 0x40 != 0,
     })
+}
+
+/// Conservative scalar Adobe XMP fallback for an unsupported ISO version.
+/// Do not reuse the permissive legacy reader: namespace spoofing, malformed
+/// numbers, duplicate properties and HDR-base maps must not bypass ISO errors.
+pub(crate) fn parse_adobe_fallback(xmp: &[u8]) -> Result<Metadata, String> {
+    const ADOBE: &str = "http://ns.adobe.com/hdr-gain-map/1.0/";
+    let known = |key: &str| matches!(key, "Version" | "GainMapMin" | "GainMapMax" |
+        "Gamma" | "OffsetSDR" | "OffsetHDR" | "HDRCapacityMin" |
+        "HDRCapacityMax" | "BaseRenditionIsHDR");
+    let mut reader = NsReader::from_reader(xmp);
+    let mut fields = std::collections::BTreeMap::<String, String>::new();
+    let mut current: Option<(String, String)> = None;
+    let mut depth = 0usize;
+    let mut roots = 0;
+    let insert = |fields: &mut std::collections::BTreeMap<String, String>, key: String, value: String| {
+        if fields.insert(key, value).is_some() {
+            Err("duplicate Adobe gain-map property".to_string())
+        } else { Ok(()) }
+    };
+    loop {
+        let (ns, event) = reader.read_resolved_event()
+            .map_err(|_| "malformed Adobe gain-map XMP")?;
+        let adobe_element = matches!(ns, ResolveResult::Bound(ref n) if n.as_ref() == ADOBE);
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                if current.is_some() { return Err("Adobe fallback requires scalar properties".into()); }
+                if depth == 0 { roots += 1; }
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|_| "malformed Adobe XMP attribute")?;
+                    let (ns, local) = reader.resolver().resolve_attribute(attr.key);
+                    if matches!(ns, ResolveResult::Bound(ref n) if n.as_ref() == ADOBE) && known(local.as_ref()) {
+                        insert(&mut fields, local.as_ref().to_string(), attr.value.trim().into())?;
+                    }
+                }
+                if adobe_element && known(e.local_name().as_ref()) {
+                    if matches!(event, Event::Empty(_)) { return Err("empty Adobe gain-map property".into()); }
+                    current = Some((e.local_name().as_ref().to_string(), String::new()));
+                }
+                if matches!(event, Event::Start(_)) { depth += 1; }
+            }
+            Event::Text(e) => {
+                let value = e.as_ref();
+                if let Some((_, text)) = &mut current { text.push_str(value); }
+                else if depth == 0 && !value.trim().is_empty() { return Err("invalid Adobe XMP document".into()); }
+            }
+            Event::End(_) => {
+                depth = depth.checked_sub(1).ok_or("unbalanced Adobe XMP")?;
+                if let Some((key, text)) = current.take() { insert(&mut fields, key, text.trim().into())?; }
+            }
+            Event::DocType(_) | Event::CData(_) | Event::GeneralRef(_) => return Err("unsupported Adobe XMP content".into()),
+            Event::Eof => break,
+            _ => (),
+        }
+    }
+    if roots != 1 || depth != 0 || current.is_some() { return Err("incomplete Adobe XMP document".into()); }
+    if fields.get("Version").map(String::as_str) != Some("1.0") {
+        return Err("Adobe fallback requires hdrgm Version 1.0".into());
+    }
+    match fields.get("BaseRenditionIsHDR").map(|v| v.to_ascii_lowercase()).as_deref() {
+        None | Some("false" | "0") => (),
+        _ => return Err("Adobe fallback requires an SDR base rendition".into()),
+    }
+    let number = |key: &str, default: Option<f32>| -> Result<f32, String> {
+        let value = match fields.get(key) {
+            Some(text) => text.parse::<f32>().map_err(|_| format!("invalid Adobe {key}"))?,
+            None => default.ok_or_else(|| format!("Adobe fallback lacks {key}"))?,
+        };
+        if !value.is_finite() { return Err(format!("nonfinite Adobe {key}")); }
+        Ok(value)
+    };
+    let min = number("GainMapMin", Some(0.0))?;
+    let max = number("GainMapMax", None)?;
+    let cap_min = number("HDRCapacityMin", Some(0.0))?;
+    let cap_max = number("HDRCapacityMax", None)?;
+    if max < min || cap_min < 0.0 || cap_max < cap_min {
+        return Err("inverted Adobe gain-map ranges".into());
+    }
+    let gamma = number("Gamma", Some(1.0))?;
+    let sdr = number("OffsetSDR", Some(1.0 / 64.0))?;
+    let hdr = number("OffsetHDR", Some(1.0 / 64.0))?;
+    let floats = vec![min.exp2(), min.exp2(), min.exp2(), 0.0,
+        max.exp2(), max.exp2(), max.exp2(), gamma, gamma, gamma,
+        sdr, sdr, sdr, hdr, hdr, hdr, cap_min.exp2(), cap_max.exp2(), cap_max.exp2(), 0.0];
+    validate(&floats)?;
+    Ok(Metadata { floats, use_base_color_space: true })
 }
 
 /// Apple v1 stores headroom in EXIF MakerNote tags 33/48; v2 can declare it
@@ -307,6 +414,38 @@ fn ifd_entry(data: &[u8], pos: usize, tag: u16, le: bool) -> Result<Option<usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn adobe(fields: &str) -> Vec<u8> {
+        format!("<root xmlns:g=\"http://ns.adobe.com/hdr-gain-map/1.0/\"><description g:Version=\"1.0\" g:GainMapMax=\"2\" g:HDRCapacityMax=\"2\" {fields}/></root>").into_bytes()
+    }
+
+    #[test]
+    fn adobe_fallback_accepts_namespaced_scalar_attributes_and_elements() {
+        let a = parse_adobe_fallback(&adobe("g:Gamma=\"1\" g:BaseRenditionIsHDR=\"False\"")).unwrap();
+        let b = parse_adobe_fallback(br#"<root xmlns:g="http://ns.adobe.com/hdr-gain-map/1.0/"><g:Version>1.0</g:Version><g:GainMapMax>2</g:GainMapMax><g:HDRCapacityMax>2</g:HDRCapacityMax></root>"#).unwrap();
+        assert_eq!(a.floats, b.floats);
+        assert_eq!(a.floats[17], 4.0);
+        assert!(a.use_base_color_space);
+    }
+
+    #[test]
+    fn adobe_fallback_rejects_spoofing_corruption_and_unsupported_values() {
+        for fields in ["g:Gamma=\"0\"", "g:Gamma=\"NaN\"", "g:Gamma=\"nonsense\"",
+            "g:OffsetSDR=\"-1\"", "g:HDRCapacityMin=\"3\"", "g:GainMapMin=\"3\"",
+            "g:BaseRenditionIsHDR=\"True\"", "g:BaseRenditionIsHDR=\"unknown\""] {
+            assert!(parse_adobe_fallback(&adobe(fields)).is_err(), "{fields}");
+        }
+        let good = String::from_utf8(adobe("")).unwrap();
+        for bad in [good.replace("http://ns.adobe.com/hdr-gain-map/1.0/", "https://example.invalid/"),
+            good.replace("g:Version=\"1.0\"", "g:Version=\"2.0\""),
+            good.replace("g:Version=\"1.0\"", ""),
+            good.replace("</root>", "<g:GainMapMax>2</g:GainMapMax></root>"),
+            good.replace("</root>", "</wrong>"),
+            format!("{good}<extra/>"),
+            good.replace("</root>", "<g:Gamma><seq>1</seq></g:Gamma></root>")] {
+            assert!(parse_adobe_fallback(bad.as_bytes()).is_err(), "{bad}");
+        }
+    }
+
     fn iso(common: bool, multichannel: bool) -> Vec<u8> {
         let mut bytes = vec![
             0,

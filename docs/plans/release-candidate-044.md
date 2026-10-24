@@ -1,5 +1,84 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-24：Linux PR #12 审查整合（0.4.5，不发布）
+
+- 用户授权审查并合并 Linux 适配 PR #12；保留主线 JPEG HDR/ICC 修复和 Flutter `0.4.5+39` / Rust `0.4.5`，不创建标签、发布版本或改动已有 Release 资产。
+- [x] 同步最新 main 到候选，审查 Linux runner、GTK 拖放/命令行导入、FFI、插件筛选、glibc 兼容 shim、AppImage/tar.gz 与用户级安装。Linux 仍标注为预览平台，不将作者的 Arch 验证扩展为本轮全发行版验收。
+- [x] 修复 FFI 从 `apps/flutter` 查找 Cargo 产物时多一级父目录；libnuma 改用 HTTPS，固定并核对 Ubuntu 原始 deb 与提取库的 SHA256，拒绝旧缓存污染和错误下载。
+- [x] 修复桌面入口路径的空格、引号、反斜杠、美元符、反引号、百分号及 `&` / `|` 转义；以真实 GLib 桌面入口启动临时目录中的测试应用。所有测试安装仅在临时目录，不触及实际用户安装。
+- [x] Linux CI 新增相关 PR 自动构建，Ubuntu 22.04 专属 x265 缓存，Rust locked 构建；构建 job 只读，Release 上传拆成仅手动执行的独立写权限 job，并校验附件版本与标签一致。未运行发布任务。
+- [x] WSL Ubuntu 上 Bash 语法、两项回归套件（共 7 个子场景）通过；Windows 宿主 Rust 258 passed / 7 ignored。实际 Ubuntu 22.04 桌面构建由新增 CI 检查，完整 GUI/图库和多发行版验收仍需后续进行。
+- [x] Flutter 本地 analyze 无问题，143 tests 全部通过；暂存测试用核心 DLL 后已按哈希恢复。候选 `54b26a72` 的全部 GitHub 检查通过：Rust、Flutter、Conformance、OHOS smoke，以及新增 Ubuntu 22.04 Linux 构建/打包（3m50s）。核心最高 GLIBC 需求为 `GLIBC_2.35`，生成 `0.4.5` AppImage/tar.gz/sha256 workflow artifact；Release 上传 job 为 skipped。
+- [x] [PR #12](https://github.com/BeetMan/XDRemux-Flutter/pull/12) 已于 2026-10-24 合入 main，合并提交 `0a2b5079`。本地候选快进同步，保留未跟踪 dist 与其他工作区的改动。仍无 `v0.4.5` 标签，正式 Latest Release 仍为 `v0.4.4`，原生版本仍为独立 `harmony-v0.5.1`。
+
+## 2026-10-24：JPEG 修复合入主线并准备 0.4.5（不发布）
+
+- 用户授权把 Issue #11 HDR 识别修复与 JPEG RGB ICC 保真修复合回 main，版本提升为 0.4.5，暂不发版。
+- [x] Flutter `pubspec.yaml` → `0.4.5+39`；Rust crate 与 Cargo.lock → `0.4.5`；Windows Inno Setup 默认版本 → `0.4.5`。Android/Apple 构建读取主 pubspec；OHOS 构建脚本也已自动从主 pubspec 同步版本，不更改模板清单或独立原生 0.5.1 的版本。
+- [x] 将暂存更新说明整理为 `tools/installer/RELEASE_NOTES_v0.4.5.md`，显式标注尚未发布；README 区分主线开发版本 0.4.5 与已发布 v0.4.4，保留已有下载链接。
+- [x] 升版后重新验证：Rust 258 passed / 7 ignored；两项原图测试显式启用通过；Flutter 完整 143 tests 通过，其中 FFI 核心版本实读 `0.4.5` 与 pubspec 匹配。测试暂存 DLL 已按哈希恢复，不提交生成二进制。日志 `target/issue-11/045-*.log`。
+- [x] 修复提交 `074a6348`；版本与文档单独提交，整合方式为基于 main `953a2737` 的线性快进，推送仅限 `HEAD:main`（显式禁止 follow-tags）。只含本轮源码/测试/文档/版本，保留 dist 和其他工作区未提交内容。
+- 发布约束：不创建任何 tag，不运行 release workflow，不创建/修改 GitHub Release 或安装附件，不关闭 issue。Release workflow 仅由 `v*` tag push 或显式 dispatch 触发；本次只有常规 main CI。
+
+下面两项修复的“未提交/未推送”状态是实现阶段历史记录，以本节整合状态为准；旧 `RELEASE_NOTES_UNRELEASED.md` 已整理为上述 0.4.5 待发布说明。
+
+## 2026-10-24：JPEG RGB ICC 保真修复（未发布）
+
+- 用户授权修复共享 JPEG 管线的 ICC 丢失，继续在 `codex/fix-jpeg-hdr-iso-fallback` 工作，保留上轮 Issue #11 修复。未修改其他工作区、原图、版本号或发布资产。
+- [x] 新增有界 `jpeg_color`：重组 JPEG APP2 ICC（支持乱序分段），检查序号/缺段/重复、16 MiB 上限、ICC RGB v2/v4 头部/设备类/PCS 与 tag 范围。非 RGB、坏 profile 明确失败，不静默丢弃或将原配置附给已变换的 RGB。
+- [x] HDR JPEG 主图和现有 SDR JPEG Styles 源重建保留设备 RGB 值，原 ICC 写入主图和主瓦片 `colr/prof`；配套 nclx=(2,2,1,full)，主图 HEVC VUI 同样为 unspecified primaries/TRC、BT.709 matrix/full range。质量预设/CRF不变，无 ICC 输入及非 JPEG 源仍沿用原路径。保留 OPPO 原机 HEIF / 水印写回已有特例，不泛改编码器默认值。
+- [x] 自动覆盖分段 ICC 重组、坏序号/缺段/重复/截断/非 RGB/tag 范围、主图/瓦片 ICC 关联、无 ICC 行为、SDR Styles 源及 RGB 数值读回。独立色块测试使用完整 512×512 平坦瓦片，避免将 16px 小图紧邻黑色 padding 的 4:2:0 边界滤波误判为色域错误；完整瓦片读回误差阈值仍为 3/255。
+- [x] Rust `cargo +1.96.1 test --locked -p xdremux-core` 共 258 passed / 7 ignored；两项 opt-in 原图测试显式运行均通过（两张 JPEG × Apple/OPPO 两种输出，原图 SHA256 不变）。FFmpeg fallback 另目录编译及两项 ICC 合成/数值回归通过。
+- [x] MIX Flip 2 原图（SHA256 `B5D0DCF287DF4D2D9085B246A017CDFCD3A04E81081A4C6371AD31C3291F8CAA`）：Apple 输出 3,326,652 bytes，SHA256 `6D14EF4AE71E5C3AC097B3749B923E95B4FD8016A4A41371A97CDD908A045EBC`；OPPO 输出 3,321,474 bytes，SHA256 `324C6EB9B29548343B098D82D3A4D3737DB32A6FFD9B0EE63EBC3D0EE2969254`。632 bytes ICC 与源一致，主图 3072×4572、增益图 1536×2286，包含水印画布，FFI 与 HDR 图结构检查通过。源 MPF 主图长度过短未造成截断。
+- [x] 独立 libheif 1.23.4 C API 读回原图输出及 P3/sRGB 平坦色块（两种模式；色块走实际 SDR Styles 转换），ICC 逐字节相同。色块中心最大通道误差 1/255、平均 0.167/255；LittleCMS 按同一 profile 转 sRGB 后各通道整图 MAE 最大 0.501/255，未做像素无损承诺。FFprobe 从主图瓦片码流核对 full-range / BT.709 matrix、无冲突的 primaries/TRC。
+- [x] Flutter 完整 143 tests 再次通过；使用本次核心暂存运行后按哈希恢复旧测试宿主 DLL，不提交二进制。`git diff --check` 通过。更新未发布 Release 说明；未提交、推送、打包手机安装版或更改 GitHub issue。
+- 验收边界：本轮是 JPEG 转换文件级色彩保真，不扩展至通用 SDR 模式、CMYK/灰阶 CMS、非 JPEG 输入的 profile 管理或全平台预览/目标相册实际显示验收。照片原件不纳入 Git；独立解码、FFprobe 日志及输出留在忽略的 `target/issue-11`。
+
+## 2026-10-24：Issue #11 JPEG HDR 识别回归热修（未发布）
+
+- 用户授权先修回归，不扩展通用 SDR JPG → HEIC。复用此干净工作区，从 main `953a2737` 新建 `codex/fix-jpeg-hdr-iso-fallback`；保留原目录未提交改动和 dist，不移动标签、不更新安装包、不自动回复或关闭 issue。
+- [x] 同一红米原图（SHA256 `3F1E942F63799A3045EFAC8A7AFD542C0258634FD63285D6D9CCE43CBBCB0747`）对照两个 tag 的解析器复现：0.4.3 可读 1,215,977 bytes 增益图；0.4.4 拒绝 ISO minimum version 2。文件同时有有效 Adobe XMP，原图及增益图结构完整。
+- [x] ISO 解析新增类型化错误，仅 UnsupportedVersion 可走严格 Adobe XMP 回退。支持 ISO 继续优先；支持版本的截断、非法数值/flags、重复段等不允许回退。Adobe 回退校验命名空间、Version 1.0、标量、重复属性、有限数值与范围，拒绝 HDR 底图，不使用身份增益图假装成功。
+- [x] JPEG 详情报告增加 `hdrParseError`，与 EXIF 的 success 独立；Flutter 格式行、摘要与复制信息显示“HDR 解析失败”及原因，不再吞错显示 SDR。普通 JPEG 的身份增益图不作为原生详情报告中的 HDR 依据。
+- [x] 自动覆盖版本不支持 + 有效/无效/缺失 XMP、合法 ISO 优先、截断/坏数据不回退、命名空间伪造、数值/范围/重复/非标量、普通 SDR 及详情错误序列化。Rust `cargo +1.96.1 test --locked -p xdremux-core` 共 252 passed / 6 ignored（其中含新增 opt-in 原图测试，已另行显式运行通过）。
+- [x] opt-in `jpeg_hdr_regression` 用用户原图经过真实 x265 转换：Apple 标准 4,933,917 bytes，SHA256 `8473CFC7C94F564A66D6EF0C34DD003D12A26C6453B6A217078C6EF49D56553F`；OPPO 兼容 4,933,219 bytes，SHA256 `89F7074E1527C7924A36860140E0141901A6FB5E0B05DD78B0FF1397E0B9F25A`。两份输出的公共 FFI 校验及 HDR 增益图结构校验通过（增益图 1536×2048），输出参数约 2.17938× / 1.12392 EV；输入哈希不变。源照片不提交 Git，合成测试可公开，原图实测通过环境变量显式启用。
+- [x] Flutter 3.47.7：详情相关 14 tests、完整 143 tests 通过；改动 Dart 文件 analyze 无问题。首次完整测试因工程内遗留 0.4.3 DLL 缺少 codec 符号/版本不匹配有 2 项失败，换用本次编译的 0.4.4 核心后完整重跑通过；测试后按哈希恢复原 DLL，不提交二进制。
+- [x] 未发布更新写入 `tools/installer/RELEASE_NOTES_UNRELEASED.md`，`git diff --check` 通过。未提交或推送修复，未打包手机安装版，未进行目标图库的显示/编辑或真机验收。
+
+日志、前后版本诊断和两种 HEIC 输出保存在忽略的 `target/issue-11`。主线 v0.4.4 的既有发布记录如下，不能将本节误解为新包已经发布。
+
+## 2026-10-22：主 README 发布后更新
+
+- [x] 首页增加官网 `https://xdremux.app`，HTTP HEAD 返回 200；跨平台/原生版本更新为 `0.4.4` / `0.5.1`，六个平台下载入口逐一与 GitHub 实际 Release 附件 URL 核对通过。
+- [x] 新增本轮更新摘要，更正已退役的 Swift 产品后端切换说明、OPPO 前摄支持、Live Photo 跨平台保存与传输机制、鸿蒙两种 HAP 的开发自签方式，以及 macOS Apple Silicon 限制。
+- [x] 明确 Flutter OHOS 当前统一图库保存和配对双文件分享未接入，不以共享核心替代各平台实际验收；保留原有产品介绍、截图和研究边界。
+- [x] README 本地链接存在性与 `git diff --check` 通过。用户随后授权提交并推送 main；本提交仅含 README 和此完成记录，不重编应用、不改动发布资产或其他本地文件。
+
+## 2026-10-22：原生 0.5.1 自签分发更正
+
+- 用户要求直接替换原生同名 HAP。使用 `harmony-v0.5.1` / `67ff09cd` 业务源码执行 DevEco debug 构建，确认 `app.debug:true`、`app.buildMode:debug`，供匹配包名、证书和设备的开发 Profile 自签；Rust 保持 Release 优化，核心 SHA256 与此前包相同。
+- 新原生 HAP 6,811,477 bytes，SHA256 `61E2F0B5667B2B668E1AE3772AAE9825EDE62E3A2DC4D05EF1940B4621856BBC`。原 Release HAP 与校验和已本地备份；包身份、`0.5.1+50100`、标签均不变。此节替代下方“原生仍为 release/debug:false”的当前状态描述，早先数字仅作历史记录。
+- 完整 debug 编译、24 个桥接符号、版本/API/身份/核心一致性、CRC、无 HAP Signing Block、16 组模型/队列测试及 5 项 HAP verifier 测试通过。本轮未执行实际自签安装或照片实机验收；unsigned 不是免签安装，开发签名仍受设备范围与有效期约束。
+- 原生 `BUILDING.md` 和发布说明已补充 GitHub 默认 debug unsigned、Rust release 优化的规则；Flutter OHOS 0.4.4 附件与其他平台资产不变。
+- 已替换 `harmony-v0.5.1` 同名 HAP 与 SHA256SUMS，更新 Release 正文；重新下载验证 HAP 哈希、校验文件、GitHub 服务器 digest/大小及正文全部匹配。旧附件可从原生工作区 target 备份恢复。
+
+## 2026-10-22：正式标签鸿蒙资产补编
+
+用户已在 Mac 发布 `v0.4.4`，并明确要求同时补齐 Flutter OHOS 0.4.4 与鸿蒙原生 0.5.1。以下构建使用各自正式标签，不移动标签，不混用两条分支的 Rust 核心，也不将本机签名上传。
+
+- [x] 主线快进到 `v0.4.4` / `6c34ed42`（Flutter `0.4.4+38`，Rust `0.4.4`）。原生按 `harmony-v0.5.1` / `67ff09cd`（app `0.5.1+50100`）构建，保留原生专用静帧提取等 API。
+- [x] 两份 Rust 核心分别执行 locked、release、aarch64-unknown-linux-ohos 构建，默认 x265，未启用 libheif 或 FFmpeg fallback；复用相同 OHOS 目标 x265 静态库和 SDK libc++。
+- [x] Flutter 使用之前校验通过的独立干净 OHOS SDK，profile 平台内核 SHA256 `6BB2231472FC399BD1BC75E6344D4380CFB94B1DB21705A7B1A36F1EA1C914B8`。隔离目录使用 OHOS pubspec 变体并只同步版本行；业务 Dart 源自 tag，不更改官方主线 pubspec/lock。
+- [x] 首次 Flutter 打包遇到路径长度超过 259 的限制，改用短隔离目录 `target/oh044-1022` 后 `devecocli build --product default --build-mode profile` 成功；原生在独立目录执行 release 构建成功。Flutter 仅隔离构建移除不可拉取的 Hvigor 6.24.4 显式依赖，并过滤 x64 库，使用 DevEco 自带工具链。
+- [x] Flutter HAP：`XDRemux-HarmonyOS-0.4.4-unsigned.hap`，37,359,949 bytes，SHA256 `E33FCF692C3B7810579A065E2B627E4BB5AE16EA93697E3EE32037CA60BFBE96`；37 个运行时 FFI 符号、ARM64 AOT/引擎/核心/运行库、包名/版本与 ZIP CRC 校验通过，签名工具确认无 HAP Signing Block。
+- [x] 原生 HAP：`XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap`，5,903,559 bytes，SHA256 `0DF31311F3EEC6D743BBBF51007D63AF34FCD863BD2A4835B7512D5AA31E8648`；24 个桥接符号、包身份/API/版本、ZIP CRC 与无签名块检查通过。16 组模型/队列测试和 5 项 HAP 校验器测试再次通过。
+- 独立快速 ArkTS 检查存在错误（Flutter 22 项类型推导/any 等，原生 1 项 `@Available` 导出），但两份完整 DevEco 构建的 CompileArkTS 与打包均通过；不冒称独立快速检查已通过，也不为本轮资产补编改写发布标签业务源码。
+- [x] 两条 Release 的 HAP 与校验文件均已上传，GitHub 服务器 SHA256 与本地一致。原生旧 HAP（SHA256 `7E39C8B5B288ADE0E11D4A5573E87B409658F2D688D1E4B19C6B4EE2B1DB7BC1`）和旧 SHA256SUMS 已先下载留存；仅替换指定原生 HAP 和对应校验文件。两条发布页保留手写正文，只追加重编信息、校验值、签名要求和限制；未覆盖其他平台资产。
+- 本轮不自动安装手机、不使用用户照片、不声称完成新的图库或 Apple Photos 实机验收。Flutter Profile/`debug:true` 可开发自签；原生仍是 Release/`debug:false`，需发布签名或从源码构建 debug 包，不混用安装说明。
+- Flutter OHOS 统一相册保存入口仍排除 OHOS，双文件分享尚未接入；本轮只补发布资产，不扩展为功能修复或完整验收通过。原生配对文档导出仍是独立实现。
+
+日志与可恢复产物保存在各工作区忽略的 target，以及 `dist/harmony-release-20261022`；不提交 HAP、签名配置、SDK 缓存或本机原始日志。后续各段为当时的候选整合历史记录。
+
 日期：2026-10-15。用户授权：整合候选代码、将本次修复提交主线，再升级 Flutter，交付验收；不创建 tag、不发布 Release。
 
 ## 范围

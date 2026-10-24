@@ -54,7 +54,7 @@
 | 文档 | 内容 |
 |---|---|
 | [testing/conformance-suite.md](testing/conformance-suite.md) | 对拍套件、golden corpus、加用例流程 |
-| [operations/building.md](operations/building.md) | 五平台构建、变体说明（含鸿蒙 hap） |
+| [operations/building.md](operations/building.md) | 跨平台构建（含 Linux 本地开发）、变体说明（含鸿蒙 hap） |
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 四 workflow 剖析、runner 矩阵 |
 

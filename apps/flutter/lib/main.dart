@@ -104,6 +104,37 @@ typedef PickedItem =
       Future<Uint8List> Function()? readBytes,
     });
 
+/// Layout traits reported by the host platform.
+///
+/// iOS 27 models a system "vertical bar" that can live on the leading or the
+/// trailing edge (see `UITraitCollection.verticalBarEdge`); iPhone Duo reserves
+/// its 84pt right inset for a trailing bar. The native side reports the
+/// preferred edge, and the UI places its tool bar there when the matching safe
+/// area is large enough. Unknown/unsupported platforms keep the regular
+/// app-bar + bottom-bar layout.
+class PlatformLayoutTraits {
+  PlatformLayoutTraits._();
+
+  static const _channel = MethodChannel('xdremux/platform-traits');
+
+  /// One of `leading`, `trailing`, `unspecified`.
+  static String verticalBarEdge = 'unspecified';
+
+  static Future<void> refresh() async {
+    if (!Platform.isIOS) return;
+    try {
+      final traits = await _channel.invokeMapMethod<String, dynamic>(
+        'getLayoutTraits',
+      );
+      final edge = traits?['verticalBarEdge'];
+      if (edge is String) verticalBarEdge = edge;
+    } catch (_) {
+      // Older iOS versions and non-iOS hosts simply have no vertical bar.
+      verticalBarEdge = 'unspecified';
+    }
+  }
+}
+
 void main() {
   runApp(const XdRemuxApp());
 }
@@ -260,6 +291,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    PlatformLayoutTraits.refresh().then((_) {
+      if (mounted) setState(() {});
+    });
     _initAsync();
     _initDropChannel();
     _initShareIntake();
@@ -2805,7 +2839,6 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 600;
-
     return KeyboardListener(
       focusNode: _captureFocusNode,
       onKeyEvent: _onKey,
@@ -2813,29 +2846,124 @@ class _HomePageState extends State<HomePage> {
         key: _rootKey,
         child: Scaffold(
           appBar: _buildAppBar(theme, compact),
-          bottomNavigationBar: compact ? _buildMobileActionBar(theme) : null,
-          body: _buildDropTarget(
-            context,
-            Column(
-              children: [
-                _buildProgressBar(theme),
-                const Divider(height: 1),
-                if (_queue.isNotEmpty) _buildQueueSummary(theme),
-                Expanded(
-                  child: _queue.isEmpty
-                      ? _buildEmptyState(theme)
-                      : _buildQueueView(theme, compact),
+          bottomNavigationBar: compact && !_floatPrimaryAction
+              ? _buildMobileActionBar(theme)
+              : null,
+          body: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _buildDropTarget(
+                        context,
+                        _buildBody(theme, compact),
+                      ),
+                    ),
+                    if (_hasTrailingBar)
+                      Positioned(
+                        right: 6,
+                        bottom: 10,
+                        child: _buildTrailingBar(theme),
+                      ),
+                    if (!_hasTrailingBar && _floatPrimaryAction)
+                      Positioned(
+                        right: 20,
+                        bottom: 20,
+                        child: _buildPrimaryFab(theme),
+                      ),
+                  ],
                 ),
-                if (_queue.isNotEmpty && !compact) _buildFooter(theme),
-              ],
-            ),
-          ),
         ),
       ),
     );
   }
 
+  Widget _buildBody(ThemeData theme, bool compact) {
+    final content = Column(
+      children: [
+        _buildProgressBar(theme),
+        const Divider(height: 1),
+        if (_queue.isNotEmpty) _buildQueueSummary(theme),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: _sideContentInset,
+              // Without the bottom bar the list runs to the screen edge; keep
+              // the last row clear of the home indicator.
+              bottom: _floatPrimaryAction
+                  ? MediaQuery.paddingOf(context).bottom
+                  : 0,
+            ),
+            child: _queue.isEmpty
+                ? _buildEmptyState(theme)
+                : _buildQueueView(theme, compact),
+          ),
+        ),
+        if (_queue.isNotEmpty && !compact) _buildFooter(theme),
+      ],
+    );
+    if (_showSidePalette) {
+      return Padding(
+        padding: EdgeInsets.only(right: MediaQuery.paddingOf(context).right),
+        child: Row(
+          children: [
+            Expanded(child: content),
+            _buildSideToolPalette(theme),
+          ],
+        ),
+      );
+    }
+    return content;
+  }
+
+  /// A trailing tool palette only pays off where it does not starve the
+  /// content: devices with a side safe-area strip AND a regular-width window
+  /// (Duo inner display / landscape). On the 466pt cover display the bar would
+  /// wrap the empty-state text and buttons, so the app-bar + bottom-bar layout
+  /// stays there.
+  /// In-content fallback palette for side-inset windows that do NOT report a
+  /// system vertical bar. Devices with a trailing bar use that strip instead,
+  /// so the two never render together (landscape used to show both).
+  bool get _showSidePalette =>
+      !_hasTrailingBar &&
+      MediaQuery.paddingOf(context).right >= 40 &&
+      MediaQuery.sizeOf(context).width >= 700;
+
+  /// Once the queue grows past this length the primary conversion action
+  /// leaves the bottom bar and floats in the trailing strip instead, so the
+  /// list keeps the full height. Empty/short queues keep the familiar bottom
+  /// bar.
+  static const int kFloatingActionQueueThreshold = 4;
+
+  /// True when the primary conversion action leaves the bottom bar: either the
+  /// queue grew long enough, or the layout has no bottom bar at all (wide
+  /// windows). Without this the action would only live in the app bar.
+  bool get _floatPrimaryAction =>
+      !_compactLayout ||
+      (_hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold);
+
+  /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
+  /// bar; when the native side reports that edge, the tool bar moves into it.
+  bool get _compactLayout => MediaQuery.sizeOf(context).width < 600;
+
+  bool get _hasTrailingBar =>
+      PlatformLayoutTraits.verticalBarEdge == 'trailing' &&
+      MediaQuery.paddingOf(context).right >= 40;
+
+  /// Horizontal content inset: the trailing bar itself occupies the reserved
+  /// strip, so the content no longer needs to avoid it.
+  double get _sideContentInset => MediaQuery.paddingOf(context).right;
+
   AppBar _buildAppBar(ThemeData theme, bool compact) {
+    // Devices with a side-mounted status strip (iPhone Duo) get a dedicated
+    // tool palette, so the app bar keeps only the title.
+    if (_showSidePalette || _hasTrailingBar) {
+      return AppBar(
+        centerTitle: false,
+        titleSpacing: compact ? 16 : null,
+        title: compact ? const Text('XDRemux') : Text('XDRemux$_versionSuffix'),
+        backgroundColor: theme.colorScheme.surfaceContainerHighest,
+        surfaceTintColor: Colors.transparent,
+      );
+    }
     final actions = <Widget>[
       if (!compact)
         IconButton(
@@ -2893,7 +3021,9 @@ class _HomePageState extends State<HomePage> {
           onPressed: _openOrganizePage,
         ),
       _buildQueueOverflowMenu(),
-      const SizedBox(width: 4),
+      // Keep the actions out of a side-mounted status/camera strip while
+      // letting the app bar surface stay edge-to-edge.
+      SizedBox(width: 4 + MediaQuery.paddingOf(context).right),
     ];
 
     return AppBar(
@@ -2986,6 +3116,193 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Vertical tool palette shown on devices whose safe area is on a side edge
+  /// (iPhone Duo's 84pt status/camera strip). It replaces the app-bar actions
+  /// and the bottom bar's add button, reclaiming vertical space on a short
+  /// screen while keeping every control inside the usable area.
+  Widget _buildSideToolPalette(ThemeData theme) {
+    return Container(
+      width: 56,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(left: BorderSide(color: theme.dividerColor)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 6),
+            IconButton(
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              tooltip: t('添加文件', 'Add files'),
+              onPressed: _canEditQueue ? _addFiles : null,
+            ),
+            if (!_isProcessing && _convertedCount > 0)
+              IconButton(
+                icon: const Icon(Icons.photo_library_outlined),
+                tooltip: t('全部保存到相册', 'Save all to gallery'),
+                onPressed: _saveAllToGallery,
+              ),
+            if (Platform.isMacOS ||
+                Platform.isIOS ||
+                Platform.isWindows ||
+                Platform.isAndroid ||
+                PlatformX.isOhos)
+              IconButton(
+                icon: const Icon(Icons.auto_awesome_motion_outlined),
+                tooltip: t('一帧影像，动用两台手机', 'One photo, two phones'),
+                onPressed: _openAppleOppoWorkflow,
+              ),
+            IconButton(
+              icon: const Icon(Icons.tune),
+              tooltip: t('设置', 'Settings'),
+              onPressed: () => _openSettings(context),
+            ),
+            _buildQueueOverflowMenu(),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Vertical tool bar drawn inside the system-reserved trailing strip
+  /// (iPhone Duo). The actions float in a bottom-anchored capsule so the strip
+  /// keeps the page background, the palette reads as a single control, and the
+  /// actions stay clear of the status items at the top and within thumb reach.
+  /// Floating capsule with the secondary actions, drawn inside the
+  /// system-reserved trailing strip (iPhone Duo). It is positioned as an
+  /// overlay so the content keeps its full height and the strip keeps the page
+  /// background; only the capsule itself is opaque.
+  Widget _buildTrailingBar(ThemeData theme) {
+    const capsuleWidth = 68.0;
+    Widget item(
+      IconData icon,
+      String label,
+      String english,
+      VoidCallback? onPressed, {
+      bool primary = false,
+    }) {
+      final tooltip = t(label, english);
+      return SizedBox(
+        width: capsuleWidth,
+        height: 46,
+        child: primary
+            ? IconButton.filledTonal(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              )
+            : IconButton(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              ),
+      );
+    }
+
+    final capsule = Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(capsuleWidth / 2),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: capsuleWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 4),
+            if (_floatPrimaryAction)
+              item(
+                Icons.add_photo_alternate_outlined,
+                '添加文件',
+                'Add files',
+                _canEditQueue ? _addFiles : null,
+              ),
+            if (!_isProcessing && _convertedCount > 0)
+              item(
+                Icons.photo_library_outlined,
+                '全部保存到相册',
+                'Save all to gallery',
+                _saveAllToGallery,
+              ),
+            if (Platform.isMacOS ||
+                Platform.isIOS ||
+                Platform.isWindows ||
+                Platform.isAndroid ||
+                PlatformX.isOhos)
+              item(
+                Icons.auto_awesome_motion_outlined,
+                '一帧影像，动用两台手机',
+                'One photo, two phones',
+                _openAppleOppoWorkflow,
+              ),
+            item(Icons.tune, '设置', 'Settings', () => _openSettings(context)),
+            SizedBox(
+              width: capsuleWidth,
+              height: 46,
+              child: _buildQueueOverflowMenu(),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        capsule,
+        const SizedBox(height: 12),
+        if (_floatPrimaryAction)
+          _buildPrimaryFab(theme)
+        else
+          // Otherwise the intake action stands alone as a FAB.
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: FloatingActionButton(
+              heroTag: 'duo-add-files',
+              tooltip: t('添加文件', 'Add files'),
+              onPressed: _canEditQueue ? _addFiles : null,
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary,
+              elevation: 6,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPrimaryFab(ThemeData theme) {
+    final label = _isProcessing
+        ? t('取消转换', 'Cancel conversion')
+        : t('开始转换', 'Start conversion');
+    final icon = _isProcessing
+        ? Icons.stop_rounded
+        : Icons.play_arrow_rounded;
+    final action = _isProcessing
+        ? _cancelConversion
+        : (_canStart ? _startConversion : null);
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Tooltip(
+        message: label,
+        child: FloatingActionButton(
+          heroTag: 'duo-primary-action',
+          onPressed: action,
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: theme.colorScheme.onPrimary,
+          elevation: 6,
+          shape: const CircleBorder(),
+          child: Icon(icon, size: 30),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMobileActionBar(ThemeData theme) {
     final primaryLabel = _isProcessing ? t('取消转换', 'Cancel conversion') : t('开始转换', 'Start conversion');
     final primaryIcon = _isProcessing
@@ -3010,12 +3327,14 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Row(
             children: [
-              IconButton.filledTonal(
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                tooltip: t('添加文件', 'Add files'),
-                onPressed: _canEditQueue ? _addFiles : null,
-              ),
-              const SizedBox(width: 12),
+              if (!_showSidePalette && !_hasTrailingBar) ...[
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  tooltip: t('添加文件', 'Add files'),
+                  onPressed: _canEditQueue ? _addFiles : null,
+                ),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: FilledButton.icon(
                   icon: Icon(primaryIcon),
@@ -3079,11 +3398,15 @@ class _HomePageState extends State<HomePage> {
         .where((i) => i.status == QueueItemStatus.running)
         .firstOrNull;
     final narrow = MediaQuery.of(context).size.width < 480;
+    final hPad = narrow ? 12.0 : 16.0;
+    final vPad = narrow ? 8.0 : 12.0;
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
-      padding: EdgeInsets.symmetric(
-        horizontal: narrow ? 12 : 16,
-        vertical: narrow ? 8 : 12,
+      padding: EdgeInsets.fromLTRB(
+        hPad,
+        vPad,
+        hPad + _sideContentInset,
+        vPad,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3314,7 +3637,12 @@ class _HomePageState extends State<HomePage> {
         : theme.colorScheme.onSurfaceVariant;
 
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      margin: EdgeInsets.fromLTRB(
+        12,
+        12,
+        12 + _sideContentInset,
+        0,
+      ),
       color: theme.colorScheme.surface,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -3678,7 +4006,12 @@ class _HomePageState extends State<HomePage> {
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        6,
+        12 + _sideContentInset,
+        6,
+      ),
       child: Row(
         children: [
           if (_failedCount > 0 && !narrow)
@@ -6154,10 +6487,10 @@ class PhotoDetailsContent extends StatelessWidget {
                   _detailRow(
                     theme,
                     t('HDR 格式', 'HDR Format'),
-                    details.hdrKind != null
-                        ? 'ProXDR (${details.hdrKind!.toUpperCase()})'
-                        : (item.hdrKind != null ? 'ProXDR (${item.hdrKind!.toUpperCase()})' : t('无 (SDR)', 'None (SDR)')),
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
                   ),
+                  if (details.hdrParseError != null)
+                    _detailRow(theme, t('解析原因', 'Parse error'), details.hdrParseError!),
                   _detailRow(
                     theme,
                     t('EDR 亮度倍率', 'EDR Headroom'),
@@ -6299,11 +6632,11 @@ class PhotoDetailsContent extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _chip(theme, '$fileSizeMb MB'),
-                if (details.hdrKind != null || item.hdrKind != null)
+                if (details.hdrParseError != null || details.hdrKind != null || item.hdrKind != null)
                   _chip(
                     theme,
-                    'ProXDR (${(details.hdrKind ?? item.hdrKind!).toUpperCase()})',
-                    color: Colors.orange,
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
+                    color: details.hdrParseError != null ? Colors.red : Colors.orange,
                   ),
                 if (item.motionPhoto != null)
                   _chip(theme, t('实况照片', 'Live Photo'), color: Colors.blue),
@@ -6407,7 +6740,10 @@ class PhotoDetailsContent extends StatelessWidget {
     buffer.writeln('拍摄时间: ${details.dateTime ?? "-"}');
     buffer.writeln('图像分辨率: ${details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : "-"}');
     buffer.writeln('--- HDR & 动态范围 ---');
-    buffer.writeln('HDR 格式: ${details.hdrKind?.toUpperCase() ?? item.hdrKind?.toUpperCase() ?? "None"}');
+    buffer.writeln('HDR 格式: ${details.hdrFormatLabel(fallbackKind: item.hdrKind)}');
+    if (details.hdrParseError != null) {
+      buffer.writeln('HDR 解析原因: ${details.hdrParseError}');
+    }
     if (details.edrScale != null) {
       buffer.writeln('EDR Headroom: ${details.edrScale!.toStringAsFixed(2)}x');
     }

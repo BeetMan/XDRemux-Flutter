@@ -724,12 +724,22 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    # macOS/iOS are new build lines: they must not block a release, so the
-    # publish gate only requires the proven Windows + Android jobs.
-    # windows-arm64 must be in `needs` (not the gate): its artifact upload
+    # Every shipping platform must have built before the release exists: a
+    # missing DMG or IPA used to be invisible because only Windows and Android
+    # gated this job, and v0.4.4 was published without the IPA after the hosted
+    # macOS arm64 queue cancelled the iOS job. windows-arm64 stays out of the
+    # gate: it is experimental and continue-on-error.
+    # windows-arm64 must still be in `needs` (not the gate): its artifact upload
     # races the download otherwise (pre.2 shipped without it).
     needs: [windows, windows-arm64, android, macos, ios]
-    if: always() && startsWith(github.ref, 'refs/tags/') && needs.windows.result == 'success' && needs.android.result == 'success'
+    # Folded to one line on purpose: the expression parser must see a single
+    # string, not YAML newlines.
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/')
+      && needs.windows.result == 'success'
+      && needs.android.result == 'success'
+      && needs.macos.result == 'success'
+      && needs.ios.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -739,6 +749,27 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+
+      # The gate above requires the jobs, but an upload can still end up empty;
+      # fail here instead of creating a release that misses a platform.
+      - name: Verify every shipping platform produced an asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for pattern in \
+            "dist/windows-installer/XDRemux-Windows-*-Setup.exe" \
+            "dist/android-apk/XDRemux-Android-*.apk" \
+            "dist/macos-dmg/XDRemux-macOS-*.dmg" \
+            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa"; do
+            if compgen -G "$pattern" >/dev/null; then
+              echo "found: $pattern"
+            else
+              echo "::error::missing release asset: $pattern"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

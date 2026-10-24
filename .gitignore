@@ -112,6 +112,8 @@ tools/ohos/*
 !tools/ohos/*.ps1
 # Packaging scripts under tools/ are source, not artifacts - keep them tracked.
 !tools/installer/
+# Linux desktop packaging (AppImage/tar.gz) is source, not downloaded artifacts.
+!tools/linux/
 # Research corpus generator (Apple-features Rust port reference outputs).
 !tools/golden_corpus.sh
 # Codec integration sources (not downloaded dependencies or generated media).

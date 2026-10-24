@@ -392,7 +392,20 @@ pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
     // The primary ISO APP2 only advertises a version. Full gain-map metadata
     // resides in the secondary image and takes precedence over legacy XMP.
     let metadata = if let Some(iso) = gm_segments.iso_metadata {
-        crate::jpeg_gainmap_metadata::parse_iso(&iso)?
+        match crate::jpeg_gainmap_metadata::parse_iso(&iso) {
+            Ok(metadata) => metadata,
+            Err(error @ crate::jpeg_gainmap_metadata::IsoParseError::UnsupportedVersion(_)) => {
+                // Some producers ship an older/different ISO revision alongside
+                // a complete Adobe representation of the SAME MPF gain map.
+                // Only version incompatibility can use this fallback; corrupt
+                // supported ISO metadata must never be silently overridden.
+                let xmp = gm_segments.xmp.as_deref().or(segments.xmp.as_deref())
+                    .ok_or_else(|| format!("{error}; no Adobe XMP fallback"))?;
+                crate::jpeg_gainmap_metadata::parse_adobe_fallback(xmp)
+                    .map_err(|fallback| format!("{error}; Adobe XMP fallback: {fallback}"))?
+            }
+            Err(error) => return Err(error.to_string()),
+        }
     } else {
         let xmp = gm_segments.xmp.or(segments.xmp)
             .ok_or("Ultra HDR JPEG lacks ISO or XMP gain-map metadata")?;
@@ -426,6 +439,7 @@ pub fn synthesize_source_container(
     info: &UhdrJpeg,
     use_420: bool,
 ) -> Result<Vec<u8>, String> {
+    let icc = crate::jpeg_color::read_rgb_icc(source)?;
     let (rgb, width, height) = crate::jpeg_decode::decode_jpeg_to_rgb(source)
         .map_err(|e| format!("Ultra HDR base JPEG decode failed: {e}"))?;
     // The base JPEG stores its pixels in capture orientation plus an EXIF
@@ -453,7 +467,7 @@ pub fn synthesize_source_container(
     let mut exif = info.exif_tiff.clone().unwrap_or_else(||
         crate::sdr_source::minimal_exif_tiff("1970:01:01 00:00:00"));
     crate::exif::ensure_exif_ifd(&mut exif)?;
-    synthesize_source_container_from_rgb(&rgb, width, height, Some(exif), use_420)
+    synthesize_source_container_from_rgb_with_icc(&rgb, width, height, Some(exif), use_420, icc.as_deref())
 }
 
 pub(crate) fn inherit_missing_exif(info: &mut UhdrJpeg, input_path: &str) {
@@ -476,6 +490,16 @@ pub fn synthesize_source_container_from_rgb(
     exif_tiff: Option<Vec<u8>>,
     use_420: bool,
 ) -> Result<Vec<u8>, String> {
+    synthesize_source_container_from_rgb_with_icc(rgb, width, height, exif_tiff, use_420, None)
+}
+
+/// Pixels must still be in the supplied profile's RGB space. In particular,
+/// never attach a source profile to RGB already color-converted by a decoder.
+pub(crate) fn synthesize_source_container_from_rgb_with_icc(
+    rgb: &[u8], width: u32, height: u32, exif_tiff: Option<Vec<u8>>,
+    use_420: bool, icc: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    if let Some(profile) = icc { crate::jpeg_color::validate_rgb_icc(profile)?; }
     let rgb = rgb.to_vec();
     let cols = width.div_ceil(TILE_SIZE).max(1);
     let rows = height.div_ceil(TILE_SIZE).max(1);
@@ -500,13 +524,15 @@ pub fn synthesize_source_container_from_rgb(
         }
     }
     let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
-    let streams = crate::hevc::x265_encode_tiles(
+    let streams = if icc.is_some() {
+        crate::hevc::x265_encode_icc_primary_tiles(&tile_refs, TILE_SIZE, TILE_SIZE, use_420)
+    } else { crate::hevc::x265_encode_tiles(
         &tile_refs,
         TILE_SIZE,
         TILE_SIZE,
         3,
         use_420,
-    )
+    ) }
     .map_err(|e| format!("Ultra HDR primary HEVC encode: {e}"))?;
     if streams.len() != total_tiles {
         return Err("primary HEVC encode produced an unexpected tile count".into());
@@ -547,8 +573,12 @@ pub fn synthesize_source_container_from_rgb(
     ipco.extend_from_slice(&grid_ispe);
     ipco.extend_from_slice(&tile_ispe);
     ipco.extend_from_slice(&hvcc_box);
-    ipco.extend_from_slice(isobmff::COLR_SRGB_BOX);
+    let profile_colr = icc.map(crate::jpeg_color::icc_colr);
+    ipco.extend_from_slice(profile_colr.as_deref().unwrap_or(isobmff::COLR_SRGB_BOX));
     ipco.extend_from_slice(&isobmff::make_irot_box(0));
+    // ICC supplies gamut/TRC; nclx and VUI agree on BT.709 matrix/full range.
+    let idx_matrix = 6u32;
+    if icc.is_some() { ipco.extend_from_slice(crate::jpeg_color::ICC_MATRIX_COLR); }
 
     let mut ipma_entries: Vec<u8> = Vec::new();
     let mut entry_count = 0u32;
@@ -556,15 +586,15 @@ pub fn synthesize_source_container_from_rgb(
         out.extend_from_slice(&isobmff::make_ipma_entry(id, assocs, 0));
         entry_count += 1;
     };
-    push_entry(
-        grid_id,
-        &[(idx_grid_ispe, true), (idx_colr, true), (idx_irot, true)],
-        &mut ipma_entries,
-    );
+    let mut primary_assocs = vec![(idx_grid_ispe, true), (idx_colr, true), (idx_irot, true)];
+    if icc.is_some() { primary_assocs.push((idx_matrix, false)); }
+    push_entry(grid_id, &primary_assocs, &mut ipma_entries);
     for i in 0..total_tiles {
+        let mut tile_assocs = vec![(idx_tile_ispe, true), (idx_hvcc, true), (idx_colr, true)];
+        if icc.is_some() { tile_assocs.push((idx_matrix, false)); }
         push_entry(
             first_tile_id + i as u32,
-            &[(idx_tile_ispe, true), (idx_hvcc, true), (idx_colr, true)],
+            &tile_assocs,
             &mut ipma_entries,
         );
     }
@@ -863,6 +893,67 @@ mod tests {
         assert!(info.use_base_color_space);
     }
 
+    fn dual_metadata_jpeg(iso: &[u8], xmp: Option<&[u8]>) -> Vec<u8> {
+        let mut gainmap = vec![0xff, 0xd8];
+        let mut payload = crate::jpeg_gainmap_metadata::ISO_NAMESPACE.to_vec();
+        payload.extend_from_slice(iso);
+        gainmap.extend(appseg(0xe2, &payload));
+        if let Some(xmp) = xmp {
+            let mut payload = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+            payload.extend_from_slice(xmp);
+            gainmap.extend(appseg(0xe1, &payload));
+        }
+        gainmap.extend(&tiny_jpeg(0x11, 10)[2..]);
+        jpeg_with_gainmap(&gainmap)
+    }
+
+    const ADOBE_XMP: &[u8] = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:h="http://ns.adobe.com/hdr-gain-map/1.0/" h:Version="1.0" h:GainMapMin="0" h:GainMapMax="1.12392" h:Gamma="1" h:OffsetSDR="0" h:OffsetHDR="0" h:HDRCapacityMin="0" h:HDRCapacityMax="1.12392" h:BaseRenditionIsHDR="False"/></rdf:RDF></x:xmpmeta>"#;
+
+    #[test]
+    fn unsupported_iso_version_uses_valid_adobe_xmp_without_losing_gainmap() {
+        let jpeg = dual_metadata_jpeg(&[0, 2, 0, 0, 0], Some(ADOBE_XMP));
+        let info = parse(&jpeg).unwrap().unwrap();
+        assert_ne!(info.gainmap_jpeg, IDENTITY_GAINMAP_JPEG);
+        assert!((info.meta_floats[4].log2() - 1.12392).abs() < 1e-5);
+        assert!((info.meta_floats[17] - 2.1793833).abs() < 1e-5);
+        assert!(info.use_base_color_space);
+        let details = crate::photo_details::inspect_photo_details_from_bytes(&jpeg);
+        assert!(details.success);
+        assert_eq!(details.hdr_kind.as_deref(), Some("uhdr"));
+        assert!(details.hdr_parse_error.is_none());
+    }
+
+    #[test]
+    fn unsupported_iso_version_requires_complete_valid_adobe_fallback() {
+        for xmp in [None, Some(&b"<broken"[..]), Some(&b"<empty/>"[..])] {
+            let jpeg = dual_metadata_jpeg(&[0, 2, 0, 0, 0], xmp);
+            let error = parse(&jpeg).err().unwrap();
+            assert!(error.contains("unsupported ISO JPEG minimum version 2"));
+            let details = crate::photo_details::inspect_photo_details_from_bytes(&jpeg);
+            assert!(details.hdr_kind.is_none());
+            assert_eq!(details.hdr_parse_error.as_deref(), Some(error.as_str()));
+            assert!(details.to_json()["hdrParseError"].is_string());
+        }
+    }
+
+    #[test]
+    fn corrupt_supported_iso_does_not_fall_back_even_with_valid_adobe_xmp() {
+        for iso in [&b""[..], &[0, 2, 0, 0], &[0, 0, 0, 0, 0x48],
+            &[0, 0, 0, 0, 0x48, 0, 0, 0, 0], &[0, 0, 0, 0, 4]] {
+            let jpeg = dual_metadata_jpeg(iso, Some(ADOBE_XMP));
+            assert!(parse(&jpeg).is_err());
+        }
+    }
+
+    #[test]
+    fn ordinary_sdr_jpeg_details_do_not_claim_uhdr() {
+        let details = crate::photo_details::inspect_photo_details_from_bytes(&tiny_jpeg(0x11, 10));
+        assert!(details.success);
+        assert!(details.hdr_kind.is_none());
+        assert!(details.hdr_parse_error.is_none());
+        assert!(details.edr_scale.is_none());
+    }
+
     #[test]
     fn jpeg_rejects_bad_iso_instead_of_synthesizing_identity() {
         let mut gainmap = vec![0xff, 0xd8];
@@ -944,6 +1035,57 @@ mod tests {
                     .find(|property| property.index == *index && property.ptype == property_type)
             })
             .expect("item has the associated property")
+    }
+
+    #[test]
+    fn jpeg_icc_is_preserved_on_primary_and_tiles_without_changing_pixels() {
+        let profile = crate::jpeg_color::tests::rgb_profile();
+        let jpeg = crate::jpeg_color::tests::add_icc(TINY_16X8_JPEG,
+            &[(2, 2, &profile[64..]), (1, 2, &profile[..64])]);
+        let info = parse(&jpeg).unwrap().unwrap();
+        let source = synthesize_source_container(&jpeg, &info, true).unwrap();
+        let parsed = isobmff::parse_source_meta(&source).unwrap();
+        let expected = crate::jpeg_color::icc_colr(&profile);
+        for item in parsed.items.iter().filter(|i| i.itype == "grid" || i.itype == "hvc1") {
+            assert_eq!(associated_property(&parsed, item.item_id, "colr").raw, expected);
+            let assocs = &parsed.ipma_entries.iter().find(|a| a.item_id == item.item_id).unwrap().associations;
+            assert!(assocs.iter().any(|(index, _)| parsed.props.iter().any(|p|
+                p.index == *index && p.raw == crate::jpeg_color::ICC_MATRIX_COLR)));
+        }
+        let (plain_rgb, w, h) = crate::jpeg_decode::decode_jpeg_to_rgb(TINY_16X8_JPEG).unwrap();
+        let (tagged_rgb, iw, ih) = crate::jpeg_decode::decode_jpeg_to_rgb(&jpeg).unwrap();
+        assert_eq!((w, h), (iw, ih));
+        assert_eq!(plain_rgb, tagged_rgb, "ICC extraction must not color-convert RGB");
+        let plain = synthesize_source_container(TINY_16X8_JPEG, &info, true).unwrap();
+        let untagged = isobmff::parse_source_meta(&plain).unwrap();
+        assert_eq!(associated_property(&untagged, untagged.primary_id, "colr").raw, isobmff::COLR_SRGB_BOX);
+    }
+
+    #[test]
+    fn jpeg_sdr_styles_source_retains_icc_too() {
+        let profile = crate::jpeg_color::tests::rgb_profile();
+        let jpeg = crate::jpeg_color::tests::add_icc(TINY_16X8_JPEG, &[(1, 1, &profile)]);
+        let (source, extracted) = crate::sdr_source::synthesize_sdr_source(&jpeg, None).unwrap();
+        let meta = isobmff::parse_source_meta(&source).unwrap();
+        assert_eq!(associated_property(&meta, meta.primary_id, "colr").raw,
+            crate::jpeg_color::icc_colr(&profile));
+        assert_eq!(extracted.gainmap_data.unwrap(), IDENTITY_GAINMAP_JPEG);
+    }
+
+    #[test]
+    fn jpeg_icc_primary_matrix_round_trips_device_rgb() {
+        let profile = crate::jpeg_color::tests::rgb_profile();
+        let color = [180u8, 40, 60];
+        // Full tile: a 16px crop next to black tile padding introduces real
+        // 4:2:0 edge filtering, which is not a matrix/profile error.
+        let rgb = color.repeat(512 * 512);
+        let source = synthesize_source_container_from_rgb_with_icc(
+            &rgb, 512, 512, None, true, Some(&profile)).unwrap();
+        let (decoded, w, h, _) = crate::sdr_source::decode_to_rgb(&source).unwrap();
+        assert_eq!((w, h), (512, 512));
+        for pixel in decoded.chunks_exact(3) {
+            for c in 0..3 { assert!(pixel[c].abs_diff(color[c]) <= 3, "{pixel:?}"); }
+        }
     }
 
     /// The Ultra HDR base JPEG's EXIF orientation is baked into the primary
