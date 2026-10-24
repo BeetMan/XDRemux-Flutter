@@ -8,7 +8,8 @@
 - [x] 修复桌面入口路径的空格、引号、反斜杠、美元符、反引号、百分号及 `&` / `|` 转义；以真实 GLib 桌面入口启动临时目录中的测试应用。所有测试安装仅在临时目录，不触及实际用户安装。
 - [x] Linux CI 新增相关 PR 自动构建，Ubuntu 22.04 专属 x265 缓存，Rust locked 构建；构建 job 只读，Release 上传拆成仅手动执行的独立写权限 job，并校验附件版本与标签一致。未运行发布任务。
 - [x] WSL Ubuntu 上 Bash 语法、两项回归套件（共 7 个子场景）通过；Windows 宿主 Rust 258 passed / 7 ignored。实际 Ubuntu 22.04 桌面构建由新增 CI 检查，完整 GUI/图库和多发行版验收仍需后续进行。
-- [ ] 最新 PR CI 通过后合并 main，并记录实际结果。PR：<https://github.com/BeetMan/XDRemux-Flutter/pull/12>。
+- [x] Flutter 本地 analyze 无问题，143 tests 全部通过；暂存测试用核心 DLL 后已按哈希恢复。候选 `54b26a72` 的全部 GitHub 检查通过：Rust、Flutter、Conformance、OHOS smoke，以及新增 Ubuntu 22.04 Linux 构建/打包（3m50s）。核心最高 GLIBC 需求为 `GLIBC_2.35`，生成 `0.4.5` AppImage/tar.gz/sha256 workflow artifact；Release 上传 job 为 skipped。
+- [x] [PR #12](https://github.com/BeetMan/XDRemux-Flutter/pull/12) 已于 2026-10-24 合入 main，合并提交 `0a2b5079`。本地候选快进同步，保留未跟踪 dist 与其他工作区的改动。仍无 `v0.4.5` 标签，正式 Latest Release 仍为 `v0.4.4`，原生版本仍为独立 `harmony-v0.5.1`。
 
 ## 2026-10-24：JPEG 修复合入主线并准备 0.4.5（不发布）
 

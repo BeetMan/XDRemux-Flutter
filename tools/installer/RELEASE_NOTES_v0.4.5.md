@@ -26,6 +26,7 @@
 - Linux 预览集成 PR #12：新增 GTK 桌面目标、拖放 / 命令行导入、Rust FFI 查找、AppImage / tar.gz 打包和用户级安装。Linux 不使用的托盘 / JNI 插件从构建中移除，不改变其他平台的产品门禁。
 - 审查补丁修正 Cargo 库相对路径、安装目录特殊字符转义；Ubuntu libnuma 下载及缓存校验 SHA256，Ubuntu 22.04 x265 缓存与较新系统隔离。Linux PR 自动执行只读构建和打包，发布附件仍需独立手动授权步骤，不随合并自动发布。
 - Linux 仍为预览平台；既有 v0.4.4 预览附件不变。本轮回归与构建检查不替代 Linux 发行版桌面和目标图库验收。
+- PR #12 合并前的 GitHub CI 全部通过；Ubuntu 22.04 实际构建并打包 0.4.5 AppImage/tar.gz，核心最高 GLIBC 需求为 2.35，附件上传仅为 workflow artifact，未上传 Release。WSL 另验证 3 种安装路径和 4 种 libnuma 缓存/下载校验场景。
 
 - 升版后 Rust 自动回归 258 passed / 7 ignored，两项显式启用的原图回归通过；Flutter 143 项测试通过，FFI 实读核心版本 `0.4.5` 与主 pubspec 一致。
 - 修复按共享 Rust 核心实现，已做 Windows 主机验证；Android、macOS、iOS 与鸿蒙的安装包和目标图库仍需在正式发布前验收。
