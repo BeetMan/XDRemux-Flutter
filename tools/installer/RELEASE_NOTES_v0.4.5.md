@@ -1,6 +1,6 @@
-# v0.4.5 — JPEG 色彩修复、iPhone Duo 适配与 Linux 预览（尚未发布）
+# v0.4.5 — JPEG 色彩修复、iPhone Duo 适配与 Linux 预览
 
-候选版本为 Flutter `0.4.5+39` / Rust `0.4.5`。当前为发布准备阶段：手动预检只生成构建产物，不创建 tag 或 GitHub Release，不修改已有附件；下列变化尚未包含在已发布的 v0.4.4 安装包中。
+本版为 Flutter `0.4.5+39` / Rust `0.4.5`，包含 Windows、Android、macOS、iOS、Linux（预览）与 Flutter HarmonyOS 六平台安装包。维护者已确认本轮验收无问题，并于 2026-10-25 授权发布。
 
 ## iPhone Duo 与 Apple 平台
 
@@ -8,9 +8,9 @@
 - 修复部分 HDR HEIC 在 iOS 上显示为黑色缩略图的问题：原生缩略图经过明确的 8-bit sRGB 上下文后再编码，异常黑图交给 Rust 预览回退。macOS 同步规范化处理；这只影响界面预览，不把 HDR 转换输出改成 SDR。
 - 新增 Apple Silicon iOS 模拟器核心构建脚本，区分真机/模拟器 x265 归档，并修复干净构建时 Rust 与 C 依赖部署目标不一致导致的链接问题。
 - iOS 发包显式使用 Xcode 27.1 / iOS 27.1 SDK，并编译探针验证 Duo API；不为旧 SDK 删除 Duo 功能。**构建 SDK 要求不等于最低系统版本**，应用部署目标仍为 iOS 15.0，新接口继续受运行时可用性检查保护。
-- 真机旋转、折叠时工具栏跟随、HDR/ICC 图库显示及 Live Photo 保存仍需要候选包验收；模拟器结果不代替真机验收。
+- Duo 适配包含已接入的侧栏和主操作布局；UIHinge 驱动的折叠态专用布局尚未接入，不承诺所有姿态或目标图库功能完全一致。
 
-## 六平台候选与发布流程
+## 六平台安装与发布范围
 
 - 目标产物：Windows x64、Android ARM64、macOS Apple Silicon、iOS ARM64、Linux x64（预览）、Flutter HarmonyOS ARM64。
 - Linux 打包现由统一发布 workflow 调用，与 Windows、Android、macOS、iOS 一起检查成功状态及附件存在性；缺少任何一类 CI 产物时不创建 Release。手动预检仍不发布。
@@ -26,7 +26,7 @@
 - 两张用户原图的 Apple 标准 / OPPO 兼容转换均通过回归；MIX Flip 2 的 632 字节 ICC 逐字节保留，完整照片和水印画布尺寸仍为 3072×4572。其错误 MPF 主图长度没有被用于截断 JPEG，未新增宽泛的损坏数据容错。
 - 独立 libheif 1.23.4 与 LittleCMS 读回验证：P3、sRGB 色块两种输出均保留原 ICC，色块中心最大 RGB 误差 1/255；整幅测试图经同一 ICC 转为 sRGB 后各通道平均绝对误差不超过 0.51/255（含边界与有损编码影响）。FFprobe 核对 HEVC VUI 与容器声明一致。
 
-上述为主机文件级验证，不代表所有平台预览、图库、HDR 显示或摄影风格编辑已完成色彩验收；PNG/HEIF 等其他格式的源色彩管理与 CMYK/灰阶 ICC 转换不在本轮范围。
+上述自动色彩验证为主机文件级验证，不代表所有设备、图库、HDR 显示或摄影风格编辑完全一致；PNG/HEIF 等其他格式的源色彩管理与 CMYK/灰阶 ICC 转换不在本轮范围。
 
 ## JPEG HDR 兼容性（Issue #11）
 
@@ -35,17 +35,19 @@
 - Flutter 照片详情新增“HDR 解析失败”与原因，信息复制中一并保留错误；不会把解析失败当作“无（SDR）”。EXIF 可继续显示。
 - 使用 Issue #11 原始 JPEG 验证 Apple 标准与 OPPO 兼容两种输出，均通过 HDR 增益图结构检查，亮度倍率约 2.18×，原图哈希不变。此验证是 Windows 主机上的共享 Rust 核心实测，不替代 Android、Apple Photos 或其他平台真机验收。
 
-本轮不增加通用 SDR JPG → HEIC 模式，不启用伪 HDR，不改变默认编码质量、签名或已发布资产。鸿蒙原生为独立版本 0.5.2；Flutter 主线 0.4.5 不替代原生发布标签及其独立验收记录。
+本轮不增加通用 SDR JPG → HEIC 模式，不启用伪 HDR，不改变默认编码质量或签名。鸿蒙原生为独立版本 0.5.2；Flutter 主线 0.4.5 不替代原生发布标签及其独立验收记录。
 
-## 验证与发布状态
+## Linux 桌面预览
 
-- 2026-10-25：六平台候选构建/静态检查完成。五个平台经云端只构建预检（Android ABI 修正后单独复验），Flutter OHOS 经本地隔离 profile AOT 出包及结构校验；发布 job 均未执行，未创建 v0.4.5 标签。详见 `docs/plans/release-045-preflight.md`，不代表安装/图库/实机验收完成。
+- 新增 GTK 桌面目标、拖放 / 命令行导入、Rust FFI、AppImage/tar.gz 打包和用户级安装。移除 Linux 不使用的托盘/JNI 插件，系统托盘和完成通知暂未接入。
+- 修正 Cargo 库查找路径及安装路径特殊字符转义；Ubuntu libnuma 通过 HTTPS 下载并校验包和缓存 SHA256，x265 缓存与较新发行版隔离。
+- Ubuntu 22.04 构建和打包通过，核心最高 GLIBC 需求为 2.35；Linux 仍按预览支持发布，不代表所有发行版已完整验收。
 
-- Linux 预览集成 PR #12：新增 GTK 桌面目标、拖放 / 命令行导入、Rust FFI 查找、AppImage / tar.gz 打包和用户级安装。Linux 不使用的托盘 / JNI 插件从构建中移除，不改变其他平台的产品门禁。
-- 审查补丁修正 Cargo 库相对路径、安装目录特殊字符转义；Ubuntu libnuma 下载及缓存校验 SHA256，Ubuntu 22.04 x265 缓存与较新系统隔离。Linux PR 自动执行只读构建和打包，发布附件仍需独立手动授权步骤，不随合并自动发布。
-- Linux 仍为预览平台；既有 v0.4.4 预览附件不变。本轮回归与构建检查不替代 Linux 发行版桌面和目标图库验收。
-- PR #12 合并前的 GitHub CI 全部通过；Ubuntu 22.04 实际构建并打包 0.4.5 AppImage/tar.gz，核心最高 GLIBC 需求为 2.35，附件上传仅为 workflow artifact，未上传 Release。WSL 另验证 3 种安装路径和 4 种 libnuma 缓存/下载校验场景。
+## 验证与安装说明
 
-- 升版后 Rust 自动回归 258 passed / 7 ignored，两项显式启用的原图回归通过；Flutter 143 项测试通过，FFI 实读核心版本 `0.4.5` 与主 pubspec 一致。
-- 修复按共享 Rust 核心实现，已做 Windows 主机验证；Android、macOS、iOS 与鸿蒙的安装包和目标图库仍需在正式发布前验收。
-- 正式对外下载仍为 v0.4.4。待验收后再决定是否创建 `v0.4.5` 标签与发布安装包。
+- 六平台预检通过；主线 CI / Conformance 全部通过。Rust 自动回归 258 passed / 7 ignored，两项显式启用的原图回归通过；本地 Flutter 145 项测试通过。
+- Android 仅 ARM64，最低 Android API 24；正式签名证书 SHA256 与 v0.4.4 一致，可在兼容设备上覆盖升级。
+- iOS IPA 未签名，需自行签名侧载；使用 iOS 27.1 SDK 构建，最低部署目标仍为 iOS 15.0。
+- Flutter 鸿蒙附件为 profile AOT / debug:true unsigned HAP，需匹配包名、证书和设备范围的开发签名，不是免签包或应用市场分发包。统一相册保存及 Live Photo 配对分享限制不变。
+- Flutter 鸿蒙附件 SHA256：`C43C01A4031150658D38496CACCFF22406E9289254B2F73C7B6691AE10630C1F`，复用维护者验收过的相同文件；全部资产另提供 `SHA256SUMS.txt`。
+- 维护者确认本轮验收通过；未提供逐设备/逐场景明细，不扩写为代理已完成六平台全部实机验收。完整构建证据和范围见[发版记录](https://github.com/BeetMan/XDRemux-Flutter/blob/main/docs/plans/release-045-preflight.md)。
