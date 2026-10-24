@@ -83,6 +83,18 @@ Flutter 版以转换队列为主要入口：导入照片、查看详情、选择
 |---|---|
 | ![Android 主界面](screenshots/android.jpg) | ![iOS 主界面](screenshots/ios.jpg) |
 
+### iPhone Duo 适配
+
+iPhone Duo（`iPhone19,4`，iOS 27.1）在屏幕右侧保留了 84pt 宽的系统竖栏区（`UITraitCollection.verticalBarEdge == trailing`）。应用把工具操作放进这条区域，内容仍按 382pt 排版，并按列表长度与折叠状态切换主操作位置；展开后队列改为 3 列网格。
+
+| 合上 · 空队列 | 合上 · 队列 ≥ 4 |
+|---|---|
+| ![合上竖屏](screenshots/duo-folded.png) | ![合上竖屏，主操作浮动](screenshots/duo-folded-queue.png) |
+
+| 展开 · 竖屏（669×951） | 展开 · 横屏（951×669） |
+|---|---|
+| ![展开竖屏](screenshots/duo-unfolded-portrait.png) | ![展开横屏](screenshots/duo-unfolded-landscape.png) |
+
 ## Apple 摄影风格：让照片可以继续编辑
 
 选择 Apple 标准输出后，可为支持的照片生成摄影风格编辑数据，让照片在支持的 Apple 照片版本与设备上继续调整。

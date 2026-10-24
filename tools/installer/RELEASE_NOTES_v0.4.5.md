@@ -7,6 +7,16 @@
 - iOS 发包使用 Xcode 27.1 / iOS 27.1 SDK.
 - Duo 适配包含已接入的侧栏和主操作布局，UIHinge 驱动的折叠态专用布局尚未接入。
 
+| 合上 · 空队列 | 合上 · 队列 ≥ 4（主操作浮动） |
+|---|---|
+| ![合上竖屏](https://raw.githubusercontent.com/BeetMan/XDRemux-Flutter/main/screenshots/duo-folded.png) | ![合上竖屏，队列较长时主操作浮动](https://raw.githubusercontent.com/BeetMan/XDRemux-Flutter/main/screenshots/duo-folded-queue.png) |
+
+| 展开 · 竖屏（669×951） | 展开 · 横屏（951×669） |
+|---|---|
+| ![展开竖屏](https://raw.githubusercontent.com/BeetMan/XDRemux-Flutter/main/screenshots/duo-unfolded-portrait.png) | ![展开横屏](https://raw.githubusercontent.com/BeetMan/XDRemux-Flutter/main/screenshots/duo-unfolded-landscape.png) |
+
+采集于 iOS 27.1 模拟器；真机折叠/展开姿态与图库导出仍需发布前补验。
+
 ## JPEG 色彩配置保留
 
 - 修复带 P3、sRGB 等 RGB ICC 的 JPEG 转 HEIC 时丢失源色彩配置的问题。HDR JPEG 与现有普通 JPEG 摄影风格源重建路径均保留原始 RGB ICC，不先压到 sRGB，也不按相机名或 profile 描述猜色域。
