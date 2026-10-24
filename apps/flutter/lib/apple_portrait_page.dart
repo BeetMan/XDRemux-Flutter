@@ -197,7 +197,12 @@ class _ApplePortraitPageState extends State<ApplePortraitPage> {
     return Scaffold(
       appBar: AppBar(title: Text(t('Apple 人像模式实验室', 'Apple Portrait Lab'))),
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          24,
+          24 + MediaQuery.paddingOf(context).right,
+          24,
+        ),
         children: [
           Card(
             child: Padding(

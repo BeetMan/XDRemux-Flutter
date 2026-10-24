@@ -422,5 +422,31 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         result(FlutterMethodNotImplemented)
       }
     }
+
+    // iOS 27 platform layout traits. The system can place a vertical bar on a
+    // leading or trailing edge (iPhone Duo reserves its 84pt right inset for a
+    // trailing bar), and `UITraitCollection.verticalBarEdge` reports the edge
+    // it prefers even before any bar is visible.
+    let traitsChannel = FlutterMethodChannel(
+      name: "xdremux/platform-traits",
+      binaryMessenger: messenger
+    )
+    traitsChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "getLayoutTraits":
+        var edge = "unspecified"
+        if #available(iOS 27.1, *) {
+          let traits = self?.window?.traitCollection ?? UITraitCollection.current
+          switch traits.verticalBarEdge {
+          case .leading: edge = "leading"
+          case .trailing: edge = "trailing"
+          default: edge = "unspecified"
+          }
+        }
+        result(["verticalBarEdge": edge])
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 }
