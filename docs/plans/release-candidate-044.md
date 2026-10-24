@@ -1,5 +1,41 @@
 # 0.4.4 候选整合与 Flutter 升级
 
+## 2026-10-24：JPEG 修复合入主线并准备 0.4.5（不发布）
+
+- 用户授权把 Issue #11 HDR 识别修复与 JPEG RGB ICC 保真修复合回 main，版本提升为 0.4.5，暂不发版。
+- [x] Flutter `pubspec.yaml` → `0.4.5+39`；Rust crate 与 Cargo.lock → `0.4.5`；Windows Inno Setup 默认版本 → `0.4.5`。Android/Apple 构建读取主 pubspec；OHOS 构建脚本也已自动从主 pubspec 同步版本，不更改模板清单或独立原生 0.5.1 的版本。
+- [x] 将暂存更新说明整理为 `tools/installer/RELEASE_NOTES_v0.4.5.md`，显式标注尚未发布；README 区分主线开发版本 0.4.5 与已发布 v0.4.4，保留已有下载链接。
+- [x] 升版后重新验证：Rust 258 passed / 7 ignored；两项原图测试显式启用通过；Flutter 完整 143 tests 通过，其中 FFI 核心版本实读 `0.4.5` 与 pubspec 匹配。测试暂存 DLL 已按哈希恢复，不提交生成二进制。日志 `target/issue-11/045-*.log`。
+- [x] 修复提交 `074a6348`；版本与文档单独提交，整合方式为基于 main `953a2737` 的线性快进，推送仅限 `HEAD:main`（显式禁止 follow-tags）。只含本轮源码/测试/文档/版本，保留 dist 和其他工作区未提交内容。
+- 发布约束：不创建任何 tag，不运行 release workflow，不创建/修改 GitHub Release 或安装附件，不关闭 issue。Release workflow 仅由 `v*` tag push 或显式 dispatch 触发；本次只有常规 main CI。
+
+下面两项修复的“未提交/未推送”状态是实现阶段历史记录，以本节整合状态为准；旧 `RELEASE_NOTES_UNRELEASED.md` 已整理为上述 0.4.5 待发布说明。
+
+## 2026-10-24：JPEG RGB ICC 保真修复（未发布）
+
+- 用户授权修复共享 JPEG 管线的 ICC 丢失，继续在 `codex/fix-jpeg-hdr-iso-fallback` 工作，保留上轮 Issue #11 修复。未修改其他工作区、原图、版本号或发布资产。
+- [x] 新增有界 `jpeg_color`：重组 JPEG APP2 ICC（支持乱序分段），检查序号/缺段/重复、16 MiB 上限、ICC RGB v2/v4 头部/设备类/PCS 与 tag 范围。非 RGB、坏 profile 明确失败，不静默丢弃或将原配置附给已变换的 RGB。
+- [x] HDR JPEG 主图和现有 SDR JPEG Styles 源重建保留设备 RGB 值，原 ICC 写入主图和主瓦片 `colr/prof`；配套 nclx=(2,2,1,full)，主图 HEVC VUI 同样为 unspecified primaries/TRC、BT.709 matrix/full range。质量预设/CRF不变，无 ICC 输入及非 JPEG 源仍沿用原路径。保留 OPPO 原机 HEIF / 水印写回已有特例，不泛改编码器默认值。
+- [x] 自动覆盖分段 ICC 重组、坏序号/缺段/重复/截断/非 RGB/tag 范围、主图/瓦片 ICC 关联、无 ICC 行为、SDR Styles 源及 RGB 数值读回。独立色块测试使用完整 512×512 平坦瓦片，避免将 16px 小图紧邻黑色 padding 的 4:2:0 边界滤波误判为色域错误；完整瓦片读回误差阈值仍为 3/255。
+- [x] Rust `cargo +1.96.1 test --locked -p xdremux-core` 共 258 passed / 7 ignored；两项 opt-in 原图测试显式运行均通过（两张 JPEG × Apple/OPPO 两种输出，原图 SHA256 不变）。FFmpeg fallback 另目录编译及两项 ICC 合成/数值回归通过。
+- [x] MIX Flip 2 原图（SHA256 `B5D0DCF287DF4D2D9085B246A017CDFCD3A04E81081A4C6371AD31C3291F8CAA`）：Apple 输出 3,326,652 bytes，SHA256 `6D14EF4AE71E5C3AC097B3749B923E95B4FD8016A4A41371A97CDD908A045EBC`；OPPO 输出 3,321,474 bytes，SHA256 `324C6EB9B29548343B098D82D3A4D3737DB32A6FFD9B0EE63EBC3D0EE2969254`。632 bytes ICC 与源一致，主图 3072×4572、增益图 1536×2286，包含水印画布，FFI 与 HDR 图结构检查通过。源 MPF 主图长度过短未造成截断。
+- [x] 独立 libheif 1.23.4 C API 读回原图输出及 P3/sRGB 平坦色块（两种模式；色块走实际 SDR Styles 转换），ICC 逐字节相同。色块中心最大通道误差 1/255、平均 0.167/255；LittleCMS 按同一 profile 转 sRGB 后各通道整图 MAE 最大 0.501/255，未做像素无损承诺。FFprobe 从主图瓦片码流核对 full-range / BT.709 matrix、无冲突的 primaries/TRC。
+- [x] Flutter 完整 143 tests 再次通过；使用本次核心暂存运行后按哈希恢复旧测试宿主 DLL，不提交二进制。`git diff --check` 通过。更新未发布 Release 说明；未提交、推送、打包手机安装版或更改 GitHub issue。
+- 验收边界：本轮是 JPEG 转换文件级色彩保真，不扩展至通用 SDR 模式、CMYK/灰阶 CMS、非 JPEG 输入的 profile 管理或全平台预览/目标相册实际显示验收。照片原件不纳入 Git；独立解码、FFprobe 日志及输出留在忽略的 `target/issue-11`。
+
+## 2026-10-24：Issue #11 JPEG HDR 识别回归热修（未发布）
+
+- 用户授权先修回归，不扩展通用 SDR JPG → HEIC。复用此干净工作区，从 main `953a2737` 新建 `codex/fix-jpeg-hdr-iso-fallback`；保留原目录未提交改动和 dist，不移动标签、不更新安装包、不自动回复或关闭 issue。
+- [x] 同一红米原图（SHA256 `3F1E942F63799A3045EFAC8A7AFD542C0258634FD63285D6D9CCE43CBBCB0747`）对照两个 tag 的解析器复现：0.4.3 可读 1,215,977 bytes 增益图；0.4.4 拒绝 ISO minimum version 2。文件同时有有效 Adobe XMP，原图及增益图结构完整。
+- [x] ISO 解析新增类型化错误，仅 UnsupportedVersion 可走严格 Adobe XMP 回退。支持 ISO 继续优先；支持版本的截断、非法数值/flags、重复段等不允许回退。Adobe 回退校验命名空间、Version 1.0、标量、重复属性、有限数值与范围，拒绝 HDR 底图，不使用身份增益图假装成功。
+- [x] JPEG 详情报告增加 `hdrParseError`，与 EXIF 的 success 独立；Flutter 格式行、摘要与复制信息显示“HDR 解析失败”及原因，不再吞错显示 SDR。普通 JPEG 的身份增益图不作为原生详情报告中的 HDR 依据。
+- [x] 自动覆盖版本不支持 + 有效/无效/缺失 XMP、合法 ISO 优先、截断/坏数据不回退、命名空间伪造、数值/范围/重复/非标量、普通 SDR 及详情错误序列化。Rust `cargo +1.96.1 test --locked -p xdremux-core` 共 252 passed / 6 ignored（其中含新增 opt-in 原图测试，已另行显式运行通过）。
+- [x] opt-in `jpeg_hdr_regression` 用用户原图经过真实 x265 转换：Apple 标准 4,933,917 bytes，SHA256 `8473CFC7C94F564A66D6EF0C34DD003D12A26C6453B6A217078C6EF49D56553F`；OPPO 兼容 4,933,219 bytes，SHA256 `89F7074E1527C7924A36860140E0141901A6FB5E0B05DD78B0FF1397E0B9F25A`。两份输出的公共 FFI 校验及 HDR 增益图结构校验通过（增益图 1536×2048），输出参数约 2.17938× / 1.12392 EV；输入哈希不变。源照片不提交 Git，合成测试可公开，原图实测通过环境变量显式启用。
+- [x] Flutter 3.47.7：详情相关 14 tests、完整 143 tests 通过；改动 Dart 文件 analyze 无问题。首次完整测试因工程内遗留 0.4.3 DLL 缺少 codec 符号/版本不匹配有 2 项失败，换用本次编译的 0.4.4 核心后完整重跑通过；测试后按哈希恢复原 DLL，不提交二进制。
+- [x] 未发布更新写入 `tools/installer/RELEASE_NOTES_UNRELEASED.md`，`git diff --check` 通过。未提交或推送修复，未打包手机安装版，未进行目标图库的显示/编辑或真机验收。
+
+日志、前后版本诊断和两种 HEIC 输出保存在忽略的 `target/issue-11`。主线 v0.4.4 的既有发布记录如下，不能将本节误解为新包已经发布。
+
 ## 2026-10-22：主 README 发布后更新
 
 - [x] 首页增加官网 `https://xdremux.app`，HTTP HEAD 返回 200；跨平台/原生版本更新为 `0.4.4` / `0.5.1`，六个平台下载入口逐一与 GitHub 实际 Release 附件 URL 核对通过。
