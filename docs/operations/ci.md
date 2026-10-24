@@ -8,6 +8,7 @@
 - Flutter analyze（容忍既有的 info 级 lint）
 - Flutter job 的 FFI 冒烟库显式使用 FFmpeg fallback；Rust job 和各平台正式构建仍使用 x265。合成自动测试不替代私有原图或目标图库的色彩验收。
 - Apple SDK 守卫的模拟工具回归测试在 Ubuntu 执行；真正的 Duo SDK/API typecheck 在 iOS 构建 runner 上执行。
+- Android APK ABI/ELF/CRC 门禁有合成包回归测试；发包 job 另检查真实 APK，必须只有 ARM64 且包含匹配架构的 Rust、Flutter、AOT 和 C++ 运行库。
 
 ## 2. conformance.yml
 

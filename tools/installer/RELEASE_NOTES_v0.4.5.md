@@ -39,6 +39,8 @@
 
 ## 验证与发布状态
 
+- 2026-10-25：六平台候选构建/静态检查完成。五个平台经云端只构建预检（Android ABI 修正后单独复验），Flutter OHOS 经本地隔离 profile AOT 出包及结构校验；发布 job 均未执行，未创建 v0.4.5 标签。详见 `docs/plans/release-045-preflight.md`，不代表安装/图库/实机验收完成。
+
 - Linux 预览集成 PR #12：新增 GTK 桌面目标、拖放 / 命令行导入、Rust FFI 查找、AppImage / tar.gz 打包和用户级安装。Linux 不使用的托盘 / JNI 插件从构建中移除，不改变其他平台的产品门禁。
 - 审查补丁修正 Cargo 库相对路径、安装目录特殊字符转义；Ubuntu libnuma 下载及缓存校验 SHA256，Ubuntu 22.04 x265 缓存与较新系统隔离。Linux PR 自动执行只读构建和打包，发布附件仍需独立手动授权步骤，不随合并自动发布。
 - Linux 仍为预览平台；既有 v0.4.4 预览附件不变。本轮回归与构建检查不替代 Linux 发行版桌面和目标图库验收。
