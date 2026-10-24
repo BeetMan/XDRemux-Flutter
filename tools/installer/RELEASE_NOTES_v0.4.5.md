@@ -15,7 +15,7 @@
 - 目标产物：Windows x64、Android ARM64、macOS Apple Silicon、iOS ARM64、Linux x64（预览）、Flutter HarmonyOS ARM64。
 - Linux 打包现由统一发布 workflow 调用，与 Windows、Android、macOS、iOS 一起检查成功状态及附件存在性；缺少任何一类 CI 产物时不创建 Release。手动预检仍不发布。
 - Flutter 鸿蒙使用独立 OHOS Flutter SDK，本地构建 profile AOT、debug:true 的 unsigned HAP，供开发签名侧载；不改变现有签名配置，也不代表免签安装。
-- Windows ARM64 仍为不可交付的实验性任务，不列入本轮六平台承诺。鸿蒙原生保持独立 0.5.1 版本线，本轮不自动同步或升版。
+- Windows ARM64 仍为不可交付的实验性任务，不列入本轮六平台承诺。鸿蒙原生采用独立版本线，已另行发布 0.5.2，本轮不重打或改动该版本。
 
 ## JPEG 色彩配置保留
 
@@ -34,7 +34,7 @@
 - Flutter 照片详情新增“HDR 解析失败”与原因，信息复制中一并保留错误；不会把解析失败当作“无（SDR）”。EXIF 可继续显示。
 - 使用 Issue #11 原始 JPEG 验证 Apple 标准与 OPPO 兼容两种输出，均通过 HDR 增益图结构检查，亮度倍率约 2.18×，原图哈希不变。此验证是 Windows 主机上的共享 Rust 核心实测，不替代 Android、Apple Photos 或其他平台真机验收。
 
-本轮不增加通用 SDR JPG → HEIC 模式，不启用伪 HDR，不改变默认编码质量、签名或已发布资产。鸿蒙原生仍为独立版本 0.5.1；主线提升到 0.4.5 不代表原生分支已同步升级。
+本轮不增加通用 SDR JPG → HEIC 模式，不启用伪 HDR，不改变默认编码质量、签名或已发布资产。鸿蒙原生为独立版本 0.5.2；Flutter 主线 0.4.5 不替代原生发布标签及其独立验收记录。
 
 ## 验证与发布状态
 
