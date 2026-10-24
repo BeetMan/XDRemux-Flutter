@@ -6,9 +6,13 @@
 
 - [x] 维护者确认本轮验收无问题并授权发布 v0.4.5；未逐项提供设备、系统或用例结果，下面的明细不由代理自行补勾。
 - [x] 主线 `c0cf1228` 的 CI / Conformance 全绿，Flutter/Rust/安装器版本一致。正式说明移除候选状态，保留完整更新记录和支持限制。
-- [ ] 从说明整理后的 main 提交创建 v0.4.5 标签，五平台 CI 构建并发布；不移动已有标签，不复用被拒绝的 Android 初版。
-- [ ] 补齐相同 SHA256 的已验收 Flutter OHOS HAP、全资产校验文件，并核对 Release 正文、下载资产和 Latest。
-- [ ] 发布成功后更新主 README 下载入口和本记录。鸿蒙原生 harmony-v0.5.2 不修改。
+- [x] 从说明整理后的 main 提交 `408fd3ce` 创建并原子推送 v0.4.5 注释标签；未移动已有标签，未复用被拒绝的 Android 初版。
+- [x] 五平台正式构建/发布：[Release run 40126749079](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40126749079) 总体 success，Windows x64 / Android / macOS / iOS / Linux 及 publish 全部成功。发布提交的普通 CI / Conformance 全绿；Windows ARM64 实验失败不计入支持范围，没有伪造 ARM64 安装包。
+- [x] 已补齐相同 SHA256 的已验收 Flutter OHOS HAP，并上传 `SHA256SUMS.txt`。[v0.4.5 Release](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.5) 为非 draft、非 prerelease，GitHub `/releases/latest` 返回 v0.4.5；正文与 tag 中正式更新说明一致。
+- [x] Release 共 9 个资产（六平台的 8 个包/校验文件 + 全局 SHA256SUMS）。全部平台附件已重新从 Release 下载；本地大小/SHA256 与 GitHub 服务器 digest 逐一匹配。WSL `sha256sum -c SHA256SUMS.txt` 8 项全部 OK；Linux 自身校验文件也通过。
+- [x] 正式 Android APK 再验版本 0.4.5+39、ARM64-only、6 份 ELF/CRC 和相同正式证书；iOS IPA 版本、设备 ARM64、SDK 27.1/最低系统 15.0、CRC 通过；Windows installer ProductVersion 为 0.4.5。鸿蒙保留验收过的相同 C43C01A4… 包，未重新签名或改写。
+- [x] 主 README 改为 v0.4.5 / 原生 0.5.2，包含全部平台链接、Linux 预览/Android ARM64/未签名包边界与更新摘要；8 个直接下载链接逐一匹配实际 Release 资产。鸿蒙原生 harmony-v0.5.2 的发布和资产不修改。
+- 最终产物与证据：忽略目录 `target/release-045-20261025/assets/`、`verification.json`、`server-release.json`；不提交二进制，不改动既有 dist 或其他工作区，不移动 v0.4.5 标签。下面保留预检阶段的来源和历史约束，不代表当前仍未发布。
 
 ## 源码和流程
 
