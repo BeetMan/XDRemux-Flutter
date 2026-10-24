@@ -2846,7 +2846,9 @@ class _HomePageState extends State<HomePage> {
         key: _rootKey,
         child: Scaffold(
           appBar: _buildAppBar(theme, compact),
-          bottomNavigationBar: compact ? _buildMobileActionBar(theme) : null,
+          bottomNavigationBar: compact && !_floatPrimaryAction
+              ? _buildMobileActionBar(theme)
+              : null,
           body: _hasTrailingBar
               ? Stack(
                   children: [
@@ -2873,7 +2875,14 @@ class _HomePageState extends State<HomePage> {
         if (_queue.isNotEmpty) _buildQueueSummary(theme),
         Expanded(
           child: Padding(
-            padding: EdgeInsets.only(right: _sideContentInset),
+            padding: EdgeInsets.only(
+              right: _sideContentInset,
+              // Without the bottom bar the list runs to the screen edge; keep
+              // the last row clear of the home indicator.
+              bottom: _floatPrimaryAction
+                  ? MediaQuery.paddingOf(context).bottom
+                  : 0,
+            ),
             child: _queue.isEmpty
                 ? _buildEmptyState(theme)
                 : _buildQueueView(theme, compact),
@@ -2904,6 +2913,15 @@ class _HomePageState extends State<HomePage> {
   static bool _showSidePalette(BuildContext context) =>
       MediaQuery.paddingOf(context).right >= 40 &&
       MediaQuery.sizeOf(context).width >= 700;
+
+  /// Once the queue grows past this length the primary conversion action
+  /// leaves the bottom bar and floats in the trailing strip instead, so the
+  /// list keeps the full height. Empty/short queues keep the familiar bottom
+  /// bar.
+  static const int kFloatingActionQueueThreshold = 4;
+
+  bool get _floatPrimaryAction =>
+      _hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold;
 
   /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
   /// bar; when the native side reports that edge, the tool bar moves into it.
@@ -3174,6 +3192,13 @@ class _HomePageState extends State<HomePage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 4),
+            if (_floatPrimaryAction)
+              item(
+                Icons.add_photo_alternate_outlined,
+                '添加文件',
+                'Add files',
+                _canEditQueue ? _addFiles : null,
+              ),
             if (!_isProcessing && _convertedCount > 0)
               item(
                 Icons.photo_library_outlined,
@@ -3204,26 +3229,55 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 
+    final primaryLabel = _isProcessing
+        ? t('取消转换', 'Cancel conversion')
+        : t('开始转换', 'Start conversion');
+    final primaryIcon = _isProcessing
+        ? Icons.stop_rounded
+        : Icons.play_arrow_rounded;
+    final primaryAction = _isProcessing
+        ? _cancelConversion
+        : (_canStart ? _startConversion : null);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         capsule,
         const SizedBox(height: 12),
-        // The primary intake action stands alone as a FAB below the palette.
-        SizedBox(
-          width: 56,
-          height: 56,
-          child: FloatingActionButton(
-            heroTag: 'duo-add-files',
-            tooltip: t('添加文件', 'Add files'),
-            onPressed: _canEditQueue ? _addFiles : null,
-            backgroundColor: theme.colorScheme.primary,
-            foregroundColor: theme.colorScheme.onPrimary,
-            elevation: 6,
-            shape: const CircleBorder(),
-            child: const Icon(Icons.add_photo_alternate_outlined),
+        if (_floatPrimaryAction)
+          // The conversion action floats in the strip once the list is long.
+          SizedBox(
+            width: 64,
+            height: 64,
+            child: Tooltip(
+              message: primaryLabel,
+              child: FloatingActionButton(
+                heroTag: 'duo-primary-action',
+                onPressed: primaryAction,
+                backgroundColor: theme.colorScheme.primary,
+                foregroundColor: theme.colorScheme.onPrimary,
+                elevation: 6,
+                shape: const CircleBorder(),
+                child: Icon(primaryIcon, size: 30),
+              ),
+            ),
+          )
+        else
+          // Otherwise the intake action stands alone as a FAB.
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: FloatingActionButton(
+              heroTag: 'duo-add-files',
+              tooltip: t('添加文件', 'Add files'),
+              onPressed: _canEditQueue ? _addFiles : null,
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary,
+              elevation: 6,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.add_photo_alternate_outlined),
+            ),
           ),
-        ),
       ],
     );
   }
