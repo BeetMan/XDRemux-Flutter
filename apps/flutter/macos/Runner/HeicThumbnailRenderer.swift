@@ -32,7 +32,7 @@ enum HeicThumbnailRenderer {
         // block. Source OPPO ProXDR files (no standard aux) stay SDR.
         let headroom = hdrHeadroom(from: src)
         let image = headroom > 1.0 ? hdrBoost(cg, headroom: headroom) : cg
-        return encodeJPEG(image)
+        return encodeJPEG(normalized(image))
     }
 
     /// Read the gain-map `AlternateHeadroom` from the ISO 21496-1 aux metadata.
@@ -78,6 +78,40 @@ enum HeicThumbnailRenderer {
             return cg
         }
         return result
+    }
+
+    /// Draw the thumbnail into an explicit 8-bit sRGB buffer before JPEG
+    /// encoding.
+    ///
+    /// ImageIO hands back `CGImage`s with `colorSpace == nil` for some HDR
+    /// HEICs (wide-gamut / gain-map sources such as iPhone HDR photos).
+    /// Handing such an image straight to the JPEG encoder produces an
+    /// all-black JPEG on iOS, which surfaced as black photo-wall cards.
+    /// Drawing through a device-independent sRGB context materializes the
+    /// pixels and gives the encoder a valid color space; it also puts 10-bit
+    /// HDR pixels through CoreGraphics' tone mapping.
+    private static func normalized(_ image: CGImage) -> CGImage {
+        if image.colorSpace != nil && image.bitsPerComponent == 8 {
+            return image
+        }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: image.width,
+            height: image.height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: space,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else {
+            return image
+        }
+        ctx.interpolationQuality = .high
+        ctx.draw(
+            image,
+            in: CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        )
+        return ctx.makeImage() ?? image
     }
 
     private static func encodeJPEG(_ image: CGImage) -> Data? {
