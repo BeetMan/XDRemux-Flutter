@@ -2847,7 +2847,19 @@ class _HomePageState extends State<HomePage> {
         child: Scaffold(
           appBar: _buildAppBar(theme, compact),
           bottomNavigationBar: compact ? _buildMobileActionBar(theme) : null,
-          body: _buildDropTarget(context, _buildBody(theme, compact)),
+          body: _hasTrailingBar
+              ? Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _buildDropTarget(
+                        context,
+                        _buildBody(theme, compact),
+                      ),
+                    ),
+                    Positioned(right: 6, bottom: 10, child: _buildTrailingBar(theme)),
+                  ],
+                )
+              : _buildDropTarget(context, _buildBody(theme, compact)),
         ),
       ),
     );
@@ -2870,14 +2882,6 @@ class _HomePageState extends State<HomePage> {
         if (_queue.isNotEmpty && !compact) _buildFooter(theme),
       ],
     );
-    if (_hasTrailingBar) {
-      return Row(
-        children: [
-          Expanded(child: content),
-          _buildTrailingBar(theme),
-        ],
-      );
-    }
     if (_showSidePalette(context)) {
       return Padding(
         padding: EdgeInsets.only(right: MediaQuery.paddingOf(context).right),
@@ -2909,10 +2913,7 @@ class _HomePageState extends State<HomePage> {
 
   /// Horizontal content inset: the trailing bar itself occupies the reserved
   /// strip, so the content no longer needs to avoid it.
-  double get _sideContentInset =>
-      (_hasTrailingBar || _showSidePalette(context))
-      ? 0.0
-      : MediaQuery.paddingOf(context).right;
+  double get _sideContentInset => MediaQuery.paddingOf(context).right;
 
   AppBar _buildAppBar(ThemeData theme, bool compact) {
     // Devices with a side-mounted status strip (iPhone Duo) get a dedicated
@@ -3128,12 +3129,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Vertical tool bar drawn inside the system-reserved trailing strip
-  /// (iPhone Duo). The strip is paintable, so the bar occupies it edge-to-edge
-  /// and continues the app-bar surface; actions are bottom-aligned (thumb
-  /// reach) and split into a secondary group above a divider plus the primary
-  /// intake action closest to the thumb.
+  /// (iPhone Duo). The actions float in a bottom-anchored capsule so the strip
+  /// keeps the page background, the palette reads as a single control, and the
+  /// actions stay clear of the status items at the top and within thumb reach.
+  /// Floating capsule with the secondary actions, drawn inside the
+  /// system-reserved trailing strip (iPhone Duo). It is positioned as an
+  /// overlay so the content keeps its full height and the strip keeps the page
+  /// background; only the capsule itself is opaque.
   Widget _buildTrailingBar(ThemeData theme) {
-    final width = MediaQuery.paddingOf(context).right;
+    const capsuleWidth = 68.0;
     Widget item(
       IconData icon,
       String label,
@@ -3142,71 +3146,67 @@ class _HomePageState extends State<HomePage> {
       bool primary = false,
     }) {
       final tooltip = t(label, english);
-      return primary
-          ? IconButton.filledTonal(
-              icon: Icon(icon),
-              tooltip: tooltip,
-              onPressed: onPressed,
-              visualDensity: VisualDensity.compact,
-            )
-          : IconButton(
-              icon: Icon(icon),
-              tooltip: tooltip,
-              onPressed: onPressed,
-              visualDensity: VisualDensity.compact,
-            );
+      return SizedBox(
+        width: capsuleWidth,
+        height: 46,
+        child: primary
+            ? IconButton.filledTonal(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              )
+            : IconButton(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              ),
+      );
     }
 
-    return SizedBox(
-      width: width,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          border: Border(left: BorderSide(color: theme.dividerColor)),
-        ),
-        child: SafeArea(
-          left: false,
-          top: false,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (!_isProcessing && _convertedCount > 0)
-                item(
-                  Icons.photo_library_outlined,
-                  '全部保存到相册',
-                  'Save all to gallery',
-                  _saveAllToGallery,
-                ),
-              if (Platform.isMacOS ||
-                  Platform.isIOS ||
-                  Platform.isWindows ||
-                  Platform.isAndroid ||
-                  PlatformX.isOhos)
-                item(
-                  Icons.auto_awesome_motion_outlined,
-                  '一帧影像，动用两台手机',
-                  'One photo, two phones',
-                  _openAppleOppoWorkflow,
-                ),
-              item(Icons.tune, '设置', 'Settings', () => _openSettings(context)),
-              _buildQueueOverflowMenu(),
-              Divider(
-                height: 9,
-                indent: 18,
-                endIndent: 18,
-                color: theme.dividerColor,
-              ),
-              // Primary intake action: filled, closest to the thumb.
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(capsuleWidth / 2),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: capsuleWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 4),
+            if (!_isProcessing && _convertedCount > 0)
               item(
-                Icons.add_photo_alternate_outlined,
-                '添加文件',
-                'Add files',
-                _canEditQueue ? _addFiles : null,
-                primary: true,
+                Icons.photo_library_outlined,
+                '全部保存到相册',
+                'Save all to gallery',
+                _saveAllToGallery,
               ),
-              const SizedBox(height: 8),
-            ],
-          ),
+            if (Platform.isMacOS ||
+                Platform.isIOS ||
+                Platform.isWindows ||
+                Platform.isAndroid ||
+                PlatformX.isOhos)
+              item(
+                Icons.auto_awesome_motion_outlined,
+                '一帧影像，动用两台手机',
+                'One photo, two phones',
+                _openAppleOppoWorkflow,
+              ),
+            item(Icons.tune, '设置', 'Settings', () => _openSettings(context)),
+            SizedBox(
+              width: capsuleWidth,
+              height: 46,
+              child: _buildQueueOverflowMenu(),
+            ),
+            item(
+              Icons.add_photo_alternate_outlined,
+              '添加文件',
+              'Add files',
+              _canEditQueue ? _addFiles : null,
+              primary: true,
+            ),
+            const SizedBox(height: 4),
+          ],
         ),
       ),
     );
