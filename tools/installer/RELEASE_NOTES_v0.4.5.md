@@ -15,6 +15,7 @@
 - 目标产物：Windows x64、Android ARM64、macOS Apple Silicon、iOS ARM64、Linux x64（预览）、Flutter HarmonyOS ARM64。
 - Linux 打包现由统一发布 workflow 调用，与 Windows、Android、macOS、iOS 一起检查成功状态及附件存在性；缺少任何一类 CI 产物时不创建 Release。手动预检仍不发布。
 - Flutter 鸿蒙使用独立 OHOS Flutter SDK，本地构建 profile AOT、debug:true 的 unsigned HAP，供开发签名侧载；不改变现有签名配置，也不代表免签安装。
+- Android 安装包明确只支持 ARM64：修正 Flutter 默认 ABI 集合的叠加，避免携带缺少 Rust 核心的 32 位/x86_64 引擎、误使不支持的设备安装后失败；新增 APK 原生库架构与完整性检查。正式签名保持不变。
 - Windows ARM64 仍为不可交付的实验性任务，不列入本轮六平台承诺。鸿蒙原生采用独立版本线，已另行发布 0.5.2，本轮不重打或改动该版本。
 
 ## JPEG 色彩配置保留

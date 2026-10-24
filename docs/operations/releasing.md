@@ -50,7 +50,9 @@ macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 �
 
 ### 3.1 只构建的发版预检
 
-在实际准备分支上运行 `release.yml` 的 `workflow_dispatch`，`platforms=all` 构建五平台，`platforms=ios` 只构建 iOS；`publish` 仍受 tag ref 门禁保护。不要为了预检创建 `v*` 标签。
+在实际准备分支上运行 `release.yml` 的 `workflow_dispatch`，`platforms=all` 构建五平台，`platforms=ios` / `android` 可单独重跑对应平台；`publish` 仍受 tag ref 门禁保护。不要为了预检创建 `v*` 标签。
+
+Android 仅交付 ARM64。`defaultConfig.ndk` 先清空 Flutter 自动填充的 ABI，再设置 arm64-v8a，CI 显式 `--target-platform android-arm64`。`tools/android/verify_apk.py` 在上传前检查 APK CRC、实际 ABI、必需的 Flutter/AOT/Rust/C++ 库以及每份库的 ELF 架构，不能只看 Gradle 配置或构建成功。
 
 iOS 使用 `xcode-27` 预览 runner，并显式设置 `DEVELOPER_DIR=/Applications/Xcode_27.1.app/Contents/Developer`；该镜像默认仍可能是 27.0，不能只换 runner 名字。`tools/apple/check_ios_sdk.sh` 校验 iPhoneOS SDK >= 27.1，并实际 typecheck `verticalBarEdge` / leading / trailing。应用最低部署目标仍为 iOS 15.0。若 runner 排队或缺少该 Xcode，停止该平台预检，使用装有新 SDK 的 Mac 完成归档，不删除 Duo 代码、不用旧 SDK 伪造成功。
 

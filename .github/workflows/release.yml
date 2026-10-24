@@ -12,7 +12,7 @@ on:
         description: 'Preflight build scope (tag releases always build all platforms)'
         type: choice
         default: all
-        options: [all, ios]
+        options: [all, ios, android]
 
 permissions:
   contents: write
@@ -24,7 +24,7 @@ env:
 
 jobs:
   windows:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows installer
     runs-on: windows-2022
     steps:
@@ -154,7 +154,7 @@ jobs:
           if-no-files-found: error
 
   windows-arm64:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows ARM64 installer (experimental)
     # Flutter publishes no Windows ARM64 SDK for the pinned version (verified
     # 2026-10-21: "Unable to determine Flutter version for channel: stable
@@ -487,7 +487,10 @@ jobs:
 
       - name: Build Android APK
         working-directory: apps/flutter
-        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+        run: flutter build apk --release --target-platform android-arm64 --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+
+      - name: Verify Android ABI and native payload
+        run: python3 tools/android/verify_apk.py apps/flutter/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Rename APK for release
         shell: bash
@@ -503,7 +506,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: macOS DMG
     runs-on: macos-latest
     steps:
@@ -614,6 +617,7 @@ jobs:
           if-no-files-found: error
 
   ios:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'android'
     name: iOS unsigned IPA
     # macos-latest still selects Xcode 26.x. Duo uses typed iOS 27.1 APIs.
     runs-on: xcode-27
@@ -728,7 +732,7 @@ jobs:
           if-no-files-found: error
 
   linux:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Linux preview packages
     uses: ./.github/workflows/linux.yml
 

@@ -77,6 +77,10 @@ jobs:
         working-directory: .
         run: python3 -m unittest discover -s tools/apple -p 'test_*.py' -v
 
+      - name: Test Android package ABI guard
+        working-directory: .
+        run: python3 -m unittest discover -s tools/android -p 'test_*.py' -v
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:

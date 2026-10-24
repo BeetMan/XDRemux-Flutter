@@ -119,6 +119,9 @@ tools/ohos/*
 tools/apple/*
 !tools/apple/*.sh
 !tools/apple/test_*.py
+!tools/android/
+tools/android/*
+!tools/android/*.py
 # Research corpus generator (Apple-features Rust port reference outputs).
 !tools/golden_corpus.sh
 # Codec integration sources (not downloaded dependencies or generated media).

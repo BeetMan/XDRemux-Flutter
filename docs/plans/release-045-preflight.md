@@ -16,12 +16,18 @@
 
 | 平台 | 目标 | 状态 |
 |---|---|---|
-| Windows | x64 Setup | 待云端预检 |
-| Android | ARM64 APK，沿用正式签名 | 待云端预检；本地 CLI 确认 SDK 路径 |
-| macOS | Apple Silicon DMG | 待云端预检 |
-| iOS | ARM64 unsigned IPA，Xcode 27.1 | 真实 SDK/API 探针及 Rust 核心构建通过，归档预检中 |
-| Linux | x64 AppImage / tar.gz / SHA256，预览 | 待统一流程预检 |
-| Flutter HarmonyOS | ARM64 profile AOT / debug:true unsigned HAP | 待隔离构建及结构校验 |
+| Windows | x64 Setup | 云端构建、打包与 artifact 上传通过 |
+| Android | ARM64 APK，沿用正式签名 | 首轮构建/签名通过，但实包含不支持 ABI；修正后单独重跑 |
+| macOS | Apple Silicon DMG | 云端构建、代码封装校验和 DMG 打包通过 |
+| iOS | ARM64 unsigned IPA，Xcode 27.1 | 云端归档/FFI 导出/IPA 打包通过；下载后确认设备 ARM64、版本 0.4.5+39、SDK 27.1、最低系统 15.0、ZIP CRC |
+| Linux | x64 AppImage / tar.gz / SHA256，预览 | 统一流程构建、glibc/依赖检查和打包通过；独立上传 job 跳过 |
+| Flutter HarmonyOS | ARM64 profile AOT / debug:true unsigned HAP | 隔离构建及静态校验通过，未安装/运行 |
+
+OHOS：忽略目录 `target/oh045-1025/XDRemux-HarmonyOS-0.4.5-unsigned.hap`，37,422,649 bytes，SHA256 `C43C01A4031150658D38496CACCFF22406E9289254B2F73C7B6691AE10630C1F`。源码 `ebabc301` 与候选业务树一致（后续只改 workflow/文档）；SDK `62357a93` 的 profile kernel 经固定哈希校验。全量 ArkTS/profile 构建成功；包版本 `0.4.5+39`、ARM64-only、profile AOT/development flags、37 个 FFI、174 个核心导入、运行库来源及 ZIP CRC 检查通过；签名工具确认无 HAP Signing Block。完整命令、vendor 文件哈希及证据在该目录 `BUILD-REPORT.md`。
+
+OHOS 隔离配置沿用已验证的 vendor 快照，移除不可获取的 Hvigor 6.24.4 显式依赖并使用 DevEco 自带工具链，排除 x64 库；没有修改业务源码、共享签名或已发布资产。当前 SDK 默认 target API 26/min API 18，有既有编译警告；未实际自签、安装、启动或验证照片转换，SDK stub 符号检查不替代设备 API 验收。
+
+首轮云端 run 总体成功，publish 和 Linux 独立附件上传均 skipped。Android 首轮下载后以 SDK 36.1.0 `apksigner` 验证签名，证书 SHA256 与正式 v0.4.4 完全一致：`6ed2b419bc97670d3d7bbec361419bb325e71f89ed3087779776acfd6aa3e9db`；`aapt` 显示 0.4.5+39/min24/target36，但同时列出 arm64、armv7、x86_64，Rust 核心却只有 arm64。原因是 Flutter 3.35+ 自动预填 ABI，旧代码只追加 ARM64 而未清空默认集合（[官方迁移说明](https://docs.flutter.dev/release/breaking-changes/default-abi-filters-android)）。本轮清空后重设 ARM64，并在 CI 使用 `--target-platform android-arm64`；新增 APK ELF/CRC/ABI 完整性门禁，初版不得作为最终候选分发。
 
 Windows ARM64 不可交付，不计入六平台门禁；本次实验任务在 Flutter SDK setup 按预期失败。鸿蒙原生已由独立流程发布 `harmony-v0.5.2`（2026-10-25 本地时间），本轮未修改或重打原生包。云端预检产物可能使用 `ci-<sha>` 文件名，但应用内部版本必须是 0.4.5；正式发布才使用标签版本文件名。
 

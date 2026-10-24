@@ -52,6 +52,9 @@ android {
         versionName = flutter.versionName
 
         ndk {
+            // Flutter 3.35+ pre-populates three ABIs. Adding ARM64 alone does
+            // not remove the others, but our Rust core only ships for ARM64.
+            abiFilters.clear()
             abiFilters += listOf("arm64-v8a")
         }
     }
