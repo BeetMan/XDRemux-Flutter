@@ -1,8 +1,8 @@
 # XDRemux 鸿蒙原生版
 
-**当前开发版本：0.5.2（尚未发布）** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
+**当前版本：0.5.2** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
 
-[下载鸿蒙原生版 0.5.1](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.1) · Flutter 跨平台版：[v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)
+[下载鸿蒙原生版 0.5.2](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.2) · Flutter 跨平台版：[v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](apps/harmony/README.md) · [开发计划](docs/plans/harmony-native.md)
 
@@ -22,9 +22,9 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本提供 [v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
 
-原生 0.5.2 开发版同步主线 0.4.5 的 Rust 转换核心；当前已发布的原生版仍是 0.5.1。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮额外纳入 JPEG HDR 回退兼容性与 RGB ICC 色彩配置保留修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
+原生 0.5.2 同步主线开发中的 Rust 0.4.5 转换核心；Flutter 当前正式版本仍为 0.4.4。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮额外纳入 JPEG HDR 回退兼容性与 RGB ICC 色彩配置保留修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
 
-在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.1 更新说明](apps/harmony/RELEASE_NOTES_v0.5.1.md)列出了本轮变化和使用范围。
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.2 更新说明](apps/harmony/RELEASE_NOTES_v0.5.2.md)列出了本轮变化和使用范围。
 
 ## 图库：从浏览照片开始
 
