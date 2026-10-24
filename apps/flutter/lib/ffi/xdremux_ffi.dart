@@ -131,6 +131,8 @@ class XdRemuxFFI {
       return ffi.DynamicLibrary.process();
     } else if (Platform.isWindows) {
       return _openWindows();
+    } else if (Platform.isLinux) {
+      return _openLinux();
     } else {
       return _openMacOS();
     }
@@ -202,6 +204,73 @@ class XdRemuxFFI {
       }
     }
     throw StateError('Could not locate $name in cwd or known build dirs.');
+  }
+
+  /// On Linux the Rust core ships as `libxdremux_core.so`. The Flutter Linux
+  /// bundle installs it into `<bundle>/lib` next to the executable (see
+  /// `linux/CMakeLists.txt`); `flutter run` / `flutter test` may find it in the
+  /// cargo target dir instead. `XDREMUX_LINUX_RUST_LIB` overrides the search.
+  static ffi.DynamicLibrary _openLinux() {
+    const name = 'libxdremux_core.so';
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final candidates = <String>[];
+
+    final override = Platform.environment['XDREMUX_LINUX_RUST_LIB'];
+    if (override != null && override.isNotEmpty) candidates.add(override);
+
+    // Loader search path (LD_LIBRARY_PATH / rpath) by bare soname.
+    candidates.add(name);
+    // Built bundle layout: <bundle>/xdremux with libs in <bundle>/lib.
+    candidates.add('$exeDir/lib/$name');
+    candidates.add('$exeDir/$name');
+    // `flutter run` keeps the cwd at apps/flutter; also cover explicit builds.
+    candidates.add('build/linux/x64/debug/bundle/lib/$name');
+    candidates.add('build/linux/x64/release/bundle/lib/$name');
+    candidates.add('build/linux/arm64/debug/bundle/lib/$name');
+    candidates.add('build/linux/arm64/release/bundle/lib/$name');
+    // Cargo output, relative to apps/flutter.
+    candidates.add('../../../target/release/$name');
+    candidates.add('../../../target/debug/$name');
+    // Cargo output, resolved from the bundle dir
+    // (apps/flutter/build/linux/<arch>/<mode>/bundle -> repo root).
+    candidates.add('$exeDir/../../../../../../../target/release/$name');
+    candidates.add('$exeDir/../../../../../../../target/debug/$name');
+    // Any locally built arch/mode bundle under the cwd.
+    candidates.addAll(_linuxBundleLibs(name));
+
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        return ffi.DynamicLibrary.open(path);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw StateError(
+      'Could not load $name on Linux. Tried: ${candidates.join(', ')}. '
+      'Last error: $lastError',
+    );
+  }
+
+  /// Enumerate `build/linux/<arch>/<mode>/bundle/lib/<name>` under the cwd so
+  /// the loader also works for locally built bundles of another arch/mode.
+  static List<String> _linuxBundleLibs(String name) {
+    final result = <String>[];
+    final root = Directory('build/linux');
+    if (!root.existsSync()) return result;
+    try {
+      for (final arch in root.listSync(followLinks: false)) {
+        if (arch is! Directory) continue;
+        for (final mode in arch.listSync(followLinks: false)) {
+          if (mode is! Directory) continue;
+          result.add('${mode.path}/bundle/lib/$name');
+        }
+      }
+    } catch (_) {
+      // Best-effort fallback only; the explicit candidates above cover the
+      // normal bundle and cargo layouts.
+    }
+    return result;
   }
 
   static final _version = _lib.lookupFunction<
