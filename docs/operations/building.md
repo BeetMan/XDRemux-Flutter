@@ -98,7 +98,7 @@ tools/linux/package_linux.sh 0.4.4 --output build/linux-packages
 
 打包细节见 [tools/linux/README.md](../../tools/linux/README.md)。要点：产物保持 **glibc 2.35（Ubuntu 22.04+）** 基线；Rust 核心 NEEDs `libnuma.so.1`，Ubuntu 22.04 桌面默认不带，因此打包器会选用可兼容 glibc 2.35 的 libnuma（缓存的 Ubuntu 22.04 版本），并由 `AppRun` / `run.sh` / 安装后的启动器设置 `LD_LIBRARY_PATH`。tar.gz 为用户级安装（`~/.local`），不需要 root。
 
-CI：`.github/workflows/linux.yml` 在相关 PR 与手动 `workflow_dispatch` 时，于 `ubuntu-22.04` 上构建并打包，校验 glibc 基线、无 appindicator / libdartjni 依赖，上传 workflow artifact。构建使用只读权限和独立的 jammy x265 缓存；只有手动填写 `attach_release_tag`，独立的写权限 job 才会把产物附加到匹配版本的既有 Release，PR 不会执行发布。该 workflow 目前独立于 tag 触发的 `release.yml`。
+CI：`.github/workflows/linux.yml` 在相关 PR、手动 `workflow_dispatch` 和 `release.yml` 的 `workflow_call` 中，于 `ubuntu-22.04` 上构建并打包，校验 glibc 基线、无 appindicator / libdartjni 依赖，上传 workflow artifact。构建使用只读权限和独立的 jammy x265 缓存；Release 调用时由统一 publish 汇总并检查附件，PR 和构建预检不会发布。直接运行 Linux workflow 时，只有手动填写 `attach_release_tag`，独立写权限 job 才会把产物附加到匹配版本的既有 Release。
 
 已验证：GTK 拖放导入、`xdremux photo.heic` 命令行导入、Rust FFI 转换与 x265 编码、XDG Portal 文件选择。暂未接入：系统托盘（`TrayService` 仅 Windows）、完成通知（仅 Windows/Android）、移动端相册与分享；Apple/OPPO 回传页在 Linux 上仍按既有产品门禁隐藏。
 

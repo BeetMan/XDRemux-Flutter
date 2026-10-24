@@ -1,6 +1,21 @@
-# v0.4.5 — JPEG 修复与 Linux 桌面预览集成（尚未发布）
+# v0.4.5 — JPEG 色彩修复、iPhone Duo 适配与 Linux 预览（尚未发布）
 
-主线开发版本为 Flutter `0.4.5+39` / Rust `0.4.5`。本次只合入源码并提升版本，不创建 tag、不触发发布流程、不创建或修改 GitHub Release；下列变化尚未包含在已发布的 v0.4.4 安装包中。
+候选版本为 Flutter `0.4.5+39` / Rust `0.4.5`。当前为发布准备阶段：手动预检只生成构建产物，不创建 tag 或 GitHub Release，不修改已有附件；下列变化尚未包含在已发布的 v0.4.4 安装包中。
+
+## iPhone Duo 与 Apple 平台
+
+- 适配 iPhone Duo 的 trailing vertical bar，将工具按钮放入系统预留的侧边区域；宽屏/双屏布局优化主操作位置，队列较长时仍能方便地开始转换。普通设备保留既有安全区布局。
+- 修复部分 HDR HEIC 在 iOS 上显示为黑色缩略图的问题：原生缩略图经过明确的 8-bit sRGB 上下文后再编码，异常黑图交给 Rust 预览回退。macOS 同步规范化处理；这只影响界面预览，不把 HDR 转换输出改成 SDR。
+- 新增 Apple Silicon iOS 模拟器核心构建脚本，区分真机/模拟器 x265 归档，并修复干净构建时 Rust 与 C 依赖部署目标不一致导致的链接问题。
+- iOS 发包显式使用 Xcode 27.1 / iOS 27.1 SDK，并编译探针验证 Duo API；不为旧 SDK 删除 Duo 功能。**构建 SDK 要求不等于最低系统版本**，应用部署目标仍为 iOS 15.0，新接口继续受运行时可用性检查保护。
+- 真机旋转、折叠时工具栏跟随、HDR/ICC 图库显示及 Live Photo 保存仍需要候选包验收；模拟器结果不代替真机验收。
+
+## 六平台候选与发布流程
+
+- 目标产物：Windows x64、Android ARM64、macOS Apple Silicon、iOS ARM64、Linux x64（预览）、Flutter HarmonyOS ARM64。
+- Linux 打包现由统一发布 workflow 调用，与 Windows、Android、macOS、iOS 一起检查成功状态及附件存在性；缺少任何一类 CI 产物时不创建 Release。手动预检仍不发布。
+- Flutter 鸿蒙使用独立 OHOS Flutter SDK，本地构建 profile AOT、debug:true 的 unsigned HAP，供开发签名侧载；不改变现有签名配置，也不代表免签安装。
+- Windows ARM64 仍为不可交付的实验性任务，不列入本轮六平台承诺。鸿蒙原生保持独立 0.5.1 版本线，本轮不自动同步或升版。
 
 ## JPEG 色彩配置保留
 

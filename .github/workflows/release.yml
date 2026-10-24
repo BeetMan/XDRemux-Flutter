@@ -615,19 +615,24 @@ jobs:
 
   ios:
     name: iOS unsigned IPA
-    runs-on: macos-latest
+    # macos-latest still selects Xcode 26.x. Duo uses typed iOS 27.1 APIs.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Verify iPhone Duo SDK and APIs
+        run: bash tools/apple/check_ios_sdk.sh
 
       - name: Restore x265 iOS build
         id: x265-cache
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-ios-${{ env.X265_TAG }}
-          restore-keys: |
-            x265-ios-${{ env.X265_TAG }}
+          # SDK-specific cache: do not reuse Xcode 26 object files.
+          key: x265-ios-sdk27.1-${{ env.X265_TAG }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -722,6 +727,11 @@ jobs:
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
           if-no-files-found: error
 
+  linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    name: Linux preview packages
+    uses: ./.github/workflows/linux.yml
+
   publish:
     name: Publish GitHub Release
     # Every shipping platform must have built before the release exists: a
@@ -731,7 +741,7 @@ jobs:
     # gate: it is experimental and continue-on-error.
     # windows-arm64 must still be in `needs` (not the gate): its artifact upload
     # races the download otherwise (pre.2 shipped without it).
-    needs: [windows, windows-arm64, android, macos, ios]
+    needs: [windows, windows-arm64, android, macos, ios, linux]
     # Folded to one line on purpose: the expression parser must see a single
     # string, not YAML newlines.
     if: >-
@@ -740,6 +750,7 @@ jobs:
       && needs.android.result == 'success'
       && needs.macos.result == 'success'
       && needs.ios.result == 'success'
+      && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -761,7 +772,10 @@ jobs:
             "dist/windows-installer/XDRemux-Windows-*-Setup.exe" \
             "dist/android-apk/XDRemux-Android-*.apk" \
             "dist/macos-dmg/XDRemux-macOS-*.dmg" \
-            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa"; do
+            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa" \
+            "dist/linux-x64-release/XDRemux-Linux-*.AppImage" \
+            "dist/linux-x64-release/XDRemux-Linux-*.tar.gz" \
+            "dist/linux-x64-release/XDRemux-Linux-*.sha256"; do
             if compgen -G "$pattern" >/dev/null; then
               echo "found: $pattern"
             else
@@ -785,3 +799,6 @@ jobs:
             dist/android-apk/XDRemux-Android-*.apk
             dist/macos-dmg/XDRemux-macOS-*.dmg
             dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa
+            dist/linux-x64-release/XDRemux-Linux-*.AppImage
+            dist/linux-x64-release/XDRemux-Linux-*.tar.gz
+            dist/linux-x64-release/XDRemux-Linux-*.sha256

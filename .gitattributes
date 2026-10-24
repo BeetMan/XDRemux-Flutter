@@ -7,3 +7,4 @@ apps/flutter/ios/SwiftBackend/Sources/CZstdDecompress/** linguist-vendored
 
 # Linux packaging scripts must also run from a Windows checkout under WSL.
 tools/linux/*.sh text eol=lf
+tools/apple/*.sh text eol=lf

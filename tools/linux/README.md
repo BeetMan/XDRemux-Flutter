@@ -6,8 +6,10 @@ Nothing here publishes or uploads anything.
 The main development version is 0.4.5 (not yet released). The 0.4.4 names below
 describe the existing preview assets; use the checked-out pubspec version when
 building new candidates. The Linux workflow runs on matching pull requests and
-manual dispatch, with read-only build permissions. Only a separate, explicitly
-requested manual attachment job can write to an existing matching release.
+manual dispatch, with read-only build permissions. The release workflow also
+calls it and gates publication on the Linux artifacts. Direct manual attachment
+is a separate job, restricted to the Linux workflow and an existing matching
+release; it cannot run when called by the Release workflow.
 
 ## Build the bundle first
 
