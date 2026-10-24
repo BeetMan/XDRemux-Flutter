@@ -85,7 +85,7 @@ oppo-final.heic
 | 解码预览 | WIC | ImageDecoder | ImageIO | ImageIO | Image Kit |
 | 文件访问 | 文件系统 | SAF（不索取存储权限） | NSOpenPanel | PHPicker / Files | file_picker / PhotoViewPicker / sendData 分享 |
 
-Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在五平台都内建 x265（Android/iOS/鸿蒙交叉编译静态库，见 `build.rs` / `build_ios.sh` / `build_ohos.sh`）。
+Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在五平台都内建 x265（Android/iOS/鸿蒙交叉编译静态库，见 `build.rs` / `build_ios.sh` / `build_ohos.sh`）。Linux 本地开发目标沿用同一路径：Rust FFI（`bundle/lib` 内的 .so）、无平台原生解码通道（缩略图走 Rust 回退）、XDG Desktop Portal 文件选择与 GTK 拖放。
 
 ## 5. Motion Photo 数据流（Phase 3a/3b）
 

@@ -21,12 +21,13 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 |---|---|---|
 | Windows x64 · Flutter | [0.4.4 Setup.exe](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Windows-0.4.4-Setup.exe) | 运行安装器，无需另装 ffmpeg |
 | macOS · Apple Silicon · Flutter | [0.4.4 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-macOS-0.4.4.dmg) | 将应用拖入 Applications；当前包不支持 Intel Mac 转换 |
+| Linux x64 · Flutter（预览） | [0.4.4 AppImage](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Linux-0.4.4-x64.AppImage) · [tar.gz](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Linux-0.4.4-x64.tar.gz) | AppImage 单文件即用；tar.gz 解压后运行 `./run.sh` 或 `./install.sh`（用户级安装）。需 GTK3 与 glibc ≥ 2.35（Ubuntu 22.04+） |
 | Android · Flutter | [0.4.4 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-Android-0.4.4.apk) | 安装 APK，使用相同签名可覆盖升级 |
 | iOS · Flutter | [0.4.4 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-iOS-0.4.4-unsigned.ipa) | 需自行签名侧载 |
 | HarmonyOS · Flutter | [0.4.4 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.4/XDRemux-HarmonyOS-0.4.4-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
 | HarmonyOS · ArkUI 原生版 | [0.5.1 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.1/XDRemux-HarmonyOS-Native-0.5.1-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
 
-当前发布不提供 Windows ARM64 安装包，也未创建 Flutter Linux 桌面目标。
+当前发布不提供 Windows ARM64 安装包。Linux x64 以预览资产形式随 v0.4.4 提供（AppImage / tar.gz，见上表），属于本地开发与验证可用、尚未纳入正式发布验收的平台；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。
 
 iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 两个当前附件都供开发自签使用，证书与 Profile 需匹配包名和目标设备，且受设备范围与有效期约束；它们不是免签包或应用市场上架包。Flutter 与原生版包名不同，签名配置不能直接混用。iOS 请使用适合自己设备的签名与侧载方式。
 
@@ -67,9 +68,9 @@ Flutter 版以转换队列为主要入口：导入照片、查看详情、选择
 
 ### 界面预览
 
-| Windows | macOS |
-|---|---|
-| ![Windows 主界面](screenshots/windows.png) | ![macOS 主界面](screenshots/macos.png) |
+| Windows | macOS | Linux（本地开发目标） |
+|---|---|---|
+| ![Windows 主界面](screenshots/windows.png) | ![macOS 主界面](screenshots/macos.png) | ![Linux 主界面](screenshots/linux.png) |
 
 | Android | iOS |
 |---|---|
@@ -161,6 +162,7 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 - **Android**：使用系统文件选择器导入，支持分享接收、保存图库与前台服务后台转换；系统省电策略仍可能影响任务运行。
 - **iOS**：支持相册、文件与分享扩展导入，使用 Rust 转换核心，PhotoKit 保存 Live Photo；提供自行签名的 IPA，未通过 App Store / TestFlight 分发。
 - **HarmonyOS（Flutter）**：通过独立鸿蒙 Flutter 引擎与插件接入系统选择器和单文件分享，使用 Rust 转换核心；当前统一相册保存与配对双文件分享仍未接入。
+- **Linux（本地开发 / 预览）**：使用 GTK 拖放与命令行参数导入照片，Rust FFI + 静态链接 x265 完成转换；文件选择走 XDG Desktop Portal。已提供 AppImage 与 tar.gz 预览包；系统托盘与完成通知暂未接入。
 
 **鸿蒙原生预览版**在 [`feat/harmony-native`](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native) 分支开发，采用 ArkTS / ArkUI，围绕「图库、队列、设置」组织界面。它共用 Rust 引擎，提供 HDR、摄影风格、人像与动态照片等核心能力；图库浏览、任务管理和导出交互则采用原生实现。
 
@@ -180,10 +182,12 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 当前主线常规 Flutter 构建固定 **Flutter 3.47.7 / Dart 3.13.5**，与 CI 一致；版本记录在 `apps/flutter/.fvmrc`。鸿蒙 Flutter 仍使用独立适配 SDK，不直接替换为官方 SDK。国内开发沿用 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`。
 
+Linux 桌面本地开发使用同一 Flutter 3.47.7。系统依赖为 clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator 与 libnotify；Rust 核心按 CI 方式静态链接 x265 4.2，再由 `apps/flutter/linux/CMakeLists.txt` 打包进 `bundle/lib`。构建与运行步骤见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)；发布用 AppImage / tar.gz 由 `tools/linux/package_linux.sh` 生成（详见 [tools/linux/README.md](tools/linux/README.md)），产物保持 glibc 2.35（Ubuntu 22.04+）基线。
+
 产品说明与工程细节分开维护，构建和研究资料请从以下入口查阅：
 
 - [技术文档索引](docs/README.md)：架构、后端、FFI、照片格式与模块说明。
-- [五平台构建指南](docs/operations/building.md)：Rust、x265、Flutter 与鸿蒙构建。
+- [构建指南（Flutter / Rust / 鸿蒙，含 Linux 本地开发）](docs/operations/building.md)：Rust、x265、Flutter 与鸿蒙构建。
 - [发版指南](docs/operations/releasing.md)：打包、签名边界与发布检查。
 - [一致性测试](docs/testing/conformance-suite.md)：结构验证、样片回归与测试流程。
 - [设备兼容矩阵](docs/validation/device-compat-matrix.md)：已验证样片、平台证据和已知问题。
@@ -195,7 +199,7 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 | 路径 | 用途 |
 |---|---|
 | `xdremux/rust/` | Rust 图像处理核心、容器解析、风格 / 人像 / 动态照片与 FFI |
-| `apps/flutter/` | Flutter App 与五平台集成 |
+| `apps/flutter/` | Flutter App 与各平台集成 |
 | `tests/conformance/` | 一致性与结构验证 |
 | `docs/` | 技术文档、研究计划与验证记录 |
 | `tools/` | 平台构建、安装器与发布工具 |
