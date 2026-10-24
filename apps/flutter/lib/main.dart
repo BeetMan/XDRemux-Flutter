@@ -2891,7 +2891,7 @@ class _HomePageState extends State<HomePage> {
         if (_queue.isNotEmpty && !compact) _buildFooter(theme),
       ],
     );
-    if (_showSidePalette(context)) {
+    if (_showSidePalette) {
       return Padding(
         padding: EdgeInsets.only(right: MediaQuery.paddingOf(context).right),
         child: Row(
@@ -2910,7 +2910,11 @@ class _HomePageState extends State<HomePage> {
   /// (Duo inner display / landscape). On the 466pt cover display the bar would
   /// wrap the empty-state text and buttons, so the app-bar + bottom-bar layout
   /// stays there.
-  static bool _showSidePalette(BuildContext context) =>
+  /// In-content fallback palette for side-inset windows that do NOT report a
+  /// system vertical bar. Devices with a trailing bar use that strip instead,
+  /// so the two never render together (landscape used to show both).
+  bool get _showSidePalette =>
+      !_hasTrailingBar &&
       MediaQuery.paddingOf(context).right >= 40 &&
       MediaQuery.sizeOf(context).width >= 700;
 
@@ -2921,10 +2925,13 @@ class _HomePageState extends State<HomePage> {
   static const int kFloatingActionQueueThreshold = 4;
 
   bool get _floatPrimaryAction =>
-      _hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold;
+      _hasTrailingBar &&
+      (_queue.length >= kFloatingActionQueueThreshold || !_compactLayout);
 
   /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
   /// bar; when the native side reports that edge, the tool bar moves into it.
+  bool get _compactLayout => MediaQuery.sizeOf(context).width < 600;
+
   bool get _hasTrailingBar =>
       PlatformLayoutTraits.verticalBarEdge == 'trailing' &&
       MediaQuery.paddingOf(context).right >= 40;
@@ -2936,7 +2943,7 @@ class _HomePageState extends State<HomePage> {
   AppBar _buildAppBar(ThemeData theme, bool compact) {
     // Devices with a side-mounted status strip (iPhone Duo) get a dedicated
     // tool palette, so the app bar keeps only the title.
-    if (_showSidePalette(context) || _hasTrailingBar) {
+    if (_showSidePalette || _hasTrailingBar) {
       return AppBar(
         centerTitle: false,
         titleSpacing: compact ? 16 : null,
@@ -3306,7 +3313,7 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Row(
             children: [
-              if (!_showSidePalette(context) && !_hasTrailingBar) ...[
+              if (!_showSidePalette && !_hasTrailingBar) ...[
                 IconButton.filledTonal(
                   icon: const Icon(Icons.add_photo_alternate_outlined),
                   tooltip: t('添加文件', 'Add files'),
