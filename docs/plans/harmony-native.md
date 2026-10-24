@@ -1,5 +1,14 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-10-25：同步主线并构建原生 0.5.2（不发布）
+
+- 合并 `origin/main` 的 `ebabc301`，合并提交 `b46e3d91`；保留原生 README 与五张截图、ArkUI 页面、Apple 编辑信息字段及原生静帧抽取 FFI。共享 Rust 核心为开发中的 `0.4.5`，原生元数据升为 `0.5.2` / code `50200`，`.arkui`、API26 目标 / API18 最低兼容及持久化 schema 不变。
+- 本轮相关核心变化为 JPEG HDR ISO 版本回退与有效 Adobe XMP 检查、RGB ICC 保留及 JPEG HDR 解析诊断。Flutter 双栏界面、Linux、iOS 缩略图和模拟器只合入源码，不宣称 ArkUI 接入其平台 UI。
+- Rust workspace 回归通过（核心 238 passed / 3 ignored；另有需要私有样片的测试保持 opt-in）；复用已构建的 Windows x265 静态库再次运行核心 238 项通过。两张私有 JPEG 原图显式 opt-in 测试通过：Apple/OPPO 两种模式、HDR 与 ICC/水印画布、原图完整性均检查。16 份 Node、5 项 HAP verifier 与 C++ PS3 helper 通过。
+- OHOS `.so` 仅由现有 `build_ohos.sh` 生成，并通过 staging helper 暂存；4,790,904 字节，SHA256 `D4CF10520B08E44C56DA0017B35CF1874D86610C9FB90DE9B2C32A77DE857583`。未启用 libheif decoder。主机 FFI 版本为 `0.4.5`，版本/分类按匹配的 free 函数释放；OHOS 24 个桥接符号齐全。
+- 沿用开发自签规则：`devecocli build --product default --build-mode debug` 全量 44 项任务成功。unsigned HAP 6,823,863 字节，SHA256 `0CD9DE1A81BAAFB54EC473F0115AF1DE4065A2CFC35C92F0FA8E100CF0DED96C`；包内 stripped core SHA256 `EBAC4A5976CA74CCD76526798D84525BA51EF1C016116C0379F70C5B2B0BB411`。包名/版本/API、ZIP CRC、app 图标、`app.debug:true` / `app.buildMode:debug` 与签名工具的 No Hap Signing Block 检查均通过。
+- HAP、SHA256SUMS、构建/回归与校验日志位于外部 `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/build-0.5.2-20261025/`。本次只准备开发构建，未安装到设备、未做目标图库新一轮验收、未创建 tag 或更改任何 Release 资产；现有 `harmony-v0.5.1` 保持不变。
+
 ## 2026-10-22：0.5.1 GitHub 默认附件改为开发自签包
 
 - [x] 用户要求直接替换原生包；在既有隔离 tag 工作目录执行 `devecocli build --product default --build-mode debug` 成功，不修改业务源码、标签、包身份、版本或本机签名设置。

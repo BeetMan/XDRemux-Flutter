@@ -29,8 +29,8 @@ The verifier reads the packaged `module.json` and `pack.info`, checks the native
 ```powershell
 python .\apps\harmony\tools\verify_harmony_hap.py `
   'C:\path\to\external\logs\entry-default-unsigned-codeNNNNN.hap' `
-  --version-name 0.5.1 `
-  --version-code 50100 `
+  --version-name 0.5.2 `
+  --version-code 50200 `
   --compatible-api 18 `
   --expected-core-sha256 <packaged-core-sha256> `
   --report 'C:\path\to\external\logs\hap-verification.json'
