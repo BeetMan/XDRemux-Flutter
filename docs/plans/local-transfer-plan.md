@@ -107,6 +107,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 
 2026-10-24 继续修复重启后的回调归属：旧发现／轮询错误不再清空设备或关闭新 runtime；新轮询、快照及收件箱不共享旧查询，旧 finally 不清除新占位。多播锁按序获取／释放，停止等待尚未完成的获取。17 项新增受控回归、完整 Flutter 125 项、analyze 及 Windows／Android 普通 release 打包核对通过；本轮未操作手机或系统网络，新版真机复验继续待执行。见 [回调归属验证](../testing/local-transfer-runtime-boundary.md)。
 
+2026-10-25 修复同一 runtime 内的发现刷新顺序：较早的状态回复和非终止错误不能覆盖之后的手动刷新；重复发现请求合并，等待期间仍处理回执／快照，runtime 退出错误仍正常停服。8 项新增受控回归、完整 Flutter 133 项、analyze 及 Windows／Android 普通 release 打包核对通过。本轮未操作手机或系统网络，真实网络与平台矩阵继续待验。见 [发现顺序验证](../testing/local-transfer-discovery-ordering.md)。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。

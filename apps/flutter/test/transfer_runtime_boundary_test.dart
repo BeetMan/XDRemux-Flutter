@@ -141,6 +141,149 @@ void main() {
     expect(held, isTrue);
   }
 
+  void expectRefreshedDiscovery() {
+    expect(controller.running, isTrue);
+    expect(controller.receiving, isTrue);
+    expect(controller.discovering, isTrue);
+    expect(controller.peers.single['alias'], 'New');
+    expect(controller.discoveryError, isNull);
+    expect(controller.error, isNull);
+    expect(created.last.ended, isFalse);
+    expect(held, isTrue);
+  }
+
+  for (final enabled in [false, true]) {
+    test(
+      'discovery ordering: older status enabled=$enabled cannot overwrite refresh',
+      () async {
+        await controller.enableReceiving();
+        final native = created.single;
+        final stale = enabled
+            ? native.discovery
+            : {'enabled': false, 'error': 'discovery_unavailable', 'peers': []};
+        final status = native.delay('discovery_status');
+        final polling = controller.poll();
+        await native.entered['discovery_status']!.future;
+        native.alias = 'New';
+        await controller.discover();
+        final lockCount = locks.length;
+        status.complete(stale);
+        await polling;
+        expect(locks, hasLength(lockCount));
+        expectRefreshedDiscovery();
+      },
+    );
+  }
+
+  for (final error in ['network', 'closed', 'worker_stopped']) {
+    test(
+      'discovery ordering: older status $error respects runtime health',
+      () async {
+        await controller.enableReceiving();
+        final native = created.single;
+        final status = native.delay('discovery_status');
+        final polling = controller.poll();
+        await native.entered['discovery_status']!.future;
+        native.alias = 'New';
+        await controller.discover();
+        status.completeError(TransferException(error));
+        await polling;
+        if (error == 'network') {
+          expectRefreshedDiscovery();
+        } else {
+          expect(controller.running, isFalse);
+          expect(controller.receiving, isFalse);
+          expect(controller.error, 'closed');
+          expect(native.ended, isTrue);
+          expect(held, isFalse);
+        }
+      },
+    );
+  }
+
+  test(
+    'discovery ordering: repeated refresh shares one pending announcement',
+    () async {
+      await controller.enableReceiving();
+      final native = created.single;
+      native.alias = 'New';
+      final gate = native.delay('discovery_start');
+      final first = controller.discover();
+      await native.entered['discovery_start']!.future;
+      final lockCount = locks.length;
+      final second = controller.discover();
+      await Future<void>.delayed(Duration.zero);
+      expect(native.calls.where((c) => c == 'discovery_start'), hasLength(2));
+      expect(locks, hasLength(lockCount));
+      gate.complete(native.discovery);
+      await Future.wait([first, second]);
+      native.pending.remove('discovery_start');
+      await controller.discover();
+      expect(native.calls.where((c) => c == 'discovery_start'), hasLength(3));
+      expectRefreshedDiscovery();
+    },
+  );
+
+  test(
+    'discovery ordering: poll consumes receipts while refresh is pending',
+    () async {
+      await controller.enableReceiving();
+      final native = created.single;
+      final gate = native.delay('discovery_start');
+      final discovering = controller.discover();
+      await native.entered['discovery_start']!.future;
+      final statusCount = native.calls
+          .where((c) => c == 'discovery_status')
+          .length;
+      native.delay('events').complete({
+        'events': [
+          {
+            'kind': 'event',
+            'event': {
+              'kind': 'committed',
+              'receipt': {'id': 'new-receipt'},
+            },
+          },
+        ],
+        'resync': false,
+      });
+      await controller.poll();
+      expect(controller.inbox, contains('new-receipt'));
+      expect(
+        native.calls.where((c) => c == 'discovery_status'),
+        hasLength(statusCount),
+      );
+      native.alias = 'New';
+      gate.complete(native.discovery);
+      await discovering;
+      expectRefreshedDiscovery();
+    },
+  );
+
+  test(
+    'discovery ordering: old completion cannot unlock a replacement refresh',
+    () async {
+      await controller.enableReceiving();
+      final old = created.single;
+      final oldGate = old.delay('discovery_start');
+      final oldRefresh = controller.discover();
+      await old.entered['discovery_start']!.future;
+      await restart();
+      final next = created.last;
+      final newGate = next.delay('discovery_start');
+      final newRefresh = controller.discover();
+      await next.entered['discovery_start']!.future;
+      oldGate.complete(old.discovery);
+      await oldRefresh;
+      final shared = controller.discover();
+      await Future<void>.delayed(Duration.zero);
+      expect(next.calls.where((c) => c == 'discovery_start'), hasLength(2));
+      newGate.complete(next.discovery);
+      await Future.wait([newRefresh, shared]);
+      expectReplacementHealthy();
+    },
+  );
+
   for (final failure in [false, true]) {
     test(
       'runtime boundary: late discovery failure=$failure cannot replace peers',

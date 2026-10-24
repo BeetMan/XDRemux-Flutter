@@ -33,7 +33,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   TransferService? _service;
   Future<void>? _startup, _stopTask;
   int _stopGeneration = 0;
-  Future<void>? _refreshTask, _inboxTask;
+  Future<void>? _refreshTask, _inboxTask, _discoveryTask;
+  int _discoveryRevision = 0;
   final Set<Future<dynamic>> _reads = {};
   Timer? _timer;
   Object? _polling;
@@ -67,6 +68,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _ownsRuntime(TransferService native, int generation) =>
       !stopping && generation == _stopGeneration && identical(_service, native);
+
+  bool _ownsDiscovery(TransferService native, int generation, int revision) =>
+      _ownsRuntime(native, generation) && revision == _discoveryRevision;
 
   static Future<void> _platformMulticastLock(bool acquire) async {
     if (Platform.isAndroid) {
@@ -133,43 +137,61 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> discover() async {
-    if (!receiving || stopping) throw const TransferException('closed');
+  Future<void> discover() {
+    if (!receiving || stopping) {
+      return Future<void>.error(const TransferException('closed'));
+    }
+    if (_discoveryTask != null) return _discoveryTask!;
     final native = service;
     final generation = _stopGeneration;
+    final revision = ++_discoveryRevision;
+    late final Future<void> task;
+    task = _discoverNow(native, generation, revision).whenComplete(() {
+      if (identical(_discoveryTask, task)) _discoveryTask = null;
+    });
+    return _discoveryTask = task;
+  }
+
+  Future<void> _discoverNow(
+    TransferService native,
+    int generation,
+    int revision,
+  ) async {
     discoveryError = null;
     try {
       await _setMulticast(
         true,
-        isCurrent: () => _ownsRuntime(native, generation),
+        isCurrent: () => _ownsDiscovery(native, generation, revision),
       );
-      if (!_ownsRuntime(native, generation)) return;
+      if (!_ownsDiscovery(native, generation, revision)) return;
       final result = await native.command({
         'command': 'discovery_start',
         'interface': discoveryInterface,
       });
-      if (!_ownsRuntime(native, generation)) return;
-      await _discoveryState(result as Map, native, generation);
+      if (!_ownsDiscovery(native, generation, revision)) return;
+      await _discoveryState(result as Map, native, generation, revision);
     } catch (e) {
-      if (!_ownsRuntime(native, generation)) return;
+      if (!_ownsDiscovery(native, generation, revision)) return;
       discoveryError = code(e);
       discovering = false;
       peers.clear();
       try {
         await _setMulticast(
           false,
-          isCurrent: () => _ownsRuntime(native, generation),
+          isCurrent: () => _ownsDiscovery(native, generation, revision),
         );
       } catch (_) {}
     }
-    if (_ownsRuntime(native, generation)) notifyListeners();
+    if (_ownsDiscovery(native, generation, revision)) notifyListeners();
   }
 
   Future<void> _discoveryState(
     Map result,
     TransferService native,
     int generation,
+    int revision,
   ) async {
+    if (!_ownsDiscovery(native, generation, revision)) return;
     discovering = result['enabled'] == true;
     discoveryError = result['error'] as String?;
     peers
@@ -183,7 +205,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       try {
         await _setMulticast(
           false,
-          isCurrent: () => _ownsRuntime(native, generation),
+          isCurrent: () => _ownsDiscovery(native, generation, revision),
         );
       } catch (_) {}
     }
@@ -441,11 +463,21 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       if (receiving &&
+          _discoveryTask == null &&
           DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
         _lastDiscoveryPoll = DateTime.now();
-        final state = await native.command({'command': 'discovery_status'});
-        if (!_ownsRuntime(native, generation)) return;
-        await _discoveryState(state as Map, native, generation);
+        final revision = _discoveryRevision;
+        try {
+          final state = await native.command({'command': 'discovery_status'});
+          await _discoveryState(state as Map, native, generation, revision);
+        } catch (e) {
+          // A manual refresh supersedes older discovery status, but a dead
+          // worker/runtime must still follow the normal explicit-restart path.
+          if (_ownsDiscovery(native, generation, revision) ||
+              ['closed', 'worker_stopped'].contains(code(e))) {
+            rethrow;
+          }
+        }
         if (!_ownsRuntime(native, generation)) return;
       }
       if (dirty) {
@@ -666,6 +698,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     // Late completions may only clear the task slot that they still own.
     _refreshTask = null;
     _inboxTask = null;
+    _discoveryTask = null;
     notifyListeners();
     try {
       try {
