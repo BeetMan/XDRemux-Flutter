@@ -2849,8 +2849,7 @@ class _HomePageState extends State<HomePage> {
           bottomNavigationBar: compact && !_floatPrimaryAction
               ? _buildMobileActionBar(theme)
               : null,
-          body: _hasTrailingBar
-              ? Stack(
+          body: Stack(
                   children: [
                     Positioned.fill(
                       child: _buildDropTarget(
@@ -2858,10 +2857,20 @@ class _HomePageState extends State<HomePage> {
                         _buildBody(theme, compact),
                       ),
                     ),
-                    Positioned(right: 6, bottom: 10, child: _buildTrailingBar(theme)),
+                    if (_hasTrailingBar)
+                      Positioned(
+                        right: 6,
+                        bottom: 10,
+                        child: _buildTrailingBar(theme),
+                      ),
+                    if (!_hasTrailingBar && _floatPrimaryAction)
+                      Positioned(
+                        right: 20,
+                        bottom: 20,
+                        child: _buildPrimaryFab(theme),
+                      ),
                   ],
-                )
-              : _buildDropTarget(context, _buildBody(theme, compact)),
+                ),
         ),
       ),
     );
@@ -2924,9 +2933,12 @@ class _HomePageState extends State<HomePage> {
   /// bar.
   static const int kFloatingActionQueueThreshold = 4;
 
+  /// True when the primary conversion action leaves the bottom bar: either the
+  /// queue grew long enough, or the layout has no bottom bar at all (wide
+  /// windows). Without this the action would only live in the app bar.
   bool get _floatPrimaryAction =>
-      _hasTrailingBar &&
-      (_queue.length >= kFloatingActionQueueThreshold || !_compactLayout);
+      !_compactLayout ||
+      (_hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold);
 
   /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
   /// bar; when the native side reports that edge, the tool bar moves into it.
@@ -3236,39 +3248,13 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 
-    final primaryLabel = _isProcessing
-        ? t('取消转换', 'Cancel conversion')
-        : t('开始转换', 'Start conversion');
-    final primaryIcon = _isProcessing
-        ? Icons.stop_rounded
-        : Icons.play_arrow_rounded;
-    final primaryAction = _isProcessing
-        ? _cancelConversion
-        : (_canStart ? _startConversion : null);
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         capsule,
         const SizedBox(height: 12),
         if (_floatPrimaryAction)
-          // The conversion action floats in the strip once the list is long.
-          SizedBox(
-            width: 64,
-            height: 64,
-            child: Tooltip(
-              message: primaryLabel,
-              child: FloatingActionButton(
-                heroTag: 'duo-primary-action',
-                onPressed: primaryAction,
-                backgroundColor: theme.colorScheme.primary,
-                foregroundColor: theme.colorScheme.onPrimary,
-                elevation: 6,
-                shape: const CircleBorder(),
-                child: Icon(primaryIcon, size: 30),
-              ),
-            ),
-          )
+          _buildPrimaryFab(theme)
         else
           // Otherwise the intake action stands alone as a FAB.
           SizedBox(
@@ -3286,6 +3272,34 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildPrimaryFab(ThemeData theme) {
+    final label = _isProcessing
+        ? t('取消转换', 'Cancel conversion')
+        : t('开始转换', 'Start conversion');
+    final icon = _isProcessing
+        ? Icons.stop_rounded
+        : Icons.play_arrow_rounded;
+    final action = _isProcessing
+        ? _cancelConversion
+        : (_canStart ? _startConversion : null);
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Tooltip(
+        message: label,
+        child: FloatingActionButton(
+          heroTag: 'duo-primary-action',
+          onPressed: action,
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: theme.colorScheme.onPrimary,
+          elevation: 6,
+          shape: const CircleBorder(),
+          child: Icon(icon, size: 30),
+        ),
+      ),
     );
   }
 
