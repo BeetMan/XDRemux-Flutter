@@ -3163,7 +3163,7 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    return Material(
+    final capsule = Material(
       color: theme.colorScheme.surfaceContainerHighest,
       elevation: 3,
       borderRadius: BorderRadius.circular(capsuleWidth / 2),
@@ -3198,17 +3198,33 @@ class _HomePageState extends State<HomePage> {
               height: 46,
               child: _buildQueueOverflowMenu(),
             ),
-            item(
-              Icons.add_photo_alternate_outlined,
-              '添加文件',
-              'Add files',
-              _canEditQueue ? _addFiles : null,
-              primary: true,
-            ),
             const SizedBox(height: 4),
           ],
         ),
       ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        capsule,
+        const SizedBox(height: 12),
+        // The primary intake action stands alone as a FAB below the palette.
+        SizedBox(
+          width: 56,
+          height: 56,
+          child: FloatingActionButton(
+            heroTag: 'duo-add-files',
+            tooltip: t('添加文件', 'Add files'),
+            onPressed: _canEditQueue ? _addFiles : null,
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            elevation: 6,
+            shape: const CircleBorder(),
+            child: const Icon(Icons.add_photo_alternate_outlined),
+          ),
+        ),
+      ],
     );
   }
 
