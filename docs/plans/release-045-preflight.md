@@ -4,6 +4,8 @@
 
 ## 正式发布（2026-10-25）
 
+- [x] 用户明确授权后，已在 [Issue #11](https://github.com/BeetMan/XDRemux-Flutter/issues/11) 留下 v0.4.5 修复、原始样片回归及升级复测说明，并以 `completed` 关闭（2026-10-25）；[处理留言](https://github.com/BeetMan/XDRemux-Flutter/issues/11#issuecomment-6388986647)。未声称提报者已复测确认，仍可继续反馈或重新打开。
+
 ### 发布后维护者调整
 
 - 维护者手工精简了 Release 更新记录，当前页面已移除两份校验附件；保留这一安排，不恢复之前的长文或校验文件。下方“9 个资产”的记录是首次发布时的历史快照，不代表当前附件列表。
