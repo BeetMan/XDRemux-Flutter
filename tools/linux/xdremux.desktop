@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=XDRemux
+GenericName=ProXDR Photo Converter
+Comment=Convert ProXDR HEIC photos to standard HDR HEIC
+Exec=xdremux %F
+Icon=xdremux
+Terminal=false
+Categories=Graphics;Photography;Utility;
+StartupWMClass=io.github.beetman.xdremux
+MimeType=image/heic;image/heif;image/jpeg;
+Keywords=XDRemux;HEIC;HEIF;HDR;ProXDR;photo;converter;

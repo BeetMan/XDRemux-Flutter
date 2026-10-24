@@ -1,4 +1,4 @@
-# 构建指南（五平台）
+# 构建指南（跨平台）
 
 > CI 全自动流程见 `.github/workflows/release.yml` 与 `operations/ci.md`；本页是本地/手动构建。
 
@@ -19,7 +19,7 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 | Windows MSVC | `vendor/x265/build_windows/Release/x265-static.lib` | ARM64: `-A ARM64 -DENABLE_ASSEMBLY=OFF` |
 | Android | `vendor/x265/build_android` | 必须静态（SELinux 禁子进程） |
 | iOS | `vendor/x265/build_ios` | `-DCMAKE_SYSTEM_NAME=iOS`，无汇编 |
-| macOS/Linux | `vendor/x265/build_desktop` | - |
+| macOS/Linux | `vendor/x265/build_desktop` | Linux 未装 nasm 时加 `-DENABLE_ASSEMBLY=OFF` |
 | 鸿蒙 | `vendor/x265/build_ohos` | DevEco NDK 交叉，关汇编；平台分支用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定 |
 
 `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`）。
@@ -31,6 +31,7 @@ cd apps/flutter
 flutter build windows        # x64 安装包前体
 flutter build macos          # 需先跑上面的 cargo build：dylib 由 Runner 的
                              # Bundle Framework 阶段随构建打包并签名
+flutter build linux          # 需先跑 cargo build --release；.so 由 linux/CMakeLists.txt 打包进 bundle/lib
 flutter build apk --release  # Android（需先 cargo ndk 更新 jniLibs）
 ```
 
@@ -49,6 +50,54 @@ tools/ohos/build_hap.ps1 -Release # release（~27MB，侧载不可签，仅供�
 `tools/ohos/check_sdk.ps1 -SdkPath C:\SDKs\flutter-ohos-clean -BuildMode profile` 可单独校验，构建脚本也在替换 pubspec 前自动执行。针对框架提交 `62357a93` 固定干净下载的 profile/debug 与 release 平台内核 SHA256；这是已验证稳定线的兼容性防护，不是所有 SDK 的真实性验证。其他框架提交只给出尚未验证的警告，须另行建立基线。发现 checksum mismatch 时停止构建并准备独立干净 SDK，不要跳过校验：2026-10-17 曾出现版本号一致、但 `platform_strong.dill` 缓存不匹配，编译和签名均成功而真机在 `SetNeedsReportTimings` 初始化时崩溃的情况。
 
 桌面开发注意：macOS 用 `deploy_macos.sh` 产出"固定版本" app；Windows 开发目录需能找到 Rust DLL（FFI 搜索安装目录/开发目录）。
+
+### Linux 桌面（本地开发）
+
+Linux 目标位于 `apps/flutter/linux/`，与 Windows/macOS 共用同一套 Dart 代码与 Rust FFI 核心；发布形态为 AppImage / tar.gz（预览资产），打包脚本见 `tools/linux/package_linux.sh`。
+
+系统依赖：Flutter 3.47.7（`.fvmrc`）、clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator、libnotify。`file_picker` 在 Linux 走 XDG Desktop Portal（需要 `xdg-desktop-portal` 及桌面后端），不需要 zenity。
+
+x265 静态库（Linux 宿主）：
+
+```bash
+git clone --depth 1 --branch 4.2 https://bitbucket.org/multicoreware/x265_git.git xdremux/rust/vendor/x265
+mkdir -p xdremux/rust/vendor/x265/include
+cp xdremux/rust/vendor/x265/source/x265.h xdremux/rust/vendor/x265/include/x265.h
+cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
+  -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \
+  -DENABLE_ASSEMBLY=OFF
+cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static --parallel
+cp xdremux/rust/vendor/x265/build_desktop/x265_config.h xdremux/rust/vendor/x265/include/x265_config.h
+```
+
+`-DENABLE_ASSEMBLY=OFF` 用于未安装 nasm 的机器；已装 nasm 时可去掉，以获得更好的编码性能（发布构建应安装 nasm 启用 SIMD）。
+
+构建与运行：
+
+```bash
+cargo build -p xdremux-core --release       # 生成 target/release/libxdremux_core.so
+cd apps/flutter
+flutter pub get --enforce-lockfile
+flutter build linux --release               # 产物：build/linux/x64/release/bundle
+./build/linux/x64/release/bundle/xdremux
+```
+
+`linux/CMakeLists.txt` 会把 `target/release/libxdremux_core.so`（缺失时回退 `target/debug`）安装到 `bundle/lib/`，Dart 侧 `XdRemuxFFI._openLinux` 按 bundle 布局查找；也可用 `XDREMUX_LINUX_RUST_LIB=/path/to/libxdremux_core.so` 指定其他产物。`flutter test` 从 Cargo `target/` 目录加载核心。CMake 还会从生成的插件列表里过滤掉 Linux 不使用的 `tray_manager`（避免 `libayatana-appindicator3` 硬依赖）与 `jni`（避免 `libjvm.so`）；过滤器与 Windows 的 jni 过滤思路一致。
+
+发布打包（AppImage / tar.gz / sha256，不发布上网）：
+
+```bash
+tools/linux/package_linux.sh 0.4.4 --output build/linux-packages
+# -> XDRemux-Linux-0.4.4-x64.AppImage
+# -> XDRemux-Linux-0.4.4-x64.tar.gz （含 run.sh / install.sh / README.txt）
+# -> XDRemux-Linux-0.4.4-x64.sha256
+```
+
+打包细节见 [tools/linux/README.md](../../tools/linux/README.md)。要点：产物保持 **glibc 2.35（Ubuntu 22.04+）** 基线；Rust 核心 NEEDs `libnuma.so.1`，Ubuntu 22.04 桌面默认不带，因此打包器会选用可兼容 glibc 2.35 的 libnuma（缓存的 Ubuntu 22.04 版本），并由 `AppRun` / `run.sh` / 安装后的启动器设置 `LD_LIBRARY_PATH`。tar.gz 为用户级安装（`~/.local`），不需要 root。
+
+CI：`.github/workflows/linux.yml` 在相关 PR 与手动 `workflow_dispatch` 时，于 `ubuntu-22.04` 上构建并打包，校验 glibc 基线、无 appindicator / libdartjni 依赖，上传 workflow artifact。构建使用只读权限和独立的 jammy x265 缓存；只有手动填写 `attach_release_tag`，独立的写权限 job 才会把产物附加到匹配版本的既有 Release，PR 不会执行发布。该 workflow 目前独立于 tag 触发的 `release.yml`。
+
+已验证：GTK 拖放导入、`xdremux photo.heic` 命令行导入、Rust FFI 转换与 x265 编码、XDG Portal 文件选择。暂未接入：系统托盘（`TrayService` 仅 Windows）、完成通知（仅 Windows/Android）、移动端相册与分享；Apple/OPPO 回传页在 Linux 上仍按既有产品门禁隐藏。
 
 ## 3. 构建变体
 

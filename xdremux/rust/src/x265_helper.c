@@ -38,3 +38,36 @@ EXPORT void xdremux_param_set_basic(x265_param *p, int width, int height,
     p->internalBitDepth = bit_depth;
     p->totalFrames = total_frames;
 }
+
+/* ---------------------------------------------------------------------------
+ * glibc >= 2.38 C23 strtol compat shim.
+ *
+ * When compiled against glibc >= 2.38, <stdlib.h> in C23 mode redirects
+ * strtol() to __isoc23_strtol (via an assembler alias), which glibc exports
+ * only as __isoc23_strtol@GLIBC_2.38. The prebuilt static libx265.a was
+ * compiled that way, so linking it leaves a GLIBC_2.38 requirement on the
+ * cdylib even though neither our code nor x265 needs the C23 '0b' prefix
+ * parsing. Define the symbol locally and forward to the classic
+ * strtol@GLIBC_2.2.5 so the .so stays loadable on Ubuntu 22.04 (glibc 2.35)
+ * and other older distros. The definition is hidden: it only exists to
+ * satisfy the static archive's reference at link time, never for interposition.
+ *
+ * This is a no-op on non-glibc Linux (musl reports no __GLIBC__) and on
+ * glibc < 2.38, where no __isoc23_* redirect exists.
+ * ------------------------------------------------------------------------- */
+#if defined(__linux__) && defined(__GLIBC__) && \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 38))
+
+/* Bind to the classic, unversioned strtol symbol (GLIBC_2.2.5) explicitly:
+   a plain strtol() call here would itself be redirected back to
+   __isoc23_strtol by glibc's asm alias and recurse. */
+extern long xdremux_libc_strtol_(const char *__restrict nptr,
+                                 char **__restrict endptr, int base)
+    __asm__("strtol");
+
+__attribute__((visibility("hidden")))
+long __isoc23_strtol(const char *nptr, char **endptr, int base) {
+    return xdremux_libc_strtol_(nptr, endptr, base);
+}
+
+#endif /* __linux__ && glibc >= 2.38 */
