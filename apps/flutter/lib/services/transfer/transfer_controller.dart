@@ -14,15 +14,21 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   TransferController({
     TransferService Function()? serviceFactory,
     Future<Directory> Function()? supportDirectory,
+    Future<void> Function(bool acquire)? multicastLock,
     bool observeLifecycle = true,
   }) : _factory = serviceFactory ?? TransferService.new,
-       _support = supportDirectory ?? getApplicationSupportDirectory {
+       _support = supportDirectory ?? getApplicationSupportDirectory,
+       _multicastLock =
+           multicastLock ??
+           (Platform.isAndroid ? _platformMulticastLock : null) {
     if (observeLifecycle) WidgetsBinding.instance.addObserver(this);
     _observing = observeLifecycle;
   }
   static final instance = TransferController();
   final TransferService Function() _factory;
   final Future<Directory> Function() _support;
+  final Future<void> Function(bool acquire)? _multicastLock;
+  Future<void> _multicastTail = Future<void>.value();
   bool _observing = false;
   TransferService? _service;
   Future<void>? _startup, _stopTask;
@@ -30,7 +36,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _refreshTask, _inboxTask;
   final Set<Future<dynamic>> _reads = {};
   Timer? _timer;
-  bool _polling = false, receiving = false, starting = false, stopping = false;
+  Object? _polling;
+  bool receiving = false, starting = false, stopping = false;
   bool discovering = false;
   String? discoveryError;
   final List<Map<String, dynamic>> peers = [];
@@ -57,6 +64,31 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   static String code(Object e) => e is TransferException ? e.code : 'io';
+
+  bool _ownsRuntime(TransferService native, int generation) =>
+      !stopping && generation == _stopGeneration && identical(_service, native);
+
+  static Future<void> _platformMulticastLock(bool acquire) async {
+    if (Platform.isAndroid) {
+      await _multicast.invokeMethod<void>(acquire ? 'acquire' : 'release');
+    }
+  }
+
+  Future<void> _setMulticast(bool acquire, {bool Function()? isCurrent}) {
+    final lock = _multicastLock;
+    if (lock == null) return Future<void>.value();
+    // Stop's release must follow every earlier acquire, including a delayed
+    // platform reply. A failed operation must not poison subsequent cleanup.
+    final task = _multicastTail.then((_) async {
+      if (isCurrent != null && !isCurrent()) return;
+      await lock(acquire);
+    });
+    _multicastTail = task.then<void>(
+      (_) {},
+      onError: (Object e, StackTrace s) {},
+    );
+    return task;
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -104,29 +136,40 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> discover() async {
     if (!receiving || stopping) throw const TransferException('closed');
     final native = service;
+    final generation = _stopGeneration;
     discoveryError = null;
     try {
-      if (Platform.isAndroid) await _multicast.invokeMethod<void>('acquire');
+      await _setMulticast(
+        true,
+        isCurrent: () => _ownsRuntime(native, generation),
+      );
+      if (!_ownsRuntime(native, generation)) return;
       final result = await native.command({
         'command': 'discovery_start',
         'interface': discoveryInterface,
       });
-      if (stopping || !identical(_service, native)) return;
-      await _discoveryState(result as Map);
+      if (!_ownsRuntime(native, generation)) return;
+      await _discoveryState(result as Map, native, generation);
     } catch (e) {
+      if (!_ownsRuntime(native, generation)) return;
       discoveryError = code(e);
       discovering = false;
       peers.clear();
-      if (Platform.isAndroid) {
-        try {
-          await _multicast.invokeMethod<void>('release');
-        } catch (_) {}
-      }
+      try {
+        await _setMulticast(
+          false,
+          isCurrent: () => _ownsRuntime(native, generation),
+        );
+      } catch (_) {}
     }
-    notifyListeners();
+    if (_ownsRuntime(native, generation)) notifyListeners();
   }
 
-  Future<void> _discoveryState(Map result) async {
+  Future<void> _discoveryState(
+    Map result,
+    TransferService native,
+    int generation,
+  ) async {
     discovering = result['enabled'] == true;
     discoveryError = result['error'] as String?;
     peers
@@ -136,9 +179,12 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           (p) => Map<String, dynamic>.from(p as Map),
         ),
       );
-    if (!discovering && Platform.isAndroid) {
+    if (!discovering) {
       try {
-        await _multicast.invokeMethod<void>('release');
+        await _setMulticast(
+          false,
+          isCurrent: () => _ownsRuntime(native, generation),
+        );
       } catch (_) {}
     }
   }
@@ -174,6 +220,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         throw TransferException(available.reason ?? 'closed');
       }
       _service = native;
+      _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
       ready = native.ready;
       receiving = receive;
       trusted.addAll(
@@ -334,12 +381,14 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> poll() async {
-    if (_polling || !running || stopping) return;
-    _polling = true;
+    final native = _service;
+    if (_polling != null || native == null || !running || stopping) return;
+    final generation = _stopGeneration;
+    final token = Object();
+    _polling = token;
     try {
-      final native = service;
       final page = await native.drainEvents();
-      if (stopping || !identical(_service, native)) return;
+      if (!_ownsRuntime(native, generation)) return;
       var dirty = page['resync'] == true;
       var ended = false;
       for (final body in page['events'] as List) {
@@ -395,14 +444,16 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
         _lastDiscoveryPoll = DateTime.now();
         final state = await native.command({'command': 'discovery_status'});
-        if (stopping || !identical(_service, native)) return;
-        await _discoveryState(state as Map);
+        if (!_ownsRuntime(native, generation)) return;
+        await _discoveryState(state as Map, native, generation);
+        if (!_ownsRuntime(native, generation)) return;
       }
       if (dirty) {
         await refresh();
+        if (!_ownsRuntime(native, generation)) return;
         // UUID order is not commit order. Recover every page after overflow.
         if (page['resync'] == true) {
-          while (moreInbox && !stopping && identical(_service, native)) {
+          while (moreInbox && _ownsRuntime(native, generation)) {
             await loadInbox();
           }
         }
@@ -410,7 +461,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       }
     } catch (e) {
-      if (!stopping) {
+      if (_ownsRuntime(native, generation)) {
         error = code(e);
         if (error == 'closed' || error == 'worker_stopped') {
           error = 'closed';
@@ -420,14 +471,22 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     } finally {
-      _polling = false;
+      if (identical(_polling, token)) _polling = null;
     }
   }
 
-  Future<void> refresh() =>
-      _refreshTask ??= _refreshNow().whenComplete(() => _refreshTask = null);
-  Future<void> _refreshNow() async {
+  Future<void> refresh() {
+    if (_refreshTask != null) return _refreshTask!;
     final native = service;
+    final generation = _stopGeneration;
+    late final Future<void> task;
+    task = _refreshNow(native, generation).whenComplete(() {
+      if (identical(_refreshTask, task)) _refreshTask = null;
+    });
+    return _refreshTask = task;
+  }
+
+  Future<void> _refreshNow(TransferService native, int generation) async {
     final nextTransfers = <String, Map<String, dynamic>>{};
     String? cursor;
     do {
@@ -470,7 +529,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         if (e.code != 'invalid_input') rethrow;
       }
     }
-    if (stopping || !identical(_service, native)) return;
+    if (!_ownsRuntime(native, generation)) return;
     transfers
       ..clear()
       ..addAll(nextTransfers);
@@ -478,12 +537,17 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       ..clear()
       ..addAll(nextFiles);
     await loadInbox(reset: true);
-    notifyListeners();
+    if (_ownsRuntime(native, generation)) notifyListeners();
   }
 
   Future<void> loadInbox({bool reset = false}) async {
-    if (_inboxTask != null) await _inboxTask;
-    final task = _loadInbox(reset: reset);
+    final native = service;
+    final generation = _stopGeneration;
+    while (_inboxTask != null) {
+      await _inboxTask;
+      if (!_ownsRuntime(native, generation)) return;
+    }
+    final task = _loadInbox(native, generation, reset: reset);
     _inboxTask = task;
     try {
       await task;
@@ -492,8 +556,11 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadInbox({required bool reset}) async {
-    final native = service;
+  Future<void> _loadInbox(
+    TransferService native,
+    int generation, {
+    required bool reset,
+  }) async {
     final rows = <String, Map<String, dynamic>>{};
     String? cursor = reset ? null : _receiptCursor;
     var more = false;
@@ -513,7 +580,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       more = page.length == 64;
       readPages++;
     } while (reset && more && readPages < _receiptPages);
-    if (stopping || !identical(_service, native)) return;
+    if (!_ownsRuntime(native, generation)) return;
     if (reset) inbox.clear();
     inbox.addAll(rows);
     // New commits may sort before/after the loaded window; keep them visible.
@@ -594,6 +661,11 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     discovering = false;
     peers.clear();
     _timer?.cancel();
+    _polling = null;
+    // New startup must load its own state, without sharing an old query future.
+    // Late completions may only clear the task slot that they still own.
+    _refreshTask = null;
+    _inboxTask = null;
     notifyListeners();
     try {
       try {
@@ -613,11 +685,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       transfers.clear();
       files.clear();
     } finally {
-      if (Platform.isAndroid) {
-        try {
-          await _multicast.invokeMethod<void>('release');
-        } catch (_) {}
-      }
+      try {
+        await _setMulticast(false);
+      } catch (_) {}
       stopping = false;
       starting = false;
       notifyListeners();

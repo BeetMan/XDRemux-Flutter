@@ -105,6 +105,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 
 2026-10-24 按用户安排仅准备真实网络变化脚本，未操作手机或网络。新增分阶段人工 checkpoint、无线 ADB 重连信息交接、同身份显式重试及独立哈希核对；先覆盖 Windows 原生发送 → Android 接收。7 项离线检查、真实 DLL 的回环 relay 切断／换端口演练及测试 APK 构建通过；真机断网、反向及官方客户端共存不计通过。复现与边界见 [网络脚本准备](../testing/local-transfer-network.md)。
 
+2026-10-24 继续修复重启后的回调归属：旧发现／轮询错误不再清空设备或关闭新 runtime；新轮询、快照及收件箱不共享旧查询，旧 finally 不清除新占位。多播锁按序获取／释放，停止等待尚未完成的获取。17 项新增受控回归、完整 Flutter 125 项、analyze 及 Windows／Android 普通 release 打包核对通过；本轮未操作手机或系统网络，新版真机复验继续待执行。见 [回调归属验证](../testing/local-transfer-runtime-boundary.md)。
+
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。
 - [ ] Android：按实际 target SDK 核对 INTERNET、局域网访问、多播与前台任务策略；SDK 升级时复核权限变化。
