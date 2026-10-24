@@ -10,7 +10,8 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 
 [官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native)
 
-> 当前跨平台版本：**v0.4.4**。鸿蒙原生版：**0.5.1**，使用独立发布标签与安装包。
+> 当前已发布跨平台版本：**v0.4.4**。鸿蒙原生版：**0.5.1**，使用独立发布标签与安装包。
+> 主线开发版本：**0.4.5+39（尚未发布）**，包含 JPEG HDR 兼容性与 ICC 色彩配置保留修复，见 [0.4.5 待发布更新说明](tools/installer/RELEASE_NOTES_v0.4.5.md)。下方仍为已发布版本的下载链接。
 > Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果取决于原始照片结构、系统版本和目标设备。请保留原图，先用少量照片验证自己的工作流。
 
 ## 下载与安装

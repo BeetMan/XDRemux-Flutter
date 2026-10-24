@@ -24,6 +24,7 @@ pub mod iso_validate;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
+mod jpeg_color;
 mod jpeg_gainmap_metadata;
 pub mod linear_thumbnail;
 pub mod progress;

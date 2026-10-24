@@ -63,6 +63,17 @@ pub fn x265_encode_tiles_oppo_sdr(
     x265_encode_tiles(tiles, width, height, pixel_bytes, use_420)
 }
 
+/// ICC-aware JPEG primaries retain device RGB values. Only the YCbCr matrix
+/// is declared here; primaries / transfer are supplied by the HEIF ICC profile.
+pub(crate) fn x265_encode_icc_primary_tiles(
+    tiles: &[&[u8]], width: u32, height: u32, use_420: bool,
+) -> std::io::Result<Vec<Vec<u8>>> {
+    #[cfg(not(xdremux_ffmpeg_fallback))]
+    { x265_encode_tiles_inner(tiles, width, height, 3, use_420, false, true) }
+    #[cfg(xdremux_ffmpeg_fallback)]
+    { tiles.iter().map(|tile| encode_raw_tile_inner(tile, "rgb24", width, height, true, use_420)).collect() }
+}
+
 /// Feature flag: encode single-tile gain maps as 4:2:0 instead of 4:4:4.
 ///
 /// The batch/production path (`x265_encode_tiles`) decides 4:2:0 vs 4:4:4 from
@@ -493,6 +504,7 @@ unsafe fn open_encoder(
     pixel_bytes: usize,
     use_420: bool,
     oppo_sdr: bool,
+    icc_rgb: bool,
 ) -> std::io::Result<(*mut crate::x265_ffi::x265_param, *mut crate::x265_ffi::x265_encoder)> {
     use crate::x265_ffi::*;
     use std::ffi::CString;
@@ -562,7 +574,11 @@ unsafe fn open_encoder(
     set_param(param, "rc-lookahead", "0");
     set_param(param, "no-open-gop", "0"); // every IDR standalone
     if is_rgb {
-        if oppo_sdr {
+        if icc_rgb {
+            set_param(param, "colormatrix", "bt709");
+            set_param(param, "colorprim", "undef");
+            set_param(param, "transfer", "undef");
+        } else if oppo_sdr {
             // Mimic the OPPO camera's signalling: limited-range BT.601 data
             // (converted above) with a full-range flag and sRGB transfer.
             set_param(param, "colormatrix", "smpte170m");
@@ -601,7 +617,7 @@ pub fn x265_encode_tiles(
     pixel_bytes: usize,
     use_420: bool,
 ) -> std::io::Result<Vec<Vec<u8>>> {
-    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, false)
+    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, false, false)
 }
 
 /// Batch-encode RGB tiles the way OPPO camera HEVC stores them: BT.601
@@ -617,7 +633,7 @@ pub fn x265_encode_tiles_oppo_sdr(
     pixel_bytes: usize,
     use_420: bool,
 ) -> std::io::Result<Vec<Vec<u8>>> {
-    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, true)
+    x265_encode_tiles_inner(tiles, width, height, pixel_bytes, use_420, true, false)
 }
 
 #[cfg(not(xdremux_ffmpeg_fallback))]
@@ -628,6 +644,7 @@ fn x265_encode_tiles_inner(
     pixel_bytes: usize,
     use_420: bool,
     oppo_sdr: bool,
+    icc_rgb: bool,
 ) -> std::io::Result<Vec<Vec<u8>>> {
     use crate::x265_ffi::*;
 
@@ -649,7 +666,7 @@ fn x265_encode_tiles_inner(
     // config from hvcC, not from each tile).
     let encode_tile = |idx: usize, tile: &[u8]| -> std::io::Result<Vec<u8>> {
         unsafe {
-            let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr)?;
+            let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr, icc_rgb)?;
             let pic = x265_picture_alloc();
             let (y, u, v, _stride) =
                 setup_pic_planes(pic, param, tile, width, height, pixel_bytes, use_420, oppo_sdr);
@@ -863,11 +880,17 @@ fn io_err(msg: &str) -> std::io::Error {
 
 #[cfg(xdremux_ffmpeg_fallback)]
 fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> std::io::Result<Vec<u8>> {
-    let pix_fmt_out = match pix_fmt_in {
+    encode_raw_tile_inner(pixels, pix_fmt_in, width, height, false, false)
+}
+
+#[cfg(xdremux_ffmpeg_fallback)]
+fn encode_raw_tile_inner(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32,
+    icc_rgb: bool, use_420: bool) -> std::io::Result<Vec<u8>> {
+    let pix_fmt_out = if icc_rgb && use_420 { "yuv420p" } else { match pix_fmt_in {
         "gray" => "yuv444p",
         "rgb24" => "yuv444p",
         other => other,
-    };
+    }};
 
     let crf: u32 = match pix_fmt_in {
         "gray" => 18,
@@ -875,7 +898,9 @@ fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> 
         _ => 18,
     };
 
-    let x265_params = if pix_fmt_in == "gray" {
+    let x265_params = if icc_rgb {
+        "range=full:colormatrix=bt709:colorprim=undef:transfer=undef:psy-rd=0:aq-mode=1"
+    } else if pix_fmt_in == "gray" {
         "range=full"
     } else {
         "range=full:colormatrix=bt709:colorprim=bt709:transfer=bt709:psy-rd=0:aq-mode=1"
@@ -896,11 +921,14 @@ fn encode_raw_tile(pixels: &[u8], pix_fmt_in: &str, width: u32, height: u32) -> 
         "-preset", preset,
         "-crf", &crf.to_string(),
     ]);
-    cmd.args(["-profile:v", "main444-8"]);
+    if icc_rgb {
+        cmd.args(["-vf", "scale=in_range=full:out_range=full:out_color_matrix=bt709"]);
+    }
+    cmd.args(["-profile:v", if icc_rgb && use_420 { "mainstillpicture" } else { "main444-8" }]);
     cmd.args([
         "-colorspace", "bt709",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
+        "-color_primaries", if icc_rgb { "2" } else { "bt709" },
+        "-color_trc", if icc_rgb { "2" } else { "bt709" },
         "-color_range", "2",
     ]);
     cmd.args([
