@@ -27,6 +27,20 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 
 `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`）。
 
+### 可选：Main10（10-bit）静态库
+
+Styles 线性缩略图的 10-bit 通路是**构建期可选**的：只要 `vendor/x265/build_<平台>_10bit` 存在，`build.rs` 就会把 10-bit 归档复制成唯一库名 `x265-main10`、编译 `src/x265_10bit_bridge.cpp` 并定义 `cfg(xdremux_main10)`；不存在则静默回退 8-bit Apple Log 路径，所以各平台可以分批启用。
+
+| 平台 | 期望目录 | 归档名 |
+|---|---|---|
+| Windows MSVC | `vendor/x265/build_windows_10bit`（或 `.../Release`） | `x265-static.lib` |
+| macOS/Linux | `vendor/x265/build_desktop_10bit` | `libx265.a` |
+| Android | `vendor/x265/build_android_10bit` | `libx265.a` |
+| iOS / 模拟器 | `vendor/x265/build_ios_10bit` / `build_ios_sim_10bit` | `libx265.a` |
+| 鸿蒙 | `vendor/x265/build_ohos_10bit` | `libx265.a` |
+
+构建要点（必须 `HIGH_BIT_DEPTH=ON` + `EXPORT_C_API=OFF` + `XDREMUX_SKIP_RC=ON`）、单帧 Rext 坑、链接语义与风险见 `docs/research/x265-main10-feasibility-20261025.md`。验证：`cargo test -p xdremux-core --lib` 的 `hevc::tests::main10_thumbnail_encode_is_profile_2_and_10bit_hvcc`（仅 `cfg(xdremux_main10)` 时运行）。
+
 ### Windows 本地开发（MSVC + x265，已实测 2026-10-25）
 
 在 `git worktree` 里直接 `cargo test` 常会失败，原因通常不是工具链坏，而是两个环境问题：
