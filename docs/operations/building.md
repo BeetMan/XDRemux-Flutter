@@ -27,6 +27,30 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 
 `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`）。
 
+### Windows 本地开发（MSVC + x265，已实测 2026-10-25）
+
+在 `git worktree` 里直接 `cargo test` 常会失败，原因通常不是工具链坏，而是两个环境问题：
+
+1. **worktree 缺 `vendor/x265`**：`vendor/` 不在版本库内（`build.rs` 按 `CARGO_MANIFEST_DIR/vendor/x265` 查找头文件与静态库），fresh worktree 里没有，`x265_helper.c` 编译会因找不到 `x265.h` 失败（cc-rs 只报 "status code exit code: 2"，不打印 cl 的具体错误）。处理：把主工作区已构建好的 vendor 以**目录联接**挂进来（不需要管理员权限）：
+
+   ```powershell
+   New-Item -ItemType Junction -Path "<worktree>\xdremux\rust\vendor" `
+            -Target "<主仓>\xdremux\rust\vendor"
+   ```
+
+2. **共享 `target/` 里的旧 C 产物**：多个 worktree 共用一个 `CARGO_TARGET_DIR` 时，`zstd-sys` 等 `cc` 构建产物可能来自不同环境（缺 `INCLUDE`/`LIB` 的旧运行），表现为 GCC 风格参数传给 MSVC 的 `cl/lib`、或 `lib.exe` 打开输出失败（1104）。处理：用**独立 target 目录**。
+
+已验证可复现的完整流程（Git Bash 之外的 `cmd` 里执行，先加载 MSVC 环境）：
+
+```bat
+call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
+set CARGO_TARGET_DIR=%TEMP%\xdremux-clean-target
+cd /d <repo>
+cargo test -p xdremux-core --lib
+```
+
+本机实测结果：`248 passed; 0 failed; 3 ignored`（2026-10-25，Windows 11、MSVC 14.51、Rust 1.99.1）。最小复现 `cc = 1.4.0` 单独编译 C 文件是正常的，所以**不要**先怀疑 VS/cc-rs 版本；先查上面两项。
+
 ## 2. Flutter 应用
 
 ```bash
