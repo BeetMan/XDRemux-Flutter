@@ -46,7 +46,7 @@
 1. **Styles native 路径不是逐像素等价**：`styleData` 为 identity，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
 2. **线性缩略图为 8-bit 4:2:0**（`linear_thumbnail.rs` 头注释），原生为 10-bit；上游 10-15 起改用 Apple Log 编码 + 全分辨率线性重建，我们尚未跟（待决策，成本含 10-bit x265 五平台构建）。
 3. **Live Photo 发布校验只在检查点恢复路径**；转换成功当次没有"立即校验 + 半成品回滚 + 独立恢复副本"（上游 #76/#78 的后半段）。
-4. **本机 Windows 无法跑全量 Rust 测试**：`zstd-sys` 的 C 构建把 GNU 风格参数传给 MSVC（`cc 1.4.0` + VS 18 / MSVC 14.51），属既有环境问题；本地验证只能依赖 CI 或模块级独立工程。
+4. **本机 Windows 跑 Rust 测试的两个坑（已解决，2026-10-25）**：① worktree 缺 gitignored 的 `vendor/x265`（`build.rs` 找不到头文件）；② 多 worktree 共用 `target/` 时 `zstd-sys` 的旧 C 产物污染。处理：vendor 用目录联接 + 独立 `CARGO_TARGET_DIR` + vcvars 环境，配方见 `docs/operations/building.md` §1「Windows 本地开发」。**已实测**：`cargo test -p xdremux-core --lib` = 248 passed / 0 failed / 3 ignored。
 5. **CI 只覆盖 Ubuntu + Flutter**（`.github/workflows/ci.yml`）：Windows/macOS 原生行为、真机 Photos 验收不在 CI 内。
 6. **鸿蒙原生版与 Flutter 版共用 Rust 核心**：任何 `xdremux/rust` 改动合入后需要重建鸿蒙 `.so` 并复测。
 
@@ -56,7 +56,7 @@
 2. `codex/local-transfer` 合并前做一次独立 review：FFI 边界、断网/中断/跨平台路径、与现有 checkpoint 的交互。
 3. 决定 Styles 方向：读 `docs/research/styles-upstream-20261024-gap.md` 后选「跟 / 只跟缩略图 / 暂不跟」。
 4. 决定 cinematic 分支去留。
-5. 修好本机 Rust 工具链（或固化"用 CI 验证"的流程），降低后续每项改动的验证成本。
+5. ~~修好本机 Rust 工具链（或用 CI 验证）~~ **已完成**：本地可跑全量 `cargo test -p xdremux-core --lib`（248 passed），配方见 `docs/operations/building.md` §1。
 
 ## 6. 常用验证命令
 
