@@ -51,9 +51,16 @@ class _Controller extends TransferController {
   final List<TransferStorageItem> items;
   final calls = <Set<String>>[];
   String? failure;
+  bool active = true, stopAfterClean = false;
+  int previews = 0;
   @override
-  Future<TransferStorageSnapshot> inspectStorage() async =>
-      TransferStorageSnapshot('ui-runtime', items);
+  bool get running => active;
+  @override
+  Future<TransferStorageSnapshot> inspectStorage() async {
+    previews++;
+    return TransferStorageSnapshot('ui-runtime', items);
+  }
+
   @override
   Future<TransferStorageCleanup> cleanStorage(
     TransferStorageSnapshot plan,
@@ -69,6 +76,7 @@ class _Controller extends TransferController {
         items.removeWhere((item) => item.id == id);
       }
     }
+    if (stopAfterClean) active = false;
     return result;
   }
 }
@@ -431,6 +439,28 @@ void main() {
         {'inbox:a'},
       ]);
       expect(controller.items.single.reason, 'queue');
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+    },
+  );
+
+  testWidgets(
+    'cleanup completion never automatically refreshes a stopped runtime',
+    (tester) async {
+      final controller = await dialog(tester);
+      controller.stopAfterClean = true;
+      await tester.tap(find.byKey(const ValueKey('storage-inbox:a')));
+      await tester.pumpAndSettle();
+      await confirm(tester);
+      expect(controller.calls.length, 1);
+      expect(controller.previews, 1);
+      expect(find.text('closed'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('clean-storage')))
+            .onPressed,
+        isNull,
+      );
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     },

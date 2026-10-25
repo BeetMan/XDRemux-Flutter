@@ -23,6 +23,22 @@ class _TransferStorageDialogState extends State<TransferStorageDialog> {
   bool _busy = false;
   String? _error;
 
+  String _errorText(String code) => switch (code) {
+    'io' => t(
+      '清理未完成，请刷新并检查剩余项目后重试',
+      'Cleanup incomplete; refresh and review remaining items before retrying',
+    ),
+    'source_changed' => t(
+      '文件状态已变化，已保留；请刷新后重新核对',
+      'File state changed; retained. Refresh and review again',
+    ),
+    'checksum_mismatch' || 'truncated' || 'unsafe_storage' => t(
+      '无法核对文件，已保留；请检查后重试',
+      'File could not be verified; retained. Review before retrying',
+    ),
+    _ => widget.errorText(code),
+  };
+
   @override
   void initState() {
     super.initState();
@@ -50,7 +66,7 @@ class _TransferStorageDialogState extends State<TransferStorageDialog> {
       if (mounted) {
         setState(() {
           _plan = null;
-          _error = widget.errorText(TransferController.code(error));
+          _error = _errorText(TransferController.code(error));
         });
       }
     } finally {
@@ -109,15 +125,24 @@ class _TransferStorageDialogState extends State<TransferStorageDialog> {
       });
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _error = widget.errorText(TransferController.code(error)),
-        );
+        setState(() => _error = _errorText(TransferController.code(error)));
       }
     } finally {
       if (mounted) {
-        final error = _error;
-        await _refresh();
-        if (mounted && error != null) setState(() => _error = error);
+        if (!widget.controller.running || widget.controller.stopping) {
+          // Home/close may have stopped the service while cleanup was awaited.
+          // An automatic refresh must not start a replacement runtime.
+          setState(() {
+            _busy = false;
+            _plan = null;
+            _selected.clear();
+            _error ??= _errorText('closed');
+          });
+        } else {
+          final error = _error;
+          await _refresh();
+          if (mounted && error != null) setState(() => _error = error);
+        }
       }
     }
   }
@@ -195,7 +220,7 @@ class _TransferStorageDialogState extends State<TransferStorageDialog> {
                                   '结果未确认，请重新打开互传页后核对',
                                   'Result unknown; reopen transfer and review',
                                 )
-                              : '$label · ${transferStorageBytes(item.bytes)}${_last?.failed[item.id] == null ? '' : '\n${widget.errorText(_last!.failed[item.id]!)}'}',
+                              : '$label · ${transferStorageBytes(item.bytes)}${_last?.failed[item.id] == null ? '' : '\n${_errorText(_last!.failed[item.id]!)}'}',
                         ),
                         value: _selected.contains(item.id),
                         onChanged: _busy || !item.canClean || unknown
