@@ -61,7 +61,36 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 
 验证现状：直出文件 ColorOS 相册、Windows WIC、heif-oxide 均可打开；Apple 照片内编辑兼容性 iPhone 真机已验证。
 
-## 4. 诊断工具
+## 4. 线性缩略图（Apple Log）
+
+对应代码：`linear_thumbnail.rs`（几何 + 重采样 + 编码）、`apple_log.rs`（传递函数）、`styles_native.rs`（装配 ispe/item）。
+
+原生 `aux:linearthumbnail` 在 Styles 文件里存的是 **Apple Log 码值**，不是 sRGB、也不是线性 RGB。2026-10-25 起本移植按同一契约生成：
+
+1. heif-oxide 解码主图得到 display-ready sRGB（8/16-bit）；
+2. 按主图 `irot` 把显示方向转回 **coded 存储方向**（aux item 继承主图 irot）；
+3. sRGB EOTF 转线性光（`apple_log::srgb_to_linear`），**在线性域**做面积覆盖重采样（`area_resize_linear_rgb`）；
+4. 几何用 `fitted_even_dimensions`：长边上限 1024、两边强制偶数、**保持 coded 宽高比（不再裁成 4:3）**、不放大；
+5. 除以 Styles baseline exposure（`styleData` plist key 4，默认 `styles_native::IDENTITY_BASELINE_EXPOSURE = 4.0`），套 Apple Log 曲线（常量 `A/B/C` 与 macOS 26A434 解码器逐位一致），量化后编码。
+
+| 项 | 现状 | 与原生差距 |
+|---|---|---|
+| 传递函数 | Apple Log（`code = A*log2(linear/BE + B_off) + C`，边界码 0/1 钳位） | 无（常量对齐上游） |
+| 几何 | 长边 1024、双偶数、coded 宽高比、同 irot | 无（对齐上游 `fitted_even_dimensions`） |
+| 量化 | **8-bit** 4:2:0 HEVC | 原生 16-bit codes + Main10；8-bit 只用了码值 `[0, 0.6946]` 区间承载 SDR，属预览级精度 |
+| HDR 范围 | 只编码 SDR（未应用 gain map） | 原生在 base 分辨率应用 ISO 增益重建 scene-linear HDR。阻塞点：移植侧没有 tmap 增益图 tile 的 HEVC 解码能力（heif-oxide 只解主图） |
+
+验证（本机，`cargo test -p xdremux-core --lib` 覆盖）：
+
+- `apple_log`：常量、编解码往返（码值 1.0 以上会钳位，约 linear 12 封顶）、边界钳位、sRGB EOTF 端点、baseline exposure 除法、8-bit 量化、异常输入拒绝；
+- `linear_thumbnail`：几何契约（4:3/16:9/竖拍/小图不放大/奇数边取偶/极端宽高比）、线性域面积重采样均值与恒等、参数校验。
+
+后续（P1）：
+1. 10-bit Main10 编码（需要 10-bit x265 静态库与多平台构建，或改用双库 `x265_api_get` 方案）后，把 `thumbnail_codes`（16-bit）直接接入，去掉 8-bit 量化；
+2. 增益图解码（HEVC tile 解码）打通后，把 base 分辨率的 gain map 应用到线性光再重采样，恢复 HDR 高光；
+3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度。
+
+## 5. 诊断工具
 
 - `styles_diag <file>`：打印 box/item/引用/属性/尾部条目全量结构
 - `styles_convert`：端到端转换探针
