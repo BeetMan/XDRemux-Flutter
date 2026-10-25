@@ -341,6 +341,64 @@ class XdRemuxFFI {
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_photo_details');
 
+  static final _inspectOppoFilterTail = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)>('xdremux_inspect_oppo_filter_tail');
+
+  static final _injectOppoFilterTail = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Int32,
+        ffi.Int32,
+        ffi.Int32,
+        ffi.Uint8,
+        ffi.Uint8,
+        ffi.Int32,
+        ffi.Int32,
+        ffi.Uint8,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        int,
+        int,
+        int,
+        int,
+        int,
+        int,
+        int,
+        int,
+      )>('xdremux_inject_oppo_filter_tail');
+
+  static final _convertCubeToMsLut = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Uint32,
+        ffi.Uint8,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        int,
+        int,
+      )>('xdremux_convert_cube_to_mslut');
+
+  static final _convertMsLutToCube = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      )>('xdremux_convert_mslut_to_cube');
+
   static final _livePhotoPairValid = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
@@ -799,6 +857,140 @@ class XdRemuxFFI {
     } finally {
       calloc.free(a);
       calloc.free(b);
+    }
+  }
+
+  /// Inspect OPPO / ColorOS `FileExtendedContainer` (`\0jxrs`) tail metadata
+  /// (`filter.info`, `master.mode.preset.info`, `basictone.info`, `basictone.vig.table`, `src.image`).
+  static Map<String, dynamic> inspectOppoFilterTail(String inputPath) {
+    final p = inputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _inspectOppoFilterTail(p);
+      if (ptr == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'xdremux_inspect_oppo_filter_tail returned null',
+        };
+      }
+      return jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+    } catch (e) {
+      return <String, dynamic>{'success': false, 'errorMessage': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(p);
+    }
+  }
+
+  /// Non-destructively inject or update `filter.info` (and optionally `src.image`) in an
+  /// OPPO JPEG or HEIC photo so ColorOS Gallery recognizes the filter/palette.
+  static Map<String, dynamic> injectOppoFilterTail({
+    required String inputPath,
+    required String outputPath,
+    required String filterType,
+    int strength = 100,
+    int orientation = 0,
+    int softLightType = 0,
+    bool isSoftLight = false,
+    bool isPalette = false,
+    int paletteSaturation = 0,
+    int paletteTone = 0,
+    bool embedSrcImage = true,
+  }) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    final ftPtr = filterType.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _injectOppoFilterTail(
+        inPtr,
+        outPtr,
+        ftPtr,
+        strength,
+        orientation,
+        softLightType,
+        isSoftLight ? 1 : 0,
+        isPalette ? 1 : 0,
+        paletteSaturation,
+        paletteTone,
+        embedSrcImage ? 1 : 0,
+      );
+      if (ptr == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'xdremux_inject_oppo_filter_tail returned null',
+        };
+      }
+      return jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+    } catch (e) {
+      return <String, dynamic>{'success': false, 'errorMessage': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(inPtr);
+      calloc.free(outPtr);
+      calloc.free(ftPtr);
+    }
+  }
+
+  /// Convert an Adobe `.cube` 3D LUT file into a Meishe `.MS-LUT` binary file (`17³` or `32³`).
+  static Map<String, dynamic> convertCubeToMsLut({
+    required String cubePath,
+    required String mslutPath,
+    int targetDimension = 32,
+    bool oklchP3GamutMap = true,
+  }) {
+    final cPtr = cubePath.toNativeUtf8();
+    final mPtr = mslutPath.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _convertCubeToMsLut(
+        cPtr,
+        mPtr,
+        targetDimension,
+        oklchP3GamutMap ? 1 : 0,
+      );
+      if (ptr == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'xdremux_convert_cube_to_mslut returned null',
+        };
+      }
+      return jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+    } catch (e) {
+      return <String, dynamic>{'success': false, 'errorMessage': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(cPtr);
+      calloc.free(mPtr);
+    }
+  }
+
+  /// Convert a Meishe `.MS-LUT` binary file into an Adobe `.cube` 3D LUT file.
+  static Map<String, dynamic> convertMsLutToCube({
+    required String mslutPath,
+    required String cubePath,
+    String? title,
+  }) {
+    final mPtr = mslutPath.toNativeUtf8();
+    final cPtr = cubePath.toNativeUtf8();
+    final tPtr = title != null ? title.toNativeUtf8() : ffi.nullptr;
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _convertMsLutToCube(mPtr, cPtr, tPtr);
+      if (ptr == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'xdremux_convert_mslut_to_cube returned null',
+        };
+      }
+      return jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+    } catch (e) {
+      return <String, dynamic>{'success': false, 'errorMessage': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(mPtr);
+      calloc.free(cPtr);
+      if (tPtr != ffi.nullptr) calloc.free(tPtr);
     }
   }
 

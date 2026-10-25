@@ -12,6 +12,7 @@ pub mod edr;
 pub mod exif;
 pub mod live_photo;
 pub mod motion_photo;
+pub mod oppo_filter_ecosystem;
 pub mod photo_details;
 pub mod uhdr_jpeg;
 pub mod gainmap;
@@ -340,6 +341,203 @@ pub extern "C" fn xdremux_inspect_photo_details(path: *const c_char) -> *mut c_c
             .map_err(|_| "path is not valid UTF-8".to_string())?;
         let details = photo_details::inspect_photo_details(path_str)?;
         Ok(details.to_json())
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Inspect OPPO / ColorOS `FileExtendedContainer` (`\0jxrs`) tail entries, including
+/// `filter.info` (v4 140B & v5/v5.1 228B), `master.mode.preset.info` (496B),
+/// `basictone.info` (8216B), `basictone.vig.table` (884B), and `src.image`.
+/// Free the returned JSON string with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_inspect_oppo_filter_tail(path: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() {
+            return Err("path is missing".into());
+        }
+        let path_str = unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .map_err(|_| "path is not valid UTF-8".to_string())?;
+        let data = std::fs::read(path_str).map_err(|e| format!("cannot read photo: {e}"))?;
+        let mut report = oppo_filter_ecosystem::inspect_oppo_tail(&data).to_json();
+        report["success"] = serde_json::Value::Bool(true);
+        Ok(report)
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Non-destructively inject or update `filter.info` (and optionally `src.image`) in an
+/// OPPO JPEG or HEIC photo so ColorOS Gallery recognizes the filter/palette.
+/// Free the returned JSON string with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_inject_oppo_filter_tail(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    filter_type: *const c_char,
+    strength: i32,
+    orientation: i32,
+    soft_light_type: i32,
+    is_soft_light: u8,
+    is_palette: u8,
+    palette_saturation: i32,
+    palette_tone: i32,
+    embed_src_image: u8,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if input_path.is_null() || output_path.is_null() || filter_type.is_null() {
+            return Err("input_path / output_path / filter_type is missing".into());
+        }
+        let input_str = unsafe { CStr::from_ptr(input_path) }
+            .to_str()
+            .map_err(|_| "input_path is not valid UTF-8".to_string())?;
+        let output_str = unsafe { CStr::from_ptr(output_path) }
+            .to_str()
+            .map_err(|_| "output_path is not valid UTF-8".to_string())?;
+        let filter_type_str = unsafe { CStr::from_ptr(filter_type) }
+            .to_str()
+            .map_err(|_| "filter_type is not valid UTF-8".to_string())?;
+
+        let data = std::fs::read(input_str).map_err(|e| format!("cannot read input photo: {e}"))?;
+        let fi = if is_palette != 0 {
+            oppo_filter_ecosystem::OppoFilterInfo::new_palette(
+                filter_type_str,
+                strength,
+                orientation,
+                palette_saturation,
+                palette_tone,
+            )
+        } else {
+            oppo_filter_ecosystem::OppoFilterInfo::new_master_filter(
+                filter_type_str,
+                strength,
+                orientation,
+                soft_light_type,
+                is_soft_light != 0,
+            )
+        };
+        let out_bytes = oppo_filter_ecosystem::inject_oppo_filter_tail(
+            &data,
+            &fi,
+            None,
+            embed_src_image != 0,
+        )?;
+        std::fs::write(output_str, &out_bytes)
+            .map_err(|e| format!("cannot write output photo: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputPath": output_str,
+            "byteLength": out_bytes.len(),
+            "filterInfo": fi.to_json(),
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Convert an Adobe `.cube` 3D LUT file into a Meishe `.MS-LUT` binary file (`17³` or `32³`).
+/// When `oklch_p3_gamut_map != 0`, performs OPPO Camera Display P3 <-> Rec.709 CSS Color 4
+/// OkLCh gamut-mapped baking. Free the returned JSON string with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_convert_cube_to_mslut(
+    cube_path: *const c_char,
+    mslut_path: *const c_char,
+    target_dim: u32,
+    oklch_p3_gamut_map: u8,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if cube_path.is_null() || mslut_path.is_null() {
+            return Err("cube_path or mslut_path is missing".into());
+        }
+        let cube_str = unsafe { CStr::from_ptr(cube_path) }
+            .to_str()
+            .map_err(|_| "cube_path is not valid UTF-8".to_string())?;
+        let mslut_str = unsafe { CStr::from_ptr(mslut_path) }
+            .to_str()
+            .map_err(|_| "mslut_path is not valid UTF-8".to_string())?;
+        let cube_text =
+            std::fs::read_to_string(cube_str).map_err(|e| format!("cannot read .cube file: {e}"))?;
+        let cube = oppo_filter_ecosystem::Cube3dLut::from_cube_str(&cube_text)?;
+        let transform = if oklch_p3_gamut_map != 0 {
+            oppo_filter_ecosystem::LutColorTransform::OppoDisplayP3Rec709Oklch
+        } else {
+            oppo_filter_ecosystem::LutColorTransform::DirectSrgb
+        };
+        let mslut = cube.bake_to_mslut(target_dim, transform)?;
+        let bytes = mslut.to_mslut_bytes();
+        std::fs::write(mslut_str, &bytes).map_err(|e| format!("cannot write .MS-LUT file: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputPath": mslut_str,
+            "sourceDimension": cube.dimension,
+            "targetDimension": mslut.dimension,
+            "byteLength": bytes.len(),
+            "colorTransform": if oklch_p3_gamut_map != 0 { "oppo_display_p3_rec709_oklch" } else { "direct_srgb" },
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Convert a Meishe `.MS-LUT` binary file into an Adobe `.cube` 3D LUT file.
+/// Free the returned JSON string with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_convert_mslut_to_cube(
+    mslut_path: *const c_char,
+    cube_path: *const c_char,
+    title: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if mslut_path.is_null() || cube_path.is_null() {
+            return Err("mslut_path or cube_path is missing".into());
+        }
+        let mslut_str = unsafe { CStr::from_ptr(mslut_path) }
+            .to_str()
+            .map_err(|_| "mslut_path is not valid UTF-8".to_string())?;
+        let cube_str = unsafe { CStr::from_ptr(cube_path) }
+            .to_str()
+            .map_err(|_| "cube_path is not valid UTF-8".to_string())?;
+        let title_opt = if title.is_null() {
+            None
+        } else {
+            unsafe { CStr::from_ptr(title) }.to_str().ok()
+        };
+        let bytes = std::fs::read(mslut_str).map_err(|e| format!("cannot read .MS-LUT file: {e}"))?;
+        let mslut = oppo_filter_ecosystem::MsLut::from_mslut_bytes(&bytes)?;
+        let cube_text = mslut.to_cube_string(title_opt);
+        std::fs::write(cube_str, cube_text.as_bytes())
+            .map_err(|e| format!("cannot write .cube file: {e}"))?;
+        Ok(serde_json::json!({
+            "success": true,
+            "outputPath": cube_str,
+            "dimension": mslut.dimension,
+            "byteLength": cube_text.len(),
+        }))
     })();
     let payload = match result {
         Ok(v) => v,

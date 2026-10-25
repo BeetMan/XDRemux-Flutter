@@ -302,6 +302,108 @@ class XdRemuxService {
     }
   }
 
+  /// Inspect OPPO / ColorOS `FileExtendedContainer` (`\0jxrs`) tail metadata
+  /// (`filter.info`, `master.mode.preset.info`, `basictone.info`, `basictone.vig.table`, `src.image`).
+  static Future<Map<String, dynamic>> inspectOppoFilterTail(
+    String inputPath,
+  ) async {
+    try {
+      return await Isolate.run(
+        () => XdRemuxFFI.inspectOppoFilterTail(inputPath),
+      );
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': error.toString(),
+      };
+    }
+  }
+
+  /// Non-destructively inject or update `filter.info` (and optionally `src.image`) in an
+  /// OPPO JPEG or HEIC photo so ColorOS Gallery recognizes the filter/palette.
+  static Future<Map<String, dynamic>> injectOppoFilterTail({
+    required String inputPath,
+    required String outputPath,
+    required String filterType,
+    int strength = 100,
+    int orientation = 0,
+    int softLightType = 0,
+    bool isSoftLight = false,
+    bool isPalette = false,
+    int paletteSaturation = 0,
+    int paletteTone = 0,
+    bool embedSrcImage = true,
+  }) async {
+    try {
+      return await Isolate.run(
+        () => XdRemuxFFI.injectOppoFilterTail(
+          inputPath: inputPath,
+          outputPath: outputPath,
+          filterType: filterType,
+          strength: strength,
+          orientation: orientation,
+          softLightType: softLightType,
+          isSoftLight: isSoftLight,
+          isPalette: isPalette,
+          paletteSaturation: paletteSaturation,
+          paletteTone: paletteTone,
+          embedSrcImage: embedSrcImage,
+        ),
+      );
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': error.toString(),
+      };
+    }
+  }
+
+  /// Convert an Adobe `.cube` 3D LUT file into a Meishe `.MS-LUT` binary file (`17³` or `32³`).
+  static Future<Map<String, dynamic>> convertCubeToMsLut({
+    required String cubePath,
+    required String mslutPath,
+    int targetDimension = 32,
+    bool oklchP3GamutMap = true,
+  }) async {
+    try {
+      return await Isolate.run(
+        () => XdRemuxFFI.convertCubeToMsLut(
+          cubePath: cubePath,
+          mslutPath: mslutPath,
+          targetDimension: targetDimension,
+          oklchP3GamutMap: oklchP3GamutMap,
+        ),
+      );
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': error.toString(),
+      };
+    }
+  }
+
+  /// Convert a Meishe `.MS-LUT` binary file into an Adobe `.cube` 3D LUT file.
+  static Future<Map<String, dynamic>> convertMsLutToCube({
+    required String mslutPath,
+    required String cubePath,
+    String? title,
+  }) async {
+    try {
+      return await Isolate.run(
+        () => XdRemuxFFI.convertMsLutToCube(
+          mslutPath: mslutPath,
+          cubePath: cubePath,
+          title: title,
+        ),
+      );
+    } catch (error) {
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': error.toString(),
+      };
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Capture-mode classification
   // -----------------------------------------------------------------------

@@ -35,6 +35,10 @@ pub struct PhotoDetails {
     pub hdr_parse_error: Option<String>,
     pub edr_scale: Option<f64>,
     pub gain_map_max: Option<f64>,
+
+    // OPPO / ColorOS Filter & Master Preset Metadata
+    pub oppo_filter_info: Option<serde_json::Value>,
+    pub oppo_master_preset: Option<serde_json::Value>,
 }
 
 impl PhotoDetails {
@@ -92,6 +96,12 @@ impl PhotoDetails {
             if let Some(n) = serde_json::Number::from_f64(v) {
                 map.insert("gainMapMax".into(), serde_json::Value::Number(n));
             }
+        }
+        if let Some(v) = &self.oppo_filter_info {
+            map.insert("oppoFilterInfo".into(), v.clone());
+        }
+        if let Some(v) = &self.oppo_master_preset {
+            map.insert("oppoMasterPreset".into(), v.clone());
         }
         serde_json::Value::Object(map)
     }
@@ -537,6 +547,15 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
         };
         details.edr_scale = Some((edr_scale * 10.0).round() / 10.0);
         details.gain_map_max = Some((gain_map_max * 10.0).round() / 10.0);
+    }
+
+    // 4. OPPO Filter / Master Preset tail inspection
+    let oppo_tail = crate::oppo_filter_ecosystem::inspect_oppo_tail(data);
+    if let Some(fi) = oppo_tail.filter_info {
+        details.oppo_filter_info = Some(fi.to_json());
+    }
+    if let Some(mp) = oppo_tail.master_preset {
+        details.oppo_master_preset = Some(mp.to_json());
     }
 
     details

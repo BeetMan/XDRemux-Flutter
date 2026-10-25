@@ -157,3 +157,17 @@ apps/flutter/ios/SwiftBackend/.build/
 apps/flutter/third_party/ohos/
 # Rust cdylib built for OHOS (regenerate via xdremux/rust/build_ohos.sh)
 apps/flutter/ohos/entry/libs/
+
+# OPPO Filter Ecosystem & Research Archives
+!docs/research/
+docs/research/*
+!docs/research/*.md
+!tools/oppo-filter-ecosystem/
+tools/oppo-filter-ecosystem/*
+!tools/oppo-filter-ecosystem/**
+!tools/oppo-master-softlight-ref/
+tools/oppo-master-softlight-ref/*
+!tools/oppo-master-softlight-ref/**
+!tools/xiaomi-m3-ref/
+tools/xiaomi-m3-ref/*
+!tools/xiaomi-m3-ref/**
