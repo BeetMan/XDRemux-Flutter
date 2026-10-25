@@ -1,0 +1,66 @@
+name: Transfer CI
+
+on:
+  push:
+    branches: [main, codex/local-transfer]
+    paths:
+      - '.github/workflows/transfer-ci.yml'
+      - '.github/scripts/transfer-ci.ps1'
+      - 'crates/xdremux-transfer/**'
+      - 'crates/xdremux-transfer-ffi/**'
+      - 'apps/flutter/lib/**'
+      - 'apps/flutter/test/**'
+      - 'apps/flutter/tool/transfer*'
+      - 'apps/flutter/pubspec*'
+  pull_request:
+    paths:
+      - '.github/workflows/transfer-ci.yml'
+      - '.github/scripts/transfer-ci.ps1'
+      - 'crates/xdremux-transfer/**'
+      - 'crates/xdremux-transfer-ffi/**'
+      - 'apps/flutter/lib/**'
+      - 'apps/flutter/test/**'
+      - 'apps/flutter/tool/transfer*'
+      - 'apps/flutter/pubspec*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transfer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.5
+          channel: stable
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run transfer gate
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: ./.github/scripts/transfer-ci.ps1 -ReportRoot "$env:RUNNER_TEMP/transfer-results"
+      - name: Retain reports and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transfer-windows-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/transfer-results/*.json
+            ${{ runner.temp }}/transfer-results/*.log
+          if-no-files-found: error
+          retention-days: 7
