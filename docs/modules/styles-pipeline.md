@@ -85,8 +85,9 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 - `apple_log`：常量、编解码往返（码值 1.0 以上会钳位，约 linear 12 封顶）、边界钳位、sRGB EOTF 端点、baseline exposure 除法、8-bit 量化、异常输入拒绝；
 - `linear_thumbnail`：几何契约（4:3/16:9/竖拍/小图不放大/奇数边取偶/极端宽高比）、线性域面积重采样均值与恒等、参数校验；
 - 10-bit 通路（仅当构建期链接了 10-bit 库，`cfg(xdremux_main10)`）：`code16_to_10bit` 端点/单调、16-bit codes → BT.601 limited-range 10-bit YUV、编码后 hvcC 断言 `profile_idc=2` 且 bitDepth=10。本机实测：链接 10-bit 库 **263 passed**，未链接 **262 passed**。
+- 真实样本端到端（2026-10-25，Windows + 10-bit 归档）：用 `examples/styles_convert` 转换两张真实样张，再用 `examples/lt_inspect <out.heic> [out.hevc]` 导出线性缩略图，`ffprobe` 判定 **`profile=Main 10` / `pix_fmt=yuv420p10le`**，尺寸与 hvcC ispe 一致（768×1024、772×1024，coded 方向长边 1024）；`ffmpeg -frames:v 1` 解码为 16-bit RGB PNG 成功，无崩溃/花屏。hvcC 断言 `profile_idc=2`、`bitDepthLuma/Chroma=10`、`chromaFormat=1`、`lengthSize=4`。
 
-Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。
+Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。CI 已在 Ubuntu 上同时构建 8-bit 与 10-bit 归档（`.github/workflows/ci.yml`），所以 `cargo test --workspace` 会覆盖 Main10 路径。
 
 后续（P1）：
 1. ~~10-bit Main10 编码~~ **已完成（构建期可选）**；剩余：为 Linux / Android / iOS / OHOS 产出 10-bit 静态库并纳入 CI；
