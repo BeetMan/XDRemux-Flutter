@@ -38,3 +38,32 @@ LHDR 路径:  灰度 mask + EDR 参数 --曲线重建--> 增益映射像素
 ## 5. 写回侧的增益映射处理
 
 回传文件（Apple 导出）自带 tmap + 增益映射图：写回时**保留其图结构**（v0.3.1 `retain returned HDR gain-map graph`），只替换主图像素。OPPO 兼容输出还会恢复 OPPO 私有 UHDR 尾部条目（原始增益映射数据），两组数据并存时的去冲突策略见 `oppo-proxdr.md` §5 的显示调整剥离规则。
+
+## 6. 写入端校验（tmap 前置检查）
+
+tmap 是定点有理数载荷，**写不出「范围反了」这种东西的修复版本**：一旦 `gain_map_max < gain_map_min` 被写进去，读者只能得到错误的 HDR 头room。因此校验必须在写入之前、且在比値域（ratio 域）完成，而不是靠读回检查。
+
+`iso21496.rs` 的两个入口：
+
+- `validate_uhdr_gain_parameters()`：把 20-float UHDR info 转成 ISO 元数据之前校验逐通道参数。规则（对齐上游 21Z121Z1/XDRemux 的 `canonical_channel_values`）：`ratio_min`、`ratio_max` 有限且 `> 0`；**`ratio_max < ratio_min` 即拒绝**（reversed per-channel gain range，2026-10-15 上游修复项）；`gamma` 有限且 `> 0`；offset 必须有限。
+- `validate_iso_meta()`：对已组装的 `IsoMeta`（log 域）再校验不变量：通道字段长度 ≥ `channel_count`；逐通道 `gain_map_max ≥ gain_map_min`；`gamma > 0`；headroom 与 scale 有限。供构造路径和外部调用方（如测试、写回路径）复用。
+
+边界语义（**比上游更宽松**，因为本移植要兼容"未设置"的零值块）：
+
+| 输入 | 结果 | 原因 |
+|---|---|---|
+| 两个正数且 `max < min`（任一通道） | 拒绝 | 写出的 tmap 上限低于下限，读取端判为无效（上游 8844899c 的核心修复） |
+| `min == max` | 接受 | 「不额外提亮」是合法配置 |
+| `min < max`，含 `min < 1`（如 0.5 → 1.0） | 接受 | 增益可小于 1，表示压暗 |
+| `ratio` 为 `0` 或负数（非有限除外） | 接受，按"未设置"透传（`safe_log2 → 0`） | OPPO 源与合成 HDR 路径会带全零 20-float 块；历史上就按 no-boost 处理 |
+| `ratio` / `gamma` / `offset` 为 NaN / Inf | 拒绝 | 无法编码为有理数，静默归零会掩盖错误 |
+| `gamma = 0` | 接受，原样透传 | 同上，历史"未设置"语义；负 gamma 拒绝 |
+| `display_ratio_hdr < 1` | 接受，`hdr_capacity_max` 钳到 0 | 对齐上游 `max(ratio, 1.0)` 后再取 log2 的做法 |
+
+> 2026-10-25 的教训：最初按上游严格度要求 `ratio > 0`，CI 的 `synthesize_bakes_exif_orientation_into_primary_and_gain_map` 立刻失败——该测试用 `vec![0.0; 20]` 合成 UHDR 容器。移植上游校验时必须先确认本仓支持的"零值=未设置"路径，否则会把合法输入拦死。
+
+JPEG 导入侧（`jpeg_gainmap_metadata.rs::validate`）早已有同样的反序检查（`f[4 + c] < f[c]`），本次补齐的是 **OPPO UHDR / LHDR 构造侧**；两条路径现在共用同一套"反序拒绝"语义。
+
+校验失败时的行为：UHDR 构造在 `isobmff_write.rs` 的 `map_err("UHDR metadata: …")` 处返回可见错误，队列显示该任务失败并可重试，不会产出半成品 tmap。
+
+
