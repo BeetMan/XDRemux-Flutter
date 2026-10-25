@@ -1709,7 +1709,7 @@ fn xdremux_convert_impl(
                 // reconstructed gain-map plane to the thumbnail generator so
                 // the Apple Log codes carry HDR headroom without decoding the
                 // HEVC-coded tmap gain map.
-                let gain_map = thumbnail_gain_map(&extracted);
+                let gain_map = thumbnail_gain_map(&extracted, &source);
                 if let Err(error) =
                     finalize_native_styles(&standard_output, output, gain_map.as_ref())
                 {
@@ -1761,6 +1761,84 @@ fn xdremux_convert_impl(
     }
 }
 
+/// Decide whether the stored gain map lives in the presentation frame.
+///
+/// Mirrors the writer's `primary_is_presentation_oriented` rule: EXIF
+/// orientation non-normal **and** the primary's `irot` absent or zero means the
+/// tiles are already presentation-oriented, so the gain map was oriented to
+/// that frame too.
+fn gain_map_needs_orientation(
+    orientation: exif::ExifOrientation,
+    primary_irot_quarter_turns: Option<u8>,
+) -> bool {
+    !matches!(orientation, exif::ExifOrientation::Normal)
+        && primary_irot_quarter_turns == Some(0)
+}
+
+/// Orientation the stored gain map needs to match the decoded thumbnail base.
+///
+/// The writer keeps the gain map in the primary's storage orientation, and
+/// orients it to the presentation frame only when the primary tiles are already
+/// presentation-oriented (EXIF orientation non-normal **and** `irot` absent or
+/// zero). The linear thumbnail decodes the presentation-oriented base and
+/// un-rotates it with `irot`, so for that same case the in-memory gain-map
+/// plane has to be oriented here too; otherwise a rotated source would apply
+/// the gain map along the wrong axes.
+fn gain_map_plane_orientation(source: &[u8]) -> Option<exif::ExifOrientation> {
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    let idat = isobmff::find_idat_box(source);
+    let orientation = exif::read_heif_exif_orientation(
+        source,
+        &meta.items,
+        &meta.iloc_entries,
+        idat.as_ref(),
+    )
+    .ok()?;
+    if matches!(orientation, exif::ExifOrientation::Normal) {
+        return None;
+    }
+    let primary_irot = meta
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == meta.primary_id)
+        .and_then(|entry| {
+            entry.associations.iter().find_map(|(index, _)| {
+                meta.props
+                    .iter()
+                    .find(|property| property.index == *index && property.ptype == "irot")
+            })
+        })
+        .and_then(|property| isobmff::irot_quarter_turns(&property.raw).ok());
+    if gain_map_needs_orientation(orientation, primary_irot) {
+        Some(orientation)
+    } else {
+        None
+    }
+}
+
+/// Apply [`gain_map_plane_orientation`] to a single-channel gain plane.
+fn orient_gain_plane(
+    luma: Vec<u8>,
+    width: u32,
+    height: u32,
+    orientation: Option<exif::ExifOrientation>,
+) -> (Vec<u8>, u32, u32) {
+    let Some(orientation) = orientation else {
+        return (luma, width, height);
+    };
+    match isobmff_write::orient_gainmap_pixels(
+        &luma,
+        width,
+        height,
+        1,
+        width as usize,
+        orientation,
+    ) {
+        Ok(oriented) => oriented,
+        Err(_) => (luma, width, height),
+    }
+}
+
 /// Build the gain-map plane for the linear thumbnail from data the conversion
 /// pipeline already decoded ("path 3" of the gain-map feasibility note): the
 /// UHDR gain-map JPEG, or the LHDR mask run through the same knee
@@ -1768,7 +1846,9 @@ fn xdremux_convert_impl(
 /// usable headroom, leaving the thumbnail on the SDR-only path.
 fn thumbnail_gain_map(
     extracted: &container::ExtractedLhdr,
+    source: &[u8],
 ) -> Option<linear_thumbnail::OwnedGainMap> {
+    let orientation = gain_map_plane_orientation(source);
     if let Some(gainmap_jpeg) = extracted.gainmap_data.as_deref() {
         let (rgb, width, height) = jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg).ok()?;
         if width == 0 || height == 0 || rgb.len() % 3 != 0 {
@@ -1794,6 +1874,7 @@ fn thumbnail_gain_map(
         if !(max_gain > 1.0) || !max_gain.is_finite() {
             return None;
         }
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
         return Some(linear_thumbnail::OwnedGainMap {
             luma,
             width,
@@ -1820,6 +1901,7 @@ fn thumbnail_gain_map(
             edr,
             version,
         );
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
         return Some(linear_thumbnail::OwnedGainMap {
             luma,
             width,
@@ -2777,6 +2859,54 @@ pub extern "C" fn xdremux_free_result(result: ConversionResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gain_plane_orientation_follows_exif_transform() {
+        // 3x2 luma plane rotated 90 degrees clockwise becomes 2x3.
+        let luma = vec![1u8, 2, 3, 4, 5, 6];
+        let (rotated, width, height) = orient_gain_plane(
+            luma.clone(),
+            3,
+            2,
+            Some(crate::exif::ExifOrientation::Rotate90Clockwise),
+        );
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(rotated.len(), luma.len());
+        assert_ne!(rotated, luma, "rotation must reorder the pixels");
+
+        // No orientation means the plane is passed through untouched.
+        let (same, same_w, same_h) = orient_gain_plane(luma.clone(), 3, 2, None);
+        assert_eq!((same_w, same_h), (3, 2));
+        assert_eq!(same, luma);
+    }
+
+    #[test]
+    fn gain_map_orientation_decision_matches_writer_rule() {
+        use crate::exif::ExifOrientation;
+        // Normal EXIF never needs the extra transform.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Normal,
+            Some(0)
+        ));
+        // Presentation-oriented primary (non-normal EXIF, irot == 0).
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(0)
+        ));
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::FlipHorizontal,
+            Some(0)
+        ));
+        // Storage-oriented primary keeps `irot`, so the gain map stays as-is.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(1)
+        ));
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            None
+        ));
+    }
 
     #[test]
     fn lossy_gainmap_promotion_is_rejected_only_for_clean_iso_output() {

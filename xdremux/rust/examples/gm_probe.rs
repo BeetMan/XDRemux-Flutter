@@ -134,6 +134,34 @@ fn main() {
         .expect("usage: gm_probe <converted.heic>");
     let data = std::fs::read(&path).expect("read input");
     let meta = isobmff::parse_source_meta(&data).expect("parse meta");
+    // Orientation decides whether a stored gain map lives in the presentation
+    // frame or in the primary's storage frame (see gain_map_plane_orientation
+    // in lib.rs); printing it makes rotated-file mismatches diagnosable.
+    let idat_box = isobmff::find_idat_box(&data);
+    if let Ok(orientation) = xdremux_core::exif::read_heif_exif_orientation(
+        &data,
+        &meta.items,
+        &meta.iloc_entries,
+        idat_box.as_ref(),
+    ) {
+        let primary_irot = meta
+            .ipma_entries
+            .iter()
+            .find(|entry| entry.item_id == meta.primary_id)
+            .and_then(|entry| {
+                entry.associations.iter().find_map(|(index, _)| {
+                    meta.props
+                        .iter()
+                        .find(|p| p.index == *index && p.ptype == "irot")
+                })
+            })
+            .and_then(|property| isobmff::irot_quarter_turns(&property.raw).ok());
+        println!(
+            "source orientation={orientation:?} primary_irot={primary_irot:?} presentation_oriented={}",
+            !matches!(orientation, xdremux_core::exif::ExifOrientation::Normal)
+                && primary_irot == Some(0)
+        );
+    }
 
     let tmap = match meta.items.iter().find(|item| item.itype == "tmap") {
         Some(item) => item,

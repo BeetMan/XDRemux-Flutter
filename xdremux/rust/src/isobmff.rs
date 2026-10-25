@@ -871,6 +871,16 @@ pub fn parse_source_meta(data: &[u8]) -> Result<ParsedMeta, String> {
     })
 }
 
+/// Locate the `idat` box inside `meta` (item payload storage for
+/// `construction_method == 1` iloc entries; offsets are relative to its data).
+pub fn find_idat_box(data: &[u8]) -> Option<BoxHeader> {
+    let top = parse_boxes(data, 0, data.len());
+    let meta = top.iter().find(|b| &b.btype == b"meta")?;
+    // `meta` is a full box: skip its 4-byte version/flags before children.
+    let children = parse_boxes(data, meta.data_start + 4, meta.data_end);
+    children.into_iter().find(|b| &b.btype == b"idat")
+}
+
 /// Return true when an existing ISO 21496 gain-map graph is encoded as
 /// 4:2:0. The primary image is intentionally excluded: ordinary HEIC primary
 /// images are often 4:2:0, whereas only the `auxC`/`auxl`-linked gain tiles

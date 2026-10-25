@@ -78,7 +78,7 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 | 传递函数 | Apple Log（`code = A*log2(linear/BE + B_off) + C`，边界码 0/1 钳位） | 无（常量对齐上游） |
 | 几何 | 长边 1024、双偶数、coded 宽高比、同 irot | 无（对齐上游 `fitted_even_dimensions`） |
 | 量化 | 构建期链接了 10-bit x265 时：**16-bit codes → Main10**；否则 8-bit 4:2:0 过渡路径 | 10-bit 通路已接入（`x265_10bit_bridge.cpp` + `build.rs` 可选链接）；未链接时 8-bit 回退仍只承载 SDR 码值 `[0, 0.6946]`，属预览级精度 |
-| HDR 范围 | **转换路径已在内存应用 ISO 21496 增益图**（路径 3）：scene-linear 阶段乘 gain 后再重采样 | 原生在 base 分辨率应用 ISO 增益重建 scene-linear HDR。**已实测**：真实样张缩略图 16-bit luma max 35610→46159、mean 21401→26070（payload 140537→154916B）。剩余：① 原生 Apple tmap 文件的重编码场景仍需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0，见 `docs/research/gainmap-decode-feasibility-20261025.md`）；② 真机 A/B 确认绝对亮度 |
+| HDR 范围 | **转换路径已在内存应用 ISO 21496 增益图**（路径 3）：scene-linear 阶段乘 gain 后再重采样；增益图方向按写路径规则处理（EXIF 非 Normal 且主图 `irot==0` 时对平面做同一 EXIF 变换） | 原生在 base 分辨率应用 ISO 增益重建 scene-linear HDR。**已实测**：真实样张缩略图 16-bit luma max 35610→46159、mean 21401→26070（payload 140537→154916B）。剩余：① 原生 Apple tmap 文件的重编码场景仍需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0，见 `docs/research/gainmap-decode-feasibility-20261025.md`）；② 真机 A/B 确认绝对亮度；③ 旋转样本的真机/E2E 验证（现有样本都是 Normal） |
 
 验证（本机，`cargo test -p xdremux-core --lib` 覆盖）：
 
@@ -87,6 +87,7 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 - 10-bit 通路（仅当构建期链接了 10-bit 库，`cfg(xdremux_main10)`）：`code16_to_10bit` 端点/单调、16-bit codes → BT.601 limited-range 10-bit YUV、编码后 hvcC 断言 `profile_idc=2` 且 bitDepth=10。本机实测：链接 10-bit 库 **263 passed**，未链接 **262 passed**。
 - 真实样本端到端（2026-10-25，Windows + 10-bit 归档）：用 `examples/styles_convert` 转换两张真实样张，再用 `examples/lt_inspect <out.heic> [out.hevc]` 导出线性缩略图，`ffprobe` 判定 **`profile=Main 10` / `pix_fmt=yuv420p10le`**，尺寸与 hvcC ispe 一致（768×1024、772×1024，coded 方向长边 1024）；`ffmpeg -frames:v 1` 解码为 16-bit RGB PNG 成功，无崩溃/花屏。hvcC 断言 `profile_idc=2`、`bitDepthLuma/Chroma=10`、`chromaFormat=1`、`lengthSize=4`。
 - 增益图应用（2026-10-25）：单测 `linear_thumbnail::tests::gain_map_plane_maps_codes_and_samples_nearest`；真实样张 E2E 前后对比见上表 HDR 行（16-bit luma max +29.6%、mean +21.8%，payload +10.2%）。
+- 增益图方向对齐（2026-10-25）：单测 `gain_map_orientation_decision_matches_writer_rule`（Normal / 非 Normal+irot0 / 非 Normal+irot1 / 非 Normal+无 irot）与 `gain_plane_orientation_follows_exif_transform`（3×2→2×3 旋转、None 透传）；Normal 样本 E2E 回归数值与修复前完全一致（max 46159 / mean 26070.3 / p99.9 43989），确认无回归。旋转样本的真实 E2E 待补（现有样本 orientation 都是 Normal）。
 
 Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。CI 已在 Ubuntu 上同时构建 8-bit 与 10-bit 归档（`.github/workflows/ci.yml`），所以 `cargo test --workspace` 会覆盖 Main10 路径。
 
