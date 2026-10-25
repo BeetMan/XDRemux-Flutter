@@ -2,6 +2,8 @@
 
 日期：2026-10-25（UTC+8）。基线：`319873fdf0b1f4024fc140f086a2fbb1fc092108`，分支 `codex/local-transfer`。机器结果见 [JSON 报告](local-transfer-p3-auto-report.json)。本轮只新增开发验收脚本及文档，生产 controller、核心、ABI、界面和锁文件未改动。
 
+后续更新：用户完成授权后，官方 1.17.0 反向发送已补验通过，见 [双向补验记录](local-transfer-official-reverse.md)。下文及本轮 JSON 保留当时的阻塞状态，不覆盖历史结果。
+
 ## 已执行
 
 | 场景 | 方法与结果 |

@@ -95,7 +95,7 @@
 - [x] P3.1：Windows 受控端口冲突、发现失效、TLS 连接切断和新端口恢复通过；Android 真机 release 多播锁释放／重新获取、runtime 停止清理及同根／同端口重启通过，见 [P3.1 记录](../testing/local-transfer-p31.md)。
 - [ ] P3.2：真实网络变化／VPN／多网卡、AP 隔离、权限撤销、锁屏强杀和窗口退出；完整平台矩阵继续下列项目。
 - [x] P3 自动切片：Windows IPv4／IPv6 本机直连、多实例／根目录互斥、同端口与精确恢复，两张已分配网卡的绑定隔离和显式改绑；仅覆盖记录中的本机条件。
-- [x] P3 自动切片：官方 Windows LocalSend 1.17.0 同机发现／端口共存、错误指纹／PIN 拒绝、native → 官方四文件独立哈希；旧版反向 UI 仍待验。
+- [x] P3 自动切片：官方 Windows LocalSend 1.17.0 同机发现／端口共存、错误指纹／PIN 拒绝；native／worker ↔ 官方双向各四文件独立哈希，官方发送页 Done／Finished 100% 已观察。仅覆盖本机组件与旧版官方窗口。
 
 P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；真实 release 窗口重复关闭、读取租约等待、部分上传清理、端口释放和同根恢复通过，Flutter 84 项及 analyze 通过。Android 生命周期切片已准备独立 release 入口和真实 mTLS 部分上传脚本；2026-10-22 Home、强停、锁屏三项真机部分上传清理／TCP 与多播锁释放通过，Home／强停后的显式重启及基线独立哈希通过。2026-10-24 补验同进程手动解锁恢复和新版启动取消；其余真实网络矩阵仍待执行。见 [P3.2 记录](../testing/local-transfer-p32.md)、[Android 真机记录](../testing/local-transfer-p32-android.md) 与 [启动／解锁补验](../testing/local-transfer-startup-android.md)。
 
@@ -114,6 +114,8 @@ P3.2 Windows 退出切片已修复关闭清理失败后无法重试的问题；�
 2026-10-25 收敛收件箱删除同步：成功删除／删除事件优先于旧分页和排队提交，失败时保留记录；重启清除旧新增回执缓存，删除回复不能修改替换后的服务。6 项受控回归及 1 项真实 DLL 删除／读取租约／同根恢复检查通过，完整 Flutter 140 项、analyze 和 Windows／Android 普通 release 打包核对通过。本轮未操作手机或系统网络。范围与夹具时序边界见 [收件箱同步验证](../testing/local-transfer-inbox-reconciliation.md)。
 
 2026-10-25 按用户要求执行无需人工配合的 P3 项：新增两个真实 DLL／worker 自动脚本，完成 IPv4／IPv6、实例／端口／存储隔离、当前两张网卡显式绑定与改绑，以及官方 Windows 1.17.0 接收方向和同机多播共存。最终运行合计核验 29 次合成文件落盘，源文件哈希不变，用户 LocalSend 配置哈希不变，analyze／格式通过。未修改生产代码或系统网络，未重复累计此前 140 项应用回归。旧版反向 UI 遇 Windows 安全授权弹窗，未代点；仍不计通过。见 [P3 自动验收](../testing/local-transfer-p3-auto.md)。
+
+随后用户完成授权，扩展可选双向 UI 验收入口并补验官方 Windows 1.17.0：双向各四件的独立磁盘哈希及官方发送页四件 Done／Finished 100% 通过；原四参数接收模式另行回归通过。用户原配置保持、进程／端口释放，analyze／格式通过。旧版进度页出现一次 Infinity／NaN 异常日志，最终完成及数据一致，详情见 [旧版反向补验](../testing/local-transfer-official-reverse.md)。真实网络与完整平台矩阵仍待验。
 
 - [ ] iOS：本地网络用途声明与授权；核对 multicast entitlement 和实际签名可用性。不可用时保留手动直连并说明自动发现限制。
 - [ ] iOS：按前台传输设计，验证锁屏、切后台、网络切换和恢复；不得将普通 Rust socket 当作系统后台传输。

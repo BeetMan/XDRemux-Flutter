@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "date": "2026-10-25",
+  "baseCommit": "fb2e5130b63045bac3689604efb4921dfc60d993",
+  "status": "official Windows 1.17 same-host bidirectional interoperability passed; full P3.2 incomplete",
+  "bidirectional": {
+    "passed": true,
+    "officialPort": 53317,
+    "officialVersion": "1.17.0+58",
+    "mode": "bidirectional_ui",
+    "scope": "Windows native/worker <-> official 1.17 with actual sender UI; same-host traffic",
+    "officialExecutableSha256": "83bad026583a847ab579cefc463627601b2c9341707bf0e0e8e3c21d20ae5949",
+    "officialProtocolVersion": "2.1",
+    "officialFingerprint": "A0637534DB94FB3C1F4342837657B1CDD89E6D5D3FB3C0C4E45B40317F8E6DC8",
+    "officialPortConflictAndAlternateListener": true,
+    "nativeDiscoverySeesOfficial": true,
+    "simultaneousMulticastStart": true,
+    "wrongFingerprintRejectedWithoutFiles": true,
+    "wrongPinRejectedWithoutFiles": true,
+    "nativeToOfficial": {
+      "files": 4,
+      "independentHashes": true
+    },
+    "officialToNative": {
+      "status": "passed",
+      "files": 4,
+      "independentHashes": true,
+      "officialSenderFinishedUiObserved": true,
+      "peerHashPresent": false
+    },
+    "fixtures": {
+      "p3-auto-empty.bin": {
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "p3-auto-中文-🧪.bin": {
+        "size": 20,
+        "sha256": "b72da95c53233e593c3517050ab210b4c6a8d270a72017c329a6ffd5ce9a02bd"
+      },
+      "p3-auto-opaque.heic": {
+        "size": 65548,
+        "sha256": "2447b36e250debd22f170f9c9e627d088342baa80b27c665bb6911b1da38c564"
+      },
+      "p3-auto-opaque.mov": {
+        "size": 1048576,
+        "sha256": "e76e4c02227083fd12207b7bc85287bb9e02a618fed3bd8eab1bc2daeda2fb53"
+      }
+    },
+    "sourceUnchanged": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+    "osNetworkSettingsChanged": false,
+    "originalConfigurationUnchanged": true
+  },
+  "officialSenderUi": {
+    "heading": "Sending files",
+    "status": "Finished",
+    "percent": 100,
+    "allFilesDone": true,
+    "fileNames": [
+      "p3-auto-empty.bin",
+      "p3-auto-中文-🧪.bin",
+      "p3-auto-opaque.heic",
+      "p3-auto-opaque.mov"
+    ],
+    "currentRunIdentityBound": true,
+    "observedVia": "computer-use accessibility tree and screenshot"
+  },
+  "independentAudit": {
+    "nativeReceiptFiles": 4,
+    "officialDestinationFiles": 4,
+    "bidirectionalFileDeliveries": 8,
+    "perDirectionBytes": 1114144,
+    "allLengthsAndHashesMatchSources": true,
+    "originalConfigurationMatchesInitialTaskBaseline": true,
+    "hashImplementation": "Python hashlib SHA-256 over actual disk data"
+  },
+  "defaultModeRegression": {
+    "passed": true,
+    "mode": "receive_only",
+    "officialDestinationFiles": 4,
+    "independentDiskHashes": true,
+    "officialToNative": {
+      "status": "not_run",
+      "reason": "receive-only harness; reverse UI must be validated separately"
+    }
+  },
+  "officialClientLogWarnings": [
+    {
+      "message": "Unsupported operation: Infinity or NaN toInt",
+      "occurrences": 1,
+      "stackLocation": "localsend_app/pages/progress_page.dart:170",
+      "causeDetermined": false,
+      "subsequentSenderFinishedAndAllDataVerified": true
+    }
+  ],
+  "officialProvenance": {
+    "existingInstallationUsed": true,
+    "newSoftwareDownloaded": false,
+    "version": "1.17.0+58",
+    "exeSha256": "83bad026583a847ab579cefc463627601b2c9341707bf0e0e8e3c21d20ae5949",
+    "aotSha256": "1b3e063a64555b840a07aa8e589a51c26fb8e0fda23b086fd7b10af37b533444"
+  },
+  "cleanup": {
+    "ownedTcpPortsReleased": true,
+    "tcpPorts": [
+      49678,
+      53317,
+      53963
+    ],
+    "multicastPortReleased": true,
+    "officialProcessRemaining": false
+  },
+  "checks": {
+    "scriptsExecutedWithRealDllAndWorker": true,
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true,
+    "fullFlutterTestsRerun": false,
+    "lastFullFlutterCount": 140,
+    "lastFullFlutterCommit": "319873fdf0b1f4024fc140f086a2fbb1fc092108",
+    "releaseBuildsRerun": false,
+    "sameDllAsCurrentWindowsRelease": true
+  },
+  "sourceSha256": {
+    "apps/flutter/tool/transfer_official_coexist.dart": "b12fc53427893212d793380b69d0becd1e13f3b30076bd7cfdbed225ae536245"
+  },
+  "productionControllerCoreAbiChanged": false,
+  "nativeLibraryChanged": false,
+  "transferAbi": "1.3",
+  "permission": {
+    "priorUserAllowConfirmed": true,
+    "securityPermissionUiActedOnByAgent": false
+  },
+  "phoneOperated": false,
+  "systemNetworkFirewallOrVpnSettingsChangedByTask": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "limits": [
+    "same-host traffic, not cross-device LAN validation",
+    "native service/worker harness, not the ordinary XDRemux application page",
+    "synthetic opaque HEIC/MOV names, not valid media/gallery/Live Photo validation",
+    "old sender omitted per-file SHA-256; disk data was independently hashed",
+    "actual official sender UI observed, including one transient progress rendering error in its log"
+  ],
+  "pending": [
+    "real network outage/switch and VPN/route changes",
+    "AP isolation and permission revocation",
+    "remaining Android ordinary-app matrix",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

@@ -1,4 +1,5 @@
-// Autonomous native -> existing official LocalSend 1.17 Windows receiver.
+// Native -> existing official LocalSend 1.17 Windows receiver, with optional UI
+// reverse validation using only this run's fixed fixtures and pinned identities.
 // Only the child process uses the fresh APPDATA/LOCALAPPDATA settings below.
 import 'dart:convert';
 import 'dart:io';
@@ -8,9 +9,12 @@ import 'package:xdremux/services/transfer/transfer_service.dart';
 import 'transfer_worker_smoke.dart' show check, fileHash;
 
 Future<void> main(List<String> args) async {
-  if (args.length != 4) {
-    throw ArgumentError('DLL_PATH NEW_ROOT EXISTING_OFFICIAL_EXE LOCAL_IPV4');
+  if (args.length != 4 && !(args.length == 5 && args[4] == '--bidirectional')) {
+    throw ArgumentError(
+      'DLL_PATH NEW_ROOT EXISTING_OFFICIAL_EXE LOCAL_IPV4 [--bidirectional]',
+    );
   }
+  final bidirectional = args.length == 5;
   final library = File(args[0]).absolute.path, root = Directory(args[1]);
   const port = 53317;
   final executable = File(args[2]).absolute.path, local = args[3];
@@ -67,15 +71,20 @@ Future<void> main(List<String> args) async {
     'passed': false,
     'officialPort': port,
     'officialVersion': version,
-    'scope':
-        'Windows native -> official 1.17 receiver; same-host multicast coexistence; reverse UI not covered',
+    'mode': bidirectional ? 'bidirectional_ui' : 'receive_only',
+    'scope': bidirectional
+        ? 'Windows native/worker <-> official 1.17 with actual sender UI; same-host traffic'
+        : 'Windows native -> official 1.17 receiver; same-host multicast coexistence; reverse UI not covered',
   };
   Future<void> stage(String name, [Map<String, dynamic> fields = const {}]) =>
       File(
         '${root.path}/status.json',
       ).writeAsString(jsonEncode({'stage': name, ...fields}), flush: true);
-  Future<Map<String, dynamic>> next(String kind) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
+  Future<Map<String, dynamic>> next(
+    String kind, {
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       final index = events.indexWhere((e) => e['kind'] == kind);
       if (index >= 0) return events.removeAt(index);
@@ -135,6 +144,7 @@ Future<void> main(List<String> args) async {
       jsonEncode({
         'address': '127.0.0.1:$nativePort',
         'fingerprint': native.ready!['fingerprint'],
+        'instanceId': native.ready!['core_instance_id'],
         'paths': paths,
         'expected': expected,
         'officialDestination': received.path,
@@ -164,7 +174,7 @@ Future<void> main(List<String> args) async {
         'flutter.ls_quick_save': false,
         'flutter.ls_quick_save_from_favorites': true,
         'flutter.ls_receive_pin': pin,
-        'flutter.ls_auto_finish': true,
+        'flutter.ls_auto_finish': !bidirectional,
         'flutter.ls_save_to_gallery': false,
         'flutter.ls_save_to_history': false,
         'flutter.ls_enable_animations': false,
@@ -183,7 +193,7 @@ Future<void> main(List<String> args) async {
     );
     official = await Process.start(
       executable,
-      ['--hidden'],
+      ['--hidden', if (bidirectional) ...paths],
       environment: {'APPDATA': roaming.path, 'LOCALAPPDATA': localData.path},
     );
     logTasks.add(
@@ -327,6 +337,101 @@ Future<void> main(List<String> args) async {
       'files': expected.length,
       'independentHashes': true,
     };
+    if (bidirectional) {
+      await stage('reverse_ready', {
+        'officialFingerprint': pinned['fingerprint'],
+        'nativeInstanceId': native.ready!['core_instance_id'],
+      });
+      final offer = (await next(
+        'offer',
+        timeout: const Duration(minutes: 5),
+      ))['offer'];
+      final names = <String>{};
+      var owned =
+          offer['peer_fingerprint'] == pinned['fingerprint'] &&
+          offer['files'].length == expected.length;
+      for (final file in offer['files'] as List) {
+        final selected = expected[file['name']];
+        owned =
+            owned &&
+            selected != null &&
+            names.add(file['name']) &&
+            file['size'] == selected['size'] &&
+            (file['sha256'] == null || file['sha256'] == selected['sha256']);
+      }
+      await native.command({
+        'command': 'decide',
+        'transfer_id': offer['session_id'],
+        'accept': owned,
+      });
+      check(
+        owned,
+        'only pinned official sender and fixed synthetic file set accepted',
+      );
+      for (var i = 0; i < expected.length; i++) {
+        await next('committed');
+      }
+      final receipts =
+          await native.command({'command': 'receipts', 'limit': 64}) as List;
+      check(
+        receipts.length == expected.length,
+        'one native receipt per official file',
+      );
+      for (final receipt in receipts) {
+        final selected = expected[receipt['name']];
+        check(selected != null, 'only selected native receipts');
+        final lease = await native.command({
+          'command': 'acquire_receipt',
+          'receipt_id': receipt['id'],
+        });
+        try {
+          final file = File(lease['path']);
+          check(
+            await file.length() == selected!['size'] &&
+                await fileHash(file) == selected['sha256'],
+            'reverse independent disk length/hash',
+          );
+        } finally {
+          await native.command({
+            'command': 'release_receipt',
+            'lease_id': lease['lease_id'],
+          });
+        }
+      }
+      await stage('reverse_committed', {
+        'officialFingerprint': pinned['fingerprint'],
+        'nativeInstanceId': native.ready!['core_instance_id'],
+        'files': receipts.length,
+      });
+      // The observer must actually inspect the official sender's Finished page.
+      // This prevents a receiver-only commit from standing in for sender UI ACK.
+      final proof = File('${root.path}/ui-finished.json');
+      final uiDeadline = DateTime.now().add(const Duration(minutes: 5));
+      while (!await proof.exists() && DateTime.now().isBefore(uiDeadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+      check(
+        await proof.exists(),
+        'official sender Finished UI observation required',
+      );
+      final observed = jsonDecode(await proof.readAsString()) as Map;
+      check(
+        observed['status'] == 'finished' &&
+            observed['officialFingerprint'] == pinned['fingerprint'] &&
+            observed['nativeInstanceId'] == native.ready!['core_instance_id'] &&
+            observed['fileCount'] == expected.length,
+        'current-run official UI result',
+      );
+      result['officialToNative'] = {
+        'status': 'passed',
+        'files': receipts.length,
+        'independentHashes': true,
+        'officialSenderFinishedUiObserved': true,
+        'peerHashPresent': receipts.every(
+          (r) => r['peer_hash_present'] == true,
+        ),
+      };
+    }
     for (final path in paths) {
       check(
         await fileHash(File(path)) ==
@@ -334,13 +439,12 @@ Future<void> main(List<String> args) async {
         'source unchanged',
       );
     }
+    result['officialToNative'] ??= {
+      'status': 'not_run',
+      'reason': 'receive-only harness; reverse UI must be validated separately',
+    };
     result.addAll({
       'passed': true,
-      'officialToNative': {
-        'status': 'not_run',
-        'reason':
-            'receive-only harness; reverse UI must be validated separately',
-      },
       'fixtures': expected,
       'sourceUnchanged': true,
       'librarySha256': await fileHash(File(library)),
