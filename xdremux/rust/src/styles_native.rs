@@ -45,11 +45,25 @@ fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u3
 }
 
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
-    let scaffolded = styles_scaffold::scaffold(standard)?;
-    assemble_styles(&scaffolded)
+    styles_native_with_gain_map(standard, None)
 }
 
-fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
+/// Like [`styles_native`], but applies an ISO 21496 gain map to the linear
+/// thumbnail (path 3 of `docs/research/gainmap-decode-feasibility-20261025.md`:
+/// the conversion pipeline already holds the reconstructed gain-map plane in
+/// memory, so no HEVC gain-map decode is needed).
+pub fn styles_native_with_gain_map(
+    standard: &[u8],
+    gain_map: Option<&crate::linear_thumbnail::GainMapPlane<'_>>,
+) -> Result<Vec<u8>, String> {
+    let scaffolded = styles_scaffold::scaffold(standard)?;
+    assemble_styles(&scaffolded, gain_map)
+}
+
+fn assemble_styles(
+    base: &[u8],
+    gain_map: Option<&crate::linear_thumbnail::GainMapPlane<'_>>,
+) -> Result<Vec<u8>, String> {
     // ---- parse the scaffolded base -------------------------------------
     let top = top_level_boxes(base)?;
     let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
@@ -222,11 +236,12 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         )
         .map(|o| o.to_u16())
         .unwrap_or(1);
-        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps(
+        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps_with_gain_map(
             base,
             primary_irot_turns,
             orientation,
             IDENTITY_BASELINE_EXPOSURE,
+            gain_map,
         ) {
             Ok(out) => (
                 out.width,

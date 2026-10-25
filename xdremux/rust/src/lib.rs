@@ -1705,7 +1705,14 @@ fn xdremux_convert_impl(
                 }
             }
             if apple_photographic_styles {
-                if let Err(error) = finalize_native_styles(&standard_output, output) {
+                // Path 3 of the gain-map feasibility note: hand the already
+                // reconstructed gain-map plane to the thumbnail generator so
+                // the Apple Log codes carry HDR headroom without decoding the
+                // HEVC-coded tmap gain map.
+                let gain_map = thumbnail_gain_map(&extracted);
+                if let Err(error) =
+                    finalize_native_styles(&standard_output, output, gain_map.as_ref())
+                {
                     let _ = std::fs::remove_file(&standard_output);
                     return ConversionResult {
                         success: false,
@@ -1754,10 +1761,85 @@ fn xdremux_convert_impl(
     }
 }
 
-fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), String> {
+/// Build the gain-map plane for the linear thumbnail from data the conversion
+/// pipeline already decoded ("path 3" of the gain-map feasibility note): the
+/// UHDR gain-map JPEG, or the LHDR mask run through the same knee
+/// reconstruction the writer uses. Returns `None` when the source carries no
+/// usable headroom, leaving the thumbnail on the SDR-only path.
+fn thumbnail_gain_map(
+    extracted: &container::ExtractedLhdr,
+) -> Option<linear_thumbnail::OwnedGainMap> {
+    if let Some(gainmap_jpeg) = extracted.gainmap_data.as_deref() {
+        let (rgb, width, height) = jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg).ok()?;
+        if width == 0 || height == 0 || rgb.len() % 3 != 0 {
+            return None;
+        }
+        let luma: Vec<u8> = rgb
+            .chunks_exact(3)
+            .map(|pixel| {
+                let value = 0.299 * f32::from(pixel[0])
+                    + 0.587 * f32::from(pixel[1])
+                    + 0.114 * f32::from(pixel[2]);
+                value.round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        let info = iso21496::parse_oppo_uhdr_info(&extracted.meta_floats).ok()?;
+        let min_gain = info
+            .ratio_min
+            .iter()
+            .copied()
+            .fold(f32::MAX, f32::min)
+            .max(1.0);
+        let max_gain = info.ratio_max.iter().copied().fold(f32::MIN, f32::max);
+        if !(max_gain > 1.0) || !max_gain.is_finite() {
+            return None;
+        }
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain,
+            max_gain,
+        });
+    }
+    if let Some(mask_jpeg) = extracted.mask_data.as_deref() {
+        let (mask_pixels, width, height) = jpeg_decode::decode_jpeg_to_gray(mask_jpeg).ok()?;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let edr = edr::edr_scale_calculator(&extracted.meta_floats);
+        if !(edr > 1.0) || !edr.is_finite() {
+            return None;
+        }
+        let version = extracted.meta_floats.first().copied().unwrap_or(3.0);
+        let luma = gainmap::reconstruct(
+            &mask_pixels,
+            width as usize,
+            height as usize,
+            width as usize,
+            edr,
+            version,
+        );
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain: 1.0,
+            max_gain: edr,
+        });
+    }
+    None
+}
+
+fn finalize_native_styles(
+    base_path: &str,
+    output_path: &str,
+    gain_map: Option<&linear_thumbnail::OwnedGainMap>,
+) -> Result<(), String> {
     let base = std::fs::read(base_path)
         .map_err(|e| format!("read Rust Styles base output: {e}"))?;
-    let styled = styles_native::styles_native(&base)
+    let plane = gain_map.map(|owned| owned.plane());
+    let styled = styles_native::styles_native_with_gain_map(&base, plane.as_ref())
         .map_err(|e| format!("Rust Photographic Styles: {e}"))?;
     std::fs::write(output_path, styled)
         .map_err(|e| format!("write Rust Photographic Styles output: {e}"))?;
