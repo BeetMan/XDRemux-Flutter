@@ -564,6 +564,7 @@ class XdRemuxService {
   static const _keyCategorizeOutputByMode = 'categorizeOutputByMode';
   static const _keyHardwareEncode = 'hardwareEncode';
   static const _keyMotionPhotoDefaultMode = 'motionPhotoDefaultMode';
+  static const _keyM9MomentMode = 'm9MomentMode';
 
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -600,6 +601,10 @@ class XdRemuxService {
       categorizeOutputByMode:
           prefs.getBool(_keyCategorizeOutputByMode) ?? false,
       hardwareEncode: prefs.getBool(_keyHardwareEncode) ?? false,
+      m9MomentMode: M9MomentMode.values.firstWhere(
+        (e) => e.name == prefs.getString(_keyM9MomentMode),
+        orElse: () => M9MomentMode.off,
+      ),
       motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
         (e) => e.name == prefs.getString(_keyMotionPhotoDefaultMode),
         orElse: () => MotionPhotoMode.livePhotoPair,
@@ -634,6 +639,7 @@ class XdRemuxService {
       config.categorizeOutputByMode,
     );
     await prefs.setBool(_keyHardwareEncode, config.hardwareEncode);
+    await prefs.setString(_keyM9MomentMode, config.m9MomentMode.name);
     await prefs.setString(
       _keyMotionPhotoDefaultMode,
       config.motionPhotoDefaultMode.name,

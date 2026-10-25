@@ -77,6 +77,7 @@
 | [reverse-key1-eval-20260825.md](research/reverse-key1-eval-20260825.md) | ReverseKey1 Core ML 批量评估（34 样本） |
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
+| [qnn-htp-and-chromatix-re-toolchain.md](research/qnn-htp-and-chromatix-re-toolchain.md) | 高通 QNN HTP 模型静态权重还原与 Chromatix/mi_tuning 逆向工具链 |
 
 ## 路线图
 

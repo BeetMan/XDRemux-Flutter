@@ -48,7 +48,8 @@ bool isSupportedInputPath(String path) {
   return lower.endsWith('.heic') ||
       lower.endsWith('.heif') ||
       lower.endsWith('.jpg') ||
-      lower.endsWith('.jpeg');
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.png');
 }
 
 /// When a user picks a previously converted output file (e.g. `foo_iso.heic`),
@@ -730,7 +731,7 @@ class _HomePageState extends State<HomePage> {
     return HuaweiPhotoPolicy.admission(
       huaweiHdr: reportedHuaweiHdr,
       portraitReady: portraitReady,
-      stylesRequested: _stylesRequested,
+      stylesRequested: _stylesRequested || _config.m9MomentMode != M9MomentMode.off,
       motionPhoto: motionPhoto,
     );
   }
@@ -1833,7 +1834,7 @@ class _HomePageState extends State<HomePage> {
             'errorMessage': report['error'] ?? t('华为人像转换失败', 'Huawei portrait conversion failed'),
           };
         });
-      } else if (item.huaweiHdr) {
+      } else if (item.huaweiHdr && runConfig.m9MomentMode == M9MomentMode.off) {
         // Huawei HDR already displays in Apple Photos. Styles are grafted onto
         // that container. A full decode-and-reencode is only the fallback when
         // the graft cannot see a gain-map graph. A Motion Photo still is
@@ -1915,6 +1916,7 @@ class _HomePageState extends State<HomePage> {
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
           applePhotographicStyles3: runConfig.applePhotographicStyles3,
+          m9Mode: runConfig.m9MomentMode.rustValue,
           progressHandle: item.progressHandle,
         ),
       )).toMap();
@@ -2032,6 +2034,7 @@ class _HomePageState extends State<HomePage> {
           oppoCameraTail: runConfig.outputMode == OutputMode.apple
               ? OppoCameraTailMode.off.rustValue
               : runConfig.oppoCameraTail.rustValue,
+          m9Mode: runConfig.m9MomentMode.rustValue,
           strictTmap: runConfig.strictTmap,
           progressHandle: handle,
         ),
@@ -4191,6 +4194,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
     widget.config.hardwareEncode = _cfg.hardwareEncode;
     widget.config.motionPhotoDefaultMode = _cfg.motionPhotoDefaultMode;
+    widget.config.m9MomentMode = _cfg.m9MomentMode;
     widget.onChanged();
     setState(() {});
   }
@@ -4469,6 +4473,37 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 8),
                     if (_cfg.backend == ConversionBackend.rust) ...[
+                      DropdownButtonFormField<M9MomentMode>(
+                        initialValue: _cfg.m9MomentMode,
+                        decoration: InputDecoration(
+                          labelText: _t(
+                            '徕卡一瞬 · M9（小米 17 Ultra 离线色彩引擎）',
+                            'Leica Moment M9 (Xiaomi 17U Offline Engine)',
+                          ),
+                          border: const OutlineInputBorder(),
+                        ),
+                        items: M9MomentMode.values
+                            .map(
+                              (mode) => DropdownMenuItem(
+                                value: mode,
+                                child: Text(mode.appTitle),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (mode) {
+                          if (mode == null) return;
+                          setState(() => _cfg.m9MomentMode = mode);
+                          _emit();
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _cfg.m9MomentMode.appHelp,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
                       Text(
                         _t(
                           'Apple 照片功能（实验性）',

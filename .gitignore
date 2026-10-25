@@ -91,6 +91,10 @@ docs/plans/*
 !docs/testing/
 docs/testing/*
 !docs/testing/windows-codec-test-02.md
+!docs/README.md
+!docs/research/
+docs/research/*
+!docs/research/qnn-htp-and-chromatix-re-toolchain.md
 **/MIGRATION_PLAN.md
 scripts/agent_completion_gate.py
 tests/validation/test_agent_completion_gate.py
@@ -126,6 +130,7 @@ tools/android/*
 !tools/golden_corpus.sh
 # Codec integration sources (not downloaded dependencies or generated media).
 !tools/native/
+!tools/re-qnn-chromatix/
 !tools/research/
 tools/research/*
 !tools/research/codec_library_poc.py

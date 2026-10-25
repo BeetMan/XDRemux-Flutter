@@ -440,6 +440,34 @@ class XdRemuxFFI {
       ffi.Void Function(ffi.Uint32, ffi.Uint32, ffi.Uint32),
       void Function(int, int, int)>('xdremux_progress_report');
 
+  static final void Function(int)? _setM9Mode = () {
+    try {
+      return _lib.lookupFunction<
+          ffi.Void Function(ffi.Uint8),
+          void Function(int)>('xdremux_set_m9_mode');
+    } catch (_) {
+      return null;
+    }
+  }();
+
+  static final int Function()? _getM9Mode = () {
+    try {
+      return _lib.lookupFunction<
+          ffi.Uint8 Function(),
+          int Function()>('xdremux_get_m9_mode');
+    } catch (_) {
+      return null;
+    }
+  }();
+
+  /// Set the Leica Moment M9 offline rendering mode (`0 = Off`, `1 = FastLut`, `2 = FullNeural`).
+  static void setM9Mode(int mode) {
+    _setM9Mode?.call(mode.clamp(0, 2));
+  }
+
+  /// Get the active Leica Moment M9 offline rendering mode (`0..2`).
+  static int getM9Mode() => _getM9Mode?.call() ?? 0;
+
   /// Returns the Rust core version string (e.g. "0.1.1").
   static Map<String, dynamic> codecCapabilities() {
     final read = _lib.lookupFunction<ffi.Pointer<Utf8> Function(),
@@ -525,6 +553,7 @@ class XdRemuxFFI {
     bool strictTmap = false,
     bool applePhotographicStyles = false,
     bool applePortrait = false,
+    int m9Mode = 0,
   }) {
     final input = inputPath.toNativeUtf8();
     final output = outputPath.toNativeUtf8();
@@ -534,6 +563,7 @@ class XdRemuxFFI {
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
     cfg.ref.applePortrait = applePortrait ? 1 : 0;
+    setM9Mode(m9Mode);
     try {
       return _convert(input, output, cfg);
     } finally {
@@ -556,6 +586,7 @@ class XdRemuxFFI {
     bool strictTmap = false,
     bool applePhotographicStyles = false,
     bool applePortrait = false,
+    int m9Mode = 0,
   }) {
     final input = inputPath.toNativeUtf8();
     final output = outputPath.toNativeUtf8();
@@ -565,6 +596,7 @@ class XdRemuxFFI {
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
     cfg.ref.applePortrait = applePortrait ? 1 : 0;
+    setM9Mode(m9Mode);
     try {
       return _convertWithProgress(input, output, cfg, progressHandle);
     } finally {
@@ -1021,6 +1053,7 @@ class XdRemuxFFI {
     int oppoCameraTail = 255,
     bool strictTmap = false,
     int progressHandle = 0,
+    int m9Mode = 0,
   }) {
     final path = inputPath.toNativeUtf8();
     final cfg = calloc<ConvertConfig>();
@@ -1028,6 +1061,7 @@ class XdRemuxFFI {
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
     try {
+      setM9Mode(m9Mode);
       return _prepareTiles(path, cfg, progressHandle);
     } finally {
       calloc.free(path);

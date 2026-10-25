@@ -27,6 +27,8 @@ pub mod jpeg_decode;
 mod jpeg_color;
 mod jpeg_gainmap_metadata;
 pub mod linear_thumbnail;
+pub mod m9_moment;
+pub mod m9_net;
 pub mod progress;
 pub mod preview;
 pub mod sdr_source;
@@ -1260,6 +1262,18 @@ pub extern "C" fn xdremux_progress_end(handle: u32) {
     progress::end_progress_with(handle);
 }
 
+/// Set the Leica Moment M9 rendering mode (0=Off, 1=Fast LUT, 2=Full Neural).
+#[no_mangle]
+pub extern "C" fn xdremux_set_m9_mode(mode: u8) {
+    m9_moment::set_m9_mode(mode);
+}
+
+/// Read the active Leica Moment M9 rendering mode (0=Off, 1=Fast LUT, 2=Full Neural).
+#[no_mangle]
+pub extern "C" fn xdremux_get_m9_mode() -> u8 {
+    m9_moment::current_m9_mode() as u8
+}
+
 #[no_mangle]
 pub extern "C" fn xdremux_convert(
     input_path: *const c_char,
@@ -1449,7 +1463,27 @@ fn xdremux_convert_impl(
     } else {
         portrait::BaseOrigin::OppoPrimary
     };
-    let extracted = if let Some((synth, extracted)) = src_image_base {
+    let m9_mode = m9_moment::current_m9_mode();
+    let extracted = if m9_mode != m9_moment::M9Mode::Off {
+        match m9_moment::synthesize_m9_source(&source, input, m9_mode) {
+            Ok((synth, extracted)) => {
+                source = synth;
+                extracted
+            }
+            Err(e) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!("M9 Moment render failed: {e}"))
+                        .unwrap()
+                        .into_raw(),
+                };
+            }
+        }
+    } else if let Some((synth, extracted)) = src_image_base {
         source = synth;
         extracted
     } else if source.starts_with(&[0xFF, 0xD8]) {
@@ -1998,7 +2032,10 @@ pub extern "C" fn xdremux_prepare_tiles(
 
     let result = (|| -> Result<(PreparedOutput, Vec<u8>), String> {
         let source = std::fs::read(input).map_err(|e| format!("cannot read input: {e}"))?;
-        let (source, extracted) = if source.starts_with(&[0xFF, 0xD8]) {
+        let m9_mode = m9_moment::current_m9_mode();
+        let (source, extracted) = if m9_mode != m9_moment::M9Mode::Off {
+            m9_moment::synthesize_m9_source(&source, input, m9_mode)?
+        } else if source.starts_with(&[0xFF, 0xD8]) {
             let mut info = uhdr_jpeg::parse(&source)?
                 .ok_or_else(|| "JPEG lacks an Ultra HDR gain map".to_string())?;
             uhdr_jpeg::inherit_missing_exif(&mut info, input);

@@ -453,6 +453,52 @@ enum OutputPlanStatus {
 // ConversionConfig
 // ---------------------------------------------------------------------------
 
+/// Xiaomi 17 Ultra "Leica Moment M9" (徕卡一瞬 · M9) offline rendering mode.
+enum M9MomentMode {
+  off,
+  fastLut,
+  fullNeural;
+
+  String get appTitle {
+    switch (this) {
+      case M9MomentMode.off:
+        return t('关闭', 'Off');
+      case M9MomentMode.fastLut:
+        return t('M9 一瞬 · 快速 LUT', 'M9 Moment · Fast LUT');
+      case M9MomentMode.fullNeural:
+        return t('M9 一瞬 · 完整神经网络', 'M9 Moment · Full Neural');
+    }
+  }
+
+  String get appHelp {
+    switch (this) {
+      case M9MomentMode.off:
+        return t('保持原图色彩与原机增益图，不应用徕卡 M9 CCD 影调。', 'Keep original colors and gain map without Leica M9 CCD rendering.');
+      case M9MomentMode.fastLut:
+        return t(
+          '应用小米 17 Ultra 传奇版 M9 AE 重测光 + B2Y IPE（TMC202/CC15/TDL13/Gamma152/CV122）+ LeicaFilter 17³ 3D LUT/暗角颗粒 + 单帧 Ultra HDR 增益图合成。',
+          'Applies Xiaomi 17U Legend M9 AE re-metering + B2Y IPE + LeicaFilter 17³ 3D LUT/vignette/grain + single-frame Ultra HDR GainMap synthesis.',
+        );
+      case M9MomentMode.fullNeural:
+        return t(
+          '完整运行 B2Y IPE + StyleTransNet（20 层 RDB 神经影调）+ ColorFixNet（544×544 引导上采样）+ LeicaFilter snapshot LUT + 单帧 Ultra HDR 增益图合成。',
+          'Runs full B2Y IPE + StyleTransNet (20-block RDB neural tone) + ColorFixNet (544×544 guided upsampling) + LeicaFilter snapshot LUT + Ultra HDR GainMap.',
+        );
+    }
+  }
+
+  int get rustValue {
+    switch (this) {
+      case M9MomentMode.off:
+        return 0;
+      case M9MomentMode.fastLut:
+        return 1;
+      case M9MomentMode.fullNeural:
+        return 2;
+    }
+  }
+}
+
 class ConversionConfig {
   AppLanguage language;
   Family family;
@@ -479,6 +525,9 @@ class ConversionConfig {
   /// Default per-card handling for Motion Photos (per-card choice overrides).
   MotionPhotoMode motionPhotoDefaultMode;
 
+  /// Xiaomi 17 Ultra "Leica Moment M9" (徕卡一瞬 · M9) mode.
+  M9MomentMode m9MomentMode;
+
   ConversionConfig({
     this.language = AppLanguage.chinese,
     this.family = Family.auto,
@@ -498,6 +547,7 @@ class ConversionConfig {
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
     this.motionPhotoDefaultMode = MotionPhotoMode.livePhotoPair,
+    this.m9MomentMode = M9MomentMode.off,
   });
 
   /// Persist to SharedPreferences.
@@ -520,6 +570,7 @@ class ConversionConfig {
     'autoSaveToGallery': autoSaveToGallery,
     'hardwareEncode': hardwareEncode,
     'motionPhotoDefaultMode': motionPhotoDefaultMode.name,
+    'm9MomentMode': m9MomentMode.name,
   };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
@@ -558,6 +609,10 @@ class ConversionConfig {
       categorizeOutputByMode: json['categorizeOutputByMode'] as bool? ?? false,
       autoSaveToGallery: json['autoSaveToGallery'] as bool? ?? false,
       hardwareEncode: json['hardwareEncode'] as bool? ?? false,
+      m9MomentMode: M9MomentMode.values.firstWhere(
+        (e) => e.name == json['m9MomentMode'],
+        orElse: () => M9MomentMode.off,
+      ),
       motionPhotoDefaultMode: MotionPhotoMode.values.firstWhere(
         (e) => e.name == json['motionPhotoDefaultMode'],
         orElse: () => MotionPhotoMode.livePhotoPair,
@@ -584,6 +639,7 @@ class ConversionConfig {
     autoSaveToGallery: autoSaveToGallery,
     hardwareEncode: hardwareEncode,
     motionPhotoDefaultMode: motionPhotoDefaultMode,
+    m9MomentMode: m9MomentMode,
   );
 
   /// Compute output path for a given input file.
@@ -608,7 +664,7 @@ class ConversionConfig {
         ? '$baseDirectory${Platform.pathSeparator}$captureModeFolderName'
         : baseDirectory;
     final stem = input.uri.pathSegments.last.replaceAll(
-      RegExp(r'\.heic$', caseSensitive: false),
+      RegExp(r'\.(heic|heif|jpg|jpeg|png)$', caseSensitive: false),
       '',
     );
     return '$dir${Platform.pathSeparator}$stem$fileNameSuffix.heic';

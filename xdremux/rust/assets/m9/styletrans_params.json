@@ -1,0 +1,77 @@
+{
+	"styletrans": {
+		"phone_version": "p1",
+		"model_version": "1.0.1.5",
+		"styletrans_size": [864, 1120, 3],
+		"colorfix_size": [544, 544, 3],
+		"snpe": {
+			"runtime": "dsp",
+			"encrypt": "false",
+			"key": "legend",
+			"dlcs": [
+				{
+					"dlc_name": "styletrans_low.minn",
+					"path_type": 0,
+					"input": [{
+						"name": "input",
+						"shape": [1, 864, 1120, 4],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"output": [{
+						"name": "output",
+						"shape": [1, 864, 1120, 3],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"model_index": 0
+				},
+				{
+					"dlc_name": "styletrans_high.minn",
+					"path_type": 0,
+					"input": [{
+						"name": "input",
+						"shape": [1, 864, 1120, 4],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"output": [{
+						"name": "output",
+						"shape": [1, 864, 1120, 3],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"model_index": 1
+				},
+				{
+					"dlc_name": "styletrans_colorfix.minn",
+					"path_type": 0,
+					"input": [{
+						"name": "input",
+						"shape": [1, 544, 544, 6],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"output": [{
+						"name": "output",
+						"shape": [1, 544, 544, 3],
+						"offset": -128,
+						"delta": 0.007843,
+						"encoding": "tf16"
+					}],
+					"model_index": 2
+				}
+			]
+		},
+		"Threshold": {
+			"lux_threshold_daytime": 260,
+			"cct_threshold": 4692
+		}
+	}
+}
+

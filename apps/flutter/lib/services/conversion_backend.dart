@@ -22,6 +22,7 @@ class ConversionRequest {
   final bool applePhotographicStyles3;
   final AppleWatermarkPolicy appleWatermarkPolicy;
   final int progressHandle;
+  final int m9Mode;
 
   const ConversionRequest({
     required this.id,
@@ -37,6 +38,7 @@ class ConversionRequest {
     this.applePhotographicStyles3 = false,
     this.appleWatermarkPolicy = AppleWatermarkPolicy.preserve,
     this.progressHandle = 0,
+    this.m9Mode = 0,
   });
 }
 
@@ -178,6 +180,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               strictTmap: request.strictTmap,
               applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
+              m9Mode: request.m9Mode,
             )
           : XdRemuxFFI.convert(
               request.inputPath,
@@ -187,6 +190,7 @@ class RustConversionBackend implements ConversionBackendAdapter {
               strictTmap: request.strictTmap,
               applePhotographicStyles: effectiveStyles,
               applePortrait: request.applePortrait,
+              m9Mode: request.m9Mode,
             );
       try {
         return BackendConversionResult(
