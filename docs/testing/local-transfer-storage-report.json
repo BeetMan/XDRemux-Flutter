@@ -5,12 +5,13 @@
   "scope": "explicit transfer inbox/import-copy storage management, guarded queue admission and cleanup",
   "status": "controlled tests, actual Windows DLL/controller checks and Windows/Android builds passed",
   "checks": {
-    "newControlledAndWidgetCases": 13,
+    "newControlledAndWidgetCases": 14,
     "newRealDllControllerTest": 1,
-    "fullFlutterPassed": 153,
+    "fullFlutterPassed": 154,
     "fullFlutterSkippedExternalMediaCase": 1,
     "externalMediaCaseSeparatelyPassed": 1,
-    "distinctFlutterCasesExecuted": 154,
+    "distinctFlutterCasesExecuted": 155,
+    "stoppedCleanupRefreshRegressionPassed": true,
     "flutterAnalyze": "No issues found",
     "formattedChangedTransferFiles": true,
     "classifierFixtureUnchanged": true
@@ -40,13 +41,14 @@
     "partial success is preserved when copy storage fails",
     "interrupted owned trash deletion can be explicitly retried",
     "unknown outcomes are not automatically replayed",
-    "stale runtime plan rejected"
+    "stale runtime plan rejected",
+    "cleanup completion never automatically refreshes a stopped runtime"
   ],
   "packaging": {
     "windows": {
       "normalMainReleaseBuilt": true,
-      "exeSha256": "acf2ab12f31e9b6e20bb06426f81b6d9007249da9117697bec94bb5b52a45b16",
-      "aotSha256": "5df8024cf7ff924a943d079a806c79ac349c5b4ccd9a144b46e1cbcfcc5caef5",
+      "exeSha256": "28904feb63e69cfca5960624d7d86f72802586ddb57b74e840a2f1006648eaac",
+      "aotSha256": "bd397c1371332f9511ee3b1cc07067c98d189799f4a54378e6c6c88b734dbcfb",
       "transferLibrarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
       "sameLibraryAsRealStorageTest": true,
       "transferLibraryUnchanged": true,
@@ -57,7 +59,7 @@
       "applicationId": "io.github.beetman.xdremux",
       "minSdk": 24,
       "targetSdk": 36,
-      "apkSha256": "8cea09dddb910c6f9b667ab553f323193cbcdbc5a302622593b1fe63386365f7",
+      "apkSha256": "e7350e2724415e4e7be071dd49eb5feb0787b8e2fd4576b58e6bd195529c9c7f",
       "packagedTransferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
       "transferLibraryUnchanged": true,
       "licensePresent": true,
@@ -78,8 +80,8 @@
     "apps/flutter/lib/services/transfer/transfer_storage.dart": "da05e4eaafe8deaab3d72c4dca5260a3bbde637b1a42d4abc4738aed04b9fca6",
     "apps/flutter/lib/services/transfer/transfer_controller.dart": "94ddcaaafcfe0e503e91c775b2926a1d30083397a6725c6858d31268f11480c5",
     "apps/flutter/lib/transfer_page.dart": "dc177723b3eea91f9395707e329d9087e78c6d3380cd4c70c1e7611d4b437d1b",
-    "apps/flutter/lib/transfer_storage_dialog.dart": "a9c908c8fd547fc140c72e94cc47c03222aabc5bc4922e177f501dc139d799e1",
-    "apps/flutter/test/transfer_storage_test.dart": "f6973cd83be5d9dba877f460d6e91d89e0ae93c24fc1560dcd92b4db47e17a32",
+    "apps/flutter/lib/transfer_storage_dialog.dart": "593fa720be9ab1c5e00b84cd66cc57400f00f03eb0d07e481395e4e6eba1ea8e",
+    "apps/flutter/test/transfer_storage_test.dart": "c2b68c995f0acc1baab86a7f5c9b13a6fd93ebdceafc22868717ca5f47f0d7ab",
     "apps/flutter/test/transfer_storage_native_test.dart": "7181e72118b7d31193acd0f10e034c9183e96d2c4a13cbb4c68585759d7cf6e3"
   },
   "limits": [
@@ -91,5 +93,21 @@
     "widget layout covers desktop and 390x844; not ordinary device UI acceptance",
     "interrupted copy deletion is a constructed recovery fixture",
     "no actual disk exhaustion, power loss or Android provider/device validation"
-  ]
+  ],
+  "finalCodeCi": {
+    "commit": "4d1ba7699fd63f3b3aeec649bebe1a1960ad01b8",
+    "runId": 40217972026,
+    "url": "https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40217972026",
+    "conclusion": "success",
+    "stagesPassed": 13,
+    "transferFlutterPassed": 97,
+    "externalMediaCaseSkipped": 1,
+    "coreTestsPassed": 29,
+    "ffiTestsPassed": 2,
+    "abiBatchFiles": 1000,
+    "realReceiverCrashCasesPassed": 2,
+    "nativeStorageEvidencePresent": true,
+    "artifactWhitelistVerified": true,
+    "privateRuntimeFilesExcludedFromArtifacts": true
+  }
 }

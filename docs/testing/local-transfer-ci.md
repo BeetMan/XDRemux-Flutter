@@ -18,4 +18,6 @@ $env:PUB_HOSTED_URL = 'https://pub.flutter-io.cn'
 
 首个包含崩溃验收的远端完整运行 [40194764199](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40194764199) 已通过，对应 `514f471f`。存储管理加入后，门禁同时要求真实 storage 集成报告存在，避免原生用例被跳过时误报通过。
 
+2026-10-26 最终代码 `4d1ba769` 的 [远端运行 40217972026](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/40217972026) 通过全部 13 阶段：core 29、FFI 2、传输 Flutter 97（外部媒体用例跳过 1）、ABI 1000 文件、两类真实接收进程强停、storage／worker 冒烟均通过。已下载并核对 artifact：只有白名单顶层 JSON／log，未包含运行时身份和 fixture；各冒烟报告使用同一构建 DLL。最终本地全量回归与正式构建见 [存储记录](local-transfer-storage.md)。之后的验收报告补记提交仅修改文档，按路径过滤不重复运行代码门禁。
+
 本地首轮完整入口通过：Rust core 29 项、FFI 2 项及实际 ABI／worker 冒烟均通过，Flutter analyze 无问题，传输 Flutter 用例通过。ABI 冒烟还核验了 1000 文件，worker 验证受管副本、ACK 丢失重试和读取中停服。此处的本地通过不代表 GitHub runner 已执行；远端状态按对应提交的 Actions 结果记录。固定 Rust 1.97.1、Flutter 3.44.5；本轮新构建 DLL SHA-256 为 `447e9276e1e2758c4c750891a9d8b8f861c1bc49ae22ca1910b63020c89bb71c`。
