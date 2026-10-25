@@ -350,11 +350,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
           # Tag-triggered runs cannot hit main-branch caches (see the Windows
           # job above); restore-keys falls back to the latest main-branch build.
           restore-keys: |
-            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -394,6 +394,26 @@ jobs:
             --target x265-static --parallel 2
           cp xdremux/rust/vendor/x265/build_android/x265_config.h \
             xdremux/rust/vendor/x265/include/x265_config.h
+          # Optional Main10 encoder for the Styles linear thumbnail. Same
+          # sources, EXPORT_C_API=OFF puts the objects in namespace x265_10bit
+          # so build.rs links it next to the 8-bit archive.
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_android_10bit \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DENABLE_SVE=OFF \
+            -DENABLE_SVE2=OFF \
+            -DENABLE_SVE2_BITPERM=OFF \
+            -DXDREMUX_SKIP_RC=ON \
+            -DHIGH_BIT_DEPTH=ON \
+            -DEXPORT_C_API=OFF
+          cmake --build xdremux/rust/vendor/x265/build_android_10bit \
+            --target x265-static --parallel 2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

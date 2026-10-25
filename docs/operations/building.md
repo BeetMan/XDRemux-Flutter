@@ -41,6 +41,18 @@ Styles 线性缩略图的 10-bit 通路是**构建期可选**的：只要 `vendo
 
 构建要点（必须 `HIGH_BIT_DEPTH=ON` + `EXPORT_C_API=OFF` + `XDREMUX_SKIP_RC=ON`）、单帧 Rext 坑、链接语义与风险见 `docs/research/x265-main10-feasibility-20261025.md`。验证：`cargo test -p xdremux-core --lib` 的 `hevc::tests::main10_thumbnail_encode_is_profile_2_and_10bit_hvcc`（仅 `cfg(xdremux_main10)` 时运行）。
 
+已验证的 10-bit 归档（2026-10-25）：
+
+| 平台 | 结果 | 交叉编译验证 |
+|---|---|---|
+| Windows MSVC | 构建通过 + 真实样本 E2E（ffprobe Main10） | `cargo test` 263 passed |
+| Linux（CI） | `ci.yml` 同时构建 8-bit/10-bit | `cargo test --workspace` 在 CI 覆盖 Main10 |
+| Android arm64-v8a | NDK 27 构建通过 | `cargo ndk -t arm64-v8a --platform 24 build --release` → `libxdremux_core.so` |
+| 鸿蒙 arm64-v8a | DevEco SDK 构建通过 | `build_ohos.sh`（默认构建，`XDREMUX_MAIN10=0` 可跳过）→ `libxdremux_core.so` |
+| iOS / 模拟器 | 待 macOS 环境 | 目录与链接逻辑已就位 |
+
+发布侧同步：`release.yml` 的 Android job 已同时构建 `build_android_10bit`（缓存键 `-asm-ndk-v4-`）；`ci.yml` 的 Linux job 已同时构建 `build_desktop_10bit`。
+
 ### Windows 本地开发（MSVC + x265，已实测 2026-10-25）
 
 在 `git worktree` 里直接 `cargo test` 常会失败，原因通常不是工具链坏，而是两个环境问题：
