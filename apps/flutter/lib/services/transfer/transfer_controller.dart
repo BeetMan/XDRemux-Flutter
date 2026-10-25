@@ -57,6 +57,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   String? _receiptCursor;
   int _receiptPages = 1;
   final Map<String, Map<String, dynamic>> _newReceipts = {};
+  // Native receipt IDs are never reused. Remember confirmed removals for this
+  // runtime so older pages/queued commits cannot put deleted files back in UI.
+  final Set<String> _removedReceipts = {};
   bool get running => _service != null && ready != null;
   bool get busy => starting || stopping;
   TransferService get service {
@@ -419,11 +422,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           if (e['kind'] == 'stopped') ended = true;
           if (e['kind'] == 'committed') {
             final receipt = Map<String, dynamic>.from(e['receipt'] as Map);
-            _newReceipts[receipt['id'] as String] = receipt;
-            inbox[receipt['id'] as String] = receipt;
+            final id = receipt['id'] as String;
+            if (!_removedReceipts.contains(id)) {
+              _newReceipts[id] = receipt;
+              inbox[id] = receipt;
+            }
           } else if (e['kind'] == 'receipt_deleted') {
-            inbox.remove(e['receipt_id']);
-            _newReceipts.remove(e['receipt_id']);
+            _removeReceipt(e['receipt_id'] as String);
           }
           if (e['kind'] == 'progress') {
             // A refreshed snapshot may already be newer than queued progress.
@@ -613,6 +618,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       readPages++;
     } while (reset && more && readPages < _receiptPages);
     if (!_ownsRuntime(native, generation)) return;
+    rows.removeWhere((id, _) => _removedReceipts.contains(id));
     if (reset) inbox.clear();
     inbox.addAll(rows);
     // New commits may sort before/after the loaded window; keep them visible.
@@ -630,10 +636,18 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> deleteReceipt(String id) async {
     await ensureLocal();
-    await service.command({'command': 'delete_receipt', 'receipt_id': id});
+    final native = service;
+    final generation = _stopGeneration;
+    await native.command({'command': 'delete_receipt', 'receipt_id': id});
+    if (!_ownsRuntime(native, generation)) return;
+    _removeReceipt(id);
+    notifyListeners();
+  }
+
+  void _removeReceipt(String id) {
+    _removedReceipts.add(id);
     inbox.remove(id);
     _newReceipts.remove(id);
-    notifyListeners();
   }
 
   Future<T> _hold<T>(Future<T> Function() work) async {
@@ -699,6 +713,10 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     _refreshTask = null;
     _inboxTask = null;
     _discoveryTask = null;
+    // A replacement runtime reloads persistent receipts from disk. Neither old
+    // commit overlays nor removal markers describe its fresh query window.
+    _newReceipts.clear();
+    _removedReceipts.clear();
     notifyListeners();
     try {
       try {
