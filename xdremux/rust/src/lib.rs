@@ -26,6 +26,7 @@ pub mod isobmff_write;
 pub mod jpeg_decode;
 mod jpeg_color;
 mod jpeg_gainmap_metadata;
+pub mod apple_log;
 pub mod linear_thumbnail;
 pub mod progress;
 pub mod preview;
