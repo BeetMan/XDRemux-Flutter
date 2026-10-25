@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "scope": "same-host native Windows receiver process crashes",
+  "librarySha256": "447e9276e1e2758c4c750891a9d8b8f861c1bc49ae22ca1910b63020c89bb71c",
+  "cases": [
+    {
+      "name": "kill_during_partial_upload",
+      "passed": true,
+      "observedPartialBytes": 65536,
+      "abruptExitCode": 1,
+      "heldReadLeaseAtCrash": true,
+      "sameRootAndPortReopened": true
+    },
+    {
+      "name": "kill_after_commit_before_client_reads_response",
+      "passed": true,
+      "abruptExitCode": 1,
+      "committedReceiptRetained": true,
+      "clientResponseConsumed": false,
+      "mutationReplayed": false
+    }
+  ],
+  "osNetworkSettingsChanged": false,
+  "userFilesUsed": false,
+  "fixtures": {
+    "after-commit.bin": {
+      "size": 131072,
+      "sha256": "59f410ae5e17962412e2aed4f815918f634932f2abf084f00bb638c4db017850"
+    },
+    "baseline.bin": {
+      "size": 65536,
+      "sha256": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2"
+    },
+    "partial.bin": {
+      "size": 8388608,
+      "sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f"
+    }
+  },
+  "independentDiskHashes": true,
+  "explicitPartialRetryPassed": true,
+  "noStaleLeaseAfterProcessDeath": true,
+  "ownedChildrenExited": true,
+  "receiverPortReleased": true,
+  "date": "2026-10-25",
+  "baseCommit": "44b2d4f610fc74e57bb928e4c5391bda57bd8ad6",
+  "scriptSha256": "c46577e71e8aa60f95c216f964767dbe3bb7126872926275bdb05a3748ec5bfb"
+}

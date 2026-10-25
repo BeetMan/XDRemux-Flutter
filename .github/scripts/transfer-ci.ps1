@@ -39,6 +39,15 @@ try {
     $env:XDREMUX_TRANSFER_TEST_DLL = $transferDll
     $transferSummary.librarySha256 = (Get-FileHash -LiteralPath $transferDll -Algorithm SHA256).Hash.ToLowerInvariant()
     Invoke-TransferStage 'abi-smoke' $Python @('crates/xdremux-transfer-ffi/scripts/smoke.py', $transferDll, '--report', (Join-Path $ReportRoot 'abi.json'))
+    $transferCrashRoot = Join-Path $ReportRoot 'private-crash'
+    try {
+        Invoke-TransferStage 'crash-smoke' $Python @('crates/xdremux-transfer-ffi/scripts/crash_smoke.py', '--library', $transferDll, '--root', $transferCrashRoot)
+    } finally {
+        $transferCrashResult = Join-Path $transferCrashRoot 'result.json'
+        if (Test-Path -LiteralPath $transferCrashResult -PathType Leaf) {
+            Copy-Item -LiteralPath $transferCrashResult -Destination (Join-Path $ReportRoot 'crash.json')
+        }
+    }
     Push-Location apps/flutter
     try {
         if (-not $NoPub) { Invoke-TransferStage 'flutter-pub' flutter @('pub', 'get', '--enforce-lockfile') }
