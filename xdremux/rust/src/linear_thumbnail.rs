@@ -57,12 +57,100 @@ pub fn generate_linear_thumbnail(
     .map(|out| (out.stream, out.hvcc, out.width, out.height))
 }
 
+/// Borrowed ISO 21496 gain-map luma plane, at whatever resolution the source
+/// carries  it (base resolution or half of it).
+///
+/// Path 3 of `docs/research/gainmap-decode-feasibility-20261025.md`: the
+/// conversion pipeline already holds the reconstructed gain map in memory, so
+/// the linear thumbnail can apply HDR headroom without decoding the HEVC-coded
+/// gain-map item.
+#[derive(Debug, Clone, Copy)]
+pub struct GainMapPlane<'a> {
+    pub luma: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+    /// Linear gain corresponding to code 0 (>= 1.0 when headroom exists).
+    pub min_gain: f32,
+    /// Linear gain corresponding to code 255.
+    pub max_gain: f32,
+}
+
+impl GainMapPlane<'_> {
+    /// Linear gain for `code` in `0..=255`.
+    pub fn gain_from_code(&self, code: u8) -> f32 {
+        let span = (self.max_gain - self.min_gain).max(0.0);
+        (self.min_gain + span * (f32::from(code) / 255.0)).max(0.0)
+    }
+
+    /// Gain at base-image pixel `(x, y)` in a `base_width × base_height`
+    /// raster, by nearest-neighbour lookup in the (smaller) gain-map plane.
+    pub fn gain_at(&self, x: u32, y: u32, base_width: u32, base_height: u32) -> f32 {
+        if self.luma.is_empty() || self.width == 0 || self.height == 0
+            || base_width == 0 || base_height == 0
+        {
+            return 1.0;
+        }
+        let gx = ((u64::from(x) * u64::from(self.width)) / u64::from(base_width))
+            .min(u64::from(self.width - 1)) as usize;
+        let gy = ((u64::from(y) * u64::from(self.height)) / u64::from(base_height))
+            .min(u64::from(self.height - 1)) as usize;
+        let index = gy * self.width as usize + gx;
+        match self.luma.get(index) {
+            Some(&code) => self.gain_from_code(code),
+            None => 1.0,
+        }
+    }
+}
+
+/// Owned counterpart of [`GainMapPlane`] for callers that must outlive the
+/// borrow (the conversion pipeline decodes the gain map before writing the
+/// output, then hands it to the thumbnail generator).
+#[derive(Debug, Clone)]
+pub struct OwnedGainMap {
+    pub luma: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub min_gain: f32,
+    pub max_gain: f32,
+}
+
+impl OwnedGainMap {
+    pub fn plane(&self) -> GainMapPlane<'_> {
+        GainMapPlane {
+            luma: &self.luma,
+            width: self.width,
+            height: self.height,
+            min_gain: self.min_gain,
+            max_gain: self.max_gain,
+        }
+    }
+}
+
 /// Generate linear thumbnail and dynamic 32×32 photographic style light maps.
 pub fn generate_linear_thumbnail_and_light_maps(
     source_heic: &[u8],
     rotate_cw_quarter_turns: u32,
     orientation: u16,
     baseline_exposure: f32,
+) -> Result<LinearThumbnailOutput, String> {
+    generate_linear_thumbnail_and_light_maps_with_gain_map(
+        source_heic,
+        rotate_cw_quarter_turns,
+        orientation,
+        baseline_exposure,
+        None,
+    )
+}
+
+/// Like [`generate_linear_thumbnail_and_light_maps`], but multiplies the
+/// scene-linear base by the supplied ISO 21496 gain map before resampling, so
+/// the Apple Log codes carry the file's HDR headroom.
+pub fn generate_linear_thumbnail_and_light_maps_with_gain_map(
+    source_heic: &[u8],
+    rotate_cw_quarter_turns: u32,
+    orientation: u16,
+    baseline_exposure: f32,
+    gain_map: Option<&GainMapPlane<'_>>,
 ) -> Result<LinearThumbnailOutput, String> {
     const LINEAR_THUMBNAIL_MAX_SIZE: u32 = 1024;
 
@@ -147,8 +235,16 @@ pub fn generate_linear_thumbnail_and_light_maps(
     // defined over linear light. Skipping this would make the Photos consumer
     // decode log over sRGB (double transfer -> washed-out style preview).
     let mut linear = Vec::with_capacity(rgb.len());
-    for &sample in &rgb {
-        linear.push(crate::apple_log::srgb8_to_linear(sample) as f32);
+    for (pixel_index, chunk) in rgb.chunks_exact(3).enumerate() {
+        let x = (pixel_index % w as usize) as u32;
+        let y = (pixel_index / w as usize) as u32;
+        let gain = match gain_map {
+            Some(plane) => plane.gain_at(x, y, w, h),
+            None => 1.0,
+        };
+        for &sample in chunk {
+            linear.push(crate::apple_log::srgb8_to_linear(sample) as f32 * gain);
+        }
     }
 
     // Native geometry contract: long edge capped, both edges even, coded
@@ -500,6 +596,39 @@ pub fn compute_storage_light_maps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gain_map_plane_maps_codes_and_samples_nearest() {
+        let plane = GainMapPlane {
+            luma: &[0u8, 255u8],
+            width: 2,
+            height: 1,
+            min_gain: 1.0,
+            max_gain: 4.0,
+        };
+        assert!((plane.gain_from_code(0) - 1.0).abs() < 1e-6);
+        assert!((plane.gain_from_code(255) - 4.0).abs() < 1e-6);
+        assert!((plane.gain_at(0, 0, 4, 1) - 1.0).abs() < 1e-6);
+        assert!((plane.gain_at(2, 0, 4, 1) - 4.0).abs() < 1e-6);
+        assert!((plane.gain_at(3, 0, 4, 1) - 4.0).abs() < 1e-6);
+
+        let empty = GainMapPlane {
+            luma: &[],
+            width: 0,
+            height: 0,
+            min_gain: 1.0,
+            max_gain: 4.0,
+        };
+        assert_eq!(empty.gain_at(3, 3, 10, 10), 1.0);
+        let no_headroom = GainMapPlane {
+            luma: &[255u8],
+            width: 1,
+            height: 1,
+            min_gain: 1.0,
+            max_gain: 1.0,
+        };
+        assert_eq!(no_headroom.gain_from_code(255), 1.0);
+    }
 
     #[test]
     fn test_f32_to_f16_known_values() {
