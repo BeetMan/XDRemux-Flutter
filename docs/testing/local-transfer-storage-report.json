@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "date": "2026-10-26",
+  "baseCommit": "514f471fe228fc0a86132bc19460eb262748afef",
+  "scope": "explicit transfer inbox/import-copy storage management, guarded queue admission and cleanup",
+  "status": "controlled tests, actual Windows DLL/controller checks and Windows/Android builds passed",
+  "checks": {
+    "newControlledAndWidgetCases": 13,
+    "newRealDllControllerTest": 1,
+    "fullFlutterPassed": 153,
+    "fullFlutterSkippedExternalMediaCase": 1,
+    "externalMediaCaseSeparatelyPassed": 1,
+    "distinctFlutterCasesExecuted": 154,
+    "flutterAnalyze": "No issues found",
+    "formattedChangedTransferFiles": true,
+    "classifierFixtureUnchanged": true
+  },
+  "nativeStorage": {
+    "passed": true,
+    "realDllAndWorker": true,
+    "leasedInboxDeletionRejected": true,
+    "explicitRetryAfterRelease": true,
+    "adoptedCopyPreserved": true,
+    "unreferencedCopyExplicitlyCleaned": true,
+    "sourceSha256": "f66f9f6edca7c89651d9eddb49cd735a02a167cac51e6f666440f5ebaa2964b0",
+    "sourceUnchanged": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+    "cleanupCompleted": true
+  },
+  "behaviors": [
+    "all receipt pages counted",
+    "explicit item selection and delete confirmation",
+    "native read leases block inbox deletion",
+    "queue and ACK ownership preserve copies",
+    "ordinary queue admission excludes storage work",
+    "pending/corrupt checkpoint retains copies",
+    "old support-directory aliases conservatively retain the same receipt bucket",
+    "changed payload hash rejects cleanup",
+    "Windows junctions never authorize traversal",
+    "partial success is preserved when copy storage fails",
+    "interrupted owned trash deletion can be explicitly retried",
+    "unknown outcomes are not automatically replayed",
+    "stale runtime plan rejected"
+  ],
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "acf2ab12f31e9b6e20bb06426f81b6d9007249da9117697bec94bb5b52a45b16",
+      "aotSha256": "5df8024cf7ff924a943d079a806c79ac349c5b4ccd9a144b46e1cbcfcc5caef5",
+      "transferLibrarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+      "sameLibraryAsRealStorageTest": true,
+      "transferLibraryUnchanged": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "minSdk": 24,
+      "targetSdk": 36,
+      "apkSha256": "8cea09dddb910c6f9b667ab553f323193cbcdbc5a302622593b1fe63386365f7",
+      "packagedTransferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "transferLibraryUnchanged": true,
+      "licensePresent": true,
+      "integrationTestRegistrantAbsent": true,
+      "integrationTestApkEntriesAbsent": true,
+      "installed": false
+    }
+  },
+  "transferAbi": "1.3",
+  "coreAndAbiSourceChanged": false,
+  "lockfilesChanged": false,
+  "phoneOperated": false,
+  "networkOrFirewallSettingsChanged": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "sourceSha256": {
+    "apps/flutter/lib/main.dart": "d22207ac0092c8c840fb9487753c8ecf56ce523617bcfaf504b44da497239e47",
+    "apps/flutter/lib/services/transfer/transfer_queue.dart": "8bf46c6c21d283738ae955bbd1483682052b0928d6683d16ec1794b892c23268",
+    "apps/flutter/lib/services/transfer/transfer_storage.dart": "da05e4eaafe8deaab3d72c4dca5260a3bbde637b1a42d4abc4738aed04b9fca6",
+    "apps/flutter/lib/services/transfer/transfer_controller.dart": "94ddcaaafcfe0e503e91c775b2926a1d30083397a6725c6858d31268f11480c5",
+    "apps/flutter/lib/transfer_page.dart": "dc177723b3eea91f9395707e329d9087e78c6d3380cd4c70c1e7611d4b437d1b",
+    "apps/flutter/lib/transfer_storage_dialog.dart": "a9c908c8fd547fc140c72e94cc47c03222aabc5bc4922e177f501dc139d799e1",
+    "apps/flutter/test/transfer_storage_test.dart": "f6973cd83be5d9dba877f460d6e91d89e0ae93c24fc1560dcd92b4db47e17a32",
+    "apps/flutter/test/transfer_storage_native_test.dart": "7181e72118b7d31193acd0f10e034c9183e96d2c4a13cbb4c68585759d7cf6e3"
+  },
+  "limits": [
+    "statistics count recognized file contents, not all allocated disk space",
+    "ACKed copies are retained for queue-owned cleanup even without a current reference",
+    "unknown outcome disabling is scoped to the current storage dialog; recheck explicitly",
+    "synthetic JPEG signature payload in native storage test, not media decoder validation",
+    "native fixture explicitly schedules controller polling",
+    "widget layout covers desktop and 390x844; not ordinary device UI acceptance",
+    "interrupted copy deletion is a constructed recovery fixture",
+    "no actual disk exhaustion, power loss or Android provider/device validation"
+  ]
+}

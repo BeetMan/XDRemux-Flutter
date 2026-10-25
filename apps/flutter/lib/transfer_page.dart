@@ -5,6 +5,7 @@ import 'l10n/l10n.dart';
 import 'services/transfer/transfer_controller.dart';
 import 'services/transfer/transfer_export.dart';
 import 'services/transfer/transfer_models.dart';
+import 'transfer_storage_dialog.dart';
 
 String transferErrorText(String code) => switch (code) {
   'batch_too_large' => t(
@@ -621,6 +622,20 @@ class _TransferPageState extends State<TransferPage> {
                             await transfer.refresh();
                           }),
                     child: Text(t('刷新', 'Refresh')),
+                  ),
+                  TextButton(
+                    key: const ValueKey('manage-transfer-storage'),
+                    onPressed: disabled
+                        ? null
+                        : () => showDialog<void>(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (_) => TransferStorageDialog(
+                              controller: transfer,
+                              errorText: transferErrorText,
+                            ),
+                          ),
+                    child: Text(t('存储管理', 'Storage')),
                   ),
                 ],
               ),

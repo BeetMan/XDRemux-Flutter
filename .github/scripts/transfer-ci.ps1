@@ -17,6 +17,7 @@ if (Test-Path -LiteralPath $ReportRoot) { throw 'ReportRoot must be a new direct
 $transferSteps = [Collections.Generic.List[object]]::new()
 $transferSummary = @{ passed = $false; scope = 'Windows transfer crates, ABI, Dart worker and transfer Flutter tests'; stages = $transferSteps }
 $transferOldDll = $env:XDREMUX_TRANSFER_TEST_DLL
+$transferOldStorageReport = $env:XDREMUX_TRANSFER_STORAGE_REPORT
 function Invoke-TransferStage([string]$Name, [string]$Program, [string[]]$Arguments) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     & $Program @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $ReportRoot "$Name.log")
@@ -37,6 +38,7 @@ try {
     $transferDll = Join-Path $transferRepo 'crates/xdremux-transfer-ffi/target/release/xdremux_transfer.dll'
     if (-not (Test-Path -LiteralPath $transferDll -PathType Leaf)) { throw 'Built DLL missing.' }
     $env:XDREMUX_TRANSFER_TEST_DLL = $transferDll
+    $env:XDREMUX_TRANSFER_STORAGE_REPORT = Join-Path $ReportRoot 'storage.json'
     $transferSummary.librarySha256 = (Get-FileHash -LiteralPath $transferDll -Algorithm SHA256).Hash.ToLowerInvariant()
     Invoke-TransferStage 'abi-smoke' $Python @('crates/xdremux-transfer-ffi/scripts/smoke.py', $transferDll, '--report', (Join-Path $ReportRoot 'abi.json'))
     $transferCrashRoot = Join-Path $ReportRoot 'private-crash'
@@ -55,12 +57,16 @@ try {
         $transferTests = @(Get-ChildItem test -Filter 'transfer_*_test.dart' | Sort-Object Name | ForEach-Object { "test/$($_.Name)" })
         if ($transferTests.Count -eq 0) { throw 'No transfer tests found.' }
         Invoke-TransferStage 'flutter-tests' flutter (@('test', '--no-pub', '--reporter=expanded') + $transferTests)
+        if (-not (Test-Path -LiteralPath $env:XDREMUX_TRANSFER_STORAGE_REPORT -PathType Leaf)) {
+            throw 'Real storage integration evidence missing; native test may have been skipped.'
+        }
         Invoke-TransferStage 'worker-smoke' dart @('run', 'tool/transfer_worker_smoke.dart', $transferDll, (Join-Path $ReportRoot 'worker.json'))
         $transferSummary.testFiles = $transferTests
     } finally { Pop-Location }
     $transferSummary.passed = $true
 } finally {
     $env:XDREMUX_TRANSFER_TEST_DLL = $transferOldDll
+    $env:XDREMUX_TRANSFER_STORAGE_REPORT = $transferOldStorageReport
     $transferSummary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $ReportRoot 'summary.json') -Encoding utf8NoBOM
     Pop-Location
 }

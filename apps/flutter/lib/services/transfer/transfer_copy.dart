@@ -16,7 +16,7 @@ Future<void> _directory(Directory dir) async {
   }
 }
 
-bool _safeName(String name) =>
+bool transferSafeName(String name) =>
     name.isNotEmpty &&
     utf8.encode(name).length <= 240 &&
     !RegExp(r'[<>:"/\\|?*\x00-\x1f\x7f]').hasMatch(name) &&
@@ -88,7 +88,7 @@ Future<Map<String, dynamic>> copyTransferInput(
   final size = receipt['size'] as int;
   final hash = receipt['sha256'] as String;
   if (!_receiptId.hasMatch(id) ||
-      !_safeName(name) ||
+      !transferSafeName(name) ||
       size < 0 ||
       !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
     throw const TransferException('unsafe_storage');

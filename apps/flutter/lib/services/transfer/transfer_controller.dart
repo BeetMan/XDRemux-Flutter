@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'transfer_intake.dart';
 import 'transfer_models.dart';
 import 'transfer_service.dart';
+import 'transfer_storage.dart';
 
 /// Application-scoped owner. No sockets until an explicit receive/send/inbox action.
 class TransferController extends ChangeNotifier with WidgetsBindingObserver {
@@ -642,6 +643,45 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     if (!_ownsRuntime(native, generation)) return;
     _removeReceipt(id);
     notifyListeners();
+  }
+
+  Future<TransferStorageSnapshot> inspectStorage() async {
+    await ensureLocal();
+    final native = service, generation = _stopGeneration;
+    final support = await _support();
+    if (!_ownsRuntime(native, generation)) {
+      throw const TransferException('closed');
+    }
+    final result = await _hold(
+      () => TransferStorage(support.path, native).preview(),
+    );
+    if (!_ownsRuntime(native, generation)) {
+      throw const TransferException('closed');
+    }
+    return result;
+  }
+
+  Future<TransferStorageCleanup> cleanStorage(
+    TransferStorageSnapshot plan,
+    Set<String> ids,
+  ) async {
+    await ensureLocal();
+    final native = service, generation = _stopGeneration;
+    final support = await _support();
+    if (!_ownsRuntime(native, generation)) {
+      throw const TransferException('closed');
+    }
+    final result = await _hold(
+      () => TransferStorage(support.path, native).clean(plan, ids),
+    );
+    if (!_ownsRuntime(native, generation)) {
+      throw const TransferException('closed');
+    }
+    for (final id in result.deleted.where((id) => id.startsWith('inbox:'))) {
+      _removeReceipt(id.substring('inbox:'.length));
+    }
+    notifyListeners();
+    return result;
   }
 
   void _removeReceipt(String id) {

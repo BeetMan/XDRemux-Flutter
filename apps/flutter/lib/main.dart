@@ -299,7 +299,11 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    TransferQueue.register(this, _acceptTransferInput);
+    TransferQueue.register(
+      this,
+      _acceptTransferInput,
+      retainedInputs: () => _queue.map((item) => item.inputPath).toSet(),
+    );
     PlatformLayoutTraits.refresh().then((_) {
       if (mounted) setState(() {});
     });
@@ -1149,6 +1153,19 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _ingestPickedFiles(
+    List<PickedItem> files, {
+    required String source,
+  }) {
+    if (TransferQueue.importing) {
+      if (mounted) setState(() => _currentFileName = t('输入文件正在处理，请稍后重新选择', 'Input files are busy; select again after the current operation'));
+      return Future<void>.value();
+    }
+    return TransferQueue.withAdmission(
+      () => _ingestPickedFilesNow(files, source: source),
+    );
+  }
+
+  Future<void> _ingestPickedFilesNow(
     List<PickedItem> files, {
     required String source,
   }) async {
@@ -2578,10 +2595,21 @@ class _HomePageState extends State<HomePage> {
     required String verb,
     int ignored = 0,
     TransferInput? transferInput,
-  }) async {
+  }) {
     if (transferInput == null && TransferQueue.importing) {
-      return TransferIntakeStatus.rejected;
+      return Future.value(TransferIntakeStatus.rejected);
     }
+    return TransferQueue.withAdmission(
+      () => _enqueuePathsNow(paths, verb: verb, ignored: ignored, transferInput: transferInput),
+    );
+  }
+
+  Future<TransferIntakeStatus> _enqueuePathsNow(
+    List<String> paths, {
+    required String verb,
+    int ignored = 0,
+    TransferInput? transferInput,
+  }) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
     int skippedExisting = 0;
