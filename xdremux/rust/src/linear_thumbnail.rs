@@ -29,6 +29,9 @@ pub struct LinearThumbnailOutput {
     pub width: u32,
     /// Stored thumbnail height (even).
     pub height: u32,
+    /// HEVC bit depth of the encoded stream: 10 when the optional Main10
+    /// encoder was linked, 8 for the Apple Log interim path.
+    pub bit_depth: u8,
 }
 
 /// Generate the linear thumbnail HEVC stream + hvcC for a converted HEIC.
@@ -153,23 +156,11 @@ pub fn generate_linear_thumbnail_and_light_maps(
     let (out_w, out_h) = fitted_even_dimensions(w, h, LINEAR_THUMBNAIL_MAX_SIZE)?;
     let resized = area_resize_linear_rgb(&linear, w, h, out_w, out_h)?;
 
-    // Baseline exposure (Styles plist key 4) then Apple Log; 8-bit is the
-    // interim quantization until the Main10 encoder lands.
-    let codes = crate::apple_log::thumbnail_codes_8bit(&resized, baseline_exposure)?;
-
-    let stream = crate::hevc::x265_encode_tiles(
-        &[codes.as_slice()],
-        out_w,
-        out_h,
-        3,
-        true,
-    )
-    .map_err(|e| format!("linear thumb encode: {e}"))?
-    .into_iter()
-    .next()
-    .ok_or("linear thumb encode produced no stream")?;
-    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
-        .ok_or("linear thumb hvcC extraction failed")?;
+    // Baseline exposure (Styles plist key 4) then Apple Log. Both encoders
+    // consume the same 16-bit codes; only the quantization/encoder differs, so
+    // the 8-bit interim and the Main10 path cannot drift apart.
+    let codes16 = crate::apple_log::thumbnail_codes(&resized, baseline_exposure)?;
+    let (stream, hvcc, bit_depth) = encode_linear_thumbnail_codes(&codes16, out_w, out_h)?;
     let idr = crate::hevc::drop_parameter_nals(&stream);
     Ok(LinearThumbnailOutput {
         stream: crate::hevc::hevc_byte_stream_to_length_prefixed(&idr),
@@ -178,7 +169,47 @@ pub fn generate_linear_thumbnail_and_light_maps(
         light_d,
         width: out_w,
         height: out_h,
+        bit_depth,
     })
+}
+
+/// Encode Apple Log codes with the best encoder this build has.
+///
+/// The optional Main10 encoder is used when the 10-bit x265 archive was linked
+/// at build time (`xdremux_main10`); otherwise the 8-bit Apple Log interim path
+/// quantizes the same codes in the log domain, which is the behaviour that
+/// shipped before Main10 landed.
+fn encode_linear_thumbnail_codes(
+    codes16: &[u16],
+    width: u32,
+    height: u32,
+) -> Result<(Vec<u8>, Vec<u8>, u8), String> {
+    // x265 refuses pictures smaller than one CTU (64x64 with the default
+    // maxCUSize); tiny thumbnails fall back to the 8-bit path which has its own
+    // small-picture handling.
+    if crate::hevc::main10_available() && width >= 64 && height >= 64 {
+        #[cfg(xdremux_main10)]
+        {
+            let stream = crate::hevc::encode_thumbnail_10bit(codes16, width, height)
+                .map_err(|e| format!("linear thumb 10-bit encode: {e}"))?;
+            let hvcc =
+                crate::hevc::extract_hvcc_config_with_chroma_and_depth(&stream, 1, 10)
+                    .ok_or("linear thumb hvcC extraction failed (10-bit)")?;
+            return Ok((stream, hvcc, 10));
+        }
+    }
+    let codes8: Vec<u8> = codes16
+        .iter()
+        .map(|&code| ((u32::from(code) + 128) / 257) as u8)
+        .collect();
+    let stream = crate::hevc::x265_encode_tiles(&[codes8.as_slice()], width, height, 3, true)
+        .map_err(|e| format!("linear thumb encode: {e}"))?
+        .into_iter()
+        .next()
+        .ok_or("linear thumb encode produced no stream")?;
+    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
+        .ok_or("linear thumb hvcC extraction failed")?;
+    Ok((stream, hvcc, 8))
 }
 
 /// Long-edge cap for the stored linear thumbnail (native files use 1024).

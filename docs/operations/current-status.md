@@ -44,7 +44,7 @@
 ## 4. 已知风险与未验证项
 
 1. **Styles native 路径不是逐像素等价**：`styleData` 为 identity，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
-2. **线性缩略图已改为 Apple Log + 原生几何（2026-10-25），但仍有两项差距**：① 编码仍是 8-bit 4:2:0（原生 16-bit + Main10），只承载 SDR 码值区间，属预览级精度；② 未应用 gain map（移植侧缺 tmap 增益图 tile 的 HEVC 解码），缩略图没有 HDR 高光。几何（coded 宽高比、长边 1024、双偶数、同 irot）与传递函数已对齐上游；baseline exposure 取 `styleData` key 4（当前 identity=4.0），绝对亮度**未在真机与原生 A/B 验证**。详见 `docs/modules/styles-pipeline.md` §4。
+2. **线性缩略图已改为 Apple Log + 原生几何 + 可选 Main10（2026-10-25）**：构建期链接了 10-bit x265 静态库时走 16-bit codes → Main10（hvcC bitDepth=10、SPS profile_idc=2，本机已断言）；库缺失时自动回退 8-bit 4:2:0 过渡路径（只承载 SDR 码值区间）。**仍缺**：① 未应用 gain map（移植侧缺 tmap 增益图 tile 的 HEVC 解码），缩略图没有 HDR 高光；② 10-bit 库目前只有 Windows 构建产物，Linux/Android/iOS/OHOS 待补；③ baseline exposure 的绝对亮度与 10-bit 缩略图接受度**未在真机与原生 A/B 验证**。详见 `docs/modules/styles-pipeline.md` §4。
 3. **Live Photo 发布校验只在检查点恢复路径**；转换成功当次没有"立即校验 + 半成品回滚 + 独立恢复副本"（上游 #76/#78 的后半段）。
 4. **本机 Windows 跑 Rust 测试的两个坑（已解决，2026-10-25）**：① worktree 缺 gitignored 的 `vendor/x265`（`build.rs` 找不到头文件）；② 多 worktree 共用 `target/` 时 `zstd-sys` 的旧 C 产物污染。处理：vendor 用目录联接 + 独立 `CARGO_TARGET_DIR` + vcvars 环境，配方见 `docs/operations/building.md` §1「Windows 本地开发」。**已实测**：`cargo test -p xdremux-core --lib` = 248 passed / 0 failed / 3 ignored。
 5. **CI 只覆盖 Ubuntu + Flutter**（`.github/workflows/ci.yml`）：Windows/macOS 原生行为、真机 Photos 验收不在 CI 内。

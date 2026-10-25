@@ -92,3 +92,27 @@ extern "C" {
     // x265 profile API
     pub fn x265_param_apply_profile(p: *mut x265_param, profile: *const c_char) -> c_int;
 }
+
+/// Optional 10-bit (Main10) bridge. Only compiled/linked when a 10-bit x265
+/// archive is present at build time (see build.rs and
+/// `docs/research/x265-main10-feasibility-20261025.md`).
+#[cfg(xdremux_main10)]
+extern "C" {
+    /// Returns 1 when the 10-bit encoder table was reachable at link time.
+    pub fn xdremux_10bit_available() -> c_int;
+
+    /// Encode one 10-bit 4:2:0 picture from three uint16 planes (samples in
+    /// 0..=1023) and store a malloc'd Annex-B stream in `out`/`out_len`.
+    pub fn xdremux_encode_10bit_planes(
+        p0: *const u16,
+        p1: *const u16,
+        p2: *const u16,
+        width: c_int,
+        height: c_int,
+        out: *mut *mut u8,
+        out_len: *mut c_int,
+    ) -> c_int;
+
+    /// Release a stream returned by [`xdremux_encode_10bit_planes`].
+    pub fn xdremux_free_stream(buffer: *mut u8);
+}

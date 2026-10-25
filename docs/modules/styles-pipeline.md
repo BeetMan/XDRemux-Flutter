@@ -77,18 +77,21 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 |---|---|---|
 | 传递函数 | Apple Log（`code = A*log2(linear/BE + B_off) + C`，边界码 0/1 钳位） | 无（常量对齐上游） |
 | 几何 | 长边 1024、双偶数、coded 宽高比、同 irot | 无（对齐上游 `fitted_even_dimensions`） |
-| 量化 | **8-bit** 4:2:0 HEVC | 原生 16-bit codes + Main10；8-bit 只用了码值 `[0, 0.6946]` 区间承载 SDR，属预览级精度 |
+| 量化 | 构建期链接了 10-bit x265 时：**16-bit codes → Main10**；否则 8-bit 4:2:0 过渡路径 | 10-bit 通路已接入（`x265_10bit_bridge.cpp` + `build.rs` 可选链接）；未链接时 8-bit 回退仍只承载 SDR 码值 `[0, 0.6946]`，属预览级精度 |
 | HDR 范围 | 只编码 SDR（未应用 gain map） | 原生在 base 分辨率应用 ISO 增益重建 scene-linear HDR。阻塞点：移植侧没有 tmap 增益图 tile 的 HEVC 解码能力（heif-oxide 只解主图） |
 
 验证（本机，`cargo test -p xdremux-core --lib` 覆盖）：
 
 - `apple_log`：常量、编解码往返（码值 1.0 以上会钳位，约 linear 12 封顶）、边界钳位、sRGB EOTF 端点、baseline exposure 除法、8-bit 量化、异常输入拒绝；
-- `linear_thumbnail`：几何契约（4:3/16:9/竖拍/小图不放大/奇数边取偶/极端宽高比）、线性域面积重采样均值与恒等、参数校验。
+- `linear_thumbnail`：几何契约（4:3/16:9/竖拍/小图不放大/奇数边取偶/极端宽高比）、线性域面积重采样均值与恒等、参数校验；
+- 10-bit 通路（仅当构建期链接了 10-bit 库，`cfg(xdremux_main10)`）：`code16_to_10bit` 端点/单调、16-bit codes → BT.601 limited-range 10-bit YUV、编码后 hvcC 断言 `profile_idc=2` 且 bitDepth=10。本机实测：链接 10-bit 库 **263 passed**，未链接 **262 passed**。
+
+Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。
 
 后续（P1）：
-1. 10-bit Main10 编码（需要 10-bit x265 静态库与多平台构建，或改用双库 `x265_api_get` 方案）后，把 `thumbnail_codes`（16-bit）直接接入，去掉 8-bit 量化；
+1. ~~10-bit Main10 编码~~ **已完成（构建期可选）**；剩余：为 Linux / Android / iOS / OHOS 产出 10-bit 静态库并纳入 CI；
 2. 增益图解码（HEVC tile 解码）打通后，把 base 分辨率的 gain map 应用到线性光再重采样，恢复 HDR 高光；
-3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度。
+3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度与 10-bit 缩略图接受度。
 
 ## 5. 诊断工具
 
