@@ -46,6 +46,15 @@ jobs:
           flutter-version: 3.44.5
           channel: stable
           cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/xdremux-transfer/target/debug
+            crates/xdremux-transfer-ffi/target/debug
+            crates/xdremux-transfer-ffi/target/release
+          key: ${{ runner.os }}-transfer-rust-1.97.1-${{ hashFiles('crates/xdremux-transfer/Cargo.lock', 'crates/xdremux-transfer-ffi/Cargo.lock') }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -53,6 +62,8 @@ jobs:
         shell: pwsh
         env:
           PYTHONUTF8: '1'
+          # Preserve the hosted source already recorded in pubspec.lock.
+          PUB_HOSTED_URL: https://pub.flutter-io.cn
         run: ./.github/scripts/transfer-ci.ps1 -ReportRoot "$env:RUNNER_TEMP/transfer-results"
       - name: Retain reports and diagnostic logs
         if: always()
