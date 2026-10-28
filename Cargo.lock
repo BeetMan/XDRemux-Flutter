@@ -1007,6 +1007,7 @@ dependencies = [
  "cc",
  "heif-oxide",
  "jpeg-decoder",
+ "ort",
  "png 0.17.16",
  "quick-xml",
  "serde_json",
