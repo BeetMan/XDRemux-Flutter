@@ -64,9 +64,11 @@
 - `codex/apple-cinematic`：远端已不存在（10-28 `fetch --prune` 后），原「冻结待决策」状态作废。
 - `codex/iso21496-write-validation`（PR #15）、`codex/docs-style-guide-and-styles-gap` 已并入 `main`。
 
-### 2.7 未定事项：pub 源
+### 2.7 pub 源（已定：镜像）
 
-`apps/flutter/pubspec.lock`（main）锁的是 `pub.flutter-io.cn` 镜像，用默认 `pub.dev` 执行 `flutter pub get` 会改写全部 hosted url 并升级依赖；本地应设 `PUB_HOSTED_URL=https://pub.flutter-io.cn` 并用 `flutter pub get --enforce-lockfile`。但 CI 早先为避免 checksum 失败去掉了镜像（`ea340db`），`research/iphone-next` 的 `283bff5` 也改回 `pub.dev`。需要统一一个源。
+主线统一使用 `pub.flutter-io.cn` 镜像 + 锁文件：`apps/flutter/pubspec.lock` 的 hosted url 全部是镜像；`ci.yml`、`linux.yml`、`release.yml` 都设置 `PUB_HOSTED_URL=https://pub.flutter-io.cn` 并执行 `flutter pub get --enforce-lockfile`（`59e493e`，2026-10-16）。本地同样设置该变量（`tools/env.sh` 已默认），否则默认的 `pub.dev` 会改写全部 hosted url 并升级依赖。
+
+例外只在未合并分支上：`research/find-next` 的 `ea340db`（09-10）去掉过 CI 镜像，`research/iphone-next` 的 `283bff5`（10-28）把锁文件改成 `pub.dev`。这两个分支若要合回主线，需先撤销对应改动。
 
 ## 3. 能力现状（主线）
 
@@ -97,7 +99,7 @@
 3. iOS 10-bit x265 静态库：10-bit 归档目前唯一缺的平台（macOS 构建环境已具备）。
 4. `codex/local-transfer` 合并前独立 review：先 rebase（+33，实际冲突块约 12 处），再看 FFI 边界、断网/中断、与现有 checkpoint 的交互。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。
-6. 决策：pub 源统一（§2.7）；`feat/m9-moment` / `feat/oppo-filter-ecosystem` 的研究资产是否进主线（包体与法务）。
+6. 决策：`feat/m9-moment` / `feat/oppo-filter-ecosystem` 的研究资产是否进主线（包体与法务）。
 7. ~~合并 PR #15（ISO 写入端校验）~~ **已完成**（`69b80d5`）；~~修好本机 Rust 工具链~~ **已完成**：本地可跑全量 `cargo test -p xdremux-core --lib`，配方见 `docs/operations/building.md` §1。
 
 ## 6. 常用验证命令
