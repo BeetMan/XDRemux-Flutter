@@ -54,6 +54,7 @@
 | 文档 | 内容 |
 |---|---|
 | [testing/conformance-suite.md](testing/conformance-suite.md) | 对拍套件、golden corpus、加用例流程 |
+| [testing/styles-hdr-device-checklist.md](testing/styles-hdr-device-checklist.md) | Styles HDR 缩略图真机 A/B 测试清单（样本矩阵、自动预检、Photos 步骤、判定口径） |
 | [operations/building.md](operations/building.md) | 跨平台构建（含 Linux 本地开发）、变体说明（含鸿蒙 hap） |
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 四 workflow 剖析、runner 矩阵 |
