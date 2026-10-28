@@ -14,6 +14,11 @@ analyzer:
     # Vendored OHOS plugin forks (regenerate via tools/ohos/fetch_plugins.sh);
     # their tests/examples are not ours to lint.
     - third_party/**
+    - build/**
+    - android/**
+    - ios/**
+    - windows/**
+    - macos/**
 
 linter:
   # The lint rules applied to this project can be customized in the

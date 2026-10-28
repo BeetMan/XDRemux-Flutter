@@ -22,7 +22,11 @@ import 'package:xdremux/services/xdremux_service.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  const repoRoot = '/Users/beet/Documents/XDRemux Playground';
+  // Sibling project root (holds test-media/). Override with
+  // XDREMUX_PLAYGROUND when the tree moves; default is the 2026-10-28
+  // migration target on the MacData volume.
+  final repoRoot =
+      Platform.environment['XDREMUX_PLAYGROUND'] ?? '/Volumes/MacData/XDRemux';
   const workDir = '/tmp/xdremux-macos-it';
 
   testWidgets('macOS e2e: drop, convert, verify, bilingual switch', (
