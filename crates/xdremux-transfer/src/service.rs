@@ -133,9 +133,35 @@ impl Inner {
         }
     }
 }
+/// BSD sockets let a SO_REUSEADDR listener (tokio sets it on Unix) bind a
+/// specific address while another socket holds the wildcard on the same port,
+/// so the service would start while peers reach the other process. Binding
+/// the wildcard with the same option fails only when such a listener exists;
+/// TIME_WAIT leftovers and other specific-address listeners still pass.
+/// Linux and Windows already reject the specific bind itself.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn probe_wildcard_conflict(bind: std::net::SocketAddr) -> Result<()> {
+    if bind.port() == 0 || bind.ip().is_unspecified() {
+        return Ok(());
+    }
+    let wildcard: std::net::IpAddr = if bind.is_ipv4() {
+        std::net::Ipv4Addr::UNSPECIFIED.into()
+    } else {
+        std::net::Ipv6Addr::UNSPECIFIED.into()
+    };
+    match std::net::TcpListener::bind((wildcard, bind.port())) {
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => Err(ErrorCode::PortInUse),
+        _ => Ok(()),
+    }
+}
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn probe_wildcard_conflict(_bind: std::net::SocketAddr) -> Result<()> {
+    Ok(())
+}
 impl Service {
     pub async fn start(config: Config) -> Result<Self> {
         config.validate()?;
+        probe_wildcard_conflict(config.bind)?;
         let root = config.root.clone();
         let (storage, identity) = tokio::task::spawn_blocking(move || {
             let storage = Storage::open(&root)?;
