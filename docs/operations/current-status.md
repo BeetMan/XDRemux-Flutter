@@ -31,7 +31,7 @@
 
 | 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
 |---|---|---|---|---|
-| `codex/local-transfer`（PR #29 open） | +32 / −0 | 10-28 rebase | 0 | 设备间互传（vendor LocalSend），独立 crate `crates/xdremux-transfer*`（各自 `[workspace]`，Rust 1.97.1）+ Flutter UI + Windows CI 门禁。10-28 rebase 到 main：丢弃已被 main `00a0068`/`074a634` 覆盖的 codec 提交 `3cd3fa7`，跳过与 main 等价的 `877047b`；rebase 后**不改 `xdremux/rust` 核心与 FFI**。macOS 本机：`flutter test` 233 passed / 10 skipped；`xdremux-transfer` 27/28，`port_collision_is_actionable_and_releases_the_root` 失败——macOS/BSD 上 `SO_REUSEADDR` 允许在别人占用 `0.0.0.0:P` 时绑定 `127.0.0.1:P`，服务不报 `PortInUse`；分支此前只在 Windows/Android 验证，合并前需修 |
+| `codex/local-transfer`（PR #29 open） | +32 / −0 | 10-28 rebase | 0 | 设备间互传（vendor LocalSend），独立 crate `crates/xdremux-transfer*`（各自 `[workspace]`，Rust 1.97.1）+ Flutter UI + Windows CI 门禁。10-28 rebase 到 main：丢弃已被 main `00a0068`/`074a634` 覆盖的 codec 提交 `3cd3fa7`，跳过与 main 等价的 `877047b`；rebase 后**不改 `xdremux/rust` 核心与 FFI**。macOS 本机：`flutter test` 233 passed / 10 skipped；`xdremux-transfer` 28/28。macOS/BSD 上 `SO_REUSEADDR` 允许在别人占用 `0.0.0.0:P` 时绑定 `127.0.0.1:P`（服务不报 `PortInUse`），已在 `50d5668` 用通配地址探测修复 |
 | `feat/harmony-native` | +98 / −34 | 10-25 | 1 文件（`README.md`） | 鸿蒙 ArkUI 原生工程，0.5.2 已发（独立标签）。长期分支，定期 merge main 同步，不并回 main；与 Flutter 共用 Rust 核心，同步后需重建 `.so` 并复测 |
 
 ### 2.3 研究分支（不直接合并）
@@ -95,7 +95,7 @@
 1. 合并 PR #25（纯文档，可 ff），再按 `docs/testing/styles-hdr-device-checklist.md` 跑 S1/S2/S3（orientation 6/3/8）/S7 真机 A/B —— 这是覆盖 §4.2 的 ②③ 未验证项的唯一闭环手段。
 2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成）：按 `docs/research/styles-upstream-20261024-gap.md` 做 P1-1 每图 key1 拟合、P1-2 GTC 单调拟合；`styleData` identity 是当前最大画质差距。
 3. iOS Main10 上机验证：真机或模拟器跑一次 Styles 转换，确认缩略图 hvcC bitDepth=10（构建与链接已完成，见 `docs/operations/building.md` §1）；评估 macOS 发布包是否也启用 10-bit。
-4. review PR #29（`codex/local-transfer`，已 rebase）：先修 macOS 端口冲突检测，再看断网/中断、与现有 checkpoint 的交互。
+4. review PR #29（`codex/local-transfer`，已 rebase，macOS 端口冲突已修）：看断网/中断、与现有 checkpoint 的交互；macOS/iOS 上的设备互通尚未实测。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。
 6. 决策：`feat/m9-moment` / `feat/oppo-filter-ecosystem` 的研究资产是否进主线（包体与法务）。
 7. ~~合并 PR #15（ISO 写入端校验）~~ **已完成**（`69b80d5`）；~~修好本机 Rust 工具链~~ **已完成**：本地可跑全量 `cargo test -p xdremux-core --lib`，配方见 `docs/operations/building.md` §1。
