@@ -1,7 +1,7 @@
 # 实现规格：摄影风格 3 — 任意照片全链路
 
 > 交给子 agent / 新 session 的完整实现规格。
-> 项目：/Users/beet/Documents/XDRemux Playground/XDRemux-Flutter
+> 项目：`XDRemux-Flutter`（本仓库；素材在同级项目的 `test-media/`）
 > 分支：main（最新含全部实验结论和工具链）
 
 ## 目标
