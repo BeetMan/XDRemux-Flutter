@@ -3,7 +3,7 @@
 > 读者：接手项目的开发者 / agent。用途：给出**可提交、可审计**的现状快照，替代只存在于本机、被 gitignore 的 `docs/plans/current-handoff.md`。
 > 更新时机：发版后、主线合并后、方向决策后。每次更新在标题保留日期，历史版本进 `docs/archive/`。
 > 断言遵循 `docs/style-guide.md` §3：已实测 / 推断 / 未验证。
-> 2026-10-28：开发机迁移后按最新 `origin/main` 复核并重写；版本号与分支计数以 git 为准。
+> 2026-10-28：开发机迁移后按最新 `origin/main` 复核并重写；版本号与分支计数以 git 为准。同日按 `fetch --prune` 后的远端重排 §2 分支地图。
 
 ## 1. 版本与发布
 
@@ -21,20 +21,52 @@
 
 ## 2. 分支地图
 
-| 分支 | 相对 `origin/main` | 状态 | 说明 |
-|---|---|---|---|
-| `main` | —（`ca11edd`） | 稳定 | 0.4.5 发版后基线 + 10-25~26 Styles HDR 增量 |
-| `codex/local-transfer` | +33 / −84 | **在飞（大改）** | 设备间互传；新增 `crates/xdremux-transfer/`（vendor LocalSend），240 文件 +48864；与 main 双改 20 文件（`main.dart`、`lib.rs`、`build.rs`、`isobmff.rs`、`styles_native.rs`、`Cargo.toml`、`pubspec`）。**先 rebase 再 review，不要直接 merge**，合并前不要动 `lib.rs` FFI 与 `services/` |
-| `feat/harmony-native` | +98 / −32 | **在飞** | 鸿蒙 ArkUI 原生工程（0.5.2 已发，独立标签）；与 Flutter 共用 Rust 核心，合入前需重建 `.so` 并复测 |
-| `feat/oppo-filter-ecosystem` | +1 / −16 | 待决策 | `.MS-LUT`↔`.cube` 编解码 + ColorOS `filter.info` 注入 + Hasselblad Master/SoftLight/M3 管线归档；研究级资产，需定「进产品 / 仅留档」 |
-| `feat/m9-moment` | +1 / −16 | 待决策 | 小米 17 Ultra 徕卡 Moment M9 引擎 + QNN/Chromatix RE 工具链；带 3.5MB 级二进制 assets，包体与法务先决策 |
-| `codex/styles-hdr-test-checklist` | +1 / −0（PR #25 open） | 纯文档，可合 | Styles HDR 真机 A/B 验收清单 `docs/testing/styles-hdr-device-checklist.md` |
-| `research/iphone-next` | +31 / −107 | 研究快照（未合并） | 皮肤 / Texture Style person 数据：`person_stats.rs`、`semantic_mattes.rs`、`face_detect.rs`；断点与验收步骤见 `docs/plans/skin-pipeline-handoff.md` |
-| `codex/apple-cinematic` | 停在 2026-10-11 | 冻结 | 需要决策：复活或废弃（当前只写待处理元数据，非完整电影效果） |
-| `research/oppo-gallery-17.10` | +4 提交（文档） | 归档级 | OPPO 相册 17.10 机制研究记录 |
-| 其余 `codex/*`、`release/*` | ahead=0 | 已合并 | 可清理 |
+> 2026-10-28 按 `git fetch --prune` 后的远端重排（基准 `origin/main` = `4550046`）。「ahead / behind」相对该基准；「冲突」是 `git merge-tree --write-tree origin/main <分支>` 模拟合并的冲突文件数（已实测）。
 
-> `codex/iso21496-write-validation`（PR #15）与 `codex/docs-style-guide-and-styles-gap`（PR）均已并入 `main`，不再单列。
+### 2.1 可合
+
+| 分支 | ahead / behind | 冲突 | 说明 |
+|---|---|---|---|
+| `codex/styles-hdr-test-checklist`（PR #25 open） | +1 / −2 | 0 | 纯文档：Styles HDR 真机 A/B 验收清单 `docs/testing/styles-hdr-device-checklist.md` |
+
+### 2.2 在飞（大改）
+
+| 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
+|---|---|---|---|---|
+| `codex/local-transfer` | +33 / −86 | 10-26 | **12 文件** | 设备间互传（vendor LocalSend，`crates/xdremux-transfer/`），240 文件 +48864。分支内已完成存储预览/清理、接收端异常退出恢复、Windows 平台矩阵与独立 CI 门禁。分叉点 `3d4bc0d`（10-01），冲突集中在 `main.dart`、`lib.rs`、`iso21496.rs`、`uhdr_jpeg.rs`、`jpeg_gainmap_metadata.rs`、`libheif_helper.cpp`、`pubspec.lock`。分支带着 10-05 的 codec 提交 `3cd3fa7`，而 main 已经用 `00a0068` 合入了同类改动——rebase 时以 main 为准。**先 rebase 再 review，不要直接 merge** |
+| `feat/harmony-native` | +98 / −34 | 10-25 | 1 文件（`README.md`） | 鸿蒙 ArkUI 原生工程，0.5.2 已发（独立标签）。长期分支，定期 merge main 同步，不并回 main；与 Flutter 共用 Rust 核心，同步后需重建 `.so` 并复测 |
+
+### 2.3 研究分支（不直接合并）
+
+| 分支 | ahead / behind | 最后提交 | 说明 |
+|---|---|---|---|
+| `research/iphone-next` | +31 / −109 | 10-28 | 皮肤 / Texture Style person 数据（`face_matte`、instance mask、FSINC 布局）。断点：9-25 注入 instance mask 后容器损坏（已排除 10 个假设），9-26 `c630b93` 修了 mime infe，**未验证**是否根治；见 `docs/plans/skin-pipeline-handoff.md`。10-28 两个提交是工具与配置（`dump_item`/`faceloc` probe、pub 源改 `pub.dev`），与 main 冲突 3 文件（`pubspec.lock`、`analysis_options.yaml`、`macos_e2e_test.dart`） |
+| `research/oppo-gallery-17.10` | +4 / −86 | 10-11 | ColorOS 相册 17.10.5 HDR/人像机制 + OPPO 尾部布局实测，基本是文档；首个提交即 `3cd3fa7`（见 2.2） |
+
+### 2.4 待决策（单提交、无冲突）
+
+| 分支 | ahead / behind | 说明 | 要定的事 |
+|---|---|---|---|
+| `feat/oppo-filter-ecosystem` | +1 / −18 | `.MS-LUT`↔`.cube` 编解码 + ColorOS `filter.info` 注入 + Hasselblad Master/SoftLight/M3 管线归档，29 文件 +6109 | 进产品 / 仅留档 |
+| `feat/m9-moment` | +1 / −18 | 小米 17 Ultra 徕卡 Moment M9 引擎 + QNN/Chromatix RE 工具链，57 文件 +6517，带 MB 级二进制 assets | 包体与法务 |
+
+### 2.5 陈旧，疑似已被主线替代（推断，未逐行比对）
+
+| 分支 | 最后提交 | 依据 |
+|---|---|---|
+| `integrate/find-next` | 09-12 | 照片检查 / 单卡转换策略；主线已有详情对话框与双流检查（不同提交实现） |
+| `research/find-next` | 09-11 | 停在 v0.4.0-pre.6；10 个提交中 3 个在 main 有 patch 等价提交 |
+| `integrate/huawei-portrait-live` | 10-05 | PR #2 已于 09-30 合并；之后的 `3cd3fa7` 已由 main 的 `00a0068` 覆盖 |
+
+### 2.6 已合并 / 已删除
+
+- `codex/prepare-045`、`research/huawei-xmage`：ahead=0，可删。
+- `codex/apple-cinematic`：远端已不存在（10-28 `fetch --prune` 后），原「冻结待决策」状态作废。
+- `codex/iso21496-write-validation`（PR #15）、`codex/docs-style-guide-and-styles-gap` 已并入 `main`。
+
+### 2.7 未定事项：pub 源
+
+`apps/flutter/pubspec.lock`（main）锁的是 `pub.flutter-io.cn` 镜像，用默认 `pub.dev` 执行 `flutter pub get` 会改写全部 hosted url 并升级依赖；本地应设 `PUB_HOSTED_URL=https://pub.flutter-io.cn` 并用 `flutter pub get --enforce-lockfile`。但 CI 早先为避免 checksum 失败去掉了镜像（`ea340db`），`research/iphone-next` 的 `283bff5` 也改回 `pub.dev`。需要统一一个源。
 
 ## 3. 能力现状（主线）
 
@@ -47,7 +79,7 @@
 | Texture Styles（Standard 注入） | 可用 | `texture_styles.rs`；与上游 `#70` 同行但更早落地 |
 | Motion Photo → Live Photo | 可用 | 配对谓词 `existing_pair_is_valid`（`live_photo.rs:1790`）、FFI `xdremux_live_photo_pair_valid`、恢复时校验（`main.dart:440`） |
 | 队列 / 检查点恢复 / 分类输出 | 可用 | 见 `docs/app/workflow-design.md` |
-| Cinematic 元数据 | 实验性/冻结 | `codex/apple-cinematic` 三周未动 |
+| Cinematic 元数据 | 已放弃（分支已删） | `codex/apple-cinematic` 远端已不存在，主线无相关能力 |
 
 ## 4. 已知风险与未验证项
 
@@ -65,7 +97,7 @@
 3. iOS 10-bit x265 静态库：10-bit 归档目前唯一缺的平台（macOS 构建环境已具备）。
 4. `codex/local-transfer` 合并前独立 review：先 rebase（+33，实际冲突块约 12 处），再看 FFI 边界、断网/中断、与现有 checkpoint 的交互。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。
-6. 决策：`codex/apple-cinematic` 去留；`feat/m9-moment` / `feat/oppo-filter-ecosystem` 的研究资产是否进主线（包体与法务）。
+6. 决策：pub 源统一（§2.7）；`feat/m9-moment` / `feat/oppo-filter-ecosystem` 的研究资产是否进主线（包体与法务）。
 7. ~~合并 PR #15（ISO 写入端校验）~~ **已完成**（`69b80d5`）；~~修好本机 Rust 工具链~~ **已完成**：本地可跑全量 `cargo test -p xdremux-core --lib`，配方见 `docs/operations/building.md` §1。
 
 ## 6. 常用验证命令
