@@ -156,11 +156,11 @@ fn main() {
             std::fs::copy(main10_file, &staged).expect("stage the 10-bit x265 archive");
         }
         println!("cargo:rustc-link-search=native={out_dir}");
-        if target_os == "ios" {
-            println!("cargo:rustc-link-arg=-Wl,-force_load,{}", staged.display());
-        } else {
-            println!("cargo:rustc-link-lib=static=x265-main10");
-        }
+        // On iOS too: link args never reach the staticlib that Xcode links,
+        // while a static -l is bundled into libxdremux_core.a next to the
+        // bridge. The app force-loads that archive; the 10-bit objects only
+        // overlap the 8-bit libx265.a on weak template symbols.
+        println!("cargo:rustc-link-lib=static=x265-main10");
         println!("cargo:rustc-cfg=xdremux_main10");
         println!("cargo:rustc-check-cfg=cfg(xdremux_main10)");
         println!("cargo:rerun-if-changed=src/x265_10bit_bridge.cpp");
