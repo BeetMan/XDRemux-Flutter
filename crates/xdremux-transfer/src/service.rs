@@ -25,7 +25,10 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tokio::{
@@ -68,6 +71,18 @@ struct Session {
     cancel: CancellationToken,
     gate: tokio::sync::Mutex<bool>,
     last: Mutex<Instant>,
+    /// Files past their last byte (hash check, fsync, commit). They send no
+    /// chunks, so the idle watchdog must not count that time as a stall.
+    finalizing: AtomicUsize,
+    /// Committed files, updated under the gate.
+    committed: AtomicUsize,
+}
+struct Finalizing<'a>(&'a Session);
+impl Drop for Finalizing<'_> {
+    fn drop(&mut self) {
+        *self.0.last.lock().unwrap() = Instant::now();
+        self.0.finalizing.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 impl Drop for Service {
     fn drop(&mut self) {
@@ -127,22 +142,43 @@ impl Inner {
         )
         .map_err(|_| ErrorCode::Io)
     }
-    async fn cancel_session(&self, id: &str, code: ErrorCode) {
+    pub(crate) async fn cancel_session(&self, id: &str, code: ErrorCode) {
         let session = self.state.lock().unwrap().sessions.get(id).cloned();
-        if let Some(session) = session {
-            *session.gate.lock().await = false;
-            session.cancel.cancel();
-            self.server.cancel_v2_session(id).await;
-            self.state.lock().unwrap().sessions.remove(id);
+        let Some(session) = session else { return };
+        let mut gate = session.gate.lock().await;
+        // Several paths race to end a session (watchdog, local cancel, peer
+        // abort, normal end). Only the first one still holding an open gate on
+        // the live session reports it, so no Failed follows SessionEnded.
+        let live = {
+            let mut state = self.state.lock().unwrap();
+            let live = *gate
+                && state
+                    .sessions
+                    .get(id)
+                    .is_some_and(|s| Arc::ptr_eq(s, &session));
+            if live {
+                state.sessions.remove(id);
+            }
+            live
+        };
+        if !live {
+            return;
+        }
+        *gate = false;
+        drop(gate);
+        session.cancel.cancel();
+        self.server.cancel_v2_session(id).await;
+        // A cancel that lost the race to the last commit ends a complete session.
+        if session.committed.load(Ordering::SeqCst) < session.offer.files.len() {
             self.emit(EventKind::Failed {
                 transfer_id: id.into(),
                 file_id: None,
                 code,
             });
-            self.emit(EventKind::SessionEnded {
-                session_id: id.into(),
-            });
         }
+        self.emit(EventKind::SessionEnded {
+            session_id: id.into(),
+        });
     }
 }
 /// BSD sockets let a SO_REUSEADDR listener (tokio sets it on Unix) bind a
@@ -626,6 +662,8 @@ async fn handle_event(inner: Arc<Inner>, event: ServerEventV2) {
                 cancel: inner.stop.child_token(),
                 gate: tokio::sync::Mutex::new(true),
                 last: Mutex::new(Instant::now()),
+                finalizing: AtomicUsize::new(0),
+                committed: AtomicUsize::new(0),
             });
             inner
                 .state
@@ -658,7 +696,8 @@ async fn handle_event(inner: Arc<Inner>, event: ServerEventV2) {
                 let deadline=inner.config.session_deadline(session.offer.files.iter().map(|f|f.size).sum());
                 loop {
                     tokio::select! {_=session.cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(20))=>{}}
-                    if started.elapsed()>=deadline || session.last.lock().unwrap().elapsed()>=inner.config.idle_timeout {
+                    let idle=session.finalizing.load(Ordering::SeqCst)==0 && session.last.lock().unwrap().elapsed()>=inner.config.idle_timeout;
+                    if started.elapsed()>=deadline || idle {
                         inner.cancel_session(&session_id,ErrorCode::TimedOut).await; break;
                     }
                 }
@@ -818,6 +857,8 @@ async fn receive(
     if written != file.size {
         return Err(ErrorCode::Truncated);
     }
+    session.finalizing.fetch_add(1, Ordering::SeqCst);
+    let _finalizing = Finalizing(&session);
     let clean = tokio::select! {_=session.cancel.cancelled()=>return Err(ErrorCode::Cancelled), result=tokio::time::timeout(inner.config.idle_timeout,body_done)=>matches!(result,Ok(Ok(true)))};
     if !clean {
         return Err(ErrorCode::Truncated);
@@ -859,6 +900,7 @@ async fn receive(
     tokio::task::spawn_blocking(move || storage.commit(&path, &saved))
         .await
         .map_err(|_| ErrorCode::Io)??;
+    session.committed.fetch_add(1, Ordering::SeqCst);
     inner.emit(EventKind::Committed { receipt });
     drop(gate);
     Ok(())

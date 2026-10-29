@@ -1498,3 +1498,29 @@ fn session_deadline_grows_with_payload() {
         cfg.session_timeout + Duration::from_secs(16 * 1024)
     );
 }
+
+#[tokio::test]
+async fn racing_session_ends_report_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    let session = prepare(&a, &b, file("race.bin", 3, None)).await;
+    // The live stream (what the Dart worker sees) is not deduplicated like the journal.
+    let mut events = b.subscribe();
+    tokio::join!(
+        b.cancel_receive(&session.session_id),
+        b.cancel_receive(&session.session_id),
+        b.inner.cancel_session(&session.session_id, ErrorCode::TimedOut),
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let (mut failed, mut ended) = (0, 0);
+    while let Ok(event) = events.try_recv() {
+        match event.kind {
+            EventKind::Failed { transfer_id, .. } if transfer_id == session.session_id => failed += 1,
+            EventKind::SessionEnded { session_id } if session_id == session.session_id => ended += 1,
+            _ => {}
+        }
+    }
+    assert_eq!((failed, ended), (1, 1));
+    a.shutdown().await;
+    b.shutdown().await;
+}
