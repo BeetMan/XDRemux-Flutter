@@ -10,6 +10,7 @@
 |---|---|---|---|
 | Windows | DLL | 路径搜索（安装目录/开发目录） | cargo build（x265 MSVC 静态链接） |
 | macOS | dylib | rpath / Frameworks / 可执行文件旁多级回退 | cargo build（`vendor/x265/build_desktop`） |
+| Linux（预览发布） | .so（ELF x86-64） | 多级回退：`XDREMUX_LINUX_RUST_LIB` -> `<exeDir>/lib` -> bundle `lib/` -> 可执行文件旁 -> cargo `target/{release,debug}` | cargo build（x265 静态链接 `vendor/x265/build_desktop`，产物由 `apps/flutter/linux/CMakeLists.txt` 装进 `bundle/lib`） |
 | Android | .so（arm64-v8a） | `DynamicLibrary.open('libxdremux_core.so')` | `cargo ndk -t arm64-v8a` -> jniLibs |
 | iOS | 静态库 | `DynamicLibrary.process()` | `build_ios.sh`（x265 + Rust 静态库进 Frameworks） |
 | 鸿蒙 | .so（arm64-v8a，`aarch64-unknown-linux-ohos`） | `DynamicLibrary.open('libxdremux_core.so')` | `build_ohos.sh`（DevEco NDK 交叉，产物拷到 `ohos/entry/libs/arm64-v8a/`） |
@@ -23,6 +24,7 @@
 | Windows | WIC（`BitmapDecoder.Create`） |
 | Android | ImageDecoder |
 | macOS / iOS | ImageIO（CGImageSource） |
+| Linux | 无平台原生解码通道；缩略图走 Rust FFI 主图预览回退 |
 | 鸿蒙 | Image Kit（vendored 插件通道） |
 
 ## 3. 文件访问
@@ -31,6 +33,7 @@
 |---|---|---|
 | Windows | 文件系统 + 拖放（drop_file_service） | - |
 | macOS | NSOpenPanel / 拖放 | - |
+| Linux | file_picker（XDG Desktop Portal）/ GTK 拖放 / `xdremux <file>` 命令行参数 | 不索取额外权限；导出到用户选择目录 |
 | Android | SAF（Storage Access Framework）+ receive_sharing_intent | **不默认索取存储权限**；工作流产物在应用私有目录 |
 | iOS | PHPicker / Files | 无相册直写；导出走分享 |
 | 鸿蒙 | file_picker（vendored fork + v12 兼容门面）/ PhotoViewPicker 选图库原图 / 系统分享（sendData） | 图库分享必转 JPEG（发送方策略）；文件管理器分享是原图；保存图库走 PhotoAccessHelper |
@@ -51,3 +54,4 @@
 - **iOS**：未签名 IPA 侧载分发；TestFlight/公证未配置
 - **鸿蒙**：**发布默认 profile 模式**（AOT + `debug:true`，~34MB）——Development Profile 只能签 debug:true 的包，release 模式包（debug:false）侧载工具全拒；debug JIT 包 118MB 不可取。签名用 DevEco 自动签名材料（本机注入，不入库）；hap 签名是 zip 块而非文件。构建必须用 PowerShell（Git Bash 会触发嵌套 bat 递归炸弹）。插件走 vendored path 依赖 + `pubspec.ohos.yaml` 变体（`tools/ohos/build_hap.ps1` 自动同步版本行）
 - **Windows ARM64**：`windows-11-arm` 原生 runner，x265 `-A ARM64 -DENABLE_ASSEMBLY=OFF`，Inno Setup `BuildArch` 参数化
+- **Linux（预览发布）**：`bundle/lib/libxdremux_core.so` 由 `linux/CMakeLists.txt` 从 `target/release`（回退 `target/debug`）安装；CMake 过滤掉 Linux 不用的 `tray_manager`/`jni` 插件以收敛运行依赖；发布包为 AppImage / tar.gz（`tools/linux/package_linux.sh`），保持 glibc 2.35（Ubuntu 22.04+）基线并打包兼容版 `libnuma.so.1`；核心里的 `__isoc23_strtol` 兼容 shim 用于抹平 glibc 2.38 链接要求

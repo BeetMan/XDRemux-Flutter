@@ -131,6 +131,8 @@ class XdRemuxFFI {
       return ffi.DynamicLibrary.process();
     } else if (Platform.isWindows) {
       return _openWindows();
+    } else if (Platform.isLinux) {
+      return _openLinux();
     } else {
       return _openMacOS();
     }
@@ -204,6 +206,73 @@ class XdRemuxFFI {
     throw StateError('Could not locate $name in cwd or known build dirs.');
   }
 
+  /// On Linux the Rust core ships as `libxdremux_core.so`. The Flutter Linux
+  /// bundle installs it into `<bundle>/lib` next to the executable (see
+  /// `linux/CMakeLists.txt`); `flutter run` / `flutter test` may find it in the
+  /// cargo target dir instead. `XDREMUX_LINUX_RUST_LIB` overrides the search.
+  static ffi.DynamicLibrary _openLinux() {
+    const name = 'libxdremux_core.so';
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final candidates = <String>[];
+
+    final override = Platform.environment['XDREMUX_LINUX_RUST_LIB'];
+    if (override != null && override.isNotEmpty) candidates.add(override);
+
+    // Loader search path (LD_LIBRARY_PATH / rpath) by bare soname.
+    candidates.add(name);
+    // Built bundle layout: <bundle>/xdremux with libs in <bundle>/lib.
+    candidates.add('$exeDir/lib/$name');
+    candidates.add('$exeDir/$name');
+    // `flutter run` keeps the cwd at apps/flutter; also cover explicit builds.
+    candidates.add('build/linux/x64/debug/bundle/lib/$name');
+    candidates.add('build/linux/x64/release/bundle/lib/$name');
+    candidates.add('build/linux/arm64/debug/bundle/lib/$name');
+    candidates.add('build/linux/arm64/release/bundle/lib/$name');
+    // Cargo output, relative to apps/flutter.
+    candidates.add('../../target/release/$name');
+    candidates.add('../../target/debug/$name');
+    // Cargo output, resolved from the bundle dir
+    // (apps/flutter/build/linux/<arch>/<mode>/bundle -> repo root).
+    candidates.add('$exeDir/../../../../../../../target/release/$name');
+    candidates.add('$exeDir/../../../../../../../target/debug/$name');
+    // Any locally built arch/mode bundle under the cwd.
+    candidates.addAll(_linuxBundleLibs(name));
+
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        return ffi.DynamicLibrary.open(path);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw StateError(
+      'Could not load $name on Linux. Tried: ${candidates.join(', ')}. '
+      'Last error: $lastError',
+    );
+  }
+
+  /// Enumerate `build/linux/<arch>/<mode>/bundle/lib/<name>` under the cwd so
+  /// the loader also works for locally built bundles of another arch/mode.
+  static List<String> _linuxBundleLibs(String name) {
+    final result = <String>[];
+    final root = Directory('build/linux');
+    if (!root.existsSync()) return result;
+    try {
+      for (final arch in root.listSync(followLinks: false)) {
+        if (arch is! Directory) continue;
+        for (final mode in arch.listSync(followLinks: false)) {
+          if (mode is! Directory) continue;
+          result.add('${mode.path}/bundle/lib/$name');
+        }
+      }
+    } catch (_) {
+      // Best-effort fallback only; the explicit candidates above cover the
+      // normal bundle and cargo layouts.
+    }
+    return result;
+  }
+
   static final _version = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(),
       ffi.Pointer<Utf8> Function()>('xdremux_version');
@@ -219,6 +288,18 @@ class XdRemuxFFI {
   static final _inspect = _lib.lookupFunction<
       ConversionResult Function(ffi.Pointer<Utf8>),
       ConversionResult Function(ffi.Pointer<Utf8>)>('xdremux_inspect');
+
+  static final _huaweiInspect = _lib
+      .lookupFunction<
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>),
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>)
+      >('xdremux_huawei_inspect');
+
+  static final _remuxHuaweiPortrait = _lib
+      .lookupFunction<
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
+        ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)
+      >('xdremux_remux_huawei_portrait');
 
   static final _classify = _lib.lookupFunction<
       ClassificationResult Function(ffi.Pointer<Utf8>),
@@ -282,6 +363,17 @@ class XdRemuxFFI {
         'xdremux_attach_styles',
       );
 
+  static final _attachStyleLayers = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Uint64,
+        ffi.Uint32,
+      ),
+      ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int, int)>(
+        'xdremux_attach_style_layers',
+      );
+
   static final _makeLivePhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
@@ -301,6 +393,10 @@ class XdRemuxFFI {
   static final _verifyPortraitOutput = _lib.lookupFunction<
       ffi.Bool Function(ffi.Pointer<Utf8>),
       bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_portrait_output');
+
+  static final _verifyHuaweiPortraitOutput = _lib.lookupFunction<
+      ffi.Bool Function(ffi.Pointer<Utf8>),
+      bool Function(ffi.Pointer<Utf8>)>('xdremux_verify_huawei_portrait_output');
 
   static final _writebackReturnedPhoto = _lib.lookupFunction<
       ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>,
@@ -345,6 +441,19 @@ class XdRemuxFFI {
       void Function(int, int, int)>('xdremux_progress_report');
 
   /// Returns the Rust core version string (e.g. "0.1.1").
+  static Map<String, dynamic> codecCapabilities() {
+    final read = _lib.lookupFunction<ffi.Pointer<Utf8> Function(),
+        ffi.Pointer<Utf8> Function()>('xdremux_codec_capabilities');
+    final result = read();
+    if (result == ffi.nullptr) throw StateError('Empty capability report');
+    try {
+      return Map<String, dynamic>.from(jsonDecode(result.toDartString()) as Map);
+    } finally {
+      _freeString(result);
+    }
+  }
+
+  /// Returns the Rust core version string.
   static String version() {
     final ptr = _version();
     try {
@@ -491,6 +600,15 @@ class XdRemuxFFI {
     }
   }
 
+  static bool verifyHuaweiPortraitOutput(String path) {
+    final ptr = path.toNativeUtf8();
+    try {
+      return _verifyHuaweiPortraitOutput(ptr);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
   static bool verifyPortraitOutput(String path) {
     try {
       final ptr = path.toNativeUtf8();
@@ -521,6 +639,66 @@ class XdRemuxFFI {
           : {'isMotionPhoto': false};
     } finally {
       calloc.free(pathPtr);
+    }
+  }
+
+  /// Inspect a Huawei HEIC without decoding or rewriting it.
+  static Map<String, dynamic> inspectHuawei(String inputPath) {
+    final input = inputPath.toNativeUtf8();
+    try {
+      final report = _huaweiInspect(input);
+      try {
+        if (report == ffi.nullptr) {
+          return <String, dynamic>{
+            'schema': 'xdremux-huawei-heic-v1',
+            'status': 'null-report',
+            'isHuaweiHdr': false,
+          };
+        }
+        final decoded = jsonDecode(report.toDartString());
+        if (decoded is Map) {
+          return decoded.map((key, value) => MapEntry(key.toString(), value));
+        }
+      } finally {
+        if (report != ffi.nullptr) _freeString(report);
+      }
+    } finally {
+      calloc.free(input);
+    }
+    return <String, dynamic>{
+      'schema': 'xdremux-huawei-heic-v1',
+      'status': 'invalid-report',
+      'isHuaweiHdr': false,
+    };
+  }
+
+  /// Remux a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
+  static Map<String, dynamic> remuxHuaweiPortrait(String inputPath, String outputPath) {
+    final inPtr = inputPath.toNativeUtf8();
+    final outPtr = outputPath.toNativeUtf8();
+    try {
+      final res = _remuxHuaweiPortrait(inPtr, outPtr);
+      if (res == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'error': 'Rust remux Huawei portrait returned null',
+        };
+      }
+      try {
+        final decoded = jsonDecode(res.toDartString());
+        if (decoded is Map) {
+          return Map<String, dynamic>.from(decoded);
+        }
+        return <String, dynamic>{
+          'success': false,
+          'error': 'Malformed response from remux Huawei portrait',
+        };
+      } finally {
+        _freeString(res);
+      }
+    } finally {
+      calloc.free(inPtr);
+      calloc.free(outPtr);
     }
   }
 
@@ -654,6 +832,44 @@ class XdRemuxFFI {
     }
   }
 
+  /// 2023 styles item. Photographic Styles 3 adds the other two bits.
+  static const int styleLayerStyles = 1;
+  static const int styleLayerTexture = 2;
+  static const int styleLayerMattes = 4;
+
+  /// Attach selected Photographic Styles layers onto an existing HEIC.
+  ///
+  /// Used after the Huawei portrait remux so portrait and styles share one
+  /// output. Returns {status, added, message?}.
+  static Map<String, dynamic> attachStyleLayers(
+    String inputPath,
+    String outputPath,
+    int grainSeed,
+    int flags,
+  ) {
+    final a = inputPath.toNativeUtf8();
+    final b = outputPath.toNativeUtf8();
+    ffi.Pointer<Utf8> ptr = ffi.nullptr;
+    try {
+      ptr = _attachStyleLayers(a, b, grainSeed, flags);
+      if (ptr == ffi.nullptr) {
+        return {'status': 'error', 'message': 'attach style layers returned null'};
+      }
+      final json = ptr.toDartString();
+      final decoded = jsonDecode(json);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return {'status': 'error', 'message': 'attach style layers returned malformed JSON'};
+    } catch (e) {
+      return {'status': 'error', 'message': '$e'};
+    } finally {
+      if (ptr != ffi.nullptr) _freeString(ptr);
+      calloc.free(a);
+      calloc.free(b);
+    }
+  }
+
   /// Styles attach for non-OPPO HEIC inputs. Returns
   /// {status: attached|already-complete|error, added: [...], message?}.
   static Map<String, dynamic> attachStyles(
@@ -776,6 +992,25 @@ class XdRemuxFFI {
   // -------------------------------------------------------------------------
   // Hardware-encoding split: prepare → Dart/MediaCodec encodes tiles → assemble
   // -------------------------------------------------------------------------
+
+  /// Primary SDR preview; missing additive API is handled by the service.
+  static Uint8List? renderThumbnail(String inputPath, {int maxPixelSize = 320}) {
+    final render = _lib.lookupFunction<
+        ThumbnailResult Function(ffi.Pointer<Utf8>, ffi.Uint32),
+        ThumbnailResult Function(ffi.Pointer<Utf8>, int)>('xdremux_render_thumbnail');
+    final path = inputPath.toNativeUtf8();
+    try {
+      final result = render(path, maxPixelSize.clamp(1, 2048));
+      try {
+        if (!result.success || result.data == ffi.nullptr || result.len == 0) return null;
+        return Uint8List.fromList(result.data.asTypedList(result.len));
+      } finally {
+        _freeThumbnail(result);
+      }
+    } finally {
+      calloc.free(path);
+    }
+  }
 
   /// Parse a HEIC, reconstruct the gain map, and pack each 512×512 tile as
   /// YUV420 (I420) into one contiguous buffer (Y,U,V per tile). Returns the

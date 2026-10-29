@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use xdremux_core::isobmff::{self, BoxHeader, IlocEntry, IrefEntry, IpmaEntry, ParsedMeta};
+use xdremux_core::isobmff::{self, BoxHeader, IlocEntry, IpmaEntry, IrefEntry, ParsedMeta};
 
 /// Result summary printed by the CLI.
 pub struct GraftSummary {
@@ -48,10 +48,10 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let std_mdat_hdr = find_top(&std_top, b"mdat").ok_or("standard: no mdat box")?;
     let _gold_mdat_hdr = find_top(&gold_top, b"mdat").ok_or("golden: no mdat box")?;
 
-    let std_meta = isobmff::parse_source_meta(standard)
-        .map_err(|e| format!("standard meta parse: {e}"))?;
-    let gold_meta = isobmff::parse_source_meta(golden)
-        .map_err(|e| format!("golden meta parse: {e}"))?;
+    let std_meta =
+        isobmff::parse_source_meta(standard).map_err(|e| format!("standard meta parse: {e}"))?;
+    let gold_meta =
+        isobmff::parse_source_meta(golden).map_err(|e| format!("golden meta parse: {e}"))?;
 
     // idat payloads (construction-method-1 item data)
     let std_idat = idat_payload(standard, &std_meta_hdr).unwrap_or_default();
@@ -79,7 +79,11 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
                     .props
                     .iter()
                     .find(|p| p.index == *idx)
-                    .map(|p| p.raw.windows(b"semanticskymatte".len()).any(|w| w == b"semanticskymatte"))
+                    .map(|p| {
+                        p.raw
+                            .windows(b"semanticskymatte".len())
+                            .any(|w| w == b"semanticskymatte")
+                    })
                     .unwrap_or(false)
             })
         })
@@ -118,13 +122,18 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
             .unwrap_or_default()
     };
     let has_styledeltamap_urn = |id: u32| {
-        props_of(id)
-            .iter()
-            .any(|p| p.windows(b"styledeltamap".len()).any(|w| w == b"styledeltamap"))
+        props_of(id).iter().any(|p| {
+            p.windows(b"styledeltamap".len())
+                .any(|w| w == b"styledeltamap")
+        })
     };
 
     let item_type = |id: u32| -> Option<&str> {
-        gold_meta.items.iter().find(|i| i.item_id == id).map(|i| i.itype.as_str())
+        gold_meta
+            .items
+            .iter()
+            .find(|i| i.item_id == id)
+            .map(|i| i.itype.as_str())
     };
 
     let delta_grid_g = *auxl_froms
@@ -137,9 +146,10 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let linear_g = *auxl_froms
         .iter()
         .find(|id| {
-            props_of(**id)
-                .iter()
-                .any(|p| p.windows(b"linearthumbnail".len()).any(|w| w == b"linearthumbnail"))
+            props_of(**id).iter().any(|p| {
+                p.windows(b"linearthumbnail".len())
+                    .any(|w| w == b"linearthumbnail")
+            })
         })
         .ok_or("golden: no linear thumbnail auxl item")?;
     let delta_tiles_g: Vec<u32> = gold_meta
@@ -153,9 +163,8 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     }
 
     // ---- 3. Extract payloads from the golden file ---------------------
-    let gold_iloc = |id: u32| -> Option<&IlocEntry> {
-        gold_meta.iloc_entries.iter().find(|e| e.item_id == id)
-    };
+    let gold_iloc =
+        |id: u32| -> Option<&IlocEntry> { gold_meta.iloc_entries.iter().find(|e| e.item_id == id) };
     let mdat_bytes = |entry: &IlocEntry| -> Result<Vec<u8>, String> {
         if entry.construction_method != 0 || entry.extents.len() != 1 {
             return Err("expected a single mdat extent".into());
@@ -184,14 +193,21 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let include_sky = include & 16 != 0 && sky_g.is_some();
     let delta_tile_payloads: Vec<Vec<u8>> = delta_tiles_g
         .iter()
-        .map(|id| gold_iloc(*id).map(&mdat_bytes).transpose().map(|o| o.unwrap()))
+        .map(|id| {
+            gold_iloc(*id)
+                .map(&mdat_bytes)
+                .transpose()
+                .map(|o| o.unwrap())
+        })
         .collect::<Result<_, _>>()?;
     let delta_grid_payload =
         idat_bytes(gold_iloc(delta_grid_g).ok_or("golden: delta grid has no iloc")?)?;
     let linear_payload =
         mdat_bytes(gold_iloc(linear_g).ok_or("golden: linear thumb has no iloc")?)?;
     let sky_payload = if include_sky {
-        Some(mdat_bytes(gold_iloc(sky_g.unwrap()).ok_or("golden: sky matte has no iloc")?)?)
+        Some(mdat_bytes(
+            gold_iloc(sky_g.unwrap()).ok_or("golden: sky matte has no iloc")?,
+        )?)
     } else {
         None
     };
@@ -245,8 +261,9 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
         *next_id += 1;
         id
     };
-    let delta_tile_ids: Vec<u32> =
-        (0..delta_tiles_g.len()).map(|_| fresh(&mut next_id)).collect();
+    let delta_tile_ids: Vec<u32> = (0..delta_tiles_g.len())
+        .map(|_| fresh(&mut next_id))
+        .collect();
     let delta_grid_id = fresh(&mut next_id);
     let linear_thumbnail_id = fresh(&mut next_id);
     let style_metadata_id = fresh(&mut next_id);
@@ -268,12 +285,9 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     }
 
     // ---- 5. Properties: append golden boxes, remap ipma ----------------
-    let std_iprp = find_child(standard, &std_meta_hdr, b"iprp")
-        .ok_or("standard: no iprp box")?;
-    let std_ipco = find_child(standard, &std_iprp, b"ipco")
-        .ok_or("standard: no ipco box")?;
-    let std_ipco_kids =
-        isobmff::parse_boxes(standard, std_ipco.data_start, std_ipco.data_end); // ipco is not a FullBox
+    let std_iprp = find_child(standard, &std_meta_hdr, b"iprp").ok_or("standard: no iprp box")?;
+    let std_ipco = find_child(standard, &std_iprp, b"ipco").ok_or("standard: no ipco box")?;
+    let std_ipco_kids = isobmff::parse_boxes(standard, std_ipco.data_start, std_ipco.data_end); // ipco is not a FullBox
     let std_ipco_raw = standard[std_ipco.data_start..std_ipco.data_end].to_vec();
     let mut property_count = std_ipco_kids.len() as u32;
 
@@ -286,12 +300,19 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
         .iter()
         .enumerate()
         .map(|(i, k)| {
-            (standard[k.box_start..k.box_start + k.size].to_vec(), (i + 1) as u32)
+            (
+                standard[k.box_start..k.box_start + k.size].to_vec(),
+                (i + 1) as u32,
+            )
         })
         .collect();
     let mut append_item_props = |item_id: u32, golden_item: u32| {
         let mut associations = Vec::new();
-        if let Some(entry) = gold_meta.ipma_entries.iter().find(|e| e.item_id == golden_item) {
+        if let Some(entry) = gold_meta
+            .ipma_entries
+            .iter()
+            .find(|e| e.item_id == golden_item)
+        {
             for (idx, essential) in &entry.associations {
                 if let Some(prop) = gold_meta.props.iter().find(|p| p.index == *idx) {
                     let raw = &prop.raw;
@@ -310,7 +331,10 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
             }
         }
         if !associations.is_empty() {
-            new_ipma_entries.push(IpmaEntry { item_id, associations });
+            new_ipma_entries.push(IpmaEntry {
+                item_id,
+                associations,
+            });
         }
     };
     let notile_ipma = std::env::var("XGRAFT_NOTILE_IPMA").is_ok();
@@ -372,18 +396,12 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let gainmap_grid_s = std_meta
         .refs
         .iter()
-        .find(|r| {
-            r.rtype == "auxl" && r.to.contains(&primary_s) && r.to.contains(&tmap_s)
-        })
+        .find(|r| r.rtype == "auxl" && r.to.contains(&primary_s) && r.to.contains(&tmap_s))
         .map(|r| r.from);
     let mut new_refs: Vec<IrefEntry> = std_meta
         .refs
         .iter()
-        .filter(|r| {
-            !(golden_style_gainmap
-                && r.rtype == "auxl"
-                && Some(r.from) == gainmap_grid_s)
-        })
+        .filter(|r| !(golden_style_gainmap && r.rtype == "auxl" && Some(r.from) == gainmap_grid_s))
         .cloned()
         .collect();
     if include & 1 != 0 && include & 2 != 0 {
@@ -445,7 +463,10 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
         new_idat.extend_from_slice(&style_metadata_payload);
     }
     let sky_mime_offset = new_idat.len() as u64;
-    let sky_mime_len = sky_mime_payload.as_ref().map(|p| p.len() as u64).unwrap_or(0);
+    let sky_mime_len = sky_mime_payload
+        .as_ref()
+        .map(|p| p.len() as u64)
+        .unwrap_or(0);
     if include_sky {
         if let Some(p) = &sky_mime_payload {
             new_idat.extend_from_slice(p);
@@ -479,7 +500,11 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
     let ipma_for_build: &[IpmaEntry] = &new_ipma_entries;
     let build = |iloc_entries: &[IlocEntry]| -> Vec<u8> {
         build_output(
-            if golden_style_gainmap { gainmap_grid_s } else { None },
+            if golden_style_gainmap {
+                gainmap_grid_s
+            } else {
+                None
+            },
             None,
             standard,
             &std_top,
@@ -576,7 +601,10 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
                     (new_off as u64, length)
                 })
                 .collect();
-            IlocEntry { extents, ..entry.clone() }
+            IlocEntry {
+                extents,
+                ..entry.clone()
+            }
         })
         .collect();
     for (entry, (rel_off, len)) in delta_tile_ids.iter().zip(tile_extents.iter()) {
@@ -653,10 +681,7 @@ pub fn graft_styles(standard: &[u8], golden: &[u8]) -> Result<(Vec<u8>, GraftSum
             delta_grid_id,
             linear_thumbnail_id,
             style_metadata_id,
-            appended_properties: new_ipma_entries
-                .iter()
-                .map(|e| e.associations.len())
-                .sum(),
+            appended_properties: new_ipma_entries.iter().map(|e| e.associations.len()).sum(),
             output_bytes: output.len(),
         },
     ))
@@ -689,8 +714,7 @@ fn find_child(data: &[u8], parent: &BoxHeader, btype: &[u8; 4]) -> Option<BoxHea
 }
 
 pub(crate) fn idat_payload(data: &[u8], meta: &BoxHeader) -> Option<Vec<u8>> {
-    find_child(data, meta, b"idat")
-        .map(|h| data[h.data_start..h.data_end].to_vec())
+    find_child(data, meta, b"idat").map(|h| data[h.data_start..h.data_end].to_vec())
 }
 
 fn golden_item_with_infe_text(meta: &ParsedMeta, text: &[u8]) -> Option<u32> {
@@ -718,8 +742,7 @@ fn patch_infe_id(raw: &[u8], new_id: u32) -> Result<Vec<u8>, String> {
     if version == 3 {
         out[id_offset..id_offset + 4].copy_from_slice(&new_id.to_be_bytes());
     } else {
-        out[id_offset..id_offset + 2]
-            .copy_from_slice(&(new_id as u16).to_be_bytes());
+        out[id_offset..id_offset + 2].copy_from_slice(&(new_id as u16).to_be_bytes());
     }
     Ok(out)
 }
@@ -824,8 +847,7 @@ fn build_output(
                 meta_payload.extend_from_slice(&idat_box);
                 shown_idat = true;
             }
-            _ => meta_payload
-                .extend_from_slice(&standard[kid.box_start..kid.box_start + kid.size]),
+            _ => meta_payload.extend_from_slice(&standard[kid.box_start..kid.box_start + kid.size]),
         }
     }
     if !shown_iref {
@@ -911,7 +933,6 @@ fn build_ipma_entries(std_meta: &ParsedMeta, base: &[IpmaEntry], extra: &[IpmaEn
     payload
 }
 
-
 /// Debug/bisect: rebuild the file's meta with zero additions and verify the
 /// output stays byte-equivalent for ImageIO.
 pub fn rewrite_meta_passthrough(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -932,26 +953,57 @@ pub fn rewrite_meta_passthrough(data: &[u8]) -> Result<Vec<u8>, String> {
     // two-pass like graft: meta may grow/shrink from reserialization
     let build = |iloc: &[IlocEntry]| {
         build_output(
-            None, None, data, &top, &meta_hdr, &mdat_hdr, &meta, &infes, iloc,
-            &ipco_raw, &[], &refs, &idat, &mdat_payload, &[],
+            None,
+            None,
+            data,
+            &top,
+            &meta_hdr,
+            &mdat_hdr,
+            &meta,
+            &infes,
+            iloc,
+            &ipco_raw,
+            &[],
+            &refs,
+            &idat,
+            &mdat_payload,
+            &[],
         )
     };
     let prelim = build(&meta.iloc_entries);
-    let prelim_meta_size = find_top(&top_level_boxes(&prelim).unwrap(), b"meta").unwrap().size;
+    let prelim_meta_size = find_top(&top_level_boxes(&prelim).unwrap(), b"meta")
+        .unwrap()
+        .size;
     let mut prefix = 0usize;
     for hdr in &top {
-        if hdr.box_start == mdat_hdr.box_start { break; }
-        prefix += if hdr.box_start == meta_hdr.box_start { prelim_meta_size } else { hdr.size };
+        if hdr.box_start == mdat_hdr.box_start {
+            break;
+        }
+        prefix += if hdr.box_start == meta_hdr.box_start {
+            prelim_meta_size
+        } else {
+            hdr.size
+        };
     }
     let new_mdat_start = prefix + 8;
     let delta = new_mdat_start as i64 - mdat_hdr.data_start as i64;
-    let final_iloc: Vec<IlocEntry> = meta.iloc_entries.iter().map(|e| IlocEntry {
-        extents: e.extents.iter().map(|&(o, l)| {
-            let oo = o as i64;
-            let shift = e.construction_method == 0 && oo >= mdat_hdr.data_start as i64 && oo < mdat_hdr.data_end as i64;
-            ((if shift { oo + delta } else { oo }) as u64, l)
-        }).collect(),
-        ..e.clone()
-    }).collect();
+    let final_iloc: Vec<IlocEntry> = meta
+        .iloc_entries
+        .iter()
+        .map(|e| IlocEntry {
+            extents: e
+                .extents
+                .iter()
+                .map(|&(o, l)| {
+                    let oo = o as i64;
+                    let shift = e.construction_method == 0
+                        && oo >= mdat_hdr.data_start as i64
+                        && oo < mdat_hdr.data_end as i64;
+                    ((if shift { oo + delta } else { oo }) as u64, l)
+                })
+                .collect(),
+            ..e.clone()
+        })
+        .collect();
     Ok(build(&final_iloc))
 }

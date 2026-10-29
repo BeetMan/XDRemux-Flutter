@@ -10,6 +10,7 @@ pub struct ExtractedLhdr {
     pub mode: String, // "lhdr" or "uhdr"
     pub meta_bytes: Vec<u8>,
     pub meta_floats: Vec<f32>,
+    pub gainmap_use_base_color_space: bool,
     pub mask_data: Option<Vec<u8>>,
     pub gainmap_data: Option<Vec<u8>>,
     pub manifest_entries: Option<Vec<ManifestEntry>>,
@@ -168,6 +169,7 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
                         mode: "uhdr".into(),
                         meta_bytes: info_bytes.to_vec(),
                         meta_floats: info_floats,
+                        gainmap_use_base_color_space: true,
                         mask_data: None,
                         gainmap_data: gainmap_bytes,
                         manifest_entries: Some(entries.clone()),
@@ -209,6 +211,7 @@ pub fn extract_lhdr_from_bytes(data: &[u8]) -> Result<ExtractedLhdr, String> {
         mode: "lhdr".into(),
         meta_bytes: meta_bytes.to_vec(),
         meta_floats: floats,
+        gainmap_use_base_color_space: true,
         mask_data,
         gainmap_data: None,
         manifest_entries: manifest.map(|m| m.0),

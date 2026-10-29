@@ -39,7 +39,7 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
   final List<_RustPortraitResult> _results = <_RustPortraitResult>[];
   String? _outputDirectory;
   bool _running = false;
-  String _status = t('选择包含 rear.depth 的 OPPO 后置人像照片。', 'Choose OPPO rear portrait photos that include rear.depth.');
+  String _status = t('选择包含 rear.depth 或 front.depth 的 OPPO 人像照片。', 'Choose OPPO portrait photos that include rear.depth or front.depth.');
 
   Future<void> _pickPhotos() async {
     final result = await FilePicker.pickFiles(
@@ -84,11 +84,14 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
   String _defaultOutputDirectory() =>
       '${File(_inputs.first).parent.path}${Platform.pathSeparator}xdremux-portrait';
 
-  bool _hasRearDepth(Map<String, dynamic> report) {
+  bool _hasPortraitDepth(Map<String, dynamic> report) {
     final resources = report['resources'];
     return report['available'] == true &&
         resources is List &&
-        resources.any((resource) => resource.toString() == 'rear.depth');
+        resources.any(
+          (resource) =>
+              resource.toString() == 'rear.depth' || resource.toString() == 'front.depth',
+        );
   }
 
   String _diagnosisSummary(Map<String, dynamic> report) {
@@ -115,14 +118,17 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
       for (final input in _inputs) {
         if (!mounted) return;
         final diagnosis = await XdRemuxService.diagnosePortrait(input);
-        if (!_hasRearDepth(diagnosis)) {
+        if (!_hasPortraitDepth(diagnosis)) {
           _results.add(
             _RustPortraitResult(
               input: input,
               output: null,
               diagnosis: diagnosis,
               success: false,
-              error: t('缺少可用 rear.depth，人像转换已跳过。', 'No usable rear.depth; portrait conversion skipped.'),
+              error: t(
+                '缺少可用 rear.depth 或 front.depth，人像转换已跳过。',
+                'No usable rear.depth or front.depth; portrait conversion skipped.',
+              ),
             ),
           );
           setState(() {});
@@ -197,7 +203,12 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
     return Scaffold(
       appBar: AppBar(title: Text(t('Rust 人像模式实验室', 'Rust Portrait Lab'))),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).right,
+          32,
+        ),
         children: [
           Card(
             color: theme.colorScheme.secondaryContainer,

@@ -12,7 +12,6 @@ import 'services/file_action_service.dart';
 import 'services/drop_file_service.dart';
 import 'services/motion_photo_service.dart';
 import 'services/picked_file_resolver.dart';
-import 'services/xdremux_service.dart';
 import 'platform_x.dart';
 import 'l10n/l10n.dart';
 
@@ -33,9 +32,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   String? _appleEditPath;
   String? _returnedPath;
   String? _finalPath;
-  BackendCapabilities _capabilities = BackendCapabilities.forCurrentPlatform();
   AppleWatermarkPolicy _watermarkPolicy = AppleWatermarkPolicy.preserve;
-  ConversionBackend _stylesBackend = ConversionBackend.rust;
   OutputMode _outputMode = Platform.isIOS ? OutputMode.apple : OutputMode.oppo;
   bool _restoreWatermark = true;
   bool _running = false;
@@ -49,7 +46,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       DropFileService.workflowActive = true;
       _dropSubscription = DropFileService.files.listen(_handleDroppedFiles);
     }
-    _loadCapabilities();
   }
 
   @override
@@ -70,12 +66,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       _finalPath = null;
       _status = t('已拖入 iPhone 回传照片：${_fileLabel(candidates.first)}', 'Dropped iPhone returned photo: ${_fileLabel(candidates.first)}');
     });
-  }
-
-  Future<void> _loadCapabilities() async {
-    final capabilities = await XdRemuxService.getBackendCapabilities();
-    if (!mounted) return;
-    setState(() => _capabilities = capabilities);
   }
 
   Future<String?> _pickPhoto() async {
@@ -166,17 +156,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   Future<void> _createAppleEditCopy() async {
     final source = _sourcePath;
     if (source == null || _running) return;
-    final backendAvailable =
-        _stylesBackend == ConversionBackend.rust ||
-        _capabilities.swiftPhotographicStyles;
-    if (!backendAvailable) {
-      _showError(
-        _capabilities.swiftAppleFeaturesUnavailableReason.isEmpty
-            ? t('当前设备未通过 Swift Apple 照片摄影风格能力验证。', 'Current device did not pass the Swift Apple Photographic Styles capability check.')
-            : _capabilities.swiftAppleFeaturesUnavailableReason,
-      );
-      return;
-    }
     setState(() {
       _running = true;
       _status = t('正在准备 Apple 编辑副本…', 'Preparing Apple edit copy…');
@@ -193,7 +172,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
       final result = await AppleOppoWorkflowService.createAppleStylesCopy(
         sourcePath: source,
         outputPath: output,
-        backend: _stylesBackend,
+        backend: ConversionBackend.rust,
         watermarkPolicy: _watermarkPolicy,
         onStatus: _setStatus,
       );
@@ -384,15 +363,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
     return _outputMode.appHelp;
   }
 
-  String get _appleCapabilityMessage {
-    if (_capabilities.swiftAppleFeaturesUnavailableReason.isNotEmpty) {
-      return _capabilities.swiftAppleFeaturesUnavailableReason;
-    }
-    return Platform.isIOS
-        ? t('iOS 当前只验证 Rust OPPO 兼容文件；Apple 照片中的摄影风格仍等待嵌入式 Swift Library。', 'iOS currently only validates Rust OPPO-compatible files; Photographic Styles in Apple Photos still await the embedded Swift Library.')
-        : t('当前设备未通过 Apple 照片摄影风格能力验证。', 'Current device did not pass the Apple Photographic Styles capability check.');
-  }
-
   Widget _stepCard({
     required BuildContext context,
     required int step,
@@ -445,9 +415,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canUseSelectedStylesBackend =
-        _stylesBackend == ConversionBackend.rust ||
-        _capabilities.swiftPhotographicStyles;
     return Scaffold(
       appBar: AppBar(
         title: Text(t('一帧影像，动用两台手机', 'One photo, two phones')),
@@ -455,7 +422,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
         surfaceTintColor: Colors.transparent,
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16 + MediaQuery.paddingOf(context).right,
+          32,
+        ),
         children: [
           Card(
             color: theme.colorScheme.secondaryContainer,
@@ -516,32 +488,6 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(t('转换引擎', 'Conversion engine'), style: theme.textTheme.titleSmall),
-                const SizedBox(height: 4),
-                SegmentedButton<ConversionBackend>(
-                  segments: ConversionBackend.values
-                      .where((backend) => _capabilities.isVisible(backend))
-                      .map(
-                        (backend) => ButtonSegment<ConversionBackend>(
-                          value: backend,
-                          label: Text(backend.appTitle),
-                          enabled:
-                              backend == ConversionBackend.rust ||
-                              _capabilities.swiftPhotographicStyles,
-                        ),
-                      )
-                      .toList(),
-                  selected: {_stylesBackend},
-                  onSelectionChanged: _running
-                      ? null
-                      : (value) {
-                          setState(() {
-                            _stylesBackend = value.first;
-                            _appleEditPath = null;
-                          });
-                        },
-                ),
-                const SizedBox(height: 12),
                 SegmentedButton<AppleWatermarkPolicy>(
                   segments: AppleWatermarkPolicy.values
                       .map(
@@ -552,7 +498,7 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                       )
                       .toList(),
                   selected: {_watermarkPolicy},
-                  onSelectionChanged: _running || !canUseSelectedStylesBackend
+                  onSelectionChanged: _running
                       ? null
                       : (value) {
                           setState(() {
@@ -568,24 +514,12 @@ class _AppleOppoWorkflowPageState extends State<AppleOppoWorkflowPage> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed:
-                      _sourcePath == null ||
-                          !canUseSelectedStylesBackend ||
-                          _running
+                  onPressed: _sourcePath == null || _running
                       ? null
                       : _createAppleEditCopy,
                   icon: const Icon(Icons.auto_awesome),
                   label: Text(t('生成 Apple 照片编辑副本', 'Generate Apple Photos edit copy')),
                 ),
-                if (!canUseSelectedStylesBackend) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _appleCapabilityMessage,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.error,
-                    ),
-                  ),
-                ],
                 if (_appleEditPath != null) ...[
                   const SizedBox(height: 12),
                   Text(t('Apple 照片编辑副本', 'Apple Photos edit copy'), style: theme.textTheme.labelLarge),

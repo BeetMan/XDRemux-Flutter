@@ -61,7 +61,42 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 
 验证现状：直出文件 ColorOS 相册、Windows WIC、heif-oxide 均可打开；Apple 照片内编辑兼容性 iPhone 真机已验证。
 
-## 4. 诊断工具
+## 4. 线性缩略图（Apple Log）
+
+对应代码：`linear_thumbnail.rs`（几何 + 重采样 + 编码）、`apple_log.rs`（传递函数）、`styles_native.rs`（装配 ispe/item）。
+
+原生 `aux:linearthumbnail` 在 Styles 文件里存的是 **Apple Log 码值**，不是 sRGB、也不是线性 RGB。2026-10-25 起本移植按同一契约生成：
+
+1. heif-oxide 解码主图得到 display-ready sRGB（8/16-bit）；
+2. 按主图 `irot` 把显示方向转回 **coded 存储方向**（aux item 继承主图 irot）；
+3. sRGB EOTF 转线性光（`apple_log::srgb_to_linear`），**在线性域**做面积覆盖重采样（`area_resize_linear_rgb`）；
+4. 几何用 `fitted_even_dimensions`：长边上限 1024、两边强制偶数、**保持 coded 宽高比（不再裁成 4:3）**、不放大；
+5. 除以 Styles baseline exposure（`styleData` plist key 4，默认 `styles_native::IDENTITY_BASELINE_EXPOSURE = 4.0`），套 Apple Log 曲线（常量 `A/B/C` 与 macOS 26A434 解码器逐位一致），量化后编码。
+
+| 项 | 现状 | 与原生差距 |
+|---|---|---|
+| 传递函数 | Apple Log（`code = A*log2(linear/BE + B_off) + C`，边界码 0/1 钳位） | 无（常量对齐上游） |
+| 几何 | 长边 1024、双偶数、coded 宽高比、同 irot | 无（对齐上游 `fitted_even_dimensions`） |
+| 量化 | 构建期链接了 10-bit x265 时：**16-bit codes → Main10**；否则 8-bit 4:2:0 过渡路径 | 10-bit 通路已接入（`x265_10bit_bridge.cpp` + `build.rs` 可选链接）；未链接时 8-bit 回退仍只承载 SDR 码值 `[0, 0.6946]`，属预览级精度 |
+| HDR 范围 | **转换路径已在内存应用 ISO 21496 增益图**（路径 3）：scene-linear 阶段乘 gain 后再重采样；增益图方向按写路径规则处理（EXIF 非 Normal 且主图 `irot==0` 时对平面做同一 EXIF 变换） | 原生在 base 分辨率应用 ISO 增益重建 scene-linear HDR。**已实测**：真实样张缩略图 16-bit luma max 35610→46159、mean 21401→26070（payload 140537→154916B）。剩余：① 原生 Apple tmap 文件的重编码场景仍需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0，见 `docs/research/gainmap-decode-feasibility-20261025.md`）；② 真机 A/B 确认绝对亮度；③ 旋转样本的真机/E2E 验证（现有样本都是 Normal） |
+
+验证（本机，`cargo test -p xdremux-core --lib` 覆盖）：
+
+- `apple_log`：常量、编解码往返（码值 1.0 以上会钳位，约 linear 12 封顶）、边界钳位、sRGB EOTF 端点、baseline exposure 除法、8-bit 量化、异常输入拒绝；
+- `linear_thumbnail`：几何契约（4:3/16:9/竖拍/小图不放大/奇数边取偶/极端宽高比）、线性域面积重采样均值与恒等、参数校验；
+- 10-bit 通路（仅当构建期链接了 10-bit 库，`cfg(xdremux_main10)`）：`code16_to_10bit` 端点/单调、16-bit codes → BT.601 limited-range 10-bit YUV、编码后 hvcC 断言 `profile_idc=2` 且 bitDepth=10。本机实测：链接 10-bit 库 **263 passed**，未链接 **262 passed**。
+- 真实样本端到端（2026-10-25，Windows + 10-bit 归档）：用 `examples/styles_convert` 转换两张真实样张，再用 `examples/lt_inspect <out.heic> [out.hevc]` 导出线性缩略图，`ffprobe` 判定 **`profile=Main 10` / `pix_fmt=yuv420p10le`**，尺寸与 hvcC ispe 一致（768×1024、772×1024，coded 方向长边 1024）；`ffmpeg -frames:v 1` 解码为 16-bit RGB PNG 成功，无崩溃/花屏。hvcC 断言 `profile_idc=2`、`bitDepthLuma/Chroma=10`、`chromaFormat=1`、`lengthSize=4`。
+- 增益图应用（2026-10-25）：单测 `linear_thumbnail::tests::gain_map_plane_maps_codes_and_samples_nearest`；真实样张 E2E 前后对比见上表 HDR 行（16-bit luma max +29.6%、mean +21.8%，payload +10.2%）。
+- 增益图方向对齐（2026-10-25）：单测 `gain_map_orientation_decision_matches_writer_rule`（Normal / 非 Normal+irot0 / 非 Normal+irot1 / 非 Normal+无 irot）与 `gain_plane_orientation_follows_exif_transform`（3×2→2×3 旋转、None 透传）；Normal 样本 E2E 回归数值与修复前完全一致（max 46159 / mean 26070.3 / p99.9 43989），确认无回归。旋转样本的真实 E2E 待补（现有样本 orientation 都是 Normal）。
+
+Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。CI 已在 Ubuntu 上同时构建 8-bit 与 10-bit 归档（`.github/workflows/ci.yml`），所以 `cargo test --workspace` 会覆盖 Main10 路径。
+
+后续（P1）：
+1. ~~10-bit Main10 编码~~ **已完成（构建期可选）**；剩余：为 Linux / Android / iOS / OHOS 产出 10-bit 静态库并纳入 CI；
+2. 增益图解码（HEVC tile 解码）打通后，把 base 分辨率的 gain map 应用到线性光再重采样，恢复 HDR 高光；
+3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度与 10-bit 缩略图接受度。
+
+## 5. 诊断工具
 
 - `styles_diag <file>`：打印 box/item/引用/属性/尾部条目全量结构
 - `styles_convert`：端到端转换探针

@@ -205,6 +205,83 @@ fn incomplete_note(bo: Bo) -> Vec<u8> {
 }
 
 #[test]
+fn zero_padding_allows_opaque_note_growth_without_payload_relocation() {
+    for bo in [Bo(false), Bo(true)] {
+        let mut note = incomplete_note(bo);
+        bo.put_u16(&mut note[30..32], 7);
+        let (entries, _) = read_ifd(&note, bo, 14).unwrap();
+        note.splice(68..68, [0; 24]);
+        for entry in entries {
+            bo.put_u32(&mut note[entry.value_field_pos..entry.value_field_pos+4], entry.payload_offset.unwrap() + 24);
+        }
+        let (original, _) = read_ifd(&note, bo, 14).unwrap();
+        let output = merge_styles_note(&note, &build_maker_note()).unwrap();
+        let (merged, _) = read_ifd(&output, bo, 14).unwrap();
+        for old in original {
+            let new = merged.iter().find(|e| e.tag == old.tag).unwrap();
+            assert_eq!(old.payload_offset, new.payload_offset);
+            assert_eq!(entry_bytes(&note, &old), entry_bytes(&output, new));
+        }
+        assert_eq!(merge_styles_note(&output, &build_maker_note()).unwrap(), output);
+    }
+}
+
+#[test]
+fn self_relative_plist_fields_preserve_bytes_and_unknown_tag_identity() {
+    for bo in [Bo(false), Bo(true)] {
+        let mut note = incomplete_note(bo);
+        let mut writer = crate::styles_bplist::BplistWriter::new();
+        let key = writer.add_str("unknown");
+        let value = writer.add_real(1.25);
+        let top = writer.add_dict(&[(key, value)]);
+        let plist = writer.finish(top);
+        let pos = 28;
+        bo.put_u16(&mut note[pos+2..pos+4], 7);
+        bo.put_u32(&mut note[pos+4..pos+8], plist.len() as u32);
+        let offset = note.len() as u32;
+        bo.put_u32(&mut note[pos+8..pos+12], offset);
+        note.extend(plist);
+        let (old, _) = read_ifd(&note, bo, 14).unwrap();
+        let output = merge_styles_note(&note, &build_maker_note()).unwrap();
+        let (new, _) = read_ifd(&output, bo, 14).unwrap();
+        for entry in old {
+            let merged = new.iter().find(|e| e.tag == entry.tag).unwrap();
+            assert_eq!((entry.typ, entry.count), (merged.typ, merged.count));
+            assert_eq!(entry_bytes(&note, &entry), entry_bytes(&output, merged));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires public libultrahdr Apple JPEG fixtures via XDREMUX_APPLE_JPEG_FIXTURES"]
+fn apple_jpeg_reference_notes_preserve_every_original_tag() {
+    let root = std::env::var("XDREMUX_APPLE_JPEG_FIXTURES").expect("set fixture directory");
+    for name in ["apple_gainmap_old.jpg", "apple_gainmap_new.jpg"] {
+        let jpeg = std::fs::read(std::path::Path::new(&root).join(name)).unwrap();
+        let tiff = crate::uhdr_jpeg::extract_exif_tiff(&jpeg).unwrap();
+        let mut exif = vec![0; 4];
+        exif.extend(tiff);
+        let prefix = exif_prefix_len(&exif).unwrap();
+        let tiff = &exif[prefix..];
+        let (bo, ifd0) = tiff_header(tiff).unwrap();
+        let (_, entries, _) = exif_directory(tiff, bo, ifd0).unwrap();
+        let note = entry_bytes(tiff, entries.iter().find(|e| e.tag == 0x927c).unwrap()).unwrap();
+        let output = compose_styles_maker_note(&exif).unwrap();
+        let bo = Bo(true);
+        let (old, _) = read_ifd(note, bo, 14).unwrap();
+        let (new, _) = read_ifd(&output, bo, 14).unwrap();
+        assert_eq!(old.len(), 51);
+        assert_eq!(new.len(), 52);
+        for entry in old {
+            let merged = new.iter().find(|e| e.tag == entry.tag).unwrap();
+            assert_eq!((entry.typ, entry.count), (merged.typ, merged.count));
+            assert_eq!(entry_bytes(note, &entry), entry_bytes(&output, merged));
+        }
+        assert_eq!(merge_styles_note(&output, &build_maker_note()).unwrap(), output);
+    }
+}
+
+#[test]
 fn incomplete_apple_note_merge_le_be_preserves_uuid_and_note_relative_payloads() {
     for bo in [Bo(false), Bo(true)] {
         let note = incomplete_note(bo);
@@ -336,5 +413,52 @@ fn metadata_rejects_invalid_headers_directories_and_payload_bounds() {
         let mut unsupported = note;
         bo.put_u16(&mut unsupported[42..44], 99);
         assert!(merge_styles_note(&unsupported, &build_maker_note()).is_err());
+    }
+}
+
+#[test]
+fn inject_maker_note_renames_duplicate_927c_entries() {
+    // Huawei cameras (e.g. Mate 70 Pro) can emit several 0x927c entries;
+    // the Apple MakerNote insert must not fail on the duplicates and the
+    // surplus vendor entries must be renamed so ImageIO cannot overwrite
+    // the Apple MakerNote afterwards.
+    for bo in [Bo(false), Bo(true)] {
+        let mut tiff = vec![0u8; 128];
+        tiff[..2].copy_from_slice(if bo.0 { b"MM" } else { b"II" });
+        bo.put_u16(&mut tiff[2..4], 42);
+        bo.put_u32(&mut tiff[4..8], 8);
+        // IFD0: only the ExifIFD pointer.
+        bo.put_u16(&mut tiff[8..10], 1);
+        bo.put_u16(&mut tiff[10..12], 0x8769);
+        bo.put_u16(&mut tiff[12..14], 4);
+        bo.put_u32(&mut tiff[14..18], 1);
+        bo.put_u32(&mut tiff[18..22], 30);
+        bo.put_u32(&mut tiff[22..26], 0);
+        // ExifIFD: three 0x927c entries (undefined, 8 bytes at offset 96).
+        let exif_ifd = 30;
+        bo.put_u16(&mut tiff[exif_ifd..exif_ifd + 2], 3);
+        for i in 0..3u32 {
+            let e = exif_ifd + 2 + 12 * i as usize;
+            bo.put_u16(&mut tiff[e..e + 2], 0x927c);
+            bo.put_u16(&mut tiff[e + 2..e + 4], 7);
+            bo.put_u32(&mut tiff[e + 4..e + 8], 8);
+            bo.put_u32(&mut tiff[e + 8..e + 12], 96);
+        }
+        bo.put_u32(&mut tiff[exif_ifd + 2 + 36..exif_ifd + 2 + 40], 0);
+        tiff[96..104].copy_from_slice(b"ven\0data");
+        let mut exif = b"\0\0\0\x06Exif\0\0".to_vec();
+        exif.extend(tiff);
+
+        let injected = inject_maker_note(&exif, b"apple").unwrap();
+        let prefix = exif_prefix_len(&injected).unwrap();
+        let out_tiff = &injected[prefix..];
+        let (_, ifd0) = tiff_header(out_tiff).unwrap();
+        let (_, entries, _) = exif_directory(out_tiff, bo, ifd0).unwrap();
+        let apple = entries.iter().find(|e| e.tag == 0x927c).expect("Apple MakerNote");
+        assert_eq!(entry_bytes(out_tiff, apple).unwrap(), b"apple");
+        for tag in [0x927du16, 0x927e] {
+            let renamed = entries.iter().find(|e| e.tag == tag).expect("renamed duplicate");
+            assert_eq!(entry_bytes(out_tiff, renamed).unwrap(), b"ven\0data");
+        }
     }
 }

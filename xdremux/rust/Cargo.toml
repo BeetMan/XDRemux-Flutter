@@ -1,6 +1,6 @@
 [package]
 name = "xdremux-core"
-version = "0.4.2"
+version = "0.4.5"
 edition = "2021"
 authors = ["BeetMan"]
 license = "MIT"
@@ -16,12 +16,19 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_ffmpeg_fallback)",
 
 [dependencies]
 heif-oxide = "0.1.0"
+rust_h265 = "0.1.0"
 jpeg-decoder = "0.3"
 quick-xml = "0.42"
 serde_json = "1.0"
 zstd = "0.13"
 png = "0.17"
 ort = "2.0.0-rc.13"
+
+[features]
+default = []
+# Native SDR decode fallback only; not an alternate HDR/container engine.
+# Requires target-built shared libheif >= 1.23.4 at XDREMUX_LIBHEIF_PREFIX.
+libheif-decoder = []
 
 [dev-dependencies]
 sha2 = "0.10"

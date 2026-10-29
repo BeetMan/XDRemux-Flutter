@@ -1,0 +1,217 @@
+name: Linux
+
+# Builds the Linux desktop release artifacts (AppImage + tar.gz) without
+# publishing, and can optionally attach them to an existing GitHub release.
+#
+# Shared by PR checks, build-only dispatch and release.yml. Linux stays a
+# preview target even though its artifacts now participate in the release gate.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Asset version (defaults to tag or pubspec)'
+        type: string
+        required: false
+        default: ''
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/linux.yml'
+      - 'apps/flutter/**'
+      - 'xdremux/rust/**'
+      - 'Cargo.*'
+      - 'tools/linux/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Asset version (defaults to apps/flutter/pubspec.yaml version)'
+        required: false
+        default: ''
+      attach_release_tag:
+        description: 'Existing release tag to attach assets to, e.g. v0.4.4 (empty = build only)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  X265_TAG: 4.2
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
+  FLUTTER_STORAGE_BASE_URL: https://storage.flutter-io.cn
+
+jobs:
+  linux-x64:
+    name: Linux x64 AppImage and tar.gz
+    # Build on the oldest supported distro so the resulting binaries keep a
+    # glibc baseline that also runs on newer distributions (Ubuntu 22.04 =
+    # glibc 2.35).
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build nasm \
+            libnuma-dev \
+            libgtk-3-dev libayatana-appindicator3-dev libnotify-dev \
+            libfuse2
+          clang --version
+          cmake --version
+
+      - name: Test packaging helpers and user-level installer
+        run: python3 -m unittest discover -s tools/linux -p 'test_*.py' -v
+
+      - name: Restore x265 build
+        id: x265-cache
+        uses: actions/cache@v4
+        with:
+          path: xdremux/rust/vendor/x265
+          # Never reuse objects compiled on ubuntu-latest with a newer glibc.
+          key: x265-linux-jammy-${{ env.X265_TAG }}-asm
+
+      - name: Build x265
+        if: steps.x265-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch "$X265_TAG" \
+            https://bitbucket.org/multicoreware/x265_git.git \
+            xdremux/rust/vendor/x265
+          mkdir -p xdremux/rust/vendor/x265/include
+          cp xdremux/rust/vendor/x265/source/x265.h \
+            xdremux/rust/vendor/x265/include/x265.h
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_desktop \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF
+          cmake --build xdremux/rust/vendor/x265/build_desktop \
+            --target x265-static --parallel 4
+          cp xdremux/rust/vendor/x265/build_desktop/x265_config.h \
+            xdremux/rust/vendor/x265/include/x265_config.h
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust core
+        run: cargo build --locked -p xdremux-core --release
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_VERSION"
+          source_version="$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' \
+            apps/flutter/pubspec.yaml | head -n 1)"
+          if [[ -z "$version" && "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$version" ]; then
+            version="$source_version"
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::invalid version '$version'"
+            exit 1
+          fi
+          if [[ "${version%%-*}" != "$source_version" ]]; then
+            echo "::error::asset version $version does not match source version $source_version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $version"
+
+      - name: Install Dart dependencies
+        working-directory: apps/flutter
+        run: flutter pub get --enforce-lockfile
+
+      - name: Build Linux app
+        working-directory: apps/flutter
+        run: >
+          flutter build linux --release --no-pub
+          --build-name="${{ steps.version.outputs.version }}"
+
+      - name: Verify Linux portability and dependency baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="apps/flutter/build/linux/x64/release/bundle"
+          max_glibc="$(objdump -T "$bundle/lib/libxdremux_core.so" \
+            | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 1)"
+          echo "Rust core max GLIBC requirement: $max_glibc"
+          # Ubuntu 22.04 ships glibc 2.35; fail if the build quietly raises the
+          # requirement (e.g. by linking objects built against newer headers).
+          if [ "$(printf '%s\n' GLIBC_2.35 "$max_glibc" | sort -V | tail -n 1)" != "GLIBC_2.35" ]; then
+            echo "::error::libxdremux_core.so requires $max_glibc, newer than the Ubuntu 22.04 baseline"
+            exit 1
+          fi
+          if readelf -d "$bundle/xdremux" | grep -q 'libayatana-appindicator3'; then
+            echo "::error::runner still links libayatana-appindicator3 (tray_manager should be filtered on Linux)"
+            exit 1
+          fi
+          if [ -e "$bundle/lib/libdartjni.so" ]; then
+            echo "::error::libdartjni.so should not be bundled on Linux"
+            exit 1
+          fi
+
+      - name: Package AppImage and tar.gz
+        run: |
+          bash tools/linux/package_linux.sh \
+            "${{ steps.version.outputs.version }}" \
+            --output dist
+
+      - name: Show artifacts
+        run: |
+          ls -lh dist
+          cat dist/*.sha256
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-release
+          path: dist/*
+          if-no-files-found: error
+
+  attach-release:
+    name: Attach to existing release (manual only)
+    needs: linux-x64
+    if: github.workflow == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.attach_release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-release
+          path: dist
+      - name: Attach artifacts to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.attach_release_tag }}
+          ASSET_VERSION: ${{ needs.linux-x64.outputs.version }}
+        run: |
+          # Do not accidentally replace another version's assets.
+          test "$RELEASE_TAG" = "v$ASSET_VERSION"
+          gh release upload "$RELEASE_TAG" \
+            dist/XDRemux-Linux-*.AppImage \
+            dist/XDRemux-Linux-*.tar.gz \
+            dist/XDRemux-Linux-*.sha256 \
+            --clobber

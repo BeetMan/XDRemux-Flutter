@@ -32,6 +32,11 @@ use crate::styles_scaffold;
 const STYLE_DATA_BLOCKS: usize = 864;
 const DELTA_TILE_SIZE: u32 = 512;
 
+/// Styles baseline exposure written as `styleData` plist key 4 and used by the
+/// Linear Thumbnail Apple Log encode (the consumer multiplies it back after
+/// decoding). Single source of truth for both places.
+pub const IDENTITY_BASELINE_EXPOSURE: f32 = 4.0;
+
 fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     let scale = 1.0f64.min((max_w as f64 / source_w as f64).min(max_h as f64 / source_h as f64));
     let w = (((source_w as f64 * scale / 2.0).round() * 2.0) as u32).max(2);
@@ -40,11 +45,25 @@ fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u3
 }
 
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
-    let scaffolded = styles_scaffold::scaffold(standard)?;
-    assemble_styles(&scaffolded)
+    styles_native_with_gain_map(standard, None)
 }
 
-fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
+/// Like [`styles_native`], but applies an ISO 21496 gain map to the linear
+/// thumbnail (path 3 of `docs/research/gainmap-decode-feasibility-20261025.md`:
+/// the conversion pipeline already holds the reconstructed gain-map plane in
+/// memory, so no HEVC gain-map decode is needed).
+pub fn styles_native_with_gain_map(
+    standard: &[u8],
+    gain_map: Option<&crate::linear_thumbnail::GainMapPlane<'_>>,
+) -> Result<Vec<u8>, String> {
+    let scaffolded = styles_scaffold::scaffold(standard)?;
+    assemble_styles(&scaffolded, gain_map)
+}
+
+fn assemble_styles(
+    base: &[u8],
+    gain_map: Option<&crate::linear_thumbnail::GainMapPlane<'_>>,
+) -> Result<Vec<u8>, String> {
     // ---- parse the scaffolded base -------------------------------------
     let top = top_level_boxes(base)?;
     let meta_hdr = find_top(&top, b"meta").ok_or("no meta box")?;
@@ -173,26 +192,29 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc)
     };
 
-    // Linear thumbnail: real generated preview (fixed 1024×768 landscape
-    // storage, 4:2:0; the item inherits the primary's irot). Diagnostic:
-    // XSTYLES_LINEAR_STREAM / XSTYLES_LINEAR_HVCC swap in a real (e.g.
-    // golden) thumbnail for Photos-behaviour bisection. On generation
-    // failure the legacy black placeholder keeps the file structurally
-    // valid.
-    const LT_W: u32 = 1024;
-    const LT_H: u32 = 768;
+    // Linear thumbnail: real generated preview in Apple Log code space. The
+    // stored item follows the primary's coded aspect ratio (long edge <= 1024,
+    // even edges) and inherits its irot. Diagnostic: XSTYLES_LINEAR_STREAM /
+    // XSTYLES_LINEAR_HVCC swap in a real (e.g. golden) thumbnail for
+    // Photos-behaviour bisection; those keep the legacy 1024x768 geometry
+    // because the env stream's real dimensions are not known here. On
+    // generation failure the legacy black placeholder keeps the file
+    // structurally valid.
+    const LEGACY_LT_W: u32 = 1024;
+    const LEGACY_LT_H: u32 = 768;
     let env_lt_stream = std::env::var("XSTYLES_LINEAR_STREAM")
         .ok()
         .map(|p| std::fs::read(p).expect("linear stream file"));
     let env_lt_hvcc = std::env::var("XSTYLES_LINEAR_HVCC")
         .ok()
         .map(|p| std::fs::read(p).expect("linear hvcc file"));
-    let (linear_stream, linear_hvcc, dynamic_light_maps) = if let Some(stream) = env_lt_stream {
-        let hvcc = env_lt_hvcc.ok_or("XDREMUX_LT_STREAM requires XDREMUX_LT_HVCC")?;
-        let idr = crate::hevc::drop_parameter_nals(&stream);
-        let stream = crate::hevc::hevc_byte_stream_to_length_prefixed(&idr);
-        (stream, hvcc, None)
-    } else {
+    let (lt_w, lt_h, linear_stream, linear_hvcc, dynamic_light_maps) =
+        if let Some(stream) = env_lt_stream {
+            let hvcc = env_lt_hvcc.ok_or("XDREMUX_LT_STREAM requires XDREMUX_LT_HVCC")?;
+            let idr = crate::hevc::drop_parameter_nals(&stream);
+            let stream = crate::hevc::hevc_byte_stream_to_length_prefixed(&idr);
+            (LEGACY_LT_W, LEGACY_LT_H, stream, hvcc, None)
+        } else {
         let primary_irot_turns = meta
             .ipma_entries
             .iter()
@@ -214,17 +236,28 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
         )
         .map(|o| o.to_u16())
         .unwrap_or(1);
-        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps(
+        match crate::linear_thumbnail::generate_linear_thumbnail_and_light_maps_with_gain_map(
             base,
             primary_irot_turns,
             orientation,
+            IDENTITY_BASELINE_EXPOSURE,
+            gain_map,
         ) {
-            Ok(out) => (out.stream, out.hvcc, Some((out.light_c, out.light_d))),
+            Ok(out) => (
+                out.width,
+                out.height,
+                out.stream,
+                out.hvcc,
+                Some((out.light_c, out.light_d)),
+            ),
             Err(e) => {
-                // Legacy black placeholder fallback.
-                let black = vec![0u8; (LT_W * LT_H * 3) as usize];
+                // Legacy black placeholder fallback, using the same geometry
+                // contract as the real path so ispe and stream agree.
+                let (fw, fh) = crate::linear_thumbnail::fitted_even_dimensions(pw, ph, 1024)
+                    .unwrap_or((LEGACY_LT_W, LEGACY_LT_H));
+                let black = vec![0u8; (fw * fh * 3) as usize];
                 let black_refs: Vec<&[u8]> = vec![&black];
-                let stream = crate::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true)
+                let stream = crate::hevc::x265_encode_tiles(&black_refs, fw, fh, 3, true)
                     .map_err(|e2| format!("linear thumb encode: {e}; fallback: {e2}"))?
                     .into_iter()
                     .next()
@@ -232,7 +265,13 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
                 let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
                     .ok_or_else(|| format!("linear thumb encode: {e}; hvcC extraction failed"))?;
                 let idr = crate::hevc::drop_parameter_nals(&stream);
-                (crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc, None)
+                (
+                    fw,
+                    fh,
+                    crate::hevc::hevc_byte_stream_to_length_prefixed(&idr),
+                    hvcc,
+                    None,
+                )
             }
         }
     };
@@ -302,7 +341,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     // Delta grid dims: fitted to 2880×2560 landscape or 2560×2880 portrait.
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
-    let ispe_lt_idx = add_prop(isobmff::make_ispe_box(LT_W, LT_H));
+    let ispe_lt_idx = add_prop(isobmff::make_ispe_box(lt_w, lt_h));
     let auxc_lt_idx = add_prop(make_auxc_box(
         b"tag:apple.com,2023:photo:aux:linearthumbnail",
     ));
@@ -675,7 +714,7 @@ impl StyleStateOverride {
             key0: 15,
             key1: identity_style_data(),
             gtc: FIELD_3.to_vec(),
-            tag4: 4.0,
+            tag4: f64::from(IDENTITY_BASELINE_EXPOSURE),
             tag5: 2,
             light_c: FIELD_C.to_vec(),
             light_d: FIELD_D.to_vec(),
@@ -900,7 +939,9 @@ fn primary_dims(meta: &ParsedMeta, primary: u32) -> Result<(u32, u32), String> {
             if p.ptype == "ispe" && p.raw.len() >= 20 {
                 let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
                 let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
-                if w > 512 && h > 512 {
+                // This is the primary item's own ispe, not a codec tile.
+                // Small photos and narrow screenshots are valid sources too.
+                if w > 0 && h > 0 {
                     return Ok((w, h));
                 }
             }
@@ -985,6 +1026,16 @@ mod tests {
     fn fitted_size_landscape_matches_golden() {
         let (w, h) = fitted_size(4096, 3512, 2880, 2560);
         assert_eq!((w, h), (2880, 2470));
+    }
+
+    #[test]
+    fn primary_dimensions_accept_small_and_narrow_images() {
+        for (w, h) in [(128, 96), (512, 384), (400, 1200)] {
+            let source = crate::uhdr_jpeg::synthesize_source_container_from_rgb(
+                &vec![80; w as usize * h as usize * 3], w, h, None, true).unwrap();
+            let meta = crate::isobmff::parse_source_meta(&source).unwrap();
+            assert_eq!(primary_dims(&meta, meta.primary_id).unwrap(), (w, h));
+        }
     }
 
     #[test]

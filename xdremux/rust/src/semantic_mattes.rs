@@ -8,6 +8,11 @@
 //! lacks all of them; this module adds zero-content (black) placeholders with
 //! the exact native contract so the PS3 style editor can locate the parts.
 //!
+//! A Huawei portrait's person contour (the same mask as
+//! `portraiteffectsmatte`) is written into `semanticpersonmatte` when the
+//! caller supplies it. That plane keeps the primary frame's aspect, so its
+//! `ispe` can differ from the 768×576 placeholders.
+//!
 //! Container surgery mirrors `texture_styles::inject_texture_styles`: rebuild
 //! iinf / iloc / iref / ipma / ipco, grow mdat, shift construction=0 extents.
 
@@ -43,23 +48,35 @@ fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Encode one zero-content matte and return (length-prefixed HEVC, hvcC).
-fn black_matte() -> Result<(Vec<u8>, Vec<u8>), String> {
-    let pixels = vec![0u8; (MATTE_W * MATTE_H) as usize];
-    let refs: Vec<&[u8]> = vec![&pixels];
-    let stream = x265_encode_tiles(&refs, MATTE_W, MATTE_H, 1, false)
+/// Encode one 8-bit matte and return (length-prefixed HEVC, hvcC).
+fn encode_gray(pixels: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let refs: Vec<&[u8]> = vec![pixels];
+    let stream = x265_encode_tiles(&refs, w, h, 1, false)
         .map_err(|e| format!("matte HEVC encode: {e}"))?
         .into_iter()
         .next()
         .ok_or("matte encode produced no stream")?;
-    let hvcc = extract_hvcc_config_with_chroma(&stream, 0)
-        .ok_or("matte hvcC extraction failed")?;
+    let hvcc = extract_hvcc_config_with_chroma(&stream, 0).ok_or("matte hvcC extraction failed")?;
     let idr = drop_parameter_nals(&stream);
     Ok((hevc_byte_stream_to_length_prefixed(&idr), hvcc))
 }
 
+fn black_matte() -> Result<(Vec<u8>, Vec<u8>), String> {
+    let pixels = vec![0u8; (MATTE_W * MATTE_H) as usize];
+    encode_gray(&pixels, MATTE_W, MATTE_H)
+}
+
 /// Inject the 12 semantic part-matte items into `data`.
 pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
+    inject_semantic_mattes_with(data, None)
+}
+
+/// Same as [`inject_semantic_mattes`], but `person` (grayscale, primary-frame
+/// orientation) replaces the empty `semanticpersonmatte`.
+pub fn inject_semantic_mattes_with(
+    data: &[u8],
+    person: Option<&(Vec<u8>, u32, u32)>,
+) -> Result<Vec<u8>, String> {
     if data
         .windows(SEMANTIC_MATTE_URNS[0].len())
         .any(|w| w == SEMANTIC_MATTE_URNS[0].as_bytes())
@@ -110,9 +127,29 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
         .find(|i| i.itype == "tmap")
         .map(|i| i.item_id);
 
-    // ---- 1. Encode the shared black matte ------------------------------
-    let (matte_stream, matte_hvcc) = black_matte()?;
+    // ---- 1. Encode mattes. Person contour replaces one layer. ----------
     let n = SEMANTIC_MATTE_URNS.len();
+    let person_at = SEMANTIC_MATTE_URNS
+        .iter()
+        .position(|urn| urn.ends_with("semanticpersonmatte"))
+        .ok_or("semanticpersonmatte URN missing")?;
+    let (black_stream, black_hvcc) = black_matte()?;
+    let person_plane = person.filter(|(pixels, w, h)| {
+        *w > 0 && *h > 0 && pixels.len() == (*w as usize) * (*h as usize)
+    });
+    let person_encoded = match person_plane {
+        Some((pixels, w, h)) => Some((encode_gray(pixels, *w, *h)?, *w, *h)),
+        None => None,
+    };
+    let mut streams = vec![black_stream; n];
+    // Own ispe/hvcC only when the contour aspect is not the 768×576 placeholder.
+    let mut person_box: Option<(u32, u32, Vec<u8>)> = None;
+    if let Some(((stream, hvcc), w, h)) = person_encoded {
+        streams[person_at] = stream;
+        if w != MATTE_W || h != MATTE_H {
+            person_box = Some((w, h, hvcc));
+        }
+    }
 
     // ---- 2. New item ids -------------------------------------------------
     let next_id = parsed
@@ -151,7 +188,7 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
     };
     let ispe_idx = prop(isobmff::make_ispe_box(MATTE_W, MATTE_H), &mut next_index);
     let pixi_idx = prop(isobmff::PIXI_MONO8_BOX.to_vec(), &mut next_index);
-    let hvcc_idx = prop(make_box(b"hvcC", &matte_hvcc), &mut next_index);
+    let hvcc_idx = prop(make_box(b"hvcC", &black_hvcc), &mut next_index);
     let auxc_idxs: Vec<u32> = SEMANTIC_MATTE_URNS
         .iter()
         .map(|urn| {
@@ -161,6 +198,11 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
             prop(make_box(b"auxC", &payload), &mut next_index)
         })
         .collect();
+    let person_props = person_box.as_ref().map(|(w, h, hvcc)| {
+        let ispe = prop(isobmff::make_ispe_box(*w, *h), &mut next_index);
+        let hvcc = prop(make_box(b"hvcC", hvcc), &mut next_index);
+        (ispe, hvcc)
+    });
     let mut new_ipco: Vec<u8> = parsed
         .props
         .iter()
@@ -188,19 +230,26 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut ipma_flags = data[ipma.data_start + 3];
     let mut entries = parsed.ipma_entries.clone();
     for (i, &id) in matte_ids.iter().enumerate() {
+        let (ispe, hvcc) = if i == person_at {
+            person_props.unwrap_or((ispe_idx, hvcc_idx))
+        } else {
+            (ispe_idx, hvcc_idx)
+        };
         entries.push(isobmff::IpmaEntry {
             item_id: id,
             associations: vec![
-                (ispe_idx, false),
+                (ispe, false),
                 (pixi_idx, false),
                 (auxc_idxs[i], true),
-                (hvcc_idx, true),
+                (hvcc, true),
             ],
         });
     }
     // 1-byte associations cap the property index at 127; upgrade to 2-byte
     // associations when the new auxC indexes exceed that.
-    if auxc_idxs.iter().any(|i| *i > 127) {
+    let wide_index = auxc_idxs.iter().any(|i| *i > 127)
+        || person_props.is_some_and(|(ispe, hvcc)| ispe > 127 || hvcc > 127);
+    if wide_index {
         ipma_flags |= 2;
     }
     let mut new_ipma_payload: Vec<u8> = vec![ipma_ver, 0, 0, ipma_flags];
@@ -266,7 +315,8 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
         .find(|b| b.btype == *b"mdat")
         .ok_or("mdat box not found")?;
     let mdat_end = mdat.box_start + mdat.size;
-    let payload_len = (matte_stream.len() * n) as i64;
+    let stream_lens: Vec<u64> = streams.iter().map(|stream| stream.len() as u64).collect();
+    let payload_len: i64 = stream_lens.iter().sum::<u64>() as i64;
     // Two-pass: measure iloc growth (base fields + 12 new entries) before
     // computing the matte payload offsets.
     let build_entries = |delta_total: i64, payload_abs: u64| -> Vec<isobmff::IlocEntry> {
@@ -281,16 +331,16 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
             }
             v.push(e);
         }
+        let mut cursor = payload_abs;
         for (i, &id) in matte_ids.iter().enumerate() {
+            let len = stream_lens[i];
             v.push(isobmff::IlocEntry {
                 item_id: id,
                 construction_method: 0,
                 data_reference_index: 0,
-                extents: vec![(
-                    payload_abs + (i as u64) * matte_stream.len() as u64,
-                    matte_stream.len() as u64,
-                )],
+                extents: vec![(cursor, len)],
             });
+            cursor += len;
         }
         v
     };
@@ -320,7 +370,7 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
     // Grow mdat and place the 12 matte payloads inside it.
     let mut mdat_bytes = data[mdat.box_start..mdat_end].to_vec();
     let declared = u32::from_be_bytes([mdat_bytes[0], mdat_bytes[1], mdat_bytes[2], mdat_bytes[3]]);
-    let grown = mdat.size as u64 + (matte_stream.len() * n) as u64;
+    let grown = mdat.size as u64 + payload_len as u64;
     if declared == 1 {
         mdat_bytes[8..16].copy_from_slice(&grown.to_be_bytes());
     } else {
@@ -330,13 +380,13 @@ pub fn inject_semantic_mattes(data: &[u8]) -> Result<Vec<u8>, String> {
         mdat_bytes[0..4].copy_from_slice(&(grown as u32).to_be_bytes());
     }
 
-    let mut out = Vec::with_capacity(data.len() + delta_total as usize + matte_stream.len() * n);
+    let mut out = Vec::with_capacity(data.len() + delta_total as usize + payload_len as usize);
     out.extend_from_slice(&data[..meta_box.box_start]);
     out.extend_from_slice(&new_meta);
     out.extend_from_slice(&data[meta_box.box_start + meta_box.size as usize..mdat.box_start]);
     out.extend_from_slice(&mdat_bytes);
-    for _ in 0..n {
-        out.extend_from_slice(&matte_stream);
+    for stream in &streams {
+        out.extend_from_slice(stream);
     }
     out.extend_from_slice(&data[mdat_end..]);
     Ok(out)

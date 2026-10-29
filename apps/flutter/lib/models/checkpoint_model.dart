@@ -73,6 +73,7 @@ class CheckpointItem {
   final int inputSize;
   final int inputMtimeMs;
   String? error;
+  final String? policyReason;
   DateTime? finishedAt;
 
   /// Classification metadata so a restored queue item keeps its capture-mode
@@ -82,6 +83,9 @@ class CheckpointItem {
   final String? classificationStatus;
   final String? hdrKind;
   final String? family;
+  final bool huaweiHdr;
+  final bool huaweiHasXtstyle;
+  final Map<String, dynamic>? huaweiPortrait;
 
   /// Motion Photo detection result (null when not a Motion Photo) and the
   /// per-card handling mode, so restore reproduces the exact queue state.
@@ -95,12 +99,16 @@ class CheckpointItem {
     this.inputSize = 0,
     this.inputMtimeMs = 0,
     this.error,
+    this.policyReason,
     this.finishedAt,
     this.captureModeKey,
     this.captureModeFolderName,
     this.classificationStatus,
     this.hdrKind,
     this.family,
+    this.huaweiHdr = false,
+    this.huaweiHasXtstyle = false,
+    this.huaweiPortrait,
     this.motionPhoto,
     this.motionPhotoMode = 'livePhotoPair',
   });
@@ -113,6 +121,7 @@ class CheckpointItem {
         'inputSize': inputSize,
         'inputMtimeMs': inputMtimeMs,
         if (error != null) 'error': error,
+        if (policyReason != null) 'policyReason': policyReason,
         if (finishedAt != null) 'finishedAt': finishedAt!.toIso8601String(),
         if (captureModeKey != null) 'captureModeKey': captureModeKey,
         if (captureModeFolderName != null)
@@ -121,6 +130,9 @@ class CheckpointItem {
           'classificationStatus': classificationStatus,
         if (hdrKind != null) 'hdrKind': hdrKind,
         if (family != null) 'family': family,
+        if (huaweiHdr) 'huaweiHdr': true,
+        if (huaweiHasXtstyle) 'huaweiHasXtstyle': true,
+        if (huaweiPortrait != null) 'huaweiPortrait': huaweiPortrait,
         if (motionPhoto != null) 'motionPhoto': motionPhoto,
         'motionPhotoMode': motionPhotoMode,
       };
@@ -133,6 +145,7 @@ class CheckpointItem {
       inputSize: json['inputSize'] as int? ?? 0,
       inputMtimeMs: json['inputMtimeMs'] as int? ?? 0,
       error: json['error'] as String?,
+      policyReason: json['policyReason'] as String?,
       finishedAt: json['finishedAt'] != null
           ? DateTime.tryParse(json['finishedAt'] as String)
           : null,
@@ -141,6 +154,11 @@ class CheckpointItem {
       classificationStatus: json['classificationStatus'] as String?,
       hdrKind: json['hdrKind'] as String?,
       family: json['family'] as String?,
+      huaweiHdr: json['huaweiHdr'] as bool? ?? false,
+      huaweiHasXtstyle: json['huaweiHasXtstyle'] as bool? ?? false,
+      huaweiPortrait: json['huaweiPortrait'] != null
+          ? Map<String, dynamic>.from(json['huaweiPortrait'] as Map)
+          : null,
       motionPhoto:
           json['motionPhoto'] != null
               ? Map<String, dynamic>.from(json['motionPhoto'] as Map)

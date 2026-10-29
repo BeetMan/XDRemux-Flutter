@@ -26,14 +26,18 @@ import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
 import 'services/file_action_service.dart';
+import 'services/output_export_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
+import 'services/huawei_photo_policy.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
 import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
+import 'widgets/codec_diagnostics_tile.dart';
+import 'services/codec_diagnostics.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -100,37 +104,47 @@ typedef PickedItem =
       Future<Uint8List> Function()? readBytes,
     });
 
+/// Layout traits reported by the host platform.
+///
+/// iOS 27 models a system "vertical bar" that can live on the leading or the
+/// trailing edge (see `UITraitCollection.verticalBarEdge`); iPhone Duo reserves
+/// its 84pt right inset for a trailing bar. The native side reports the
+/// preferred edge, and the UI places its tool bar there when the matching safe
+/// area is large enough. Unknown/unsupported platforms keep the regular
+/// app-bar + bottom-bar layout.
+class PlatformLayoutTraits {
+  PlatformLayoutTraits._();
+
+  static const _channel = MethodChannel('xdremux/platform-traits');
+
+  /// One of `leading`, `trailing`, `unspecified`.
+  static String verticalBarEdge = 'unspecified';
+
+  static Future<void> refresh() async {
+    if (!Platform.isIOS) return;
+    try {
+      final traits = await _channel.invokeMapMethod<String, dynamic>(
+        'getLayoutTraits',
+      );
+      final edge = traits?['verticalBarEdge'];
+      if (edge is String) verticalBarEdge = edge;
+    } catch (_) {
+      // Older iOS versions and non-iOS hosts simply have no vertical bar.
+      verticalBarEdge = 'unspecified';
+    }
+  }
+}
+
 void main() {
   runApp(const XdRemuxApp());
 }
 
-/// Remove persisted Apple feature flags when the current native capability
-/// probe cannot support them. OutputMode.apple remains independent: it is a
-/// clean output target. Rust Photographic Styles and the R5 Portrait graph are
-/// implemented in the Rust core; Swift remains available for Apple-native paths.
-bool _sanitizeConfigForCapabilities(
-  ConversionConfig config,
-  BackendCapabilities capabilities,
-) {
-  var changed = false;
-  if (!capabilities.isAvailable(config.backend)) {
-    config.backend = ConversionBackend.rust;
-    changed = true;
-  }
-  if (config.backend != ConversionBackend.swift) {
-    // Rust now includes the R5 native Portrait graph writer.
-  } else {
-    if (config.applePhotographicStyles &&
-        !capabilities.swiftPhotographicStyles) {
-      config.applePhotographicStyles = false;
-      changed = true;
-    }
-    if (config.applePortrait && !capabilities.swiftPortrait) {
-      config.applePortrait = false;
-      changed = true;
-    }
-  }
-  return changed;
+/// Product conversions run on Rust. A previously saved Swift engine selection
+/// is discarded; Apple Photographic Styles and Portrait stay on the Rust path.
+bool _sanitizeConfigForCapabilities(ConversionConfig config) {
+  if (config.backend == ConversionBackend.rust) return false;
+  config.backend = ConversionBackend.rust;
+  return true;
 }
 
 class XdRemuxApp extends StatelessWidget {
@@ -262,6 +276,8 @@ class _HomePageState extends State<HomePage> {
   BackendCapabilities _backendCapabilities =
       BackendCapabilities.forCurrentPlatform();
   Timer? _configSaveTimer;
+  final _outputExports = OutputExportService();
+  bool _savingGallery = false;
   Checkpoint? _checkpoint;
 
   /// Android: app-specific external directory for output (scoped storage).
@@ -275,6 +291,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    PlatformLayoutTraits.refresh().then((_) {
+      if (mounted) setState(() {});
+    });
     _initAsync();
     _initDropChannel();
     _initShareIntake();
@@ -313,10 +332,9 @@ class _HomePageState extends State<HomePage> {
     _config = await XdRemuxService.loadConfig();
     setUiLanguage(_config.language);
     _backendCapabilities = await XdRemuxService.getBackendCapabilities();
-    // Swift is intentionally not exposed on Windows/Android. If a shared
-    // preferences store contains an unavailable backend or Apple-only choice,
-    // normalize it before any conversion can start.
-    if (_sanitizeConfigForCapabilities(_config, _backendCapabilities)) {
+    // A previously saved Swift engine selection is discarded. Product
+    // conversions stay on Rust.
+    if (_sanitizeConfigForCapabilities(_config)) {
       _scheduleConfigSave();
     }
     try {
@@ -422,6 +440,7 @@ class _HomePageState extends State<HomePage> {
         outputPath: cpItem.outputPath,
         status: status,
         errorMessage: cpItem.error,
+        policyReason: cpItem.policyReason,
         outputPlanStatus: _computeOutputPlan(
           cpItem.inputPath,
           cpItem.outputPath,
@@ -432,6 +451,9 @@ class _HomePageState extends State<HomePage> {
         classificationStatus: cpItem.classificationStatus,
         hdrKind: cpItem.hdrKind,
         family: cpItem.family,
+        huaweiHdr: cpItem.huaweiHdr,
+        huaweiHasXtstyle: cpItem.huaweiHasXtstyle,
+        huaweiPortrait: cpItem.huaweiPortrait,
         motionPhoto:
             mpJson == null
                 ? null
@@ -693,6 +715,50 @@ class _HomePageState extends State<HomePage> {
 
   int get _skippedPolicyCount =>
       _queue.where((item) => item.status == QueueItemStatus.skippedPolicy).length;
+
+  bool get _stylesRequested =>
+      _config.applePhotographicStyles || _config.applePhotographicStyles3;
+
+  /// Ordinary Huawei HDR already displays in Photos, so it is skipped only
+  /// when Photographic Styles is off. Styles uses the generic HEIC encode,
+  /// which these files must be allowed to enter.
+  (QueueItemStatus, String?) _huaweiHdrAdmission({
+    required bool reportedHuaweiHdr,
+    required bool portraitReady,
+    bool motionPhoto = false,
+  }) {
+    return HuaweiPhotoPolicy.admission(
+      huaweiHdr: reportedHuaweiHdr,
+      portraitReady: portraitReady,
+      stylesRequested: _stylesRequested,
+      motionPhoto: motionPhoto,
+    );
+  }
+
+  void _syncHuaweiHdrPolicy() {
+    var changed = false;
+    for (final item in _queue) {
+      if (!item.huaweiHdr) continue;
+      final portraitReady =
+          item.huaweiPortrait != null &&
+          item.huaweiPortrait!['safeToTransform'] == true;
+      if (portraitReady) continue;
+      if (item.status != QueueItemStatus.pending &&
+          item.status != QueueItemStatus.skippedPolicy) {
+        continue;
+      }
+      final (status, reason) = _huaweiHdrAdmission(
+        reportedHuaweiHdr: true,
+        portraitReady: false,
+        motionPhoto: item.motionPhoto != null,
+      );
+      if (item.status == status && item.policyReason == reason) continue;
+      item.status = status;
+      item.policyReason = reason;
+      changed = true;
+    }
+    if (changed && mounted) setState(() {});
+  }
 
   int get _skippedCount => _skippedExistingCount + _skippedPolicyCount;
 
@@ -1045,6 +1111,10 @@ class _HomePageState extends State<HomePage> {
       if (summary == null) return;
       item.motionPhoto = summary;
       item.motionPhotoMode = _config.motionPhotoDefaultMode;
+      if (item.huaweiHdr) {
+        item.status = QueueItemStatus.pending;
+        item.policyReason = null;
+      }
       if (mounted) setState(() {});
     } finally {
       _motionInspectsInFlight--;
@@ -1129,6 +1199,22 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+        final admission = _huaweiHdrAdmission(
+          reportedHuaweiHdr: reportedHuaweiHdr,
+          portraitReady:
+              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
+        );
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -1140,6 +1226,11 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: admission.$1,
+            policyReason: admission.$2,
           ),
         );
         _inspectMotionPhoto(_queue.last);
@@ -1200,6 +1291,16 @@ class _HomePageState extends State<HomePage> {
     // Other platforms keep the existing conversion behavior until a portable
     // Rust diagnostic FFI is exposed.
     if (!Platform.isMacOS && !Platform.isIOS) return null;
+
+    // Huawei uses edof/RfDataB, not OPPO rear.depth. Inspect it before the
+    // OPPO-only diagnostic so Apple imports reach the shared Rust remux.
+    final huawei = await XdRemuxService.inspectHuawei(inputPath);
+    if (huawei['huaweiPortrait'] is Map &&
+        HuaweiPhotoPolicy.portraitReady(
+          Map<String, dynamic>.from(huawei['huaweiPortrait'] as Map),
+        )) {
+      return null;
+    }
 
     final report = await XdRemuxService.diagnosePortrait(inputPath);
     if (report['classification'] == 'missing-rear-depth') {
@@ -1385,28 +1486,6 @@ class _HomePageState extends State<HomePage> {
           severity: _PreflightSeverity.blocking,
           title: t('转换后端不可用', 'Conversion backend unavailable'),
           detail: _backendCapabilities.statusFor(_config.backend),
-        ),
-      );
-    }
-    if (_config.applePhotographicStyles &&
-        _config.backend == ConversionBackend.swift &&
-        !_backendCapabilities.swiftPhotographicStyles) {
-      issues.add(
-        _PreflightIssue(
-          severity: _PreflightSeverity.blocking,
-          title: t('Apple 照片摄影风格不可用', 'Apple Photographic Styles unavailable'),
-          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
-        ),
-      );
-    }
-    if (_config.applePortrait &&
-        _config.backend == ConversionBackend.swift &&
-        !_backendCapabilities.swiftPortrait) {
-      issues.add(
-        _PreflightIssue(
-          severity: _PreflightSeverity.blocking,
-          title: t('Apple 人像模式不可用', 'Apple Portrait unavailable'),
-          detail: t('当前平台 capability 未就绪。', 'Platform capability is not ready.'),
         ),
       );
     }
@@ -1614,6 +1693,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
     // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
@@ -1645,6 +1725,12 @@ class _HomePageState extends State<HomePage> {
         : 0;
 
     try {
+      if ((item.huaweiHdr || item.huaweiPortrait != null) &&
+          (File(item.inputPath).absolute.path == File(item.outputPath).absolute.path ||
+              (File(item.outputPath).existsSync() &&
+                  FileSystemEntity.identicalSync(item.inputPath, item.outputPath)))) {
+        throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
+      }
       // Skip if the input is already a converted ISO HDR output —
       // re-converting produces a broken nested gain map.
       if (runConfig.skipExisting &&
@@ -1672,16 +1758,142 @@ class _HomePageState extends State<HomePage> {
         outFile.deleteSync();
       }
 
-      // Photographic Styles need the styles scaffold, which only the
-      // conversion pipeline generates. Non-ProXDR inputs are decoded and
-      // rebuilt into a standard container inside Rust (see sdr_source.rs), so
-      // no input special-casing is needed here.
+      // Photographic Styles on an ordinary photo go through the conversion
+      // pipeline. A Huawei portrait keeps its own remux, then the requested
+      // styles layers are written onto that output.
+
+      // Huawei Portrait fast path: uses the dedicated remux pipeline
+      // instead of the OPPO-based classify/extract/encode path.
+      // Styles / Styles 3, when enabled, are attached afterwards so both
+      // stay on together. Live Photo pairing already cleared styles-only
+      // above; Styles 3 is still applied.
+      final wantStyles = runConfig.applePhotographicStyles;
+      final wantStyles3 = runConfig.applePhotographicStyles3;
+      final styleFlags = (wantStyles || wantStyles3 ? XdRemuxFFI.styleLayerStyles : 0) |
+          (wantStyles3 ? XdRemuxFFI.styleLayerTexture | XdRemuxFFI.styleLayerMattes : 0);
+      var grainSeed = 0;
+      for (final c in item.inputPath.codeUnits) {
+        grainSeed = (grainSeed * 31 + c) & 0x7fffffff;
+      }
+      Map<String, dynamic>? result;
+      if (item.huaweiPortrait != null &&
+          item.huaweiPortrait!['safeToTransform'] == true) {
+        result = await Isolate.run(() {
+          final report = XdRemuxFFI.remuxHuaweiPortrait(
+            item.inputPath,
+            item.outputPath,
+          );
+          if (report['success'] == true) {
+            final outputValid = XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath);
+            if (!outputValid) {
+              return <String, dynamic>{
+                'success': false,
+                'outputValid': false,
+                'errorMessage': t(
+                  '华为人像输出验证失败',
+                  'Huawei portrait output verification failed',
+                ),
+              };
+            }
+            if (styleFlags != 0) {
+              final attached = XdRemuxFFI.attachStyleLayers(
+                item.outputPath,
+                item.outputPath,
+                grainSeed,
+                styleFlags,
+              );
+              if (attached['status'] == 'error') {
+                return <String, dynamic>{
+                  'success': false,
+                  'outputValid': false,
+                  'errorMessage': t(
+                    '华为人像摄影风格写入失败: ${attached['message'] ?? ''}',
+                    'Huawei portrait styles attach failed: ${attached['message'] ?? ''}',
+                  ),
+                };
+              }
+              if (!XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath)) {
+                return <String, dynamic>{
+                  'success': false,
+                  'outputValid': false,
+                  'errorMessage': t(
+                    '摄影风格写入后人像数据丢失',
+                    'Portrait data was lost while attaching styles',
+                  ),
+                };
+              }
+            }
+            return <String, dynamic>{
+              'success': true,
+              'outputValid': true,
+            };
+          }
+          return <String, dynamic>{
+            'success': false,
+            'errorMessage': report['error'] ?? t('华为人像转换失败', 'Huawei portrait conversion failed'),
+          };
+        });
+      } else if (item.huaweiHdr) {
+        // Huawei HDR already displays in Apple Photos. Styles are grafted onto
+        // that container. A full decode-and-reencode is only the fallback when
+        // the graft cannot see a gain-map graph. A Motion Photo still is
+        // materialized here so Live Photo pairing or video export can run.
+        result = await Isolate.run(() async {
+          try {
+            final inFile = File(item.inputPath);
+            final outFile = File(item.outputPath);
+            final parent = outFile.parent;
+            if (!parent.existsSync()) {
+              parent.createSync(recursive: true);
+            }
+            final stillBytes = item.motionPhoto?.stillBytes ?? 0;
+            if (stillBytes > 0 && stillBytes < inFile.lengthSync()) {
+              final raf = await inFile.open(mode: FileMode.read);
+              try {
+                final bytes = await raf.read(stillBytes);
+                await outFile.writeAsBytes(bytes, flush: true);
+              } finally {
+                await raf.close();
+              }
+            } else if (item.inputPath != item.outputPath) {
+              await inFile.copy(item.outputPath);
+            }
+            if (styleFlags != 0) {
+              final attached = XdRemuxFFI.attachStyleLayers(
+                item.outputPath,
+                item.outputPath,
+                grainSeed,
+                styleFlags,
+              );
+              final added = attached['added'];
+              final grafted = attached['status'] != 'error' &&
+                  added is List &&
+                  added.contains('styles-native');
+              if (!grafted) {
+                return <String, dynamic>{'fallback': true};
+              }
+            }
+            return <String, dynamic>{
+              'success': true,
+              'outputValid': true,
+            };
+          } catch (e) {
+            return <String, dynamic>{
+              'success': false,
+              'errorMessage': t('华为静帧提取失败: $e', 'Huawei still extraction failed: $e'),
+            };
+          }
+        });
+        if (result != null && result['fallback'] == true) {
+          result = null;
+        }
+      }
 
       // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
       // try the hardware encode path. Any failure falls back to the proven
       // software path so conversion never silently breaks.
-      Map<String, dynamic>? result;
-      if (runConfig.backend == ConversionBackend.rust &&
+      if (result == null &&
+          runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
           !runConfig.applePhotographicStyles3 &&
           (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
@@ -1758,35 +1970,12 @@ class _HomePageState extends State<HomePage> {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
-            final outParent = File(item.outputPath).parent.path;
-            final report = XdRemuxFFI.makeLivePhoto(
+            await MotionPhotoService.composeLivePhoto(
               item.inputPath,
               item.outputPath,
-              outParent,
             );
-            if (report['success'] != true) {
-              throw report['errorMessage'] ?? 'live photo compose failed';
-            }
-            // Adopt the paired still (identical pixels + MakerNote) as the
-            // output, and place the MOV next to it under the output name.
-            final pairedStill = report['stillPath'] as String?;
-            final pairedMov = report['videoPath'] as String?;
-            if (pairedStill != null &&
-                pairedMov != null &&
-                File(pairedStill).existsSync()) {
-              final outFile = File(item.outputPath);
-              if (pairedStill != item.outputPath) {
-                await File(pairedStill).copy(item.outputPath);
-                await File(pairedStill).delete();
-              }
-              final movTarget = _sideOutputPath(
-                outFile.path.replaceAll(RegExp(r'\.[^.]+$'), '.mov'),
-              );
-              if (pairedMov != movTarget) {
-                await File(pairedMov).rename(movTarget);
-              }
-            }
           } catch (e) {
+            item.status = QueueItemStatus.failed;
             item.errorMessage = t('Live Photo 合成失败: $e', 'Live Photo composition failed: $e');
             debugPrint('[XDRemux][motion] live photo compose failed: $e');
           }
@@ -2024,24 +2213,12 @@ class _HomePageState extends State<HomePage> {
       final cpByPath = {for (final ci in cpItems) ci.inputPath: ci};
 
       for (final qItem in _queue) {
-        if (!cpByPath.containsKey(qItem.inputPath)) {
-          // New item not in checkpoint
-          cpItems.add(
-            CheckpointItem(
-              inputPath: qItem.inputPath,
-              outputPath: qItem.outputPath,
-              status: CheckpointItemStatus.pending,
-              inputSize: _fileSize(qItem.inputPath),
-              inputMtimeMs: _fileMtimeMs(qItem.inputPath),
-              captureModeKey: qItem.captureModeKey,
-              captureModeFolderName: qItem.captureModeFolderName,
-              classificationStatus: qItem.classificationStatus,
-              hdrKind: qItem.hdrKind,
-              family: qItem.family,
-              motionPhoto: qItem.motionPhoto?.toJson(),
-              motionPhotoMode: qItem.motionPhotoMode.name,
-            ),
-          );
+        final current = CheckpointService.createItemsFromQueue([qItem]).single;
+        final previous = cpByPath[qItem.inputPath];
+        if (previous == null) {
+          cpItems.add(current);
+        } else {
+          cpItems[cpItems.indexOf(previous)] = current;
         }
       }
     } else {
@@ -2133,8 +2310,8 @@ class _HomePageState extends State<HomePage> {
       if (mounted) {
         final outcome = _failedCount > 0 ? t('完成（有失败）', 'Done (with failures)') : t('完成', 'Done');
         final summary = t(
-          '${_config.backend.appTitle}：$outcome，成功 $_convertedCount 个',
-          '${_config.backend.appTitle}: $outcome, $_convertedCount succeeded',
+          '$outcome，成功 $_convertedCount 个',
+          '$outcome, $_convertedCount succeeded',
         );
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -2146,44 +2323,22 @@ class _HomePageState extends State<HomePage> {
     if ((Platform.isAndroid || Platform.isIOS) &&
         _config.autoSaveToGallery &&
         _convertedCount > 0) {
-      _saveAllConvertedToGallery().then((result) {
-        if (result == null) return;
-        final (saved, failed) = result;
-        if (failed > 0) {
-          debugPrint(
-            '[XDRemux][gallery] auto-save: $saved saved, $failed failed',
-          );
-        }
-      });
+      // Auto-save must surface incomplete pairs just like a manual save.
+      unawaited(_saveAllToGallery());
     }
 
     if (Platform.isWindows) TrayService.setToolTip('XDRemux');
   }
 
   String _backendError(ConversionBackend backend, String message) {
+    if (backend == ConversionBackend.rust) {
+      return CodecDiagnostics.describe(message, english: uiLanguage == AppLanguage.english);
+    }
     if (backend == ConversionBackend.swift &&
         !message.startsWith(t('Swift 后端', 'Swift backend'))) {
       return t('Swift 后端：$message', 'Swift backend: $message');
     }
     return message;
-  }
-
-  static int _fileSize(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.lengthSync() : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  static int _fileMtimeMs(String path) {
-    try {
-      final f = File(path);
-      return f.existsSync() ? f.statSync().modified.millisecondsSinceEpoch : 0;
-    } catch (_) {
-      return 0;
-    }
   }
 
   void _clearQueue() {
@@ -2304,8 +2459,10 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   Widget _buildDropTarget(BuildContext context, Widget child) {
-    // Drag & drop is desktop-only; on mobile just return the child directly.
-    if (Platform.isAndroid || Platform.isIOS) return child;
+    // Drag & drop is desktop-only. On touch platforms the DragTarget joins
+    // the gesture arena and can swallow the tap that should open the
+    // output menu.
+    if (PlatformX.isMobile) return child;
     return DragTarget<List<String>>(
       onWillAcceptWithDetails: (_) => _canEditQueue,
       onAcceptWithDetails: (details) => _handleDrop(details.data),
@@ -2396,6 +2553,22 @@ class _HomePageState extends State<HomePage> {
           fallbackDir: _androidOutputDir,
           captureModeFolderName: folderName,
         );
+        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
+            effectivePath.toLowerCase().endsWith('.heif');
+        final huaweiReport = isHeic
+            ? await XdRemuxService.inspectHuawei(effectivePath)
+            : const <String, dynamic>{};
+        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+            : null;
+        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+        final admission = _huaweiHdrAdmission(
+          reportedHuaweiHdr: reportedHuaweiHdr,
+          portraitReady:
+              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
+        );
+
         _queue.add(
           QueueItem(
             id: _makeId(),
@@ -2407,6 +2580,11 @@ class _HomePageState extends State<HomePage> {
             classificationStatus: classification['status'] as String?,
             hdrKind: classification['hdrKind'] as String?,
             family: classification['family'] as String?,
+            huaweiHdr: reportedHuaweiHdr,
+            huaweiHasXtstyle: huaweiHasXtstyle,
+            huaweiPortrait: huaweiPortrait,
+            status: admission.$1,
+            policyReason: admission.$2,
           ),
         );
         _inspectMotionPhoto(_queue.last);
@@ -2464,23 +2642,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Returns [target] with a sequence suffix (" 2", " 3", …) inserted before
-  /// the extension until a non-existing path is found. Side outputs (Live
-  /// Photo MOV, motion video exports) use this so a repeated conversion
-  /// never silently overwrites a previous side file.
-  String _sideOutputPath(String target) {
-    if (!File(target).existsSync()) return target;
-    final dir = File(target).parent.path;
-    final name = File(target).uri.pathSegments.last;
-    final dot = name.lastIndexOf('.');
-    final stem = dot > 0 ? name.substring(0, dot) : name;
-    final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 2;; i++) {
-      final candidate = '$dir${Platform.pathSeparator}$stem $i$ext';
-      if (!File(candidate).existsSync()) return candidate;
-    }
-  }
-
   void _revealInExplorer(String path) {
     if (Platform.isWindows) {
       Process.run('explorer', ['/select,', path]);
@@ -2522,51 +2683,36 @@ class _HomePageState extends State<HomePage> {
   /// Android: batch-save all converted outputs to the gallery.
   /// Uses per-item albums (capture mode folder) when categorize is on.
   Future<void> _saveAllToGallery() async {
-    final result = await _saveAllConvertedToGallery(showDeniedHint: true);
+    final result = await _saveAllConvertedToGallery();
     if (result == null || !mounted) return;
-    final (saved, failed) = result;
-    final msg = failed > 0
-        ? t('已保存 $saved 个到相册，$failed 个失败', 'Saved $saved to gallery, $failed failed')
-        : t('已保存 $saved 个到相册', 'Saved $saved to gallery');
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
-  /// Core of the gallery batch-save. Returns (saved, failed), or null when
-  /// there was nothing to save or gallery permission was denied.
-  Future<(int, int)?> _saveAllConvertedToGallery({
-    bool showDeniedHint = false,
-  }) async {
+  /// Every entry uses the bundle-aware save path, including auto-save.
+  Future<GalleryExportBatchResult?> _saveAllConvertedToGallery() async {
+    if (_savingGallery) return null;
     final items = _queue
         .where((item) => item.status == QueueItemStatus.converted)
         .toList();
     if (items.isEmpty) return null;
 
-    final hasAccess = await FileActionService.hasGalleryPermission();
-    if (!hasAccess) {
-      final granted = await FileActionService.requestGalleryPermission();
-      if (!granted) {
-        if (showDeniedHint && mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
-        }
-        return null;
-      }
+    _savingGallery = true;
+    try {
+      return await _outputExports.saveBatch(items, albumFor: _galleryAlbum);
+    } finally {
+      _savingGallery = false;
     }
+  }
 
-    int saved = 0, failed = 0;
-    for (final item in items) {
-      final ok = await FileActionService.saveToGallery(
-        item.outputPath,
-        album: _galleryAlbum(item),
-      );
-      if (ok) {
-        saved++;
-      } else {
-        failed++;
-      }
+  Future<void> _saveOutputToGallery(QueueItem item) async {
+    if (_savingGallery) return;
+    _savingGallery = true;
+    try {
+      final result = await _outputExports.save(item, album: _galleryAlbum(item));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+    } finally {
+      _savingGallery = false;
     }
-    return (saved, failed);
   }
 
   /// Gallery album for an output item: capture-mode folder name when
@@ -2581,6 +2727,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _galleryAlbumSubtitle(QueueItem item) {
+    if (hasLivePhotoOutput(item)) {
+      return Platform.isIOS
+          ? t('作为一个完整 Live Photo 保存到系统照片库', 'Save one complete Live Photo to the system photo library')
+          : t('保存 HEIF + MOV 两个独立文件；传输时请保留配对原件', 'Save separate HEIF + MOV files; transfer both originals');
+    }
     final album = _galleryAlbum(item) ?? 'XDRemux';
     if (Platform.isIOS) return t('相册「$album」', 'Album "$album"');
     // gal/MediaStore places image albums under Pictures/, not DCIM/.
@@ -2602,13 +2753,20 @@ class _HomePageState extends State<HomePage> {
               if (Platform.isAndroid || Platform.isIOS)
                 ListTile(
                   leading: const Icon(Icons.photo_library),
-                  title: Text(t('保存到相册', 'Save to gallery')),
+                  title: Text(hasLivePhotoOutput(item)
+                      ? (Platform.isIOS ? t('保存 Live Photo', 'Save Live Photo') : t('保存 HEIF + MOV', 'Save HEIF + MOV'))
+                      : t('保存到相册', 'Save to gallery')),
                   subtitle: Text(_galleryAlbumSubtitle(item)),
                   onTap: () => Navigator.pop(ctx, _OutputAction.save),
                 ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: Text(t('分享', 'Share')),
+                title: Text(hasLivePhotoOutput(item) ? t('分享配对原文件', 'Share paired originals') : t('分享', 'Share')),
+                subtitle: hasLivePhotoOutput(item)
+                    ? Text(t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
+                    : PlatformX.isOhos
+                    ? Text(t('以文件发送原件', 'Send the original as a file'))
+                    : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
               ListTile(
@@ -2652,29 +2810,13 @@ class _HomePageState extends State<HomePage> {
       case _OutputAction.details:
         _showPhotoDetails(item);
       case _OutputAction.save:
-        final hasAccess = await FileActionService.hasGalleryPermission();
-        if (!hasAccess) {
-          final granted = await FileActionService.requestGalleryPermission();
-          if (!granted) {
-            if (mounted) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(t('未获得存储权限', 'Storage permission not granted'))));
-            }
-            return;
-          }
-        }
-        final ok = await FileActionService.saveToGallery(
-          item.outputPath,
-          album: _galleryAlbum(item),
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(ok ? t('已保存到相册', 'Saved to gallery') : t('保存失败', 'Save failed'))));
-        }
+        await _saveOutputToGallery(item);
       case _OutputAction.share:
-        await FileActionService.shareFile(item.outputPath);
+        try {
+          await _outputExports.share(item);
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t('分享失败：$e', 'Share failed: $e'))));
+        }
       case _OutputAction.open:
         await FileActionService.openFile(item.outputPath);
       case _OutputAction.reconvert:
@@ -2697,7 +2839,6 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 600;
-
     return KeyboardListener(
       focusNode: _captureFocusNode,
       onKeyEvent: _onKey,
@@ -2705,29 +2846,124 @@ class _HomePageState extends State<HomePage> {
         key: _rootKey,
         child: Scaffold(
           appBar: _buildAppBar(theme, compact),
-          bottomNavigationBar: compact ? _buildMobileActionBar(theme) : null,
-          body: _buildDropTarget(
-            context,
-            Column(
-              children: [
-                _buildProgressBar(theme),
-                const Divider(height: 1),
-                if (_queue.isNotEmpty) _buildQueueSummary(theme),
-                Expanded(
-                  child: _queue.isEmpty
-                      ? _buildEmptyState(theme)
-                      : _buildQueueView(theme, compact),
+          bottomNavigationBar: compact && !_floatPrimaryAction
+              ? _buildMobileActionBar(theme)
+              : null,
+          body: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: _buildDropTarget(
+                        context,
+                        _buildBody(theme, compact),
+                      ),
+                    ),
+                    if (_hasTrailingBar)
+                      Positioned(
+                        right: 6,
+                        bottom: 10,
+                        child: _buildTrailingBar(theme),
+                      ),
+                    if (!_hasTrailingBar && _floatPrimaryAction)
+                      Positioned(
+                        right: 20,
+                        bottom: 20,
+                        child: _buildPrimaryFab(theme),
+                      ),
+                  ],
                 ),
-                if (_queue.isNotEmpty && !compact) _buildFooter(theme),
-              ],
-            ),
-          ),
         ),
       ),
     );
   }
 
+  Widget _buildBody(ThemeData theme, bool compact) {
+    final content = Column(
+      children: [
+        _buildProgressBar(theme),
+        const Divider(height: 1),
+        if (_queue.isNotEmpty) _buildQueueSummary(theme),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(
+              right: _sideContentInset,
+              // Without the bottom bar the list runs to the screen edge; keep
+              // the last row clear of the home indicator.
+              bottom: _floatPrimaryAction
+                  ? MediaQuery.paddingOf(context).bottom
+                  : 0,
+            ),
+            child: _queue.isEmpty
+                ? _buildEmptyState(theme)
+                : _buildQueueView(theme, compact),
+          ),
+        ),
+        if (_queue.isNotEmpty && !compact) _buildFooter(theme),
+      ],
+    );
+    if (_showSidePalette) {
+      return Padding(
+        padding: EdgeInsets.only(right: MediaQuery.paddingOf(context).right),
+        child: Row(
+          children: [
+            Expanded(child: content),
+            _buildSideToolPalette(theme),
+          ],
+        ),
+      );
+    }
+    return content;
+  }
+
+  /// A trailing tool palette only pays off where it does not starve the
+  /// content: devices with a side safe-area strip AND a regular-width window
+  /// (Duo inner display / landscape). On the 466pt cover display the bar would
+  /// wrap the empty-state text and buttons, so the app-bar + bottom-bar layout
+  /// stays there.
+  /// In-content fallback palette for side-inset windows that do NOT report a
+  /// system vertical bar. Devices with a trailing bar use that strip instead,
+  /// so the two never render together (landscape used to show both).
+  bool get _showSidePalette =>
+      !_hasTrailingBar &&
+      MediaQuery.paddingOf(context).right >= 40 &&
+      MediaQuery.sizeOf(context).width >= 700;
+
+  /// Once the queue grows past this length the primary conversion action
+  /// leaves the bottom bar and floats in the trailing strip instead, so the
+  /// list keeps the full height. Empty/short queues keep the familiar bottom
+  /// bar.
+  static const int kFloatingActionQueueThreshold = 4;
+
+  /// True when the primary conversion action leaves the bottom bar: either the
+  /// queue grew long enough, or the layout has no bottom bar at all (wide
+  /// windows). Without this the action would only live in the app bar.
+  bool get _floatPrimaryAction =>
+      !_compactLayout ||
+      (_hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold);
+
+  /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
+  /// bar; when the native side reports that edge, the tool bar moves into it.
+  bool get _compactLayout => MediaQuery.sizeOf(context).width < 600;
+
+  bool get _hasTrailingBar =>
+      PlatformLayoutTraits.verticalBarEdge == 'trailing' &&
+      MediaQuery.paddingOf(context).right >= 40;
+
+  /// Horizontal content inset: the trailing bar itself occupies the reserved
+  /// strip, so the content no longer needs to avoid it.
+  double get _sideContentInset => MediaQuery.paddingOf(context).right;
+
   AppBar _buildAppBar(ThemeData theme, bool compact) {
+    // Devices with a side-mounted status strip (iPhone Duo) get a dedicated
+    // tool palette, so the app bar keeps only the title.
+    if (_showSidePalette || _hasTrailingBar) {
+      return AppBar(
+        centerTitle: false,
+        titleSpacing: compact ? 16 : null,
+        title: compact ? const Text('XDRemux') : Text('XDRemux$_versionSuffix'),
+        backgroundColor: theme.colorScheme.surfaceContainerHighest,
+        surfaceTintColor: Colors.transparent,
+      );
+    }
     final actions = <Widget>[
       if (!compact)
         IconButton(
@@ -2785,7 +3021,9 @@ class _HomePageState extends State<HomePage> {
           onPressed: _openOrganizePage,
         ),
       _buildQueueOverflowMenu(),
-      const SizedBox(width: 4),
+      // Keep the actions out of a side-mounted status/camera strip while
+      // letting the app bar surface stay edge-to-edge.
+      SizedBox(width: 4 + MediaQuery.paddingOf(context).right),
     ];
 
     return AppBar(
@@ -2878,6 +3116,193 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Vertical tool palette shown on devices whose safe area is on a side edge
+  /// (iPhone Duo's 84pt status/camera strip). It replaces the app-bar actions
+  /// and the bottom bar's add button, reclaiming vertical space on a short
+  /// screen while keeping every control inside the usable area.
+  Widget _buildSideToolPalette(ThemeData theme) {
+    return Container(
+      width: 56,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(left: BorderSide(color: theme.dividerColor)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 6),
+            IconButton(
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              tooltip: t('添加文件', 'Add files'),
+              onPressed: _canEditQueue ? _addFiles : null,
+            ),
+            if (!_isProcessing && _convertedCount > 0)
+              IconButton(
+                icon: const Icon(Icons.photo_library_outlined),
+                tooltip: t('全部保存到相册', 'Save all to gallery'),
+                onPressed: _saveAllToGallery,
+              ),
+            if (Platform.isMacOS ||
+                Platform.isIOS ||
+                Platform.isWindows ||
+                Platform.isAndroid ||
+                PlatformX.isOhos)
+              IconButton(
+                icon: const Icon(Icons.auto_awesome_motion_outlined),
+                tooltip: t('一帧影像，动用两台手机', 'One photo, two phones'),
+                onPressed: _openAppleOppoWorkflow,
+              ),
+            IconButton(
+              icon: const Icon(Icons.tune),
+              tooltip: t('设置', 'Settings'),
+              onPressed: () => _openSettings(context),
+            ),
+            _buildQueueOverflowMenu(),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Vertical tool bar drawn inside the system-reserved trailing strip
+  /// (iPhone Duo). The actions float in a bottom-anchored capsule so the strip
+  /// keeps the page background, the palette reads as a single control, and the
+  /// actions stay clear of the status items at the top and within thumb reach.
+  /// Floating capsule with the secondary actions, drawn inside the
+  /// system-reserved trailing strip (iPhone Duo). It is positioned as an
+  /// overlay so the content keeps its full height and the strip keeps the page
+  /// background; only the capsule itself is opaque.
+  Widget _buildTrailingBar(ThemeData theme) {
+    const capsuleWidth = 68.0;
+    Widget item(
+      IconData icon,
+      String label,
+      String english,
+      VoidCallback? onPressed, {
+      bool primary = false,
+    }) {
+      final tooltip = t(label, english);
+      return SizedBox(
+        width: capsuleWidth,
+        height: 46,
+        child: primary
+            ? IconButton.filledTonal(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              )
+            : IconButton(
+                icon: Icon(icon),
+                tooltip: tooltip,
+                onPressed: onPressed,
+              ),
+      );
+    }
+
+    final capsule = Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(capsuleWidth / 2),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: capsuleWidth,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 4),
+            if (_floatPrimaryAction)
+              item(
+                Icons.add_photo_alternate_outlined,
+                '添加文件',
+                'Add files',
+                _canEditQueue ? _addFiles : null,
+              ),
+            if (!_isProcessing && _convertedCount > 0)
+              item(
+                Icons.photo_library_outlined,
+                '全部保存到相册',
+                'Save all to gallery',
+                _saveAllToGallery,
+              ),
+            if (Platform.isMacOS ||
+                Platform.isIOS ||
+                Platform.isWindows ||
+                Platform.isAndroid ||
+                PlatformX.isOhos)
+              item(
+                Icons.auto_awesome_motion_outlined,
+                '一帧影像，动用两台手机',
+                'One photo, two phones',
+                _openAppleOppoWorkflow,
+              ),
+            item(Icons.tune, '设置', 'Settings', () => _openSettings(context)),
+            SizedBox(
+              width: capsuleWidth,
+              height: 46,
+              child: _buildQueueOverflowMenu(),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        capsule,
+        const SizedBox(height: 12),
+        if (_floatPrimaryAction)
+          _buildPrimaryFab(theme)
+        else
+          // Otherwise the intake action stands alone as a FAB.
+          SizedBox(
+            width: 56,
+            height: 56,
+            child: FloatingActionButton(
+              heroTag: 'duo-add-files',
+              tooltip: t('添加文件', 'Add files'),
+              onPressed: _canEditQueue ? _addFiles : null,
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary,
+              elevation: 6,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPrimaryFab(ThemeData theme) {
+    final label = _isProcessing
+        ? t('取消转换', 'Cancel conversion')
+        : t('开始转换', 'Start conversion');
+    final icon = _isProcessing
+        ? Icons.stop_rounded
+        : Icons.play_arrow_rounded;
+    final action = _isProcessing
+        ? _cancelConversion
+        : (_canStart ? _startConversion : null);
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: Tooltip(
+        message: label,
+        child: FloatingActionButton(
+          heroTag: 'duo-primary-action',
+          onPressed: action,
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: theme.colorScheme.onPrimary,
+          elevation: 6,
+          shape: const CircleBorder(),
+          child: Icon(icon, size: 30),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMobileActionBar(ThemeData theme) {
     final primaryLabel = _isProcessing ? t('取消转换', 'Cancel conversion') : t('开始转换', 'Start conversion');
     final primaryIcon = _isProcessing
@@ -2896,31 +3321,37 @@ class _HomePageState extends State<HomePage> {
       ),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        child: Row(
-          children: [
-            IconButton.filledTonal(
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-              tooltip: t('添加文件', 'Add files'),
-              onPressed: _canEditQueue ? _addFiles : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FilledButton.icon(
-                icon: Icon(primaryIcon),
-                label: Text(primaryLabel),
-                onPressed: primaryAction,
+        // SafeArea.minimum takes max(inset, minimum), not their sum.
+        // Keep the button's own spacing inside the system-safe region.
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: Row(
+            children: [
+              if (!_showSidePalette && !_hasTrailingBar) ...[
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  tooltip: t('添加文件', 'Add files'),
+                  onPressed: _canEditQueue ? _addFiles : null,
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: FilledButton.icon(
+                  icon: Icon(primaryIcon),
+                  label: Text(primaryLabel),
+                  onPressed: primaryAction,
+                ),
               ),
-            ),
-            if (showSaveAll) ...[
-              const SizedBox(width: 12),
-              IconButton.filledTonal(
-                icon: const Icon(Icons.photo_library_outlined),
-                tooltip: t('全部保存到相册', 'Save all to gallery'),
-                onPressed: _saveAllToGallery,
-              ),
+              if (showSaveAll) ...[
+                const SizedBox(width: 12),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.photo_library_outlined),
+                  tooltip: t('全部保存到相册', 'Save all to gallery'),
+                  onPressed: _saveAllToGallery,
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -2967,11 +3398,15 @@ class _HomePageState extends State<HomePage> {
         .where((i) => i.status == QueueItemStatus.running)
         .firstOrNull;
     final narrow = MediaQuery.of(context).size.width < 480;
+    final hPad = narrow ? 12.0 : 16.0;
+    final vPad = narrow ? 8.0 : 12.0;
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
-      padding: EdgeInsets.symmetric(
-        horizontal: narrow ? 12 : 16,
-        vertical: narrow ? 8 : 12,
+      padding: EdgeInsets.fromLTRB(
+        hPad,
+        vPad,
+        hPad + _sideContentInset,
+        vPad,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3202,7 +3637,12 @@ class _HomePageState extends State<HomePage> {
         : theme.colorScheme.onSurfaceVariant;
 
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      margin: EdgeInsets.fromLTRB(
+        12,
+        12,
+        12 + _sideContentInset,
+        0,
+      ),
       color: theme.colorScheme.surface,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -3280,7 +3720,7 @@ class _HomePageState extends State<HomePage> {
 
         final itemIndex = index - 1;
         final item = _queue[itemIndex];
-        return _MobileQueueCard(
+        return MobileQueueCard(
           item: item,
           isSelected: itemIndex == _selectedIndex,
           onTap: () {
@@ -3338,7 +3778,10 @@ class _HomePageState extends State<HomePage> {
               },
               onRevealInput: () => _revealInExplorer(_queue[index].inputPath),
               onRevealOutput: () {
-                if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+                if (Platform.isAndroid ||
+                    Platform.isIOS ||
+                    Platform.isMacOS ||
+                    PlatformX.isOhos) {
                   _showOutputActions(_queue[index]);
                 } else {
                   _revealInExplorer(_queue[index].outputPath);
@@ -3376,7 +3819,7 @@ class _HomePageState extends State<HomePage> {
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
-          child: _PhotoDetailsContent(
+          child: PhotoDetailsContent(
             item: item,
             details: details,
             fileSizeMb: fileSizeMb,
@@ -3393,7 +3836,7 @@ class _HomePageState extends State<HomePage> {
           ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 580, maxHeight: 720),
-            child: _PhotoDetailsContent(
+            child: PhotoDetailsContent(
               item: item,
               details: details,
               fileSizeMb: fileSizeMb,
@@ -3517,7 +3960,10 @@ class _HomePageState extends State<HomePage> {
   /// - Running → select only
   void _handleItemTap(QueueItem item) {
     if (item.isSuccessful) {
-      if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+      if (Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isMacOS ||
+          PlatformX.isOhos) {
         _showOutputActions(item);
       } else {
         _revealInExplorer(item.outputPath);
@@ -3560,7 +4006,12 @@ class _HomePageState extends State<HomePage> {
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: EdgeInsets.fromLTRB(
+        12,
+        6,
+        12 + _sideContentInset,
+        6,
+      ),
       child: Row(
         children: [
           if (_failedCount > 0 && !narrow)
@@ -3616,6 +4067,7 @@ class _HomePageState extends State<HomePage> {
         onChanged: () {
           _scheduleConfigSave();
           _refreshOutputPaths(refreshAll: true);
+          _syncHuaweiHdrPolicy();
         },
       ),
     );
@@ -3681,8 +4133,6 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   late ConversionConfig _cfg;
   late final TextEditingController _suffixController;
-  BackendCapabilities _backendCapabilities =
-      BackendCapabilities.forCurrentPlatform();
 
   /// Hardware-encoding availability probe result (null = not yet known).
   /// Only probed on Android, where the MediaCodec path exists.
@@ -3696,15 +4146,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   void initState() {
     super.initState();
     _cfg = widget.config.copy();
+    _sanitizeConfigForCapabilities(_cfg);
     _suffixController = TextEditingController(text: _cfg.fileNameSuffix);
-    if (Platform.isMacOS || Platform.isIOS) {
-      XdRemuxService.getBackendCapabilities().then((capabilities) {
-        if (!mounted) return;
-        final changed = _sanitizeConfigForCapabilities(_cfg, capabilities);
-        setState(() => _backendCapabilities = capabilities);
-        if (changed) _emit();
-      });
-    }
     if (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) {
       HardwareEncodeService.isAvailable().then((ok) {
         if (mounted) setState(() => _hwAvailable = ok);
@@ -4025,116 +4468,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Swift is visible only on Apple platforms. It remains
-                    // disabled until the embedded Swift Core capability probe
-                    // reports a linked and verified implementation.
-                    if (Platform.isMacOS || Platform.isIOS) ...[
-                      Text(
-                        _t('转换引擎', 'Conversion engine'),
-                        style: theme.textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<ConversionBackend>(
-                        initialValue: _cfg.backend,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          DropdownMenuItem(
-                            value: ConversionBackend.rust,
-                            child: Text(_t('Rust（推荐）', 'Rust (Recommended)')),
-                          ),
-                          DropdownMenuItem(
-                            value: ConversionBackend.swift,
-                            enabled: _backendCapabilities.swiftAvailable,
-                            child: Text('Swift'),
-                          ),
-                        ],
-                        onChanged: (backend) {
-                          if (backend == null ||
-                              !_backendCapabilities.isAvailable(backend)) {
-                            return;
-                          }
-                          setState(() {
-                            _cfg.backend = backend;
-                            if (backend != ConversionBackend.swift) {
-                              _cfg.applePhotographicStyles = false;
-                              _cfg.applePortrait = false;
-                            } else {
-                              // PS3 injection is Rust-only.
-                              _cfg.applePhotographicStyles3 = false;
-                            }
-                          });
-                          _emit();
-                        },
-                      ),
-                      if (_cfg.backend == ConversionBackend.swift &&
-                          _backendCapabilities.swiftAppleFeatures) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          _t(
-                            'Apple 照片功能（实验性）',
-                            'Apple Photos features (Experimental)',
-                          ),
-                          style: theme.textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _t(
-                            '这里写入的是可继续调节的数据，不会把风格直接烘焙进照片。',
-                            'These options write editable data; the look is not baked into the photo.',
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        if (_backendCapabilities.swiftPhotographicStyles)
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              _t(
-                                'Apple 照片摄影风格（Swift）',
-                                'Apple Photos Photographic Styles (Swift)',
-                              ),
-                            ),
-                            subtitle: Text(
-                              _t(
-                                '使用 Swift 生成可在 Apple 照片中继续调节的摄影风格数据；仅 Apple 原生能力可用时显示。',
-                                'Uses Swift to generate Photographic Styles data editable in Apple Photos; available only with Apple-native capabilities.',
-                              ),
-                            ),
-                            value: _cfg.applePhotographicStyles,
-                            onChanged: (value) {
-                              setState(() {
-                                _cfg.applePhotographicStyles = value;
-                                if (value) {
-                                  _cfg.outputMode = OutputMode.apple;
-                                  _cfg.oppoCompatibility = OppoCompatMode.off;
-                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                                }
-                              });
-                              _emit();
-                            },
-                          ),
-                        if (_backendCapabilities.swiftPortrait)
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('Apple 人像模式（Swift）'),
-                            value: _cfg.applePortrait,
-                            onChanged: (value) {
-                              setState(() {
-                                _cfg.applePortrait = value;
-                                if (value) {
-                                  _cfg.outputMode = OutputMode.apple;
-                                  _cfg.oppoCompatibility = OppoCompatMode.off;
-                                  _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                                }
-                              });
-                              _emit();
-                            },
-                          ),
-                      ],
-                      const SizedBox(height: 20),
-                    ],
-
                     if (_cfg.backend == ConversionBackend.rust) ...[
                       Text(
                         _t(
@@ -4155,8 +4488,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            'Apple 照片摄影风格（Rust）',
-                            'Apple Photos Photographic Styles (Rust)',
+                            'Apple 照片摄影风格',
+                            'Apple Photos Photographic Styles',
                           ),
                         ),
                         subtitle: Text(
@@ -4166,8 +4499,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   'Included in Photographic Styles 3; turn that off to change this.',
                                 )
                               : _t(
-                                 '使用 Rust 生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                                 'Uses Rust to generate Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                                 '生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                 'Generates Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
                                ),
                         ),
                         value: _cfg.applePhotographicStyles,
@@ -4221,7 +4554,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          _t('Apple 人像模式（Rust）', 'Apple Portrait Mode (Rust)'),
+                          _t('Apple 人像模式', 'Apple Portrait Mode'),
                         ),
                         value: _cfg.applePortrait,
                         onChanged: (value) {
@@ -4859,6 +5192,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ],
 
                     // Cache management (Android / iOS)
+                    const Divider(),
+                    CodecDiagnosticsTile(english: _cfg.language == AppLanguage.english),
+
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       const Divider(),
                       const SizedBox(height: 8),
@@ -5077,7 +5413,9 @@ class _FeatureChip extends StatelessWidget {
   }
 }
 
-class _MobileQueueCard extends StatelessWidget {
+/// Responsive queue item, public so layout regressions can be exercised with
+/// populated motion-photo data rather than only an empty home page.
+class MobileQueueCard extends StatelessWidget {
   final QueueItem item;
   final bool isSelected;
   final VoidCallback onTap;
@@ -5085,7 +5423,8 @@ class _MobileQueueCard extends StatelessWidget {
   final VoidCallback onRemove;
   final ValueChanged<MotionPhotoMode?> onMotionModeChanged;
 
-  const _MobileQueueCard({
+  const MobileQueueCard({
+    super.key,
     required this.item,
     required this.isSelected,
     required this.onTap,
@@ -5120,7 +5459,7 @@ class _MobileQueueCard extends StatelessWidget {
     }
     if (item.status == QueueItemStatus.skippedExisting ||
         item.status == QueueItemStatus.skippedPolicy) {
-      return item.outputPlanStatus.displayName;
+      return item.policyReason ?? item.outputPlanStatus.displayName;
     }
     return item.outputPlanStatus.blocksConversion
         ? item.outputPlanStatus.displayName
@@ -5172,19 +5511,19 @@ class _MobileQueueCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Expanded(
-                            child: Text(
-                              item.fileName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
+                          Text(
+                            item.fileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(width: 8),
                           _MobileStatusPill(
                             label: item.status.displayName,
                             color: statusColor,
@@ -5229,7 +5568,10 @@ class _MobileQueueCard extends StatelessWidget {
                           item.status != QueueItemStatus.running)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Row(
+                          child: Wrap(
+                            spacing: 10,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(
                                 item.motionPhoto!.resolutionLabel.isNotEmpty
@@ -5239,7 +5581,6 @@ class _MobileQueueCard extends StatelessWidget {
                                   color: theme.colorScheme.onSurfaceVariant,
                                 ),
                               ),
-                              const SizedBox(width: 10),
                               _MotionModeMenu(
                                 value: item.motionPhotoMode,
                                 onChanged: onMotionModeChanged,
@@ -5384,12 +5725,21 @@ class _MotionModeMenu extends StatelessWidget {
           .map(
             (mode) => PopupMenuItem<MotionPhotoMode>(
               value: mode,
-              child: Text(mode.displayName),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(mode.displayName),
+                  if (mode == MotionPhotoMode.stillAndVideo)
+                    Text(t('仅提取视频，不生成 Apple 配对 ID', 'Extracts video only; no Apple pairing ID'),
+                        style: theme.textTheme.bodySmall),
+                ],
+              ),
             ),
           )
           .toList(),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        constraints: const BoxConstraints(minHeight: 36),
         decoration: BoxDecoration(
           color: theme.colorScheme.tertiary.withAlpha(24),
           borderRadius: BorderRadius.circular(6),
@@ -5398,11 +5748,23 @@ class _MotionModeMenu extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              value.displayName,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.tertiary,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              // Size against every option, but paint/expose only the selected
+              // one. Otherwise short labels can move this control between Wrap
+              // runs or remove a text line, shifting the card and queue below.
+              child: IndexedStack(
+                index: MotionPhotoMode.values.indexOf(value),
+                alignment: AlignmentDirectional.centerStart,
+                children: [
+                  for (final mode in MotionPhotoMode.values)
+                    Text(
+                      mode.displayName,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.tertiary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(width: 2),
@@ -6005,13 +6367,14 @@ class _ResumeCheckpointDialog extends StatelessWidget {
   }
 }
 
-class _PhotoDetailsContent extends StatelessWidget {
+class PhotoDetailsContent extends StatelessWidget {
   final QueueItem item;
   final PhotoDetailsModel details;
   final String fileSizeMb;
   final bool isBottomSheet;
 
-  const _PhotoDetailsContent({
+  const PhotoDetailsContent({
+    super.key,
     required this.item,
     required this.details,
     required this.fileSizeMb,
@@ -6124,10 +6487,10 @@ class _PhotoDetailsContent extends StatelessWidget {
                   _detailRow(
                     theme,
                     t('HDR 格式', 'HDR Format'),
-                    details.hdrKind != null
-                        ? 'ProXDR (${details.hdrKind!.toUpperCase()})'
-                        : (item.hdrKind != null ? 'ProXDR (${item.hdrKind!.toUpperCase()})' : t('无 (SDR)', 'None (SDR)')),
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
                   ),
+                  if (details.hdrParseError != null)
+                    _detailRow(theme, t('解析原因', 'Parse error'), details.hdrParseError!),
                   _detailRow(
                     theme,
                     t('EDR 亮度倍率', 'EDR Headroom'),
@@ -6218,22 +6581,29 @@ class _PhotoDetailsContent extends StatelessWidget {
         ),
         const Divider(height: 1),
         // Footer buttons
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton.icon(
-                icon: const Icon(Icons.copy, size: 16),
-                label: Text(t('复制全部信息', 'Copy Details')),
-                onPressed: () => _copyDetailsToClipboard(context),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text(t('关闭', 'Close')),
-              ),
-            ],
+        // ModalBottomSheet.useSafeArea deliberately excludes the bottom.
+        SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          bottom: isBottomSheet,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: Text(t('复制全部信息', 'Copy Details')),
+                  onPressed: () => _copyDetailsToClipboard(context),
+                ),
+                const SizedBox(width: 10),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(t('关闭', 'Close')),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -6262,11 +6632,11 @@ class _PhotoDetailsContent extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _chip(theme, '$fileSizeMb MB'),
-                if (details.hdrKind != null || item.hdrKind != null)
+                if (details.hdrParseError != null || details.hdrKind != null || item.hdrKind != null)
                   _chip(
                     theme,
-                    'ProXDR (${(details.hdrKind ?? item.hdrKind!).toUpperCase()})',
-                    color: Colors.orange,
+                    details.hdrFormatLabel(fallbackKind: item.hdrKind),
+                    color: details.hdrParseError != null ? Colors.red : Colors.orange,
                   ),
                 if (item.motionPhoto != null)
                   _chip(theme, t('实况照片', 'Live Photo'), color: Colors.blue),
@@ -6370,7 +6740,10 @@ class _PhotoDetailsContent extends StatelessWidget {
     buffer.writeln('拍摄时间: ${details.dateTime ?? "-"}');
     buffer.writeln('图像分辨率: ${details.dimensionsSummary.isNotEmpty ? details.dimensionsSummary : "-"}');
     buffer.writeln('--- HDR & 动态范围 ---');
-    buffer.writeln('HDR 格式: ${details.hdrKind?.toUpperCase() ?? item.hdrKind?.toUpperCase() ?? "None"}');
+    buffer.writeln('HDR 格式: ${details.hdrFormatLabel(fallbackKind: item.hdrKind)}');
+    if (details.hdrParseError != null) {
+      buffer.writeln('HDR 解析原因: ${details.hdrParseError}');
+    }
     if (details.edrScale != null) {
       buffer.writeln('EDR Headroom: ${details.edrScale!.toStringAsFixed(2)}x');
     }

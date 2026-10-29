@@ -10,6 +10,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"   # -> xdremux/rust
 
+# rustc links the iOS staticlib at its own default minimum (iOS 10) while the C
+# dependencies (zstd, x265 helper) are compiled against the installed SDK. With
+# a modern SDK that mismatch fails the cdylib link with
+# "Undefined symbols ... ___chkstk_darwin". Pin the deployment target so a clean
+# rebuild matches the app's iOS 15 minimum.
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
+
 DEST="../../apps/flutter/ios/Runner/Frameworks"
 mkdir -p "$DEST"
 
@@ -25,6 +32,24 @@ if [ ! -f vendor/x265/build_ios/libx265.a ]; then
     -DCMAKE_BUILD_TYPE=Release
 fi
 cmake --build vendor/x265/build_ios --target x265-static -j8
+
+# Optional Main10 encoder for the Styles linear thumbnail (set XDREMUX_MAIN10=0
+# to skip). EXPORT_C_API=OFF puts the objects in namespace x265_10bit; build.rs
+# bundles this archive into libxdremux_core.a, so nothing extra is staged.
+if [ "${XDREMUX_MAIN10:-1}" != "0" ]; then
+  echo "==> x265 10-bit (iOS arm64, no assembly)"
+  if [ ! -f vendor/x265/build_ios_10bit/libx265.a ]; then
+    cmake -S vendor/x265/source -B vendor/x265/build_ios_10bit \
+      -DCMAKE_SYSTEM_NAME=iOS \
+      -DCMAKE_OSX_SYSROOT="$X265_SDK" \
+      -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+      -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+      -DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF \
+      -DCMAKE_BUILD_TYPE=Release
+  fi
+  cmake --build vendor/x265/build_ios_10bit --target x265-static -j8
+fi
 
 # Workspace root may redirect the target dir (repo root Cargo.toml workspace),
 # so resolve it via cargo metadata instead of assuming ./target.

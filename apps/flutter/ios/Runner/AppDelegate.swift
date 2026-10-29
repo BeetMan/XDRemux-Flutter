@@ -2,6 +2,7 @@ import Flutter
 import ImageIO
 import UniformTypeIdentifiers
 import PhotosUI
+import Photos
 import UniformTypeIdentifiers
 import UIKit
 import XDremuxAppleProviders
@@ -64,6 +65,56 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
 
   private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
   private var pendingPhotoPickerResult: FlutterResult?
+
+  /// A single Photos asset with two resources. Do not move the app's originals
+  /// or fall back to a still-only save when permission/pair import fails.
+  private static func saveLivePhoto(stillPath: String, videoPath: String, result: @escaping FlutterResult) {
+    let finish: (Any?) -> Void = { value in
+      DispatchQueue.main.async { result(value) }
+    }
+    let stillURL = URL(fileURLWithPath: stillPath)
+    let movieURL = URL(fileURLWithPath: videoPath)
+    do {
+      guard stillURL.standardizedFileURL != movieURL.standardizedFileURL else {
+        finish(FlutterError(code: "invalid_pair", message: "The photo and movie must be different files", details: nil))
+        return
+      }
+      for url in [stillURL, movieURL] {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else {
+          finish(FlutterError(code: "missing_resource", message: "A Live Photo resource is missing or empty", details: nil))
+          return
+        }
+      }
+    } catch {
+      finish(FlutterError(code: "missing_resource", message: error.localizedDescription, details: nil))
+      return
+    }
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        finish(FlutterError(code: "permission_denied", message: "Photo library add permission was denied", details: nil))
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        let request = PHAssetCreationRequest.forAsset()
+        let photoOptions = PHAssetResourceCreationOptions()
+        photoOptions.shouldMoveFile = false
+        photoOptions.originalFilename = stillURL.lastPathComponent
+        request.addResource(with: .photo, fileURL: stillURL, options: photoOptions)
+        let movieOptions = PHAssetResourceCreationOptions()
+        movieOptions.shouldMoveFile = false
+        movieOptions.originalFilename = movieURL.lastPathComponent
+        request.addResource(with: .pairedVideo, fileURL: movieURL, options: movieOptions)
+      }) { success, error in
+        if success {
+          finish(true)
+        } else {
+          finish(FlutterError(code: "live_photo_save_failed",
+            message: error?.localizedDescription ?? "Photos rejected the Live Photo resources", details: nil))
+        }
+      }
+    }
+  }
 
   private static func activePresenter() -> UIViewController? {
     let scenes = UIApplication.shared.connectedScenes
@@ -237,14 +288,22 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       binaryMessenger: messenger
     )
     nativeShareChannel.setMethodCallHandler { call, result in
-      guard call.method == "shareFile",
-            let args = call.arguments as? [String: Any],
-            let path = args["path"] as? String else {
+      guard call.method == "shareFile" || call.method == "shareFiles" else {
         result(FlutterMethodNotImplemented)
         return
       }
+      let args = call.arguments as? [String: Any]
+      let paths: [String]
+      if call.method == "shareFile", let path = args?["path"] as? String {
+        paths = [path]
+      } else if call.method == "shareFiles", let values = args?["paths"] as? [String], !values.isEmpty {
+        paths = values
+      } else {
+        result(FlutterError(code: "bad_args", message: "Missing share file paths", details: nil))
+        return
+      }
       DispatchQueue.main.async {
-        guard FileManager.default.fileExists(atPath: path),
+        guard paths.allSatisfy({ FileManager.default.fileExists(atPath: $0) }),
               let presenter = Self.activePresenter() else {
           result(FlutterError(
             code: "share_unavailable",
@@ -254,9 +313,14 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
           return
         }
         let controller = UIActivityViewController(
-          activityItems: [URL(fileURLWithPath: path)],
+          activityItems: paths.map { URL(fileURLWithPath: $0) },
           applicationActivities: nil
         )
+        if paths.count > 1 {
+          // Sharing two URLs is not a PhotoKit Live Photo import. Use the
+          // dedicated save action rather than offering a misleading fallback.
+          controller.excludedActivityTypes = [.saveToCameraRoll]
+        }
         if let popover = controller.popoverPresentationController {
           popover.sourceView = presenter.view
           popover.sourceRect = CGRect(
@@ -269,6 +333,29 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         presenter.present(controller, animated: true) {
           result(true)
         }
+      }
+    }
+
+    let livePhotoChannel = FlutterMethodChannel(
+      name: "xdremux/live-photo",
+      binaryMessenger: messenger
+    )
+    livePhotoChannel.setMethodCallHandler { call, result in
+      guard call.method == "saveLivePhoto" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let args = call.arguments as? [String: Any],
+            let still = args["stillPath"] as? String,
+            let movie = args["videoPath"] as? String,
+            !still.isEmpty, !movie.isEmpty else {
+        result(FlutterError(code: "bad_args", message: "Missing Live Photo resource paths", details: nil))
+        return
+      }
+      // UIKit's application delegate is main-actor isolated. Only file
+      // attributes are checked here; authorization and Photos writes are async.
+      DispatchQueue.main.async {
+        Self.saveLivePhoto(stillPath: still, videoPath: movie, result: result)
       }
     }
 
@@ -331,6 +418,32 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         } else {
           result(nil)
         }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    // iOS 27 platform layout traits. The system can place a vertical bar on a
+    // leading or trailing edge (iPhone Duo reserves its 84pt right inset for a
+    // trailing bar), and `UITraitCollection.verticalBarEdge` reports the edge
+    // it prefers even before any bar is visible.
+    let traitsChannel = FlutterMethodChannel(
+      name: "xdremux/platform-traits",
+      binaryMessenger: messenger
+    )
+    traitsChannel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "getLayoutTraits":
+        var edge = "unspecified"
+        if #available(iOS 27.1, *) {
+          let traits = self?.window?.traitCollection ?? UITraitCollection.current
+          switch traits.verticalBarEdge {
+          case .leading: edge = "leading"
+          case .trailing: edge = "trailing"
+          default: edge = "unspecified"
+          }
+        }
+        result(["verticalBarEdge": edge])
       default:
         result(FlutterMethodNotImplemented)
       }

@@ -592,7 +592,7 @@ pub fn parse_iloc(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<IlocEntry>, St
             if index_size > 0 {
                 pos += index_size;
             }
-            let mut offset: u64 = base_offset;
+            let mut offset: u64 = 0;
             for _ in 0..offset_size {
                 offset = (offset << 8) | data[pos] as u64;
                 pos += 1;
@@ -602,6 +602,7 @@ pub fn parse_iloc(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<IlocEntry>, St
                 length = (length << 8) | data[pos] as u64;
                 pos += 1;
             }
+            let offset = base_offset.checked_add(offset).ok_or("iloc extent offset overflow")?;
             extents.push((offset, length));
         }
 
@@ -668,21 +669,15 @@ pub fn parse_iinf(data: &[u8], box_hdr: &BoxHeader) -> Result<Vec<ItemInfo>, Str
         // Skip item_protection_index (u16)
         p += 2;
 
-        // Read item type (4-char code, null-terminated)
+        // ISO BMFF item_type is exactly four bytes. The item name/content
+        // follows it; do not fold those strings into the type (Huawei's
+        // `gridbase`, `tmapTone-mapped representation`, and `mime...`
+        // items exposed this bug in the previous null-terminated parser).
         let type_start = p;
-        while p < infe_end && data[p] != 0 {
-            p += 1;
-        }
-        let itype = std::str::from_utf8(&data[type_start..p])
+        let type_end = type_start.saturating_add(4).min(infe_end);
+        let itype = std::str::from_utf8(&data[type_start..type_end])
             .unwrap_or("????")
             .to_string();
-        // p is at null byte; advance past it
-        p += 1;
-        let _ = p; // suppress unused-assignment warning
-
-        // For mime type, skip content type + content encoding null-terminated strings
-        // (we don't need them for passthrough)
-
         let flags = if v >= 2 {
             ((data[child.data_start + 1] as u32) << 16)
                 | ((data[child.data_start + 2] as u32) << 8)
@@ -895,6 +890,16 @@ pub fn parse_source_meta(data: &[u8]) -> Result<ParsedMeta, String> {
     })
 }
 
+/// Locate the `idat` box inside `meta` (item payload storage for
+/// `construction_method == 1` iloc entries; offsets are relative to its data).
+pub fn find_idat_box(data: &[u8]) -> Option<BoxHeader> {
+    let top = parse_boxes(data, 0, data.len());
+    let meta = top.iter().find(|b| &b.btype == b"meta")?;
+    // `meta` is a full box: skip its 4-byte version/flags before children.
+    let children = parse_boxes(data, meta.data_start + 4, meta.data_end);
+    children.into_iter().find(|b| &b.btype == b"idat")
+}
+
 /// Return true when an existing ISO 21496 gain-map graph is encoded as
 /// 4:2:0. The primary image is intentionally excluded: ordinary HEIC primary
 /// images are often 4:2:0, whereas only the `auxC`/`auxl`-linked gain tiles
@@ -1036,6 +1041,23 @@ mod tests {
     }
 
     #[test]
+    fn iloc_adds_nonzero_base_offset_instead_of_shifting_it() {
+        let mut payload = vec![1, 0, 0, 0, 0x44, 0x40];
+        payload.extend(1u16.to_be_bytes()); // item count
+        payload.extend(2u16.to_be_bytes()); // item ID
+        payload.extend(0u16.to_be_bytes()); // construction method
+        payload.extend(0u16.to_be_bytes()); // data reference
+        payload.extend(1000u32.to_be_bytes()); // base offset
+        payload.extend(1u16.to_be_bytes()); // extent count
+        payload.extend(50u32.to_be_bytes()); // extent offset
+        payload.extend(32u32.to_be_bytes()); // extent length
+        let data = make_box(b"iloc", &payload);
+        let boxes = parse_boxes(&data, 0, data.len());
+        let parsed = parse_iloc(&data, &boxes[0]).unwrap();
+        assert_eq!(parsed[0].extents, vec![(1050, 32)]);
+    }
+
+    #[test]
     fn infe_hvc1_roundtrip() {
         let infe = make_infe_box(5, "hvc1", 1);
         // Should be a valid box
@@ -1045,6 +1067,14 @@ mod tests {
         // Verify it contains "hvc1"
         let hvc1_pos = infe.windows(4).position(|w| w == b"hvc1");
         assert!(hvc1_pos.is_some(), "infe should contain 'hvc1'");
+    }
+
+    #[test]
+    fn parse_iinf_keeps_four_byte_item_type_separate_from_name() {
+        let iinf = make_iinf_box(0, &[make_mime_infe_box(20, 1)]);
+        let header = find_box(&iinf, b"iinf", 0, iinf.len()).expect("iinf box");
+        let items = parse_iinf(&iinf, &header).expect("parse iinf");
+        assert_eq!(items[0].itype, "mime");
     }
 
     #[test]

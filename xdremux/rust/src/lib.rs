@@ -2,7 +2,10 @@
 //!
 //! Exposes a small C FFI surface consumed by Flutter via `dart:ffi`.
 
+#![recursion_limit = "256"]
+
 pub mod categorize;
+pub mod codec_capabilities;
 pub mod container;
 pub mod container_build;
 pub mod edr;
@@ -13,13 +16,20 @@ pub mod photo_details;
 pub mod uhdr_jpeg;
 pub mod gainmap;
 pub mod hevc;
+#[cfg(any(feature = "libheif-decoder", test))]
+mod heif_decode;
+pub mod huawei_heic;
 pub mod iso21496;
 pub mod iso_validate;
 pub mod isobmff;
 pub mod isobmff_write;
 pub mod jpeg_decode;
+mod jpeg_color;
+mod jpeg_gainmap_metadata;
+pub mod apple_log;
 pub mod linear_thumbnail;
 pub mod progress;
+pub mod preview;
 pub mod sdr_source;
 pub mod person_stats;
 pub mod face_detect;
@@ -31,6 +41,7 @@ pub mod texture_styles;
 pub mod semantic_mattes;
 pub mod styles_attach;
 mod styles_consts;
+mod apple_note_payload;
 mod styles_graft;
 pub mod styles_native;
 pub mod styles_scaffold;
@@ -38,6 +49,9 @@ pub mod styles_scaffold;
 // R5 native Rust Portrait graph writer, ported from the conformance research
 // implementation. It produces an Apple-editable depth graph from OPPO rear.depth.
 mod portrait;
+// Huawei portrait remux entry (see examples/huawei_portrait_remux.rs); the
+// portrait module itself stays private.
+pub use portrait::run_huawei_portrait;
 mod portrait_consts;
 mod portrait_depth;
 mod portrait_graft;
@@ -53,6 +67,16 @@ use std::ptr;
 use container::OppoCameraTail;
 use exif::OppoCompat;
 use isobmff_write::PreparedOutput;
+
+fn paths_refer_to_same_file(input: &str, output: &str) -> bool {
+    if input == output {
+        return true;
+    }
+    match (std::fs::canonicalize(input), std::fs::canonicalize(output)) {
+        (Ok(input), Ok(output)) => input == output,
+        _ => false,
+    }
+}
 
 /// Opaque result struct returned to Dart. Dart must call `xdremux_free_result`.
 #[repr(C)]
@@ -114,6 +138,13 @@ pub extern "C" fn xdremux_version() -> *mut c_char {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
     }
+}
+
+/// JSON capability report; free with xdremux_free_string.
+#[no_mangle]
+pub extern "C" fn xdremux_codec_capabilities() -> *mut c_char {
+    std::panic::catch_unwind(|| CString::new(codec_capabilities::report().to_string()).ok().map(CString::into_raw))
+        .ok().flatten().unwrap_or(ptr::null_mut())
 }
 
 /// Inspect a photo for Motion Photo structure. Returns a JSON report with
@@ -247,6 +278,11 @@ pub extern "C" fn xdremux_make_live_photo(
             .map_err(|e| format!("cannot read source: {e}"))?;
         let still = std::fs::read(still_path)
             .map_err(|e| format!("cannot read still: {e}"))?;
+        let still = if let Ok(Some(still_asset)) = motion_photo::parse_motion_photo(&still) {
+            still[still_asset.still_range.start as usize..still_asset.still_range.end as usize].to_vec()
+        } else {
+            still
+        };
         let asset = motion_photo::parse_motion_photo(&source)?
             .ok_or("source is not a Motion Photo")?;
         let primary = motion_photo::primary_video_range(&source, &asset);
@@ -268,6 +304,11 @@ pub extern "C" fn xdremux_make_live_photo(
             .unwrap_or("livephoto");
         let still_out_path = format!("{out_dir}/{stem}.heic");
         let mov_path = format!("{out_dir}/{stem}.mov");
+        if paths_refer_to_same_file(source_path, &still_out_path)
+            || paths_refer_to_same_file(source_path, &mov_path)
+        {
+            return Err("Live Photo output must not overwrite the source".into());
+        }
         std::fs::write(&still_out_path, &still_out)
             .map_err(|e| format!("write still: {e}"))?;
         std::fs::write(&mov_path, &mov).map_err(|e| format!("write movie: {e}"))?;
@@ -440,6 +481,54 @@ pub extern "C" fn xdremux_attach_styles(
         let output = read(output_path).ok_or("bad output path")?;
         let data = std::fs::read(input).map_err(|e| format!("read: {e}"))?;
         let (patched, report) = styles_attach::attach_styles(&data, grain_seed)?;
+        std::fs::write(output, patched).map_err(|e| format!("write: {e}"))?;
+        let added = report
+            .added
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(format!(
+            "{{\"status\":\"{}\",\"added\":[{}]}}",
+            report.status, added
+        ))
+    })();
+    let json = match result {
+        Ok(json) => json,
+        Err(message) => {
+            let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{{\"status\":\"error\",\"message\":\"{escaped}\"}}")
+        }
+    };
+    CString::new(json).map(|s| s.into_raw()).unwrap_or_else(|_| std::ptr::null_mut())
+}
+
+/// Same JSON contract as [`xdremux_attach_styles`], but only the requested
+/// layers are written.
+///
+/// `flags`: bit 0 = 2023 styles item, bit 1 = texture/grain, bit 2 = the 12
+/// semantic part mattes. Huawei portrait calls this after the portrait remux
+/// so Photographic Styles can be on without a second encode.
+#[no_mangle]
+pub extern "C" fn xdremux_attach_style_layers(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+    flags: u32,
+) -> *mut c_char {
+    let result = (|| -> Result<String, String> {
+        let read = |p: *const c_char| -> Option<String> {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
+        };
+        let input = read(input_path).ok_or("bad input path")?;
+        let output = read(output_path).ok_or("bad output path")?;
+        let data = std::fs::read(input).map_err(|e| format!("read: {e}"))?;
+        let layers = styles_attach::StyleLayers {
+            styles: flags & 1 != 0,
+            texture: flags & 2 != 0,
+            mattes: flags & 4 != 0,
+        };
+        let (patched, report) = styles_attach::attach_style_layers(&data, grain_seed, layers)?;
         std::fs::write(output, patched).map_err(|e| format!("write: {e}"))?;
         let added = report
             .added
@@ -805,6 +894,7 @@ pub(crate) fn extract_lhdr_or_uhdr_from_bytes(
                 mode: "uhdr".into(),
                 meta_bytes: Vec::new(),
                 meta_floats: uhdr.meta_floats,
+                gainmap_use_base_color_space: uhdr.use_base_color_space,
                 mask_data: None,
                 gainmap_data: Some(uhdr.gainmap_jpeg),
                 manifest_entries: None,
@@ -822,6 +912,7 @@ pub(crate) fn extract_lhdr_or_uhdr_from_bytes(
                         mode: "uhdr".into(),
                         meta_bytes: Vec::new(),
                         meta_floats: uhdr.meta_floats,
+                        gainmap_use_base_color_space: uhdr.use_base_color_space,
                         mask_data: None,
                         gainmap_data: Some(uhdr.gainmap_jpeg),
                         manifest_entries: None,
@@ -894,6 +985,157 @@ pub extern "C" fn xdremux_free_classification_result(result: ClassificationResul
             }
         }
     }
+}
+
+/// Inspect a Huawei HDR HEIC without decoding or rewriting it.
+///
+/// The returned JSON is owned and must be released with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_huawei_inspect(input_path: *const c_char) -> *mut c_char {
+    let report = std::panic::catch_unwind(|| {
+        if input_path.is_null() {
+            serde_json::json!({
+                "schema": "xdremux-huawei-heic-v1",
+                "status": "invalid-input-path",
+                "isHuaweiHdr": false,
+                "applePhotosHdrCompatible": false,
+                "recommendedAction": "inspect",
+                "error": "input path is missing",
+            })
+            .to_string()
+        } else {
+            match unsafe { CStr::from_ptr(input_path) }.to_str() {
+                Ok(path) => match huawei_heic::inspect_path(path) {
+                    Ok(report) => report.to_json(),
+                    Err(error) => serde_json::json!({
+                        "schema": "xdremux-huawei-heic-v1",
+                        "status": "input-read-error",
+                        "isHuaweiHdr": false,
+                        "applePhotosHdrCompatible": false,
+                        "recommendedAction": "inspect",
+                        "error": error,
+                    })
+                    .to_string(),
+                },
+                Err(_) => serde_json::json!({
+                    "schema": "xdremux-huawei-heic-v1",
+                    "status": "invalid-input-path",
+                    "isHuaweiHdr": false,
+                    "applePhotosHdrCompatible": false,
+                    "recommendedAction": "inspect",
+                    "error": "input path is not valid UTF-8",
+                })
+                .to_string(),
+            }
+        }
+    })
+    .unwrap_or_else(|_| {
+        serde_json::json!({
+            "schema": "xdremux-huawei-heic-v1",
+            "status": "diagnostic-panic",
+            "isHuaweiHdr": false,
+            "applePhotosHdrCompatible": false,
+            "recommendedAction": "inspect",
+            "error": "malformed HEIF metadata caused a diagnostic parser failure",
+        })
+        .to_string()
+    });
+    CString::new(report).unwrap_or_default().into_raw()
+}
+
+/// Remux a native Huawei Portrait HEIC into an Apple-compatible Portrait HEIC.
+///
+/// Returns a JSON string with `{"success": true}` or `{"success": false, "error": "..."}`.
+/// The returned string is owned and must be released with `xdremux_free_string`.
+#[no_mangle]
+pub extern "C" fn xdremux_remux_huawei_portrait(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = std::panic::catch_unwind(|| {
+        if input_path.is_null() || output_path.is_null() {
+            return serde_json::json!({
+                "success": false,
+                "error": "null path pointer",
+            })
+            .to_string();
+        }
+        let in_str = match unsafe { CStr::from_ptr(input_path) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("invalid utf-8 input path: {e}"),
+                })
+                .to_string()
+            }
+        };
+        let out_str = match unsafe { CStr::from_ptr(output_path) }.to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("invalid utf-8 output path: {e}"),
+                })
+                .to_string()
+            }
+        };
+        if paths_refer_to_same_file(in_str, out_str) {
+            return serde_json::json!({
+                "success": false,
+                "error": "portrait output must not overwrite the source",
+            }).to_string();
+        }
+        let data = match std::fs::read(in_str) {
+            Ok(d) => d,
+            Err(e) => {
+                return serde_json::json!({
+                    "success": false,
+                    "error": format!("read error: {e}"),
+                })
+                .to_string()
+            }
+        };
+        match portrait::run_huawei_portrait(&data) {
+            Ok(remuxed) => {
+                if let Some(parent) = std::path::Path::new(out_str).parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return serde_json::json!({
+                            "success": false,
+                            "error": format!("create output directory: {e}"),
+                        }).to_string();
+                    }
+                }
+                if let Err(e) = std::fs::write(out_str, remuxed) {
+                    return serde_json::json!({
+                        "success": false,
+                        "error": format!("write error: {e}"),
+                    })
+                    .to_string();
+                }
+                serde_json::json!({
+                    "success": true,
+                })
+                .to_string()
+            }
+            Err(e) => serde_json::json!({
+                "success": false,
+                "error": e,
+            })
+            .to_string(),
+        }
+    })
+    .unwrap_or_else(|_| {
+        serde_json::json!({
+            "success": false,
+            "error": "panic in xdremux_remux_huawei_portrait",
+        })
+        .to_string()
+    });
+
+    CString::new(result).unwrap_or_default().into_raw()
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,24 +1457,34 @@ fn xdremux_convert_impl(
         extracted
     } else if source.starts_with(&[0xFF, 0xD8]) {
         // A real Ultra HDR JPEG keeps its own gain map. Everything else — a
-        // plain SDR JPEG, or one whose MPF/hdrgm metadata is malformed — is
-        // the same non-ProXDR case as a foreign container and goes through the
+        // plain SDR JPEG — is the same non-ProXDR case as a foreign container
+        // and goes through the
         // shared SDR synthesis, so the Exif and orientation handling can never
         // disagree between the two entry conditions.
-        let real_gain_map = matches!(
-            uhdr_jpeg::parse(&source),
-            Ok(Some(ref info)) if info.gainmap_jpeg != uhdr_jpeg::IDENTITY_GAINMAP_JPEG
-        );
+        // Never silently replace a malformed HDR gain map with SDR identity,
+        // even when Styles enables the ordinary SDR synthesis path.
+        let parsed_jpeg = match uhdr_jpeg::parse(&source) {
+            Ok(info) => info,
+            Err(e) => return ConversionResult {
+                success: false,
+                mode: ptr::null_mut(),
+                family: ptr::null_mut(),
+                edr_scale: 0.0,
+                gain_map_max: 0.0,
+                error_message: CString::new(format!("Ultra HDR JPEG parse: {e}"))
+                    .unwrap().into_raw(),
+            },
+        };
+        let real_gain_map = matches!(parsed_jpeg,
+            Some(ref info) if info.gainmap_jpeg != uhdr_jpeg::IDENTITY_GAINMAP_JPEG);
         if real_gain_map {
-            let info = match uhdr_jpeg::parse(&source) {
-                Ok(Some(info)) => info,
-                _ => unreachable!("checked above"),
-            };
+            let mut info = parsed_jpeg.expect("checked above");
             // Primary image in HEIF must always be 4:2:0 (Main profile) so that
             // hardware decoders (OPPO/Qualcomm/MediaTek/Apple) and parser
             // libraries (heif-oxide) can decode it properly without
             // black-screening.
             let use_420 = true;
+            uhdr_jpeg::inherit_missing_exif(&mut info, input);
             let synth = match uhdr_jpeg::synthesize_source_container(&source, &info, use_420) {
                 Ok(s) => s,
                 Err(e) => {
@@ -1255,6 +1507,7 @@ fn xdremux_convert_impl(
                 mode: "uhdr".into(),
                 meta_bytes: Vec::new(),
                 meta_floats: info.meta_floats,
+                gainmap_use_base_color_space: info.use_base_color_space,
                 mask_data: None,
                 gainmap_data: Some(info.gainmap_jpeg),
                 manifest_entries: None,
@@ -1291,6 +1544,44 @@ fn xdremux_convert_impl(
                         error_message: CString::new(reason).unwrap().into_raw(),
                     };
                 }
+            }
+        }
+    } else if huawei_heic::inspect_bytes(&source).is_huawei_hdr {
+        // Huawei HDR already carries its own gain map. LHDR/UHDR tails are the
+        // OPPO container, so they are not searched here. Photographic Styles
+        // decode the picture and rebuild a standard container around it.
+        match sdr_fallback(&source, apple_photographic_styles, input) {
+            Some(Ok((synth, extracted))) => {
+                source = synth;
+                extracted
+            }
+            Some(Err(sdr_err)) => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(format!(
+                        "Huawei HDR Photographic Styles decode failed: {sdr_err}"
+                    ))
+                    .unwrap()
+                    .into_raw(),
+                };
+            }
+            None => {
+                return ConversionResult {
+                    success: false,
+                    mode: ptr::null_mut(),
+                    family: ptr::null_mut(),
+                    edr_scale: 0.0,
+                    gain_map_max: 0.0,
+                    error_message: CString::new(
+                        "Huawei HDR is not an OPPO LHDR/UHDR container",
+                    )
+                    .unwrap()
+                    .into_raw(),
+                };
             }
         }
     } else {
@@ -1416,7 +1707,14 @@ fn xdremux_convert_impl(
                 }
             }
             if apple_photographic_styles {
-                if let Err(error) = finalize_native_styles(&standard_output, output) {
+                // Path 3 of the gain-map feasibility note: hand the already
+                // reconstructed gain-map plane to the thumbnail generator so
+                // the Apple Log codes carry HDR headroom without decoding the
+                // HEVC-coded tmap gain map.
+                let gain_map = thumbnail_gain_map(&extracted, &source);
+                if let Err(error) =
+                    finalize_native_styles(&standard_output, output, gain_map.as_ref())
+                {
                     let _ = std::fs::remove_file(&standard_output);
                     return ConversionResult {
                         success: false,
@@ -1465,10 +1763,167 @@ fn xdremux_convert_impl(
     }
 }
 
-fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), String> {
+/// Decide whether the stored gain map lives in the presentation frame.
+///
+/// Mirrors the writer's `primary_is_presentation_oriented` rule: EXIF
+/// orientation non-normal **and** the primary's `irot` absent or zero means the
+/// tiles are already presentation-oriented, so the gain map was oriented to
+/// that frame too.
+fn gain_map_needs_orientation(
+    orientation: exif::ExifOrientation,
+    primary_irot_quarter_turns: Option<u8>,
+) -> bool {
+    !matches!(orientation, exif::ExifOrientation::Normal)
+        && primary_irot_quarter_turns == Some(0)
+}
+
+/// Orientation the stored gain map needs to match the decoded thumbnail base.
+///
+/// The writer keeps the gain map in the primary's storage orientation, and
+/// orients it to the presentation frame only when the primary tiles are already
+/// presentation-oriented (EXIF orientation non-normal **and** `irot` absent or
+/// zero). The linear thumbnail decodes the presentation-oriented base and
+/// un-rotates it with `irot`, so for that same case the in-memory gain-map
+/// plane has to be oriented here too; otherwise a rotated source would apply
+/// the gain map along the wrong axes.
+fn gain_map_plane_orientation(source: &[u8]) -> Option<exif::ExifOrientation> {
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    let idat = isobmff::find_idat_box(source);
+    let orientation = exif::read_heif_exif_orientation(
+        source,
+        &meta.items,
+        &meta.iloc_entries,
+        idat.as_ref(),
+    )
+    .ok()?;
+    if matches!(orientation, exif::ExifOrientation::Normal) {
+        return None;
+    }
+    let primary_irot = meta
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == meta.primary_id)
+        .and_then(|entry| {
+            entry.associations.iter().find_map(|(index, _)| {
+                meta.props
+                    .iter()
+                    .find(|property| property.index == *index && property.ptype == "irot")
+            })
+        })
+        .and_then(|property| isobmff::irot_quarter_turns(&property.raw).ok());
+    if gain_map_needs_orientation(orientation, primary_irot) {
+        Some(orientation)
+    } else {
+        None
+    }
+}
+
+/// Apply [`gain_map_plane_orientation`] to a single-channel gain plane.
+fn orient_gain_plane(
+    luma: Vec<u8>,
+    width: u32,
+    height: u32,
+    orientation: Option<exif::ExifOrientation>,
+) -> (Vec<u8>, u32, u32) {
+    let Some(orientation) = orientation else {
+        return (luma, width, height);
+    };
+    match isobmff_write::orient_gainmap_pixels(
+        &luma,
+        width,
+        height,
+        1,
+        width as usize,
+        orientation,
+    ) {
+        Ok(oriented) => oriented,
+        Err(_) => (luma, width, height),
+    }
+}
+
+/// Build the gain-map plane for the linear thumbnail from data the conversion
+/// pipeline already decoded ("path 3" of the gain-map feasibility note): the
+/// UHDR gain-map JPEG, or the LHDR mask run through the same knee
+/// reconstruction the writer uses. Returns `None` when the source carries no
+/// usable headroom, leaving the thumbnail on the SDR-only path.
+fn thumbnail_gain_map(
+    extracted: &container::ExtractedLhdr,
+    source: &[u8],
+) -> Option<linear_thumbnail::OwnedGainMap> {
+    let orientation = gain_map_plane_orientation(source);
+    if let Some(gainmap_jpeg) = extracted.gainmap_data.as_deref() {
+        let (rgb, width, height) = jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg).ok()?;
+        if width == 0 || height == 0 || rgb.len() % 3 != 0 {
+            return None;
+        }
+        let luma: Vec<u8> = rgb
+            .chunks_exact(3)
+            .map(|pixel| {
+                let value = 0.299 * f32::from(pixel[0])
+                    + 0.587 * f32::from(pixel[1])
+                    + 0.114 * f32::from(pixel[2]);
+                value.round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        let info = iso21496::parse_oppo_uhdr_info(&extracted.meta_floats).ok()?;
+        let min_gain = info
+            .ratio_min
+            .iter()
+            .copied()
+            .fold(f32::MAX, f32::min)
+            .max(1.0);
+        let max_gain = info.ratio_max.iter().copied().fold(f32::MIN, f32::max);
+        if !(max_gain > 1.0) || !max_gain.is_finite() {
+            return None;
+        }
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain,
+            max_gain,
+        });
+    }
+    if let Some(mask_jpeg) = extracted.mask_data.as_deref() {
+        let (mask_pixels, width, height) = jpeg_decode::decode_jpeg_to_gray(mask_jpeg).ok()?;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let edr = edr::edr_scale_calculator(&extracted.meta_floats);
+        if !(edr > 1.0) || !edr.is_finite() {
+            return None;
+        }
+        let version = extracted.meta_floats.first().copied().unwrap_or(3.0);
+        let luma = gainmap::reconstruct(
+            &mask_pixels,
+            width as usize,
+            height as usize,
+            width as usize,
+            edr,
+            version,
+        );
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain: 1.0,
+            max_gain: edr,
+        });
+    }
+    None
+}
+
+fn finalize_native_styles(
+    base_path: &str,
+    output_path: &str,
+    gain_map: Option<&linear_thumbnail::OwnedGainMap>,
+) -> Result<(), String> {
     let base = std::fs::read(base_path)
         .map_err(|e| format!("read Rust Styles base output: {e}"))?;
-    let styled = styles_native::styles_native(&base)
+    let plane = gain_map.map(|owned| owned.plane());
+    let styled = styles_native::styles_native_with_gain_map(&base, plane.as_ref())
         .map_err(|e| format!("Rust Photographic Styles: {e}"))?;
     std::fs::write(output_path, styled)
         .map_err(|e| format!("write Rust Photographic Styles output: {e}"))?;
@@ -1530,6 +1985,7 @@ fn portrait_src_image_base(source: &[u8]) -> Option<(Vec<u8>, container::Extract
             mode: "uhdr".into(),
             meta_bytes: Vec::new(),
             meta_floats: info.meta_floats,
+            gainmap_use_base_color_space: info.use_base_color_space,
             mask_data: None,
             gainmap_data: Some(info.gainmap_jpeg),
             manifest_entries: None,
@@ -1614,10 +2070,11 @@ fn convert_uhdr(
     progress::set_progress(2, 0, 0); // decode JPEG
 
     progress::set_progress(4, 1, 1); // assemble
-    isobmff_write::write_uhdr_iso_output(
+    isobmff_write::write_uhdr_iso_output_with_color_space(
         source,
         gainmap_jpeg,
         &extracted.meta_floats,
+        extracted.gainmap_use_base_color_space,
         oppo_compat,
         oppo_camera_tail,
         strict_tmap,
@@ -1709,10 +2166,19 @@ pub extern "C" fn xdremux_prepare_tiles(
     let result = (|| -> Result<(PreparedOutput, Vec<u8>), String> {
         let source = std::fs::read(input).map_err(|e| format!("cannot read input: {e}"))?;
         let (source, extracted) = if source.starts_with(&[0xFF, 0xD8]) {
-            let info = uhdr_jpeg::parse(&source)?
+            let mut info = uhdr_jpeg::parse(&source)?
                 .ok_or_else(|| "JPEG lacks an Ultra HDR gain map".to_string())?;
+            uhdr_jpeg::inherit_missing_exif(&mut info, input);
             let synth = uhdr_jpeg::synthesize_source_container(&source, &info, false)?;
-            let ext = container::extract_lhdr_from_bytes(&synth)?;
+            let ext = container::ExtractedLhdr {
+                mode: "uhdr".into(),
+                meta_bytes: Vec::new(),
+                meta_floats: info.meta_floats,
+                gainmap_use_base_color_space: info.use_base_color_space,
+                mask_data: None,
+                gainmap_data: Some(info.gainmap_jpeg),
+                manifest_entries: None,
+            };
             (synth, ext)
         } else {
             let ext = extract_lhdr_or_uhdr_from_bytes(&source)?;
@@ -1721,10 +2187,11 @@ pub extern "C" fn xdremux_prepare_tiles(
         if extracted.mode == "uhdr" {
             let gm = extracted.gainmap_data.as_ref().ok_or("no gainmap JPEG in UHDR data")?;
             progress::set_progress(2, 0, 0); // decode JPEG
-            isobmff_write::prepare_uhdr_tiles(
+            isobmff_write::prepare_uhdr_tiles_with_color_space(
                 &source,
                 gm,
                 &extracted.meta_floats,
+                extracted.gainmap_use_base_color_space,
                 oppo_compat,
                 tail_policy,
                 strict_tmap,
@@ -1929,6 +2396,17 @@ pub extern "C" fn xdremux_verify_styles_output(path: *const c_char) -> bool {
     verify_iso_gain_map(&data) && verify_photographic_styles(&data)
 }
 
+/// Portrait graph written by the Huawei remux. Photos already accepts this
+/// file. [`xdremux_verify_portrait_output`] does not: it also requires an
+/// ISO 21496-1 gain-map `auxC` and a `mimehdrgm-xmp` item, and the Huawei
+/// container stores the matte XMP inside `mime` items instead.
+pub fn huawei_portrait_output_ok(data: &[u8]) -> bool {
+    contains_ascii(data, b"portraiteffectsmatte")
+        && contains_ascii(data, b"semanticskinmatte")
+        && contains_ascii(data, b"semantichairmatte")
+        && contains_ascii(data, b"portraitLightingEffect")
+}
+
 /// Verifies a Rust Apple Portrait output structurally. Photos remains the
 /// final authority for rendering the editable depth effect.
 #[no_mangle]
@@ -1942,6 +2420,20 @@ pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
         Err(_) => return false,
     };
     verify_iso_gain_map(&data) && verify_portrait_graph(&data)
+}
+
+/// Huawei portrait check used by the app. See [`huawei_portrait_output_ok`].
+#[no_mangle]
+pub extern "C" fn xdremux_verify_huawei_portrait_output(path: *const c_char) -> bool {
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let data = match std::fs::read(path_str) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    huawei_portrait_output_ok(&data)
 }
 
 fn verify_portrait_graph(data: &[u8]) -> bool {
@@ -1967,11 +2459,13 @@ fn verify_photographic_styles(data: &[u8]) -> bool {
         Ok(meta) => meta,
         Err(_) => return false,
     };
-    let style_item = match meta
-        .items
-        .iter()
-        .find(|item| item.itype.contains("styleMetadata"))
-    {
+    let style_item = match meta.items.iter().find(|item| {
+        item.itype.contains("styleMetadata")
+            || item
+                .raw_infe
+                .windows(13)
+                .any(|window| window == b"styleMetadata")
+    }) {
         Some(item) => item,
         None => return false,
     };
@@ -2151,6 +2645,17 @@ pub extern "C" fn xdremux_extract_thumbnail(path: *const c_char) -> ThumbnailRes
     }
 
     fail
+}
+
+/// Additive preview API, using the existing owned buffer ABI.
+#[no_mangle]
+pub extern "C" fn xdremux_render_thumbnail(path: *const c_char, max_size: u32) -> ThumbnailResult {
+    let fail = ThumbnailResult { data: ptr::null_mut(), len: 0, success: false };
+    if path.is_null() { return fail; }
+    std::panic::catch_unwind(|| {
+        let path = unsafe { CStr::from_ptr(path) }.to_str().ok()?;
+        preview::render(path, max_size).ok().map(return_thumbnail)
+    }).ok().flatten().unwrap_or(fail)
 }
 
 fn return_thumbnail(jpeg: Vec<u8>) -> ThumbnailResult {
@@ -2358,6 +2863,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gain_plane_orientation_follows_exif_transform() {
+        // 3x2 luma plane rotated 90 degrees clockwise becomes 2x3.
+        let luma = vec![1u8, 2, 3, 4, 5, 6];
+        let (rotated, width, height) = orient_gain_plane(
+            luma.clone(),
+            3,
+            2,
+            Some(crate::exif::ExifOrientation::Rotate90Clockwise),
+        );
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(rotated.len(), luma.len());
+        assert_ne!(rotated, luma, "rotation must reorder the pixels");
+
+        // No orientation means the plane is passed through untouched.
+        let (same, same_w, same_h) = orient_gain_plane(luma.clone(), 3, 2, None);
+        assert_eq!((same_w, same_h), (3, 2));
+        assert_eq!(same, luma);
+    }
+
+    #[test]
+    fn gain_map_orientation_decision_matches_writer_rule() {
+        use crate::exif::ExifOrientation;
+        // Normal EXIF never needs the extra transform.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Normal,
+            Some(0)
+        ));
+        // Presentation-oriented primary (non-normal EXIF, irot == 0).
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(0)
+        ));
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::FlipHorizontal,
+            Some(0)
+        ));
+        // Storage-oriented primary keeps `irot`, so the gain map stays as-is.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(1)
+        ));
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            None
+        ));
+    }
+
+    #[test]
     fn lossy_gainmap_promotion_is_rejected_only_for_clean_iso_output() {
         assert!(should_reject_lossy_gainmap_promotion(true, OppoCompat::Off));
         assert!(!should_reject_lossy_gainmap_promotion(
@@ -2380,6 +2933,43 @@ mod tests {
         let v = xdremux_version();
         assert!(!v.is_null());
         xdremux_free_string(v);
+    }
+
+    #[test]
+    fn malformed_jpeg_gain_metadata_cannot_be_downgraded_by_styles() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_nanos();
+        let folder = std::env::temp_dir().join(format!(
+            "xdremux_bad_gainmap_{}_{}", std::process::id(), nonce));
+        std::fs::create_dir(&folder).unwrap();
+        let input_path = folder.join("input.jpg");
+        let output_path = folder.join("output.heic");
+        let mut jpeg = vec![0xff, 0xd8];
+        for _ in 0..2 {
+            let namespace = jpeg_gainmap_metadata::ISO_NAMESPACE;
+            jpeg.extend([0xff, 0xe2]);
+            jpeg.extend(((namespace.len() + 2) as u16).to_be_bytes());
+            jpeg.extend(namespace);
+        }
+        jpeg.extend([0xff, 0xd9]);
+        std::fs::write(&input_path, jpeg).unwrap();
+        let input = CString::new(input_path.to_str().unwrap()).unwrap();
+        let output = CString::new(output_path.to_str().unwrap()).unwrap();
+        for styles in [0, 1] {
+            let config = ConvertConfig {
+                oppo_compat: 0, oppo_camera_tail: 0, strict_tmap: 1,
+                apple_photographic_styles: styles, apple_portrait: 0,
+            };
+            let result = xdremux_convert(input.as_ptr(), output.as_ptr(), &config);
+            assert!(!result.success);
+            let message = unsafe { CStr::from_ptr(result.error_message) }
+                .to_string_lossy().into_owned();
+            xdremux_free_result(result);
+            assert!(message.contains("duplicate ISO gain-map APP2"), "{message}");
+            assert!(!output_path.exists());
+        }
+        std::fs::remove_file(input_path).unwrap();
+        std::fs::remove_dir(folder).unwrap();
     }
 
     #[test]
@@ -2904,6 +3494,147 @@ mod tests {
     fn verify_output_junk_data() {
         // Junk data should not crash and should return false
         assert!(!verify_iso_gain_map(&[0u8; 1024]));
+    }
+
+    #[test]
+    fn huawei_hdr_styles_native_skips_primary_reencode() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\run-20260930-0104\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("huawei hdr");
+        let started = std::time::Instant::now();
+        let (styled, report) = styles_attach::attach_style_layers(
+            &data,
+            1,
+            styles_attach::StyleLayers::STYLES_ONLY,
+        )
+        .expect("styles on huawei hdr");
+        let elapsed = started.elapsed();
+        eprintln!("huawei hdr styles {} bytes in {elapsed:?}", styled.len());
+        assert!(
+            report.added.iter().any(|layer| *layer == "styles-native"),
+            "{report:?}"
+        );
+        assert!(verify_photographic_styles(&styled), "styleMetadata");
+        assert!(
+            elapsed.as_secs() < 5,
+            "grafting styles re-encoded the primary ({elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn huawei_portrait_full_styles_keeps_portrait_markers() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\run-20260930-0104\1790697212348-IMG_20260907_021118_iso.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("portrait remux");
+        let (styled, report) = styles_attach::attach_style_layers(
+            &data,
+            1,
+            styles_attach::StyleLayers::ALL,
+        )
+        .expect("portrait styles");
+        assert!(
+            report.added.iter().any(|layer| *layer == "styles-native"),
+            "{report:?}"
+        );
+        for needle in [
+            b"portraiteffectsmatte".as_slice(),
+            b"semanticskinmatte".as_slice(),
+            b"semantichairmatte".as_slice(),
+            b"portraitLightingEffect".as_slice(),
+            b"styleMetadata".as_slice(),
+            b"semanticpersonmatte".as_slice(),
+        ] {
+            assert!(
+                styled.windows(needle.len()).any(|window| window == needle),
+                "missing {}",
+                String::from_utf8_lossy(needle)
+            );
+        }
+        if portrait::huawei_person_contour(&data).is_some() {
+            assert!(
+                report.added.iter().any(|layer| *layer == "mattes-person"),
+                "{report:?}"
+            );
+            let meta = isobmff::parse_source_meta(&styled).expect("styled meta");
+            let len_of = |urn: &[u8]| -> u64 {
+                let item = meta
+                    .ipma_entries
+                    .iter()
+                    .find(|entry| {
+                        entry.associations.iter().any(|(idx, _)| {
+                            meta.props.iter().any(|prop| {
+                                prop.index == *idx
+                                    && prop.raw.windows(urn.len()).any(|window| window == urn)
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| panic!("missing {}", String::from_utf8_lossy(urn)));
+                meta.iloc_entries
+                    .iter()
+                    .find(|entry| entry.item_id == item.item_id)
+                    .and_then(|entry| entry.extents.first())
+                    .map(|extent| extent.1)
+                    .unwrap_or(0)
+            };
+            assert_ne!(
+                len_of(b"semanticpersonmatte"),
+                len_of(b"semanticnosematte"),
+                "person matte stayed empty"
+            );
+        }
+    }
+
+    #[test]
+    fn huawei_hdr_is_not_searched_as_oppo_lhdr() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\fail-20260930\1790700513983-IMG_20260907_234311.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let input = CString::new(path.to_str().unwrap()).unwrap();
+        let output = CString::new(r"C:\tmp\huawei\fail-20260930\unused-output.heic").unwrap();
+        let config = ConvertConfig {
+            oppo_compat: 0,
+            oppo_camera_tail: 0,
+            strict_tmap: 0,
+            apple_photographic_styles: 0,
+            apple_portrait: 0,
+        };
+        let result = xdremux_convert(input.as_ptr(), output.as_ptr(), &config);
+        assert!(!result.success);
+        let message = unsafe { CStr::from_ptr(result.error_message) }
+            .to_string_lossy()
+            .into_owned();
+        xdremux_free_string(result.error_message);
+        assert!(
+            !message.contains("Failed to locate LHDR"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn styles_item_named_style_metadata_counts() {
+        let path = std::path::Path::new(
+            r"C:\tmp\huawei\fail-20260930\1790700514014-IMG_20260907_021033_iso.heic",
+        );
+        if !path.exists() {
+            return;
+        }
+        let data = std::fs::read(path).expect("styled output");
+        assert!(
+            verify_photographic_styles(&data),
+            "uri item named styleMetadata must pass"
+        );
+        assert!(verify_iso_gain_map(&data));
     }
 
     // Real-photo conversions live in `tests/local_samples.rs`. They are

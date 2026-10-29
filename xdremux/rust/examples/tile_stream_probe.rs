@@ -4,6 +4,10 @@ fn main() {
     let rgb = vec![16u8; 512 * 512 * 3];
     let planes: Vec<&[u8]> = vec![&rgb];
     let streams = xdremux_core::hevc::x265_encode_tiles(&planes, 512, 512, 3, true).unwrap();
-    std::fs::write("C:/Users/Beet/AppData/Local/Temp/android-issue/tile16.h265", &streams[0]).unwrap();
+    std::fs::write(
+        "C:/Users/Beet/AppData/Local/Temp/android-issue/tile16.h265",
+        &streams[0],
+    )
+    .unwrap();
     println!("wrote {} bytes", streams[0].len());
 }

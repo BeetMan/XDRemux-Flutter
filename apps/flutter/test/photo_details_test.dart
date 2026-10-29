@@ -46,6 +46,24 @@ void main() {
       expect(details.focalLengthSummary, '24mm');
     });
 
+    test('HDR parse error survives JSON and overrides stale queue HDR kind', () {
+      final details = PhotoDetailsModel.fromJson({
+        'success': true,
+        'model': 'Test camera',
+        'hdrParseError': 'unsupported ISO JPEG minimum version 2; no Adobe XMP fallback',
+      });
+      expect(details.success, isTrue);
+      expect(details.model, 'Test camera');
+      expect(details.hdrParseError, contains('minimum version 2'));
+      expect(details.hdrFormatLabel(fallbackKind: 'uhdr'), 'HDR 解析失败');
+    });
+
+    test('SDR and unreadable input have distinct HDR labels', () {
+      expect(const PhotoDetailsModel(success: true).hdrFormatLabel(), '无 (SDR)');
+      expect(const PhotoDetailsModel(success: false).hdrFormatLabel(), '无法读取');
+      expect(const PhotoDetailsModel(success: true, hdrKind: 'uhdr').hdrFormatLabel(), 'ProXDR (UHDR)');
+    });
+
     test('dimensionsSummary calculates megapixel accurately', () {
       const details = PhotoDetailsModel(
         success: true,

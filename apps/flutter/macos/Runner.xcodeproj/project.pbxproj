@@ -33,6 +33,7 @@
 		33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC11122044BFA00003C045 /* MainFlutterWindow.swift */; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
 		C0D3A1B2C3D4E5F607182930 /* XDRemuxFlutterBackend in Frameworks */ = {isa = PBXBuildFile; productRef = C0D3A1B2C3D4E5F607182931 /* XDRemuxFlutterBackend */; };
+		C0D3A1B2C3D4E5F6071829A2 /* libxdremux_core.dylib in Bundle Framework */ = {isa = PBXBuildFile; fileRef = C0D3A1B2C3D4E5F6071829A1 /* libxdremux_core.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +60,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
+				C0D3A1B2C3D4E5F6071829A2 /* libxdremux_core.dylib in Bundle Framework */,
 			);
 			name = "Bundle Framework";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -94,6 +96,7 @@
 		9FEC729A606D7935A4BD2973 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12EEC1A42994B5563DE55BE /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		A2C2A0E52165C6B06573F539 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		C0D3A1B2C3D4E5F6071829A1 /* libxdremux_core.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libxdremux_core.dylib; path = "../../../target/release/libxdremux_core.dylib"; sourceTree = "<group>"; };
 		FC9BE7AC7696722A8A119306 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -214,6 +217,7 @@
 		D73912EC22F37F3D000D13A0 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				C0D3A1B2C3D4E5F6071829A1 /* libxdremux_core.dylib */,
 				FC9BE7AC7696722A8A119306 /* Pods_Runner.framework */,
 				9FEC729A606D7935A4BD2973 /* Pods_RunnerTests.framework */,
 			);

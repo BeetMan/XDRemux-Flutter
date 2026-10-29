@@ -483,7 +483,7 @@ fn primary_ispe(meta: &ParsedMeta, primary: u32) -> Result<(u32, u32), String> {
                 // raw includes the box header: size(4)+type(4)+verflags(4)
                 let w = u32::from_be_bytes([p.raw[12], p.raw[13], p.raw[14], p.raw[15]]);
                 let h = u32::from_be_bytes([p.raw[16], p.raw[17], p.raw[18], p.raw[19]]);
-                if w > 512 && h > 512 {
+                if w > 0 && h > 0 {
                     return Ok((w, h));
                 }
             }
@@ -547,7 +547,7 @@ fn build_matte_xmp() -> Vec<u8> {
 /// The Apple MakerNote observed in the golden scaffold:
 /// "Apple iOS\0\0\x01" + MM magic(2) + entries (tag 43 UUID, tag 84 flags
 /// bplist) + zero terminator. Offsets are relative to the MakerNote start.
-fn build_maker_note() -> Vec<u8> {
+pub(crate) fn build_maker_note() -> Vec<u8> {
     let uuid = uuid_v4_upper();
     // 91 bytes, copied verbatim from the golden scaffold (keys '0'..'7').
     let flags_bplist: &[u8] = &[
@@ -647,13 +647,21 @@ fn merge_styles_note(note: &[u8], styles: &[u8]) -> Result<Vec<u8>, String> {
         return Ok(note.to_vec());
     }
     let missing = required.iter().filter(|r| !entries.iter().any(|e| e.tag == r.tag)).count();
-    let shift = missing * 12;
-    if shift != 0 && entries.iter().any(|e| e.typ == 7 && e.payload_offset.is_some() && e.tag != 84) {
+    let growth = missing * 12;
+    // Consume existing zero padding first: unknown payloads retain both their
+    // original offsets and bytes. Otherwise relocate only validated layouts.
+    let first_payload = entries.iter().filter_map(|e| e.payload_offset).min()
+        .map(|v| v as usize).unwrap_or(note.len());
+    let has_padding = old_end.checked_add(growth).is_some_and(|end|
+        end <= first_payload && end <= note.len() && note[old_end..end].iter().all(|&b| b == 0));
+    let shift = if has_padding { 0 } else { growth };
+    if shift != 0 && entries.iter().any(|e| e.typ == 7 && e.payload_offset.is_some()
+        && !crate::apple_note_payload::relocatable(e.tag, entry_bytes(note, e).unwrap())) {
         return Err("cannot expand Apple MakerNote with unknown out-of-line UNDEFINED payload".into());
     }
     let count = u16::try_from(entries.len() + missing).map_err(|_| "too many MakerNote entries")?;
-    // Only incomplete notes expand the fixed-position directory. Relocate typed
-    // fields and the demonstrated self-relative tag84 plist, not opaque blobs.
+    // Only incomplete notes expand the directory. Payload contents are never
+    // rewritten; unknown opaque formats still fail closed when relocation is needed.
     let mut out = note.to_vec();
     if shift != 0 {
         out.splice(old_end..old_end, vec![0; shift]);
@@ -994,18 +1002,49 @@ pub(crate) fn normalize_primary_orientation(exif: &[u8]) -> Result<Vec<u8>, Stri
 /// its Apple-specific meaning still requires device validation. Append a new
 /// directory when absent, leaving all TIFF payload/thumbnail/GPS offsets intact.
 pub(crate) fn set_portrait_custom_rendered(exif: &[u8]) -> Result<Vec<u8>, String> {
-    let prefix = exif_prefix_len(exif)?;
+    let exif = rename_extra_maker_notes(exif)?;
+    let prefix = exif_prefix_len(&exif)?;
     let (bo, _) = tiff_header(&exif[prefix..]).ok_or("bad TIFF header")?;
     let mut value = [0; 2];
     bo.put_u16(&mut value, 9);
-    upsert_exif_field(exif, 0xa401, 3, 1, &value)
+    upsert_exif_field(&exif, 0xa401, 3, 1, &value)
 }
 
 /// Append payloads/directories rather than shifting TIFF data: MakerNotes,
 /// thumbnails, GPS and other IFDs keep their original offset bases.
 pub(crate) fn inject_maker_note(exif: &[u8], maker_note: &[u8]) -> Result<Vec<u8>, String> {
     let count = u32::try_from(maker_note.len()).map_err(|_| "MakerNote too large")?;
-    upsert_exif_field(exif, 0x927c, 7, count, maker_note)
+    let exif = rename_extra_maker_notes(exif)?;
+    upsert_exif_field(&exif, 0x927c, 7, count, maker_note)
+}
+
+/// Rename surplus `0x927c` Exif entries to unused tags (`0x927d`, `0x927e`, ...).
+/// Huawei cameras (e.g. Mate 70 Pro) can emit up to four `0x927c` entries;
+/// `upsert_exif_field` rejects duplicates, and Apple's ImageIO would otherwise
+/// overwrite the Apple MakerNote with a later vendor entry.
+fn rename_extra_maker_notes(exif: &[u8]) -> Result<Vec<u8>, String> {
+    let prefix = exif_prefix_len(exif)?;
+    let tiff = &exif[prefix..];
+    let (bo, ifd0) = tiff_header(tiff).ok_or("bad TIFF header")?;
+    let (_, entries, _) = exif_directory(tiff, bo, ifd0)?;
+    let maker_notes: Vec<&IfdEntry> = entries.iter().filter(|e| e.tag == 0x927c).collect();
+    if maker_notes.len() <= 1 {
+        return Ok(exif.to_vec());
+    }
+    let used: Vec<u16> = entries.iter().map(|e| e.tag).collect();
+    let mut patched = tiff.to_vec();
+    let mut extra_tag = 0x927du16;
+    for dup in &maker_notes[1..] {
+        while used.contains(&extra_tag) {
+            extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
+        }
+        let tag_pos = dup.value_field_pos - 8;
+        bo.put_u16(&mut patched[tag_pos..tag_pos + 2], extra_tag);
+        extra_tag = extra_tag.checked_add(1).ok_or("no free Exif tag")?;
+    }
+    let mut out = exif[..prefix].to_vec();
+    out.extend_from_slice(&patched);
+    Ok(out)
 }
 
 fn upsert_exif_field(exif: &[u8], tag: u16, typ: u16, count: u32, value: &[u8]) -> Result<Vec<u8>, String> {

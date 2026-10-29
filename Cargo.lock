@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "xdremux-core"
-version = "0.4.2"
+version = "0.4.5"
 dependencies = [
  "cc",
  "heif-oxide",
@@ -1010,6 +1010,7 @@ dependencies = [
  "ort",
  "png 0.17.16",
  "quick-xml",
+ "rust_h265",
  "serde_json",
  "sha2",
  "zstd",

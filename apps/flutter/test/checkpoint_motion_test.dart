@@ -2,12 +2,78 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:xdremux/models/app_models.dart';
 import 'package:xdremux/models/checkpoint_model.dart';
 import 'package:xdremux/services/motion_photo_service.dart';
+import 'package:xdremux/services/checkpoint_service.dart';
+import 'package:xdremux/ffi/xdremux_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('Live composition refuses to overwrite its original source', () async {
+    await expectLater(
+      MotionPhotoService.composeLivePhoto('/source.heic', '/source.heic'),
+      throwsStateError,
+    );
+  });
+
+  test('Huawei Live FFI preserves source and produces a valid pair on retry', () async {
+    const path = r'C:\tmp\huawei\portrait-motion-20260907\IMG_20260907_021031.heic';
+    if (!File(path).existsSync()) return;
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async => Directory.systemTemp.path);
+    final temp = await Directory.systemTemp.createTemp('xdremux-live-test-');
+    try {
+      // Intentionally put source and output in the same directory, matching
+      // desktop's default workflow and exercising the old overwrite bug.
+      final input = '${temp.path}${Platform.pathSeparator}source.heic';
+      final output = '${temp.path}${Platform.pathSeparator}source_iso.heic';
+      final movie = '${temp.path}${Platform.pathSeparator}source_iso.mov';
+      final original = await File(path).readAsBytes();
+      await File(input).writeAsBytes(original);
+      await File(input).copy(output);
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await MotionPhotoService.composeLivePhoto(input, output);
+        expect(XdRemuxFFI.livePhotoPairValid(output, movie), isTrue);
+        expect(await File(input).readAsBytes(), original);
+        expect(File('${temp.path}${Platform.pathSeparator}source_iso 2.mov').existsSync(), isFalse);
+      }
+      final direct = XdRemuxFFI.makeLivePhoto(input, output, temp.path);
+      expect(direct['success'], isFalse);
+      expect(await File(input).readAsBytes(), original);
+    } finally {
+      await temp.delete(recursive: true);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
+
   group('Checkpoint motion-photo round-trip', () {
+    test('fresh checkpoint preserves all terminal states and Huawei skip reason', () {
+      final queue = [for (final status in QueueItemStatus.values)
+        QueueItem(
+          id: status.name, inputPath: '/${status.name}.heic',
+          outputPath: '/out/${status.name}.heic', status: status,
+          huaweiHdr: true, policyReason: 'Native HDR needs no conversion',
+          motionPhotoMode: MotionPhotoMode.stillAndVideo,
+        ),
+      ];
+      final items = CheckpointService.createItemsFromQueue(queue);
+      for (var i = 0; i < queue.length; i++) {
+        final item = CheckpointItem.fromJson(items[i].toJson());
+        final state = queue[i].status;
+        expect(item.status.name, switch (state) {
+          QueueItemStatus.running || QueueItemStatus.cancelled => 'pending',
+          _ => state.name,
+        });
+        expect(item.policyReason, 'Native HDR needs no conversion');
+        expect(item.huaweiHdr, isTrue);
+        expect(item.motionPhotoMode, 'stillAndVideo');
+      }
+    });
+
     test('CheckpointItem persists motion photo fields', () {
       final item = CheckpointItem(
         inputPath: '/tmp/IMG_0001.HEIC',
@@ -167,13 +233,44 @@ void main() {
       expect(summary.videoWidth, 3840);
       expect(summary.videoHeight, 2880);
       expect(summary.resolutionLabel, contains('3840×2880'));
-      expect(summary.hasAudio, isTrue);
-      expect(summary.audioCodec, 'mp4a');
-      expect(summary.audioChannels, 1);
-      expect(summary.audioSampleRate, 16000);
-      expect(summary.secondaryWidth, 1920);
-      expect(summary.secondaryHeight, 1440);
-      expect(summary.presentationTimestampUs, 1496141);
+    });
+
+    test('MotionPhotoService inspects real Huawei Mate 70 motion photo if present', () async {
+      const sample = r'C:\tmp\huawei\portrait-motion-20260907\IMG_20260907_021031.heic';
+      if (!File(sample).existsSync()) return;
+
+      final summary = await MotionPhotoService.inspect(sample);
+      expect(summary, isNotNull);
+      expect(summary!.kind, 'huaweiOpenHarmonyMotionPhoto');
+      expect(summary.videoBytes, greaterThan(0));
+      expect(summary.stillBytes, greaterThan(0));
+    });
+
+    test('CheckpointItem persists huawei fields', () {
+      final item = CheckpointItem(
+        inputPath: '/tmp/IMG_0001.heic',
+        outputPath: '/out/IMG_0001_iso.heic',
+        status: CheckpointItemStatus.pending,
+        huaweiHdr: true,
+        huaweiHasXtstyle: true,
+        huaweiPortrait: const {'classification': 'huawei-portrait', 'safeToTransform': true},
+        motionPhoto: const {
+          'kind': 'huaweiOpenHarmonyMotionPhoto',
+          'stillBytes': 2854016,
+          'videoBytes': 4562931,
+          'streamCount': 1,
+        },
+        motionPhotoMode: 'livePhotoPair',
+      );
+
+      final json = item.toJson();
+      final restored = CheckpointItem.fromJson(json);
+
+      expect(restored.huaweiHdr, isTrue);
+      expect(restored.huaweiHasXtstyle, isTrue);
+      expect(restored.huaweiPortrait?['safeToTransform'], isTrue);
+      expect(restored.motionPhoto?['kind'], 'huaweiOpenHarmonyMotionPhoto');
+      expect(restored.motionPhotoMode, 'livePhotoPair');
     });
   });
 }

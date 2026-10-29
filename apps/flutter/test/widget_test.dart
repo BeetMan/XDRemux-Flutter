@@ -62,12 +62,12 @@ void main() {
     expect(find.text('转换设置'), findsOneWidget);
     expect(find.text('输出模式'), findsOneWidget);
     expect(find.text('Apple 标准'), findsOneWidget);
-    expect(find.text('Apple 人像模式（Rust）'), findsOneWidget);
+    expect(find.text('Apple 人像模式'), findsOneWidget);
     expect(find.text('跳过已有有效输出'), findsOneWidget);
-    expect(
-      find.text('转换引擎'),
-      (Platform.isMacOS || Platform.isIOS) ? findsOneWidget : findsNothing,
-    );
+    // The Swift "conversion engine" selector was retired (commit 6e6a184):
+    // Apple platforms always convert through the packaged Rust core, so the
+    // section must be gone everywhere, not only on Linux.
+    expect(find.text('转换引擎'), findsNothing);
     expect(find.text('兼容性高级设置'), findsOneWidget);
     expect(find.text('一般保持默认；只在排查相册兼容性时修改'), findsOneWidget);
     expect(find.text('输入照片类型'), findsNothing);

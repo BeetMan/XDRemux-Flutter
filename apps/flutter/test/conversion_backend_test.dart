@@ -34,14 +34,14 @@ void main() {
     expect(restored.oppoCameraTail, OppoCameraTailMode.off);
   });
 
-  test('Apple feature flags survive config round-trip', () {
+  test('Apple feature flags survive config round-trip on Rust', () {
     final config = ConversionConfig(
       backend: ConversionBackend.swift,
       applePhotographicStyles: true,
       applePortrait: true,
     );
     final restored = ConversionConfig.fromJson(config.toJson());
-    expect(restored.backend, ConversionBackend.swift);
+    expect(restored.backend, ConversionBackend.rust);
     expect(restored.applePhotographicStyles, isTrue);
     expect(restored.applePortrait, isTrue);
   });
@@ -68,7 +68,7 @@ void main() {
     () {
       const request = ConversionRequest(
         id: 'workflow-test',
-        backend: ConversionBackend.swift,
+        backend: ConversionBackend.rust,
         inputPath: 'input.heic',
         outputPath: 'output.heic',
         oppoCompat: 0,
@@ -78,7 +78,7 @@ void main() {
       expect(request.appleWatermarkPolicy, AppleWatermarkPolicy.preserve);
       const isolated = ConversionRequest(
         id: 'workflow-isolate-test',
-        backend: ConversionBackend.swift,
+        backend: ConversionBackend.rust,
         inputPath: 'input.heic',
         outputPath: 'output.heic',
         oppoCompat: 0,

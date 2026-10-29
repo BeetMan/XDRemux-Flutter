@@ -29,6 +29,7 @@ pub struct IsoMeta {
     pub base_rendition_is_hdr: bool,
     pub scale: f32,
     pub channel_count: usize,
+    pub use_base_color_space: bool,
 }
 
 /// Parsed OPPO UHDR 20-float info block.
@@ -110,21 +111,150 @@ pub fn parse_oppo_uhdr_info(floats: &[f32]) -> Result<OppoUhdrInfo, String> {
 // ISO metadata construction
 // ---------------------------------------------------------------------------
 
+/// Reject UHDR gain-map parameters that cannot form a valid ISO 21496-1
+/// `tmap`, while the values are still in the ratio domain the 20-float block
+/// stores them in.
+///
+/// This mirrors the upstream (21Z121Z1/XDRemux) "reversed per-channel gain
+/// ranges" fix, with the port's tolerance for unset values: OPPO sources and
+/// the synthetic-HDR path can carry an all-zero 20-float block, where `0` means
+/// "not provided" and historical code maps it to `log2 -> 0` (no boost). Such
+/// blocks must keep converting, so only these cases are refused:
+///
+/// - non-finite ratio, gamma or offset values;
+/// - a channel whose *positive* bounds are inverted (`ratio_max < ratio_min`),
+///   which would serialize as `gain_map_max < gain_map_min`;
+/// - negative gamma.
+///
+/// A zero gamma is tolerated for the same legacy reason (it is passed through
+/// unchanged, matching the pre-validation behavior).
+fn validate_uhdr_gain_parameters(info: &OppoUhdrInfo) -> Result<(), String> {
+    for channel in 0..3 {
+        let min = info.ratio_min[channel];
+        let max = info.ratio_max[channel];
+        if !min.is_finite() || !max.is_finite() {
+            return Err(format!(
+                "non-finite UHDR gain-map ratio for channel {channel}: min {min}, max {max}"
+            ));
+        }
+        // Zero/negative bounds are legacy "unset" markers; only an inverted
+        // pair of real (positive) bounds is the bug this guard exists for.
+        if min > 0.0 && max > 0.0 && max < min {
+            return Err(format!(
+                "reversed UHDR gain-map range for channel {channel}: max {max} < min {min}"
+            ));
+        }
+        let gamma = info.gamma[channel];
+        if !gamma.is_finite() || gamma < 0.0 {
+            return Err(format!(
+                "invalid UHDR gain-map gamma for channel {channel}: {gamma} (must be finite and >= 0)"
+            ));
+        }
+        if !info.epsilon_sdr[channel].is_finite() || !info.epsilon_hdr[channel].is_finite() {
+            return Err(format!(
+                "invalid UHDR gain-map offset for channel {channel} (must be finite)"
+            ));
+        }
+    }
+    for (name, value) in [
+        ("display_ratio_sdr", info.display_ratio_sdr),
+        ("display_ratio_hdr", info.display_ratio_hdr),
+        ("scale", info.scale),
+    ] {
+        if !value.is_finite() {
+            return Err(format!("invalid UHDR {name}: {value} (must be finite)"));
+        }
+    }
+    Ok(())
+}
+
+/// Validate an assembled ISO 21496-1 gain-map metadata set before it reaches a
+/// `tmap` writer or an XMP block.
+///
+/// Checks the invariants a byte-level writer cannot repair: every channel
+/// field must cover `channel_count`, bounds and gamma must be finite (gamma
+/// strictly positive), the upper bound must not be below the lower bound, and
+/// headroom/scale must be finite. Trailing values beyond `channel_count` are
+/// ignored, matching how [`make_imageio_native_tmap_payload`] and
+/// [`make_iso21496_metadata_payload`] read per-channel fields.
+pub fn validate_iso_meta(meta: &IsoMeta) -> Result<(), String> {
+    if meta.channel_count == 0 || meta.channel_count > 3 {
+        return Err(format!(
+            "ISO gain-map channel count must be 1..=3, got {}",
+            meta.channel_count
+        ));
+    }
+    if !meta.hdr_capacity_min.is_finite()
+        || !meta.hdr_capacity_max.is_finite()
+        || !meta.scale.is_finite()
+    {
+        return Err("ISO gain-map headroom and scale must be finite".into());
+    }
+
+    let channel_fields: [(&str, &Vec<f32>); 5] = [
+        ("gain_map_min", &meta.gain_map_min),
+        ("gain_map_max", &meta.gain_map_max),
+        ("gamma", &meta.gamma),
+        ("offset_sdr", &meta.offset_sdr),
+        ("offset_hdr", &meta.offset_hdr),
+    ];
+    for (name, values) in channel_fields {
+        if values.len() < meta.channel_count {
+            return Err(format!(
+                "ISO gain-map {name} has {} values, expected at least {}",
+                values.len(),
+                meta.channel_count
+            ));
+        }
+    }
+
+    for channel in 0..meta.channel_count {
+        let gain_min = meta.gain_map_min[channel];
+        let gain_max = meta.gain_map_max[channel];
+        let gamma = meta.gamma[channel];
+        if !gain_min.is_finite() || !gain_max.is_finite() {
+            return Err(format!(
+                "ISO gain-map bounds for channel {channel} must be finite \
+                 (min {gain_min}, max {gain_max})"
+            ));
+        }
+        if gain_max < gain_min {
+            return Err(format!(
+                "reversed ISO gain-map range for channel {channel}: max {gain_max} < min {gain_min}"
+            ));
+        }
+        if !gamma.is_finite() || gamma < 0.0 {
+            return Err(format!(
+                "ISO gain-map gamma for channel {channel} must be finite and >= 0, got {gamma}"
+            ));
+        }
+        if !meta.offset_sdr[channel].is_finite() || !meta.offset_hdr[channel].is_finite() {
+            return Err(format!(
+                "ISO gain-map offsets for channel {channel} must be finite"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Build ISO 21496-1 metadata from UHDR 20-float info block.
 pub fn build_iso_metadata_from_uhdr(floats: &[f32]) -> Result<IsoMeta, String> {
     let info = parse_oppo_uhdr_info(floats)?;
+    validate_uhdr_gain_parameters(&info)?;
 
     let gain_map_min: Vec<f32> = info
         .ratio_min
         .iter()
-        .map(|&v| safe_log2(v).max(0.0))
+        .map(|&v| safe_log2(v))
         .collect();
     let gain_map_max: Vec<f32> = info.ratio_max.iter().map(|&v| safe_log2(v)).collect();
     let cap_min = safe_log2(info.display_ratio_sdr).max(0.0);
-    let cap_max = safe_log2(info.display_ratio_hdr);
+    // Upstream clamps the alternate headroom at unity before the log, so a
+    // malformed source ratio below 1.0 yields 0.0 instead of negative capacity.
+    let cap_max = safe_log2(info.display_ratio_hdr.max(1.0));
     let base_hdr = info.base_image_type > 0.5;
 
-    Ok(IsoMeta {
+    let meta = IsoMeta {
         gain_map_min,
         gain_map_max,
         gamma: info.gamma.to_vec(),
@@ -135,7 +265,10 @@ pub fn build_iso_metadata_from_uhdr(floats: &[f32]) -> Result<IsoMeta, String> {
         base_rendition_is_hdr: base_hdr,
         scale: info.scale,
         channel_count: 3,
-    })
+        use_base_color_space: true,
+    };
+    validate_iso_meta(&meta)?;
+    Ok(meta)
 }
 
 /// Build ISO 21496-1 metadata from LHDR EDR scale.
@@ -157,6 +290,7 @@ pub fn build_iso_metadata(edr_scale: f32) -> IsoMeta {
         base_rendition_is_hdr: false,
         scale: edr,
         channel_count: 1,
+        use_base_color_space: true,
     }
 }
 
@@ -378,7 +512,7 @@ fn _fixed_i32_zero_as_one(value: f32) -> i32 {
 pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
     let cap_min = meta.hdr_capacity_min.max(0.0);
     let cap_max = meta.hdr_capacity_max;
-    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0);
     let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
     let gamma = meta.gamma.first().copied().unwrap_or(1.0);
     let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
@@ -404,7 +538,8 @@ pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
 
     let mut out = Vec::with_capacity(62);
     // Header: 6 bytes
-    out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x40]);
+    out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00,
+        if meta.use_base_color_space { 0x40 } else { 0 }]);
     // 14 × i32be fixed-point values. Base/alternate offset use
     // zero_as_one — writing 1/100000 instead of 0/100000.
     for (i, v) in values.iter().enumerate() {
@@ -442,7 +577,7 @@ pub fn make_apple_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
 /// = 142 bytes
 /// ```
 pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
-    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0).max(0.0);
+    let gain_min = meta.gain_map_min.first().copied().unwrap_or(0.0);
     let gain_max = meta.gain_map_max.first().copied().unwrap_or(0.0);
     let gamma = meta.gamma.first().copied().unwrap_or(1.0);
     let base_offset = meta.offset_sdr.first().copied().unwrap_or(0.0);
@@ -464,23 +599,24 @@ pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
     // Common header (21 bytes)
     append_u16be(0, &mut out); // minimum_version
     append_u16be(0, &mut out); // writer_version
-    out.push(0xC0); // flags: multichannel=1, use_base_colour_space=1
+    out.push(0x80 | if meta.use_base_color_space { 0x40 } else { 0 });
     append_u32be(fixed_u32(cap_min), &mut out); // base_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // base_hdr_headroom denominator
     append_u32be(fixed_u32(cap_max), &mut out); // alternate_hdr_headroom numerator
     append_u32be(RATIONAL_DEN as u32, &mut out); // alternate_hdr_headroom denominator
 
-    // 3 channels × 40 bytes (same values for all channels, matching 62B payload)
-    for _ in 0..3 {
-        append_i32be(fixed_i32(gain_min), &mut out);
+    // 3 channels × 40 bytes; retain imported per-channel metadata.
+    for c in 0..3 {
+        let channel = |v: &[f32], fallback| v.get(c).copied().unwrap_or(fallback);
+        append_i32be(fixed_i32(channel(&meta.gain_map_min, gain_min)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(gain_max), &mut out);
+        append_i32be(fixed_i32(channel(&meta.gain_map_max, gain_max)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_u32be(fixed_u32(gamma), &mut out);
+        append_u32be(fixed_u32(channel(&meta.gamma, gamma)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(base_num), &mut out);
+        append_i32be(fixed_i32(channel(&meta.offset_sdr, base_num)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
-        append_i32be(fixed_i32(alt_num), &mut out);
+        append_i32be(fixed_i32(channel(&meta.offset_hdr, alt_num)), &mut out);
         append_u32be(RATIONAL_DEN as u32, &mut out);
     }
 
@@ -490,6 +626,16 @@ pub fn make_imageio_native_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
         "ImageIO-native tmap payload must be exactly 142 bytes"
     );
     out
+}
+
+/// Keep the established 62-byte output for scalar metadata; do not discard
+/// distinct channel values when importing ISO JPEG metadata.
+pub fn make_clean_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
+    if channel_count_for_iso_meta(meta) == 3 {
+        make_imageio_native_tmap_payload(meta)
+    } else {
+        make_apple_tmap_payload(meta)
+    }
 }
 
 /// Convert a 62-byte Apple or 142-byte ImageIO tmap payload to ISO 21496-1
@@ -516,18 +662,12 @@ pub fn make_strict_tmap_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
 // Strict ISO 21496-1 GainMapMetadata (C.2.2)
 // ---------------------------------------------------------------------------
 
-/// Detect the channel count from a per-channel metadata block, mirroring
-/// Python's `_iso_channel_count` helper in `isobmff_patch.py`.
-///
-/// Returns 3 if any of the channel-valued fields has at least 3 values that
-/// differ by more than a small tolerance. Returns 1 otherwise. The two values
-/// in a 2-element list never trigger multichannel — only 3 differing values do.
+/// Returns 3 if any channel-valued field has 3 values and at least one
+/// differs from the first. A 2-element list never triggers multichannel.
 fn channel_count_for_iso_meta(meta: &IsoMeta) -> usize {
     let check = |v: &[f32]| {
         v.len() >= 3
-            && (v[0] - v[1]).abs() > 1e-6
-            && (v[0] - v[2]).abs() > 1e-6
-            && (v[1] - v[2]).abs() > 1e-6
+            && ((v[0] - v[1]).abs() > 1e-6 || (v[0] - v[2]).abs() > 1e-6)
     };
     if check(&meta.gain_map_min)
         || check(&meta.gain_map_max)
@@ -566,7 +706,7 @@ pub fn make_iso21496_metadata_payload(meta: &IsoMeta) -> Vec<u8> {
 
     let channel_count = channel_count_for_iso_meta(meta);
     let is_multichannel = channel_count == 3;
-    let use_base_color_space = true; // matches Python default
+    let use_base_color_space = meta.use_base_color_space;
     let flags: u8 =
         (if is_multichannel { 0x80 } else { 0 }) | (if use_base_color_space { 0x40 } else { 0 });
 
@@ -677,6 +817,154 @@ mod tests {
     fn parse_uhdr_too_few_floats() {
         let floats = vec![1.0; 10];
         assert!(parse_oppo_uhdr_info(&floats).is_err());
+    }
+
+    // ---------- write-side gain-map validation ----------
+
+    fn rejects(floats: &[f32], needle: &str) {
+        let error = build_iso_metadata_from_uhdr(floats).unwrap_err();
+        assert!(
+            error.contains(needle),
+            "expected error containing {needle:?}, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn reversed_per_channel_gain_ranges_are_rejected() {
+        for channel in 0..3 {
+            let mut floats = make_sample_uhdr_floats();
+            floats[channel] = 4.0;
+            floats[4 + channel] = 2.0;
+            rejects(&floats, "reversed UHDR gain-map range");
+        }
+    }
+
+    #[test]
+    fn equal_and_sub_unity_gain_ranges_are_accepted() {
+        // Equal bounds are the "no boost" case and are valid.
+        for channel in 0..3 {
+            let mut floats = make_sample_uhdr_floats();
+            floats[channel] = 2.0;
+            floats[4 + channel] = 2.0;
+            assert!(
+                build_iso_metadata_from_uhdr(&floats).is_ok(),
+                "equal range must be accepted (channel {channel})"
+            );
+        }
+        // Ratios below unity are valid: they expand the SDR base.
+        for channel in 0..3 {
+            let mut floats = make_sample_uhdr_floats();
+            floats[channel] = 0.5;
+            floats[4 + channel] = 1.0;
+            assert!(
+                build_iso_metadata_from_uhdr(&floats).is_ok(),
+                "sub-unity range must be accepted (channel {channel})"
+            );
+        }
+    }
+
+    #[test]
+    fn non_finite_ratios_are_rejected() {
+        for bad in [f32::NAN, f32::INFINITY] {
+            let mut floats = make_sample_uhdr_floats();
+            floats[1] = bad;
+            rejects(&floats, "non-finite UHDR gain-map ratio");
+        }
+    }
+
+    #[test]
+    fn zero_and_negative_ratios_are_tolerated_as_unset() {
+        // OPPO sources and the synthetic-HDR path can carry an all-zero info
+        // block; `0` means "not provided" and must keep converting.
+        let meta = build_iso_metadata_from_uhdr(&vec![0.0f32; 20]).unwrap();
+        assert_eq!(meta.channel_count, 3);
+        assert_eq!(meta.gain_map_min, vec![0.0; 3]);
+        assert_eq!(meta.gain_map_max, vec![0.0; 3]);
+        assert_eq!(meta.gamma, vec![0.0; 3]);
+        assert_eq!(meta.hdr_capacity_min, 0.0);
+        assert_eq!(meta.hdr_capacity_max, 0.0);
+        assert!(validate_iso_meta(&meta).is_ok());
+
+        // A single unset bound next to a real bound is not an inverted range.
+        let mut floats = make_sample_uhdr_floats();
+        floats[0] = 0.0;
+        floats[1] = -1.0;
+        assert!(build_iso_metadata_from_uhdr(&floats).is_ok());
+    }
+
+    #[test]
+    fn negative_or_non_finite_gamma_is_rejected() {
+        for bad in [-0.5, f32::NAN] {
+            let mut floats = make_sample_uhdr_floats();
+            floats[8] = bad;
+            rejects(&floats, "invalid UHDR gain-map gamma");
+        }
+        // Zero gamma is legacy "unset" and is passed through unchanged.
+        let mut floats = make_sample_uhdr_floats();
+        floats[8] = 0.0;
+        assert!(build_iso_metadata_from_uhdr(&floats).is_ok());
+    }
+
+    #[test]
+    fn non_finite_uhdr_offsets_are_rejected() {
+        let mut floats = make_sample_uhdr_floats();
+        floats[10] = f32::NAN;
+        rejects(&floats, "invalid UHDR gain-map offset");
+        let mut floats = make_sample_uhdr_floats();
+        floats[14] = f32::INFINITY;
+        rejects(&floats, "invalid UHDR gain-map offset");
+    }
+
+    #[test]
+    fn hdr_capacity_is_clamped_when_source_ratio_is_below_one() {
+        let mut floats = make_sample_uhdr_floats();
+        floats[17] = 0.5;
+        let meta = build_iso_metadata_from_uhdr(&floats).unwrap();
+        assert_eq!(meta.hdr_capacity_min, 0.0);
+        assert_eq!(meta.hdr_capacity_max, 0.0);
+    }
+
+    #[test]
+    fn validate_iso_meta_rejects_manual_reversed_ranges() {
+        let mut meta = build_iso_metadata(4.0);
+        assert!(validate_iso_meta(&meta).is_ok());
+        meta.gain_map_min = vec![2.0];
+        meta.gain_map_max = vec![1.0];
+        assert!(validate_iso_meta(&meta)
+            .unwrap_err()
+            .contains("reversed ISO gain-map range"));
+    }
+
+    #[test]
+    fn validate_iso_meta_rejects_bad_channel_fields() {
+        // Short per-channel vectors cannot fill the declared channel count.
+        let mut meta = build_iso_metadata(4.0);
+        meta.channel_count = 3;
+        assert!(validate_iso_meta(&meta).is_err());
+
+        // Non-finite gamma must not reach the unsigned rational writer.
+        let mut meta = build_iso_metadata(4.0);
+        meta.gamma = vec![f32::NAN];
+        assert!(validate_iso_meta(&meta).is_err());
+
+        // Negative gamma is invalid; zero stays tolerated as legacy "unset".
+        let mut meta = build_iso_metadata(4.0);
+        meta.gamma = vec![-1.0];
+        assert!(validate_iso_meta(&meta).is_err());
+        let mut meta = build_iso_metadata(4.0);
+        meta.gamma = vec![0.0];
+        assert!(validate_iso_meta(&meta).is_ok());
+
+        // Headroom must be finite.
+        let mut meta = build_iso_metadata(4.0);
+        meta.hdr_capacity_max = f32::NAN;
+        assert!(validate_iso_meta(&meta).is_err());
+    }
+
+    #[test]
+    fn valid_sample_meta_passes_validation() {
+        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
+        assert!(validate_iso_meta(&meta).is_ok());
     }
 
     // ---------- ISO metadata ----------
@@ -874,6 +1162,26 @@ mod tests {
             144,
             "multichannel ISO 21496-1 must be 144 bytes"
         );
+    }
+
+    #[test]
+    fn imported_metadata_preserves_color_space_and_partially_distinct_channels() {
+        let mut meta = build_iso_metadata(8.0);
+        meta.gain_map_max = vec![1.0, 1.0, 3.0];
+        meta.gain_map_min = vec![-1.0; 3];
+        meta.use_base_color_space = false;
+        let clean = make_clean_tmap_payload(&meta);
+        assert_eq!(clean.len(), 142);
+        assert_eq!(clean[5], 0x80);
+        let value = |offset| i32::from_be_bytes(clean[offset..offset + 4].try_into().unwrap());
+        assert_eq!(value(22), -100000);
+        assert_eq!(value(30), 100000);
+        assert_eq!(value(110), 300000);
+        let iso = make_iso21496_metadata_payload(&meta);
+        assert_eq!(iso.len(), 144);
+        assert_eq!(iso[4], 0x80);
+        meta.gain_map_max = vec![3.0; 3];
+        assert_eq!(make_clean_tmap_payload(&meta)[5], 0);
     }
 
     #[test]

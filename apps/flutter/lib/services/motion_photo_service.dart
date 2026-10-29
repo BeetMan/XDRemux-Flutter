@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,6 +14,44 @@ import '../models/app_models.dart';
 /// main conversion flow.
 class MotionPhotoService {
   MotionPhotoService._();
+
+  /// Compose off the UI thread in an isolated staging directory. Never let
+  /// the FFI's source-based filenames overwrite the original in its folder.
+  static Future<void> composeLivePhoto(String inputPath, String outputPath) async {
+    final movTarget = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.mov');
+    for (final target in [outputPath, movTarget]) {
+      if (File(inputPath).absolute.path == File(target).absolute.path ||
+          (File(target).existsSync() &&
+              FileSystemEntity.identicalSync(inputPath, target))) {
+        throw StateError('Live Photo output must not overwrite the source');
+      }
+    }
+    final temp = await getTemporaryDirectory();
+    final staging = await temp.createTemp('xdremux-live-');
+    try {
+      final report = await Isolate.run(() =>
+          XdRemuxFFI.makeLivePhoto(inputPath, outputPath, staging.path));
+      if (report['success'] != true) {
+        throw StateError('${report['errorMessage'] ?? 'Live Photo compose failed'}');
+      }
+      final still = report['stillPath'] as String?;
+      final movie = report['videoPath'] as String?;
+      if (still == null || movie == null ||
+          !File(still).existsSync() || !File(movie).existsSync() ||
+          !XdRemuxFFI.livePhotoPairValid(still, movie)) {
+        throw StateError('Live Photo pair is missing or invalid');
+      }
+      // A retry replaces the sibling MOV, rather than creating a numbered
+      // file that checkpoint restoration would not be able to locate.
+      await File(movie).copy(movTarget);
+      await File(still).copy(outputPath);
+      if (!XdRemuxFFI.livePhotoPairValid(outputPath, movTarget)) {
+        throw StateError('Exported Live Photo pair failed verification');
+      }
+    } finally {
+      await staging.delete(recursive: true);
+    }
+  }
 
   /// Inspect [path] and return a summary when it is a Motion Photo.
   static Future<MotionPhotoSummary?> inspect(String path) async {

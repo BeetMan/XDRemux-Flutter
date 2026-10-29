@@ -7,6 +7,12 @@ on:
   # Manual runs for CI debugging: asset builds run, the publish job stays
   # tag-gated so a dispatch can never cut a release.
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Preflight build scope (tag releases always build all platforms)'
+        type: choice
+        default: all
+        options: [all, ios, android]
 
 permissions:
   contents: write
@@ -14,9 +20,11 @@ permissions:
 env:
   X265_TAG: 4.2
   ANDROID_NDK_VERSION: 28.2.13676358
+  PUB_HOSTED_URL: https://pub.flutter-io.cn
 
 jobs:
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows installer
     runs-on: windows-2022
     steps:
@@ -69,15 +77,17 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           cache: true
 
       - name: Resolve release version
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            # workflow_dispatch (CI debugging): no tag, use a placeholder.
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -103,7 +113,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # path_provider_android brings the jni FFI package into Flutter's
       # generated Windows plugin list, but Windows does not ship a JVM.
@@ -144,9 +154,14 @@ jobs:
           if-no-files-found: error
 
   windows-arm64:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows ARM64 installer (experimental)
-    # Flutter 3.44.5 currently emits an x64 Windows runner even on the
-    # windows-11-arm host, so do not block the public release on this job.
+    # Flutter publishes no Windows ARM64 SDK for the pinned version (verified
+    # 2026-10-21: "Unable to determine Flutter version for channel: stable
+    # version: 3.47.7 architecture: arm64"), so this job fails in setup within
+    # seconds and ships no installer. continue-on-error keeps the release green;
+    # the staging guard below still refuses a mislabeled x64 bundle if an ARM64
+    # SDK appears in a later Flutter release.
     continue-on-error: true
     runs-on: windows-11-arm
     steps:
@@ -177,9 +192,16 @@ jobs:
             xdremux/rust/vendor/x265/include/x265.h
           # x265's assembly only covers x86 (NASM) and aarch64-with-GNU-as;
           # MSVC ARM64 gets the portable C path.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vsVersion = & $vswhere -latest -products '*' -property installationVersion
+          $generator = switch ([int]($vsVersion.Split('.')[0])) {
+            18 { 'Visual Studio 18 2026' }
+            17 { 'Visual Studio 17 2022' }
+            default { throw "Unsupported Visual Studio version: $vsVersion" }
+          }
           cmake -S xdremux/rust/vendor/x265/source `
             -B xdremux/rust/vendor/x265/build_windows `
-            -G 'Visual Studio 17 2022' -A ARM64 `
+            -G $generator -A ARM64 `
             -DENABLE_SHARED=OFF -DENABLE_CLI=OFF `
             -DENABLE_ASSEMBLY=OFF `
             -DXDREMUX_SKIP_RC=ON
@@ -195,17 +217,22 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
-          # The Windows Flutter SDK is x64-only and runs emulated on this
-          # runner, but `flutter build windows` produces a native ARM64 app.
-          architecture: x64
+          flutter-version: 3.47.7
+          # The windows-11-arm image reports an x64 runner arch, so the default
+          # resolves to the x64 SDK; the preflight proved that the resulting
+          # `flutter build windows` output is x64 too (PE 0x8664), which the
+          # staging guard below refuses. Ask for the arm64 SDK explicitly: if
+          # Flutter publishes no ARM64 build for this version the action fails
+          # here instead of producing a mislabeled installer.
+          architecture: arm64
           cache: true
 
       - name: Resolve release version
         shell: pwsh
         run: |
           if ("${{ github.ref_name }}" -notmatch '^[vV]') {
-            "APP_VERSION=0.0.0" >> $env:GITHUB_ENV
+            $pubspecVersion = (Select-String -Path apps/flutter/pubspec.yaml -Pattern '^version:\s*(\S+)' ).Matches.Groups[1].Value
+            "APP_VERSION=$($pubspecVersion.Split('+')[0])" >> $env:GITHUB_ENV
             "TAG_VERSION=ci-${{ github.run_id }}" >> $env:GITHUB_ENV
             return
           }
@@ -227,7 +254,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # path_provider_android brings the jni FFI package into Flutter's
       # generated Windows plugin list, but Windows does not ship a JVM.
@@ -241,16 +268,24 @@ jobs:
         working-directory: apps/flutter
         run: flutter build windows --release --no-pub --build-name="$env:APP_VERSION"
 
-      # Flutter's x64-emulated SDK on windows-11-arm still writes to the x64
-      # path, but the runner.exe inside is native ARM64. Mirror it to the
-      # arm64 path the installer script expects.
-      - name: Mirror ARM64 output path
+      # Emulated x64 Dart may build an x64 runner even on an ARM64 host.
+      # A directory rename must never disguise a mixed-architecture bundle.
+      - name: Stage and validate ARM64 output
         shell: pwsh
         run: |
           $src = 'apps/flutter/build/windows/x64'
           $dst = 'apps/flutter/build/windows/arm64'
           if ((Test-Path $src) -and -not (Test-Path $dst)) {
             Copy-Item $src $dst -Recurse
+          }
+          foreach ($name in @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')) {
+            $path = Join-Path $dst "runner/Release/$name"
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Refusing mixed ARM64 installer: {0} is PE machine 0x{1:X4}" -f $name, $machine)
+            }
           }
 
       - name: Build Inno Setup installer
@@ -281,6 +316,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
     name: Android APK
     runs-on: ubuntu-latest
     steps:
@@ -314,11 +350,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
           # Tag-triggered runs cannot hit main-branch caches (see the Windows
           # job above); restore-keys falls back to the latest main-branch build.
           restore-keys: |
-            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -358,6 +394,26 @@ jobs:
             --target x265-static --parallel 2
           cp xdremux/rust/vendor/x265/build_android/x265_config.h \
             xdremux/rust/vendor/x265/include/x265_config.h
+          # Optional Main10 encoder for the Styles linear thumbnail. Same
+          # sources, EXPORT_C_API=OFF puts the objects in namespace x265_10bit
+          # so build.rs links it next to the 8-bit archive.
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_android_10bit \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DENABLE_SVE=OFF \
+            -DENABLE_SVE2=OFF \
+            -DENABLE_SVE2_BITPERM=OFF \
+            -DXDREMUX_SKIP_RC=ON \
+            -DHIGH_BIT_DEPTH=ON \
+            -DEXPORT_C_API=OFF
+          cmake --build xdremux/rust/vendor/x265/build_android_10bit \
+            --target x265-static --parallel 2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -371,15 +427,18 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
           cache: true
 
       - name: Resolve release version
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
-            echo "APP_BUILD_NUMBER=0" >> "$GITHUB_ENV"
+            # workflow_dispatch (CI debugging): no tag, fall back to the
+            # pubspec version so the app reports a real version, not 0.0.0.
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
+            echo "APP_BUILD_NUMBER=${pubspec_version##*+}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
             return 2>/dev/null || exit 0
           fi
@@ -422,7 +481,7 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Configure Android release signing
         shell: bash
@@ -448,7 +507,10 @@ jobs:
 
       - name: Build Android APK
         working-directory: apps/flutter
-        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+        run: flutter build apk --release --target-platform android-arm64 --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+
+      - name: Verify Android ABI and native payload
+        run: python3 tools/android/verify_apk.py apps/flutter/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Rename APK for release
         shell: bash
@@ -464,6 +526,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: macOS DMG
     runs-on: macos-latest
     steps:
@@ -504,16 +567,18 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
 
       - name: Resolve release version
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
@@ -522,28 +587,45 @@ jobs:
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build macOS app
         working-directory: apps/flutter
         run: flutter build macos --release
 
-      - name: Verify Rust dylib is bundled
+      - name: Verify Rust dylib is bundled and the app is sealed
         shell: bash
         run: |
+          set -euo pipefail
           APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
-          if [ ! -f "$APP/Contents/Frameworks/libxdremux_core.dylib" ]; then
-            echo "dylib missing from bundle; copying explicitly"
-            mkdir -p "$APP/Contents/Frameworks"
-            cp -f target/release/libxdremux_core.dylib "$APP/Contents/Frameworks/"
-          fi
+          DY="$APP/Contents/Frameworks/libxdremux_core.dylib"
+          # The Runner target's "Bundle Framework" copy phase must produce this;
+          # a missing dylib means the build silently produced an app that cannot
+          # load the Rust core. Fail here instead of patching it up afterwards.
+          test -f "$DY" || { echo "Rust dylib missing from the bundle" >&2; exit 1; }
+          test -x "$DY" || { echo "Rust dylib is not executable" >&2; exit 1; }
+          # The copy phase runs before CodeSign, so both the dylib and the app
+          # seal must be intact. A post-build copy would break the seal.
+          codesign -v --deep --strict "$APP"
+          echo "dylib bundled and app seal valid"
 
       - name: Package DMG
         shell: bash
         run: |
-          mkdir -p apps/flutter/build/dmg
+          set -euo pipefail
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          STAGE="apps/flutter/build/dmg/stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          # Stage the app beside an /Applications symlink so the image supports
+          # the usual drag-to-install gesture. Copying keeps the code signature
+          # (it is embedded in the Mach-O, not in an extended attribute).
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
+          test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
           hdiutil create -volname XDRemux \
-            -srcfolder apps/flutter/build/macos/Build/Products/Release/XDRemux.app \
+            -srcfolder "$STAGE" \
             -ov -format UDZO \
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
 
@@ -555,20 +637,27 @@ jobs:
           if-no-files-found: error
 
   ios:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'android'
     name: iOS unsigned IPA
-    runs-on: macos-latest
+    # macos-latest still selects Xcode 26.x. Duo uses typed iOS 27.1 APIs.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Verify iPhone Duo SDK and APIs
+        run: bash tools/apple/check_ios_sdk.sh
 
       - name: Restore x265 iOS build
         id: x265-cache
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-ios-${{ env.X265_TAG }}
-          restore-keys: |
-            x265-ios-${{ env.X265_TAG }}
+          # SDK-specific cache: do not reuse Xcode 26 object files.
+          # -main10: the cached tree now also holds build_ios_10bit.
+          key: x265-ios-sdk27.1-main10-${{ env.X265_TAG }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -607,26 +696,28 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.44.5
+          flutter-version: 3.47.7
 
       - name: Resolve release version
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^[vV] ]]; then
-            echo "APP_VERSION=0.0.0" >> "$GITHUB_ENV"
+            pubspec_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' apps/flutter/pubspec.yaml | head -n1)"
+            echo "APP_VERSION=${pubspec_version%%+*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=ci-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           else
             version="${GITHUB_REF_NAME#v}"
+            echo "APP_VERSION=${version%%-*}" >> "$GITHUB_ENV"
             echo "TAG_VERSION=$version" >> "$GITHUB_ENV"
           fi
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Build unsigned archive
         working-directory: apps/flutter
-        run: flutter build ipa --release --no-codesign
+        run: flutter build ipa --release --no-codesign --no-pub
 
       - name: Package unsigned IPA
         shell: bash
@@ -636,6 +727,19 @@ jobs:
           # wrap Products/Applications/<App>.app into Payload/ ourselves.
           ARCHIVE="apps/flutter/build/ios/archive/Runner.xcarchive"
           APP=$(find "$ARCHIVE/Products/Applications" -name '*.app' | head -1)
+          # Dart loads the core through DynamicLibrary.process(). A successful
+          # archive alone does not prove its runtime FFI survived dead_strip.
+          # Keep diagnostics compact (set -x would print thousands of C++
+          # symbols) while preserving the archive's actual export check.
+          set +x
+          SYMBOLS=$(nm -gU "$APP/Runner")
+          while read -r symbol; do
+            if ! grep -Eq "[[:space:]]_${symbol}$" <<< "$SYMBOLS"; then
+              echo "Missing iOS runtime FFI symbol: $symbol" >&2
+              exit 1
+            fi
+          done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
+          echo 'Validated all Dart runtime FFI exports in the iOS archive.'
           mkdir -p apps/flutter/build/ios/ipa/Payload
           cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
           cd apps/flutter/build/ios/ipa
@@ -648,14 +752,30 @@ jobs:
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
           if-no-files-found: error
 
+  linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
+    name: Linux preview packages
+    uses: ./.github/workflows/linux.yml
+
   publish:
     name: Publish GitHub Release
-    # macOS/iOS are new build lines: they must not block a release, so the
-    # publish gate only requires the proven Windows + Android jobs.
-    # windows-arm64 must be in `needs` (not the gate): its artifact upload
+    # Every shipping platform must have built before the release exists: a
+    # missing DMG or IPA used to be invisible because only Windows and Android
+    # gated this job, and v0.4.4 was published without the IPA after the hosted
+    # macOS arm64 queue cancelled the iOS job. windows-arm64 stays out of the
+    # gate: it is experimental and continue-on-error.
+    # windows-arm64 must still be in `needs` (not the gate): its artifact upload
     # races the download otherwise (pre.2 shipped without it).
-    needs: [windows, windows-arm64, android, macos, ios]
-    if: always() && startsWith(github.ref, 'refs/tags/') && needs.windows.result == 'success' && needs.android.result == 'success'
+    needs: [windows, windows-arm64, android, macos, ios, linux]
+    # Folded to one line on purpose: the expression parser must see a single
+    # string, not YAML newlines.
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/')
+      && needs.windows.result == 'success'
+      && needs.android.result == 'success'
+      && needs.macos.result == 'success'
+      && needs.ios.result == 'success'
+      && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -665,6 +785,30 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+
+      # The gate above requires the jobs, but an upload can still end up empty;
+      # fail here instead of creating a release that misses a platform.
+      - name: Verify every shipping platform produced an asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for pattern in \
+            "dist/windows-installer/XDRemux-Windows-*-Setup.exe" \
+            "dist/android-apk/XDRemux-Android-*.apk" \
+            "dist/macos-dmg/XDRemux-macOS-*.dmg" \
+            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa" \
+            "dist/linux-x64-release/XDRemux-Linux-*.AppImage" \
+            "dist/linux-x64-release/XDRemux-Linux-*.tar.gz" \
+            "dist/linux-x64-release/XDRemux-Linux-*.sha256"; do
+            if compgen -G "$pattern" >/dev/null; then
+              echo "found: $pattern"
+            else
+              echo "::error::missing release asset: $pattern"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -680,3 +824,6 @@ jobs:
             dist/android-apk/XDRemux-Android-*.apk
             dist/macos-dmg/XDRemux-macOS-*.dmg
             dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa
+            dist/linux-x64-release/XDRemux-Linux-*.AppImage
+            dist/linux-x64-release/XDRemux-Linux-*.tar.gz
+            dist/linux-x64-release/XDRemux-Linux-*.sha256
