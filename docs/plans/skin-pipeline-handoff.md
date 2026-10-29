@@ -1,6 +1,79 @@
-# 柔肤管道交接（断点：修 YuNet 后处理）
+# 柔肤管道交接
 
-分支 `research/iphone-next`。**所有其它部件已验证正确**，只差一处几何解码。
+分支 `research/iphone-next`。最新断点在下面「当前断点（2026-10-29）」；
+其后的各节按时间顺序保留，YuNet 解码（`ea1d6de`）与 9-25 的容器损坏都已解决。
+
+## 当前断点（2026-10-29）
+
+### 结论：`c630b93` 根治了 9-25 的容器损坏，根因是 mime infe 缺 `content_type`
+
+样张 `IMG_0004.HEIC`，`skin_test` 全流程（faces: 1 → 转换 → person 数据 → 实例遮罩）：
+
+- 输出能被 ImageIO 解码：`sips -s format png` 成功（4284×5712），顶层 box、iinf 153 项、
+  iloc 全部 extent 都在文件内。
+- 新增的 infe 与 Apple 的 157/158 **逐字节一致**（除 item id）：
+  hvc1 `flags=1, name=""`；mime `flags=1, name="", content_type="application/rdf+xml"`。
+- **二分**（临时改 `inject_instance_mask` 里两行 infe 后重编译，均已还原）：
+
+  | 变体 | mask infe | XMP infe | sips |
+  |---|---|---|---|
+  | 修复前 | flags 0 | `make_infe_box(.., "mime", 0)`（无 content_type）| ✗ Cannot extract image |
+  | 只加 hidden | flags 1 | `make_infe_box(.., "mime", 1)` | ✗ |
+  | 只加 content_type | flags 0 | `make_mime_infe_box_named(.., 0, "")` | ✓ |
+  | `c630b93` | flags 1 | `make_mime_infe_box_named(.., 1, "")` | ✓ |
+
+  ⇒ 唯一决定性的是 **mime infe 必须带 content_type**；hidden 标志不影响解码（保留是为了与 Apple 一致）。
+  全仓只有这一处用 `make_infe_box` 造 mime 项，已无同类隐患。
+
+### 新发现：Apple 的实例遮罩是**正式辅助图**（9-25 的布局记录有误）
+
+用 `ipma`/`iref` 逐项解析（`all_items` 把 auxC 字节打印成乱码，导致之前误读为「无 auxC」）：
+
+| | Apple 157（遮罩）| Apple 158（XMP）|
+|---|---|---|
+| 属性 | `ispe 768×576`、`pixi`、**`auxC(tag:apple.com,2026:photo:aux:semanticpersoninstances)!`**、`hvcC!`、`irot!` | 无 |
+| iref | **`auxl 157 → [46 主图, 154 tmap]`** | **`cdsc 158 → [157]`** |
+
+140/141（`urn:mpeg:hevc:2015:auxid:2`）与 142–151（portraiteffectsmatte 等）也是同样的「辅助图 + cdsc XMP」成对结构。
+
+`cdf13b7` 已让 `inject_instance_mask` 写出 ispe + pixi + auxC(essential) + hvcC(essential)、
+`auxl → [primary, tmap]`、`cdsc xmp → mask`。验证：输出可解码、主图像素与改动前逐像素一致、
+遮罩流可被 ffmpeg 解码、`cargo test -p xdremux-core --lib` 273 passed。**未加 `irot`**（见下 2）。
+
+### 遮罩内容与 person 数据：仍与 Apple 不同
+
+- **遮罩像素**：Apple 157 是**整个人的软分割**（256 级灰度，>127 覆盖 48 919 px，
+  bbox x=0.266 y=0.068 w=0.474 h=0.582，存储方向）；我们的 `face_matte` 只是脸框二值图
+  （4 480 px，约 Apple 的 9%）。
+- **`instanceROI` ≈ 遮罩 bbox 以中心放大 ~1.09**：Apple ROI = (0.2396, 0.0417, 0.5195, 0.6372)，
+  遮罩 bbox(>32) = (0.264, 0.066, 0.478, 0.585)，中心 (0.503, 0.359) vs (0.499, 0.360)，宽高比值 1.087/1.089。
+  只有一张样片，是假设不是定论。我们的 instanceROI 是启发式 (0.003, 0.138, 0.730, 0.341)，差得远。
+- **faceROI** 已接近（x 0.316/0.341、y 0.284/0.308、w 0.104/0.074、h 0.097/0.098）；9-25 的水平镜像问题不复存在。
+  肤色 (0.682, 0.577, 0.486) vs Apple (0.755, 0.541, 0.444)；右眼颜色/bimodal 偏差最大
+  （0.348/0.202/0.141, bimodal=true vs 0.606/0.430/0.354, false）——疑似右眼 ROI 落在头发/阴影上。
+- `skin_test` 两次运行输出不逐字节一致（差异在 mdat 尾部遮罩流附近），疑似 x265 线程非确定性；不影响正确性，做回归比对时注意。
+
+### 下一步（按优先级）
+
+1. **实机验证**：把 `skin_test` 输出（现在的布局与 Apple 结构一致、可解码）导入 iPhone/Photos，
+   看 Texture Style/柔肤选项是否出现。之前三个文件都是坏的，这是第一次有合法容器可测。
+2. **遮罩方向 + `irot`**：我们的主图 item 1 是 `ispe 4284×5712 + irot`，Apple 主图是 `ispe 5712×4284 + irot`，
+   而遮罩是 768×576 横向。先确认我们的主图存储方向与 face_roi 的「存储像素空间」是否一致，再决定是否给遮罩挂 `irot`
+   （Apple 挂了主图同一个 irot）。
+3. **人物分割替代脸框**：遮罩改为整人软分割（候选：源文件已有 portrait/person matte 时降采样复用；
+   否则需要一个分割模型，和 YuNet 一样走 ort）。然后 `instanceROI = bbox(mask>32) × ~1.09`，再用更多样片校验系数。
+4. 右眼统计：核对 76 点模板放出来的右眼区域。
+
+### 工具（本轮新增在 scratchpad，未入库）
+
+`heifcheck.py`（顶层/iinf/iloc 校验 + 指定 item 的 infe 原始字节）和 `props.py`（item 的 ipma 属性含 auxC URN、
+iref 关系）—— 比 `all_items` 的 auxC 输出可靠，如需长期用可以入库到 `tools/`。
+
+---
+
+# 历史记录
+
+## 断点：修 YuNet 后处理（已由 `ea1d6de` 解决）
 
 ## 要修的 bug
 
@@ -224,7 +297,7 @@ isobmff::make_box(btype, payload)
 
 - mask 项：`hvc1`，ipma = ispe + hvcC(essential)
 - xmp 项：`mime`，无属性
-- 两项都不建 `iref`（Apple 的实例遮罩不挂在主图上）
+- 两项都不建 `iref`（Apple 的实例遮罩不挂在主图上） —— **有误，见顶部 10-29：Apple 用 auxC + auxl + cdsc**
 - 数据追加到 `mdat` 末尾
 
 最后：把 `PersonInstance::mask_reference` 改成 **true**，由 `skin_test` 调用注入。
@@ -273,6 +346,8 @@ def boxes(d, start, end):
 注入后用 `sips` 或解析校验，失败就回退到注入前的字节。
 
 ### 断点 2：inject_instance_mask —— 已排除 10 个假设，剩 1 个
+
+> **10-29 已解决**：根因是 XMP 的 mime infe 缺 content_type（下文怀疑 1 的方向是对的），`c630b93` 修复，二分证据见顶部。
 
 **现象**：`sips -s format png` 报 `Cannot extract image from file`。
 对照：注入前（v7）能转 PNG，注入后（v15）不能。
