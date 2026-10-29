@@ -3,6 +3,7 @@ package com.example.xdremux
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -69,7 +70,7 @@ class TransferDocuments(private val activity: Activity) {
                                 val digest = MessageDigest.getInstance("SHA-256")
                                 var written = 0L
                                 file.inputStream().use { input ->
-                                    activity.contentResolver.openOutputStream(target, "wt")!!.use { output ->
+                                    openForWrite(target).use { output ->
                                         val buffer = ByteArray(64 * 1024)
                                         while (true) {
                                             val n = input.read(buffer); if (n < 0) break
@@ -91,14 +92,36 @@ class TransferDocuments(private val activity: Activity) {
                                 }
                                 read == size && hex(verify.digest()).equals(expected, true)
                             } catch (_: Exception) { false }
+                            // The picker already created the document; never leave an
+                            // empty or partial file in the user's folder.
+                            if (!ok) discard(target)
                             writing.set(false)
                             activity.runOnUiThread { result.success(ok) }
                         }
                     }
                 }
+                "discardDocument" -> {
+                    // Dart could not start the write (e.g. the receipt lease failed).
+                    val target = selected
+                    if (target != null && call.argument<String>("uri") == target.toString() && !writing.get()) {
+                        selected = null
+                        executor.execute { discard(target) }
+                    }
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+    // "wt" is not supported by every provider (e.g. some cloud drives); the
+    // document was just created empty, so plain "w" is equivalent there.
+    private fun openForWrite(target: Uri) = try {
+        activity.contentResolver.openOutputStream(target, "wt")!!
+    } catch (_: Exception) {
+        activity.contentResolver.openOutputStream(target, "w")!!
+    }
+    private fun discard(target: Uri) {
+        try { DocumentsContract.deleteDocument(activity.contentResolver, target) } catch (_: Exception) {}
     }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
     fun onActivityResult(code: Int, result: Int, data: Intent?): Boolean {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'transfer_models.dart';
 
 /// One application queue owner; registration has no network or native side effects.
@@ -7,8 +8,36 @@ class TransferQueue {
   static Set<String> Function()? _retainedInputs;
   static Set<String> get retainedInputPaths =>
       Set.of(_retainedInputs?.call() ?? {});
-  static int imports = 0;
+  static int _imports = 0;
+  static final _importListeners = <void Function()>{};
+  static int get imports => _imports;
+  static set imports(int value) {
+    _imports = value;
+    for (final listener in List.of(_importListeners)) {
+      listener();
+    }
+  }
+
   static bool get importing => imports > 0;
+  static void addImportListener(void Function() listener) =>
+      _importListeners.add(listener);
+  static void removeImportListener(void Function() listener) =>
+      _importListeners.remove(listener);
+
+  /// Completes once no transfer import or storage scan holds the inputs.
+  static Future<void> whenIdle() {
+    if (!importing) return Future<void>.value();
+    final idle = Completer<void>();
+    void check() {
+      if (importing) return;
+      _importListeners.remove(check);
+      idle.complete();
+    }
+
+    _importListeners.add(check);
+    return idle.future;
+  }
+
   static int _admissions = 0;
   static bool get admitting => _admissions > 0;
   static Future<T> withAdmission<T>(Future<T> Function() action) async {

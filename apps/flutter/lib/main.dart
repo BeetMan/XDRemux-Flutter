@@ -305,6 +305,7 @@ class _HomePageState extends State<HomePage> {
       _acceptTransferInput,
       retainedInputs: () => _queue.map((item) => item.inputPath).toSet(),
     );
+    TransferQueue.addImportListener(_onTransferImportsChanged);
     PlatformLayoutTraits.refresh().then((_) {
       if (mounted) setState(() {});
     });
@@ -693,6 +694,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _transferLifecycle?.dispose();
     TransferQueue.unregister(this);
+    TransferQueue.removeImportListener(_onTransferImportsChanged);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
     _shareSubscription?.cancel();
@@ -712,6 +714,12 @@ class _HomePageState extends State<HomePage> {
   // ---------------------------------------------------------------------------
 
   bool get _canEditQueue => !_isProcessing && !TransferQueue.importing;
+
+  // Queue actions are gated on TransferQueue.importing, which changes outside
+  // this widget's state; rebuild so they re-enable when an import ends.
+  void _onTransferImportsChanged() {
+    if (mounted) setState(() {});
+  }
 
   // Keep the start action enabled when there are pending items with
   // blockers, so the user can see the preflight explanation instead of a
@@ -2598,7 +2606,12 @@ class _HomePageState extends State<HomePage> {
     TransferInput? transferInput,
   }) {
     if (transferInput == null && TransferQueue.importing) {
-      return Future.value(TransferIntakeStatus.rejected);
+      // A share or drop cannot be resent from here, so hold it until the
+      // transfer import or storage scan releases the inputs.
+      return TransferQueue.whenIdle().then((_) {
+        if (!mounted) return TransferIntakeStatus.rejected;
+        return _enqueuePaths(paths, verb: verb, ignored: ignored);
+      });
     }
     return TransferQueue.withAdmission(
       () => _enqueuePathsNow(paths, verb: verb, ignored: ignored, transferInput: transferInput),

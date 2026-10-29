@@ -173,14 +173,19 @@ Future<TransferStorageItem> _copyItem(
     final suffix = '/$bucket/$name';
     final referenceSuffix = Platform.isWindows ? suffix.toLowerCase() : suffix;
     final queued =
-        protected?.any((path) => path.endsWith(referenceSuffix)) == true ||
-        ['added', 'duplicate'].contains(data['state']);
+        protected?.any((path) => path.endsWith(referenceSuffix)) == true;
+    // An ACK only hands the copy to the queue. Once neither the live queue nor
+    // a readable checkpoint references it (batch finished, queue cleared, app
+    // restarted), nothing ever will again and it would otherwise leak.
+    final state = data['state'];
+    final acknowledged =
+        (state == 'added' || state == 'duplicate') && data['queueId'] is String;
     final reason = queued
         ? 'queue'
         : protected == null ||
               !validSize ||
-              data['state'] != 'prepared' ||
-              data['queueId'] != null
+              !(acknowledged ||
+                  (state == 'prepared' && data['queueId'] == null))
         ? 'unknown'
         : null;
     return TransferStorageItem(

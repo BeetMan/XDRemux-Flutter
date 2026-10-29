@@ -137,6 +137,7 @@ void main() {
           queueId: 'queue-item',
         ),
       );
+      retained.add(acknowledged);
       final plan = await TransferStorage(root.path, native).preview();
       expect(plan.countFor('inbox'), 65);
       expect(plan.bytesFor('inbox'), 2080);
@@ -157,6 +158,23 @@ void main() {
       expect(native.deleted, isEmpty);
     },
   );
+
+  test('an ACKed copy no longer referenced anywhere can be cleaned', () async {
+    final path = await copy();
+    await persistTransferAck(
+      path,
+      const TransferIntakeAck(
+        TransferIntakeStatus.added,
+        queueId: 'queue-item',
+      ),
+    );
+    final manager = TransferStorage(root.path, native);
+    final plan = await manager.preview();
+    final item = plan.items.singleWhere((item) => item.kind == 'copy');
+    expect(item.reason, isNull);
+    expect((await manager.clean(plan, {item.id})).deleted, {item.id});
+    expect(await File(path).exists(), isFalse);
+  });
 
   test(
     'rechecks queue adoption after preview and only deletes unused copies',
