@@ -487,6 +487,14 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
         if (!_ownsRuntime(native, generation)) return;
       }
       if (dirty) {
+        // A refresh already in flight (decide, cancel, retry) may have read its
+        // snapshot before these events. Sharing it would consume the dirty
+        // flag with stale state, so wait for it and query again.
+        final running = _refreshTask;
+        if (running != null) {
+          await running.then<void>((_) {}, onError: (_) {});
+          if (!_ownsRuntime(native, generation)) return;
+        }
         await refresh();
         if (!_ownsRuntime(native, generation)) return;
         // UUID order is not commit order. Recover every page after overflow.

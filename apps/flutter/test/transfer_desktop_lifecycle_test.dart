@@ -115,4 +115,24 @@ void main() {
       owner.dispose();
     },
   );
+
+  test(
+    'a stop that never settles still lets the window and tray exit',
+    () async {
+      final channel = _Channel();
+      var exits = 0;
+      final owner = TransferDesktopLifecycle(
+        channel: channel,
+        stop: () => Completer<void>().future,
+        exitProcess: (_) => exits++,
+        stopTimeout: const Duration(milliseconds: 20),
+      );
+      await owner.register();
+      await channel.handler!(const MethodCall('requestClose'));
+      expect(channel.calls, ['ready', 'approveClose']);
+      await owner.exitApplication();
+      expect(exits, 1);
+      owner.dispose();
+    },
+  );
 }

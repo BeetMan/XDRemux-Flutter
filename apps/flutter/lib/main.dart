@@ -39,6 +39,7 @@ import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
+import 'ffi/transfer_ffi.dart';
 import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
 import 'widgets/codec_diagnostics_tile.dart';
@@ -2913,7 +2914,7 @@ class _HomePageState extends State<HomePage> {
                     : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
-              if (Platform.isWindows || Platform.isAndroid) ...[
+              if (TransferBindings.available) ...[
                 ListTile(
                   leading: const Icon(Icons.send),
                   title: Text(t('局域网发送原文件', 'Send original over LAN')),
@@ -3131,7 +3132,7 @@ class _HomePageState extends State<HomePage> {
       );
     }
     final actions = <Widget>[
-      if (Platform.isWindows || Platform.isAndroid)
+      if (TransferBindings.available)
         IconButton(
           key: const ValueKey('open-local-transfer'),
           icon: const Icon(Icons.wifi_tethering),
@@ -4093,7 +4094,7 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (Platform.isWindows || Platform.isAndroid)
+              if (TransferBindings.available)
                 ListTile(
                   leading: const Icon(Icons.send),
                   title: Text(t('局域网发送原文件', 'Send original over LAN')),

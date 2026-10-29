@@ -15,7 +15,19 @@ typedef _HandleN = Int32 Function(Uint64);
 typedef _HandleD = int Function(int);
 
 /// Construct only inside the persistent worker isolate; no image FFI dependency.
+/// The one exception is [available], which only loads and version-checks.
 class TransferBindings {
+  /// Whether this build bundles a compatible transfer library. The release
+  /// pipeline does not build it yet, so entry points must not assume it.
+  static final bool available = () {
+    try {
+      TransferBindings(null);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }();
+
   TransferBindings(String? overridePath) {
     if (overridePath == null && !Platform.isWindows && !Platform.isAndroid) {
       throw const TransferException('unsupported_platform');
