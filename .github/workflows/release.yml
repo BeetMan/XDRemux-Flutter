@@ -656,7 +656,8 @@ jobs:
         with:
           path: xdremux/rust/vendor/x265
           # SDK-specific cache: do not reuse Xcode 26 object files.
-          key: x265-ios-sdk27.1-${{ env.X265_TAG }}
+          # -main10: the cached tree now also holds build_ios_10bit.
+          key: x265-ios-sdk27.1-main10-${{ env.X265_TAG }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

@@ -41,7 +41,7 @@ Styles 线性缩略图的 10-bit 通路是**构建期可选**的：只要 `vendo
 
 构建要点（必须 `HIGH_BIT_DEPTH=ON` + `EXPORT_C_API=OFF` + `XDREMUX_SKIP_RC=ON`）、单帧 Rext 坑、链接语义与风险见 `docs/research/x265-main10-feasibility-20261025.md`。验证：`cargo test -p xdremux-core --lib` 的 `hevc::tests::main10_thumbnail_encode_is_profile_2_and_10bit_hvcc`（仅 `cfg(xdremux_main10)` 时运行）。
 
-已验证的 10-bit 归档（2026-10-25）：
+已验证的 10-bit 归档（2026-10-25；Apple 平台 2026-10-28）：
 
 | 平台 | 结果 | 交叉编译验证 |
 |---|---|---|
@@ -49,9 +49,14 @@ Styles 线性缩略图的 10-bit 通路是**构建期可选**的：只要 `vendo
 | Linux（CI） | `ci.yml` 同时构建 8-bit/10-bit | `cargo test --workspace` 在 CI 覆盖 Main10 |
 | Android arm64-v8a | NDK 27 构建通过 | `cargo ndk -t arm64-v8a --platform 24 build --release` → `libxdremux_core.so` |
 | 鸿蒙 arm64-v8a | DevEco SDK 构建通过 | `build_ohos.sh`（默认构建，`XDREMUX_MAIN10=0` 可跳过）→ `libxdremux_core.so` |
-| iOS / 模拟器 | 待 macOS 环境 | 目录与链接逻辑已就位 |
+| macOS arm64（本机） | Xcode 27.1 构建通过 | `cargo test -p xdremux-core --lib` 266 passed（含 `main10_thumbnail_encode_is_profile_2_and_10bit_hvcc`）；macOS 发布包尚未构建 10-bit |
+| iOS arm64 / 模拟器 arm64 | iPhoneOS / iPhoneSimulator 27.1 SDK 构建通过（`LC_BUILD_VERSION` platform 2 / 7） | `build_ios.sh` → `libxdremux_core.a` 内含 `x265_10bit::` 符号；按 Podfile 的 `-force_load` 参数模拟链接通过。**未在真机/模拟器运行** |
 
-发布侧同步：`release.yml` 的 Android job 已同时构建 `build_android_10bit`（缓存键 `-asm-ndk-v4-`）；`ci.yml` 的 Linux job 已同时构建 `build_desktop_10bit`。
+iOS 链接语义：Xcode 链接的是 Rust **staticlib**，`cargo:rustc-link-arg` 对 staticlib 无效，所以 `build.rs` 在 iOS 上同样用 `rustc-link-lib=static=x265-main10`，让 rustc 把 10-bit 归档打包进 `libxdremux_core.a`。Podfile 对 `libx265.a`（8-bit）与 `libxdremux_core.a` 都是 `-force_load`；两者重叠的只有 weak 模板/内联符号（10-bit 自有 C 符号带 `_x265_10bit_` 前缀），不会重复定义。
+
+坑：`build_ios.sh` 只在 `build_ios/libx265.a` 缺失时才 configure，旧 SDK 留下的归档会被一直复用。若 release 链接报 `building for 'iOS', but linking in object file ... built for 'macCatalyst'`，用 `otool -l vendor/x265/build_ios/libx265.a | grep -A4 LC_BUILD_VERSION` 看 platform（iOS=2、模拟器=7、macCatalyst=6），把该目录挪走后设置 `IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"` 重跑。
+
+发布侧同步：`release.yml` 的 Android job 已同时构建 `build_android_10bit`（缓存键 `-asm-ndk-v4-`）；`ci.yml` 的 Linux job 已同时构建 `build_desktop_10bit`；iOS job 经 `build_ios.sh` 构建 `build_ios_10bit`（缓存键 `x265-ios-sdk27.1-main10-`）。
 
 ### Windows 本地开发（MSVC + x265，已实测 2026-10-25）
 
