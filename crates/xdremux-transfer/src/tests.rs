@@ -1456,3 +1456,45 @@ async fn cut_tls_connection_retries_only_remaining_file_at_new_endpoint() {
     a.shutdown().await;
     b.shutdown().await;
 }
+
+#[tokio::test]
+async fn foreign_and_damaged_inbox_entries_do_not_block_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let (a, b) = pair(temp.path()).await;
+    for name in ["one.bin", "two.bin"] {
+        let session = prepare(&a, &b, file(name, 3, None)).await;
+        upload(&a, &b, &session, b"abc".to_vec()).await.unwrap();
+    }
+    let receipts = b.receipts(8).await.unwrap();
+    assert_eq!(receipts.len(), 2);
+    let cfg = b.inner.config.clone();
+    b.shutdown().await;
+    let root = temp.path().join("b");
+    for dir in ["received", ".incoming", ".outgoing"] {
+        fs::write(root.join(dir).join(".DS_Store"), b"finder").unwrap();
+    }
+    // Truncate one received file so its receipt no longer verifies.
+    let damaged = root
+        .join("received")
+        .join(format!("file-{}", receipts[0].id));
+    fs::write(damaged.join("data"), b"a").unwrap();
+    let b = Service::start(cfg).await.unwrap();
+    let listed = b.receipts(8).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, receipts[1].id);
+    // Nothing this store does not own is deleted.
+    assert!(root.join("received/.DS_Store").exists());
+    assert!(damaged.join("data").exists());
+    a.shutdown().await;
+    b.shutdown().await;
+}
+
+#[test]
+fn session_deadline_grows_with_payload() {
+    let cfg = Config::new(std::path::PathBuf::new());
+    assert_eq!(cfg.session_deadline(0), cfg.session_timeout);
+    assert_eq!(
+        cfg.session_deadline(16 * 1024 * 1024 * 1024),
+        cfg.session_timeout + Duration::from_secs(16 * 1024)
+    );
+}

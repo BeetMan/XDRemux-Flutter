@@ -335,26 +335,29 @@ impl Storage {
         plain(&self.root.join("received"), true)?;
         Ok(self.root.join("received").join(format!("file-{id}")))
     }
+    // Entries this store does not own (Finder's .DS_Store, antivirus or backup
+    // droppings) and receipts that no longer verify are left untouched and
+    // skipped: failing here would refuse every later start with no way to
+    // recover the inbox from inside the app.
     fn recover(&self) -> Result<()> {
         for dir in [".incoming", ".outgoing"] {
             for entry in fs::read_dir(self.root.join(dir))? {
                 let entry = entry?;
                 if !owned_id(&entry.file_name().to_string_lossy(), "txn-") {
-                    return Err(ErrorCode::UnsafeStorage);
+                    continue;
                 }
                 self.remove_transaction(&entry.path())?;
             }
         }
         for entry in fs::read_dir(self.root.join("received"))? {
             let entry = entry?;
-            if !owned_id(&entry.file_name().to_string_lossy(), "file-") {
-                return Err(ErrorCode::UnsafeStorage);
+            if !owned_id(&entry.file_name().to_string_lossy(), "file-")
+                || plain(&entry.path(), true).is_err()
+            {
+                continue;
             }
-            plain(&entry.path(), true)?;
             if !entry.path().join("receipt.json").exists() {
                 self.remove_transaction(&entry.path())?;
-            } else {
-                self.read_receipt(&entry.path())?;
             }
         }
         Ok(())
@@ -453,10 +456,15 @@ impl Storage {
         for entry in fs::read_dir(received)? {
             let entry = entry?;
             // A directory without a marker is an in-flight commit, never an exposed file.
-            if !entry.path().join("receipt.json").exists() {
+            if !owned_id(&entry.file_name().to_string_lossy(), "file-")
+                || !entry.path().join("receipt.json").exists()
+            {
                 continue;
             }
-            let receipt = self.read_receipt(&entry.path())?;
+            // One damaged receipt must not hide every other one.
+            let Ok(receipt) = self.read_receipt(&entry.path()) else {
+                continue;
+            };
             if after.is_none_or(|id| receipt.id.as_str() > id) {
                 results.insert(receipt.id.clone(), receipt);
                 if results.len() > limit {

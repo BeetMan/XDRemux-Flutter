@@ -107,11 +107,23 @@ impl Inner {
         }
     }
     pub fn client(&self, fingerprint: Option<String>) -> Result<LsHttpClientV2> {
+        self.client_with(fingerprint, Some(self.config.request_timeout))
+    }
+    /// reqwest's timeout is a total deadline that also covers the streamed
+    /// body, so uploads use a client without one and watch for stalls instead.
+    pub fn upload_client(&self, fingerprint: String) -> Result<LsHttpClientV2> {
+        self.client_with(Some(fingerprint), None)
+    }
+    fn client_with(
+        &self,
+        fingerprint: Option<String>,
+        timeout: Option<Duration>,
+    ) -> Result<LsHttpClientV2> {
         LsHttpClientV2::try_new(
             &self.identity.key,
             &self.identity.cert,
             fingerprint.map(|s| s.to_ascii_uppercase()),
-            Some(self.config.request_timeout),
+            timeout,
         )
         .map_err(|_| ErrorCode::Io)
     }
@@ -643,9 +655,10 @@ async fn handle_event(inner: Arc<Inner>, event: ServerEventV2) {
                 inner.emit(EventKind::Accepted{session_id:session_id.clone()});
                 drop(gate);
                 let started=Instant::now();
+                let deadline=inner.config.session_deadline(session.offer.files.iter().map(|f|f.size).sum());
                 loop {
                     tokio::select! {_=session.cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(20))=>{}}
-                    if started.elapsed()>=inner.config.session_timeout || session.last.lock().unwrap().elapsed()>=inner.config.idle_timeout {
+                    if started.elapsed()>=deadline || session.last.lock().unwrap().elapsed()>=inner.config.idle_timeout {
                         inner.cancel_session(&session_id,ErrorCode::TimedOut).await; break;
                     }
                 }

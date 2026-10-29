@@ -92,6 +92,14 @@ impl Config {
             request_timeout: Duration::from_secs(300),
         }
     }
+    /// Wall-clock cap for a session moving `bytes`. A fixed `session_timeout`
+    /// would fail large transfers that are still making progress, so the cap
+    /// grows with the payload at a floor rate. It still bounds a peer that
+    /// trickles data just under `idle_timeout` forever.
+    pub(crate) fn session_deadline(&self, bytes: u64) -> Duration {
+        const FLOOR_BYTES_PER_SEC: u64 = 1024 * 1024;
+        self.session_timeout + Duration::from_secs(bytes / FLOOR_BYTES_PER_SEC)
+    }
     pub(crate) fn validate(&self) -> Result<()> {
         if self.alias.is_empty()
             || self.alias.len() > 128

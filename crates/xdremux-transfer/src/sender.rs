@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::Arc,
-    time::Duration,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -87,6 +87,12 @@ impl Service {
         {
             return Err(ErrorCode::InvalidInput);
         }
+        // Estimated up front; send() re-checks every size while staging.
+        let bytes = paths
+            .iter()
+            .filter_map(|p| std::fs::metadata(p).ok())
+            .fold(0u64, |sum, m| sum.saturating_add(m.len()));
+        let deadline = self.inner.config.session_deadline(bytes);
         let id = Uuid::new_v4().to_string();
         let cancel = self.inner.stop.child_token();
         let mut state = self.inner.state.lock().unwrap();
@@ -123,7 +129,7 @@ impl Service {
             let result=tokio::select! {
                 biased;
                 _=token.cancelled()=>Err(ErrorCode::Cancelled),
-                result=tokio::time::timeout(inner.config.session_timeout,send(&inner,&task_id,&plan,pin.as_deref(),token.clone(),&mut report))=>result.unwrap_or(Err(ErrorCode::TimedOut)),
+                result=tokio::time::timeout(deadline,send(&inner,&task_id,&plan,pin.as_deref(),token.clone(),&mut report))=>result.unwrap_or(Err(ErrorCode::TimedOut)),
             };
             report.error=result.err();
             if report.error.is_some() {
@@ -286,6 +292,7 @@ async fn send(
         return Err(ErrorCode::IdentityMismatch);
     }
     let client = inner.client(Some(peer.fingerprint.clone()))?;
+    let uploader = inner.upload_client(peer.fingerprint.clone())?;
     let prepared = client
         .prepare_upload(
             ProtocolType::Https,
@@ -318,8 +325,11 @@ async fn send(
         let size = file.size;
         let mut bytes = 0u64;
         let mut reported = 0u64;
+        let last = Arc::new(Mutex::new(Instant::now()));
+        let touched = last.clone();
         let stream = ReaderStream::with_capacity(source, 64 * 1024).inspect(move |chunk| {
             if let Ok(chunk) = chunk {
+                *touched.lock().unwrap() = Instant::now();
                 bytes += chunk.len() as u64;
                 if bytes - reported >= 512 * 1024 || bytes == size {
                     reported = bytes;
@@ -332,20 +342,30 @@ async fn send(
                 }
             }
         });
-        client
-            .upload(
-                ProtocolType::Https,
-                &host,
-                port,
-                None,
-                &session.session_id,
-                &file_id,
-                &token,
-                localsend::reqwest::Body::wrap_stream(stream),
-                cancel.clone(),
-            )
-            .await
-            .map_err(map_error)?;
+        let upload = uploader.upload(
+            ProtocolType::Https,
+            &host,
+            port,
+            None,
+            &session.session_id,
+            &file_id,
+            &token,
+            localsend::reqwest::Body::wrap_stream(stream),
+            cancel.clone(),
+        );
+        tokio::pin!(upload);
+        // Fail only on a stall: no body bytes taken for `request_timeout`. That
+        // also bounds the receiver's hash, fsync and commit after the last byte.
+        loop {
+            tokio::select! {
+                result = &mut upload => break result.map_err(map_error)?,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    if last.lock().unwrap().elapsed() >= inner.config.request_timeout {
+                        return Err(ErrorCode::TimedOut);
+                    }
+                }
+            }
+        }
         report.files.push(sent_file(file));
         inner.emit(EventKind::FileSent {
             transfer_id: id.to_owned(),
