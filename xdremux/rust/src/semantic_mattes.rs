@@ -444,10 +444,16 @@ fn instance_mask_xmp(key: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Auxiliary type of the FSINC instance mask (item 157 in IMG_0004).
+pub const INSTANCE_MASK_URN: &str = "tag:apple.com,2026:photo:aux:semanticpersoninstances";
+
 /// Inject one FSINC instance mask: an `hvc1` item carrying the face-region
-/// pixels plus its `mime` XMP declaration. Apple stores them as a pair with
-/// no iref and no auxC (items 157/158 in IMG_0004), so the person data's
-/// `instanceMaskReferenceKey` finally points at something real.
+/// pixels plus its `mime` XMP declaration. Apple stores the mask as a real
+/// auxiliary image (ispe, pixi, auxC(essential), hvcC(essential), with
+/// `auxl → [primary, tmap]`) and ties the XMP to it with `cdsc` (items
+/// 157/158 in IMG_0004), so the person data's `instanceMaskReferenceKey`
+/// finally points at something real. Apple's mask also carries the primary's
+/// `irot`; that is left out until the mask's orientation is settled.
 pub fn inject_instance_mask(
     data: &[u8],
     face_roi: [f64; 4],
@@ -514,9 +520,16 @@ pub fn inject_instance_mask(
         }
     }
     let ispe_idx = (prop_base + 1) as u32;
-    let hvcc_idx = (prop_base + 2) as u32;
+    let pixi_idx = (prop_base + 2) as u32;
+    let auxc_idx = (prop_base + 3) as u32;
+    let hvcc_idx = (prop_base + 4) as u32;
+    let mut auxc_payload = vec![0u8, 0, 0, 0]; // FullBox version+flags
+    auxc_payload.extend_from_slice(INSTANCE_MASK_URN.as_bytes());
+    auxc_payload.push(0);
     let mut new_ipco_body = data[ipco.data_start..ipco.box_start + ipco.size as usize].to_vec();
     new_ipco_body.extend_from_slice(&isobmff::make_ispe_box(mask_w, mask_h));
+    new_ipco_body.extend_from_slice(isobmff::PIXI_MONO8_BOX);
+    new_ipco_body.extend_from_slice(&make_box(b"auxC", &auxc_payload));
     new_ipco_body.extend_from_slice(&make_box(b"hvcC", &matte_hvcc));
     let new_ipco = make_box(b"ipco", &new_ipco_body);
 
@@ -527,7 +540,12 @@ pub fn inject_instance_mask(
     let mut entries = parsed.ipma_entries.clone();
     entries.push(isobmff::IpmaEntry {
         item_id: mask_id,
-        associations: vec![(ispe_idx, false), (hvcc_idx, true)],
+        associations: vec![
+            (ispe_idx, false),
+            (pixi_idx, false),
+            (auxc_idx, true),
+            (hvcc_idx, true),
+        ],
     });
     let mut new_ipma_payload = vec![data[ipma.data_start], 0, 0, ipma_flags];
     new_ipma_payload.extend_from_slice(&(entries.len() as u32).to_be_bytes());
@@ -537,9 +555,35 @@ pub fn inject_instance_mask(
     }
     let new_ipma = make_box(b"ipma", &new_ipma_payload);
 
+    // ---- iref: auxl mask → [primary, tmap], cdsc xmp → mask --------------
+    let iref = children.iter().find(|b| b.btype == *b"iref").ok_or("iref not found")?;
+    if data[iref.data_start] != 0 {
+        return Err(format!("unsupported iref version {}", data[iref.data_start]));
+    }
+    let pitm = children.iter().find(|b| b.btype == *b"pitm").ok_or("pitm not found")?;
+    let primary_id = isobmff::parse_pitm(data, pitm);
+    let tmap_id = parsed.items.iter().find(|i| i.itype == "tmap").map(|i| i.item_id);
+    let mut auxl_targets = vec![primary_id];
+    if let Some(tid) = tmap_id.filter(|t| *t != primary_id) {
+        auxl_targets.push(tid);
+    }
+    let single_ref = |from: u32, to: &[u32]| -> Vec<u8> {
+        let mut v = (from as u16).to_be_bytes().to_vec();
+        v.extend_from_slice(&(to.len() as u16).to_be_bytes());
+        for t in to {
+            v.extend_from_slice(&(*t as u16).to_be_bytes());
+        }
+        v
+    };
+    let mut new_iref_body = data[iref.data_start..iref.box_start + iref.size as usize].to_vec();
+    new_iref_body.extend_from_slice(&make_box(b"auxl", &single_ref(mask_id, &auxl_targets)));
+    new_iref_body.extend_from_slice(&make_box(b"cdsc", &single_ref(xmp_id, &[mask_id])));
+    let new_iref = make_box(b"iref", &new_iref_body);
+
     // ---- iloc: shift existing extents, append two -----------------------
     let xmp = instance_mask_xmp(&key);
     let d_iinf = new_iinf.len() as i64 - iinf.size as i64;
+    let d_iref = new_iref.len() as i64 - iref.size as i64;
     let d_iprp = (new_ipco.len() as i64 - ipco.size as i64) + (new_ipma.len() as i64 - ipma.size as i64);
     let mdat = top.iter().find(|b| b.btype == *b"mdat").ok_or("mdat not found")?;
     let mdat_end = (mdat.box_start + mdat.size) as i64;
@@ -551,7 +595,7 @@ pub fn inject_instance_mask(
     // `make_iloc_box` sizes its offset/length fields from the values present, so
     // measuring with zero offsets under-counts the growth. Build once with a
     // plausible payload offset, measure the real box, then rebuild.
-    let shift_0 = d_iinf + d_iprp;
+    let shift_0 = d_iinf + d_iprp + d_iref;
     let measure = |payload_guess: u64| -> Vec<isobmff::IlocEntry> {
         let mut v: Vec<isobmff::IlocEntry> = Vec::new();
         for mut e in isobmff::parse_iloc(data, iloc).unwrap_or_default() {
@@ -579,7 +623,7 @@ pub fn inject_instance_mask(
     };
     let d_iloc = isobmff::make_iloc_box(&measure(mdat_end as u64 + shift_0 as u64)).len() as i64
         - iloc.size as i64;
-    let head_delta = d_iinf + d_iprp + d_iloc;
+    let head_delta = d_iinf + d_iprp + d_iref + d_iloc;
 
     let mut out_entries: Vec<isobmff::IlocEntry> = Vec::new();
     for mut e in isobmff::parse_iloc(data, iloc)? {
@@ -617,6 +661,7 @@ pub fn inject_instance_mask(
         match &child.btype {
             b"iinf" => meta_body.extend_from_slice(&new_iinf),
             b"iloc" => meta_body.extend_from_slice(&new_iloc),
+            b"iref" => meta_body.extend_from_slice(&new_iref),
             b"iprp" => {
                 let mut body = Vec::new();
                 for s in &sub {
