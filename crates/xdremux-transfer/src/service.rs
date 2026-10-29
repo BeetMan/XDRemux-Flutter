@@ -858,7 +858,7 @@ async fn receive(
         return Err(ErrorCode::Truncated);
     }
     session.finalizing.fetch_add(1, Ordering::SeqCst);
-    let _finalizing = Finalizing(&session);
+    let _finalizing = Finalizing(session);
     let clean = tokio::select! {_=session.cancel.cancelled()=>return Err(ErrorCode::Cancelled), result=tokio::time::timeout(inner.config.idle_timeout,body_done)=>matches!(result,Ok(Ok(true)))};
     if !clean {
         return Err(ErrorCode::Truncated);
