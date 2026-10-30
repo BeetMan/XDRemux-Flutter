@@ -188,6 +188,14 @@ Flutter 版生成的检查点文件可被原生版读取。
   X6 LHDR 样本作为 donor 被 Rust 拒绝（"donor photo has no UHDR gain-map payload"），与 Flutter 行为一致。
 - 未验证：真实 iPhone 回传文件（需要真机往返）；GUI 四步页仅编译与渲染，未人工点击走完。
 
+**P2 补充：双语与系统集成（2026-10-30）**
+
+- String Catalog `App/Localizable.xcstrings`：源语言 zh-Hans，158 条英文译文；非 View 层文案（状态、错误、设置枚举标题、
+  面板按钮）统一改走 `String(localized:)`，`InfoRow` / `StepCard` 标签改为 `LocalizedStringKey`。
+  `-AppleLanguages (en)` 启动实测列表与四步页全部英文。术语与 Flutter `l10n` 一致（Apple Standard / OPPO Compatible）。
+- `CFBundleDocumentTypes` 声明 HEIC / HEIF / JPEG（Viewer，Alternate），`onOpenURL` 接入导入：访达"打开方式"、Dock 拖入、
+  iOS"用 XDRemux 打开"均走同一导入路径。`--round-trip` 启动参数直接打开四步页，供冒烟。
+
 ### P3：实况、分享与系统集成
 
 - Motion Photo 识别 / 拆分、Live Photo 配对复用 Rust 导出（`xdremux_motion_photo_*`、

@@ -47,7 +47,7 @@ final class OutputLocation {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
-        panel.prompt = "选择输出目录"
+        panel.prompt = String(localized: "选择输出目录")
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         guard let bookmark = try? url.bookmarkData(options: [.withSecurityScope]) else { return nil }
         scopedURL?.stopAccessingSecurityScopedResource()

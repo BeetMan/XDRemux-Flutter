@@ -54,11 +54,11 @@ struct PhotoItem: Identifiable {
 
     var statusText: String {
         switch state {
-        case .inspecting: return "正在读取…"
-        case .ready: return isConvertible ? "可转换" : (inspection?.errorMessage ?? "不支持")
-        case .converting(let p): return "转换中 \(Int(p * 100))%"
-        case .done: return "已完成"
-        case .failed(let m): return "失败：\(m)"
+        case .inspecting: return String(localized: "正在读取…")
+        case .ready: return isConvertible ? String(localized: "可转换") : (inspection?.errorMessage ?? String(localized: "不支持"))
+        case .converting(let p): return String(localized: "转换中 \(Int(p * 100))%")
+        case .done: return String(localized: "已完成")
+        case .failed(let m): return String(localized: "失败：\(m)")
         }
     }
 
@@ -68,7 +68,7 @@ struct PhotoItem: Identifiable {
         if let f = classification?.family { parts.append(f.uppercased()) }
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
         if let d = details?.dimensionsText { parts.append(d) }
-        if isMotionPhoto { parts.append("动态照片") }
+        if isMotionPhoto { parts.append(String(localized: "动态照片")) }
         return parts.joined(separator: " · ")
     }
 }

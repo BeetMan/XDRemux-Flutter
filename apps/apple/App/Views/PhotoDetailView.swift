@@ -82,13 +82,13 @@ struct PhotoDetailView: View {
                     InfoRow("EDR scale", String(format: "%.3f", i.edrScale))
                     InfoRow("Gain map 上限", String(format: "%.3f", i.gainMapMax))
                 }
-                if item.details?.applePhotographicStyles == true { InfoRow("Apple 摄影风格", "已包含") }
-                if item.details?.applePortrait == true { InfoRow("Apple 人像", "已包含") }
+                if item.details?.applePhotographicStyles == true { InfoRow("Apple 摄影风格", String(localized: "已包含")) }
+                if item.details?.applePortrait == true { InfoRow("Apple 人像", String(localized: "已包含")) }
                 if let m = item.motionPhoto {
                     InfoRow("动态照片", [m.sourceKind, m.durationText,
                                        m.videoWidth.flatMap { w in m.videoHeight.map { "\(w) × \($0)" } },
-                                       m.isDualStream ? "双流" : nil,
-                                       m.hasAudio == true ? "有声音" : nil].compactMap { $0 }.joined(separator: " · "))
+                                       m.isDualStream ? String(localized: "双流") : nil,
+                                       m.hasAudio == true ? String(localized: "有声音") : nil].compactMap { $0 }.joined(separator: " · "))
                 }
             }
         }
@@ -112,7 +112,7 @@ struct PhotoDetailView: View {
         }
     }
 
-    private func motionHint(_ mode: MotionPhotoMode) -> String {
+    private func motionHint(_ mode: MotionPhotoMode) -> LocalizedStringKey {
         switch mode {
         case .livePhotoPair: return "转换后的静帧与原视频配对为 Apple Live Photo（HEIC + MOV 需一起导入 Apple 照片）。"
         case .still: return "只转换静帧，忽略附带的视频。"
@@ -188,7 +188,7 @@ struct PreviewCard: View {
         }
     }
 
-    private func badge(_ text: String) -> some View {
+    private func badge(_ text: LocalizedStringKey) -> some View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 8).padding(.vertical, 4)
@@ -206,14 +206,14 @@ struct ResultSection: View {
         GroupBox("转换结果") {
             VStack(alignment: .leading, spacing: 12) {
                 InfoGrid {
-                    InfoRow("输出模式", product.config.outputMode == .oppo ? "OPPO 兼容" : "Apple 标准")
+                    InfoRow("输出模式", product.config.outputMode == .oppo ? String(localized: "OPPO 兼容") : String(localized: "Apple 标准"))
                     InfoRow("文件", product.outputURL.lastPathComponent)
                     if let mov = product.pairedVideoURL { InfoRow("Live Photo 视频", mov.lastPathComponent) }
                     if !product.extraVideoURLs.isEmpty {
                         InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "))
                     }
                     InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
-                    InfoRow("校验", "通过（可解码 + 结构检查）")
+                    InfoRow("校验", String(localized: "通过（可解码 + 结构检查）"))
                 }
                 ExportButtons(model: model, item: item, product: product)
             }
@@ -233,10 +233,10 @@ struct InfoGrid<Content: View>: View {
 }
 
 struct InfoRow: View {
-    let label: String
+    let label: LocalizedStringKey
     let value: String?
 
-    init(_ label: String, _ value: String?) {
+    init(_ label: LocalizedStringKey, _ value: String?) {
         self.label = label
         self.value = value
     }

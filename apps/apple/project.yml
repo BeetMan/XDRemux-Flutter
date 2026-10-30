@@ -8,6 +8,7 @@
 name: XDRemux
 options:
   bundleIdPrefix: io.github.beetman
+  developmentLanguage: zh-Hans
   deploymentTarget:
     iOS: "17.0"
     macOS: "14.0"
@@ -32,9 +33,21 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: XDRemux
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSApplicationCategoryType: public.app-category.photography
+        # Viewer-rank document types: Finder "Open With", Dock drop, iOS "Open in".
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: HEIF image
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.heic, public.heif]
+          - CFBundleTypeName: JPEG image
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.jpeg]
         NSPhotoLibraryAddUsageDescription: 转换结果写入照片库需要此权限。
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]

@@ -41,8 +41,15 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
 results are identical for the same options. x265's own log lines are silenced unless `-v`.
 
-The app also accepts `XDRemux --import <files…> [--convert-all]` at launch for scripting; the
-files must be readable from inside the app sandbox (e.g. its container's `Documents`).
+The app also accepts `XDRemux --import <files…> [--convert-all] [--round-trip]` at launch for scripting;
+the files must be readable from inside the app sandbox (e.g. its container's `Documents`). Finder
+"Open With", Dock drops and iOS "Open in XDRemux" import through the same path.
+
+## Localization
+
+Source language is Simplified Chinese; `App/Localizable.xcstrings` carries the English translations
+(terminology matches the Flutter app: Apple Standard / OPPO Compatible). Strings outside SwiftUI views
+go through `String(localized:)`. Test with `-AppleLanguages "(en)"`.
 
 ## Build
 

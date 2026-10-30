@@ -32,7 +32,7 @@ struct RoundTripView: View {
                     StepCard(step: 2, title: "生成 Apple 照片摄影风格编辑副本",
                              description: "对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。",
                              fileName: model.editCopy?.lastPathComponent) {
-                        Button(model.busy == .editCopy ? "生成中…" : "生成 Apple 照片编辑副本") {
+                        Button(model.busy == .editCopy ? String(localized: "生成中…") : String(localized: "生成 Apple 照片编辑副本")) {
                             Task { await model.createEditCopy() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -57,16 +57,16 @@ struct RoundTripView: View {
                         }
                         .pickerStyle(.segmented)
                         Toggle("按 OPPO 原始照片恢复可见原机水印", isOn: $model.restoreWatermark)
-                        Button(model.busy == .writeback ? "处理中…" : "生成最终输出") {
+                        Button(model.busy == .writeback ? String(localized: "处理中…") : String(localized: "生成最终输出")) {
                             Task { await model.writeback() }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.returned == nil || model.busy != nil)
                         if let report = model.report {
                             InfoGrid {
-                                InfoRow("原机水印", report.rasterWatermarkRestored.map { $0 ? "已恢复" : "未恢复" })
+                                InfoRow("原机水印", report.rasterWatermarkRestored.map { $0 ? String(localized: "已恢复") : String(localized: "未恢复") })
                                 InfoRow("OPPO 条目", report.restoredOppoEntries?.joined(separator: ", "))
-                                InfoRow("EXIF", report.exifGrafted == true ? "已从原图移植" : nil)
+                                InfoRow("EXIF", report.exifGrafted == true ? String(localized: "已从原图移植") : nil)
                             }
                         }
                         if let final = model.finalOutput {
@@ -142,36 +142,36 @@ final class RoundTripModel {
             switch slot {
             case .donor:
                 donor = copy; editCopy = nil; finalOutput = nil; report = nil
-                status = "已选择 OPPO 原始照片：\(url.lastPathComponent)"
+                status = String(localized: "已选择 OPPO 原始照片：\(url.lastPathComponent)")
             case .returned:
                 returned = copy; finalOutput = nil; report = nil
-                status = "已选择 iPhone 回传照片：\(url.lastPathComponent)"
+                status = String(localized: "已选择 iPhone 回传照片：\(url.lastPathComponent)")
             }
         } catch {
-            self.error = "导入失败：\(error.localizedDescription)"
+            self.error = String(localized: "导入失败：\(error.localizedDescription)")
         }
     }
 
     func createEditCopy() async {
         guard let donor, busy == nil else { return }
-        busy = .editCopy; error = nil; status = "正在生成 Apple 照片摄影风格编辑副本…"
+        busy = .editCopy; error = nil; status = String(localized: "正在生成 Apple 照片摄影风格编辑副本…")
         defer { busy = nil }
         let job = ConversionJob(backend: engine, scratchRoot: library.directories.scratch, outputRoot: library.outputRoot)
         do {
             let product = try await RoundTrip.createEditCopy(donor: donor, sourceName: library.sourceName(of: donor),
                                                              base: library.config, job: job)
             editCopy = product.outputURL
-            status = "Apple 编辑副本已生成：\(product.outputURL.lastPathComponent)"
+            status = String(localized: "Apple 编辑副本已生成：\(product.outputURL.lastPathComponent)")
         } catch {
-            self.error = "Apple 照片摄影风格失败：\(error)"
+            self.error = String(localized: "Apple 照片摄影风格失败：\(String(describing: error))")
         }
     }
 
     func writeback() async {
         guard let returned, busy == nil else { return }
-        if outputMode == .oppo && donor == nil { error = "OPPO 兼容输出必须保留 OPPO 原始照片。"; return }
-        if restoreWatermark && donor == nil { error = "需要恢复原机水印时必须保留 OPPO 原始照片。"; return }
-        busy = .writeback; error = nil; status = "正在写回回传照片…"
+        if outputMode == .oppo && donor == nil { error = String(localized: "OPPO 兼容输出必须保留 OPPO 原始照片。"); return }
+        if restoreWatermark && donor == nil { error = String(localized: "需要恢复原机水印时必须保留 OPPO 原始照片。"); return }
+        busy = .writeback; error = nil; status = String(localized: "正在写回回传照片…")
         defer { busy = nil }
         do {
             let (url, report) = try await RoundTrip.writeback(
@@ -180,19 +180,19 @@ final class RoundTripModel {
                 outputRoot: library.outputRoot, scratchRoot: library.directories.scratch, backend: engine)
             finalOutput = url
             self.report = report
-            status = "最终输出已生成：\(url.lastPathComponent)"
+            status = String(localized: "最终输出已生成：\(url.lastPathComponent)")
         } catch RoundTripError.writebackFailed(let message) {
-            error = "写回失败：\(message ?? "未知原因")"
+            error = String(localized: "写回失败：\(message ?? String(localized: "未知原因"))")
         } catch {
-            self.error = "写回失败：\(error)"
+            self.error = String(localized: "写回失败：\(String(describing: error))")
         }
     }
 }
 
 struct StepCard<Actions: View>: View {
     let step: Int
-    let title: String
-    let description: String
+    let title: LocalizedStringKey
+    let description: LocalizedStringKey
     let fileName: String?
     @ViewBuilder let actions: Actions
 

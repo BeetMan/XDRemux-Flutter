@@ -20,6 +20,8 @@ final class LibraryModel {
     var selectedID: PhotoItem.ID?
     var lastError: String?
     var isImporting = false
+    /// Set by `--round-trip` so the four-step sheet opens at launch (smoke runs).
+    var openRoundTripOnLaunch = false
     /// Where published files land; the app folder unless the user chose one.
     private(set) var outputRoot: URL
     var usesCustomOutputDirectory: Bool { outputLocation.isCustom }
@@ -92,10 +94,10 @@ final class LibraryModel {
                         pairedVideoURL: record.pairedVideoPath.map(URL.init(fileURLWithPath:)),
                         extraVideoURLs: (record.extraVideoPaths ?? []).map(URL.init(fileURLWithPath:))))
                 } else {
-                    item.state = .failed("记录不完整，请重新转换")
+                    item.state = .failed(String(localized: "记录不完整，请重新转换"))
                 }
             case .failed:
-                item.state = .failed(record.errorMessage ?? "失败")
+                item.state = .failed(record.errorMessage ?? String(localized: "失败"))
             }
             return item
         }
@@ -128,7 +130,7 @@ final class LibraryModel {
                                        pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
-        do { try journalStore.save(journal) } catch { lastError = "无法保存队列状态：\(error.localizedDescription)" }
+        do { try journalStore.save(journal) } catch { lastError = String(localized: "无法保存队列状态：\(error.localizedDescription)") }
     }
 
     var selectedItem: PhotoItem? {
@@ -150,6 +152,7 @@ final class LibraryModel {
     /// readable without security scope, so this is a developer/automation
     /// entry, not the user-facing import.
     func handleLaunchArguments(_ arguments: [String] = CommandLine.arguments) async {
+        if arguments.contains("--round-trip") { openRoundTripOnLaunch = true }
         guard let start = arguments.firstIndex(of: "--import") else { return }
         let rest = arguments[(start + 1)...]
         let paths = rest.prefix { !$0.hasPrefix("--") }
@@ -174,7 +177,7 @@ final class LibraryModel {
                 if selectedID == nil { selectedID = item.id }
                 await inspect(item.id)
             } catch {
-                lastError = "导入 \(url.lastPathComponent) 失败：\(error.localizedDescription)"
+                lastError = String(localized: "导入 \(url.lastPathComponent) 失败：\(error.localizedDescription)")
             }
         }
     }
@@ -190,7 +193,7 @@ final class LibraryModel {
             if selectedID == nil { selectedID = item.id }
             await inspect(item.id)
         } catch {
-            lastError = "导入 \(name) 失败：\(error.localizedDescription)"
+            lastError = String(localized: "导入 \(name) 失败：\(error.localizedDescription)")
         }
     }
 
@@ -240,7 +243,7 @@ final class LibraryModel {
         } catch {
             update(id) { item in
                 item.thumbnail = thumbnail
-                if !keepState || item.state == .inspecting { item.state = .failed("读取失败：\(error)") }
+                if !keepState || item.state == .inspecting { item.state = .failed(String(localized: "读取失败：\(String(describing: error))")) }
             }
         }
     }
@@ -335,11 +338,11 @@ final class LibraryModel {
 
     private static func describe(_ error: ConversionJobError) -> String {
         switch error {
-        case .coreFailed(let message): return message ?? "内核未给出原因"
-        case .verificationFailed: return "输出未通过结构校验，已丢弃"
-        case .livePhotoFailed(let message): return message ?? "Live Photo 合成失败"
-        case .missingOutput: return "内核报告成功但没有写出文件"
-        case .samePath: return "输出路径与输入相同"
+        case .coreFailed(let message): return message ?? String(localized: "内核未给出原因")
+        case .verificationFailed: return String(localized: "输出未通过结构校验，已丢弃")
+        case .livePhotoFailed(let message): return message ?? String(localized: "Live Photo 合成失败")
+        case .missingOutput: return String(localized: "内核报告成功但没有写出文件")
+        case .samePath: return String(localized: "输出路径与输入相同")
         }
     }
 }

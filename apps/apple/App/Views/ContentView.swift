@@ -50,7 +50,14 @@ struct ContentView: View {
         .sheet(isPresented: $showRoundTrip) {
             RoundTripView(library: model)
         }
-        .task { await model.handleLaunchArguments() }
+        .task {
+            await model.handleLaunchArguments()
+            if model.openRoundTripOnLaunch { showRoundTrip = true }
+        }
+        // Finder "Open With", Dock drop, and iOS "Open in XDRemux" hand files here.
+        .onOpenURL { url in
+            Task { await model.importFiles([url]) }
+        }
         .fileImporter(isPresented: $showFileImporter,
                       allowedContentTypes: Self.importTypes,
                       allowsMultipleSelection: true) { result in

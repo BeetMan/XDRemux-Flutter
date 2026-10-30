@@ -76,7 +76,7 @@ struct FileExportButtons: View {
     private func saveToPhotos() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
-            message = "没有写入照片库的权限，可在“设置”里允许。"
+            message = String(localized: "没有写入照片库的权限，可在“设置”里允许。")
             return
         }
         let still = primary
@@ -100,9 +100,9 @@ struct FileExportButtons: View {
                 }
             }
             onSavedToPhotos?()
-            message = pairedVideo != nil ? "已作为 Live Photo 保存到照片库。" : "已作为新照片保存到照片库。"
+            message = pairedVideo != nil ? String(localized: "已作为 Live Photo 保存到照片库。") : String(localized: "已作为新照片保存到照片库。")
         } catch {
-            message = "保存失败：\(error.localizedDescription)"
+            message = String(localized: "保存失败：\(error.localizedDescription)")
         }
     }
     #else
@@ -121,7 +121,7 @@ struct FileExportButtons: View {
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
             panel.canCreateDirectories = true
-            panel.prompt = "存储到此文件夹"
+            panel.prompt = String(localized: "存储到此文件夹")
             guard panel.runModal() == .OK, let folder = panel.url else { return }
             copy(files, to: folder, renamingFirstTo: nil)
         }
@@ -137,9 +137,9 @@ struct FileExportButtons: View {
                 }
                 try FileManager.default.copyItem(at: file, to: destination)
             }
-            message = files.count == 1 ? "已存储到 \(folder.path)" : "已存储 \(files.count) 个文件到 \(folder.path)"
+            message = files.count == 1 ? String(localized: "已存储到 \(folder.path)") : String(localized: "已存储 \(files.count) 个文件到 \(folder.path)")
         } catch {
-            message = "存储失败：\(error.localizedDescription)"
+            message = String(localized: "存储失败：\(error.localizedDescription)")
         }
     }
     #endif
