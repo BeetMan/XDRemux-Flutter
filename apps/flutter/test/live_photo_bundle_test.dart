@@ -134,14 +134,27 @@ void main() {
       },
     );
 
-    test('share sends one zip of the bundle', () async {
-      final destination = _Destination('android');
-      final archived = <String>[];
-      await service(destination, archived: archived).share(item);
-      expect(archived, [bundle]);
-      expect(destination.shared, ['${temp.path}/out.pvt.zip']);
-      expect(destination.originals, isTrue);
-    });
+    for (final os in ['android', 'windows', 'linux', 'ohos']) {
+      test('$os share sends one zip of the bundle', () async {
+        final destination = _Destination(os);
+        final archived = <String>[];
+        await service(destination, archived: archived).share(item);
+        expect(archived, [bundle]);
+        expect(destination.shared, ['${temp.path}/out.pvt.zip']);
+        expect(destination.originals, isTrue);
+      });
+    }
+
+    for (final os in ['ios', 'macos']) {
+      test('$os share sends the .pvt directory itself', () async {
+        final destination = _Destination(os);
+        final archived = <String>[];
+        await service(destination, archived: archived).share(item);
+        expect(archived, isEmpty);
+        expect(destination.shared, [bundle]);
+        expect(destination.originals, isTrue);
+      });
+    }
 
     test('Android saves the inner HEIF + MOV', () async {
       final destination = _Destination('android');

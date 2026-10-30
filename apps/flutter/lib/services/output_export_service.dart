@@ -44,6 +44,11 @@ String livePhotoBundledPath(String flat) {
   return '${flat.substring(0, cut)}$stem.pvt$separator$name';
 }
 
+/// Apple share sheets send a `.pvt` directory as a package (AirDrop delivers
+/// it as one Live Photo); elsewhere the share path only takes files.
+bool sharesLivePhotoBundleDirectly(String operatingSystem) =>
+    operatingSystem == 'ios' || operatingSystem == 'macos';
+
 /// Zips a `.pvt` bundle into one shareable file and returns its path.
 typedef LivePhotoBundleArchiver = Future<String> Function(String bundleDir);
 
@@ -297,9 +302,12 @@ class OutputExportService {
         ? livePhotoBundleDir(paths.first)
         : null;
     if (bundle != null) {
-      // A directory cannot go through a share sheet; send the bundle as one
-      // zip so the HEIF + MOV pair stays together on every platform.
-      await destination.share([await _archiveBundle(bundle)], originals: true);
+      // Android/Windows/Linux/OHOS share sheets cannot send a directory; zip
+      // the bundle there so the HEIF + MOV pair stays together.
+      final shared = sharesLivePhotoBundleDirectly(destination.operatingSystem)
+          ? bundle
+          : await _archiveBundle(bundle);
+      await destination.share([shared], originals: true);
       return;
     }
     // Do not swallow missing MOV / platform / presentation errors, and do not

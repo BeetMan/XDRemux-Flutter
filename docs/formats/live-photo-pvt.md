@@ -34,7 +34,9 @@
 - 打开后：转换器仍然先把静帧写到原计划的 `<dir>/<stem>.heic`，合成时在临时目录配对，打包成 `<dir>/<stem>.pvt/`，最后删掉原位置那张没配对的静帧。`item.outputPath` 指向包里的 HEIC，`livePhotoMoviePath` 仍能找到包里的 MOV。
 - 检查点里记录的是原计划路径。恢复时如果原路径不存在而 `<stem>.pvt/<stem>.heic` 存在，就改用包里的文件，并用 `xdremux_live_photo_bundle_valid` 校验。重新转换时会把路径还原到原计划位置。
 - 保存：iOS 仍用 PhotoKit，以 `.photo` + `.pairedVideo` 写入包里的两个文件；Android 存两个独立媒体项，和以前相同。
-- 分享：目录没法通过分享面板发出去，所以统一先打成 `<名称>.pvt.zip`（deflate 等级 0，条目带 `<名称>.pvt/` 前缀），以单文件分享。鸿蒙原来不支持多文件分享，用这个方式也能发出去。
+- 分享（按平台，`sharesLivePhotoBundleDirectly`）：
+  - iOS / macOS：直接把 `.pvt` 目录交给系统分享面板（iOS 走 `UIActivityViewController`，macOS 走 share_plus 的 `NSSharingServicePicker`），AirDrop 到苹果设备后就是一张 Live Photo，不打 zip。
+  - Android / Windows / Linux / 鸿蒙：这些平台的分享面板只能发文件，不能发目录，所以先打成 `<名称>.pvt.zip`（deflate 等级 0，条目带 `<名称>.pvt/` 前缀），以单文件分享。鸿蒙原来不支持多文件分享，用这个方式也能发出去。
 
 ## 4. 验证记录（2026-10-30，macOS 27 / 照片 App）
 
@@ -47,6 +49,7 @@
 | 「照片」界面上的 `XDR_PVT_OPPO_std1x` | 用户肉眼确认：有实况标记，长按能播放（2026-10-30） |
 
 **没验证**：
+- 在 iOS / macOS 的 app 里直接分享 `.pvt` 目录（AirDrop、存到「文件」）的实机效果。
 - iPhone 上经 AirDrop 或「文件」App 解压 zip 后能否直接存成实况。
 - Android、Windows、鸿蒙上的实机分享。
 - Flutter 端用真实文件跑的 `composeLivePhoto(bundle: true)`：macOS 的 `flutter_tester` 是 darwin-x64，加载不了 arm64 的核心库，所以 `test/live_photo_bundle_test.dart` 里的真实样片用例在本机会自动跳过，只在能加载核心库的主机上运行。

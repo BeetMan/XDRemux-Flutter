@@ -2779,7 +2779,9 @@ class _HomePageState extends State<HomePage> {
                     : t('分享', 'Share')),
                 subtitle: hasLivePhotoOutput(item)
                     ? Text(livePhotoBundleDir(item.outputPath) != null
-                        ? t('打包为 zip 发送；在 Mac 上解压后可导入照片', 'Sent as a zip; unzip on a Mac and import into Photos')
+                        ? (sharesLivePhotoBundleDirectly(Platform.operatingSystem)
+                            ? t('直接发送 .pvt 包，苹果设备收到即为 Live Photo', 'Sends the .pvt bundle; Apple devices receive one Live Photo')
+                            : t('打包为 zip 发送；在 Mac 上解压后可导入照片', 'Sent as a zip; unzip on a Mac and import into Photos'))
                         : t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
                     : PlatformX.isOhos
                     ? Text(t('以文件发送原件', 'Send the original as a file'))
@@ -4960,8 +4962,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       title: Text(t('Live Photo 打包为 .pvt', 'Package Live Photos as .pvt')),
                       subtitle: Text(
                         t(
-                          '输出 <名称>.pvt 文件夹（HEIF + MOV + metadata.plist），Mac 照片可直接导入为一个 Live Photo；分享时打包为 zip。',
-                          'Write a <name>.pvt folder (HEIF + MOV + metadata.plist) that Mac Photos imports as one Live Photo; shared as a zip.',
+                          '输出 <名称>.pvt 文件夹（HEIF + MOV + metadata.plist），Mac 照片可直接导入为一个 Live Photo；iOS/macOS 直接分享该包，其他平台打包为 zip。',
+                          'Write a <name>.pvt folder (HEIF + MOV + metadata.plist) that Mac Photos imports as one Live Photo; iOS/macOS share the bundle, other platforms a zip.',
                         ),
                       ),
                       value: _cfg.livePhotoBundle,
