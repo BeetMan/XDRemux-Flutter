@@ -98,12 +98,12 @@
 
 ### 4.1 Standard key 1 色格判定（2026-10-30，已实测，消费端模型）
 
-上游 PR #88（未合并）判定 Standard 的 key 1 不能用 primary→thumbnail 拟合（gain-map 比值放不进有界多项式，Photos 里画出 12×9 色格）；我方 `styles_fit.rs::revert_local_style_data`（PR #33）是同一设计。本机用 `examples/styles_convert` + `examples/styles_key1_color_probe` 对 3 张 OPPO 样张读回 key 1 并在主图上回放：ΔE76 均值 2.15–2.93 / p95 5.1–6.2 / 最大 15–23，色度偏移按 12×9 格分布，identity 对照为 0，无增益图重拟合给出同量级 → 偏移来自 h/key4 = 0.46 的曝光比本身。机理复现、幅度可见但未到上游宽盒子的"红/绿/青色格"量级。**macOS 27.2 照片实测（10-30，维护者拉滑块）**：2 张连续无色块，带白色水印的 `IMG20260822150037` 调节时色块变化突兀、水印区出现图案状效果——色格在真实 Photos 上部分复现（1/3）。**已实施（PR #38）：Standard key 1 回 identity，保留 key 3 GTC 与 HDR 线性缩略图**（`styles_native.rs::apply_per_image_fit` 只取 GTC，拟合保留作诊断；重新转换 3 张样张读回 key 1 = identity）。待办：用新输出在照片里复拉滑块确认水印样张不再突兀；iOS 真机 A/B（`styles-hdr-device-checklist.md`）用 identity key 1 的输出做。证据与命令：`docs/research/styles-key1-color-grid-20261030.md`，`docs/modules/styles-pipeline.md` §4.1。
+上游 PR #88（未合并）判定 Standard 的 key 1 不能用 primary→thumbnail 拟合（gain-map 比值放不进有界多项式，Photos 里画出 12×9 色格）；我方 `styles_fit.rs::revert_local_style_data`（PR #33）是同一设计。本机用 `examples/styles_convert` + `examples/styles_key1_color_probe` 对 3 张 OPPO 样张读回 key 1 并在主图上回放：ΔE76 均值 2.15–2.93 / p95 5.1–6.2 / 最大 15–23，色度偏移按 12×9 格分布，identity 对照为 0，无增益图重拟合给出同量级 → 偏移来自 h/key4 = 0.46 的曝光比本身。机理复现、幅度可见但未到上游宽盒子的"红/绿/青色格"量级。**macOS 27.2 照片实测（10-30，维护者拉滑块）**：2 张连续无色块，带白色水印的 `IMG20260822150037` 调节时色块变化突兀、水印区出现图案状效果——色格在真实 Photos 上部分复现（1/3）。**已实施（PR #38）：Standard key 1 回 identity，保留 key 3 GTC 与 HDR 线性缩略图**（`styles_native.rs::apply_per_image_fit` 只取 GTC，拟合保留作诊断；重新转换 3 张样张读回 key 1 = identity）。**已复验（10-30，macOS 27.2 照片）**：水印样张用新输出拉滑块效果合理，突兀色块消失。iOS 真机 A/B（`styles-hdr-device-checklist.md`）用 identity key 1 的输出做。证据与命令：`docs/research/styles-key1-color-grid-20261030.md`，`docs/modules/styles-pipeline.md` §4.1。
 
 ## 5. 下一步优先级
 
 1. ~~合并 PR #25~~ **已完成**；按 `docs/testing/styles-hdr-device-checklist.md` 跑 S1/S2/S3（orientation 6/3/8）/S7 真机 A/B —— 这是覆盖 §4.2 的 ②③ 未验证项的唯一闭环手段。
-2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：macOS 照片已确认接受拟合值（10-30，3 张 OPPO 样张）；**10-30 色格判定（§4.1）：Photos 实测 1/3 样张出现突兀色块，Standard key 1 已回 identity（PR #38，拟合/回放保留作诊断）**，待用新输出复拉滑块确认；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
+2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：macOS 照片已确认接受拟合值（10-30，3 张 OPPO 样张）；**10-30 色格判定（§4.1）：Photos 实测 1/3 样张出现突兀色块，Standard key 1 已回 identity（PR #38，拟合/回放保留作诊断），macOS 照片复验通过**；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
 3. iOS Main10 上机验证：真机或模拟器跑一次 Styles 转换，确认缩略图 hvcC bitDepth=10（构建与链接已完成，见 `docs/operations/building.md` §1）；评估 macOS 发布包是否也启用 10-bit。
 4. PR #29（`codex/local-transfer`）：review 发现的问题已于 10-29 修完、CI 全绿；剩 Android 导出与 macOS/iOS 设备互通真机实测，然后合并。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。
