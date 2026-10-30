@@ -467,17 +467,24 @@ class _HomePageState extends State<HomePage> {
       if (restoredItem.status == QueueItemStatus.converted &&
           restoredItem.motionPhoto != null &&
           mpMode == MotionPhotoMode.livePhotoPair) {
-        final movPath = cpItem.outputPath.replaceAll(
-          RegExp(r'\.[^.]+$'),
-          '.mov',
-        );
+        // Checkpoints record the planned flat path; a .pvt item's pair
+        // lives in the sibling bundle instead.
+        final bundled = livePhotoBundledPath(cpItem.outputPath);
+        if (!File(cpItem.outputPath).existsSync() &&
+            File(bundled).existsSync()) {
+          restoredItem.outputPath = bundled;
+        }
+        final movPath = livePhotoMoviePath(restoredItem.outputPath);
+        final bundleDir = livePhotoBundleDir(restoredItem.outputPath);
         var pairOk = false;
         if (File(movPath).existsSync()) {
           try {
-            pairOk = XdRemuxFFI.livePhotoPairValid(
-              cpItem.outputPath,
-              movPath,
-            );
+            pairOk = bundleDir != null
+                ? XdRemuxFFI.livePhotoBundleValid(bundleDir)
+                : XdRemuxFFI.livePhotoPairValid(
+                    restoredItem.outputPath,
+                    movPath,
+                  );
           } catch (_) {
             pairOk = false;
           }
@@ -1693,6 +1700,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    // A retried .pvt item converts at its planned flat path again; composing
+    // then rebuilds (or, with bundling off, replaces) the pair.
+    item.outputPath = livePhotoFlatPath(item.outputPath);
     runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
     // Live Photo pairing is incompatible with the style state in Photos'
@@ -1970,9 +1980,10 @@ class _HomePageState extends State<HomePage> {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
-            await MotionPhotoService.composeLivePhoto(
+            item.outputPath = await MotionPhotoService.composeLivePhoto(
               item.inputPath,
               item.outputPath,
+              bundle: runConfig.livePhotoBundle,
             );
           } catch (e) {
             item.status = QueueItemStatus.failed;
@@ -2761,9 +2772,15 @@ class _HomePageState extends State<HomePage> {
                 ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: Text(hasLivePhotoOutput(item) ? t('分享配对原文件', 'Share paired originals') : t('分享', 'Share')),
+                title: Text(hasLivePhotoOutput(item)
+                    ? (livePhotoBundleDir(item.outputPath) != null
+                        ? t('分享 .pvt 包', 'Share .pvt bundle')
+                        : t('分享配对原文件', 'Share paired originals'))
+                    : t('分享', 'Share')),
                 subtitle: hasLivePhotoOutput(item)
-                    ? Text(t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
+                    ? Text(livePhotoBundleDir(item.outputPath) != null
+                        ? t('打包为 zip 发送；在 Mac 上解压后可导入照片', 'Sent as a zip; unzip on a Mac and import into Photos')
+                        : t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
                     : PlatformX.isOhos
                     ? Text(t('以文件发送原件', 'Send the original as a file'))
                     : null,
@@ -4191,6 +4208,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
     widget.config.hardwareEncode = _cfg.hardwareEncode;
     widget.config.motionPhotoDefaultMode = _cfg.motionPhotoDefaultMode;
+    widget.config.livePhotoBundle = _cfg.livePhotoBundle;
     widget.onChanged();
     setState(() {});
   }
@@ -4933,6 +4951,25 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               .toList(),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Live Photo container: loose HEIC + MOV or one .pvt bundle.
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(t('Live Photo 打包为 .pvt', 'Package Live Photos as .pvt')),
+                      subtitle: Text(
+                        t(
+                          '输出 <名称>.pvt 文件夹（HEIF + MOV + metadata.plist），Mac 照片可直接导入为一个 Live Photo；分享时打包为 zip。',
+                          'Write a <name>.pvt folder (HEIF + MOV + metadata.plist) that Mac Photos imports as one Live Photo; shared as a zip.',
+                        ),
+                      ),
+                      value: _cfg.livePhotoBundle,
+                      dense: true,
+                      onChanged: (v) {
+                        setState(() => _cfg.livePhotoBundle = v);
+                        _emit();
+                      },
                     ),
                     const SizedBox(height: 12),
 

@@ -28,6 +28,7 @@
 | [apple-photographic-styles.md](formats/apple-photographic-styles.md) | 风格编辑图层结构、bplist、生成策略 |
 | [iso-21496-1-gainmap.md](formats/iso-21496-1-gainmap.md) | 增益映射转换与编码约束 |
 | [hevc-hevc-conventions.md](formats/hevc-hevc-conventions.md) | 范围/矩阵/传输函数实测约定、双解码器验证法、陷阱清单 |
+| [live-photo-pvt.md](formats/live-photo-pvt.md) | Apple Live Photo `.pvt` 包结构、写入规则、照片 App 导入验证 |
 
 ## Rust 模块（modules/）
 

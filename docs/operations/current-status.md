@@ -84,6 +84,7 @@
 | Photographic Styles 写入 | **实验性** | 缩略图已按 Log/Main10/HDR 生成；`styleData` key 1 / key 3 已按图拟合（P1-1/P1-2；10-30 macOS 照片实测可导入、风格编辑器正常），key 4/h、统计与天空蒙版仍为参考值/零值占位；见 `docs/modules/styles-pipeline.md` §4.1、`styles_fit.rs` |
 | Texture Styles（Standard 注入） | 可用 | `texture_styles.rs`；与上游 `#70` 同行但更早落地 |
 | Motion Photo → Live Photo | 可用 | 配对谓词 `existing_pair_is_valid`（`live_photo.rs:1790`）、FFI `xdremux_live_photo_pair_valid`、恢复时校验（`main.dart:440`） |
+| Live Photo `.pvt` 包输出 | 可用（默认关闭） | 设置「Live Photo 打包为 .pvt」；`live_photo_bundle.rs`、FFI `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid`；10-30 在 macOS「照片」用 AppleScript 导入为单个资产；界面效果和 iPhone/Android 实机待确认，见 `docs/formats/live-photo-pvt.md` |
 | 队列 / 检查点恢复 / 分类输出 | 可用 | 见 `docs/app/workflow-design.md` |
 | Cinematic 元数据 | 已放弃（分支已删） | `codex/apple-cinematic` 远端已不存在，主线无相关能力 |
 

@@ -56,6 +56,7 @@
 | `xdremux_diagnose_portrait` | 人像深度诊断 |
 | `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
+| `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid` | 把已配对的 HEIC+MOV 打成 `.pvt` 包 / 校验 `.pvt` 包（见 `docs/formats/live-photo-pvt.md`） |
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 
