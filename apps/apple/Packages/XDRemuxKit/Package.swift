@@ -10,6 +10,8 @@ import PackageDescription
 //                 reports, RAII release of Rust-owned memory, progress stream.
 //   XDRemuxModel  Pure Swift business model (config, queue, checkpoint). No UI,
 //                 no platform frameworks, so it runs under `swift test` on CI.
+//   xdremux       macOS command-line front-end over the same Kit/Model
+//                 (`swift build -c release --product xdremux`).
 let package = Package(
     name: "XDRemuxKit",
     platforms: [
@@ -19,6 +21,10 @@ let package = Package(
     products: [
         .library(name: "XDRemuxKit", targets: ["XDRemuxKit"]),
         .library(name: "XDRemuxModel", targets: ["XDRemuxModel"]),
+        .executable(name: "xdremux", targets: ["xdremux"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     ],
     targets: [
         .binaryTarget(
@@ -35,6 +41,14 @@ let package = Package(
         ),
         .target(
             name: "XDRemuxModel"
+        ),
+        .executableTarget(
+            name: "xdremux",
+            dependencies: [
+                "XDRemuxKit", "XDRemuxModel",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/xdremux-cli"
         ),
         .testTarget(
             name: "XDRemuxKitTests",
