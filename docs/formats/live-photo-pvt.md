@@ -47,6 +47,7 @@
 | 用户样片 `IMG_3648_HDR10_Live.pvt` 只读校验 | `read_bundle` / `bundle_is_valid` 通过 |
 | 用与 app 相同的参数打 zip，`ditto -x -k` 解压 | 得到 `.pvt` 目录，`mdls` 类型为 live-photo-bundle，校验通过 |
 | 「照片」界面上的 `XDR_PVT_OPPO_std1x` | 用户肉眼确认：有实况标记，长按能播放（2026-10-30） |
+| `XDR_PVT_OPPO_std1x.pvt` 从 Mac 隔空投送到 iPhone | 用户确认没问题（2026-10-30） |
 
 **没验证**：
 - 在 iOS / macOS 的 app 里直接分享 `.pvt` 目录（AirDrop、存到「文件」）的实机效果。
