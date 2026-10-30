@@ -96,6 +96,19 @@ Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platfo
 2. 增益图解码（HEVC tile 解码）打通后，把 base 分辨率的 gain map 应用到线性光再重采样，恢复 HDR 高光；
 3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度与 10-bit 缩略图接受度。
 
+## 4.1 每图 styleData：key 1 / key 3 拟合（2026-10-30）
+
+对应代码：`styles_fit.rs`（拟合）、`linear_thumbnail.rs`（产出拟合输入 `fit_raster`）、`styles_native.rs`（写入 plist）。对应差距文档 `docs/research/styles-upstream-20261024-gap.md` P1-1 / P1-2，按上游 `bb66981b`（含 `73804f5c` GTC 读回修正）重写。
+
+- 输入：缩略图几何、**显示方向**的一对线性光栅 —— 主图（sRGB 解码到线性，"styled"）与 scene-linear 缩略图（有增益图时乘了增益）。消费端的 `S = scene / key4 × keyH`，钳位 `[0,1]`；key 4 / h 取同一 plist 写入的值（目前仍是 4.0 / 1.8384）。
+- **key 3（GTC）**：每通道共享一条 256 节点曲线，按 half 量化码值分箱求主图均值 → 空箱邻近插值 → PAV 单调投影；线格式 257 + 256 个 sRGB 编码节点（65534 刻度）+ 末节点重复，共 516B；端点不归一化。误差按消费端读回（65535 刻度 + 反 sRGB）统计。
+- **key 1**：12×9 空间格 × 8 亮度平面，每格 10 项二次多项式 × RGB 加权最小二乘（remove-style：styled 主图 → 缩略图码），残差叠加在 identity 上并钳位 ±1/8（常数/一次）、±1/16（二次）；欠定格回退 identity。
+- 失败或缩略图走黑帧回退时保持 identity 资源；`styles_attach` 的"只注入 metadata"分支没有像素，仍写 identity。
+
+验证：`cargo test -p xdremux-core --lib styles_fit` 覆盖单调性、线格式、上游 fixture（二次 + 亚白端点、阶跃、局部左暗）、未改动图像得 identity、合成场景对上拟合优于 identity；`examples/styles_fit_probe <heic...>` 在真实样张上对比 identity（消费端模型，非 Photos 结论）。2026-10-30 本机 5 张样张（3 张 iPhone 原生、2 张 OPPO，均无增益图）：GTC RMSE 0.0004–0.0007 vs identity 0.16–0.36，全部单调；key 1 RMSE 比 identity 低 25–38%（受系数上限约束）。
+
+**未验证（需真机 A/B）**：Photos 是否接受拟合值、风格滑块观感；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
+
 ## 5. 诊断工具
 
 - `styles_diag <file>`：打印 box/item/引用/属性/尾部条目全量结构

@@ -81,7 +81,7 @@
 | ProXDR → ISO 21496-1 HDR HEIC（UHDR/LHDR） | 可用 | 两种输出模式：OPPO 兼容 / Apple 标准 |
 | 线性缩略图（Apple Log + Main10 + HDR 增益图） | 可用（iOS 10-bit 已接入构建，未上机） | 几何 1024/双偶数契约、Log 曲线、可选 10-bit、内存增益图乘入 scene-linear；见 `docs/modules/styles-pipeline.md` §4 |
 | OPPO / 华为人像转换 | 可用（条件受限） | 依赖源文件深度数据与系统版本 |
-| Photographic Styles 写入 | **实验性** | 缩略图已按 Log/Main10/HDR 生成；`styleData` 仍为 identity、天空蒙版零值占位；见 `docs/modules/styles-pipeline.md`、`styles_native.rs` |
+| Photographic Styles 写入 | **实验性** | 缩略图已按 Log/Main10/HDR 生成；`styleData` key 1 / key 3 已按图拟合（P1-1/P1-2，未上机），key 4/h、统计与天空蒙版仍为参考值/零值占位；见 `docs/modules/styles-pipeline.md` §4.1、`styles_fit.rs` |
 | Texture Styles（Standard 注入） | 可用 | `texture_styles.rs`；与上游 `#70` 同行但更早落地 |
 | Motion Photo → Live Photo | 可用 | 配对谓词 `existing_pair_is_valid`（`live_photo.rs:1790`）、FFI `xdremux_live_photo_pair_valid`、恢复时校验（`main.dart:440`） |
 | 队列 / 检查点恢复 / 分类输出 | 可用 | 见 `docs/app/workflow-design.md` |
@@ -99,7 +99,7 @@
 ## 5. 下一步优先级
 
 1. ~~合并 PR #25~~ **已完成**；按 `docs/testing/styles-hdr-device-checklist.md` 跑 S1/S2/S3（orientation 6/3/8）/S7 真机 A/B —— 这是覆盖 §4.2 的 ②③ 未验证项的唯一闭环手段。
-2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成）：按 `docs/research/styles-upstream-20261024-gap.md` 做 P1-1 每图 key1 拟合、P1-2 GTC 单调拟合；`styleData` identity 是当前最大画质差距。
+2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：真机 A/B 确认 Photos 接受拟合值与滑块观感；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
 3. iOS Main10 上机验证：真机或模拟器跑一次 Styles 转换，确认缩略图 hvcC bitDepth=10（构建与链接已完成，见 `docs/operations/building.md` §1）；评估 macOS 发布包是否也启用 10-bit。
 4. PR #29（`codex/local-transfer`）：review 发现的问题已于 10-29 修完、CI 全绿；剩 Android 导出与 macOS/iOS 设备互通真机实测，然后合并。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。

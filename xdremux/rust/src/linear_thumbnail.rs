@@ -32,6 +32,9 @@ pub struct LinearThumbnailOutput {
     /// HEVC bit depth of the encoded stream: 10 when the optional Main10
     /// encoder was linked, 8 for the Apple Log interim path.
     pub bit_depth: u8,
+    /// Display-order linear primary / scene pair at thumbnail geometry, the
+    /// input of the per-image key 1 / key 3 fits (`styles_fit`).
+    pub fit_raster: crate::styles_fit::StyleFitRaster,
 }
 
 /// Generate the linear thumbnail HEVC stream + hvcC for a converted HEIC.
@@ -234,23 +237,44 @@ pub fn generate_linear_thumbnail_and_light_maps_with_gain_map(
     // Linearize the display-referred sRGB samples, because Apple Log codes are
     // defined over linear light. Skipping this would make the Photos consumer
     // decode log over sRGB (double transfer -> washed-out style preview).
-    let mut linear = Vec::with_capacity(rgb.len());
-    for (pixel_index, chunk) in rgb.chunks_exact(3).enumerate() {
-        let x = (pixel_index % w as usize) as u32;
-        let y = (pixel_index / w as usize) as u32;
-        let gain = match gain_map {
-            Some(plane) => plane.gain_at(x, y, w, h),
-            None => 1.0,
-        };
-        for &sample in chunk {
-            linear.push(crate::apple_log::srgb8_to_linear(sample) as f32 * gain);
+    let linearize = |gain_map: Option<&GainMapPlane<'_>>| -> Vec<f32> {
+        let mut linear = Vec::with_capacity(rgb.len());
+        for (pixel_index, chunk) in rgb.chunks_exact(3).enumerate() {
+            let x = (pixel_index % w as usize) as u32;
+            let y = (pixel_index / w as usize) as u32;
+            let gain = match gain_map {
+                Some(plane) => plane.gain_at(x, y, w, h),
+                None => 1.0,
+            };
+            for &sample in chunk {
+                linear.push(crate::apple_log::srgb8_to_linear(sample) as f32 * gain);
+            }
         }
-    }
+        linear
+    };
 
     // Native geometry contract: long edge capped, both edges even, coded
     // aspect preserved (no 4:3 crop), never upscaled.
     let (out_w, out_h) = fitted_even_dimensions(w, h, LINEAR_THUMBNAIL_MAX_SIZE)?;
-    let resized = area_resize_linear_rgb(&linear, w, h, out_w, out_h)?;
+    let resized = area_resize_linear_rgb(&linearize(gain_map), w, h, out_w, out_h)?;
+    // The Styles fits pair the scene-linear thumbnail with the displayed
+    // primary at the same footprint. One full-resolution buffer at a time.
+    let primary_resized = if gain_map.is_some() {
+        area_resize_linear_rgb(&linearize(None), w, h, out_w, out_h)?
+    } else {
+        resized.clone()
+    };
+    // Fits run in display order (upstream `bb66981b`); undo the storage
+    // rotation applied above on the small buffers.
+    let turns = rotate_cw_quarter_turns % 4;
+    let (fit_w, fit_h, scene_display) = rotate_ccw_rgb_f32(&resized, out_w, out_h, turns);
+    let (_, _, primary_display) = rotate_ccw_rgb_f32(&primary_resized, out_w, out_h, turns);
+    let fit_raster = crate::styles_fit::StyleFitRaster {
+        width: fit_w as usize,
+        height: fit_h as usize,
+        primary_linear: primary_display,
+        scene_linear: scene_display,
+    };
 
     // Baseline exposure (Styles plist key 4) then Apple Log. Both encoders
     // consume the same 16-bit codes; only the quantization/encoder differs, so
@@ -266,7 +290,28 @@ pub fn generate_linear_thumbnail_and_light_maps_with_gain_map(
         width: out_w,
         height: out_h,
         bit_depth,
+        fit_raster,
     })
+}
+
+/// Rotate an interleaved f32 RGB raster counter-clockwise by `turns` quarter
+/// turns (the inverse of the storage CW rotation above).
+fn rotate_ccw_rgb_f32(rgb: &[f32], w: u32, h: u32, turns: u32) -> (u32, u32, Vec<f32>) {
+    let (mut data, mut w, mut h) = (rgb.to_vec(), w as usize, h as usize);
+    for _ in 0..(turns % 4) {
+        // Output is h x w; out(x', y') = src(w - 1 - y', x').
+        let mut out = vec![0.0f32; data.len()];
+        for yo in 0..w {
+            for xo in 0..h {
+                let src = ((xo * w) + (w - 1 - yo)) * 3;
+                let dst = (yo * h + xo) * 3;
+                out[dst..dst + 3].copy_from_slice(&data[src..src + 3]);
+            }
+        }
+        data = out;
+        std::mem::swap(&mut w, &mut h);
+    }
+    (w as u32, h as u32, data)
 }
 
 /// Encode Apple Log codes with the best encoder this build has.
@@ -662,6 +707,21 @@ mod tests {
     }
 
     // ---------- native geometry contract (P0-1) ----------
+
+    #[test]
+    fn rotate_ccw_inverts_the_storage_cw_rotation() {
+        // 3x2 raster, one distinct value per pixel (R channel).
+        let src: Vec<f32> = (0..6).flat_map(|i| [i as f32, 0.0, 0.0]).collect();
+        // One CCW turn: out is 2x3, out(x', y') = src(2 - y', x').
+        let (w, h, out) = rotate_ccw_rgb_f32(&src, 3, 2, 1);
+        assert_eq!((w, h), (2, 3));
+        let r: Vec<f32> = out.chunks_exact(3).map(|p| p[0]).collect();
+        assert_eq!(r, vec![2.0, 5.0, 1.0, 4.0, 0.0, 3.0]);
+        let (w4, h4, full) = rotate_ccw_rgb_f32(&src, 3, 2, 4);
+        assert_eq!((w4, h4, full), (3, 2, src.clone()));
+        let (w0, h0, none) = rotate_ccw_rgb_f32(&src, 3, 2, 0);
+        assert_eq!((w0, h0, none), (3, 2, src));
+    }
 
     #[test]
     fn fitted_even_dimensions_follow_the_native_contract() {
