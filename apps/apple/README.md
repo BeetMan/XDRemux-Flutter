@@ -1,19 +1,45 @@
 # XDRemux for iOS / macOS (native SwiftUI)
 
 Native Apple front-end on the shared Rust core. Plan, stages and acceptance:
-[`docs/plans/apple-native.md`](../../docs/plans/apple-native.md). Status: **P0 scaffold**
-(toolchain + ABI verified; the product UI is P1–P2).
+[`docs/plans/apple-native.md`](../../docs/plans/apple-native.md). Status: **P1** — a working
+basic version: import (files, drag-drop, Photos picker on iOS), detail-first inspection, single
+or batch conversion with progress, verified publish, HDR preview, export (Photos / share /
+save panel / Finder), persistent settings, plus a macOS command-line tool.
 
 ```text
 apps/apple/
   project.yml                 xcodegen spec → XDRemux.xcodeproj (ignored)
   App/                        multiplatform SwiftUI target (iOS 17 / macOS 14)
+    Model/                    LibraryModel (items, settings, pipeline), PhotoItem
+    Views/                    ContentView (split view / stack), PhotoDetailView, SettingsView
+    Platform/                 Photos picker (iOS), export (Photos / save panel / Finder)
   Packages/XDRemuxKit/
-    Sources/XDRemuxKit/       Swift wrapper over the C ABI (background queue, RAII free, Codable reports)
-    Sources/XDRemuxModel/     pure Swift model; JSON keys match the Flutter app
+    Sources/XDRemuxKit/       Swift wrapper over the C ABI (background queue, RAII free, Codable reports, ImageIO)
+    Sources/XDRemuxModel/     pure Swift model: ConversionConfig, ConversionJob, OutputPlanner, SettingsStore
+    Sources/xdremux-cli/      `xdremux` command-line tool (macOS)
     Tests/                    `swift test` — no simulator, no private photos
   Frameworks/                 XDRemuxCore.xcframework (built, ignored)
 ```
+
+## Command line (macOS)
+
+```bash
+cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
+.build/release/xdremux convert ~/Pictures/oppo/*.heic -o ~/Pictures/converted          # OPPO 兼容 (default)
+.build/release/xdremux convert photo.heic -m apple --styles3 --json                     # Apple 标准 + Photographic Styles 3
+.build/release/xdremux inspect ~/Pictures/oppo                                          # convertible? family / hdr kind
+.build/release/xdremux details photo.heic                                               # EXIF / HDR summary
+.build/release/xdremux verify out/*.heic                                                # decode + structure check
+.build/release/xdremux capabilities                                                     # encoder paths in this core
+```
+
+`convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
+(`--suffix`, `--no-overwrite` appends ` (2)`, `--categorize` adds a mode folder). Exit status 1 if any
+input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
+results are identical for the same options. x265's own log lines are silenced unless `-v`.
+
+The app also accepts `XDRemux --import <files…> [--convert-all]` at launch for scripting; the
+files must be readable from inside the app sandbox (e.g. its container's `Documents`).
 
 ## Build
 
@@ -31,7 +57,8 @@ xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'generic/plat
 ```
 
 Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim`,
-`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header).
+`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). Apple Silicon only for now
+(no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
 
 `XDREMUX_SAMPLE_DIR=/path/to/proxdr-heics swift test` additionally converts one real sample
 through the Swift wrapper and verifies the output; it is skipped otherwise.

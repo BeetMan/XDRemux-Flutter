@@ -125,11 +125,44 @@ final class EngineSmokeTests: XCTestCase {
             input: (dir as NSString).appendingPathComponent(input),
             output: output,
             config: ConversionConfig().rustConfig,
-            progress: { _ in seen.mark() })
+            progress: { (_: ConversionProgress) in seen.mark() })
         try report.checked()
         XCTAssertTrue(seen.value)
         let ok = try await XDRemuxEngine.shared.verifyOutput(path: output)
         XCTAssertTrue(ok)
+    }
+}
+
+extension EngineSmokeTests {
+    /// Opt-in end-to-end through the model's `ConversionJob` with the real
+    /// engine: temp output, verification, publish; the input's bytes are
+    /// untouched (plan §3 P1 acceptance).
+    func testConversionJobEndToEndIfSampleProvided() async throws {
+        guard let dir = ProcessInfo.processInfo.environment["XDREMUX_SAMPLE_DIR"] else {
+            throw XCTSkip("set XDREMUX_SAMPLE_DIR to a folder of ProXDR .heic files")
+        }
+        let inputs = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.lowercased().hasSuffix(".heic") }.sorted()
+        let name = try XCTUnwrap(inputs.first, "no .heic in \(dir)")
+        let input = tempDir.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: dir).appendingPathComponent(name), to: input)
+        let before = try Data(contentsOf: input)
+
+        var config = ConversionConfig()
+        config.outputMode = .apple
+        let job = ConversionJob(backend: XDRemuxEngine.shared,
+                                scratchRoot: tempDir.appendingPathComponent("scratch"),
+                                outputRoot: tempDir.appendingPathComponent("out"))
+        let product = try await job.run(input: input, config: config)
+        XCTAssertEqual(product.outputURL.lastPathComponent, (name as NSString).deletingPathExtension + "_iso.heic")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: product.outputURL.path))
+        XCTAssertEqual(try Data(contentsOf: input), before, "input bytes unchanged")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("scratch").path)
+                       && (try? FileManager.default.contentsOfDirectory(atPath: tempDir.appendingPathComponent("scratch").path))?.isEmpty == false,
+                       "scratch cleaned")
+        let details: PhotoDetails = try await XDRemuxEngine.shared.decodedPhotoDetails(path: product.outputURL.path)
+        XCTAssertTrue(details.success)
+        XCTAssertNotNil(details.width)
     }
 }
 

@@ -120,6 +120,27 @@ Instruments Leaks 连续调用 1000 次无泄漏；损坏输入返回错误 JSON
 验收：已知 HEIC / JPEG 样本导入 → 分类 → 转换 → 导出成功；原图哈希不变；
 输出与同配置 Flutter 版输出按 `tests/conformance` 的规范化结构摘要一致（不要求整文件哈希）。
 
+**P1 执行记录（2026-10-30，分支 `feat/apple-native-p1`）**
+
+- `XDRemuxModel` 新增 `ConversionJob`（临时路径 → `verify_output` → 发布，失败不留文件、不碰输入；
+  `skipExisting` 决定覆盖还是追加 ` (2)`）、`OutputPlanner`（`<stem><suffix>.heic`、按模式分目录）、
+  `SettingsStore`（与 Dart 同键的 JSON 记录）；`ConversionBackend` 协议让 Job 可用假引擎测试，`XDRemuxEngine` 实现之。
+  模型测试 19 项，全部不依赖 XCFramework。
+- `XDRemuxKit` 新增 `PhotoDetails` 解码、`ImageLoading`（ImageIO 缩略图、`kCGImageSourceDecodeToHDR` 全图解码）。
+- App：`LibraryModel` + 列表 / 详情 / 设置三视图。macOS 为 `NavigationSplitView` + 拖放；iOS 为 `NavigationStack` +
+  `PhotosPicker`（`preferredItemEncoding: .current` 取 HEIC 原图）。详情优先：导入即 classify / inspect / details，
+  转换选项按输出模式裁剪，"转换这张" 与工具栏 "全部转换" 分离；输出用 `allowedDynamicRange(.high)` 预览。
+  导出：iOS `PHAssetCreationRequest`（add-only 权限）与 `ShareLink`；macOS `NSSavePanel`、在访达中显示、`ShareLink`。
+  设置改动即持久化，运行中任务保留开始时快照。`--import <files> [--convert-all]` 启动参数用于脚本与冒烟。
+- `xdremux` CLI（swift-argument-parser）：`convert`（默认）/ `inspect` / `classify` / `details` / `verify` / `capabilities`，
+  `--json`、退出码、`--no-overwrite`、`--categorize`、`-v` 显示 x265 日志；与 App 共用 `ConversionJob`。
+- 验证：`swift test` 30 项通过（含 opt-in 真实样本：`ConversionJob` 端到端、输入字节不变）；macOS arm64 与 iOS 模拟器
+  arm64 构建通过；macOS 上以 `--import --convert-all` 启动，两张 OPPO 样本（X6 LHDR、X7 UHDR）导入、转换、HDR 预览
+  与详情显示正常；CLI 对同两张样本 OPPO / Apple 两种模式转换并 `verify` 通过，损坏输入退出码 1。
+- 未完成 / 待真机：iOS 模拟器未安装运行时，iOS 界面未实际运行；照片库保存与 PhotosPicker 需真机；HDR 预览在
+  `Image(decorative:)` 路径上是否真正以 HDR 亮度显示待在 HDR 显示器上确认；双语 String Catalog 未做（当前中文文案）；
+  Live Photo / Motion Photo / Share Extension 属 P3。
+
 ### P2：队列、设置、检查点
 
 - 移植 `apps/flutter/lib/models/app_models.dart` 的 `ConversionConfig`（约 20 个字段）、
