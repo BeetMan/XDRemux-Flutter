@@ -12,7 +12,7 @@ public protocol ConversionBackend: Sendable {
 }
 
 /// Backend-neutral copy of the core's conversion report.
-public struct ConversionOutcome: Equatable, Sendable {
+public struct ConversionOutcome: Codable, Equatable, Sendable {
     public var success: Bool
     public var mode: String?
     public var family: String?
@@ -66,6 +66,13 @@ public struct ConversionProduct: Equatable, Sendable {
     public let outputURL: URL
     public let outcome: ConversionOutcome
     public let config: ConversionConfig
+
+    public init(inputURL: URL, outputURL: URL, outcome: ConversionOutcome, config: ConversionConfig) {
+        self.inputURL = inputURL
+        self.outputURL = outputURL
+        self.outcome = outcome
+        self.config = config
+    }
 }
 
 /// One input → one verified output. The output is written to a task-private

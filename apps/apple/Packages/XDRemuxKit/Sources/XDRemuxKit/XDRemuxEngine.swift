@@ -5,15 +5,24 @@ import XDRemuxModel
 /// Swift façade over the Rust C ABI.
 ///
 /// All Rust calls are synchronous and CPU-bound (x265 spins its own thread
-/// pool), so they run on a private queue, never on the main actor. P0 keeps
-/// the queue serial, mirroring the HarmonyOS bridge's single core mutex; a
-/// configurable concurrency level is a P2 item (docs/plans/apple-native.md).
+/// pool), so they run on a private concurrent queue, never on the main actor.
+/// `maxConcurrency` bounds how many Rust calls run at once (the Flutter app's
+/// `maxConcurrentJobs`); 1 reproduces the HarmonyOS bridge's single mutex.
 public final class XDRemuxEngine: Sendable {
     public static let shared = XDRemuxEngine()
 
-    private let queue = DispatchQueue(label: "io.github.beetman.xdremux.core", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "io.github.beetman.xdremux.core", qos: .userInitiated, attributes: .concurrent)
+    private let gate: Gate
 
-    public init() {}
+    public init(maxConcurrency: Int = 1) {
+        gate = Gate(limit: max(1, maxConcurrency))
+    }
+
+    /// Current bound on simultaneous Rust calls.
+    public var maxConcurrency: Int { gate.limit }
+
+    /// Changes the bound; calls already running are unaffected.
+    public func setMaxConcurrency(_ value: Int) { gate.setLimit(max(1, value)) }
 
     // MARK: - Synchronous, cheap
 
@@ -26,7 +35,9 @@ public final class XDRemuxEngine: Sendable {
 
     private func run<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
-            queue.async {
+            queue.async { [gate] in
+                gate.acquire()
+                defer { gate.release() }
                 continuation.resume(with: Result { try body() })
             }
         }
@@ -108,5 +119,33 @@ public final class XDRemuxEngine: Sendable {
         var buf = [UInt32](repeating: 0, count: 4)
         xdremux_read_progress_for(handle, &buf)
         return ConversionProgress(stage: buf[0], current: buf[1], total: buf[2])
+    }
+}
+
+/// Counting gate with an adjustable limit (a semaphore whose capacity can
+/// change at runtime). Waiters block the calling queue thread; the queue is
+/// concurrent so other work still proceeds.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSCondition()
+    private var running = 0
+    private var _limit: Int
+
+    init(limit: Int) { _limit = limit }
+
+    var limit: Int { lock.withLock { _limit } }
+
+    func setLimit(_ value: Int) {
+        lock.lock(); _limit = value; lock.broadcast(); lock.unlock()
+    }
+
+    func acquire() {
+        lock.lock()
+        while running >= _limit { lock.wait() }
+        running += 1
+        lock.unlock()
+    }
+
+    func release() {
+        lock.lock(); running -= 1; lock.broadcast(); lock.unlock()
     }
 }

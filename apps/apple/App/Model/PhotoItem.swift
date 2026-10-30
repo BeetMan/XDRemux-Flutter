@@ -21,9 +21,15 @@ struct PhotoItem: Identifiable {
         }
     }
 
-    let id = UUID()
+    let id: UUID
     let sourceName: String
     let inputURL: URL
+
+    init(id: UUID = UUID(), sourceName: String, inputURL: URL) {
+        self.id = id
+        self.sourceName = sourceName
+        self.inputURL = inputURL
+    }
     var classification: Classification?
     var inspection: ConversionReport?
     var details: PhotoDetails?

@@ -159,6 +159,20 @@ Instruments Leaks 连续调用 1000 次无泄漏；损坏输入返回错误 JSON
 验收：转换期间 UI 可交互；错误可定位到单项；设置变更后可重新转换；杀进程重启后队列按检查点恢复；
 Flutter 版生成的检查点文件可被原生版读取。
 
+**P2 执行记录（2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `QueueJournal` / `QueueJournalStore`：队列 journal（`queue.json`，schema 1）原子写入（临时文件 + replace），
+  加载时校验 schema、损坏文件隔离为 `.corrupt-<ts>`；恢复规则与鸿蒙版一致：`running` 回到待处理不自动续跑，
+  输出丢失的成功项变为失败，输入副本丢失的项变为失败并提示重新导入。5 项测试。
+- `XDRemuxEngine` 并发度可配置（并发队列 + 可调上限门），`convertAll` 用 TaskGroup 按 `maxConcurrentJobs` 限宽；
+  设置页加 Stepper。
+- macOS 输出目录：`OutputLocation` 用安全作用域书签持久化用户选择的目录，设置页可选择 / 恢复默认。
+- `LibraryModel` 每次 items 变化即写 journal，启动时恢复并重新读取缩略图与分类。
+- 验证：`swift test` 35 项通过；macOS 上带两张样本启动转换后退出，空参数重开，两项以已完成状态恢复，HDR 预览与
+  详情完整，输出文件名不再带沙盒副本前缀。
+- 未做：Flutter 检查点文件（`checkpoint_model.dart`，donor 与回传配对）互读，因原生版尚无回传写回工作流；
+  主工作流四步页与批量整理页仍待做；运行中任务的 config 快照已由 `ConversionJob` 复制保证。
+
 ### P3：实况、分享与系统集成
 
 - Motion Photo 识别 / 拆分、Live Photo 配对复用 Rust 导出（`xdremux_motion_photo_*`、

@@ -15,6 +15,19 @@ struct SettingsView: View {
                         Text("OPPO 兼容").tag(OutputMode.oppo)
                         Text("Apple 标准").tag(OutputMode.apple)
                     }
+                    #if os(macOS)
+                    LabeledContent("输出目录") {
+                        HStack {
+                            Text(model.outputRoot.path).lineLimit(1).truncationMode(.middle)
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("选择…") { model.chooseOutputDirectory() }
+                            if model.usesCustomOutputDirectory {
+                                Button("恢复默认") { model.resetOutputDirectory() }
+                            }
+                        }
+                    }
+                    #endif
+                    Stepper("同时转换 \(model.config.maxConcurrentJobs) 张", value: $model.config.maxConcurrentJobs, in: 1...8)
                     TextField("文件名后缀", text: $model.config.fileNameSuffix)
                     Toggle("覆盖同名输出", isOn: $model.config.skipExisting)
                     Toggle("按输出模式分目录", isOn: $model.config.categorizeOutputByMode)
@@ -48,7 +61,7 @@ struct SettingsView: View {
 
                 Section("关于") {
                     LabeledContent("Rust 内核", value: model.coreVersion)
-                    LabeledContent("输出目录", value: model.directories.outputs.path)
+                    LabeledContent("输出目录", value: model.outputRoot.path)
                         .font(.caption)
                     Button("恢复默认设置", role: .destructive) {
                         model.config = ConversionConfig()
