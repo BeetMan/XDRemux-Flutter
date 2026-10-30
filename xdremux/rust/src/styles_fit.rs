@@ -532,9 +532,12 @@ pub fn fit_style_state(
     })
 }
 
-/// Evaluate a key-1 payload on `styled_rgb` with the same plane and spatial
-/// weights the fit uses (the consumer model the fit assumes). Test/diagnostic
-/// only; the real consumer is Photos.
+/// Evaluate a key-1 payload on `styled_rgb` (interleaved linear RGB) with the
+/// same spatial spotlight weights and brightness-plane weights the fit uses.
+/// Stored half values already include the identity diagonal, so this is the
+/// remove-style polynomial Photos applies to the displayed primary (upstream
+/// `apple_style_apply_local`, PR #88). Diagnostic model only; the real
+/// consumer is Photos.
 pub fn apply_style_data(
     style_data: &[u8],
     width: usize,
@@ -558,6 +561,10 @@ pub fn apply_style_data(
             let plane_sum = brightness_plane_weights(styled, &mut plane_weights);
             let column_weights = spotlight_weights(x, width, GRID_WIDTH);
             let mut result = [0.0_f64; 3];
+            if plane_sum <= 0.0 {
+                out.extend_from_slice(&[0.0; 3]);
+                continue;
+            }
             for &(cell_y, y_weight) in &row_weights {
                 for &(cell_x, x_weight) in &column_weights {
                     for (plane, &plane_weight) in plane_weights.iter().enumerate() {
@@ -580,6 +587,34 @@ pub fn apply_style_data(
         }
     }
     Ok(out)
+}
+
+/// Mean absolute chromaticity change between two linear RGB rasters: each
+/// channel divided by its pixel's Rec. 709 luminance, averaged over channels
+/// and pixels (upstream PR #88 `mean_abs_chroma_delta`). Zero means only
+/// brightness moved; a pure per-pixel scale does not register.
+pub fn mean_abs_chroma_delta(source: &[f32], rendered: &[f32]) -> f64 {
+    const Y: [f64; 3] = [0.212_639, 0.715_169, 0.072_192];
+    let luminance = |rgb: &[f32]| {
+        (0..3)
+            .map(|c| f64::from(rgb[c]) * Y[c])
+            .sum::<f64>()
+            .max(1.0e-4)
+    };
+    let mut total = 0.0_f64;
+    let mut count = 0.0_f64;
+    for (before, after) in source.chunks_exact(3).zip(rendered.chunks_exact(3)) {
+        let (before_y, after_y) = (luminance(before), luminance(after));
+        for c in 0..3 {
+            total += (f64::from(after[c]) / after_y - f64::from(before[c]) / before_y).abs();
+        }
+        count += 3.0;
+    }
+    if count == 0.0 {
+        0.0
+    } else {
+        total / count
+    }
 }
 
 #[cfg(test)]
@@ -749,6 +784,59 @@ mod tests {
         let fit_err = rmse_raw(&applied, &recovered);
         let id_err = rmse_raw(&identity, &recovered);
         assert!(fit_err < id_err * 0.5, "fit {fit_err} vs identity {id_err}");
+    }
+
+    #[test]
+    fn apply_style_data_identity_preserves_rgb() {
+        let rgb = [0.2_f32, 0.45, 0.7, 0.05, 0.1, 0.9, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let applied = apply_style_data(&identity_style_data(), 2, 2, &rgb).unwrap();
+        for (actual, expected) in applied.iter().zip(rgb) {
+            assert!((actual - expected).abs() < 1e-5, "identity moved {expected} to {actual}");
+        }
+        assert!(mean_abs_chroma_delta(&rgb, &applied) < 1e-6);
+        assert!(apply_style_data(&identity_style_data(), 1, 1, &[0.0; 6]).is_err());
+        assert!(apply_style_data(&[0; 2], 1, 1, &[0.0; 3]).is_err());
+    }
+
+    /// Upstream PR #88 fixture
+    /// (`standard_key1_stays_identity_when_the_recovered_ratio_is_outside_the_box`):
+    /// a gradient primary whose "thumbnail" differs by a per-channel RGB gain
+    /// (warm right half, cool left half), as a gain-map ratio would. The
+    /// bounded primary→thumbnail fit cannot express that ratio; the clamped
+    /// cross terms repaint chromaticity when the payload is replayed on the
+    /// primary. Documents the failure mode; the production decision is in
+    /// `docs/modules/styles-pipeline.md` §4.1.
+    #[test]
+    fn key1_fit_of_rgb_gain_sample_repaints_chromaticity() {
+        let (width, height) = (24, 18);
+        let mut styled = Vec::with_capacity(width * height * 3);
+        let mut recovered = Vec::with_capacity(width * height * 3);
+        for y in 0..height {
+            for x in 0..width {
+                let red = 0.08 + (x as f32 / width as f32) * 0.55;
+                let green = 0.05 + (y as f32 / height as f32) * 0.35;
+                let blue = 0.04 + ((x + y) % 5) as f32 * 0.03;
+                let scale = if x >= width / 2 {
+                    [0.35_f32, 0.9, 1.8]
+                } else {
+                    [1.4, 0.7, 0.25]
+                };
+                styled.extend_from_slice(&[red, green, blue]);
+                recovered.extend_from_slice(&[
+                    (red * scale[0]).clamp(0.0, 1.0),
+                    (green * scale[1]).clamp(0.0, 1.0),
+                    (blue * scale[2]).clamp(0.0, 1.0),
+                ]);
+            }
+        }
+        let data = revert_local_style_data(width, height, &styled, &recovered).unwrap();
+        let painted = apply_style_data(&data, width, height, &styled).unwrap();
+        let invented = mean_abs_chroma_delta(&styled, &painted);
+        assert!(invented > 0.02, "fit should repaint chromaticity, got {invented}");
+
+        let kept = apply_style_data(&identity_style_data(), width, height, &styled).unwrap();
+        let preserved = mean_abs_chroma_delta(&styled, &kept);
+        assert!(preserved < 1e-3, "identity changed chromaticity by {preserved}");
     }
 
     #[test]

@@ -105,11 +105,13 @@ Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platfo
 - **key 1**：12×9 空间格 × 8 亮度平面，每格 10 项二次多项式 × RGB 加权最小二乘（remove-style：styled 主图 → 缩略图码），残差叠加在 identity 上并钳位 ±1/8（常数/一次）、±1/16（二次）；欠定格回退 identity。
 - 失败或缩略图走黑帧回退时保持 identity 资源；`styles_attach` 的"只注入 metadata"分支没有像素，仍写 identity。
 
-验证：`cargo test -p xdremux-core --lib styles_fit` 覆盖单调性、线格式、上游 fixture（二次 + 亚白端点、阶跃、局部左暗）、未改动图像得 identity、合成场景对上拟合优于 identity；`examples/styles_fit_probe <heic...>` 在真实样张上对比 identity（消费端模型，非 Photos 结论）。2026-10-30 本机 5 张样张（3 张 iPhone 原生、2 张 OPPO，均无增益图）：GTC RMSE 0.0004–0.0007 vs identity 0.16–0.36，全部单调；key 1 RMSE 比 identity 低 25–38%（受系数上限约束）。
+验证：`cargo test -p xdremux-core --lib styles_fit` 覆盖单调性、线格式、上游 fixture（二次 + 亚白端点、阶跃、局部左暗）、未改动图像得 identity、合成场景对上拟合优于 identity、identity payload 回放不改像素、上游 #88 的 RGB 增益 fixture 拟合后回放会改变色度；`examples/styles_fit_probe <heic...>` 在真实样张上对比 identity（消费端模型，非 Photos 结论）。2026-10-30 本机 5 张样张（3 张 iPhone 原生、2 张 OPPO，均无增益图）：GTC RMSE 0.0004–0.0007 vs identity 0.16–0.36，全部单调；key 1 RMSE 比 identity 低 25–38%（受系数上限约束）。
 
 **已实测（2026-10-30，macOS 27.2 照片）**：用合并后的 main（`9ca9329`）以 `examples/styles_convert` 转换 3 张 OPPO 样张（`IMG20260802135928`、`IMG20260814202514`、`IMG20260822150037`）；读回 styleData 确认 key 1（51 840B）/ key 3（516B）每张哈希不同（非 identity），其余键不变。3 张导入照片无拒收，风格编辑器可正常打开和调节（维护者手动确认）。
 
-**未验证**：iPhone 照片上的同一结论（按 macOS 与 iOS 照片同一编辑引擎推断）；拟合前后滑块观感与原生的主观 A/B；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
+**已实测（2026-10-30，key 1 色格判定，消费端模型）**：上游 PR #88 指出 Standard 的 key 1 按 primary→thumbnail 拟合会把 gain-map 比值（含 h/key4 = 0.46 的曝光比）塞进有界多项式，clamp 后交叉项填满，在 Photos 里画出 12×9 色格。用 `examples/styles_key1_color_probe` 从上面 3 张转换输出里读回 key 1、在同一主图的线性光栅上回放（`styles_fit::apply_style_data`，与上游 `apple_style_apply_local` 同一数学）：ΔE76 均值 2.15–2.93、p95 5.1–6.2、最大 15–23，ΔL* −0.6 ~ −2.6，色度偏移按 12×9 格分布（相邻格均值差 0.8–1.2 ΔE，格表里 0.x ↔ 4–7 的跳变）；identity payload 为 0；**不带增益图重拟合给出几乎相同的均值**，即偏移来自曝光比本身而非增益图。结论：机理复现、幅度可见（超过 JND），但因盒子更窄（±1/8、±1/16）没到上游宽盒子报告的"红/绿/青色格"量级；拟合没达到目标却引入色偏。**建议 Standard key 1 回 identity，保留 key 3 GTC 与线性缩略图**（本会话只给结论，未改生产路径）。证据、命令与完整格表：`docs/research/styles-key1-color-grid-20261030.md`。
+
+**未验证**：Photos 编辑器拉滑块时的实际观感（需维护者在 macOS 照片里对上述 3 张截图：导入 → 编辑 → 风格 → 拖 Tone/Color 滑块，看是否出现格状/块状色偏，这一项排在 `docs/testing/styles-hdr-device-checklist.md` 的 iOS 真机 A/B 之前）；iPhone 照片上的同一结论（按 macOS 与 iOS 照片同一编辑引擎推断）；拟合前后滑块观感与原生的主观 A/B；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
 
 ## 5. 诊断工具
 
