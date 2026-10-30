@@ -4,7 +4,8 @@ Native Apple front-end on the shared Rust core. Plan, stages and acceptance:
 [`docs/plans/apple-native.md`](../../docs/plans/apple-native.md). Status: **P1** — a working
 basic version: import (files, drag-drop, Photos picker on iOS), detail-first inspection, single
 or batch conversion with progress, verified publish, HDR preview, export (Photos / share /
-save panel / Finder), persistent settings, plus a macOS command-line tool.
+save panel / Finder), persistent settings with restart restore, Motion Photo → Live Photo pairs, the
+OPPO ↔ Apple round-trip workflow, plus a macOS command-line tool.
 
 ```text
 apps/apple/
@@ -31,6 +32,8 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux details photo.heic                                               # EXIF / HDR summary
 .build/release/xdremux verify out/*.heic                                                # decode + structure check
 .build/release/xdremux capabilities                                                     # encoder paths in this core
+.build/release/xdremux edit-copy oppo.heic                                              # round trip step 2 → oppo.apple-edit.heic
+.build/release/xdremux writeback returned.heic --donor oppo.heic -m oppo                # round trip step 4 → returned.oppo-final.heic
 ```
 
 `convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`

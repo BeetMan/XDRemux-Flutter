@@ -270,3 +270,68 @@ final class MotionPhotoJobTests: XCTestCase {
         XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
     }
 }
+
+// MARK: - Round trip
+
+private struct FakeWriteback: WritebackBackend {
+    let fs: FakeFS
+    var report: WritebackReport
+    var writes = true
+    func writebackReturnedPhoto(original: String?, returned: String, output: String,
+                                outputMode: OutputMode, restoreWatermark: Bool) async throws -> WritebackReport {
+        if writes { fs.lock.withLock { _ = fs.files.insert(output) } }
+        return report
+    }
+}
+
+final class RoundTripTests: XCTestCase {
+    let out = URL(fileURLWithPath: "/out"), scratch = URL(fileURLWithPath: "/scratch")
+    let returned = URL(fileURLWithPath: "/in/IMG_1234.HEIC"), donor = URL(fileURLWithPath: "/in/IMG20260802.heic")
+
+    func testEditCopyConfigForcesAppleStyles() {
+        var base = ConversionConfig(); base.outputMode = .oppo; base.applePortrait = true; base.fileNameSuffix = "_x"
+        let c = RoundTrip.editCopyConfig(base: base)
+        XCTAssertEqual(c.outputMode, .apple)
+        XCTAssertEqual(c.rustConfig, RustConvertConfig(oppoCompat: 0, oppoCameraTail: 0, strictTmap: 0, applePhotographicStyles: 1, applePortrait: 0))
+        XCTAssertEqual(OutputPlanner.publishedFileName(forInput: "IMG20260802.heic", config: c), "IMG20260802.apple-edit.heic")
+    }
+
+    func testFinalURLNaming() {
+        XCTAssertEqual(RoundTrip.finalURL(returnedName: "IMG_1234.HEIC", outputMode: .oppo, outputRoot: out).lastPathComponent, "IMG_1234.oppo-final.heic")
+        XCTAssertEqual(RoundTrip.finalURL(returnedName: "IMG_1234.HEIC", outputMode: .apple, outputRoot: out).lastPathComponent, "IMG_1234.apple-final.heic")
+    }
+
+    func testOppoWritebackNeedsDonor() async {
+        let fs = FakeFS()
+        do {
+            _ = try await RoundTrip.writeback(donor: nil, returned: returned, outputMode: .oppo, restoreWatermark: false,
+                                              outputRoot: out, scratchRoot: scratch,
+                                              backend: FakeWriteback(fs: fs, report: WritebackReport(success: true)), fileSystem: fs)
+            XCTFail()
+        } catch { XCTAssertEqual(error as? RoundTripError, .donorRequired) }
+    }
+
+    func testUsableReportPublishes() async throws {
+        let fs = FakeFS()
+        let report = WritebackReport(success: true, outputValid: true, rasterWatermarkRestored: true, restoredOppoEntries: ["oplus"])
+        let (url, r) = try await RoundTrip.writeback(donor: donor, returned: returned, outputMode: .oppo, restoreWatermark: true,
+                                                     outputRoot: out, scratchRoot: scratch,
+                                                     backend: FakeWriteback(fs: fs, report: report), fileSystem: fs)
+        XCTAssertEqual(url.path, "/out/IMG_1234.oppo-final.heic")
+        XCTAssertEqual(r.restoredOppoEntries, ["oplus"])
+        XCTAssertEqual(fs.files, ["/out/IMG_1234.oppo-final.heic"])
+    }
+
+    func testInvalidOutputIsRejected() async {
+        let fs = FakeFS()
+        do {
+            _ = try await RoundTrip.writeback(donor: donor, returned: returned, outputMode: .apple, restoreWatermark: false,
+                                              outputRoot: out, scratchRoot: scratch,
+                                              backend: FakeWriteback(fs: fs, report: WritebackReport(success: true, outputValid: false)), fileSystem: fs)
+            XCTFail()
+        } catch {
+            if case .writebackFailed = error as? RoundTripError {} else { XCTFail("\(error)") }
+        }
+        XCTAssertTrue(fs.files.isEmpty)
+    }
+}

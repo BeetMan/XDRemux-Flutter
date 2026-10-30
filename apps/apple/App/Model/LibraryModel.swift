@@ -194,6 +194,19 @@ final class LibraryModel {
         }
     }
 
+    /// Public variant for other flows (round trip) that need a sandbox copy
+    /// without creating a library item.
+    func materialise(_ url: URL) throws -> URL {
+        try copyIntoInputs(url)
+    }
+
+    /// Strips the UUID prefix `copyIntoInputs` adds, giving back the user's file name.
+    func sourceName(of sandboxCopy: URL) -> String {
+        let name = sandboxCopy.lastPathComponent
+        guard name.count > 37, name[name.index(name.startIndex, offsetBy: 36)] == "-" else { return name }
+        return String(name.dropFirst(37))
+    }
+
     private func copyIntoInputs(_ url: URL) throws -> URL {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }

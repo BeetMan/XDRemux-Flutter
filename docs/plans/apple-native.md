@@ -170,8 +170,23 @@ Flutter 版生成的检查点文件可被原生版读取。
 - `LibraryModel` 每次 items 变化即写 journal，启动时恢复并重新读取缩略图与分类。
 - 验证：`swift test` 35 项通过；macOS 上带两张样本启动转换后退出，空参数重开，两项以已完成状态恢复，HDR 预览与
   详情完整，输出文件名不再带沙盒副本前缀。
-- 未做：Flutter 检查点文件（`checkpoint_model.dart`，donor 与回传配对）互读，因原生版尚无回传写回工作流；
-  主工作流四步页与批量整理页仍待做；运行中任务的 config 快照已由 `ConversionJob` 复制保证。
+- 未做：Flutter 检查点文件（`checkpoint_model.dart`，donor 与回传配对）互读；批量整理页；运行中任务的 config 快照
+  已由 `ConversionJob` 复制保证。
+
+**P2 补充：主工作流"一帧影像，动用两台手机"（2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `RoundTrip`（Model）：`editCopyConfig` 强制 Apple 标准 + 摄影风格、后缀 `.apple-edit`；`createEditCopy` 复用
+  `ConversionJob`（单次转换，不产生 OPPO 中间文件）；`writeback` 经 `WritebackBackend` 调 Rust
+  `xdremux_writeback_returned_photo`（模式字节 0=Apple、1=OPPO，与 Dart 一致），报告 `success && outputValid != false`
+  才从暂存路径发布为 `<回传 stem>.<mode>-final.heic`；OPPO 输出或恢复水印缺 donor 直接拒绝。5 项假引擎测试。
+- App：工具栏入口打开四步 sheet（选 OPPO 原图 → 生成编辑副本 → 选回传照片 → 写回），macOS 支持拖入；
+  导出按钮通用化为 `FileExportButtons`，编辑副本与最终文件都可保存 / 分享 / 定位。
+- CLI：`xdremux edit-copy <oppo.heic>` 与 `xdremux writeback <returned.heic> --donor <oppo.heic> -m oppo|apple
+  [--no-restore-watermark]`。
+- 验证：`swift test` 46 项通过；X7 UHDR 样本经 CLI edit-copy → 以编辑副本充当回传 → OPPO 与 Apple 两种写回均成功，
+  OPPO 模式恢复 9 个 OPPO 私有条目，Apple 模式恢复画布水印并移植 EXIF，两个输出 `verify` 通过；
+  X6 LHDR 样本作为 donor 被 Rust 拒绝（"donor photo has no UHDR gain-map payload"），与 Flutter 行为一致。
+- 未验证：真实 iPhone 回传文件（需要真机往返）；GUI 四步页仅编译与渲染，未人工点击走完。
 
 ### P3：实况、分享与系统集成
 
