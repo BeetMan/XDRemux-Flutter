@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:xdremux/main.dart';
@@ -155,4 +156,139 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+
+  // Rotating the unfolded Duo can put the 84pt strip on the left. The content
+  // must still avoid it, whether or not the platform reports a vertical bar,
+  // and a reported bar draws its actions inside that left strip.
+  for (final edge in ['trailing', 'leading', 'unspecified']) {
+    testWidgets('Duo strip on the left keeps content clear (edge $edge)', (
+      tester,
+    ) async {
+      PlatformLayoutTraits.verticalBarEdge = edge;
+      addTearDown(() => PlatformLayoutTraits.verticalBarEdge = 'unspecified');
+      _setDuoView(tester, const Size(951, 669), left: 84, bottom: 21);
+
+      await tester.pumpWidget(const XdRemuxApp());
+      await tester.pumpAndSettle();
+
+      final bar = tester.getRect(find.byType(LinearProgressIndicator).first);
+      expect(bar.left, greaterThanOrEqualTo(84 - 0.5));
+      if (edge != 'unspecified') {
+        for (final tooltip in ['添加文件', '设置']) {
+          final rect = tester.getRect(find.byTooltip(tooltip));
+          expect(rect.left, greaterThanOrEqualTo(0), reason: tooltip);
+          expect(rect.right, lessThanOrEqualTo(84 + 0.5), reason: tooltip);
+        }
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  // Without a bottom bar the floating actions are overlays on a body that runs
+  // to the screen edge; they must stay above the home indicator.
+  // The folded layout only drops its bottom bar once the queue reaches
+  // kFloatingActionQueueThreshold, so that case queues files first.
+  for (final (name, size, right, bottom, queued) in [
+    ('folded, long queue', const Size(466, 678), 84.0, 34.0, 5),
+    ('unfolded landscape', const Size(951, 669), 84.0, 21.0, 0),
+  ]) {
+    testWidgets('Duo floating actions stay above the home indicator ($name)', (
+      tester,
+    ) async {
+      PlatformLayoutTraits.verticalBarEdge = 'trailing';
+      addTearDown(() => PlatformLayoutTraits.verticalBarEdge = 'unspecified');
+      _setDuoView(tester, size, right: right, bottom: bottom);
+
+      await tester.pumpWidget(const XdRemuxApp());
+      await tester.pumpAndSettle();
+      if (queued > 0) {
+        await _dropFiles(tester, [
+          for (var i = 0; i < queued; i++) '/nonexistent/duo-$i.heic',
+        ]);
+        // The floating start action only exists once the bottom bar is gone.
+        expect(find.byTooltip('开始转换'), findsOneWidget);
+      }
+
+      final fabs = find.byType(FloatingActionButton);
+      expect(fabs, findsWidgets);
+      for (var i = 0; i < fabs.evaluate().length; i++) {
+        final rect = tester.getRect(fabs.at(i));
+        expect(rect.bottom, lessThanOrEqualTo(size.height - bottom + 0.5));
+        // Clear of the indicator, but not lifted by a second inset.
+        expect(rect.bottom, greaterThan(size.height - bottom - 40));
+      }
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  // Unfolded portrait has no bottom bar, so "Start conversion" floats even
+  // over an empty queue; it must not look tappable while it is disabled.
+  testWidgets('Disabled floating start action uses disabled colours', (
+    tester,
+  ) async {
+    _setDuoView(tester, const Size(669, 951), bottom: 21);
+
+    await tester.pumpWidget(const XdRemuxApp());
+    await tester.pumpAndSettle();
+
+    final fab = tester.widget<FloatingActionButton>(
+      find.byType(FloatingActionButton),
+    );
+    expect(fab.onPressed, isNull);
+    final scheme = Theme.of(
+      tester.element(find.byType(FloatingActionButton)),
+    ).colorScheme;
+    expect(fab.backgroundColor, isNot(scheme.primary));
+    expect(fab.foregroundColor, isNot(scheme.onPrimary));
+    final rect = tester.getRect(find.byType(FloatingActionButton));
+    expect(rect.bottom, lessThanOrEqualTo(951 - 21 + 0.5));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+}
+
+void _setDuoView(
+  WidgetTester tester,
+  Size logicalSize, {
+  double left = 0,
+  double right = 0,
+  double bottom = 0,
+}) {
+  const ratio = 3.0;
+  tester.view.physicalSize = logicalSize * ratio;
+  tester.view.devicePixelRatio = ratio;
+  final padding = FakeViewPadding(
+    left: left * ratio,
+    right: right * ratio,
+    bottom: bottom * ratio,
+  );
+  tester.view.padding = padding;
+  tester.view.viewPadding = padding;
+  addTearDown(tester.view.reset);
+}
+
+/// Queues files through the desktop drop channel, the same intake the host
+/// window uses; the paths only need a supported extension.
+Future<void> _dropFiles(WidgetTester tester, List<String> paths) async {
+  final message = const StandardMethodCodec().encodeMethodCall(
+    MethodCall('onFilesDropped', paths),
+  );
+  await tester.runAsync(() async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'xdremux/drop',
+      message,
+      (_) {},
+    );
+  });
+  // Intake awaits file and FFI probes outside the fake clock.
+  for (var i = 0; i < 50; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    if (find.byTooltip('开始转换').evaluate().isNotEmpty) break;
+  }
+  await tester.pumpAndSettle();
 }
