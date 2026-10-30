@@ -141,3 +141,4 @@ cargo run -p xdremux-conformance -- --help   # 见 docs/testing/conformance-suit
 - **PR #79 已合**（`72b8302`）：`Sources/XDStylesNative/Styles.m`、`scene_reconstruction.rs`、`scene_guidance.rs`、`display_family.rs`、`reconstruct_styles.rs`、`hdr_look.rs` 进入上游主线，`STYLE_RECONSTRUCTION_METADATA_VERSIONS=[8,9,15,16]` 与 guidance 参数**已固化**。→ 契约可引用，实现仍依赖 dlopen `NeutrinoCore` 私有选择器与 macOS/Metal，不移植。
 - **新分支 `codex/hdr-color-management`**（`d300f33`，2026-10-28）：gain map 色彩学与 managed float 重建，与本项目刚落地的 HDR 增益图缩略图同题，保持观察。
 - PR #77 cinematic camera estimation 已合；依赖 bump（uuid、rustix）；10-24 起文档双语重写与 CLI 指南。
+- **10-30 补充**：上游已到 `5dbeeb7`，#83–#87 合入、#88（Standard key1 回 identity）待合，改授权 GPL-3.0-only。详见 `docs/research/upstream-20261030.md`，其 P0-1（复核 key1 拟合是否在 Photos 画色格）应排在 §5.1 真机 A/B 之前。

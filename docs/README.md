@@ -81,6 +81,7 @@
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
 | [oppo-gallery-17.10.5.md](research/oppo-gallery-17.10.5.md) | ColorOS 相册 17.10.5 静态阅读：HDR / 编辑 / 人像机制、OPPO 尾部布局实测、Find X8 Ultra 前置人像与大水印 |
+| [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#88 进展与差距矩阵（2026-10-30）：Standard key1 identity 争议、GPLv3 改授权、研究仓迁移；含 P0/P1/P2 规划 |
 
 ## 路线图
 
