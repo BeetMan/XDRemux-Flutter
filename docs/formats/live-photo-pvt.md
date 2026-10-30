@@ -44,9 +44,9 @@
 | 已有的配对产物（`IMG_20261014_215647.jpg_iso.*`）打包后导入 | 同上，1 个资产，导出 2 个资源 |
 | 用户样片 `IMG_3648_HDR10_Live.pvt` 只读校验 | `read_bundle` / `bundle_is_valid` 通过 |
 | 用与 app 相同的参数打 zip，`ditto -x -k` 解压 | 得到 `.pvt` 目录，`mdls` 类型为 live-photo-bundle，校验通过 |
+| 「照片」界面上的 `XDR_PVT_OPPO_std1x` | 用户肉眼确认：有实况标记，长按能播放（2026-10-30） |
 
 **没验证**：
-- 「照片」界面上的实况标记、长按播放、声音，都要用户肉眼确认（本机没有截屏和界面操作权限，「照片」数据库也受隐私权限保护读不到）。
 - iPhone 上经 AirDrop 或「文件」App 解压 zip 后能否直接存成实况。
 - Android、Windows、鸿蒙上的实机分享。
 - Flutter 端用真实文件跑的 `composeLivePhoto(bundle: true)`：macOS 的 `flutter_tester` 是 darwin-x64，加载不了 arm64 的核心库，所以 `test/live_photo_bundle_test.dart` 里的真实样片用例在本机会自动跳过，只在能加载核心库的主机上运行。
