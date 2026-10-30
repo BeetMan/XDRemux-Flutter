@@ -1,6 +1,8 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（绑定）、`xdremux/rust/src/lib.rs`（导出，29 个 `extern "C"` 函数）。
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，38 个 `extern "C"` 函数）、
+> `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
+> 改导出后用 `tools/apple/check_header.sh` 校验）。
 
 ## 1. 库加载
 
@@ -10,6 +12,7 @@
 | iOS | `DynamicLibrary.process()`（静态链接进主二进制） |
 | Windows | 安装目录/开发目录搜索 DLL |
 | macOS | 多级回退：dylib 裸名（rpath）-> 可执行文件旁 -> `../Frameworks` -> `../../Frameworks` |
+| 原生 Apple（SwiftUI） | 静态链接 `XDRemuxCore.xcframework`（`xdremux/rust/build_apple.sh`），Swift 直接引用符号，无需 `-u` 保留 |
 | 鸿蒙 | `DynamicLibrary.open('libxdremux_core.so')`（`ohos/entry/libs/arm64-v8a/` 打包） |
 
 绑定在 `XdRemuxFFI` 中以 `lookupFunction` 静态缓存。**添加新导出函数时两侧命名必须同步**：Rust 侧 `xdremux_<snake_case>`，Dart 侧 `_<camelCase>`。
