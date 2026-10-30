@@ -88,6 +88,7 @@ docs/plans/*
 !docs/plans/live-photo-export-fix.md
 !docs/plans/release-candidate-044.md
 !docs/plans/mac-acceptance-044.md
+!docs/plans/apple-native.md
 !docs/testing/
 docs/testing/*
 !docs/testing/windows-codec-test-02.md
