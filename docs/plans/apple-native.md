@@ -90,6 +90,22 @@ SwiftUI View → ViewModel（@Observable）→ XDRemuxModel（队列/事务/策�
 验收：最小 macOS 与 iOS（模拟器 + 真机）应用取得核心版本并分类一个测试文件；
 Instruments Leaks 连续调用 1000 次无泄漏；损坏输入返回错误 JSON 而非崩溃。
 
+**P0 执行记录（2026-10-30，分支 `feat/apple-native-p0`）**
+
+- 已落地：`xdremux/rust/cbindgen.toml` + 生成并提交的 `include/xdremux_core.h`（38 个导出，与 lib.rs 一致，
+  排除 x265 内部导入块）、`include/module.modulemap`（模块名 `XDRemuxCoreC`）、`tools/apple/check_header.sh`
+  头文件新鲜度检查；`xdremux/rust/build_apple.sh` 产出 macOS arm64 / iOS arm64 / iOS 模拟器 arm64 三切片的
+  `apps/apple/Frameworks/XDRemuxCore.xcframework`（每切片 = Rust staticlib + libx265.a 用 libtool 合并，
+  附 BUILD_RECORD.txt 记录 Rust 提交、工具链与各切片哈希）。
+- `apps/apple/Packages/XDRemuxKit`：`XDRemuxCore` binaryTarget、`XDRemuxKit`（后台串行队列、RAII 释放、
+  Codable 报告、进度轮询）、`XDRemuxModel`（`ConversionConfig` 与 Dart 同 JSON 键）。`swift test` 17 项通过
+  （含 500 次分配 / 释放 soak、损坏与缺失输入不崩溃）；设置 `XDREMUX_SAMPLE_DIR` 后，一张真实 OPPO ProXDR 样本经
+  Swift 包转换并通过 `xdremux_verify_output`，进度回调被观察到。
+- `apps/apple/project.yml`（xcodegen）生成单一多平台 target，macOS arm64 与 iOS 模拟器 arm64 均编译链接通过。
+  探针页展示内核版本、编码能力，并对导入文件做分类与结构检查。
+- 未完成：Instruments Leaks 实测、iOS 真机安装（需本机签名）、x86_64 切片（宿主无对应 Rust 目标与 x265 构建，
+  当前仅 Apple Silicon）。
+
 ### P1：单文件闭环
 
 - 导入：iOS 用 `PhotosPicker`（请求 HEIC 原始资源，拒绝被转码的 JPEG）与 `fileImporter`；
