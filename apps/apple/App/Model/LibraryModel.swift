@@ -80,13 +80,17 @@ final class LibraryModel {
             var item = PhotoItem(id: record.id, sourceName: record.sourceName,
                                  inputURL: URL(fileURLWithPath: record.inputPath))
             item.savedToPhotos = record.savedToPhotos
+            item.motionMode = record.motionMode
             switch record.status {
             case .pending, .running:
                 item.state = .inspecting
             case .succeeded:
                 if let out = record.outputPath, let outcome = record.outcome {
-                    item.state = .done(ConversionProduct(inputURL: item.inputURL, outputURL: URL(fileURLWithPath: out),
-                                                         outcome: outcome, config: record.config ?? ConversionConfig()))
+                    item.state = .done(ConversionProduct(
+                        inputURL: item.inputURL, outputURL: URL(fileURLWithPath: out),
+                        outcome: outcome, config: record.config ?? ConversionConfig(),
+                        pairedVideoURL: record.pairedVideoPath.map(URL.init(fileURLWithPath:)),
+                        extraVideoURLs: (record.extraVideoPaths ?? []).map(URL.init(fileURLWithPath:))))
                 } else {
                     item.state = .failed("记录不完整，请重新转换")
                 }
@@ -108,16 +112,20 @@ final class LibraryModel {
             var output: String?
             var outcome: ConversionOutcome?
             var config: ConversionConfig?
+            var paired: String?
+            var extras: [String]?
             var error: String?
             switch item.state {
             case .inspecting, .ready: status = .pending
             case .converting: status = .running
             case .done(let p):
                 status = .succeeded; output = p.outputURL.path; outcome = p.outcome; config = p.config
+                paired = p.pairedVideoURL?.path; extras = p.extraVideoURLs.map(\.path)
             case .failed(let m): status = .failed; error = m
             }
             return QueueJournal.Record(id: item.id, sourceName: item.sourceName, inputPath: item.inputURL.path,
                                        status: status, outputPath: output, outcome: outcome, config: config,
+                                       pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
         do { try journalStore.save(journal) } catch { lastError = "无法保存队列状态：\(error.localizedDescription)" }
@@ -201,15 +209,18 @@ final class LibraryModel {
         async let classification = engine.classify(path: path)
         async let inspection = engine.inspect(path: path)
         async let details = engine.decodedPhotoDetails(path: path)
+        async let motion = engine.motionPhotoInfo(path: path)
         let thumbnail = await Task.detached(priority: .utility) {
             ImageLoading.thumbnail(at: url, maxPixelSize: 512)
         }.value
         do {
             let (c, i, d) = try await (classification, inspection, details)
+            let m = try? await motion
             update(id) { item in
                 item.classification = c
                 item.inspection = i
                 item.details = d
+                item.motionPhoto = m
                 item.thumbnail = thumbnail
                 if !keepState || item.state == .inspecting { item.state = .ready }
             }
@@ -229,7 +240,9 @@ final class LibraryModel {
         let job = ConversionJob(backend: engine, scratchRoot: directories.scratch, outputRoot: outputRoot)
         update(id) { $0.state = .converting(0); $0.savedToPhotos = false }
         do {
-            let product = try await job.run(input: item.inputURL, sourceName: item.sourceName, config: config) { fraction in
+            let mode = item.motionMode ?? config.motionPhotoDefaultMode
+            let product = try await job.run(input: item.inputURL, sourceName: item.sourceName, config: config,
+                                            motionMode: item.isMotionPhoto ? mode : nil) { fraction in
                 Task { @MainActor [weak self] in
                     self?.update(id) { if case .converting = $0.state { $0.state = .converting(fraction) } }
                 }
@@ -292,6 +305,10 @@ final class LibraryModel {
         }
     }
 
+    func setMotionMode(_ mode: MotionPhotoMode, for id: PhotoItem.ID) {
+        update(id) { $0.motionMode = mode }
+    }
+
     func markSavedToPhotos(_ id: PhotoItem.ID) {
         update(id) { $0.savedToPhotos = true }
     }
@@ -307,6 +324,7 @@ final class LibraryModel {
         switch error {
         case .coreFailed(let message): return message ?? "内核未给出原因"
         case .verificationFailed: return "输出未通过结构校验，已丢弃"
+        case .livePhotoFailed(let message): return message ?? "Live Photo 合成失败"
         case .missingOutput: return "内核报告成功但没有写出文件"
         case .samePath: return "输出路径与输入相同"
         }

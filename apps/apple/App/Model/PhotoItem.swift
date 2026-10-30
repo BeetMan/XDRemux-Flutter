@@ -34,8 +34,13 @@ struct PhotoItem: Identifiable {
     var inspection: ConversionReport?
     var details: PhotoDetails?
     var thumbnail: CGImage?
+    var motionPhoto: MotionPhotoInfo?
+    /// Per-photo override of `ConversionConfig.motionPhotoDefaultMode`.
+    var motionMode: MotionPhotoMode?
     var state: State = .inspecting
     var savedToPhotos = false
+
+    var isMotionPhoto: Bool { motionPhoto != nil }
 
     var product: ConversionProduct? {
         if case .done(let p) = state { return p }
@@ -63,6 +68,7 @@ struct PhotoItem: Identifiable {
         if let f = classification?.family { parts.append(f.uppercased()) }
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
         if let d = details?.dimensionsText { parts.append(d) }
+        if isMotionPhoto { parts.append("动态照片") }
         return parts.joined(separator: " · ")
     }
 }

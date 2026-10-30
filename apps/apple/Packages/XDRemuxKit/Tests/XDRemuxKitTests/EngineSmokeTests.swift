@@ -172,3 +172,43 @@ private final class Seen: @unchecked Sendable {
     var value: Bool { lock.withLock { flag } }
     func mark() { lock.withLock { flag = true } }
 }
+
+extension EngineSmokeTests {
+    /// Opt-in: `XDREMUX_MOTION_SAMPLE_DIR` with OPPO Motion Photo JPEGs →
+    /// inspect, convert as a Live Photo pair, validate the pair.
+    func testLivePhotoPairEndToEndIfSampleProvided() async throws {
+        guard let dir = ProcessInfo.processInfo.environment["XDREMUX_MOTION_SAMPLE_DIR"] else {
+            throw XCTSkip("set XDREMUX_MOTION_SAMPLE_DIR to a folder of OPPO Motion Photo .jpg files")
+        }
+        let candidates = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.lowercased().hasSuffix(".jpg") && !$0.contains("_iso") }.sorted()
+        var picked: String?
+        for name in candidates {
+            let report = try await XDRemuxEngine.shared.motionPhotoReport(path: (dir as NSString).appendingPathComponent(name))
+            if report.isMotionPhoto { picked = name; break }
+        }
+        let name = try XCTUnwrap(picked, "no Motion Photo in \(dir)")
+        let input = tempDir.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: dir).appendingPathComponent(name), to: input)
+
+        var config = ConversionConfig()
+        config.outputMode = .apple
+        let job = ConversionJob(backend: XDRemuxEngine.shared,
+                                scratchRoot: tempDir.appendingPathComponent("scratch"),
+                                outputRoot: tempDir.appendingPathComponent("out"))
+        let product = try await job.run(input: input, config: config, motionMode: .livePhotoPair)
+        let mov = try XCTUnwrap(product.pairedVideoURL)
+        XCTAssertEqual(mov.deletingPathExtension().lastPathComponent, product.outputURL.deletingPathExtension().lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mov.path))
+        let valid = try await XDRemuxEngine.shared.livePhotoPairValid(still: product.outputURL.path, video: mov.path)
+        XCTAssertTrue(valid)
+        let ok = try await XDRemuxEngine.shared.verifyOutput(path: product.outputURL.path)
+        XCTAssertTrue(ok)
+
+        let clips = try await ConversionJob(backend: XDRemuxEngine.shared,
+                                            scratchRoot: tempDir.appendingPathComponent("scratch2"),
+                                            outputRoot: tempDir.appendingPathComponent("out2"))
+            .run(input: input, config: config, motionMode: .stillAndVideo)
+        XCTAssertFalse(clips.extraVideoURLs.isEmpty)
+    }
+}

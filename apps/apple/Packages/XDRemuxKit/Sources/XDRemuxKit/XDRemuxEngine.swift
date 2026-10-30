@@ -33,6 +33,11 @@ public final class XDRemuxEngine: Sendable {
 
     // MARK: - Background calls
 
+    /// Runs a blocking core call on the engine queue under the concurrency gate.
+    func runOnQueue<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
+        try await run(body)
+    }
+
     private func run<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [gate] in

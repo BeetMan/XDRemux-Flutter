@@ -26,7 +26,7 @@ struct ExportButtons: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(item.savedToPhotos)
-                ShareLink(item: product.outputURL) {
+                ShareLink(items: product.allFiles) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
@@ -38,12 +38,12 @@ struct ExportButtons: View {
                 }
                 .buttonStyle(.borderedProminent)
                 Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([product.outputURL])
+                    NSWorkspace.shared.activateFileViewerSelecting(product.allFiles)
                 } label: {
                     Label("在访达中显示", systemImage: "folder")
                 }
                 .buttonStyle(.bordered)
-                ShareLink(item: product.outputURL) {
+                ShareLink(items: product.allFiles) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
@@ -68,26 +68,57 @@ struct ExportButtons: View {
                 let options = PHAssetResourceCreationOptions()
                 options.originalFilename = product.outputURL.lastPathComponent
                 request.addResource(with: .photo, fileURL: product.outputURL, options: options)
+                if let mov = product.pairedVideoURL {
+                    let movOptions = PHAssetResourceCreationOptions()
+                    movOptions.originalFilename = mov.lastPathComponent
+                    request.addResource(with: .pairedVideo, fileURL: mov, options: movOptions)
+                }
+            }
+            for clip in product.extraVideoURLs {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: clip, options: nil)
+                }
             }
             model.markSavedToPhotos(item.id)
-            message = "已作为新照片保存到照片库。"
+            message = product.isLivePhoto ? "已作为 Live Photo 保存到照片库。" : "已作为新照片保存到照片库。"
         } catch {
             message = "保存失败：\(error.localizedDescription)"
         }
     }
     #else
+    /// Single file: save panel. Live Photo / clips: choose a folder so the
+    /// pair keeps its shared stem (Photos matches HEIC + MOV by name).
     private func saveCopy() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = product.outputURL.lastPathComponent
-        panel.allowedContentTypes = [.heic]
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let files = product.allFiles
+        if files.count == 1 {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = product.outputURL.lastPathComponent
+            panel.allowedContentTypes = [.heic]
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            copy(files, to: destination.deletingLastPathComponent(), renamingFirstTo: destination.lastPathComponent)
+        } else {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.prompt = "存储到此文件夹"
+            guard panel.runModal() == .OK, let folder = panel.url else { return }
+            copy(files, to: folder, renamingFirstTo: nil)
+        }
+    }
+
+    private func copy(_ files: [URL], to folder: URL, renamingFirstTo firstName: String?) {
         do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+            for (index, file) in files.enumerated() {
+                var destination = folder.appendingPathComponent(file.lastPathComponent)
+                if index == 0, let firstName { destination = folder.appendingPathComponent(firstName) }
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: file, to: destination)
             }
-            try FileManager.default.copyItem(at: product.outputURL, to: destination)
-            message = "已存储到 \(destination.path)"
+            message = files.count == 1 ? "已存储到 \(folder.path)" : "已存储 \(files.count) 个文件到 \(folder.path)"
         } catch {
             message = "存储失败：\(error.localizedDescription)"
         }

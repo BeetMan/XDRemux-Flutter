@@ -18,6 +18,7 @@ struct PhotoDetailView: View {
                     statusSection(item)
                     infoSection(item)
                     if item.isConvertible, item.product == nil {
+                        if item.isMotionPhoto { motionSection(item) }
                         optionsSection(item)
                     }
                     if let product = item.product {
@@ -83,7 +84,39 @@ struct PhotoDetailView: View {
                 }
                 if item.details?.applePhotographicStyles == true { InfoRow("Apple 摄影风格", "已包含") }
                 if item.details?.applePortrait == true { InfoRow("Apple 人像", "已包含") }
+                if let m = item.motionPhoto {
+                    InfoRow("动态照片", [m.sourceKind, m.durationText,
+                                       m.videoWidth.flatMap { w in m.videoHeight.map { "\(w) × \($0)" } },
+                                       m.isDualStream ? "双流" : nil,
+                                       m.hasAudio == true ? "有声音" : nil].compactMap { $0 }.joined(separator: " · "))
+                }
             }
+        }
+    }
+
+    private func motionSection(_ item: PhotoItem) -> some View {
+        GroupBox("动态照片处理") {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("处理方式", selection: Binding(
+                    get: { item.motionMode ?? model.config.motionPhotoDefaultMode },
+                    set: { model.setMotionMode($0, for: item.id) })) {
+                    Text("Live Photo 合成").tag(MotionPhotoMode.livePhotoPair)
+                    Text("仅静帧").tag(MotionPhotoMode.still)
+                    Text("静帧 + 视频").tag(MotionPhotoMode.stillAndVideo)
+                }
+                .pickerStyle(.segmented)
+                Text(motionHint(item.motionMode ?? model.config.motionPhotoDefaultMode))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func motionHint(_ mode: MotionPhotoMode) -> String {
+        switch mode {
+        case .livePhotoPair: return "转换后的静帧与原视频配对为 Apple Live Photo（HEIC + MOV 需一起导入 Apple 照片）。"
+        case .still: return "只转换静帧，忽略附带的视频。"
+        case .stillAndVideo: return "转换静帧，并把视频流另存为 MP4 放在输出旁边。"
         }
     }
 
@@ -175,6 +208,10 @@ struct ResultSection: View {
                 InfoGrid {
                     InfoRow("输出模式", product.config.outputMode == .oppo ? "OPPO 兼容" : "Apple 标准")
                     InfoRow("文件", product.outputURL.lastPathComponent)
+                    if let mov = product.pairedVideoURL { InfoRow("Live Photo 视频", mov.lastPathComponent) }
+                    if !product.extraVideoURLs.isEmpty {
+                        InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "))
+                    }
                     InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
                     InfoRow("校验", "通过（可解码 + 结构检查）")
                 }

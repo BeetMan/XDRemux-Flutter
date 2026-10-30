@@ -19,12 +19,16 @@ public struct QueueJournal: Codable, Equatable, Sendable {
         public var outputPath: String?
         public var outcome: ConversionOutcome?
         public var config: ConversionConfig?
+        public var pairedVideoPath: String?
+        public var extraVideoPaths: [String]?
+        public var motionMode: MotionPhotoMode?
         public var errorMessage: String?
         public var savedToPhotos: Bool
         public var addedAt: Date
 
         public init(id: UUID = UUID(), sourceName: String, inputPath: String, status: Status = .pending,
                     outputPath: String? = nil, outcome: ConversionOutcome? = nil, config: ConversionConfig? = nil,
+                    pairedVideoPath: String? = nil, extraVideoPaths: [String]? = nil, motionMode: MotionPhotoMode? = nil,
                     errorMessage: String? = nil, savedToPhotos: Bool = false, addedAt: Date = Date()) {
             self.id = id
             self.sourceName = sourceName
@@ -33,6 +37,9 @@ public struct QueueJournal: Codable, Equatable, Sendable {
             self.outputPath = outputPath
             self.outcome = outcome
             self.config = config
+            self.pairedVideoPath = pairedVideoPath
+            self.extraVideoPaths = extraVideoPaths
+            self.motionMode = motionMode
             self.errorMessage = errorMessage
             self.savedToPhotos = savedToPhotos
             self.addedAt = addedAt
@@ -67,10 +74,13 @@ public struct QueueJournal: Codable, Equatable, Sendable {
                 r.status = .pending
                 r.errorMessage = nil
             case .succeeded:
-                if let out = r.outputPath, !fileExists(out) {
+                let lostStill = r.outputPath.map { !fileExists($0) } ?? true
+                let lostVideo = r.pairedVideoPath.map { !fileExists($0) } ?? false
+                if lostStill || lostVideo {
                     r.status = .failed
-                    r.errorMessage = "输出文件已不存在，请重新转换"
+                    r.errorMessage = lostVideo && !lostStill ? "Live Photo 视频已不存在，请重新转换" : "输出文件已不存在，请重新转换"
                     r.outputPath = nil
+                    r.pairedVideoPath = nil
                 }
             default:
                 break

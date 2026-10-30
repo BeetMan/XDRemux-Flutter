@@ -188,3 +188,85 @@ private final class Progress: @unchecked Sendable {
     var values: [Double] = []
     func record(_ v: Double) { lock.withLock { values.append(v) } }
 }
+
+// MARK: - Motion Photo paths
+
+private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
+    let fs: FakeFS
+    var isMotion = true
+    var pairValid = true
+
+    func convert(input: String, output: String, config: RustConvertConfig,
+                 progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
+        fs.lock.withLock { _ = fs.files.insert(output) }
+        return ConversionOutcome(success: true, mode: "lhdr", family: "x7")
+    }
+    func verifyOutput(path: String) async throws -> Bool { true }
+    func motionPhotoInfo(path: String) async throws -> MotionPhotoInfo? {
+        isMotion ? MotionPhotoInfo(sourceKind: "oppoLpex", durationMs: 3000) : nil
+    }
+    func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles {
+        let stem = ((source as NSString).lastPathComponent as NSString).deletingPathExtension
+        let s = "\(outputDirectory)/\(stem).heic", v = "\(outputDirectory)/\(stem).mov"
+        fs.lock.withLock { fs.files.insert(s); fs.files.insert(v) }
+        return LivePhotoFiles(stillPath: s, videoPath: v, contentIdentifier: "ABC")
+    }
+    func livePhotoPairIsValid(still: String, video: String) async throws -> Bool { pairValid }
+    func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
+        let v = "\(outputDirectory)/x.video.mp4", p = "\(outputDirectory)/x.primary.mp4"
+        fs.lock.withLock { fs.files.insert(v); fs.files.insert(p) }
+        return [v, p]
+    }
+}
+
+final class MotionPhotoJobTests: XCTestCase {
+    let scratch = URL(fileURLWithPath: "/scratch")
+    let outRoot = URL(fileURLWithPath: "/out")
+    let input = URL(fileURLWithPath: "/in/IMG_M.jpg")
+
+    func testLivePhotoPairPublishesStillAndMov() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+        XCTAssertEqual(p.outputURL.path, "/out/IMG_M_iso.heic")
+        XCTAssertEqual(p.pairedVideoURL?.path, "/out/IMG_M_iso.mov")
+        XCTAssertTrue(p.isLivePhoto)
+        XCTAssertEqual(Set(fs.files), ["/out/IMG_M_iso.heic", "/out/IMG_M_iso.mov"], "scratch files gone: \(fs.files)")
+    }
+
+    func testInvalidPairFailsWithoutPublishing() async {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs, pairValid: false), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        do {
+            _ = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+            XCTFail("expected failure")
+        } catch let e as ConversionJobError {
+            if case .livePhotoFailed = e {} else { XCTFail("\(e)") }
+        } catch { XCTFail("\(error)") }
+        XCTAssertTrue(fs.files.isEmpty, "\(fs.files)")
+    }
+
+    func testStillOnlyIgnoresVideo() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .still)
+        XCTAssertNil(p.pairedVideoURL)
+        XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
+    }
+
+    func testStillAndVideoExportsClips() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .stillAndVideo)
+        XCTAssertEqual(Set(p.extraVideoURLs.map(\.lastPathComponent)), ["IMG_M_iso.motion.mp4", "IMG_M_iso.primary.mp4"])
+        XCTAssertEqual(p.allFiles.count, 3)
+    }
+
+    func testNonMotionPhotoIgnoresMode() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs, isMotion: false), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+        XCTAssertNil(p.pairedVideoURL)
+        XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
+    }
+}

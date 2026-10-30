@@ -189,6 +189,20 @@ Flutter 版生成的检查点文件可被原生版读取。
 验收：普通图、Motion Photo、无效文件混合队列行为正确；iPhone 照片中 Live Photo 可播放有声音；
 分享面板导入保留 HEIC 原始字节。
 
+**P3 执行记录（第一批：动态照片 / Live Photo，2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `MotionPhotoBackend` 协议（inspect / make_live_photo / pair_valid / split）；`ConversionJob` 在校验通过的静帧上按
+  `MotionPhotoMode` 处理：`livePhotoPair` 用 Rust 合成带 content identifier 的静帧 + MOV，配对校验通过才发布为
+  `<stem><suffix>.heic` + `.mov`；`stillAndVideo` 拆出 `.motion.mp4` / `.primary.mp4`；`still` 忽略视频。
+  5 项假引擎测试覆盖配对失败不发布、非动态照片忽略模式。
+- Kit：`MotionPhotoReport` 解码、`makeLivePhotoFiles`、`livePhotoPairValid`、`splitMotionPhoto`。
+- App：导入即识别动态照片（列表摘要与详情显示时长 / 尺寸 / 双流 / 声音），详情页按张选择处理方式（默认取全局设置），
+  结果区列出配对视频；iOS 保存到照片库时以 `.photo` + `.pairedVideo` 写入同一 asset；macOS 多文件时选文件夹整组存储，
+  访达定位与分享同时带上 MOV；journal 记录 `pairedVideoPath` / `extraVideoPaths` / `motionMode`，视频丢失视为失败。
+- 验证：opt-in 真实 OPPO 动态照片（`XDREMUX_MOTION_SAMPLE_DIR`）端到端：Live Photo 配对校验通过、静帧 verify 通过、
+  拆分有产物；macOS GUI 导入一张动态照片默认 Live Photo 合成，输出 `motion-master_iso.heic` + `.mov`。
+- 未验证：iPhone 照片中 Live Photo 播放与声音（需真机）；Share Extension、批量导出仍待做。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、
