@@ -81,7 +81,7 @@
 | ProXDR → ISO 21496-1 HDR HEIC（UHDR/LHDR） | 可用 | 两种输出模式：OPPO 兼容 / Apple 标准 |
 | 线性缩略图（Apple Log + Main10 + HDR 增益图） | 可用（iOS 10-bit 已接入构建，未上机） | 几何 1024/双偶数契约、Log 曲线、可选 10-bit、内存增益图乘入 scene-linear；见 `docs/modules/styles-pipeline.md` §4 |
 | OPPO / 华为人像转换 | 可用（条件受限） | 依赖源文件深度数据与系统版本 |
-| Photographic Styles 写入 | **实验性** | 缩略图已按 Log/Main10/HDR 生成；`styleData` key 1 / key 3 已按图拟合（P1-1/P1-2，未上机），key 4/h、统计与天空蒙版仍为参考值/零值占位；见 `docs/modules/styles-pipeline.md` §4.1、`styles_fit.rs` |
+| Photographic Styles 写入 | **实验性** | 缩略图已按 Log/Main10/HDR 生成；`styleData` key 1 / key 3 已按图拟合（P1-1/P1-2；10-30 macOS 照片实测可导入、风格编辑器正常），key 4/h、统计与天空蒙版仍为参考值/零值占位；见 `docs/modules/styles-pipeline.md` §4.1、`styles_fit.rs` |
 | Texture Styles（Standard 注入） | 可用 | `texture_styles.rs`；与上游 `#70` 同行但更早落地 |
 | Motion Photo → Live Photo | 可用 | 配对谓词 `existing_pair_is_valid`（`live_photo.rs:1790`）、FFI `xdremux_live_photo_pair_valid`、恢复时校验（`main.dart:440`） |
 | 队列 / 检查点恢复 / 分类输出 | 可用 | 见 `docs/app/workflow-design.md` |
@@ -89,7 +89,7 @@
 
 ## 4. 已知风险与未验证项
 
-1. **Styles native 路径不是逐像素等价**：`styleData` 为 identity，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
+1. **Styles native 路径不是逐像素等价**：`styleData` 仅 key 1 / key 3 按图拟合，key 4/h、统计仍为参考值，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
 2. **线性缩略图已改为 Apple Log + 原生几何 + 可选 Main10 + HDR 增益（2026-10-25）**：构建期链接了 10-bit x265 静态库时走 16-bit codes → Main10（hvcC bitDepth=10、SPS profile_idc=2，本机与真实样本均已断言）；库缺失时自动回退 8-bit 4:2:0 过渡路径。10-bit 归档已验证：Windows（真实样本 E2E）、Linux（CI 双库构建）、Android arm64（NDK 27 + cargo ndk）、鸿蒙 arm64（DevEco SDK + `build_ohos.sh`）；iOS（真机 + 模拟器）与 macOS 本机的 10-bit 归档于 2026-10-28 构建通过：`build_ios.sh`/`build_ios_sim.sh` 默认构建 10-bit，`build.rs` 把它打包进 `libxdremux_core.a`（staticlib 不吃 link-arg），按 Podfile 参数模拟链接通过；**未在 iOS 真机或模拟器上运行**，macOS 发布包尚未启用 10-bit。**HDR 增益图（路径 3）已落地**：转换管线把内存里的重建增益图直接乘进 scene-linear base，真实样张缩略图 16-bit luma max 35610→46159、mean 21401→26070；增益图方向按写路径规则对齐（EXIF 非 Normal 且主图 `irot==0` 时做同一变换，Normal 样本回归数值不变）。**仍缺**：① 原生 Apple tmap 文件的重编码场景仍需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0）；② baseline exposure 绝对亮度与 HDR 缩略图接受度**未在真机与原生 A/B 验证**（验收清单见 `docs/testing/styles-hdr-device-checklist.md`，PR #25）；③ 旋转样本的真实 E2E 未验证（现有样本 orientation 均为 Normal）。详见 `docs/modules/styles-pipeline.md` §4。
 3. **Live Photo 发布校验只在检查点恢复路径**；转换成功当次没有"立即校验 + 半成品回滚 + 独立恢复副本"（上游 #76/#78 的后半段）。
 4. **本机 Windows 跑 Rust 测试的两个坑（已解决，2026-10-25）**：① worktree 缺 gitignored 的 `vendor/x265`（`build.rs` 找不到头文件）；② 多 worktree 共用 `target/` 时 `zstd-sys` 的旧 C 产物污染。处理：vendor 用目录联接 + 独立 `CARGO_TARGET_DIR` + vcvars 环境，配方见 `docs/operations/building.md` §1「Windows 本地开发」。**已实测**：`cargo test -p xdremux-core --lib` = 248 passed / 0 failed / 3 ignored。
@@ -99,7 +99,7 @@
 ## 5. 下一步优先级
 
 1. ~~合并 PR #25~~ **已完成**；按 `docs/testing/styles-hdr-device-checklist.md` 跑 S1/S2/S3（orientation 6/3/8）/S7 真机 A/B —— 这是覆盖 §4.2 的 ②③ 未验证项的唯一闭环手段。
-2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：真机 A/B 确认 Photos 接受拟合值与滑块观感；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
+2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：macOS 照片已确认接受拟合值（10-30，3 张 OPPO 样张），剩滑块观感与原生的主观 A/B；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
 3. iOS Main10 上机验证：真机或模拟器跑一次 Styles 转换，确认缩略图 hvcC bitDepth=10（构建与链接已完成，见 `docs/operations/building.md` §1）；评估 macOS 发布包是否也启用 10-bit。
 4. PR #29（`codex/local-transfer`）：review 发现的问题已于 10-29 修完、CI 全绿；剩 Android 导出与 macOS/iOS 设备互通真机实测，然后合并。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。
