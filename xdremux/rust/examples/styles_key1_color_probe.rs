@@ -16,6 +16,10 @@
 //! with no gain map (thumbnail = primary × h / key 4) to separate the
 //! baseline-exposure ratio from the gain-map ratio.
 //!
+//! Since the writer stopped emitting the fitted key 1 (Standard key 1 is the
+//! identity lattice), the "file key1" row reads 0 on new outputs and the
+//! "exposure-only" row shows what the fit would have painted.
+//!
 //! Diagnostic model only: Photos is the real consumer and still has to be
 //! checked by eye (slider screenshots).
 

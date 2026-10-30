@@ -1,7 +1,15 @@
 //! Per-image Photographic Styles fits: key 1 (local quadratic lattice) and
 //! key 3 (monotonic global tone curve).
 //!
-//! Replaces the identity `styleData` the native writer used to emit (gap
+//! The writer takes only key 3 from here; the fitted key 1 is diagnostic.
+//! Photos evaluates key 1 on the displayed primary, and the primary ->
+//! thumbnail ratio (h / key 4 = 0.46 before any gain map) does not fit the
+//! bounded quadratic, so the clamped lattice paints cell-structured colour
+//! shifts in the editor (upstream PR #88, reproduced in
+//! `docs/research/styles-key1-color-grid-20261030.md`). Standard key 1 is
+//! therefore written as identity (`styles_native.rs`).
+//!
+//! Replaces the identity key 3 the native writer used to emit (gap
 //! doc `docs/research/styles-upstream-20261024-gap.md` P1-1 / P1-2). Ported
 //! from upstream `21Z121Z1/XDRemux` `bb66981b`
 //! (`crates/xdremux-engine/src/apple_photographic_styles.rs`:
@@ -502,7 +510,9 @@ pub struct FittedStyleState {
 
 /// Fit key 1 and key 3 for the plist that carries `baseline_exposure` (key 4)
 /// and `base_gain` (key `h`). Those two scalars define the consumer's `S`, so
-/// they must be the values written into the same file.
+/// they must be the values written into the same file. The writer uses only
+/// `global_tone_curve`; `style_data` is the diagnostic key 1 lattice (see the
+/// module doc).
 pub fn fit_style_state(
     raster: &StyleFitRaster,
     baseline_exposure: f64,
