@@ -107,7 +107,9 @@ Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platfo
 
 验证：`cargo test -p xdremux-core --lib styles_fit` 覆盖单调性、线格式、上游 fixture（二次 + 亚白端点、阶跃、局部左暗）、未改动图像得 identity、合成场景对上拟合优于 identity；`examples/styles_fit_probe <heic...>` 在真实样张上对比 identity（消费端模型，非 Photos 结论）。2026-10-30 本机 5 张样张（3 张 iPhone 原生、2 张 OPPO，均无增益图）：GTC RMSE 0.0004–0.0007 vs identity 0.16–0.36，全部单调；key 1 RMSE 比 identity 低 25–38%（受系数上限约束）。
 
-**未验证（需真机 A/B）**：Photos 是否接受拟合值、风格滑块观感；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
+**已实测（2026-10-30，macOS 27.2 照片）**：用合并后的 main（`9ca9329`）以 `examples/styles_convert` 转换 3 张 OPPO 样张（`IMG20260802135928`、`IMG20260814202514`、`IMG20260822150037`）；读回 styleData 确认 key 1（51 840B）/ key 3（516B）每张哈希不同（非 identity），其余键不变。3 张导入照片无拒收，风格编辑器可正常打开和调节（维护者手动确认）。
+
+**未验证**：iPhone 照片上的同一结论（按 macOS 与 iOS 照片同一编辑引擎推断）；拟合前后滑块观感与原生的主观 A/B；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
 
 ## 5. 诊断工具
 
