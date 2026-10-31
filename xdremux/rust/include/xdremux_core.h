@@ -164,6 +164,23 @@ uint8_t xdremux_live_photo_pair_valid(const char *still_path,
                                       const char *mov_path);
 
 /**
+ * Package a composed still HEIC + MOV pair into an Apple Live Photo bundle
+ * directory (`bundle_path`, must end with `.pvt`). The pair is verified
+ * first and copied byte-for-byte; an existing bundle of the same name is
+ * replaced. Returns a JSON report with the bundle and inner file paths.
+ */
+char *xdremux_make_live_photo_bundle(const char *still_path,
+                                     const char *mov_path,
+                                     const char *bundle_path);
+
+/**
+ * Validate a `.pvt` Live Photo bundle: metadata.plist present, exactly one
+ * still + one MOV sharing a stem, matching content identifiers. Returns 1
+ * when valid.
+ */
+uint8_t xdremux_live_photo_bundle_valid(const char *bundle_path);
+
+/**
  * Inject the 12 zero-content 2026 semantic part-matte items into an
  * existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
  */

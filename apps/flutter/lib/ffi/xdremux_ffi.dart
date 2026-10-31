@@ -345,6 +345,22 @@ class XdRemuxFFI {
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>)>('xdremux_live_photo_pair_valid');
 
+  static final _makeLivePhotoBundle = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+      )>('xdremux_make_live_photo_bundle');
+
+  static final _livePhotoBundleValid = _lib.lookupFunction<
+      ffi.Uint8 Function(ffi.Pointer<Utf8>),
+      int Function(ffi.Pointer<Utf8>)>('xdremux_live_photo_bundle_valid');
+
   static final _injectTextureStyles = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Uint64),
       int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int)>(
@@ -760,6 +776,51 @@ class XdRemuxFFI {
       calloc.free(sourcePtr);
       calloc.free(stillPtr);
       calloc.free(outPtr);
+    }
+  }
+
+  /// Package a composed still + MOV pair into an Apple Live Photo `.pvt`
+  /// bundle directory at [bundlePath]. The pair is verified and copied
+  /// unchanged; an existing bundle of the same name is replaced.
+  static Map<String, dynamic> makeLivePhotoBundle(
+    String stillPath,
+    String movPath,
+    String bundlePath,
+  ) {
+    final stillPtr = stillPath.toNativeUtf8();
+    final movPtr = movPath.toNativeUtf8();
+    final bundlePtr = bundlePath.toNativeUtf8();
+    try {
+      final report = _makeLivePhotoBundle(stillPtr, movPtr, bundlePtr);
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust live photo bundler returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Rust live photo bundler returned an invalid report',
+      };
+    } finally {
+      calloc.free(stillPtr);
+      calloc.free(movPtr);
+      calloc.free(bundlePtr);
+    }
+  }
+
+  /// Validate a `.pvt` bundle: metadata.plist, one still + one MOV with the
+  /// same stem, and matching content identifiers.
+  static bool livePhotoBundleValid(String bundlePath) {
+    final p = bundlePath.toNativeUtf8();
+    try {
+      return _livePhotoBundleValid(p) != 0;
+    } finally {
+      calloc.free(p);
     }
   }
 
