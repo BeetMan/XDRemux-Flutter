@@ -4560,19 +4560,19 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            'Apple 照片摄影风格',
-                            'Apple Photos Photographic Styles',
+                            '摄影风格 2',
+                            'Photographic Styles 2',
                           ),
                         ),
                         subtitle: Text(
                           _cfg.applePhotographicStyles3
                               ? _t(
-                                  '已包含在摄影风格 3 中；如需单独调整，请先关闭摄影风格 3。',
-                                  'Included in Photographic Styles 3; turn that off to change this.',
+                                  '摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。',
+                                  'Photographic Styles 3 includes Photographic Styles 2; turn it off to change this.',
                                 )
                               : _t(
-                                 '生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                                 'Generates Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                                 '写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                 'Writes Photographic Styles data so tone, color and intensity can be adjusted in Apple Photos; selects Apple Standard output and disables GPU encoding.',
                                ),
                         ),
                         value: _cfg.applePhotographicStyles,
@@ -4595,14 +4595,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            '摄影风格 3（质感 + 颗粒）',
-                            'Photographic Styles 3 (texture + grain)',
+                            '摄影风格 3',
+                            'Photographic Styles 3',
                           ),
                         ),
                         subtitle: Text(
                           _t(
-                            '输出携带 Standard texture_styles 元数据，可在 Apple 照片中调节质感/颗粒；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                            'Output carries a Standard texture_styles item so Apple Photos offers texture/grain editing; selects Apple Standard output and disables GPU encoding.',
+                            '在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            'Adds texture (such as Soft Skin, Glow or Film) and grain to Photographic Styles 2, adjustable in Apple Photos on iOS 27 or later; selects Apple Standard output and disables GPU encoding.',
                           ),
                         ),
                         value: _cfg.applePhotographicStyles3,
