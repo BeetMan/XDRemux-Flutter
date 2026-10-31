@@ -7,7 +7,7 @@
 **新人上手**：overview -> data-flow -> platform-backend
 **排障定位**：platform-backend（先确定看哪份代码）-> 对应模块页
 **格式逆向**：formats/ 全部 + `docs/standards/`（ISO 标准中译）
-**改 FFI**：ffi-contract（必读契约）
+**改 FFI**：ffi-contract（必读契约；改完重新生成 `xdremux_core.h`）
 **发版**：operations/releasing
 
 ## 架构（architecture/）
@@ -49,6 +49,7 @@
 | [motion-photo-ui-design.md](app/motion-photo-ui-design.md) | 动态照片四档策略、识别时机、3a/3b 设计记录 |
 | [android-integration.md](app/android-integration.md) | SAF 原则、原生组件、构建锁死项、调试速查 |
 | [apple-integration.md](app/apple-integration.md) | macOS dylib 打包、iOS 静态库、分发现状 |
+| [`apps/apple/README.md`](../apps/apple/README.md) | 原生 SwiftUI 前端（未发布）：目录结构、iOS 模拟器、macOS CLI `xdremux` |
 
 ## 测试与运维
 
@@ -58,7 +59,8 @@
 | [testing/styles-hdr-device-checklist.md](testing/styles-hdr-device-checklist.md) | Styles HDR 缩略图真机 A/B 测试清单（样本矩阵、自动预检、Photos 步骤、判定口径） |
 | [operations/building.md](operations/building.md) | 跨平台构建（含 Linux 本地开发）、变体说明（含鸿蒙 hap） |
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
-| [operations/ci.md](operations/ci.md) | 四 workflow 剖析、runner 矩阵 |
+| [operations/ci.md](operations/ci.md) | 六个 workflow 剖析（含 apple-ci）、runner 矩阵 |
+| [operations/installing.md](operations/installing.md) | 各平台侧载与 macOS 授权步骤 |
 | [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步 |
 
 ## 写作与证据规范
@@ -82,10 +84,15 @@
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
 | [oppo-gallery-17.10.5.md](research/oppo-gallery-17.10.5.md) | ColorOS 相册 17.10.5 静态阅读：HDR / 编辑 / 人像机制、OPPO 尾部布局实测、Find X8 Ultra 前置人像与大水印 |
+| [styles-key1-color-grid-20261030.md](research/styles-key1-color-grid-20261030.md) | Standard key 1 拟合在 Photos 画色格的复现与判定（结论：key 1 回 identity，PR #38） |
+| [huawei-xmage-format.md](research/huawei-xmage-format.md) | 华为相机 HDR（XMAGE）表示法与能否纳入转换管线、鸿蒙图库输出需求 |
+| [oppo-proxdr-families.md](research/oppo-proxdr-families.md) | Find N3 / Find X8 Ultra ProXDR 采样分析（2026-09） |
+| [iphone-18-pro-notes.md](research/iphone-18-pro-notes.md) | iPhone 18 Pro（iOS 27）新拍摄模式：样张 EXIF / MakerNote / 容器结构 |
 | [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#88 进展与差距矩阵（2026-10-30）：Standard key1 identity 争议、GPLv3 改授权、研究仓迁移；含 P0/P1/P2 规划 |
 
 ## 路线图
 
+- [`docs/plans/apple-native.md`](plans/apple-native.md)：原生 Apple（SwiftUI）前端计划与 P0–P3 执行记录（进行中）
 - [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
 - [`docs/plans/huawei-to-apple-plan.md`](plans/huawei-to-apple-plan.md)：Mate 70 原生 HDR 识别、XMAGE 风格、人像与 Live Photo 研究计划（普通 HDR 无需转换）
 - [`docs/plans/sample-collection-202608.md`](plans/sample-collection-202608.md)：样本采集计划（A~E 组状态见 v0.4-roadmap 与设备兼容矩阵）

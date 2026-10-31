@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，39 个 `extern "C"` 函数）、
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，41 个 `extern "C"` 函数，2026-10-31）、
 > `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
 > 改导出后用 `tools/apple/check_header.sh` 校验）。
 
@@ -12,6 +12,7 @@
 | iOS | `DynamicLibrary.process()`（静态链接进主二进制） |
 | Windows | 安装目录/开发目录搜索 DLL |
 | macOS | 多级回退：dylib 裸名（rpath）-> 可执行文件旁 -> `../Frameworks` -> `../../Frameworks` |
+| Linux | 多级回退：`XDREMUX_LINUX_RUST_LIB` -> `<exeDir>/lib` -> bundle `lib/` -> 可执行文件旁 -> cargo `target/{release,debug}`（见 `platform-backend.md` §1） |
 | 原生 Apple（SwiftUI） | 静态链接 `XDRemuxCore.xcframework`（`xdremux/rust/build_apple.sh`），Swift 直接引用符号，无需 `-u` 保留 |
 | 鸿蒙 | `DynamicLibrary.open('libxdremux_core.so')`（`ohos/entry/libs/arm64-v8a/` 打包） |
 
@@ -56,10 +57,15 @@
 |---|---|
 | `xdremux_version` | 版本串（与 Cargo 一致） |
 | `xdremux_classify` / `xdremux_inspect` | 输入分类 / 结构检查 |
+| `xdremux_inspect_photo_details` | 照片详情 JSON（机型、光圈、快门、ISO 等拍摄参数与 HDR headroom） |
+| `xdremux_codec_capabilities` | 编码路径能力报告（是否链接 10-bit x265 等） |
 | `xdremux_huawei_inspect` | Huawei HDR / 人像 HEIC 只读识别与“无需转换”诊断（含 `xtstyle` 及 `huaweiPortrait` 的 `edof`、`auxC`、`auxl`、`RfDataB` 尺寸/字节形态；不做语义转换） |
 | `xdremux_convert` / `xdremux_convert_with_progress` | ProXDR -> ISO 转换（含 Ultra HDR JPEG 输入） |
 | `xdremux_writeback_returned_photo` | 回传照片写回（全平台统一） |
 | `xdremux_diagnose_portrait` | 人像深度诊断 |
+| `xdremux_remux_huawei_portrait` / `xdremux_verify_huawei_portrait_output` | 华为原生人像 HEIC → Apple 兼容人像 HEIC / 输出校验 |
+| `xdremux_attach_styles` / `xdremux_attach_style_layers` | 给非 OPPO 照片补风格项；`flags` 位 0 = 2023 styles、位 1 = 纹理/颗粒、位 2 = 12 个语义 matte（华为人像 remux 后调用，免二次编码） |
+| `xdremux_style_experiment` | 研究用：替换 styleMetadata 载荷（打过补丁的 bplist） |
 | `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid` | 把已配对的 HEIC+MOV 打成 `.pvt` 包 / 校验 `.pvt` 包（见 `docs/formats/live-photo-pvt.md`） |
@@ -67,6 +73,8 @@
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 | `xdremux_inject_texture_styles` / `xdremux_inject_semantic_mattes` | 摄影风格 3 后处理：在已转换 HEIC 上追加 texture_styles 项与 12 个语义 matte 占位（Dart / Swift 前端在校验通过后按顺序调用） |
 | `xdremux_progress_cancel` | 取消运行中的转换（见 §2.5） |
+| `xdremux_extract_thumbnail` / `xdremux_render_thumbnail` | 取 EXIF / 内嵌 JPEG 缩略图 / 渲染预览 |
+| `xdremux_free_string` / `xdremux_free_result` / `xdremux_free_classification_result` / `xdremux_free_prepared` / `xdremux_free_thumbnail` | 释放对应返回值（规则见 §2） |
 
 当报告含 `huaweiPortrait` 时，嵌套对象只描述观察到的 ISOBMFF 资源：
 `edofItemId` / `edofDimensions` / `edofTileItemIds`、`edofAuxiliaryTypes`（`auxC`）、
@@ -81,7 +89,7 @@
 
 ## 4. 变更纪律
 
-1. 改 FFI 签名 = 同时改两侧 + 更新本页表格
+1. 改 FFI 签名 = 同时改 Dart 绑定、`xdremux_core.h`（cbindgen 重新生成，`tools/apple/check_header.sh` 校验，`apple-ci.yml` 会拦）、Swift 封装（`apps/apple/Packages/XDRemuxKit`）+ 更新本页表格与函数总数
 2. 新增返回堆内存的导出 = 必须配套 free 函数
 3. Dart 侧错误处理只依赖 JSON 报告字段，不做异常字符串匹配
 4. conformance 测试（`tests/conformance`）覆盖 Rust 侧逻辑；FFI 边界用 `apps/flutter/test/ffi_smoke_test.dart` 冒烟
