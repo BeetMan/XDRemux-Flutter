@@ -24,6 +24,8 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private val transferDocuments by lazy { TransferDocuments(this) }
+    private val transferMulticast by lazy { TransferMulticast(this) }
     private val batteryChannel = "xdremux/battery"
     private val hevcProbeChannel = "xdremux/hevc-probe"
     private val hwEncodeChannel = "xdremux/hw-encode"
@@ -39,12 +41,21 @@ class MainActivity : FlutterActivity() {
     private val thumbnailCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray?>()
 
     override fun onDestroy() {
+        transferMulticast.release()
+        transferDocuments.close()
         thumbnailExecutor.shutdownNow()
         super.onDestroy()
     }
 
+    override fun onStop() {
+        transferMulticast.release()
+        super.onStop()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        transferDocuments.configure(MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xdremux/transfer-documents"))
+        transferMulticast.configure(MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xdremux/transfer-discovery"))
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, batteryChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -182,6 +193,12 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!transferDocuments.onActivityResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
     }
 
     /// Diagnose whether `path` is a readable real file and how big it is.

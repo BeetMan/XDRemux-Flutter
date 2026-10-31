@@ -25,6 +25,11 @@ import 'services/tray_service.dart';
 import 'services/update_service.dart';
 import 'services/xdremux_service.dart';
 import 'services/checkpoint_service.dart';
+import 'services/transfer/transfer_models.dart';
+import 'services/transfer/transfer_queue.dart';
+import 'services/transfer/transfer_controller.dart';
+import 'services/transfer/transfer_desktop_lifecycle.dart';
+import 'transfer_page.dart';
 import 'services/file_action_service.dart';
 import 'services/output_export_service.dart';
 import 'services/hardware_encoder.dart';
@@ -34,6 +39,7 @@ import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
 import 'services/drop_file_service.dart';
+import 'ffi/transfer_ffi.dart';
 import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
 import 'widgets/codec_diagnostics_tile.dart';
@@ -266,6 +272,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  TransferDesktopLifecycle? _transferLifecycle;
+  TransferController? _transfer;
+
   final List<QueueItem> _queue = [];
   ConversionConfig _config = ConversionConfig();
   String _statusText = t('就绪', 'Ready');
@@ -297,6 +306,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    TransferQueue.register(
+      this,
+      _acceptTransferInput,
+      retainedInputs: () => _queue.map((item) => item.inputPath).toSet(),
+    );
+    TransferQueue.addImportListener(_onTransferImportsChanged);
     PlatformLayoutTraits.refresh().then((_) {
       if (mounted) setState(() {});
     });
@@ -306,9 +321,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     NotificationService.init();
     ForegroundService.init();
     if (Platform.isWindows) {
+      _transferLifecycle = TransferDesktopLifecycle(stop: () async {
+        await _transfer?.stop();
+      });
+      unawaited(
+        _transferLifecycle!.register().catchError((_) {}),
+      );
       TrayService.init(
         onShowWindow: TrayService.showWindow,
-        onExit: () => exit(0),
+        onExit: () => unawaited(_transferLifecycle!.exitApplication()),
       );
     }
     _checkForUpdate();
@@ -695,6 +716,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _transferLifecycle?.dispose();
+    TransferQueue.unregister(this);
+    TransferQueue.removeImportListener(_onTransferImportsChanged);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
     _shareSubscription?.cancel();
@@ -713,12 +737,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // Queue management
   // ---------------------------------------------------------------------------
 
-  bool get _canEditQueue => !_isProcessing;
+  bool get _canEditQueue => !_isProcessing && !TransferQueue.importing;
+
+  // Queue actions are gated on TransferQueue.importing, which changes outside
+  // this widget's state; rebuild so they re-enable when an import ends.
+  void _onTransferImportsChanged() {
+    if (mounted) setState(() {});
+  }
 
   // Keep the start action enabled when there are pending items with
   // blockers, so the user can see the preflight explanation instead of a
   // mysteriously disabled button.
   bool get _canStart =>
+      !TransferQueue.importing &&
       !_isProcessing &&
       _queue.any((item) => item.status == QueueItemStatus.pending);
 
@@ -1155,6 +1186,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _ingestPickedFiles(
+    List<PickedItem> files, {
+    required String source,
+  }) {
+    if (TransferQueue.importing) {
+      if (mounted) setState(() => _currentFileName = t('输入文件正在处理，请稍后重新选择', 'Input files are busy; select again after the current operation'));
+      return Future<void>.value();
+    }
+    return TransferQueue.withAdmission(
+      () => _ingestPickedFilesNow(files, source: source),
+    );
+  }
+
+  Future<void> _ingestPickedFilesNow(
     List<PickedItem> files, {
     required String source,
   }) async {
@@ -2361,6 +2405,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _clearQueue() {
     if (!_canEditQueue) return;
+    final removedPaths = _queue.map((item) => item.inputPath).toList();
     final oldCheckpoint = _checkpoint;
     setState(() {
       _queue.clear();
@@ -2374,6 +2419,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       unawaited(CheckpointService.cleanupMaterializedInputs(oldCheckpoint));
     }
     unawaited(CheckpointService.cleanupAllMaterializedInputs());
+    for (final path in removedPaths) {
+      unawaited(CheckpointService.cleanupSingleMaterializedInput(path));
+    }
     unawaited(CheckpointService.delete());
   }
 
@@ -2472,6 +2520,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ).push(MaterialPageRoute(builder: (_) => const OrganizePage()));
   }
 
+  Future<void> _openTransfer({
+    List<String> paths = const [],
+    String? source,
+  }) async {
+    _transfer ??= TransferController.instance;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TransferPage(
+          controller: _transfer,
+          initialPaths: paths,
+          sourceLabel: source,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openTransferActions() async {
+    final index = _selectedIndex;
+    if (index == null || index >= _queue.length) {
+      await _openTransfer();
+      return;
+    }
+    final item = _queue[index];
+    final source = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(t('发送原文件', 'Send original file')),
+            onTap: () => Navigator.pop(ctx, false),
+          ),
+          if (item.isSuccessful)
+            ListTile(
+              title: Text(t('发送转换结果', 'Send converted file')),
+              onTap: () => Navigator.pop(ctx, true),
+            ),
+          ListTile(
+            title: Text(t('打开互传', 'Open local transfer')),
+            onTap: () {
+              Navigator.pop(ctx);
+              _openTransfer();
+            },
+          ),
+        ],
+      ),
+    );
+    if (!mounted || source == null) return;
+    await _openTransfer(
+      paths: [source ? item.outputPath : item.inputPath],
+      source: source ? t('转换结果', 'Converted file') : t('原文件', 'Original file'),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Drag & drop
   // ---------------------------------------------------------------------------
@@ -2514,10 +2617,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// Shared intake for desktop drop and Android share: classifies each
   /// supported path and appends it to the queue, then reports how many
   /// files were added and how many were ignored as non-HEIC.
-  Future<void> _enqueuePaths(
+  Future<TransferIntakeStatus> _enqueuePaths(
     List<String> paths, {
     required String verb,
     int ignored = 0,
+    TransferInput? transferInput,
+  }) {
+    if (transferInput == null && TransferQueue.importing) {
+      // A share or drop cannot be resent from here, so hold it until the
+      // transfer import or storage scan releases the inputs.
+      return TransferQueue.whenIdle().then((_) {
+        if (!mounted) return TransferIntakeStatus.rejected;
+        return _enqueuePaths(paths, verb: verb, ignored: ignored);
+      });
+    }
+    return TransferQueue.withAdmission(
+      () => _enqueuePathsNow(paths, verb: verb, ignored: ignored, transferInput: transferInput),
+    );
+  }
+
+  Future<TransferIntakeStatus> _enqueuePathsNow(
+    List<String> paths, {
+    required String verb,
+    int ignored = 0,
+    TransferInput? transferInput,
   }) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
     int added = 0;
@@ -2532,9 +2655,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Shared-media intake and some picker implementations hand us a cache
       // path. Use the same persistent materialization path as file picking so
       // share/drop and picker have identical resume semantics.
-      final path = await CheckpointService.materializeTemporaryInput(
-        resolvedPath,
-      );
+      final path = transferInput != null
+          ? resolvedPath
+          : await CheckpointService.materializeTemporaryInput(resolvedPath);
       if (existing.contains(path)) continue;
       if (_config.applePortrait) {
         final portraitReason = await _portraitImportRejection(path);
@@ -2544,7 +2667,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             resolvedPath.split(RegExp(r'[/\\]')).last,
           );
           debugPrint(
-            '[XDRemux][portrait] rejected $resolvedPath: $portraitReason',
+            '[XDRemux][portrait] input rejected',
           );
           continue;
         }
@@ -2553,7 +2676,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         String effectivePath = path;
         final inputIsConverted = await XdRemuxService.verifyOutput(path);
         if (inputIsConverted) {
-          final donor = _findOriginalDonorForConvertedFile(path);
+          final donor = transferInput == null
+              ? _findOriginalDonorForConvertedFile(path)
+              : null;
           if (donor != null && !existing.contains(donor)) {
             debugPrint(
               '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
@@ -2568,7 +2693,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         final folderName = classification['folderName'] as String?;
         final outputPath = _config.outputPathFor(
           effectivePath,
-          fallbackDir: _androidOutputDir,
+          fallbackDir: transferInput?.outputDirectory ?? _androidOutputDir,
           captureModeFolderName: folderName,
         );
         final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
@@ -2621,7 +2746,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ignored == 0 &&
         skippedExisting == 0 &&
         skippedUnsupportedPortrait == 0) {
-      return;
+      return TransferIntakeStatus.failed;
     }
 
     final parts = <String>[];
@@ -2647,7 +2772,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         skippedExisting > 0 ||
         skippedUnsupportedPortrait > 0 ||
         verb == t('接收', 'Received')) {
-      if (!mounted) return;
+      if (!mounted) return TransferIntakeStatus.failed;
       final snackText = skippedExisting > 0
           ? t(
               '$skippedExisting 个文件已是转换后的 HDR 照片（如需应用新设置，请选择原始拍摄照片）',
@@ -2658,6 +2783,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(snackText)));
     }
+    return added > 0
+        ? TransferIntakeStatus.added
+        : ignored > 0
+        ? TransferIntakeStatus.unsupported
+        : TransferIntakeStatus.rejected;
+  }
+
+  Future<TransferIntakeAck> _acceptTransferInput(TransferInput input) async {
+    if (!mounted || _isProcessing) {
+      return const TransferIntakeAck(TransferIntakeStatus.rejected);
+    }
+    if (!isSupportedInputPath(input.path)) {
+      return const TransferIntakeAck(TransferIntakeStatus.unsupported);
+    }
+    final previous = _queue.where((q) => q.inputPath == input.path).toList();
+    final status = previous.isNotEmpty
+        ? TransferIntakeStatus.duplicate
+        : await _enqueuePaths([input.path],
+            verb: t('接收', 'Received'), transferInput: input);
+    final items = _queue.where((q) => q.inputPath == input.path).toList();
+    if (items.isEmpty) return TransferIntakeAck(status);
+    // ACK requires durable queue state, including imports made before a batch starts.
+    _checkpoint = Checkpoint(
+      header: CheckpointHeader(
+        configHash: CheckpointService.computeConfigHash(_config),
+        totalJobs: _queue.length,
+        startedAt: DateTime.now(),
+        appVersion: _version,
+      ),
+      items: CheckpointService.createItemsFromQueue(_queue),
+    );
+    await CheckpointService.save(_checkpoint!, requirePersistence: true);
+    return TransferIntakeAck(status, queueId: items.first.id);
   }
 
   void _revealInExplorer(String path) {
@@ -2795,6 +2953,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
+              if (TransferBindings.available) ...[
+                ListTile(
+                  leading: const Icon(Icons.send),
+                  title: Text(t('局域网发送原文件', 'Send original over LAN')),
+                  onTap: () => Navigator.pop(ctx, _OutputAction.sendOriginal),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.send_outlined),
+                  title: Text(t('局域网发送转换结果', 'Send converted file over LAN')),
+                  onTap: () => Navigator.pop(ctx, _OutputAction.sendOutput),
+                ),
+              ],
               ListTile(
                 leading: const Icon(Icons.open_in_new),
                 title: Text(t('打开', 'Open')),
@@ -2833,6 +3003,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     switch (action) {
+      case _OutputAction.sendOriginal:
+        await _openTransfer(
+          paths: [item.inputPath],
+          source: t('原文件', 'Original file'),
+        );
+      case _OutputAction.sendOutput:
+        await _openTransfer(
+          paths: [item.outputPath],
+          source: t('转换结果', 'Converted file'),
+        );
       case _OutputAction.details:
         _showPhotoDetails(item);
       case _OutputAction.save:
@@ -3010,6 +3190,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       );
     }
     final actions = <Widget>[
+      if (TransferBindings.available)
+        IconButton(
+          key: const ValueKey('open-local-transfer'),
+          icon: const Icon(Icons.wifi_tethering),
+          tooltip: t('局域网互传', 'Local transfer'),
+          onPressed: _openTransferActions,
+        ),
       if (!compact)
         IconButton(
           icon: const Icon(Icons.add_photo_alternate),
@@ -3983,6 +4170,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (TransferBindings.available)
+                ListTile(
+                  leading: const Icon(Icons.send),
+                  title: Text(t('局域网发送原文件', 'Send original over LAN')),
+                  onTap: () =>
+                      Navigator.pop(ctx, _PendingItemAction.sendOriginal),
+                ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: Text(t('照片详情', 'Photo details')),
@@ -4008,6 +4202,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     switch (action) {
+      case _PendingItemAction.sendOriginal:
+        await _openTransfer(
+          paths: [item.inputPath],
+          source: t('原文件', 'Original file'),
+        );
       case _PendingItemAction.details:
         _showPhotoDetails(item);
       case _PendingItemAction.remove:
@@ -5772,9 +5971,17 @@ class MobileQueueCard extends StatelessWidget {
 
 enum _ImportSource { photos, files }
 
-enum _OutputAction { save, share, open, details, reconvert }
+enum _OutputAction {
+  save,
+  share,
+  open,
+  details,
+  reconvert,
+  sendOriginal,
+  sendOutput,
+}
 
-enum _PendingItemAction { details, remove }
+enum _PendingItemAction { details, remove, sendOriginal }
 
 enum _MobileQueueAction { retry, remove }
 

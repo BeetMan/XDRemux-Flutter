@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-17",
+  "phase": "P1",
+  "upstreamCommit": "af0416be50770a97760f7070684bc667b759a15c",
+  "rust": "1.97.1",
+  "androidNdk": "28.2.13676358",
+  "androidRuntime": "Android 17, ARM64, ADB shell harness",
+  "unitAndHttpsTests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "fmt": "passed",
+  "clippy": "passed, all-targets, no-deps, -D warnings",
+  "windowsJunction": "rejected with UnsafeStorage; outside sentinel unchanged",
+  "windowsToAndroid": {
+    "direction": "Windows to Android",
+    "files": 5,
+    "bytes": 18579897.0,
+    "independentDiskVerification": true,
+    "fixtures": [
+      {
+        "name": "xdremux-poc-photo.heic",
+        "size": 1800239,
+        "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+      },
+      {
+        "name": "xdremux-poc-payload.bin",
+        "size": 16777216,
+        "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b"
+      },
+      {
+        "name": "xdremux-poc-photo.jpg",
+        "size": 248,
+        "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954"
+      },
+      {
+        "name": "xdremux-poc-empty.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "xdremux-poc-clip.mov",
+        "size": 2194,
+        "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a"
+      }
+    ]
+  },
+  "sourceFilesUnchanged": true,
+  "androidToWindows": {
+    "status": "passed",
+    "validatedAt": "2026-10-18",
+    "files": 5,
+    "bytes": 18579897,
+    "independentDiskVerification": true,
+    "allLengthsAndSha256Match": true,
+    "nativeHarnessHashesMatchRecordedBuilds": true,
+    "previousBlocker": "Windows Firewall blocked the test executable. User allowed inbound access; wireless ADB subsequently disconnected. Both blockers resolved before this successful rerun."
+  },
+  "artifacts": [
+    {
+      "platform": "windows-x86_64",
+      "bytes": 5039104,
+      "sha256": "a039a45f4bface80ab1bfa527ca10b93c8d60b6b0d97609e1f43beacf86af2ed"
+    },
+    {
+      "platform": "android-aarch64",
+      "bytes": 4102040,
+      "sha256": "dc8337e766b116df7d7a197c3507e4fa151ca8ac39d24cd2a6f1163d2338783b"
+    }
+  ],
+  "scope": "Native/shell service only; no Flutter, app permissions, gallery, background, Apple or HarmonyOS validation",
+  "bidirectionalValidation": {
+    "date": "2026-10-18",
+    "summary": {
+      "transport": "direct LAN HTTPS; ADB deployment, control and independent verification only",
+      "filesPerDirection": 5,
+      "bytesPerDirection": 18579897.0,
+      "allLengthsAndSha256Match": true,
+      "independentDiskVerification": true,
+      "sourceFilesUnchanged": true,
+      "fixtures": [
+        {
+          "name": "xdremux-poc-clip.mov",
+          "size": 2194,
+          "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a"
+        },
+        {
+          "name": "xdremux-poc-empty.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "xdremux-poc-payload.bin",
+          "size": 16777216,
+          "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b"
+        },
+        {
+          "name": "xdremux-poc-photo.heic",
+          "size": 1800239,
+          "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+        },
+        {
+          "name": "xdremux-poc-photo.jpg",
+          "size": 248,
+          "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954"
+        }
+      ]
+    },
+    "scope": "Windows x64 and Android ARM64 native/shell harnesses; file payloads transferred directly over LAN HTTPS."
+  }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "xdremux-transfer"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace]
+members = ["."]
+exclude = ["vendor/localsend"]
+
+[dependencies]
+localsend = { path = "vendor/localsend", default-features = false, features = ["http", "multicast"] }
+bytes = "1.12"
+fs2 = "0.4"
+futures-util = "0.3"
+pem = "4.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tempfile = "3.27"
+tokio = { version = "1.53", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+uuid = { version = "1.24", features = ["v4", "serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

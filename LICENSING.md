@@ -28,6 +28,7 @@ XDRemux-Flutter 的源代码按 **GNU General Public License 第 3 版（仅第 
 第三方组件保留各自的原始许可，被包含在 GPL 作品中并不改变它们自身的许可：
 
 - **x265**：GPL-2.0-or-later，静态链接进各平台的转换核心；源码与许可见 [x265](https://bitbucket.org/multicoreware/x265_git)。
+- **LocalSend core**：Apache-2.0。`crates/xdremux-transfer/vendor/localsend/` 是 [LocalSend](https://github.com/localsend/localsend) v1.18.2（提交 `af0416be`）`packages/core` 的源码子集，用于设备间局域网传输，经本项目修改，修改内容与来源见 [UPSTREAM.md](crates/xdremux-transfer/UPSTREAM.md)，原许可全文随附于同目录 `LICENSE`。Apache-2.0 可并入 GPL-3.0 作品；上游没有 NOTICE 文件。App 内「开源许可」页也列出了它的许可全文。
 - **libheif / libde265**（可选解码功能，默认不启用）：各自的许可见其上游项目，分发时保留其许可声明并遵守 LGPL 的重新链接要求。
 - **Rust crates、Flutter / Dart 包与平台插件**：许可以各自包的声明为准（多为 MIT、BSD 或 Apache-2.0）。
 - **鸿蒙平台的 Flutter 插件**（`tools/ohos/fetch_plugins.sh` 拉取的 CPF-Flutter 分支）：许可以各插件仓库的声明为准。

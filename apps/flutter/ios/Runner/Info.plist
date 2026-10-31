@@ -35,6 +35,8 @@
 	<array>
 		<string>com.pravera.flutter_foreground_task.refresh</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>在同一局域网内与其他设备互传照片和文件</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>保存转换后的 HDR 照片和完整 Live Photo 到相册</string>
 	<key>NSPhotoLibraryUsageDescription</key>

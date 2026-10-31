@@ -111,6 +111,12 @@ jobs:
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
 
+      - name: Build local transfer library
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          ./tools/native/build-transfer.ps1 -Platform windows
+
       - name: Install Dart dependencies
         working-directory: apps/flutter
         run: flutter pub get --enforce-lockfile
@@ -252,6 +258,15 @@ jobs:
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
 
+      # ring needs clang for aarch64-pc-windows-msvc. Without the library the
+      # installer still ships and hides the transfer entry.
+      - name: Build local transfer library
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          ./tools/native/build-transfer.ps1 -Platform windows
+
       - name: Install Dart dependencies
         working-directory: apps/flutter
         run: flutter pub get --enforce-lockfile
@@ -278,7 +293,11 @@ jobs:
           if ((Test-Path $src) -and -not (Test-Path $dst)) {
             Copy-Item $src $dst -Recurse
           }
-          foreach ($name in @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')) {
+          $names = @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')
+          if (Test-Path (Join-Path $dst 'runner/Release/xdremux_transfer.dll')) {
+            $names += 'xdremux_transfer.dll'
+          }
+          foreach ($name in $names) {
             $path = Join-Path $dst "runner/Release/$name"
             $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
             $pe = [BitConverter]::ToInt32($bytes, 0x3c)
@@ -471,6 +490,11 @@ jobs:
         working-directory: xdremux/rust
         run: cargo ndk -t arm64-v8a -o ../../apps/flutter/android/app/src/main/jniLibs build --release
 
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target aarch64-linux-android
+          bash tools/native/build-transfer.sh android
+
       - name: Bundle Android C++ runtime
         shell: bash
         run: |
@@ -585,6 +609,11 @@ jobs:
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
 
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          bash tools/native/build-transfer.sh macos
+
       - name: Install Dart dependencies
         working-directory: apps/flutter
         run: flutter pub get --enforce-lockfile
@@ -604,6 +633,8 @@ jobs:
           # load the Rust core. Fail here instead of patching it up afterwards.
           test -f "$DY" || { echo "Rust dylib missing from the bundle" >&2; exit 1; }
           test -x "$DY" || { echo "Rust dylib is not executable" >&2; exit 1; }
+          test -f "$APP/Contents/Frameworks/libxdremux_transfer.dylib" || {
+            echo "Local transfer dylib missing from the bundle" >&2; exit 1; }
           # The copy phase runs before CodeSign, so both the dylib and the app
           # seal must be intact. A post-build copy would break the seal.
           codesign -v --deep --strict "$APP"
@@ -695,6 +726,11 @@ jobs:
           # it at the runner's current iPhoneOS SDK.
           bash xdremux/rust/build_ios.sh
 
+      - name: Build local transfer framework
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target aarch64-apple-ios --target aarch64-apple-ios-sim
+          bash tools/native/build-transfer.sh ios
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -743,6 +779,8 @@ jobs:
             fi
           done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
           echo 'Validated all Dart runtime FFI exports in the iOS archive.'
+          test -f "$APP/Frameworks/xdremux_transfer.framework/xdremux_transfer" || {
+            echo "Local transfer framework missing from the app" >&2; exit 1; }
           mkdir -p apps/flutter/build/ios/ipa/Payload
           cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
           cd apps/flutter/build/ios/ipa

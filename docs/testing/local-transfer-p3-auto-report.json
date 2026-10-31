@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "date": "2026-10-25",
+  "baseCommit": "319873fdf0b1f4024fc140f086a2fbb1fc092108",
+  "status": "automatic Windows subsets passed; full P3.2 and reverse official UI remain incomplete",
+  "matrix": {
+    "passed": true,
+    "scope": "Windows real DLL and Dart worker; loopback and explicitly assigned local interfaces, no OS network changes",
+    "sharedRootError": "busy",
+    "multiInterfaceDirections": 3,
+    "assignedInterfacesTested": 2,
+    "interfaceChangeType": "explicit service bind change; OS interfaces untouched",
+    "checks": [
+      "ipv4_distinct_loopback_addresses_same_port_bidirectional_four_files",
+      "same_address_port_conflict_does_not_stop_other_receivers",
+      "same_root_exclusive_lease_preserves_original_runtime",
+      "independent_stop_exact_port_root_reopen_and_persistent_receipts",
+      "ipv6_loopback_https_certificate_and_bidirectional_four_files",
+      "two_assigned_interfaces_same_port_bidirectional_and_no_wildcard_bind",
+      "explicit_interface_rebind_same_root_identity_and_new_transfer"
+    ],
+    "filesPerLoopbackDirection": 4,
+    "loopbackDirections": 4,
+    "verifiedFileDeliveries": 25,
+    "independentHashes": true,
+    "sourceHashes": {
+      "empty.bin": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "中文-🧪.bin": "b1f5da728e921d9f66e872af01fa07ec1c9e4b251eada2aa6ba19e5acbc68aab",
+      "opaque.heic": "2447b36e250debd22f170f9c9e627d088342baa80b27c665bb6911b1da38c564",
+      "opaque.mov": "e76e4c02227083fd12207b7bc85287bb9e02a618fed3bd8eab1bc2daeda2fb53"
+    },
+    "sourceUnchanged": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+    "osNetworkSettingsChanged": false
+  },
+  "officialReceiver": {
+    "passed": true,
+    "officialPort": 53317,
+    "officialVersion": "1.17.0+58",
+    "scope": "Windows native -> official 1.17 receiver; same-host multicast coexistence; reverse UI not covered",
+    "officialExecutableSha256": "83bad026583a847ab579cefc463627601b2c9341707bf0e0e8e3c21d20ae5949",
+    "officialProtocolVersion": "2.1",
+    "officialFingerprint": "046D68EC91B719E30E21BD377139CD23101D9DB46677EA2E0446D196EA6A3FD8",
+    "officialPortConflictAndAlternateListener": true,
+    "nativeDiscoverySeesOfficial": true,
+    "simultaneousMulticastStart": true,
+    "wrongFingerprintRejectedWithoutFiles": true,
+    "wrongPinRejectedWithoutFiles": true,
+    "nativeToOfficial": {
+      "files": 4,
+      "independentHashes": true
+    },
+    "officialToNative": {
+      "status": "not_run",
+      "reason": "receive-only harness; reverse UI must be validated separately"
+    },
+    "fixtures": {
+      "p3-auto-empty.bin": {
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "p3-auto-中文-🧪.bin": {
+        "size": 20,
+        "sha256": "b72da95c53233e593c3517050ab210b4c6a8d270a72017c329a6ffd5ce9a02bd"
+      },
+      "p3-auto-opaque.heic": {
+        "size": 65548,
+        "sha256": "2447b36e250debd22f170f9c9e627d088342baa80b27c665bb6911b1da38c564"
+      },
+      "p3-auto-opaque.mov": {
+        "size": 1048576,
+        "sha256": "e76e4c02227083fd12207b7bc85287bb9e02a618fed3bd8eab1bc2daeda2fb53"
+      }
+    },
+    "sourceUnchanged": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+    "osNetworkSettingsChanged": false,
+    "originalConfigurationUnchanged": true
+  },
+  "independentAudit": {
+    "nativeReceiptFiles": 25,
+    "officialDestinationFiles": 4,
+    "verifiedFileDeliveries": 29,
+    "allLengthsAndHashesMatchSources": true,
+    "originalConfigurationMatchesInitialTaskBaseline": true
+  },
+  "officialProvenance": {
+    "version": "1.17.0+58",
+    "existingInstallationUsed": true,
+    "newSoftwareDownloaded": false,
+    "exeSha256": "83bad026583a847ab579cefc463627601b2c9341707bf0e0e8e3c21d20ae5949",
+    "aotSha256": "1b3e063a64555b840a07aa8e589a51c26fb8e0fda23b086fd7b10af37b533444",
+    "sourceTag": "v1.17.0",
+    "settingsReferences": [
+      "https://raw.githubusercontent.com/localsend/localsend/v1.17.0/app/lib/provider/persistence_provider.dart",
+      "https://raw.githubusercontent.com/localsend/localsend/v1.17.0/app/lib/util/shared_preferences/shared_preferences_portable.dart"
+    ]
+  },
+  "cleanup": {
+    "officialProcessRemaining": false,
+    "multicastPortReleased": true,
+    "ownedTcpPortsReleased": true
+  },
+  "uiAttempt": {
+    "status": "blocked",
+    "reason": "Windows network permission prompt",
+    "permissionButtonActedOn": false,
+    "unexpectedInstalledLaunchStopped": true,
+    "originalConfigurationUnchanged": true,
+    "skill": "computer-use",
+    "rule": "Do not act on security or privacy permission requests."
+  },
+  "checks": {
+    "scriptsExecutedWithRealDllAndWorker": true,
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true,
+    "fullFlutterTestsRerun": false,
+    "lastFullFlutterCount": 140,
+    "lastFullFlutterCommit": "319873fdf0b1f4024fc140f086a2fbb1fc092108",
+    "releaseBuildsRerun": false,
+    "sameDllAsCurrentWindowsRelease": true
+  },
+  "sourceSha256": {
+    "apps/flutter/tool/transfer_platform_matrix.dart": "dfe667ae8c5cdcc87c454f25610fe9a3407bdf64690435a5de7e895e511a5c89",
+    "apps/flutter/tool/transfer_official_coexist.dart": "1b19b80fe1e30b0acf0381ee197d2358318ded9fc62fd40b867a1ad09ec99f1d"
+  },
+  "productionControllerCoreAbiChanged": false,
+  "nativeLibraryChanged": false,
+  "transferAbi": "1.3",
+  "phoneOperated": false,
+  "systemNetworkFirewallOrVpnSettingsChangedByTask": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "limits": [
+    "same-host traffic, not a cross-device LAN test",
+    "synthetic opaque HEIC/MOV names, not media/gallery/Live Photo validation",
+    "explicit service bind changes, not physical disconnect or VPN switching",
+    "raw service/worker harnesses, not ordinary application UI acceptance",
+    "old official Windows client reverse direction blocked by OS permission UI"
+  ],
+  "pending": [
+    "real network outage/switch, VPN reconfiguration and route changes",
+    "AP isolation and system permission revocation",
+    "IPv6 link-local scope and additional real network topologies",
+    "official 1.17 Windows reverse UI",
+    "latest Android ordinary-app lifecycle and large batch retest",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}
