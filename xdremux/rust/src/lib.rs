@@ -11,6 +11,7 @@ pub mod container_build;
 pub mod edr;
 pub mod exif;
 pub mod live_photo;
+pub mod live_photo_styles;
 pub mod live_photo_bundle;
 pub mod motion_photo;
 pub mod photo_details;

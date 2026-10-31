@@ -11,7 +11,7 @@
 
 use crate::motion_photo::OppoMetadata;
 
-const QUICKTIME_EPOCH_OFFSET: u64 = 2_082_844_800;
+pub(crate) const QUICKTIME_EPOCH_OFFSET: u64 = 2_082_844_800;
 const METADATA_TIMESCALE: u32 = 600;
 const CONTENT_IDENTIFIER_KEY: &[u8] = b"com.apple.quicktime.content.identifier";
 const LIVE_PHOTO_AUTO_KEY: &[u8] = b"com.apple.quicktime.live-photo.auto";
@@ -504,23 +504,23 @@ pub fn patch_makernote_inplace(tiff: &mut [u8], replacement: &[u8]) -> Result<bo
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
-struct MovBox {
-    offset: usize,
-    size: usize,
-    kind: [u8; 4],
-    header_size: usize,
+pub(crate) struct MovBox {
+    pub(crate) offset: usize,
+    pub(crate) size: usize,
+    pub(crate) kind: [u8; 4],
+    pub(crate) header_size: usize,
 }
 
 impl MovBox {
-    fn payload_offset(&self) -> usize {
+    pub(crate) fn payload_offset(&self) -> usize {
         self.offset + self.header_size
     }
-    fn end(&self) -> usize {
+    pub(crate) fn end(&self) -> usize {
         self.offset + self.size
     }
 }
 
-fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, String> {
+pub(crate) fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, String> {
     let mut out = Vec::new();
     let mut offset = start;
     while offset < end {
@@ -564,7 +564,7 @@ fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, Stri
     Ok(out)
 }
 
-fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+pub(crate) fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     let size = 8 + payload.len();
     if size <= 0xFFFF_FFFF {
         let mut v = Vec::with_capacity(size);
@@ -582,7 +582,7 @@ fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     }
 }
 
-fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> {
+pub(crate) fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> {
     let mut p = Vec::with_capacity(4 + payload.len());
     p.push(version);
     p.extend_from_slice(&flags.to_be_bytes()[1..]);
@@ -590,14 +590,14 @@ fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> 
     make_box(kind, &p)
 }
 
-fn direct_child<'a>(data: &[u8], parent: &MovBox, kind: &[u8; 4]) -> Result<MovBox, String> {
+pub(crate) fn direct_child<'a>(data: &[u8], parent: &MovBox, kind: &[u8; 4]) -> Result<MovBox, String> {
     scan_boxes(data, parent.payload_offset(), parent.end())?
         .into_iter()
         .find(|b| &b.kind == kind)
         .ok_or_else(|| format!("missing {} box", String::from_utf8_lossy(kind)))
 }
 
-fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
+pub(crate) fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
     let root = MovBox {
         offset: 0,
         size: moov.len(),
@@ -623,14 +623,14 @@ fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
     Ok((timescale, duration))
 }
 
-fn track_id(moov: &[u8], track: &MovBox) -> Result<u32, String> {
+pub(crate) fn track_id(moov: &[u8], track: &MovBox) -> Result<u32, String> {
     let tkhd = direct_child(moov, track, b"tkhd")?;
     let version = moov[tkhd.payload_offset()];
     let off = tkhd.offset + if version == 0 { 20 } else { 28 };
     Ok(u32::from_be_bytes(moov[off..off + 4].try_into().unwrap()))
 }
 
-fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
+pub(crate) fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
     let mdia = direct_child(moov, track, b"mdia")?;
     let hdlr = direct_child(moov, &mdia, b"hdlr")?;
     if hdlr.size < 20 {
@@ -641,7 +641,7 @@ fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
         .unwrap())
 }
 
-fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
+pub(crate) fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
     let mdia = direct_child(moov, track, b"mdia")?;
     let mdhd = direct_child(moov, &mdia, b"mdhd")?;
     let version = moov[mdhd.payload_offset()];
@@ -654,7 +654,7 @@ fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
 }
 
 /// Sample presentation times (seconds) of a track from stts+ctts.
-fn sample_pts_seconds(moov: &[u8], track: &MovBox) -> Result<Vec<f64>, String> {
+pub(crate) fn sample_pts_seconds(moov: &[u8], track: &MovBox) -> Result<Vec<f64>, String> {
     let timescale = mdhd_timescale(moov, track)?;
     let mdia = direct_child(moov, track, b"mdia")?;
     let minf = direct_child(moov, &mdia, b"minf")?;
@@ -1469,7 +1469,13 @@ pub fn make_live_photo(
         return Err("failed to write the Live Photo MakerNote into the still".into());
     }
 
-    let mov = write_live_photo_movie(video, &content_id, still_time, oppo_metadata)?;
+    let mut mov = write_live_photo_movie(video, &content_id, still_time, oppo_metadata)?;
+    // A styled still sends Photos down the styled Live Photo pipeline, which
+    // needs the MOV's linear-thumbnail port; without it Edit aborts.
+    if crate::live_photo_styles::still_has_styles(&still_out) {
+        let level = crate::live_photo_styles::MovieStyleLevel::from_env();
+        mov = crate::live_photo_styles::attach_style_tracks(&mov, &still_out, level)?;
+    }
     Ok((still_out, mov, content_id))
 }
 
