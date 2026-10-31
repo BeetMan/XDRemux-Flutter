@@ -2,11 +2,17 @@
 
 ## 本项目代码
 
-自 v0.4.6 起，XDRemux-Flutter 的源代码按 **GNU General Public License 第 3 版（仅第 3 版，GPL-3.0-only）** 授权，全文见 [LICENSE](LICENSE)。范围包括 Flutter / Dart、Rust、Swift / Objective-C、ArkTS、构建与工具脚本，以及项目自写的文档（文件另有声明的除外）。
+XDRemux-Flutter 的源代码按 **GNU General Public License 第 3 版（仅第 3 版，GPL-3.0-only）** 授权，全文见 [LICENSE](LICENSE)。范围包括 Flutter / Dart、Rust、Swift / Objective-C、ArkTS、构建与工具脚本，以及项目自写的文档（文件另有声明的除外）。
 
-v0.4.5 及更早的版本按当时附带的 MIT 许可发布，已经发出的授权不受这次变更影响。
+## 历史版本
 
-v0.4.6 发布时标签中的 `LICENSE` 文件仍是 MIT 文本，但该版本包含下文所列移植自上游的代码，上游对这些代码只给出 GPL-3.0-only 授权，因此 v0.4.6 整体按 GPL-3.0-only 适用；本文件与新的 `LICENSE` 随后补入主线。
+本项目作者额外以 GPL-3.0-only 授权 v0.1.0 至 v0.4.6 的全部 Flutter 版发布标签，以及 `harmony-v*` 鸿蒙原生版发布标签。
+
+- 这些版本中本项目自有代码此前附带的 MIT 授权继续有效，不因本说明撤回；v0.4.6 标签中的 `LICENSE` 文件仍是当时的 MIT 文本。
+- 移植自上游的部分（见下节）按上游 GPL-3.0-only 授权使用。
+- 各平台安装包因静态链接 x265 等 GPL 组件，整体按 GPL 分发。
+
+请勿改写历史标签来表示当时已附带 GPL 声明。
 
 ## 来自上游 XDRemux 的代码
 
