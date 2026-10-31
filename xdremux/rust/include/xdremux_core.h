@@ -430,6 +430,21 @@ void xdremux_free_thumbnail(struct ThumbnailResult result);
  */
 void xdremux_free_result(struct ConversionResult result);
 
+#if (!defined(XDREMUX_FFMPEG_FALLBACK) && defined(XDREMUX_MAIN10))
+/**
+ * [`xdremux_encode_10bit_planes`] that also reports the PSNR of x265's
+ * reconstructed luma against `p0` (used by tests to catch layout bugs).
+ */
+extern int xdremux_encode_10bit_planes_checked(const uint16_t *p0,
+                                               const uint16_t *p1,
+                                               const uint16_t *p2,
+                                               int width,
+                                               int height,
+                                               uint8_t **out,
+                                               int *out_len,
+                                               double *luma_psnr);
+#endif
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
