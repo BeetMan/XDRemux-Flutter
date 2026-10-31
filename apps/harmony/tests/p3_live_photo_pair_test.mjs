@@ -6,6 +6,7 @@ import {
 import {
   attachLivePhotoExportTargets,
   buildLivePhotoExportPlan,
+  livePhotoExportStem,
   runLivePhotoPairExport,
   summarizeLivePhotoExport
 } from '../entry/src/main/ets/queue/LivePhotoPairExport.ts';
@@ -144,6 +145,19 @@ const cleanupWarningPair = await runLivePhotoPairPipeline(
 assert.match(cleanupWarningPair.cleanupWarning, /cleanup failed/);
 
 const exportPlan = buildLivePhotoExportPlan(paired);
+
+// User-facing names follow the original photo, not the sandbox scratch stem.
+assert.equal(livePhotoExportStem('IMG20260731191303.jpg', 'fallback'), 'IMG20260731191303');
+assert.equal(livePhotoExportStem('IMG_20260926_174343.heic', 'fallback'), 'IMG_20260926_174343');
+assert.equal(livePhotoExportStem('我的 照片 (1).jpg', 'fallback'), '1');
+assert.equal(livePhotoExportStem('我的照片.jpg', 'fallback'), 'fallback');
+assert.equal(livePhotoExportStem('夜景 IMG 1.jpg', 'fallback'), 'IMG_1');
+assert.equal(livePhotoExportStem('a.b.c.HEIC', 'fallback'), 'a_b_c');
+assert.equal(livePhotoExportStem('', 'fallback'), 'fallback');
+const namedPlan = buildLivePhotoExportPlan(paired, 'IMG20260731191303');
+assert.deepEqual(namedPlan.map((entry) => entry.fileName), ['IMG20260731191303.heic', 'IMG20260731191303.mov']);
+assert.equal(namedPlan[0].sourcePath, paired.stillPath);
+assert.throws(() => buildLivePhotoExportPlan(paired, 'bad name'), /不安全/);
 assert.equal(exportPlan.length, 2);
 assert.equal(exportPlan[0].fileName.replace(/\.heic$/, ''), exportPlan[1].fileName.replace(/\.mov$/, ''));
 const unorderedUris = [

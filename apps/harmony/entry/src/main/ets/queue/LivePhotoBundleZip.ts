@@ -170,11 +170,10 @@ function extensionOf(leaf: string): string {
   return dot <= 0 ? '' : leaf.substring(dot + 1).toLowerCase();
 }
 
-/** `<stem>.pvt` directory name for a paired still path. */
-export function livePhotoBundleName(stillPath: string): string {
-  const stem: string = stemOf(leafOf(stillPath));
+/** `<stem>.pvt` directory name; Rust names the HEIC/MOV inside after the same stem. */
+export function livePhotoBundleName(stem: string): string {
   if (stem.length === 0 || !/^[A-Za-z0-9_-]+$/.test(stem)) {
-    throw new Error('Live Photo 静态图文件名不能用于 .pvt 包');
+    throw new Error('Live Photo 文件名不能用于 .pvt 包');
   }
   return stem + '.pvt';
 }

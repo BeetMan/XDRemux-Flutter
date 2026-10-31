@@ -102,6 +102,7 @@ import type {
 import {
   attachLivePhotoExportTargets,
   buildLivePhotoExportPlan,
+  livePhotoExportStem,
   runLivePhotoPairExport,
   summarizeLivePhotoExport
 } from '../queue/LivePhotoPairExport';
@@ -2268,7 +2269,7 @@ struct Index {
       this.operationStatus = '应用沙盒尚未加载';
       return;
     }
-    const entries: Array<LivePhotoExportEntry> = buildLivePhotoExportPlan(pair);
+    const entries: Array<LivePhotoExportEntry> = buildLivePhotoExportPlan(pair, this.livePhotoExportStemFor(item, pair));
     const itemId: string = item.id;
     let locked: boolean = false;
     this.pageBusy = true;
@@ -2379,11 +2380,16 @@ struct Index {
    * share target may still read it after the panel closes, so it is cleared
    * at the start of the next packaging run rather than right after sharing.
    */
-  private async buildLivePhotoBundleZip(pair: LivePhotoPairResult, cacheDir: string): Promise<string> {
+  private livePhotoExportStemFor(item: QueueItem, pair: LivePhotoPairResult): string {
+    const still: string = pair.stillPath.substring(pair.stillPath.lastIndexOf('/') + 1);
+    return livePhotoExportStem(item.displayName, still.substring(0, still.lastIndexOf('.')));
+  }
+
+  private async buildLivePhotoBundleZip(pair: LivePhotoPairResult, stem: string, cacheDir: string): Promise<string> {
     const workDir: string = cacheDir + '/pvt-export';
     if (await fileIo.access(workDir)) await fileIo.rmdir(workDir);
     await fileIo.mkdir(workDir);
-    const bundleName: string = livePhotoBundleName(pair.stillPath);
+    const bundleName: string = livePhotoBundleName(stem);
     const bundlePath: string = workDir + '/' + bundleName;
     const report: LivePhotoBundleReport = parseLivePhotoBundleReport(
       await xdremuxNative.livePhotoBundleMake(pair.stillPath, pair.movPath, bundlePath) as string, bundlePath);
@@ -2445,7 +2451,7 @@ struct Index {
       controller.beginExternal(itemId);
       locked = true;
       await controller.persist();
-      const zipPath: string = await this.buildLivePhotoBundleZip(pair, context.cacheDir);
+      const zipPath: string = await this.buildLivePhotoBundleZip(pair, this.livePhotoExportStemFor(item, pair), context.cacheDir);
       const zipName: string = zipPath.substring(zipPath.lastIndexOf('/') + 1);
       controller.endExternal(itemId);
       locked = false;

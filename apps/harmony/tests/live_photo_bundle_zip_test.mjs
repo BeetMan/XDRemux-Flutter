@@ -17,9 +17,9 @@ assert.equal(crc32(new Uint8Array(0)), 0);
 assert.deepEqual(dosDateTime(new Date(2026, 9, 31, 6, 30, 59)), [((2026 - 1980) << 9) | (10 << 5) | 31, (6 << 11) | (30 << 5) | 29]);
 assert.equal(dosDateTime(new Date(1970, 0, 1))[0] >> 9, 0);
 
-assert.equal(livePhotoBundleName('/s/outputs/input-job-1-live-1-1.heic'), 'input-job-1-live-1-1.pvt');
-assert.throws(() => livePhotoBundleName('/s/outputs/bad name.heic'), /不能用于/);
-assert.throws(() => livePhotoBundleName('/s/outputs/.heic'), /不能用于/);
+assert.equal(livePhotoBundleName('IMG20260731191303'), 'IMG20260731191303.pvt');
+assert.throws(() => livePhotoBundleName('bad name'), /不能用于/);
+assert.throws(() => livePhotoBundleName(''), /不能用于/);
 
 const still = { leaf: 'a.heic', data: bytes('still') };
 const mov = { leaf: 'a.mov', data: bytes('movie!') };

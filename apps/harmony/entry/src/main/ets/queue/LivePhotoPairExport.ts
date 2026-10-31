@@ -34,7 +34,22 @@ function safeToken(value: string): boolean {
   return value.length > 0 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
-export function buildLivePhotoExportPlan(pair: LivePhotoPairResult): Array<LivePhotoExportEntry> {
+/**
+ * User-facing file stem for a Live Photo export: the original photo's name
+ * without extension (IMG20260731191303.jpg -> IMG20260731191303), not the
+ * sandbox scratch stem. Characters outside [A-Za-z0-9_-] become '_' so the
+ * name stays valid for the save picker and the ASCII-only .pvt zip; a name
+ * with nothing usable falls back to `fallback`.
+ */
+export function livePhotoExportStem(displayName: string, fallback: string): string {
+  const leafName: string = leaf(displayName.trim());
+  const dot: number = leafName.lastIndexOf('.');
+  const base: string = dot > 0 ? leafName.substring(0, dot) : leafName;
+  const cleaned: string = base.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').substring(0, 80);
+  return /[A-Za-z0-9]/.test(cleaned) ? cleaned : fallback;
+}
+
+export function buildLivePhotoExportPlan(pair: LivePhotoPairResult, exportStem: string = ''): Array<LivePhotoExportEntry> {
   const stillLeaf: string = leaf(pair.stillPath);
   const movLeaf: string = leaf(pair.movPath);
   if (!stillLeaf.endsWith('.heic') || !movLeaf.endsWith('.mov')) {
@@ -45,12 +60,14 @@ export function buildLivePhotoExportPlan(pair: LivePhotoPairResult): Array<LiveP
   if (stillStem !== movStem || !safeToken(stillStem)) {
     throw new Error('Live Photo 导出文件必须使用同一安全文件名');
   }
+  const stem: string = exportStem.length > 0 ? exportStem : stillStem;
+  if (!safeToken(stem)) throw new Error('Live Photo 导出文件名含有不安全字符');
   return [
     {
       kind: 'still',
       label: 'HEIC 静态图',
       sourcePath: pair.stillPath,
-      fileName: stillStem + '.heic',
+      fileName: stem + '.heic',
       targetUri: '',
       status: 'waiting',
       errorMessage: ''
@@ -59,7 +76,7 @@ export function buildLivePhotoExportPlan(pair: LivePhotoPairResult): Array<LiveP
       kind: 'video',
       label: 'MOV 视频',
       sourcePath: pair.movPath,
-      fileName: movStem + '.mov',
+      fileName: stem + '.mov',
       targetUri: '',
       status: 'waiting',
       errorMessage: ''
