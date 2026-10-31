@@ -38,6 +38,7 @@ import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
 import 'widgets/codec_diagnostics_tile.dart';
 import 'services/codec_diagnostics.dart';
+import 'services/license_notices.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -139,6 +140,7 @@ class PlatformLayoutTraits {
 }
 
 void main() {
+  registerAppLicenses();
   runApp(const XdRemuxApp());
 }
 
@@ -5275,6 +5277,22 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // Cache management (Android / iOS)
                     const Divider(),
                     CodecDiagnosticsTile(english: _cfg.language == AppLanguage.english),
+
+                    const Divider(),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.gavel_outlined),
+                      title: Text(t('开源许可', 'Open source licenses')),
+                      subtitle: Text(
+                        t('GPL-3.0-only；源代码、x265 与第三方组件许可',
+                            'GPL-3.0-only; source code, x265 and third-party licenses'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      onTap: () => showAppLicenses(
+                        context,
+                        english: _cfg.language == AppLanguage.english,
+                      ),
+                    ),
 
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       const Divider(),

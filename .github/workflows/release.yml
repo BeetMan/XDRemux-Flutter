@@ -622,6 +622,9 @@ jobs:
           # (it is embedded in the Mach-O, not in an extended attribute).
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
+          # GPL-3.0-only notice next to the app (see LICENSING.md).
+          cp LICENSE "$STAGE/LICENSE.txt"
+          cp LICENSING.md "$STAGE/LICENSING.md"
           test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
           test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
           hdiutil create -volname XDRemux \
