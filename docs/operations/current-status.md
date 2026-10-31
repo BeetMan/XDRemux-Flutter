@@ -89,17 +89,21 @@
 
 ## 4. 已知风险与未验证项
 
-1. **Styles native 路径不是逐像素等价**：`styleData` 仅 key 1 / key 3 按图拟合，key 4/h、统计仍为参考值，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
+1. **Styles native 路径不是逐像素等价**：`styleData` 仅 key 3 按图拟合（key 1 自 10-30 起固定 identity，见 §4.1），key 4/h、统计仍为参考值，天空分割待 R4；目标只是"Apple 照片可继续编辑"，不是原生画质。**未验证**：全量样本在最新 iOS 上的编辑入口一致性。
 2. **线性缩略图已改为 Apple Log + 原生几何 + 可选 Main10 + HDR 增益（2026-10-25）**：构建期链接了 10-bit x265 静态库时走 16-bit codes → Main10（hvcC bitDepth=10、SPS profile_idc=2，本机与真实样本均已断言）；库缺失时自动回退 8-bit 4:2:0 过渡路径。10-bit 归档已验证：Windows（真实样本 E2E）、Linux（CI 双库构建）、Android arm64（NDK 27 + cargo ndk）、鸿蒙 arm64（DevEco SDK + `build_ohos.sh`）；iOS（真机 + 模拟器）与 macOS 本机的 10-bit 归档于 2026-10-28 构建通过：`build_ios.sh`/`build_ios_sim.sh` 默认构建 10-bit，`build.rs` 把它打包进 `libxdremux_core.a`（staticlib 不吃 link-arg），按 Podfile 参数模拟链接通过；**未在 iOS 真机或模拟器上运行**，macOS 发布包尚未启用 10-bit。**HDR 增益图（路径 3）已落地**：转换管线把内存里的重建增益图直接乘进 scene-linear base，真实样张缩略图 16-bit luma max 35610→46159、mean 21401→26070；增益图方向按写路径规则对齐（EXIF 非 Normal 且主图 `irot==0` 时做同一变换，Normal 样本回归数值不变）。**仍缺**：① 原生 Apple tmap 文件的重编码场景仍需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0）；② baseline exposure 绝对亮度与 HDR 缩略图接受度**未在真机与原生 A/B 验证**（验收清单见 `docs/testing/styles-hdr-device-checklist.md`，PR #25）；③ 旋转样本的真实 E2E 未验证（现有样本 orientation 均为 Normal）。详见 `docs/modules/styles-pipeline.md` §4。
 3. **Live Photo 发布校验只在检查点恢复路径**；转换成功当次没有"立即校验 + 半成品回滚 + 独立恢复副本"（上游 #76/#78 的后半段）。
 4. **本机 Windows 跑 Rust 测试的两个坑（已解决，2026-10-25）**：① worktree 缺 gitignored 的 `vendor/x265`（`build.rs` 找不到头文件）；② 多 worktree 共用 `target/` 时 `zstd-sys` 的旧 C 产物污染。处理：vendor 用目录联接 + 独立 `CARGO_TARGET_DIR` + vcvars 环境，配方见 `docs/operations/building.md` §1「Windows 本地开发」。**已实测**：`cargo test -p xdremux-core --lib` = 248 passed / 0 failed / 3 ignored。
 5. **CI 只覆盖 Ubuntu + Flutter**（`.github/workflows/ci.yml`）：Windows/macOS 原生行为、真机 Photos 验收不在 CI 内。
 6. **鸿蒙原生版与 Flutter 版共用 Rust 核心**：任何 `xdremux/rust` 改动合入后需要重建鸿蒙 `.so` 并复测。
 
+### 4.1 Standard key 1 色格判定（2026-10-30，已实测，消费端模型）
+
+上游 PR #88（未合并）判定 Standard 的 key 1 不能用 primary→thumbnail 拟合（gain-map 比值放不进有界多项式，Photos 里画出 12×9 色格）；我方 `styles_fit.rs::revert_local_style_data`（PR #33）是同一设计。本机用 `examples/styles_convert` + `examples/styles_key1_color_probe` 对 3 张 OPPO 样张读回 key 1 并在主图上回放：ΔE76 均值 2.15–2.93 / p95 5.1–6.2 / 最大 15–23，色度偏移按 12×9 格分布，identity 对照为 0，无增益图重拟合给出同量级 → 偏移来自 h/key4 = 0.46 的曝光比本身。机理复现、幅度可见但未到上游宽盒子的"红/绿/青色格"量级。**macOS 27.2 照片实测（10-30，维护者拉滑块）**：2 张连续无色块，带白色水印的 `IMG20260822150037` 调节时色块变化突兀、水印区出现图案状效果——色格在真实 Photos 上部分复现（1/3）。**已实施（PR #38）：Standard key 1 回 identity，保留 key 3 GTC 与 HDR 线性缩略图**（`styles_native.rs::apply_per_image_fit` 只取 GTC，拟合保留作诊断；重新转换 3 张样张读回 key 1 = identity）。**已复验（10-30，macOS 27.2 照片）**：水印样张用新输出拉滑块效果合理，突兀色块消失。iOS 真机 A/B（`styles-hdr-device-checklist.md`）用 identity key 1 的输出做。证据与命令：`docs/research/styles-key1-color-grid-20261030.md`，`docs/modules/styles-pipeline.md` §4.1。
+
 ## 5. 下一步优先级
 
 1. ~~合并 PR #25~~ **已完成**；按 `docs/testing/styles-hdr-device-checklist.md` 跑 S1/S2/S3（orientation 6/3/8）/S7 真机 A/B —— 这是覆盖 §4.2 的 ②③ 未验证项的唯一闭环手段。
-2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：macOS 照片已确认接受拟合值（10-30，3 张 OPPO 样张），剩滑块观感与原生的主观 A/B；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
+2. Styles 画质下一步（缩略图 P0-1/P0-2 已完成；P1-1 每图 key1 拟合、P1-2 GTC 单调拟合已实现，见 `docs/modules/styles-pipeline.md` §4.1）：macOS 照片已确认接受拟合值（10-30，3 张 OPPO 样张）；**10-30 色格判定（§4.1）：Photos 实测 1/3 样张出现突兀色块，Standard key 1 已回 identity（PR #38，拟合/回放保留作诊断），macOS 照片复验通过**；之后是 per-image key 4/h（`linear_metadata`）与 P1-3 统计。
 3. iOS Main10 上机验证：真机或模拟器跑一次 Styles 转换，确认缩略图 hvcC bitDepth=10（构建与链接已完成，见 `docs/operations/building.md` §1）；评估 macOS 发布包是否也启用 10-bit。
 4. PR #29（`codex/local-transfer`）：review 发现的问题已于 10-29 修完、CI 全绿；剩 Android 导出与 macOS/iOS 设备互通真机实测，然后合并。
 5. 真机确认 baseline exposure 绝对亮度与 Photos 对「4:2:0 增益图 + Main10 缩略图」组合的接受度。

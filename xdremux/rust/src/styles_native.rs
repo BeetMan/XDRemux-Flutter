@@ -283,14 +283,7 @@ fn assemble_styles(
     if let Some((c, d, fit_raster)) = dynamic_light_maps {
         style_state.light_c = c;
         style_state.light_d = d;
-        // Per-image key 1 / key 3 against the key 4 / h this plist carries.
-        // A failed fit keeps the identity resources (still a valid file).
-        if let Ok(fitted) =
-            crate::styles_fit::fit_style_state(&fit_raster, style_state.tag4, style_state.tag_h)
-        {
-            style_state.key1 = fitted.style_data;
-            style_state.gtc = fitted.global_tone_curve.data;
-        }
+        apply_per_image_fit(&mut style_state, &fit_raster);
     }
     let bplist = build_style_metadata_with(&style_state);
 
@@ -653,6 +646,25 @@ fn assemble_styles(
 // ---------------------------------------------------------------------------
 // style metadata bplist
 // ---------------------------------------------------------------------------
+
+/// Take the per-image fits into the plist state: key 3 (GTC) against the
+/// key 4 / h this plist carries. Key 1 stays the identity lattice: Photos
+/// applies it to the displayed primary, and the primary -> thumbnail ratio
+/// (h / key 4 alone is 0.46) does not fit the bounded quadratic, so the
+/// clamped fit paints cell-structured colour shifts in the editor (upstream
+/// PR #88; `docs/research/styles-key1-color-grid-20261030.md`). The fitted
+/// lattice is still computed for diagnostics (`styles_fit_probe`). A failed
+/// fit keeps the identity resources (still a valid file).
+fn apply_per_image_fit(
+    style_state: &mut StyleStateOverride,
+    fit_raster: &crate::styles_fit::StyleFitRaster,
+) {
+    if let Ok(fitted) =
+        crate::styles_fit::fit_style_state(fit_raster, style_state.tag4, style_state.tag_h)
+    {
+        style_state.gtc = fitted.global_tone_curve.data;
+    }
+}
 
 /// Identity styleData: 864 blocks × 30 f16 values, 1.0 at [3,7,11].
 fn identity_style_data() -> Vec<u8> {
@@ -1043,6 +1055,42 @@ mod tests {
             let meta = crate::isobmff::parse_source_meta(&source).unwrap();
             assert_eq!(primary_dims(&meta, meta.primary_id).unwrap(), (w, h));
         }
+    }
+
+    /// Standard key 1 must stay the identity lattice even though the
+    /// per-image fit runs and would produce a non-identity lattice (upstream
+    /// PR #88: the fitted lattice paints colour blocks in Photos). Key 3 still
+    /// carries the per-image tone curve.
+    #[test]
+    fn per_image_fit_keeps_standard_key1_identity_and_fits_gtc() {
+        let (w, h) = (96usize, 72usize);
+        let mut primary = Vec::with_capacity(w * h * 3);
+        let mut scene = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let u = x as f32 / (w - 1) as f32;
+                let v = y as f32 / (h - 1) as f32;
+                let rgb = [0.05 + 0.85 * u, 0.05 + 0.8 * v, 0.08 + 0.7 * u * v];
+                let gain = 1.0 + 1.5 * (1.0 - u) * (1.0 - v);
+                for c in rgb {
+                    primary.push(c);
+                    scene.push(c * gain);
+                }
+            }
+        }
+        let raster = crate::styles_fit::StyleFitRaster {
+            width: w,
+            height: h,
+            primary_linear: primary,
+            scene_linear: scene,
+        };
+        let mut state = StyleStateOverride::identity();
+        let fitted = crate::styles_fit::fit_style_state(&raster, state.tag4, state.tag_h).unwrap();
+        assert_ne!(fitted.style_data, identity_style_data(), "fixture must fit a non-identity key 1");
+        apply_per_image_fit(&mut state, &raster);
+        assert_eq!(state.key1, identity_style_data(), "Standard key 1 must be written as identity");
+        assert_eq!(state.gtc, fitted.global_tone_curve.data);
+        assert_ne!(state.gtc, crate::styles_consts::FIELD_3.to_vec(), "GTC should still be fitted");
     }
 
     #[test]
