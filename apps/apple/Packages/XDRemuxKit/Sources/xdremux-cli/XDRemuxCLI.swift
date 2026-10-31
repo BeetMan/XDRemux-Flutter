@@ -145,13 +145,20 @@ struct Convert: AsyncParsableCommand {
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         var failures = 0
+        let interrupt = InterruptWatcher()
+        defer { interrupt.stop() }
         for (index, input) in inputs.enumerated() {
+            if interrupt.triggered { break }
             let outputRoot = outputDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? input.deletingLastPathComponent()
             let job = ConversionJob(backend: XDRemuxEngine.shared, scratchRoot: scratch, outputRoot: outputRoot)
             let label = "[\(index + 1)/\(inputs.count)] \(input.lastPathComponent)"
             let reporter = ProgressReporter(label: label, enabled: !quiet && !format.json, console: console)
             do {
-                let product = try await job.run(input: input, config: config) { reporter.update($0) }
+                // Ctrl-C cancels the running task; the core stops at its next
+                // tile and the partial output is discarded with the scratch dir.
+                let work = Task { try await job.run(input: input, config: config) { reporter.update($0) } }
+                interrupt.onInterrupt = { work.cancel() }
+                let product = try await work.value
                 reporter.finish()
                 if format.json {
                     emitJSON(["input": input.path, "output": product.outputURL.path, "success": true,
@@ -161,6 +168,14 @@ struct Convert: AsyncParsableCommand {
                 } else {
                     print("\(label) → \(product.outputURL.path)")
                 }
+            } catch is CancellationError {
+                reporter.finish()
+                if format.json {
+                    emitJSON(["input": input.path, "success": false, "cancelled": true])
+                } else {
+                    console.write("\(label) 已取消\n")
+                }
+                throw ExitCode(130)
             } catch {
                 failures += 1
                 reporter.finish()
@@ -182,10 +197,41 @@ struct Convert: AsyncParsableCommand {
         switch error {
         case ConversionJobError.coreFailed(let m): return m ?? "core failed"
         case ConversionJobError.verificationFailed: return "output failed verification and was discarded"
+        case ConversionJobError.styles3Failed(let m): return "Photographic Styles 3 post-process failed: \(m ?? "unknown")"
         case ConversionJobError.missingOutput: return "core reported success but wrote no file"
         case ConversionJobError.samePath: return "output path equals input path"
         default: return String(describing: error)
         }
+    }
+}
+
+/// SIGINT → `onInterrupt` (once). The default handler is replaced so the
+/// process can finish cleanly: cancel the core, delete scratch, exit 130.
+final class InterruptWatcher: @unchecked Sendable {
+    private let source: DispatchSourceSignal
+    private let lock = NSLock()
+    private var _triggered = false
+    var onInterrupt: (@Sendable () -> Void)?
+
+    var triggered: Bool { lock.withLock { _triggered } }
+
+    init() {
+        signal(SIGINT, SIG_IGN)
+        source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let handler: (@Sendable () -> Void)? = self.lock.withLock {
+                self._triggered = true
+                return self.onInterrupt
+            }
+            handler?()
+        }
+        source.resume()
+    }
+
+    func stop() {
+        source.cancel()
+        signal(SIGINT, SIG_DFL)
     }
 }
 

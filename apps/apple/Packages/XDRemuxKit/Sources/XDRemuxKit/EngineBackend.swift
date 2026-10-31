@@ -12,7 +12,16 @@ extension XDRemuxEngine: ConversionBackend {
                                  edrScale: report.edrScale, gainMapMax: report.gainMapMax,
                                  errorMessage: report.errorMessage)
     }
+
+    public func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool {
+        guard try await verifyOutput(path: path) else { return false }
+        if styles, !(try await verifyStylesOutput(path: path)) { return false }
+        if portrait, !(try await verifyPortraitOutput(path: path)) { return false }
+        return true
+    }
 }
+
+extension XDRemuxEngine: Styles3Backend {}
 
 /// Decoded `xdremux_inspect_photo_details` report. Keys follow
 /// `xdremux/rust/src/photo_details.rs`; all fields are optional because Rust

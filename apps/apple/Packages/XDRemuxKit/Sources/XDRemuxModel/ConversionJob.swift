@@ -7,8 +7,23 @@ public protocol ConversionBackend: Sendable {
     /// means the call itself could not be made.
     func convert(input: String, output: String, config: RustConvertConfig,
                  progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome
-    /// Decodes and structure-checks a produced file.
-    func verifyOutput(path: String) async throws -> Bool
+    /// Decodes and structure-checks a produced file. `styles` / `portrait`
+    /// add the Apple Photographic Styles / Portrait structure checks, as the
+    /// Flutter backend does (`conversion_backend.dart`).
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool
+}
+
+extension ConversionBackend {
+    public func verifyOutput(path: String) async throws -> Bool {
+        try await verifyOutput(path: path, styles: false, portrait: false)
+    }
+}
+
+/// Photographic Styles 3 post-processing (`xdremux_inject_texture_styles` +
+/// `xdremux_inject_semantic_mattes`); optional on a backend.
+public protocol Styles3Backend: Sendable {
+    /// Rewrites `path` in place. Throws when either injection fails.
+    func injectStyles3(path: String, grainSeed: UInt64) async throws
 }
 
 /// Motion Photo support the model needs from the core; optional on a backend.
@@ -104,6 +119,8 @@ public enum ConversionJobError: Error, Equatable, Sendable {
     case livePhotoFailed(String?)
     /// Rust reported success but `verifyOutput` rejected the file.
     case verificationFailed
+    /// Photographic Styles 3 post-processing failed; nothing was published.
+    case styles3Failed(String?)
     /// Rust reported success but wrote nothing at the temporary path.
     case missingOutput
     /// Input and output would be the same file.
@@ -173,11 +190,29 @@ public struct ConversionJob: Sendable {
         try fileSystem.createDirectory(scratchDir)
         defer { try? fileSystem.removeItem(scratchDir) }
 
+        let rust = config.rustConfig
         let outcome = try await backend.convert(input: input.path, output: temp.path,
-                                                config: config.rustConfig, progress: progress)
+                                                config: rust, progress: progress)
+        // A cancelled conversion leaves a partial file in scratch; the defer
+        // above removes it and nothing reaches the output folder.
+        try Task.checkCancellation()
         guard outcome.success else { throw ConversionJobError.coreFailed(outcome.errorMessage) }
         guard fileSystem.fileExists(temp) else { throw ConversionJobError.missingOutput }
-        guard try await backend.verifyOutput(path: temp.path) else { throw ConversionJobError.verificationFailed }
+        guard try await backend.verifyOutput(path: temp.path, styles: rust.applePhotographicStyles != 0,
+                                             portrait: rust.applePortrait != 0) else {
+            throw ConversionJobError.verificationFailed
+        }
+        // Photographic Styles 3: add the texture/grain item and the 12
+        // semantic part-matte placeholders so Photos offers texture editing.
+        if rust.applePhotographicStyles != 0, config.applePhotographicStyles3,
+           let styles = backend as? Styles3Backend {
+            do {
+                try await styles.injectStyles3(path: temp.path, grainSeed: Self.grainSeed(for: name))
+            } catch {
+                throw ConversionJobError.styles3Failed(String(describing: error))
+            }
+            try Task.checkCancellation()
+        }
 
         // Motion Photo handling on the verified still, still inside scratch.
         var still = temp
@@ -234,5 +269,14 @@ public struct ConversionJob: Sendable {
         progress(1)
         return ConversionProduct(inputURL: input, outputURL: published, outcome: outcome, config: config,
                                  pairedVideoURL: publishedVideo, extraVideoURLs: publishedExtras)
+    }
+
+    /// Same hash as the Flutter backend (`_grainSeedFor`): Java-style string
+    /// hash over UTF-16 code units, masked to 31 bits, so the same file name
+    /// yields the same grain pattern on every platform.
+    public static func grainSeed(for name: String) -> UInt64 {
+        var h: UInt64 = 0
+        for unit in name.utf16 { h = (h &* 31 &+ UInt64(unit)) & 0x7fff_ffff }
+        return h
     }
 }

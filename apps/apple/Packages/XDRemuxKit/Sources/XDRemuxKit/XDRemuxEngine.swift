@@ -78,6 +78,10 @@ public final class XDRemuxEngine: Sendable {
     /// The output path must differ from the input; Rust refuses in-place
     /// writes. Callers should pass a task-private temporary path and publish
     /// only after `xdremux_verify_output` succeeds (plan §3 P1).
+    ///
+    /// Cancelling the calling task calls `xdremux_progress_cancel`; the core
+    /// stops at its next tile and this throws `CancellationError`. The
+    /// partial output at `output` is the caller's to delete.
     public func convert(
         input: String,
         output: String,
@@ -98,24 +102,54 @@ public final class XDRemuxEngine: Sendable {
         }
         defer { poller?.cancel() }
 
-        return try await run {
-            var c = ConvertConfig(
-                oppo_compat: config.oppoCompat,
-                oppo_camera_tail: config.oppoCameraTail,
-                strict_tmap: config.strictTmap,
-                apple_photographic_styles: config.applePhotographicStyles,
-                apple_portrait: config.applePortrait)
-            return withCPath(input) { cin in
-                withCPath(output) { cout in
-                    ConversionReport(consuming: xdremux_convert_with_progress(cin, cout, &c, handle))
+        let report = try await withTaskCancellationHandler {
+            try await run {
+                var c = ConvertConfig(
+                    oppo_compat: config.oppoCompat,
+                    oppo_camera_tail: config.oppoCameraTail,
+                    strict_tmap: config.strictTmap,
+                    apple_photographic_styles: config.applePhotographicStyles,
+                    apple_portrait: config.applePortrait)
+                return withCPath(input) { cin in
+                    withCPath(output) { cout in
+                        ConversionReport(consuming: xdremux_convert_with_progress(cin, cout, &c, handle))
+                    }
                 }
             }
+        } onCancel: {
+            xdremux_progress_cancel(handle)
         }
+        if Task.isCancelled || report.errorMessage == Self.cancelledMessage {
+            throw CancellationError()
+        }
+        return report
     }
+
+    /// `progress::CANCELLED_MESSAGE` in the core.
+    static let cancelledMessage = "conversion cancelled"
 
     /// `xdremux_verify_output`: decodes and structure-checks a produced file.
     public func verifyOutput(path: String) async throws -> Bool {
         try await run { withCPath(path) { xdremux_verify_output($0) } }
+    }
+
+    /// `xdremux_verify_styles_output`: the Apple Photographic Styles scaffold is complete.
+    public func verifyStylesOutput(path: String) async throws -> Bool {
+        try await run { withCPath(path) { xdremux_verify_styles_output($0) } }
+    }
+
+    /// `xdremux_verify_portrait_output`: the Apple Portrait payload is complete.
+    public func verifyPortraitOutput(path: String) async throws -> Bool {
+        try await run { withCPath(path) { xdremux_verify_portrait_output($0) } }
+    }
+
+    /// `xdremux_inject_texture_styles` then `xdremux_inject_semantic_mattes`,
+    /// in place (Photographic Styles 3 post-process).
+    public func injectStyles3(path: String, grainSeed: UInt64) async throws {
+        let textures = try await run { withCPath(path) { xdremux_inject_texture_styles($0, $0, grainSeed) != 0 } }
+        guard textures else { throw XDRemuxError.coreFailure(message: "PS3 texture_styles injection failed") }
+        let mattes = try await run { withCPath(path) { xdremux_inject_semantic_mattes($0, $0) != 0 } }
+        guard mattes else { throw XDRemuxError.coreFailure(message: "PS3 semantic matte injection failed") }
     }
 
     // MARK: - Progress

@@ -1322,6 +1322,17 @@ pub extern "C" fn xdremux_progress_end(handle: u32) {
     progress::end_progress_with(handle);
 }
 
+/// Ask the conversion running under `handle` (from
+/// [xdremux_progress_begin]) to stop. Safe from any thread. The worker
+/// checks the flag between tiles and returns a failed [ConversionResult]
+/// whose `error_message` is "conversion cancelled"; the caller still owns
+/// the handle and releases it with [xdremux_progress_end]. The partially
+/// written output must be deleted by the caller.
+#[no_mangle]
+pub extern "C" fn xdremux_progress_cancel(handle: u32) {
+    progress::cancel(handle);
+}
+
 #[no_mangle]
 pub extern "C" fn xdremux_convert(
     input_path: *const c_char,
