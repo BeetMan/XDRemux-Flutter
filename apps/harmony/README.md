@@ -2,6 +2,12 @@
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
+## Native 0.5.3 release (2026-10-31)
+
+The native branch merges main `60b2b48` and `release/0.4.6-prep` (`c649570`), so the shared Rust core reports `0.4.6` (main already carried every 0.4.6 code change; the prep branch only adds the version bump). Native app metadata is `0.5.3` / code `50300`; the `.arkui` identity and queue/settings schemas are unchanged. New native features: Live Photo export/share as a stored `<stem>.pvt.zip` (new `livePhotoBundleMake` N-API call over `xdremux_make_live_photo_bundle`), Gallery "convert single" of an Apple-mode Motion Photo runs only that item through the queue, Live Photo exports are named after the original photo, and Photographic Styles 2 results can be paired as Live Photos (main #51). Fixes: taps on the expanded gallery info/settings panel no longer reach the hidden thumbnail strip, and the Styles toggles are named Photographic Styles 2 / 3. See [0.5.3 release notes](RELEASE_NOTES_v0.5.3.md).
+
+This release was built on macOS (Apple Silicon) with DevEco Studio 26.0; see [BUILDING.md](BUILDING.md) for the macOS commands.
+
 ## Native 0.5.2 release (2026-10-25)
 
 The native branch synchronizes main `ebabc301` and its unreleased Rust `0.4.5` core. Native app metadata is `0.5.2` / code `50200`; the `.arkui` identity, queue/settings schemas and gallery cancellation fix are preserved. The relevant core updates are JPEG HDR version fallback, RGB ICC profile preservation and JPEG HDR inspection diagnostics. Flutter layout, Linux packaging and iOS thumbnail changes are not native UI features.
@@ -33,7 +39,7 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.2` and version code `50200`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.3` and version code `50300`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
 
 The local gallery index is `filesDir/xdremux-gallery/library.json`; imported originals live under `filesDir/xdremux-gallery/items/`. Queue-owned inputs remain separate under the queue sandbox. Import copies are committed to the index only after the copied file is verified, and the index is replaced atomically.
 

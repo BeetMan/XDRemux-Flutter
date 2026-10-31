@@ -22,6 +22,19 @@ if ($buildExitCode -ne 0) { throw 'DevEco HAP build failed' }
 
 DevEco writes the HAP to `apps/harmony/entry/build/default/outputs/default/entry-default-unsigned.hap` when no signing profile is configured. Copy each reviewed build to the external `harmony-native` log/artifact directory; never add HAP files, staged libraries, signing profiles, or signing credentials to Git.
 
+## macOS
+
+DevEco Studio's bundled SDK, ohpm, hvigor and hdc work on Apple Silicon. `xdremux/rust/build_ohos.sh` defaults to the DevEco.app native SDK and its ninja; `tools/ohos/prepare_harmony_native.sh` is the bash counterpart of the PowerShell staging script. `devecocli` installs from npm (`@deveco/deveco-cli`).
+
+```bash
+rustup target add aarch64-unknown-linux-ohos
+bash xdremux/rust/build_ohos.sh
+tools/ohos/prepare_harmony_native.sh
+cd apps/harmony && devecocli build --product default --build-mode debug
+```
+
+For a release package, build from a clean export whose `build-profile.json5` has no `signingConfigs`, so the build log shows signing was skipped rather than failed.
+
 ## Verify the built package
 
 The verifier reads the packaged `module.json` and `pack.info`, checks the native bundle identity is distinct from the Flutter bundle, version and compatible API, checks the arm64 bridge/core/runtime libraries, rejects recognized signature entries, and reports hashes for the HAP and packaged Rust core.
@@ -29,8 +42,8 @@ The verifier reads the packaged `module.json` and `pack.info`, checks the native
 ```powershell
 python .\apps\harmony\tools\verify_harmony_hap.py `
   'C:\path\to\external\logs\entry-default-unsigned-codeNNNNN.hap' `
-  --version-name 0.5.2 `
-  --version-code 50200 `
+  --version-name 0.5.3 `
+  --version-code 50300 `
   --compatible-api 18 `
   --expected-core-sha256 <packaged-core-sha256> `
   --report 'C:\path\to\external\logs\hap-verification.json'

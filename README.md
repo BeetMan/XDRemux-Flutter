@@ -1,8 +1,8 @@
 # XDRemux 鸿蒙原生版
 
-**当前版本：0.5.2** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
+**当前版本：0.5.3** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
 
-[下载鸿蒙原生版 0.5.2](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.2) · Flutter 跨平台版：[v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)
+[下载鸿蒙原生版 0.5.3](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](apps/harmony/README.md) · [开发计划](docs/plans/harmony-native.md)
 
@@ -18,13 +18,13 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 > 原生版的功能和设备兼容性仍在持续完善。Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果以照片结构、系统版本和目标设备为准。
 
-## Flutter 版 0.4.4：共享转换核心的跨平台版本
+## Flutter 版：共享转换核心的跨平台版本
 
-除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本提供 [v0.4.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.4)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
+除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本见[最新发布](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
 
-原生 0.5.2 同步主线开发中的 Rust 0.4.5 转换核心；Flutter 当前正式版本仍为 0.4.4。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮额外纳入 JPEG HDR 回退兼容性与 RGB ICC 色彩配置保留修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
+原生 0.5.3 使用与 Flutter 0.4.6 相同的 Rust 0.4.6 转换核心。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮纳入 Live Photo 摄影风格配套轨与 AAC 音频修复、线性 HDR 风格缩略图，以及 MPF / ISO 21496 修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
 
-在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.2 更新说明](apps/harmony/RELEASE_NOTES_v0.5.2.md)列出了本轮变化和使用范围。
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.3 更新说明](apps/harmony/RELEASE_NOTES_v0.5.3.md)列出了本轮变化和使用范围。
 
 ## 图库：从浏览照片开始
 
@@ -64,7 +64,7 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 - 查看可读取的视频尺寸、时长、编码和音轨信息。
 - 拆分静态照片与视频资源，并分别导出。
-- 对符合条件的照片生成 Live Photo 配对文件，成对导出 HEIC 与 MOV。
+- 对符合条件的照片生成 Live Photo 配对文件，成对导出 HEIC 与 MOV，或导出 / 分享为 `.pvt` 包（`<名称>.pvt.zip`，在 Mac 上解压后「照片」可导入为一张 Live Photo）。在图库对动态照片点「转换单张」会在队列中单独转换并直接进入这些操作。
 
 Live Photo 的实际导入、播放和声音表现仍需在目标设备上验证。
 
