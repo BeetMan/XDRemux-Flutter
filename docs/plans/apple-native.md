@@ -159,6 +159,43 @@ Instruments Leaks 连续调用 1000 次无泄漏；损坏输入返回错误 JSON
 验收：转换期间 UI 可交互；错误可定位到单项；设置变更后可重新转换；杀进程重启后队列按检查点恢复；
 Flutter 版生成的检查点文件可被原生版读取。
 
+**P2 执行记录（2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `QueueJournal` / `QueueJournalStore`：队列 journal（`queue.json`，schema 1）原子写入（临时文件 + replace），
+  加载时校验 schema、损坏文件隔离为 `.corrupt-<ts>`；恢复规则与鸿蒙版一致：`running` 回到待处理不自动续跑，
+  输出丢失的成功项变为失败，输入副本丢失的项变为失败并提示重新导入。5 项测试。
+- `XDRemuxEngine` 并发度可配置（并发队列 + 可调上限门），`convertAll` 用 TaskGroup 按 `maxConcurrentJobs` 限宽；
+  设置页加 Stepper。
+- macOS 输出目录：`OutputLocation` 用安全作用域书签持久化用户选择的目录，设置页可选择 / 恢复默认。
+- `LibraryModel` 每次 items 变化即写 journal，启动时恢复并重新读取缩略图与分类。
+- 验证：`swift test` 35 项通过；macOS 上带两张样本启动转换后退出，空参数重开，两项以已完成状态恢复，HDR 预览与
+  详情完整，输出文件名不再带沙盒副本前缀。
+- 未做：Flutter 检查点文件（`checkpoint_model.dart`，donor 与回传配对）互读；批量整理页；运行中任务的 config 快照
+  已由 `ConversionJob` 复制保证。
+
+**P2 补充：主工作流"一帧影像，动用两台手机"（2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `RoundTrip`（Model）：`editCopyConfig` 强制 Apple 标准 + 摄影风格、后缀 `.apple-edit`；`createEditCopy` 复用
+  `ConversionJob`（单次转换，不产生 OPPO 中间文件）；`writeback` 经 `WritebackBackend` 调 Rust
+  `xdremux_writeback_returned_photo`（模式字节 0=Apple、1=OPPO，与 Dart 一致），报告 `success && outputValid != false`
+  才从暂存路径发布为 `<回传 stem>.<mode>-final.heic`；OPPO 输出或恢复水印缺 donor 直接拒绝。5 项假引擎测试。
+- App：工具栏入口打开四步 sheet（选 OPPO 原图 → 生成编辑副本 → 选回传照片 → 写回），macOS 支持拖入；
+  导出按钮通用化为 `FileExportButtons`，编辑副本与最终文件都可保存 / 分享 / 定位。
+- CLI：`xdremux edit-copy <oppo.heic>` 与 `xdremux writeback <returned.heic> --donor <oppo.heic> -m oppo|apple
+  [--no-restore-watermark]`。
+- 验证：`swift test` 46 项通过；X7 UHDR 样本经 CLI edit-copy → 以编辑副本充当回传 → OPPO 与 Apple 两种写回均成功，
+  OPPO 模式恢复 9 个 OPPO 私有条目，Apple 模式恢复画布水印并移植 EXIF，两个输出 `verify` 通过；
+  X6 LHDR 样本作为 donor 被 Rust 拒绝（"donor photo has no UHDR gain-map payload"），与 Flutter 行为一致。
+- 未验证：真实 iPhone 回传文件（需要真机往返）；GUI 四步页仅编译与渲染，未人工点击走完。
+
+**P2 补充：双语与系统集成（2026-10-30）**
+
+- String Catalog `App/Localizable.xcstrings`：源语言 zh-Hans，158 条英文译文；非 View 层文案（状态、错误、设置枚举标题、
+  面板按钮）统一改走 `String(localized:)`，`InfoRow` / `StepCard` 标签改为 `LocalizedStringKey`。
+  `-AppleLanguages (en)` 启动实测列表与四步页全部英文。术语与 Flutter `l10n` 一致（Apple Standard / OPPO Compatible）。
+- `CFBundleDocumentTypes` 声明 HEIC / HEIF / JPEG（Viewer，Alternate），`onOpenURL` 接入导入：访达"打开方式"、Dock 拖入、
+  iOS"用 XDRemux 打开"均走同一导入路径。`--round-trip` 启动参数直接打开四步页，供冒烟。
+
 ### P3：实况、分享与系统集成
 
 - Motion Photo 识别 / 拆分、Live Photo 配对复用 Rust 导出（`xdremux_motion_photo_*`、
@@ -174,6 +211,20 @@ Flutter 版生成的检查点文件可被原生版读取。
 
 验收：普通图、Motion Photo、无效文件混合队列行为正确；iPhone 照片中 Live Photo 可播放有声音；
 分享面板导入保留 HEIC 原始字节。
+
+**P3 执行记录（第一批：动态照片 / Live Photo，2026-10-30，分支 `feat/apple-native-p2`）**
+
+- `MotionPhotoBackend` 协议（inspect / make_live_photo / pair_valid / split）；`ConversionJob` 在校验通过的静帧上按
+  `MotionPhotoMode` 处理：`livePhotoPair` 用 Rust 合成带 content identifier 的静帧 + MOV，配对校验通过才发布为
+  `<stem><suffix>.heic` + `.mov`；`stillAndVideo` 拆出 `.motion.mp4` / `.primary.mp4`；`still` 忽略视频。
+  5 项假引擎测试覆盖配对失败不发布、非动态照片忽略模式。
+- Kit：`MotionPhotoReport` 解码、`makeLivePhotoFiles`、`livePhotoPairValid`、`splitMotionPhoto`。
+- App：导入即识别动态照片（列表摘要与详情显示时长 / 尺寸 / 双流 / 声音），详情页按张选择处理方式（默认取全局设置），
+  结果区列出配对视频；iOS 保存到照片库时以 `.photo` + `.pairedVideo` 写入同一 asset；macOS 多文件时选文件夹整组存储，
+  访达定位与分享同时带上 MOV；journal 记录 `pairedVideoPath` / `extraVideoPaths` / `motionMode`，视频丢失视为失败。
+- 验证：opt-in 真实 OPPO 动态照片（`XDREMUX_MOTION_SAMPLE_DIR`）端到端：Live Photo 配对校验通过、静帧 verify 通过、
+  拆分有产物；macOS GUI 导入一张动态照片默认 Live Photo 合成，输出 `motion-master_iso.heic` + `.mov`。
+- 未验证：iPhone 照片中 Live Photo 播放与声音（需真机）；Share Extension、批量导出仍待做。
 
 ### P4：跨端回归与发布
 

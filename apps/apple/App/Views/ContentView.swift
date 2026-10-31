@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var model = LibraryModel()
     @State private var showSettings = false
     @State private var showFileImporter = false
+    @State private var showRoundTrip = false
 
     static let importTypes: [UTType] = [.heic, .heif, .jpeg]
 
@@ -46,7 +47,17 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
         }
-        .task { await model.handleLaunchArguments() }
+        .sheet(isPresented: $showRoundTrip) {
+            RoundTripView(library: model)
+        }
+        .task {
+            await model.handleLaunchArguments()
+            if model.openRoundTripOnLaunch { showRoundTrip = true }
+        }
+        // Finder "Open With", Dock drop, and iOS "Open in XDRemux" hand files here.
+        .onOpenURL { url in
+            Task { await model.importFiles([url]) }
+        }
         .fileImporter(isPresented: $showFileImporter,
                       allowedContentTypes: Self.importTypes,
                       allowsMultipleSelection: true) { result in
@@ -78,6 +89,12 @@ struct ContentView: View {
                 Label("全部转换", systemImage: "play.fill")
             }
             .disabled(model.convertibleCount == 0 || model.isConverting)
+            Button {
+                showRoundTrip = true
+            } label: {
+                Label("一帧影像，动用两台手机", systemImage: "arrow.triangle.2.circlepath.camera")
+            }
+            .help("OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据")
             Button {
                 showSettings = true
             } label: {

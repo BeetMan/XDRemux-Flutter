@@ -13,7 +13,24 @@ struct ExportButtons: View {
     @Bindable var model: LibraryModel
     let item: PhotoItem
     let product: ConversionProduct
+
+    var body: some View {
+        FileExportButtons(files: product.allFiles, livePhoto: product.isLivePhoto,
+                          alreadySaved: item.savedToPhotos,
+                          onSavedToPhotos: { model.markSavedToPhotos(item.id) })
+    }
+}
+
+/// Export controls for any set of produced files (a still, a Live Photo
+/// pair, or clips). The first file is the primary still.
+struct FileExportButtons: View {
+    let files: [URL]
+    var livePhoto = false
+    var alreadySaved = false
+    var onSavedToPhotos: (() -> Void)?
     @State private var message: String?
+
+    private var primary: URL { files[0] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -22,11 +39,11 @@ struct ExportButtons: View {
                 Button {
                     Task { await saveToPhotos() }
                 } label: {
-                    Label(item.savedToPhotos ? "已保存到照片" : "保存到照片", systemImage: item.savedToPhotos ? "checkmark" : "square.and.arrow.down")
+                    Label(alreadySaved ? "已保存到照片" : "保存到照片", systemImage: alreadySaved ? "checkmark" : "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(item.savedToPhotos)
-                ShareLink(item: product.outputURL) {
+                .disabled(alreadySaved)
+                ShareLink(items: files) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
@@ -38,12 +55,12 @@ struct ExportButtons: View {
                 }
                 .buttonStyle(.borderedProminent)
                 Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([product.outputURL])
+                    NSWorkspace.shared.activateFileViewerSelecting(files)
                 } label: {
                     Label("在访达中显示", systemImage: "folder")
                 }
                 .buttonStyle(.bordered)
-                ShareLink(item: product.outputURL) {
+                ShareLink(items: files) {
                     Label("分享", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.bordered)
@@ -59,37 +76,70 @@ struct ExportButtons: View {
     private func saveToPhotos() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
-            message = "没有写入照片库的权限，可在“设置”里允许。"
+            message = String(localized: "没有写入照片库的权限，可在“设置”里允许。")
             return
         }
+        let still = primary
+        let pairedVideo = livePhoto ? files.dropFirst().first { $0.pathExtension.lowercased() == "mov" } : nil
+        let clips = files.dropFirst().filter { $0 != pairedVideo && ["mp4", "mov"].contains($0.pathExtension.lowercased()) }
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 let request = PHAssetCreationRequest.forAsset()
                 let options = PHAssetResourceCreationOptions()
-                options.originalFilename = product.outputURL.lastPathComponent
-                request.addResource(with: .photo, fileURL: product.outputURL, options: options)
+                options.originalFilename = still.lastPathComponent
+                request.addResource(with: .photo, fileURL: still, options: options)
+                if let mov = pairedVideo {
+                    let movOptions = PHAssetResourceCreationOptions()
+                    movOptions.originalFilename = mov.lastPathComponent
+                    request.addResource(with: .pairedVideo, fileURL: mov, options: movOptions)
+                }
             }
-            model.markSavedToPhotos(item.id)
-            message = "已作为新照片保存到照片库。"
+            for clip in clips {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: clip, options: nil)
+                }
+            }
+            onSavedToPhotos?()
+            message = pairedVideo != nil ? String(localized: "已作为 Live Photo 保存到照片库。") : String(localized: "已作为新照片保存到照片库。")
         } catch {
-            message = "保存失败：\(error.localizedDescription)"
+            message = String(localized: "保存失败：\(error.localizedDescription)")
         }
     }
     #else
+    /// Single file: save panel. Live Photo / clips: choose a folder so the
+    /// pair keeps its shared stem (Photos matches HEIC + MOV by name).
     private func saveCopy() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = product.outputURL.lastPathComponent
-        panel.allowedContentTypes = [.heic]
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        if files.count == 1 {
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = primary.lastPathComponent
+            panel.allowedContentTypes = [.heic]
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            copy(files, to: destination.deletingLastPathComponent(), renamingFirstTo: destination.lastPathComponent)
+        } else {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.prompt = String(localized: "存储到此文件夹")
+            guard panel.runModal() == .OK, let folder = panel.url else { return }
+            copy(files, to: folder, renamingFirstTo: nil)
+        }
+    }
+
+    private func copy(_ files: [URL], to folder: URL, renamingFirstTo firstName: String?) {
         do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+            for (index, file) in files.enumerated() {
+                var destination = folder.appendingPathComponent(file.lastPathComponent)
+                if index == 0, let firstName { destination = folder.appendingPathComponent(firstName) }
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: file, to: destination)
             }
-            try FileManager.default.copyItem(at: product.outputURL, to: destination)
-            message = "已存储到 \(destination.path)"
+            message = files.count == 1 ? String(localized: "已存储到 \(folder.path)") : String(localized: "已存储 \(files.count) 个文件到 \(folder.path)")
         } catch {
-            message = "存储失败：\(error.localizedDescription)"
+            message = String(localized: "存储失败：\(error.localizedDescription)")
         }
     }
     #endif

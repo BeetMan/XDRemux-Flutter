@@ -18,7 +18,8 @@ struct XDRemuxCLI: AsyncParsableCommand {
             editable in Apple Photos. Rust core \(XDRemuxEngine.coreVersion()).
             """,
         version: XDRemuxEngine.coreVersion(),
-        subcommands: [Convert.self, Inspect.self, Classify.self, Details.self, Verify.self, Capabilities.self],
+        subcommands: [Convert.self, EditCopy.self, Writeback.self, Inspect.self, Classify.self, Details.self,
+                      Verify.self, Capabilities.self],
         defaultSubcommand: Convert.self)
 }
 
@@ -248,6 +249,99 @@ final class ProgressReporter: @unchecked Sendable {
     func finish() {
         guard enabled else { return }
         console.write("\r\u{1B}[2K")
+    }
+}
+
+// MARK: - round trip: edit-copy / writeback
+
+struct EditCopy: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "edit-copy",
+        abstract: "Step 2 of the OPPO ↔ Apple round trip: make an Apple Photographic Styles edit copy of an OPPO original.",
+        discussion: "Writes <stem>.apple-edit.heic. Transfer it to an iPhone, edit in Apple Photos, export the result and feed it to `writeback` together with the same OPPO original as --donor.")
+
+    @OptionGroup var files: InputFiles
+    @OptionGroup var format: OutputFormat
+    @Option(name: [.short, .customLong("output-dir")], help: "Directory for outputs (default: next to each input).", completion: .directory)
+    var outputDir: String?
+    @Flag(name: .shortAndLong, help: "Keep x265 log lines on stderr.")
+    var verbose = false
+
+    mutating func run() async throws {
+        let console = StderrConsole(silenceOriginal: !verbose)
+        defer { console.restore() }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-cli-\(ProcessInfo.processInfo.processIdentifier)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        var failures = 0
+        for input in try files.resolved() {
+            let root = outputDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? input.deletingLastPathComponent()
+            let job = ConversionJob(backend: XDRemuxEngine.shared, scratchRoot: scratch, outputRoot: root)
+            do {
+                let product = try await RoundTrip.createEditCopy(donor: input, base: ConversionConfig(), job: job)
+                if format.json { emitJSON(["input": input.path, "editCopy": product.outputURL.path, "success": true]) }
+                else { print("\(input.lastPathComponent) → \(product.outputURL.path)") }
+            } catch {
+                failures += 1
+                if format.json { emitJSON(["input": input.path, "success": false, "error": String(describing: error)]) }
+                else { console.write("\(input.lastPathComponent) 失败：\(error)\n") }
+            }
+        }
+        if failures > 0 { throw ExitCode(1) }
+    }
+}
+
+struct Writeback: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Step 4 of the round trip: write the iPhone-returned photo back with the OPPO donor's watermark and metadata.",
+        discussion: "Writes <returned stem>.<mode>-final.heic. OPPO 兼容 output and --restore-watermark both require --donor.")
+
+    @Argument(help: "The photo returned from Apple Photos (.heic).", completion: .file(extensions: ["heic", "HEIC", "heif"]))
+    var returned: String
+    @Option(name: .long, help: "The original OPPO photo used as donor for watermark, metadata and OPPO tail.", completion: .file())
+    var donor: String?
+    @Option(name: [.customShort("m"), .long], help: "oppo (OPPO 兼容) or apple (Apple 标准).")
+    var mode: OutputMode = .oppo
+    @Flag(name: .long, inversion: .prefixedNo, help: "Restore the visible original watermark from the donor (default on).")
+    var restoreWatermark = true
+    @Option(name: [.short, .customLong("output-dir")], help: "Directory for the output (default: next to the returned photo).", completion: .directory)
+    var outputDir: String?
+    @OptionGroup var format: OutputFormat
+    @Flag(name: .shortAndLong, help: "Keep x265 log lines on stderr.")
+    var verbose = false
+
+    mutating func run() async throws {
+        let console = StderrConsole(silenceOriginal: !verbose)
+        defer { console.restore() }
+        let returnedURL = URL(fileURLWithPath: returned)
+        let root = outputDir.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? returnedURL.deletingLastPathComponent()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-cli-\(ProcessInfo.processInfo.processIdentifier)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        do {
+            let (url, report) = try await RoundTrip.writeback(
+                donor: donor.map(URL.init(fileURLWithPath:)), returned: returnedURL, outputMode: mode,
+                restoreWatermark: restoreWatermark, outputRoot: root, scratchRoot: scratch, backend: XDRemuxEngine.shared)
+            if format.json {
+                emitJSON(["returned": returned, "donor": donor as Any, "output": url.path, "success": true,
+                          "rasterWatermarkRestored": report.rasterWatermarkRestored as Any,
+                          "restoredOppoEntries": report.restoredOppoEntries as Any,
+                          "exifGrafted": report.exifGrafted as Any, "timingsMs": report.timingsMs as Any])
+            } else {
+                print("\(returnedURL.lastPathComponent) → \(url.path)")
+                if let w = report.rasterWatermarkRestored { print("  原机水印恢复: \(w ? "是" : "否")") }
+                if let e = report.restoredOppoEntries, !e.isEmpty { print("  恢复的 OPPO 条目: \(e.joined(separator: ", "))") }
+            }
+        } catch {
+            let message: String
+            switch error {
+            case RoundTripError.donorRequired: message = "OPPO 兼容输出或恢复水印需要 --donor"
+            case RoundTripError.writebackFailed(let m): message = m ?? "writeback failed"
+            case RoundTripError.outputMissing: message = "core reported success but wrote no file"
+            default: message = String(describing: error)
+            }
+            if format.json { emitJSON(["returned": returned, "success": false, "error": message]) }
+            else { console.write("写回失败：\(message)\n") }
+            throw ExitCode(1)
+        }
     }
 }
 

@@ -188,3 +188,150 @@ private final class Progress: @unchecked Sendable {
     var values: [Double] = []
     func record(_ v: Double) { lock.withLock { values.append(v) } }
 }
+
+// MARK: - Motion Photo paths
+
+private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
+    let fs: FakeFS
+    var isMotion = true
+    var pairValid = true
+
+    func convert(input: String, output: String, config: RustConvertConfig,
+                 progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
+        fs.lock.withLock { _ = fs.files.insert(output) }
+        return ConversionOutcome(success: true, mode: "lhdr", family: "x7")
+    }
+    func verifyOutput(path: String) async throws -> Bool { true }
+    func motionPhotoInfo(path: String) async throws -> MotionPhotoInfo? {
+        isMotion ? MotionPhotoInfo(sourceKind: "oppoLpex", durationMs: 3000) : nil
+    }
+    func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles {
+        let stem = ((source as NSString).lastPathComponent as NSString).deletingPathExtension
+        let s = "\(outputDirectory)/\(stem).heic", v = "\(outputDirectory)/\(stem).mov"
+        fs.lock.withLock { fs.files.insert(s); fs.files.insert(v) }
+        return LivePhotoFiles(stillPath: s, videoPath: v, contentIdentifier: "ABC")
+    }
+    func livePhotoPairIsValid(still: String, video: String) async throws -> Bool { pairValid }
+    func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
+        let v = "\(outputDirectory)/x.video.mp4", p = "\(outputDirectory)/x.primary.mp4"
+        fs.lock.withLock { fs.files.insert(v); fs.files.insert(p) }
+        return [v, p]
+    }
+}
+
+final class MotionPhotoJobTests: XCTestCase {
+    let scratch = URL(fileURLWithPath: "/scratch")
+    let outRoot = URL(fileURLWithPath: "/out")
+    let input = URL(fileURLWithPath: "/in/IMG_M.jpg")
+
+    func testLivePhotoPairPublishesStillAndMov() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+        XCTAssertEqual(p.outputURL.path, "/out/IMG_M_iso.heic")
+        XCTAssertEqual(p.pairedVideoURL?.path, "/out/IMG_M_iso.mov")
+        XCTAssertTrue(p.isLivePhoto)
+        XCTAssertEqual(Set(fs.files), ["/out/IMG_M_iso.heic", "/out/IMG_M_iso.mov"], "scratch files gone: \(fs.files)")
+    }
+
+    func testInvalidPairFailsWithoutPublishing() async {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs, pairValid: false), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        do {
+            _ = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+            XCTFail("expected failure")
+        } catch let e as ConversionJobError {
+            if case .livePhotoFailed = e {} else { XCTFail("\(e)") }
+        } catch { XCTFail("\(error)") }
+        XCTAssertTrue(fs.files.isEmpty, "\(fs.files)")
+    }
+
+    func testStillOnlyIgnoresVideo() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .still)
+        XCTAssertNil(p.pairedVideoURL)
+        XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
+    }
+
+    func testStillAndVideoExportsClips() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .stillAndVideo)
+        XCTAssertEqual(Set(p.extraVideoURLs.map(\.lastPathComponent)), ["IMG_M_iso.motion.mp4", "IMG_M_iso.primary.mp4"])
+        XCTAssertEqual(p.allFiles.count, 3)
+    }
+
+    func testNonMotionPhotoIgnoresMode() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs, isMotion: false), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+        XCTAssertNil(p.pairedVideoURL)
+        XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
+    }
+}
+
+// MARK: - Round trip
+
+private struct FakeWriteback: WritebackBackend {
+    let fs: FakeFS
+    var report: WritebackReport
+    var writes = true
+    func writebackReturnedPhoto(original: String?, returned: String, output: String,
+                                outputMode: OutputMode, restoreWatermark: Bool) async throws -> WritebackReport {
+        if writes { fs.lock.withLock { _ = fs.files.insert(output) } }
+        return report
+    }
+}
+
+final class RoundTripTests: XCTestCase {
+    let out = URL(fileURLWithPath: "/out"), scratch = URL(fileURLWithPath: "/scratch")
+    let returned = URL(fileURLWithPath: "/in/IMG_1234.HEIC"), donor = URL(fileURLWithPath: "/in/IMG20260802.heic")
+
+    func testEditCopyConfigForcesAppleStyles() {
+        var base = ConversionConfig(); base.outputMode = .oppo; base.applePortrait = true; base.fileNameSuffix = "_x"
+        let c = RoundTrip.editCopyConfig(base: base)
+        XCTAssertEqual(c.outputMode, .apple)
+        XCTAssertEqual(c.rustConfig, RustConvertConfig(oppoCompat: 0, oppoCameraTail: 0, strictTmap: 0, applePhotographicStyles: 1, applePortrait: 0))
+        XCTAssertEqual(OutputPlanner.publishedFileName(forInput: "IMG20260802.heic", config: c), "IMG20260802.apple-edit.heic")
+    }
+
+    func testFinalURLNaming() {
+        XCTAssertEqual(RoundTrip.finalURL(returnedName: "IMG_1234.HEIC", outputMode: .oppo, outputRoot: out).lastPathComponent, "IMG_1234.oppo-final.heic")
+        XCTAssertEqual(RoundTrip.finalURL(returnedName: "IMG_1234.HEIC", outputMode: .apple, outputRoot: out).lastPathComponent, "IMG_1234.apple-final.heic")
+    }
+
+    func testOppoWritebackNeedsDonor() async {
+        let fs = FakeFS()
+        do {
+            _ = try await RoundTrip.writeback(donor: nil, returned: returned, outputMode: .oppo, restoreWatermark: false,
+                                              outputRoot: out, scratchRoot: scratch,
+                                              backend: FakeWriteback(fs: fs, report: WritebackReport(success: true)), fileSystem: fs)
+            XCTFail()
+        } catch { XCTAssertEqual(error as? RoundTripError, .donorRequired) }
+    }
+
+    func testUsableReportPublishes() async throws {
+        let fs = FakeFS()
+        let report = WritebackReport(success: true, outputValid: true, rasterWatermarkRestored: true, restoredOppoEntries: ["oplus"])
+        let (url, r) = try await RoundTrip.writeback(donor: donor, returned: returned, outputMode: .oppo, restoreWatermark: true,
+                                                     outputRoot: out, scratchRoot: scratch,
+                                                     backend: FakeWriteback(fs: fs, report: report), fileSystem: fs)
+        XCTAssertEqual(url.path, "/out/IMG_1234.oppo-final.heic")
+        XCTAssertEqual(r.restoredOppoEntries, ["oplus"])
+        XCTAssertEqual(fs.files, ["/out/IMG_1234.oppo-final.heic"])
+    }
+
+    func testInvalidOutputIsRejected() async {
+        let fs = FakeFS()
+        do {
+            _ = try await RoundTrip.writeback(donor: donor, returned: returned, outputMode: .apple, restoreWatermark: false,
+                                              outputRoot: out, scratchRoot: scratch,
+                                              backend: FakeWriteback(fs: fs, report: WritebackReport(success: true, outputValid: false)), fileSystem: fs)
+            XCTFail()
+        } catch {
+            if case .writebackFailed = error as? RoundTripError {} else { XCTFail("\(error)") }
+        }
+        XCTAssertTrue(fs.files.isEmpty)
+    }
+}

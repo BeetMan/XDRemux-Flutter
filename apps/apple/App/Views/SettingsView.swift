@@ -15,6 +15,19 @@ struct SettingsView: View {
                         Text("OPPO 兼容").tag(OutputMode.oppo)
                         Text("Apple 标准").tag(OutputMode.apple)
                     }
+                    #if os(macOS)
+                    LabeledContent("输出目录") {
+                        HStack {
+                            Text(model.outputRoot.path).lineLimit(1).truncationMode(.middle)
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("选择…") { model.chooseOutputDirectory() }
+                            if model.usesCustomOutputDirectory {
+                                Button("恢复默认") { model.resetOutputDirectory() }
+                            }
+                        }
+                    }
+                    #endif
+                    Stepper("同时转换 \(model.config.maxConcurrentJobs) 张", value: $model.config.maxConcurrentJobs, in: 1...8)
                     TextField("文件名后缀", text: $model.config.fileNameSuffix)
                     Toggle("覆盖同名输出", isOn: $model.config.skipExisting)
                     Toggle("按输出模式分目录", isOn: $model.config.categorizeOutputByMode)
@@ -48,7 +61,7 @@ struct SettingsView: View {
 
                 Section("关于") {
                     LabeledContent("Rust 内核", value: model.coreVersion)
-                    LabeledContent("输出目录", value: model.directories.outputs.path)
+                    LabeledContent("输出目录", value: model.outputRoot.path)
                         .font(.caption)
                     Button("恢复默认设置", role: .destructive) {
                         model.config = ConversionConfig()
@@ -70,29 +83,29 @@ struct SettingsView: View {
 
     static func title(_ mode: OppoCompatMode) -> String {
         switch mode {
-        case .auto: return "自动"
-        case .on: return "开启"
-        case .tail: return "仅尾部"
-        case .iso: return "ISO"
-        case .isoNoLocal: return "ISO（无本地）"
-        case .isoGraph: return "ISO 图"
-        case .off: return "关闭"
+        case .auto: return String(localized: "自动")
+        case .on: return String(localized: "开启")
+        case .tail: return String(localized: "仅尾部")
+        case .iso: return String(localized: "ISO")
+        case .isoNoLocal: return String(localized: "ISO（无本地）")
+        case .isoGraph: return String(localized: "ISO 图")
+        case .off: return String(localized: "关闭")
         }
     }
 
     static func title(_ mode: OppoCameraTailMode) -> String {
         switch mode {
-        case .automatic: return "自动"
-        case .off: return "不保留"
-        case .watermark: return "仅水印"
-        case .compact: return "精简"
-        case .preserve: return "完整保留"
-        case .preserveWithoutPortrait: return "保留（去人像）"
-        case .preserveWithoutPortraitOrPrivateHdr: return "保留（去人像与私有 HDR）"
-        case .preserveWithoutPrivateUhdr: return "保留（去私有 UHDR）"
-        case .preserveWithoutPrivateHdr: return "保留（去私有 HDR）"
-        case .preserveNoUhdr: return "保留（无 UHDR）"
-        case .preserveNoHdr: return "保留（无 HDR）"
+        case .automatic: return String(localized: "自动")
+        case .off: return String(localized: "不保留")
+        case .watermark: return String(localized: "仅水印")
+        case .compact: return String(localized: "精简")
+        case .preserve: return String(localized: "完整保留")
+        case .preserveWithoutPortrait: return String(localized: "保留（去人像）")
+        case .preserveWithoutPortraitOrPrivateHdr: return String(localized: "保留（去人像与私有 HDR）")
+        case .preserveWithoutPrivateUhdr: return String(localized: "保留（去私有 UHDR）")
+        case .preserveWithoutPrivateHdr: return String(localized: "保留（去私有 HDR）")
+        case .preserveNoUhdr: return String(localized: "保留（无 UHDR）")
+        case .preserveNoHdr: return String(localized: "保留（无 HDR）")
         }
     }
 }

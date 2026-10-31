@@ -4,7 +4,8 @@ Native Apple front-end on the shared Rust core. Plan, stages and acceptance:
 [`docs/plans/apple-native.md`](../../docs/plans/apple-native.md). Status: **P1** — a working
 basic version: import (files, drag-drop, Photos picker on iOS), detail-first inspection, single
 or batch conversion with progress, verified publish, HDR preview, export (Photos / share /
-save panel / Finder), persistent settings, plus a macOS command-line tool.
+save panel / Finder), persistent settings with restart restore, Motion Photo → Live Photo pairs, the
+OPPO ↔ Apple round-trip workflow, plus a macOS command-line tool.
 
 ```text
 apps/apple/
@@ -31,6 +32,8 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux details photo.heic                                               # EXIF / HDR summary
 .build/release/xdremux verify out/*.heic                                                # decode + structure check
 .build/release/xdremux capabilities                                                     # encoder paths in this core
+.build/release/xdremux edit-copy oppo.heic                                              # round trip step 2 → oppo.apple-edit.heic
+.build/release/xdremux writeback returned.heic --donor oppo.heic -m oppo                # round trip step 4 → returned.oppo-final.heic
 ```
 
 `convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
@@ -38,8 +41,15 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
 results are identical for the same options. x265's own log lines are silenced unless `-v`.
 
-The app also accepts `XDRemux --import <files…> [--convert-all]` at launch for scripting; the
-files must be readable from inside the app sandbox (e.g. its container's `Documents`).
+The app also accepts `XDRemux --import <files…> [--convert-all] [--round-trip]` at launch for scripting;
+the files must be readable from inside the app sandbox (e.g. its container's `Documents`). Finder
+"Open With", Dock drops and iOS "Open in XDRemux" import through the same path.
+
+## Localization
+
+Source language is Simplified Chinese; `App/Localizable.xcstrings` carries the English translations
+(terminology matches the Flutter app: Apple Standard / OPPO Compatible). Strings outside SwiftUI views
+go through `String(localized:)`. Test with `-AppleLanguages "(en)"`.
 
 ## Build
 
