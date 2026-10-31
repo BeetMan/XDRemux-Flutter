@@ -2220,7 +2220,7 @@ struct Index {
     }
   }
 
-  private async prepareAndExportLivePhoto(): Promise<void> {
+  private async prepareAndExportLivePhoto(target: 'pair' | 'pvt-save' | 'pvt-share'): Promise<void> {
     const item: QueueItem | undefined = this.selectedItem();
     if (item === undefined || this.pageBusy || this.queueRunning) return;
     const key: string = this.livePhotoPairCacheKey(item);
@@ -2234,7 +2234,11 @@ struct Index {
     }
     if (!this.livePhotoPairCache.has(key)) await this.makeSelectedLivePhotoPair();
     if (this.selectedItemId === item.id && this.livePhotoPairCache.has(key)) {
-      await this.exportSelectedLivePhotoPair();
+      if (target === 'pair') {
+        await this.exportSelectedLivePhotoPair();
+      } else {
+        await this.exportSelectedLivePhotoBundle(target === 'pvt-share');
+      }
     }
   }
 
@@ -5698,7 +5702,7 @@ struct Index {
 
         Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
         if (this.galleryDetails?.motionPhoto === true) {
-          Text('Live Photo · 转换后可在队列详情中成对导出 HEIC + MOV')
+          Text('Live Photo · 转换后可在队列详情中导出 HEIC + MOV 或 .pvt 包')
             .fontSize(13)
             .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .width('100%')
@@ -6994,12 +6998,32 @@ struct Index {
           .width('100%')
           .height(44)
           .enabled(!this.pageBusy && !this.queueRunning && !this.livePhotoPairExporting)
-          .onClick((): void => { void this.prepareAndExportLivePhoto(); });
+          .onClick((): void => { void this.prepareAndExportLivePhoto('pair'); });
         Text('自动生成并校验 HEIC + MOV 配对文件；配对失败时保留已转换的照片。')
           .fontSize(12)
           .fontColor($r('sys.color.font_secondary'))
           .width('100%')
-          .margin({ top: 6, bottom: 8 });
+          .margin({ top: 6 });
+        Row({ space: 8 }) {
+          Button(this.livePhotoBundleBusy ? '正在处理 .pvt…' : '导出 .pvt 包')
+            .layoutWeight(1)
+            .height(44)
+            .enabled(!this.pageBusy && !this.queueRunning && !this.livePhotoPairExporting && !this.livePhotoBundleBusy)
+            .onClick((): void => { void this.prepareAndExportLivePhoto('pvt-save'); });
+          Button('分享 .pvt 包')
+            .layoutWeight(1)
+            .height(44)
+            .enabled(!this.pageBusy && !this.queueRunning && !this.livePhotoPairExporting && !this.livePhotoBundleBusy)
+            .onClick((): void => { void this.prepareAndExportLivePhoto('pvt-share'); });
+        }
+        .width('100%')
+        .margin({ top: 8 });
+        Text(this.livePhotoBundleStatus.length > 0 ? this.livePhotoBundleStatus
+          : '.pvt 包：HEIC + MOV + metadata.plist 打成一个 <名称>.pvt.zip；Mac 解压后「照片」可直接导入为一张 Live Photo。')
+          .fontSize(12)
+          .fontColor(this.livePhotoBundleStatus.includes('失败') ? '#B3261E' : $r('sys.color.font_secondary'))
+          .width('100%')
+          .margin({ top: 4, bottom: 8 });
       }
       Text('Motion Photo（按需识别）')
         .fontSize(16)
@@ -7200,36 +7224,6 @@ struct Index {
             .onClick(() => {
               this.exportSelectedLivePhotoPair();
             });
-          Row({ space: 8 }) {
-            Button(this.livePhotoBundleBusy ? '正在处理 .pvt…' : '导出 .pvt 包')
-              .fontSize(14)
-              .layoutWeight(1)
-              .height(44)
-              .enabled(!this.livePhotoBundleBusy && !this.livePhotoPairExporting && !this.livePhotoPairing &&
-                !this.motionSplitting && !this.motionInspecting && !this.pageBusy && !this.queueRunning &&
-                !this.batchExportRunning && !this.cleanupRunning && !this.settingsSaving && !this.queuePersistenceFailed())
-              .onClick(() => {
-                this.exportSelectedLivePhotoBundle(false);
-              });
-            Button('分享 .pvt 包')
-              .fontSize(14)
-              .layoutWeight(1)
-              .height(44)
-              .enabled(!this.livePhotoBundleBusy && !this.livePhotoPairExporting && !this.livePhotoPairing &&
-                !this.motionSplitting && !this.motionInspecting && !this.pageBusy && !this.queueRunning &&
-                !this.batchExportRunning && !this.cleanupRunning && !this.settingsSaving && !this.queuePersistenceFailed())
-              .onClick(() => {
-                this.exportSelectedLivePhotoBundle(true);
-              });
-          }
-          .width('100%')
-          .margin({ top: 8 });
-          Text(this.livePhotoBundleStatus.length > 0 ? this.livePhotoBundleStatus
-            : '打包为 <名称>.pvt.zip（HEIC + MOV + metadata.plist，不压缩）；Mac 解压后「照片」可直接导入为一张 Live Photo。')
-            .fontSize(12)
-            .fontColor(this.livePhotoBundleStatus.includes('失败') ? '#B3261E' : $r('sys.color.font_secondary'))
-            .width('100%')
-            .margin({ top: 4 });
           if (this.livePhotoPairExportEntries.length > 0) {
             Text(this.livePhotoExportSummaryText())
               .fontSize(13)
