@@ -3008,6 +3008,16 @@ struct Index {
       !this.livePhotoPairExporting && !this.motionSplitting && !this.motionInspecting;
   }
 
+  /** A Motion Photo converted to Apple output keeps its Live part only through the queue. */
+  private gallerySingleConvertNeedsQueue(): boolean {
+    if (this.galleryDetails?.motionPhoto !== true) return false;
+    try {
+      return this.galleryPhotoModeSnapshot().modeKey === 'apple';
+    } catch (error) {
+      return false;
+    }
+  }
+
   private gallerySupportedOutputModes(): Array<SettingsOutputMode> {
     if (this.galleryDetails?.huaweiPortraitReady === true) return ['apple'];
     if (this.gallerySupportsNativeConversion()) return ['oppo', 'apple'];
@@ -5304,10 +5314,16 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .hitTestBehavior(HitTestMode.Default)
-    .accessibilityText('转换并保存为本地图库新图')
+    .accessibilityText(this.gallerySingleConvertNeedsQueue() ? '在队列中单独转换这张 Live Photo' : '转换并保存为本地图库新图')
     .onClick((): void => {
       if (!this.canConvertGalleryPhotoDirectly()) {
         this.showGallerySuccessToast(this.galleryConversionUnavailableMessage());
+        return;
+      }
+      if (this.gallerySingleConvertNeedsQueue()) {
+        // Live Photo pairing and .pvt export live on the queue item; convert
+        // only this item there so the motion part is not dropped.
+        void this.convertGallerySelection(true);
         return;
       }
       void this.convertGalleryPhotoDirectly();
@@ -5495,6 +5511,12 @@ struct Index {
     })
     .position({ x: 0, y: this.galleryThumbnailStripTop() })
     .opacity(this.galleryThumbnailStripVisible() ? 1 : 0)
+    // HitTestMode.None only exempts the Scroll itself: its clickable
+    // thumbnails sit above the expanded info/settings panel (zIndex 9) and
+    // would still take taps meant for the panel, switching photos. Hidden
+    // keeps the layout (and scroller position) but drops the whole subtree
+    // from hit testing.
+    .visibility(this.galleryThumbnailStripVisible() ? Visibility.Visible : Visibility.Hidden)
     .hitTestBehavior(this.galleryThumbnailStripVisible() ? HitTestMode.Default : HitTestMode.None)
     .zIndex(9);
   }
@@ -5702,7 +5724,7 @@ struct Index {
 
         Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ top: 14, bottom: 12 });
         if (this.galleryDetails?.motionPhoto === true) {
-          Text('Live Photo · 转换后可在队列详情中导出 HEIC + MOV 或 .pvt 包')
+          Text(this.gallerySingleConvertNeedsQueue() ? 'Live Photo · 转换单张会在队列中单独转换这张照片，完成后可导出 HEIC + MOV 或 .pvt 包' : 'Live Photo · 转换后可在队列详情中导出 HEIC + MOV 或 .pvt 包')
             .fontSize(13)
             .fontColor(this.galleryInfoPanelPrimaryTextColor())
             .width('100%')
