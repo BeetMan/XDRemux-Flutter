@@ -111,6 +111,7 @@ tools/*
 !tools/ohos/
 tools/ohos/*
 !tools/ohos/*.ps1
+!tools/ohos/build_hap.sh
 # Packaging scripts under tools/ are source, not artifacts - keep them tracked.
 !tools/installer/
 # Linux desktop packaging (AppImage/tar.gz) is source, not downloaded artifacts.

@@ -17,6 +17,7 @@
 
 #include "x265.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -51,6 +52,25 @@ bool append_nal(unsigned char** buffer, size_t* length, size_t* capacity,
     return true;
 }
 
+// PSNR of a reconstructed 10-bit luma plane (byte stride) against `source`.
+double recon_luma_psnr(const uint16_t* source, int width, int height,
+                       const x265_picture& recon) {
+    if (!recon.planes[0] || recon.stride[0] <= 0) {
+        return -1.0;
+    }
+    const uint8_t* row = static_cast<const uint8_t*>(recon.planes[0]);
+    double sse = 0.0;
+    for (int y = 0; y < height; ++y, row += recon.stride[0]) {
+        const uint16_t* r = reinterpret_cast<const uint16_t*>(row);
+        for (int x = 0; x < width; ++x) {
+            const double d = double(r[x]) - double(source[y * width + x]);
+            sse += d * d;
+        }
+    }
+    const double mse = sse / (double(width) * double(height));
+    return mse == 0.0 ? 99.0 : 10.0 * std::log10(1023.0 * 1023.0 / mse);
+}
+
 }  // namespace
 
 extern "C" {
@@ -59,9 +79,13 @@ int xdremux_10bit_available(void) { return 1; }
 
 // Encode one 10-bit 4:2:0 picture. `p1`/`p2` are half-resolution chroma planes.
 // Returns 0 on success and stores a malloc'd Annex-B stream in `out`/`out_len`.
-int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
-                               const uint16_t* p2, int width, int height,
-                               unsigned char** out, int* out_len) {
+// When `luma_psnr` is non-null it receives the PSNR of x265's reconstructed
+// luma against `p0` itself (not x265's internal copy of it), so a wrong input
+// layout shows up as a low value.
+int xdremux_encode_10bit_planes_checked(const uint16_t* p0, const uint16_t* p1,
+                                        const uint16_t* p2, int width, int height,
+                                        unsigned char** out, int* out_len,
+                                        double* luma_psnr) {
     if (!p0 || !p1 || !p2 || !out || !out_len || width <= 0 || height <= 0) {
         return -1;
     }
@@ -114,12 +138,15 @@ int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
     picture->planes[0] = const_cast<uint16_t*>(p0);
     picture->planes[1] = const_cast<uint16_t*>(p1);
     picture->planes[2] = const_cast<uint16_t*>(p2);
-    // x265 strides are in bytes; 10-bit samples are 16-bit words. A sample
-    // count here makes every row read half a row (two squeezed copies).
     const int chroma_width = (width + 1) / 2;
+    // x265 strides are in bytes; it divides by the sample size when reading
+    // 16-bit input, so sample-count strides read only half of every row.
     picture->stride[0] = width * static_cast<int>(sizeof(uint16_t));
     picture->stride[1] = chroma_width * static_cast<int>(sizeof(uint16_t));
     picture->stride[2] = chroma_width * static_cast<int>(sizeof(uint16_t));
+    x265_picture recon;
+    std::memset(&recon, 0, sizeof(recon));
+    x265_picture* recon_out = luma_psnr ? &recon : nullptr;
 
     unsigned char* buffer = nullptr;
     size_t length = 0;
@@ -138,9 +165,11 @@ int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
         }
     }
     if (status == 0) {
-        int encoded = api->encoder_encode(encoder, &nals, &nal_count, picture, nullptr);
+        int encoded = api->encoder_encode(encoder, &nals, &nal_count, picture, recon_out);
         if (encoded < 0) {
             status = -9;
+        } else if (encoded > 0 && luma_psnr) {
+            *luma_psnr = recon_luma_psnr(p0, width, height, recon);
         }
         for (uint32_t i = 0; status == 0 && i < nal_count; ++i) {
             if (!append_nal(&buffer, &length, &capacity, nals[i])) {
@@ -149,10 +178,13 @@ int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
         }
     }
     for (int flush = 0; status == 0 && flush < 4; ++flush) {
-        int encoded = api->encoder_encode(encoder, &nals, &nal_count, nullptr, nullptr);
+        int encoded = api->encoder_encode(encoder, &nals, &nal_count, nullptr, recon_out);
         if (encoded < 0) {
             status = -9;
             break;
+        }
+        if (encoded > 0 && luma_psnr) {
+            *luma_psnr = recon_luma_psnr(p0, width, height, recon);
         }
         if (encoded == 0 && nal_count == 0) {
             break;
@@ -181,6 +213,13 @@ int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
     *out = buffer;
     *out_len = static_cast<int>(length);
     return 0;
+}
+
+int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
+                               const uint16_t* p2, int width, int height,
+                               unsigned char** out, int* out_len) {
+    return xdremux_encode_10bit_planes_checked(p0, p1, p2, width, height, out,
+                                               out_len, nullptr);
 }
 
 void xdremux_free_stream(unsigned char* buffer) { std::free(buffer); }
