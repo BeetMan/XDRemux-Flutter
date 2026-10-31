@@ -86,14 +86,15 @@ void main() {
     });
   });
 
-  test('bundling setting defaults off and persists', () {
+  test('bundling setting defaults on and persists', () {
     final config = ConversionConfig();
-    expect(config.livePhotoBundle, isFalse);
-    config.livePhotoBundle = true;
-    expect(ConversionConfig.fromJson(config.toJson()).livePhotoBundle, isTrue);
-    expect(config.copy().livePhotoBundle, isTrue);
+    expect(config.livePhotoBundle, isTrue);
+    config.livePhotoBundle = false;
+    expect(ConversionConfig.fromJson(config.toJson()).livePhotoBundle, isFalse);
+    expect(config.copy().livePhotoBundle, isFalse);
+    // Settings saved before the option existed (0.4.5) get the new default.
     final legacy = config.toJson()..remove('livePhotoBundle');
-    expect(ConversionConfig.fromJson(legacy).livePhotoBundle, isFalse);
+    expect(ConversionConfig.fromJson(legacy).livePhotoBundle, isTrue);
   });
 
   group('export of a .pvt item', () {

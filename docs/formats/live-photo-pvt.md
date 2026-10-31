@@ -30,7 +30,7 @@
 
 ## 3. 应用行为
 
-- 设置项「Live Photo 打包为 .pvt」（`ConversionConfig.livePhotoBundle`）**默认关闭**，关闭时行为和以前一样，输出同 stem 的 HEIC + MOV。
+- 设置项「Live Photo 打包为 .pvt」（`ConversionConfig.livePhotoBundle`）**默认开启**（0.4.6 起；没有该字段的旧设置也按开启处理）。关闭时输出同 stem 的 HEIC + MOV，和 0.4.5 一样。
 - 打开后：转换器仍然先把静帧写到原计划的 `<dir>/<stem>.heic`，合成时在临时目录配对，打包成 `<dir>/<stem>.pvt/`，最后删掉原位置那张没配对的静帧。`item.outputPath` 指向包里的 HEIC，`livePhotoMoviePath` 仍能找到包里的 MOV。
 - 检查点里记录的是原计划路径。恢复时如果原路径不存在而 `<stem>.pvt/<stem>.heic` 存在，就改用包里的文件，并用 `xdremux_live_photo_bundle_valid` 校验。重新转换时会把路径还原到原计划位置。
 - 保存：iOS 仍用 PhotoKit，以 `.photo` + `.pairedVideo` 写入包里的两个文件；Android 存两个独立媒体项，和以前相同。
