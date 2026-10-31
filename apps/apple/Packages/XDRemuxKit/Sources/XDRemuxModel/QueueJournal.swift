@@ -91,6 +91,44 @@ public struct QueueJournal: Codable, Equatable, Sendable {
     }
 }
 
+extension QueueJournal {
+    /// Paths inside `home` are stored as `~/<relative>`: the iOS app
+    /// container (and the macOS sandbox container) gets a new UUID path on
+    /// every app update, so absolute paths would make every restored item a
+    /// "missing input" after an update. Paths outside `home` (a user-chosen
+    /// macOS output folder) stay absolute.
+    public static let homePrefix = "~/"
+
+    public static func portable(_ path: String, home: String) -> String {
+        let root = home.hasSuffix("/") ? home : home + "/"
+        guard path.hasPrefix(root) else { return path }
+        return homePrefix + path.dropFirst(root.count)
+    }
+
+    public static func absolute(_ path: String, home: String) -> String {
+        guard path.hasPrefix(homePrefix) else { return path }
+        let root = home.hasSuffix("/") ? home : home + "/"
+        return root + path.dropFirst(homePrefix.count)
+    }
+
+    /// Every path rewritten with `transform` (input, output, videos).
+    public func mapPaths(_ transform: (String) -> String) -> QueueJournal {
+        var copy = self
+        copy.records = records.map { r in
+            var r = r
+            r.inputPath = transform(r.inputPath)
+            r.outputPath = r.outputPath.map(transform)
+            r.pairedVideoPath = r.pairedVideoPath.map(transform)
+            r.extraVideoPaths = r.extraVideoPaths?.map(transform)
+            return r
+        }
+        return copy
+    }
+
+    public func portable(home: String) -> QueueJournal { mapPaths { Self.portable($0, home: home) } }
+    public func resolved(home: String) -> QueueJournal { mapPaths { Self.absolute($0, home: home) } }
+}
+
 public enum QueueJournalError: Error, Equatable, Sendable {
     case unsupportedSchema(Int)
 }

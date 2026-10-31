@@ -22,6 +22,21 @@ apps/apple/
   Frameworks/                 XDRemuxCore.xcframework (built, ignored)
 ```
 
+## iOS simulator
+
+```bash
+cd xdremux/rust && XDREMUX_APPLE_SLICES="macos ios-sim" ./build_apple.sh
+cd apps/apple && xcodegen generate
+xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'platform=iOS Simulator,name=iPhone 18 Pro' build
+xcrun simctl install booted <DerivedData>/Build/Products/Debug-iphonesimulator/XDRemux.app
+# stage samples inside the app container, then launch with the same flags as macOS
+C=$(xcrun simctl get_app_container booted io.github.beetman.xdremux.swiftui data)
+xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Documents/samples/a.heic" --convert-all
+```
+
+The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
+HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
+
 ## Command line (macOS)
 
 ```bash
