@@ -3,7 +3,7 @@
 > 读者：接手项目的开发者 / agent。用途：给出**可提交、可审计**的现状快照，替代只存在于本机、被 gitignore 的 `docs/plans/current-handoff.md`。
 > 更新时机：发版后、主线合并后、方向决策后。每次更新在标题保留日期，历史版本进 `docs/archive/`（上一版：[`archive/current-status-20261029.md`](../archive/current-status-20261029.md)）。
 > 断言遵循 `docs/style-guide.md` §3：已实测 / 推断 / 未验证。
-> 2026-10-31：v0.4.6 与鸿蒙原生 0.5.3 发版、GPL-3.0-only 改授权（PR #54）、原生 SwiftUI Apple 前端进入主线（PR #52）后重写。分支计数基准 `origin/main` = `8385138`。
+> 2026-10-31：v0.4.6 与鸿蒙原生 0.5.3 发版、GPL-3.0-only 改授权（PR #54）、原生 SwiftUI Apple 前端进入主线（PR #52）后重写。分支计数基准 `origin/main` = `8385138`（之后又合入 PR #55、#56，至 `699fef5`）。
 
 ## 1. 版本与发布
 
@@ -25,9 +25,7 @@
 
 ### 2.1 可合
 
-| 分支 | ahead / behind | 冲突 | 说明 |
-|---|---|---|---|
-| `feat/license-notices`（PR #55 open） | +1 / −0 | 0 | #54 的后续：设置页「开源许可」入口（`LicenseRegistry` 注册 GPL-3.0 与 x265 GPL-2.0 文本）、Windows / macOS / Linux 安装包附带 `LICENSE` 与 `LICENSING.md`。PR CI（Rust、Flutter、Linux、conformance）通过；安装包改动只在 `release.yml` 中运行，需一次预检 |
+（无。PR #55 GPL 通知（设置页「开源许可」、安装包附带 `LICENSE` / `LICENSING.md`）已于 10-31 合并为 `35dae91`；PR #56 原生 Apple 工具栏与 size-class 布局合并为 `699fef5`。）
 
 ### 2.2 在飞（大改）
 
@@ -88,11 +86,11 @@
 4. **Live Photo 发布校验只在检查点恢复路径**；转换成功当次没有"立即校验 + 半成品回滚 + 独立恢复副本"（上游 #76/#78 的后半段）。
 5. **CI 覆盖**：`ci.yml` 只跑 Ubuntu + Flutter；`apple-ci.yml` 只跑原生 Apple 的 macOS 切片（不含 iOS）；Windows/macOS 原生行为、真机照片验收不在 CI 内。见 `docs/operations/ci.md`。
 6. **三个前端共用 Rust 核心**（Flutter、鸿蒙原生、原生 Apple）：`xdremux/rust` 的 FFI 改动需重新生成 `xdremux_core.h`（`apple-ci.yml` 会校验），并重建鸿蒙 `.so` 复测。
-7. **许可**：改 GPL-3.0-only 后，应用内与安装包尚未附带许可文本（PR #55 待合）；下一次发版前必须合入。
+7. **许可**：应用内许可页与安装包附带许可文本已合入（PR #55），但安装包部分只在 `release.yml` 中运行，**未验证**实际产物。
 
 ## 5. 下一步优先级
 
-1. 合并 PR #55（GPL 通知进应用与安装包），并跑一次 `release.yml` `workflow_dispatch` 预检，确认三类安装包里有 `LICENSE` / `LICENSING.md`。
+1. ~~合并 PR #55~~ **已完成**（`35dae91`）；跑一次 `release.yml` `workflow_dispatch` 预检，确认 Windows / macOS / Linux 安装包里有 `LICENSE` / `LICENSING.md`。
 2. 清理 §2.5 已合并分支与对应本机 worktree。
 3. PR #29（`codex/local-transfer`）：merge main（落后 54）→ CI → Android 导出与 Apple 设备互通真机实测 → 合并。
 4. 原生 Apple 前端：P3 剩余（Share Extension、批量导出）→ iOS 真机签名安装与 Live Photo 声音 / HDR 亮度验收 → P4 跨端回归。
