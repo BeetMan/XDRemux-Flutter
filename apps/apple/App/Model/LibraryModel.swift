@@ -15,7 +15,23 @@ final class LibraryModel {
         didSet {
             try? settingsStore.save(config)
             engine.setMaxConcurrency(config.maxConcurrentJobs)
+            applyPolicies()
         }
+    }
+
+    /// Re-evaluates the Huawei admission policy for every idle photo, e.g.
+    /// after Photographic Styles is switched on (which admits Huawei HDR).
+    private func applyPolicies() {
+        for index in items.indices where items[index].state == .ready {
+            items[index].policyReason = Self.policyReason(for: items[index], config: config)
+        }
+    }
+
+    private static func policyReason(for item: PhotoItem, config: ConversionConfig) -> String? {
+        if case .skipped(let reason) = HuaweiPhotoPolicy.admission(item.huawei, config: config, motionPhoto: item.isMotionPhoto) {
+            return reason
+        }
+        return nil
     }
     var selectedID: PhotoItem.ID?
     var lastError: String?
@@ -304,19 +320,24 @@ final class LibraryModel {
         async let inspection = engine.inspect(path: path)
         async let details = engine.decodedPhotoDetails(path: path)
         async let motion = engine.motionPhotoInfo(path: path)
+        async let huawei = engine.huaweiPhotoInfo(path: path)
         let thumbnail = await Task.detached(priority: .utility) {
             ImageLoading.thumbnail(at: url, maxPixelSize: 512)
         }.value
         do {
             let (c, i, d) = try await (classification, inspection, details)
             let m = try? await motion
+            let h = await huawei
+            let config = self.config
             update(id) { item in
                 item.classification = c
                 item.inspection = i
                 item.details = d
                 item.motionPhoto = m
+                item.huawei = h
                 item.thumbnail = thumbnail
                 if !keepState || item.state == .inspecting { item.state = .ready }
+                item.policyReason = Self.policyReason(for: item, config: config)
             }
         } catch {
             update(id) { item in

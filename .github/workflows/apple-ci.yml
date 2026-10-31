@@ -34,7 +34,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-macos-apple-${{ env.X265_TAG }}-10bit
+          # Bumped whenever build_apple.sh needs more archives: this key
+          # covers desktop + simulator, arm64 + x86_64, 8-bit + Main10
+          # (build_apple.sh builds the missing ones on a cache miss).
+          key: x265-macos-apple-${{ env.X265_TAG }}-10bit-universal-sim
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -57,7 +60,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-ios-sim, x86_64-apple-ios
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -77,8 +80,17 @@ jobs:
       - name: Check the committed C header is current
         run: tools/apple/check_header.sh
 
-      - name: Build XDRemuxCore.xcframework (macOS slice)
-        run: XDREMUX_APPLE_SLICES=macos xdremux/rust/build_apple.sh
+      - name: Build XDRemuxCore.xcframework (macOS + simulator, arm64 + x86_64)
+        run: XDREMUX_APPLE_SLICES="macos ios-sim" xdremux/rust/build_apple.sh
+
+      - name: Check slice architectures
+        run: |
+          set -euo pipefail
+          fw=apps/apple/Frameworks/XDRemuxCore.xcframework
+          cat "$fw/BUILD_RECORD.txt"
+          for lib in "$fw"/macos-*/libXDRemuxCore.a "$fw"/ios-*-simulator/libXDRemuxCore.a; do
+            lipo -info "$lib" | tee /dev/stderr | grep -q "x86_64" && lipo -info "$lib" | grep -q "arm64"
+          done
 
       - name: Swift package tests
         working-directory: apps/apple/Packages/XDRemuxKit
@@ -100,3 +112,15 @@ jobs:
           xcodebuild -project XDRemux.xcodeproj -scheme XDRemux \
             -destination 'platform=macOS,arch=arm64' -configuration Debug \
             CODE_SIGNING_ALLOWED=NO build | tail -5
+
+      # The iOS build has its own failure modes (toolbar placement, HDR
+      # preview, container paths, the Share Extension); build it for the
+      # simulator so they surface in CI, not on a phone.
+      - name: Build iOS app and Share Extension (simulator)
+        working-directory: apps/apple
+        run: |
+          xcodebuild -project XDRemux.xcodeproj -scheme XDRemux \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build | tail -5
+          ls build/Debug-iphonesimulator/XDRemux.app/PlugIns 2>/dev/null \
+            || find ~/Library/Developer/Xcode/DerivedData -path '*Debug-iphonesimulator/XDRemux.app/PlugIns/XDRemuxShare.appex' -maxdepth 8 | grep -q appex

@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var showFileImporter = false
     @State private var showPhotosPicker = false
     @State private var showRoundTrip = false
+    @State private var showOrganize = false
     @State private var importingCheckpoint = false
     @State private var exportingCheckpoint = false
     @State private var checkpointDocument = TextFileDocument(text: "")
@@ -79,6 +80,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showRoundTrip) {
             RoundTripView(library: model)
+        }
+        .sheet(isPresented: $showOrganize) {
+            OrganizeView()
         }
         .task {
             await model.handleLaunchArguments()
@@ -165,6 +169,12 @@ struct ContentView: View {
                 Label("一帧影像，动用两台手机", systemImage: "arrow.triangle.2.circlepath.camera")
             }
             .help("OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据")
+            Button {
+                showOrganize = true
+            } label: {
+                Label("批量整理", systemImage: "folder.badge.gearshape")
+            }
+            .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
             Button {
                 importingCheckpoint = true
             } label: {
