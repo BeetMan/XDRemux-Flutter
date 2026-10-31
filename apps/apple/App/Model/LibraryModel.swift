@@ -77,7 +77,7 @@ final class LibraryModel {
     /// Rebuilds `items` from the journal, applying the restart rules; then
     /// re-reads classification and thumbnails for each restored input.
     private func restoreJournal() {
-        guard let journal = try? journalStore.load() else { return }
+        guard let journal = try? journalStore.load()?.resolved(home: NSHomeDirectory()) else { return }
         let restored = journal.restored { FileManager.default.fileExists(atPath: $0) }
         restoring = true
         items = restored.records.map { record in
@@ -132,7 +132,7 @@ final class LibraryModel {
                                        pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
-        do { try journalStore.save(journal) } catch { lastError = String(localized: "无法保存队列状态：\(error.localizedDescription)") }
+        do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = String(localized: "无法保存队列状态：\(error.localizedDescription)") }
     }
 
     var selectedItem: PhotoItem? {
