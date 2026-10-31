@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var showRoundTrip = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
     #endif
 
     static let importTypes: [UTType] = [.heic, .heif, .jpeg]
@@ -78,7 +79,15 @@ struct ContentView: View {
         .task {
             await model.handleLaunchArguments()
             if model.openRoundTripOnLaunch { showRoundTrip = true }
+            await model.drainSharedInbox()
         }
+        #if os(iOS)
+        // Photos shared through the extension while the app was in the
+        // background are picked up when it comes to the front.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.drainSharedInbox() } }
+        }
+        #endif
         // Finder "Open With", Dock drop, and iOS "Open in XDRemux" hand files here.
         .onOpenURL { url in
             Task { await model.importFiles([url]) }
