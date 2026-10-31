@@ -1720,18 +1720,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     item.outputPath = livePhotoFlatPath(item.outputPath);
     runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
-    // Live Photo pairing is incompatible with the style state in Photos'
-    // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
-    // Keep the pairing pure: no styleMetadata in the paired still.
-    if (item.motionPhoto != null &&
-        item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
-      // PS3 contract (styles + texture + mattes) is now allowed on paired
-      // stills — re-test of the 2026-09-02 "style+pair fails to load" finding
-      // with the full matte contract. Old-styles-only pairs stay pure.
-      if (!runConfig.applePhotographicStyles3) {
-        runConfig.applePhotographicStyles = false;
-      }
-    }
+    // Styles (2 and 3) are kept on Live Photo pairs: when the paired still
+    // declares Photographic Styles, make_live_photo also writes the MOV style
+    // tracks Photos' Live Photo editor needs (live_photo_styles.rs, #46).
     // PS3 injection is Rust-only.
     if (runConfig.backend != ConversionBackend.rust) {
       runConfig.applePhotographicStyles3 = false;
@@ -1790,8 +1781,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Huawei Portrait fast path: uses the dedicated remux pipeline
       // instead of the OPPO-based classify/extract/encode path.
       // Styles / Styles 3, when enabled, are attached afterwards so both
-      // stay on together. Live Photo pairing already cleared styles-only
-      // above; Styles 3 is still applied.
+      // stay on together.
       final wantStyles = runConfig.applePhotographicStyles;
       final wantStyles3 = runConfig.applePhotographicStyles3;
       final styleFlags = (wantStyles || wantStyles3 ? XdRemuxFFI.styleLayerStyles : 0) |
