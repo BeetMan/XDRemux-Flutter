@@ -78,6 +78,7 @@ export const motionSplit: (path: string, outputDirectory: string) => Promise<str
 export const motionExtractStill: (inputPath: string, outputPath: string) => Promise<string>;
 export const livePhotoMake: (sourcePath: string, stillPath: string, outputDirectory: string) => Promise<string>;
 export const livePhotoPairValid: (stillPath: string, movPath: string) => Promise<boolean>;
+export const livePhotoBundleMake: (stillPath: string, movPath: string, bundlePath: string) => Promise<string>;
 export const convert: (
   inputPath: string,
   outputPath: string,

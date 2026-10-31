@@ -106,6 +106,13 @@ import {
   summarizeLivePhotoExport
 } from '../queue/LivePhotoPairExport';
 import type { LivePhotoExportEntry } from '../queue/LivePhotoPairExport';
+import {
+  buildStoredZip,
+  livePhotoBundleName,
+  livePhotoBundleZipEntries,
+  parseLivePhotoBundleReport
+} from '../queue/LivePhotoBundleZip';
+import type { LivePhotoBundleFile, LivePhotoBundleReport } from '../queue/LivePhotoBundleZip';
 import { ps3OptionsFor, stableGrainSeed } from '../queue/Ps3Model';
 import { convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompatible,
   mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
@@ -245,6 +252,8 @@ struct Index {
   @State private livePhotoPairExporting: boolean = false;
   @State private livePhotoPairResult: LivePhotoPairResult | undefined = undefined;
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
+  @State private livePhotoBundleBusy: boolean = false;
+  @State private livePhotoBundleStatus: string = '';
   @State private mainTabIndex: number = 1;
   @State private galleryDetailVisible: boolean = false;
   @State private galleryDetailMounted: boolean = false;
@@ -1169,6 +1178,7 @@ struct Index {
     if (this.livePhotoPairExportKey !== pairKey) {
       this.livePhotoPairExportKey = pairKey;
       this.livePhotoPairExportEntries = [];
+      this.livePhotoBundleStatus = '';
     }
     this.livePhotoPairResult = pairKey.length === 0 ? undefined : this.livePhotoPairCache.get(pairKey);
     if (item === undefined || item.inputPath.length === 0) {
@@ -2334,6 +2344,155 @@ struct Index {
         }
       }
       this.livePhotoPairExporting = false;
+      this.pageBusy = false;
+      this.syncQueue();
+    }
+  }
+
+  private async readLocalFile(path: string): Promise<Uint8Array> {
+    const stat: fileIo.Stat = await fileIo.lstat(path);
+    if (stat.isSymbolicLink() || !stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size <= 0) {
+      throw new Error('不是非空普通文件：' + path.substring(path.lastIndexOf('/') + 1));
+    }
+    const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+    const file: fileIo.File = await fileIo.open(path, fileIo.OpenMode.READ_ONLY);
+    try {
+      let offset: number = 0;
+      while (offset < stat.size) {
+        const read: number = await fileIo.read(file.fd, buffer, { offset: offset, length: stat.size - offset });
+        if (read <= 0) throw new Error('读取文件提前结束');
+        offset += read;
+      }
+    } finally {
+      await fileIo.close(file.fd);
+    }
+    return new Uint8Array(buffer);
+  }
+
+  /**
+   * Package the current pair as `<stem>.pvt` (Rust) and zip it into the cache
+   * directory. The work directory only ever holds the latest bundle zip: a
+   * share target may still read it after the panel closes, so it is cleared
+   * at the start of the next packaging run rather than right after sharing.
+   */
+  private async buildLivePhotoBundleZip(pair: LivePhotoPairResult, cacheDir: string): Promise<string> {
+    const workDir: string = cacheDir + '/pvt-export';
+    if (await fileIo.access(workDir)) await fileIo.rmdir(workDir);
+    await fileIo.mkdir(workDir);
+    const bundleName: string = livePhotoBundleName(pair.stillPath);
+    const bundlePath: string = workDir + '/' + bundleName;
+    const report: LivePhotoBundleReport = parseLivePhotoBundleReport(
+      await xdremuxNative.livePhotoBundleMake(pair.stillPath, pair.movPath, bundlePath) as string, bundlePath);
+    const files: Array<LivePhotoBundleFile> = [];
+    for (const leaf of await fileIo.listFile(report.bundlePath)) {
+      files.push({ leaf: leaf, data: leaf.startsWith('.') ? new Uint8Array(0) : await this.readLocalFile(bundlePath + '/' + leaf) });
+    }
+    const zip: Uint8Array = buildStoredZip(livePhotoBundleZipEntries(bundleName, files), new Date());
+    const zipPath: string = workDir + '/' + bundleName + '.zip';
+    const out: fileIo.File = await fileIo.open(zipPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.WRITE_ONLY);
+    try {
+      const buffer: ArrayBuffer = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+      let offset: number = 0;
+      while (offset < buffer.byteLength) {
+        const written: number = await fileIo.write(out.fd, buffer, { offset: offset, length: buffer.byteLength - offset });
+        if (written <= 0) throw new Error('写入 .pvt zip 提前结束');
+        offset += written;
+      }
+    } finally {
+      await fileIo.close(out.fd);
+    }
+    await fileIo.rmdir(bundlePath);
+    return zipPath;
+  }
+
+  private async exportSelectedLivePhotoBundle(share: boolean): Promise<void> {
+    const controller: QueueController | undefined = this.queueController;
+    const item: QueueItem | undefined = this.selectedItem();
+    if (this.livePhotoBundleBusy || this.livePhotoPairExporting || this.livePhotoPairing || this.motionSplitting ||
+      this.motionInspecting || this.pageBusy || this.batchExportRunning || this.queueRunning || this.cleanupRunning ||
+      this.settingsSaving || controller === undefined || item === undefined) {
+      this.operationStatus = '当前有文件操作正在进行，暂不能处理 .pvt 包';
+      return;
+    }
+    if (!this.queueLoaded || !this.queueReady || this.queueRecoveryRequired || controller.hasPersistenceError ||
+      controller.isPersistenceBusy || this.queueHasBlockingOperation(controller)) {
+      this.operationStatus = '队列仍在恢复、保存或执行文件操作，暂不能处理 .pvt 包';
+      return;
+    }
+    const cacheKey: string = this.livePhotoPairCacheKey(item);
+    const pair: LivePhotoPairResult | undefined = cacheKey.length === 0 ? undefined : this.livePhotoPairCache.get(cacheKey);
+    if (pair === undefined || pair.inputPath !== item.inputPath || pair.convertedStillPath !== item.result?.outputPath) {
+      this.operationStatus = '当前项目没有与原图及 Apple 转换结果匹配的 Live Photo 配对；请重新生成';
+      return;
+    }
+    const uiContext: UIContext = this.getUIContext();
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      this.operationStatus = '应用沙盒尚未加载';
+      return;
+    }
+    const itemId: string = item.id;
+    let locked: boolean = false;
+    this.pageBusy = true;
+    this.livePhotoBundleBusy = true;
+    this.livePhotoBundleStatus = '正在打包 .pvt…';
+    try {
+      // Hold the item so cleanup cannot remove the pair while Rust copies it.
+      controller.beginExternal(itemId);
+      locked = true;
+      await controller.persist();
+      const zipPath: string = await this.buildLivePhotoBundleZip(pair, context.cacheDir);
+      const zipName: string = zipPath.substring(zipPath.lastIndexOf('/') + 1);
+      controller.endExternal(itemId);
+      locked = false;
+      if (share) {
+        const data: systemShare.SharedData = new systemShare.SharedData({
+          utd: utd.UniformDataType.FILE_URI,
+          uri: fileUri.getUriFromPath(zipPath),
+          title: zipName
+        });
+        await new systemShare.ShareController(data).show(context as common.UIAbilityContext, {
+          selectionMode: systemShare.SelectionMode.SINGLE,
+          previewMode: systemShare.SharePreviewMode.DEFAULT
+        });
+        this.livePhotoBundleStatus = '已打开分享面板：' + zipName + '；对方在 Mac 上解压后即为 .pvt 包';
+        return;
+      }
+      const documentPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
+      const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      options.newFileNames = [zipName];
+      this.livePhotoBundleStatus = '请选择 ' + zipName + ' 的保存位置…';
+      this.batchPickerActive = true;
+      let saved: Array<string> = [];
+      try {
+        saved = await documentPicker.save(options);
+      } finally {
+        this.batchPickerActive = false;
+      }
+      if (saved.length === 0) {
+        this.livePhotoBundleStatus = '已取消 .pvt 包导出';
+        return;
+      }
+      if (saved.length !== 1) throw new Error('保存选择器必须只返回一个目标');
+      if (!await this.waitForBatchPageShow()) {
+        this.livePhotoBundleStatus = '页面未恢复前台；.pvt 包未写入';
+        return;
+      }
+      await copyBatchOutput(this.batchFileIo(), zipPath, saved[0], item.sourceUri, this.batchProtectedPaths(controller));
+      this.livePhotoBundleStatus = '已导出 ' + zipName + '；在 Mac 上解压后可直接导入「照片」为一张 Live Photo';
+    } catch (error) {
+      this.livePhotoBundleStatus = '.pvt 包' + (share ? '分享' : '导出') + '失败：' + this.errorMessage(error);
+    } finally {
+      this.batchPickerActive = false;
+      if (locked) {
+        controller.endExternal(itemId);
+      }
+      try {
+        await controller.persist();
+      } catch (persistError) {
+        this.queueError = '.pvt 包处理结束后队列状态保存失败：' + this.errorMessage(persistError) + '；请重试保存';
+      }
+      this.livePhotoBundleBusy = false;
       this.pageBusy = false;
       this.syncQueue();
     }
@@ -7041,6 +7200,36 @@ struct Index {
             .onClick(() => {
               this.exportSelectedLivePhotoPair();
             });
+          Row({ space: 8 }) {
+            Button(this.livePhotoBundleBusy ? '正在处理 .pvt…' : '导出 .pvt 包')
+              .fontSize(14)
+              .layoutWeight(1)
+              .height(44)
+              .enabled(!this.livePhotoBundleBusy && !this.livePhotoPairExporting && !this.livePhotoPairing &&
+                !this.motionSplitting && !this.motionInspecting && !this.pageBusy && !this.queueRunning &&
+                !this.batchExportRunning && !this.cleanupRunning && !this.settingsSaving && !this.queuePersistenceFailed())
+              .onClick(() => {
+                this.exportSelectedLivePhotoBundle(false);
+              });
+            Button('分享 .pvt 包')
+              .fontSize(14)
+              .layoutWeight(1)
+              .height(44)
+              .enabled(!this.livePhotoBundleBusy && !this.livePhotoPairExporting && !this.livePhotoPairing &&
+                !this.motionSplitting && !this.motionInspecting && !this.pageBusy && !this.queueRunning &&
+                !this.batchExportRunning && !this.cleanupRunning && !this.settingsSaving && !this.queuePersistenceFailed())
+              .onClick(() => {
+                this.exportSelectedLivePhotoBundle(true);
+              });
+          }
+          .width('100%')
+          .margin({ top: 8 });
+          Text(this.livePhotoBundleStatus.length > 0 ? this.livePhotoBundleStatus
+            : '打包为 <名称>.pvt.zip（HEIC + MOV + metadata.plist，不压缩）；Mac 解压后「照片」可直接导入为一张 Live Photo。')
+            .fontSize(12)
+            .fontColor(this.livePhotoBundleStatus.includes('失败') ? '#B3261E' : $r('sys.color.font_secondary'))
+            .width('100%')
+            .margin({ top: 4 });
           if (this.livePhotoPairExportEntries.length > 0) {
             Text(this.livePhotoExportSummaryText())
               .fontSize(13)

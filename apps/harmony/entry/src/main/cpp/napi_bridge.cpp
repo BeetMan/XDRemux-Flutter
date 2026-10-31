@@ -67,6 +67,7 @@ char *xdremux_motion_photo_split(const char *input_path, const char *output_dire
 char *xdremux_motion_photo_extract_still(const char *input_path, const char *output_path);
 char *xdremux_make_live_photo(const char *source_path, const char *still_path, const char *out_dir);
 std::uint8_t xdremux_live_photo_pair_valid(const char *still_path, const char *mov_path);
+char *xdremux_make_live_photo_bundle(const char *still_path, const char *mov_path, const char *bundle_path);
 XdremuxConversionResult xdremux_convert_with_progress(
     const char *input_path,
     const char *output_path,
@@ -188,6 +189,7 @@ struct AsyncContext {
         MOTION_EXTRACT_STILL,
         LIVE_PHOTO_MAKE,
         LIVE_PHOTO_PAIR_VALID,
+        LIVE_PHOTO_BUNDLE_MAKE,
         CONVERT,
     };
 
@@ -365,6 +367,17 @@ void execute_operation(napi_env, void *data)
                     context->input_path.c_str(), context->still_path.c_str(), context->output_path.c_str()));
             if (!value) {
                 set_error(*context, "xdremux_make_live_photo returned a null report");
+                return;
+            }
+            context->live_photo_json.assign(value.get());
+            return;
+        }
+        case AsyncContext::Operation::LIVE_PHOTO_BUNDLE_MAKE: {
+            std::unique_ptr<char, RustStringDeleter> value(
+                xdremux_make_live_photo_bundle(
+                    context->input_path.c_str(), context->still_path.c_str(), context->output_path.c_str()));
+            if (!value) {
+                set_error(*context, "xdremux_make_live_photo_bundle returned a null report");
                 return;
             }
             context->live_photo_json.assign(value.get());
@@ -652,7 +665,8 @@ void complete_operation(napi_env env, napi_status status, void *data)
         } else {
             reject_with_message(env, context->deferred, "unable to create Motion Photo split result");
         }
-    } else if (context->operation == AsyncContext::Operation::LIVE_PHOTO_MAKE) {
+    } else if (context->operation == AsyncContext::Operation::LIVE_PHOTO_MAKE ||
+               context->operation == AsyncContext::Operation::LIVE_PHOTO_BUNDLE_MAKE) {
         napi_value value = nullptr;
         if (napi_create_string_utf8(env, context->live_photo_json.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
             napi_resolve_deferred(env, context->deferred, value);
@@ -1187,6 +1201,44 @@ napi_value live_photo_make(napi_env env, napi_callback_info info)
     return queue_operation(env, context);
 }
 
+napi_value live_photo_bundle_make(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value args[3] = {nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+        napi_throw_type_error(env, nullptr, "livePhotoBundleMake(stillPath, movPath, bundlePath) requires three filesystem paths");
+        return nullptr;
+    }
+
+    auto *context = new (std::nothrow) AsyncContext();
+    if (context == nullptr) {
+        napi_throw_error(env, nullptr, "unable to allocate native async context");
+        return nullptr;
+    }
+    // input_path = paired still, still_path = paired MOV, output_path = <stem>.pvt directory.
+    context->operation = AsyncContext::Operation::LIVE_PHOTO_BUNDLE_MAKE;
+    try {
+        if (!read_local_path(env, args[0], context->input_path) ||
+            !read_local_path(env, args[1], context->still_path) ||
+            !read_local_path(env, args[2], context->output_path)) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoBundleMake requires three local filesystem paths");
+            return nullptr;
+        }
+        if (context->input_path == context->still_path || context->input_path == context->output_path ||
+            context->still_path == context->output_path) {
+            delete context;
+            napi_throw_type_error(env, nullptr, "livePhotoBundleMake paths must be distinct");
+            return nullptr;
+        }
+    } catch (...) {
+        delete context;
+        napi_throw_error(env, nullptr, "unable to read Live Photo bundle paths");
+        return nullptr;
+    }
+    return queue_operation(env, context);
+}
+
 napi_value live_photo_pair_valid(napi_env env, napi_callback_info info)
 {
     size_t argc = 2;
@@ -1367,6 +1419,7 @@ napi_value initialize(napi_env env, napi_value exports)
         {"motionExtractStill", nullptr, motion_extract_still, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"livePhotoMake", nullptr, live_photo_make, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"livePhotoPairValid", nullptr, live_photo_pair_valid, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"livePhotoBundleMake", nullptr, live_photo_bundle_make, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"convert", nullptr, convert, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressBegin", nullptr, progress_begin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressRead", nullptr, progress_read, nullptr, nullptr, nullptr, napi_default, nullptr},
