@@ -114,10 +114,12 @@ int xdremux_encode_10bit_planes(const uint16_t* p0, const uint16_t* p1,
     picture->planes[0] = const_cast<uint16_t*>(p0);
     picture->planes[1] = const_cast<uint16_t*>(p1);
     picture->planes[2] = const_cast<uint16_t*>(p2);
+    // x265 strides are in bytes; 10-bit samples are 16-bit words. A sample
+    // count here makes every row read half a row (two squeezed copies).
     const int chroma_width = (width + 1) / 2;
-    picture->stride[0] = width;
-    picture->stride[1] = chroma_width;
-    picture->stride[2] = chroma_width;
+    picture->stride[0] = width * static_cast<int>(sizeof(uint16_t));
+    picture->stride[1] = chroma_width * static_cast<int>(sizeof(uint16_t));
+    picture->stride[2] = chroma_width * static_cast<int>(sizeof(uint16_t));
 
     unsigned char* buffer = nullptr;
     size_t length = 0;
