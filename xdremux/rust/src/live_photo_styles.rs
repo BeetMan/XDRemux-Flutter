@@ -1070,6 +1070,13 @@ fn attach_with(
             continue;
         }
         let mut raw = moov[child.offset..child.end()].to_vec();
+        // Pairs written before the QuickTime AAC fix: Photos renders the
+        // video of a styled edit, which needs decodable audio.
+        if &child.kind == b"trak" && handler_type(moov, child).ok() == Some(*b"soun") {
+            if let Some(fixed) = crate::live_photo::quicktime_aac_track(&raw)? {
+                raw = fixed;
+            }
+        }
         if &child.kind == b"mvhd" {
             let pos = raw.len() - 4;
             raw[pos..].copy_from_slice(&next_id.to_be_bytes());
