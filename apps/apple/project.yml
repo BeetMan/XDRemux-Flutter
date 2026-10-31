@@ -75,9 +75,6 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         # x265 is C++; the Rust staticlib carries no link flags of its own.
         OTHER_LDFLAGS: ["$(inherited)", "-lc++"]
-        # build_apple.sh produces arm64-only slices (Apple Silicon host, no
-        # x86_64 Rust/x265 builds); keep the simulator build to arm64 too.
-        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         # macOS: no app group (needs a development certificate to sign).
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": App/XDRemux-macOS.entitlements
       configs:
@@ -121,7 +118,6 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: false
-        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
       configs:
         Debug:
           CODE_SIGN_IDENTITY: "-"
