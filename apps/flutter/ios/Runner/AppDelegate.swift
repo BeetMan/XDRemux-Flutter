@@ -436,7 +436,14 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       case "getLayoutTraits":
         var edge = "unspecified"
         if #available(iOS 27.1, *) {
-          let traits = self?.window?.traitCollection ?? UITraitCollection.current
+          // The app runs on a SceneDelegate, so the app delegate's `window` is
+          // usually nil; read the traits of the scene's key window instead.
+          let sceneWindow = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+          let window = sceneWindow ?? self?.window
+          let traits = window?.traitCollection ?? UITraitCollection.current
           switch traits.verticalBarEdge {
           case .leading: edge = "leading"
           case .trailing: edge = "trailing"

@@ -1,0 +1,1586 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "Apple 人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Portrait"
+          }
+        }
+      }
+    },
+    "Apple 人像数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Portrait data"
+          }
+        }
+      }
+    },
+    "Apple 摄影风格": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Photographic Styles"
+          }
+        }
+      }
+    },
+    "Apple 标准": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Standard"
+          }
+        }
+      }
+    },
+    "Apple 照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Photos"
+          }
+        }
+      }
+    },
+    "Apple 照片摄影风格失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Photographic Styles failed: %@"
+          }
+        }
+      }
+    },
+    "Apple 编辑副本已生成：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple edit copy generated: %@"
+          }
+        }
+      }
+    },
+    "Gain map 上限": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain map max"
+          }
+        }
+      }
+    },
+    "HDR 类型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR kind"
+          }
+        }
+      }
+    },
+    "HDR 输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR output"
+          }
+        }
+      }
+    },
+    "ISO 图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ISO graph"
+          }
+        }
+      }
+    },
+    "ISO（无本地）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ISO (no local)"
+          }
+        }
+      }
+    },
+    "Live Photo 合成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo"
+          }
+        }
+      }
+    },
+    "Live Photo 合成失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo composition failed"
+          }
+        }
+      }
+    },
+    "Live Photo 视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo video"
+          }
+        }
+      }
+    },
+    "OPPO 兼容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO Compatible"
+          }
+        }
+      }
+    },
+    "OPPO 兼容恢复 OPPO 兼容结构、元数据和尾部数据；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息，可按开关恢复可见原机水印。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO Compatible restores the OPPO-compatible structure, metadata and tail data; Apple Standard keeps the Apple Photos result without OPPO private data and can restore the visible original watermark via the toggle."
+          }
+        }
+      }
+    },
+    "OPPO 兼容输出必须保留 OPPO 原始照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO Compatible output requires keeping the original OPPO photo."
+          }
+        }
+      }
+    },
+    "OPPO 原始照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO original"
+          }
+        }
+      }
+    },
+    "OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO original → Apple edit copy → edit on iPhone → write back watermark and metadata"
+          }
+        }
+      }
+    },
+    "OPPO 条目": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO entries"
+          }
+        }
+      }
+    },
+    "Rust 内核": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rust core"
+          }
+        }
+      }
+    },
+    "Rust 内核 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rust core %@"
+          }
+        }
+      }
+    },
+    "一帧影像，动用两台手机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One photo, two phones"
+          }
+        }
+      }
+    },
+    "一次摄影风格转换生成 Apple 编辑副本，在 iPhone 上编辑后回传，由 Rust 恢复原机水印与 OPPO 元数据。普通批量转换队列不参与此流程。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "One Photographic Styles conversion produces an Apple edit copy; edit it on an iPhone, bring it back, and Rust restores the original watermark and OPPO metadata. The ordinary batch queue is not involved."
+          }
+        }
+      }
+    },
+    "不保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "None"
+          }
+        }
+      }
+    },
+    "不支持": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unsupported"
+          }
+        }
+      }
+    },
+    "不追加 OPPO 私有信息，照片可在 Apple 照片里继续编辑。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adds no OPPO private data; the photo stays editable in Apple Photos."
+          }
+        }
+      }
+    },
+    "严格 ISO 21496-1 tmap": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strict ISO 21496-1 tmap"
+          }
+        }
+      }
+    },
+    "仅尾部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tail only"
+          }
+        }
+      }
+    },
+    "仅水印": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Watermark only"
+          }
+        }
+      }
+    },
+    "仅静帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Still only"
+          }
+        }
+      }
+    },
+    "从文件导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import from Files"
+          }
+        }
+      }
+    },
+    "从照片导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import from Photos"
+          }
+        }
+      }
+    },
+    "保存到照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Photos"
+          }
+        }
+      }
+    },
+    "保存失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save failed: %@"
+          }
+        }
+      }
+    },
+    "保留（去人像与私有 HDR）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no portrait, no private HDR)"
+          }
+        }
+      }
+    },
+    "保留（去人像）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no portrait)"
+          }
+        }
+      }
+    },
+    "保留（去私有 HDR）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no private HDR)"
+          }
+        }
+      }
+    },
+    "保留（去私有 UHDR）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no private UHDR)"
+          }
+        }
+      }
+    },
+    "保留（无 HDR）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no HDR)"
+          }
+        }
+      }
+    },
+    "保留（无 UHDR）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve (no UHDR)"
+          }
+        }
+      }
+    },
+    "全部转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert All"
+          }
+        }
+      }
+    },
+    "关于": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About"
+          }
+        }
+      }
+    },
+    "关闭": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        }
+      }
+    },
+    "兼容策略": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compatibility policy"
+          }
+        }
+      }
+    },
+    "内核报告成功但没有写出文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The core reported success but wrote no file"
+          }
+        }
+      }
+    },
+    "内核未给出原因": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The core gave no reason"
+          }
+        }
+      }
+    },
+    "写回失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writeback failed: %@"
+          }
+        }
+      }
+    },
+    "出错了": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something went wrong"
+          }
+        }
+      }
+    },
+    "分享": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share"
+          }
+        }
+      }
+    },
+    "分类状态": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Classification"
+          }
+        }
+      }
+    },
+    "动态照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion Photo"
+          }
+        }
+      }
+    },
+    "动态照片处理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion Photo handling"
+          }
+        }
+      }
+    },
+    "原图预览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original preview"
+          }
+        }
+      }
+    },
+    "原机水印": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original watermark"
+          }
+        }
+      }
+    },
+    "双流": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dual stream"
+          }
+        }
+      }
+    },
+    "只转换静帧，忽略附带的视频。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert the still image only and ignore the attached video."
+          }
+        }
+      }
+    },
+    "可转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertible"
+          }
+        }
+      }
+    },
+    "同时转换 %lld 张": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert %lld at a time"
+          }
+        }
+      }
+    },
+    "在 iPhone 上编辑": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit on iPhone"
+          }
+        }
+      }
+    },
+    "在访达中显示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show in Finder"
+          }
+        }
+      }
+    },
+    "处理中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Processing…"
+          }
+        }
+      }
+    },
+    "处理方式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handling"
+          }
+        }
+      }
+    },
+    "失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed"
+          }
+        }
+      }
+    },
+    "失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed: %@"
+          }
+        }
+      }
+    },
+    "好": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OK"
+          }
+        }
+      }
+    },
+    "存储到此文件夹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to this folder"
+          }
+        }
+      }
+    },
+    "存储副本…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save a Copy…"
+          }
+        }
+      }
+    },
+    "存储失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save failed: %@"
+          }
+        }
+      }
+    },
+    "完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        }
+      }
+    },
+    "完整保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve"
+          }
+        }
+      }
+    },
+    "对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run one Photographic Styles conversion on the selected OPPO original to produce the working file for editing on iPhone."
+          }
+        }
+      }
+    },
+    "导入 %@ 失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to import %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import OPPO original photos and convert them to a universal HDR format that stays editable in Apple Photos."
+          }
+        }
+      }
+    },
+    "导入失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import failed: %@"
+          }
+        }
+      }
+    },
+    "尚未选择": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not selected yet"
+          }
+        }
+      }
+    },
+    "尺寸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dimensions"
+          }
+        }
+      }
+    },
+    "已从原图移植": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grafted from the original"
+          }
+        }
+      }
+    },
+    "已作为 Live Photo 保存到照片库。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved to the photo library as a Live Photo."
+          }
+        }
+      }
+    },
+    "已作为新照片保存到照片库。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved to the photo library as a new photo."
+          }
+        }
+      }
+    },
+    "已保存到照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved to Photos"
+          }
+        }
+      }
+    },
+    "已包含": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "present"
+          }
+        }
+      }
+    },
+    "已存储 %lld 个文件到 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %1$lld files to %2$@"
+          }
+        }
+      }
+    },
+    "已存储到 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved to %@"
+          }
+        }
+      }
+    },
+    "已完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done"
+          }
+        }
+      }
+    },
+    "已恢复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "restored"
+          }
+        }
+      }
+    },
+    "已选择 OPPO 原始照片：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected OPPO original: %@"
+          }
+        }
+      }
+    },
+    "已选择 iPhone 回传照片：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected iPhone returned photo: %@"
+          }
+        }
+      }
+    },
+    "建议选择未经转换的 OPPO 原始照片；它也是后续恢复原机水印和元数据的来源。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prefer an unconverted OPPO original; it is also the source for restoring the watermark and metadata later."
+          }
+        }
+      }
+    },
+    "开启": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On"
+          }
+        }
+      }
+    },
+    "恢复 OPPO 兼容结构、元数据和 OPPO 私有尾部数据，照片在 ColorOS 图库里像原机照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restores the OPPO-compatible structure, metadata and OPPO private tail so the photo behaves like an original in the ColorOS gallery."
+          }
+        }
+      }
+    },
+    "恢复原机水印并生成最终输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore original watermark and generate final output"
+          }
+        }
+      }
+    },
+    "恢复默认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset"
+          }
+        }
+      }
+    },
+    "恢复默认设置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore Defaults"
+          }
+        }
+      }
+    },
+    "把上一步的文件传到 iPhone，在 Apple 照片中调整后导出（保留 HEIC）并选回这里。macOS 可直接从 Apple 照片拖到此窗口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer the file from the previous step to an iPhone, adjust it in Apple Photos, export it (keeping HEIC) and select it here. On macOS you can drag it straight from Apple Photos into this window."
+          }
+        }
+      }
+    },
+    "拍摄时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Captured"
+          }
+        }
+      }
+    },
+    "拍摄模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture mode"
+          }
+        }
+      }
+    },
+    "拍摄设备": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera"
+          }
+        }
+      }
+    },
+    "按 OPPO 原始照片恢复可见原机水印": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the visible original watermark from the OPPO source"
+          }
+        }
+      }
+    },
+    "按输出模式分目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sort outputs into mode folders"
+          }
+        }
+      }
+    },
+    "摄影风格 3（纹理与颗粒）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 3 (texture and grain)"
+          }
+        }
+      }
+    },
+    "文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File"
+          }
+        }
+      }
+    },
+    "文件名后缀": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File name suffix"
+          }
+        }
+      }
+    },
+    "无法保存队列状态：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save the queue: %@"
+          }
+        }
+      }
+    },
+    "曝光": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exposure"
+          }
+        }
+      }
+    },
+    "最终输出已生成：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Final output generated: %@"
+          }
+        }
+      }
+    },
+    "有声音": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "with audio"
+          }
+        }
+      }
+    },
+    "未恢复": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not restored"
+          }
+        }
+      }
+    },
+    "未知原因": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "unknown reason"
+          }
+        }
+      }
+    },
+    "机型家族": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Family"
+          }
+        }
+      }
+    },
+    "来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source"
+          }
+        }
+      }
+    },
+    "校验": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verification"
+          }
+        }
+      }
+    },
+    "正在写回回传照片…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writing back the returned photo…"
+          }
+        }
+      }
+    },
+    "正在生成 Apple 照片摄影风格编辑副本…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generating the Apple Photographic Styles edit copy…"
+          }
+        }
+      }
+    },
+    "正在读取…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading…"
+          }
+        }
+      }
+    },
+    "没有写入照片库的权限，可在“设置”里允许。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No permission to add to the photo library; allow it in Settings."
+          }
+        }
+      }
+    },
+    "照片信息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photo info"
+          }
+        }
+      }
+    },
+    "照片已移出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photo removed"
+          }
+        }
+      }
+    },
+    "生成 Apple 照片摄影风格编辑副本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate Apple Photographic Styles edit copy"
+          }
+        }
+      }
+    },
+    "生成 Apple 照片编辑副本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate Apple Photos edit copy"
+          }
+        }
+      }
+    },
+    "生成中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generating…"
+          }
+        }
+      }
+    },
+    "生成最终输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate final output"
+          }
+        }
+      }
+    },
+    "相机尾部数据": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Camera tail data"
+          }
+        }
+      }
+    },
+    "移出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        }
+      }
+    },
+    "精简": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compact"
+          }
+        }
+      }
+    },
+    "自动": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto"
+          }
+        }
+      }
+    },
+    "覆盖同名输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replace existing output"
+          }
+        }
+      }
+    },
+    "视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Videos"
+          }
+        }
+      }
+    },
+    "让 ProXDR HEIC 更容易分享": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Make ProXDR HEIC easier to share"
+          }
+        }
+      }
+    },
+    "记录不完整，请重新转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incomplete record; convert again"
+          }
+        }
+      }
+    },
+    "设置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings"
+          }
+        }
+      }
+    },
+    "读取失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read failed: %@"
+          }
+        }
+      }
+    },
+    "读取照片失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to read photo: %@"
+          }
+        }
+      }
+    },
+    "跳过一张不是 HEIC / JPEG 的照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skipped a photo that is not HEIC / JPEG."
+          }
+        }
+      }
+    },
+    "转换中 %lld%%": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Converting %lld%%"
+          }
+        }
+      }
+    },
+    "转换后的静帧与原视频配对为 Apple Live Photo（HEIC + MOV 需一起导入 Apple 照片）。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairs the converted still with the original video as an Apple Live Photo (import the HEIC and MOV together into Apple Photos)."
+          }
+        }
+      }
+    },
+    "转换结果": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Result"
+          }
+        }
+      }
+    },
+    "转换这张": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert This Photo"
+          }
+        }
+      }
+    },
+    "转换选项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversion options"
+          }
+        }
+      }
+    },
+    "转换静帧，并把视频流另存为 MP4 放在输出旁边。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Converts the still and saves the video stream(s) as MP4 next to the output."
+          }
+        }
+      }
+    },
+    "输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output"
+          }
+        }
+      }
+    },
+    "输出未通过结构校验，已丢弃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output failed structural verification and was discarded"
+          }
+        }
+      }
+    },
+    "输出模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output mode"
+          }
+        }
+      }
+    },
+    "输出目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output folder"
+          }
+        }
+      }
+    },
+    "输出路径与输入相同": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output path equals the input path"
+          }
+        }
+      }
+    },
+    "这张照片不是可转换的 ProXDR / Ultra HDR 文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This photo is not a convertible ProXDR / Ultra HDR file."
+          }
+        }
+      }
+    },
+    "选择 OPPO 原始照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select the original OPPO photo"
+          }
+        }
+      }
+    },
+    "选择 iPhone 回传照片…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select iPhone returned photo…"
+          }
+        }
+      }
+    },
+    "选择…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose…"
+          }
+        }
+      }
+    },
+    "选择照片…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose photo…"
+          }
+        }
+      }
+    },
+    "选择输出目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose output folder"
+          }
+        }
+      }
+    },
+    "通过": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passed"
+          }
+        }
+      }
+    },
+    "通过（可解码 + 结构检查）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passed (decodable + structure check)"
+          }
+        }
+      }
+    },
+    "重试": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry"
+          }
+        }
+      }
+    },
+    "需要恢复原机水印时必须保留 OPPO 原始照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restoring the original watermark requires keeping the original OPPO photo."
+          }
+        }
+      }
+    },
+    "静帧 + 视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Still + video"
+          }
+        }
+      }
+    },
+    "高级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Advanced"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

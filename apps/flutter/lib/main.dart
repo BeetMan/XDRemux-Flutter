@@ -120,8 +120,10 @@ class PlatformLayoutTraits {
   /// One of `leading`, `trailing`, `unspecified`.
   static String verticalBarEdge = 'unspecified';
 
-  static Future<void> refresh() async {
-    if (!Platform.isIOS) return;
+  /// Re-reads the traits; returns true when the reported edge changed.
+  static Future<bool> refresh() async {
+    if (!Platform.isIOS) return false;
+    final previous = verticalBarEdge;
     try {
       final traits = await _channel.invokeMapMethod<String, dynamic>(
         'getLayoutTraits',
@@ -132,6 +134,7 @@ class PlatformLayoutTraits {
       // Older iOS versions and non-iOS hosts simply have no vertical bar.
       verticalBarEdge = 'unspecified';
     }
+    return verticalBarEdge != previous;
   }
 }
 
@@ -260,7 +263,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final List<QueueItem> _queue = [];
   ConversionConfig _config = ConversionConfig();
   String _statusText = t('就绪', 'Ready');
@@ -291,6 +294,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     PlatformLayoutTraits.refresh().then((_) {
       if (mounted) setState(() {});
     });
@@ -676,8 +680,19 @@ class _HomePageState extends State<HomePage> {
     await _enqueuePaths(paths, verb: t('接收', 'Received'), ignored: ignored + unreadable);
   }
 
+  /// Folding, unfolding and rotation change the window metrics; the vertical
+  /// bar edge can change with them, so re-read it instead of trusting the
+  /// value from launch.
+  @override
+  void didChangeMetrics() {
+    PlatformLayoutTraits.refresh().then((changed) {
+      if (changed && mounted) setState(() {});
+    });
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _configSaveTimer?.cancel();
     _progressTimer?.cancel();
     _shareSubscription?.cancel();
@@ -2876,16 +2891,21 @@ class _HomePageState extends State<HomePage> {
                         _buildBody(theme, compact),
                       ),
                     ),
-                    if (_hasTrailingBar)
+                    // Overlays sit above the home indicator: the body runs to
+                    // the screen edge once the bottom bar is gone.
+                    if (_hasVerticalBar)
                       Positioned(
-                        right: 6,
-                        bottom: 10,
+                        left: _verticalBarOnLeft ? 6 : null,
+                        right: _verticalBarOnLeft ? null : 6,
+                        bottom: 10 + _overlayBottomInset(compact),
                         child: _buildTrailingBar(theme),
                       ),
-                    if (!_hasTrailingBar && _floatPrimaryAction)
+                    if (!_hasVerticalBar && _floatPrimaryAction)
                       Positioned(
-                        right: 20,
-                        bottom: 20,
+                        right: 20 +
+                            MediaQuery.paddingOf(context).right +
+                            (_showSidePalette ? 56 : 0),
+                        bottom: 20 + _overlayBottomInset(compact),
                         child: _buildPrimaryFab(theme),
                       ),
                   ],
@@ -2904,7 +2924,8 @@ class _HomePageState extends State<HomePage> {
         Expanded(
           child: Padding(
             padding: EdgeInsets.only(
-              right: _sideContentInset,
+              left: _leftContentInset,
+              right: _rightContentInset,
               // Without the bottom bar the list runs to the screen edge; keep
               // the last row clear of the home indicator.
               bottom: _floatPrimaryAction
@@ -2933,16 +2954,12 @@ class _HomePageState extends State<HomePage> {
     return content;
   }
 
-  /// A trailing tool palette only pays off where it does not starve the
-  /// content: devices with a side safe-area strip AND a regular-width window
-  /// (Duo inner display / landscape). On the 466pt cover display the bar would
-  /// wrap the empty-state text and buttons, so the app-bar + bottom-bar layout
-  /// stays there.
   /// In-content fallback palette for side-inset windows that do NOT report a
-  /// system vertical bar. Devices with a trailing bar use that strip instead,
-  /// so the two never render together (landscape used to show both).
+  /// system vertical bar, and only where it does not starve the content
+  /// (regular-width windows). Devices with a vertical bar use that strip
+  /// instead, so the two never render together (landscape used to show both).
   bool get _showSidePalette =>
-      !_hasTrailingBar &&
+      !_hasVerticalBar &&
       MediaQuery.paddingOf(context).right >= 40 &&
       MediaQuery.sizeOf(context).width >= 700;
 
@@ -2957,24 +2974,41 @@ class _HomePageState extends State<HomePage> {
   /// windows). Without this the action would only live in the app bar.
   bool get _floatPrimaryAction =>
       !_compactLayout ||
-      (_hasTrailingBar && _queue.length >= kFloatingActionQueueThreshold);
+      (_hasVerticalBar && _queue.length >= kFloatingActionQueueThreshold);
 
-  /// iPhone Duo reserves a trailing safe-area strip for the system's vertical
-  /// bar; when the native side reports that edge, the tool bar moves into it.
   bool get _compactLayout => MediaQuery.sizeOf(context).width < 600;
 
-  bool get _hasTrailingBar =>
-      PlatformLayoutTraits.verticalBarEdge == 'trailing' &&
-      MediaQuery.paddingOf(context).right >= 40;
+  /// iPhone Duo reserves a side safe-area strip for the system's vertical bar;
+  /// when the native side reports a bar, the tool bar moves into that strip.
+  /// The reported edge says the device has one; the inset says where it is
+  /// now, since rotating the unfolded display can move the strip to the left.
+  bool get _hasVerticalBar {
+    if (PlatformLayoutTraits.verticalBarEdge == 'unspecified') return false;
+    final padding = MediaQuery.paddingOf(context);
+    return padding.left >= 40 || padding.right >= 40;
+  }
 
-  /// Horizontal content inset: the trailing bar itself occupies the reserved
-  /// strip, so the content no longer needs to avoid it.
-  double get _sideContentInset => MediaQuery.paddingOf(context).right;
+  bool get _verticalBarOnLeft {
+    final padding = MediaQuery.paddingOf(context);
+    return padding.left > padding.right;
+  }
+
+  /// Bottom inset for the floating overlays. With the bottom bar in place the
+  /// body already ends above the home indicator; without it the body runs to
+  /// the screen edge.
+  double _overlayBottomInset(bool compact) => compact && !_floatPrimaryAction
+      ? 0
+      : MediaQuery.paddingOf(context).bottom;
+
+  /// Horizontal content insets: the content stays out of side strips, while
+  /// the vertical bar draws inside its own strip.
+  double get _leftContentInset => MediaQuery.paddingOf(context).left;
+  double get _rightContentInset => MediaQuery.paddingOf(context).right;
 
   AppBar _buildAppBar(ThemeData theme, bool compact) {
     // Devices with a side-mounted status strip (iPhone Duo) get a dedicated
     // tool palette, so the app bar keeps only the title.
-    if (_showSidePalette || _hasTrailingBar) {
+    if (_showSidePalette || _hasVerticalBar) {
       return AppBar(
         centerTitle: false,
         titleSpacing: compact ? 16 : null,
@@ -3184,14 +3218,11 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Vertical tool bar drawn inside the system-reserved trailing strip
-  /// (iPhone Duo). The actions float in a bottom-anchored capsule so the strip
-  /// keeps the page background, the palette reads as a single control, and the
-  /// actions stay clear of the status items at the top and within thumb reach.
   /// Floating capsule with the secondary actions, drawn inside the
-  /// system-reserved trailing strip (iPhone Duo). It is positioned as an
-  /// overlay so the content keeps its full height and the strip keeps the page
-  /// background; only the capsule itself is opaque.
+  /// system-reserved vertical-bar strip (iPhone Duo). It is a bottom-anchored
+  /// overlay so the content keeps its full height, the strip keeps the page
+  /// background, and the actions stay clear of the status items at the top
+  /// and within thumb reach; only the capsule itself is opaque.
   Widget _buildTrailingBar(ThemeData theme) {
     const capsuleWidth = 68.0;
     Widget item(
@@ -3279,14 +3310,11 @@ class _HomePageState extends State<HomePage> {
           SizedBox(
             width: 56,
             height: 56,
-            child: FloatingActionButton(
+            child: _floatingAction(
+              theme,
               heroTag: 'duo-add-files',
               tooltip: t('添加文件', 'Add files'),
               onPressed: _canEditQueue ? _addFiles : null,
-              backgroundColor: theme.colorScheme.primary,
-              foregroundColor: theme.colorScheme.onPrimary,
-              elevation: 6,
-              shape: const CircleBorder(),
               child: const Icon(Icons.add_photo_alternate_outlined),
             ),
           ),
@@ -3309,16 +3337,40 @@ class _HomePageState extends State<HomePage> {
       height: 64,
       child: Tooltip(
         message: label,
-        child: FloatingActionButton(
+        child: _floatingAction(
+          theme,
           heroTag: 'duo-primary-action',
           onPressed: action,
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: theme.colorScheme.onPrimary,
-          elevation: 6,
-          shape: const CircleBorder(),
           child: Icon(icon, size: 30),
         ),
       ),
+    );
+  }
+
+  /// FloatingActionButton has no disabled styling of its own: with a null
+  /// `onPressed` it still paints the primary colour and reads as tappable
+  /// (e.g. "Start conversion" over an empty queue). Use the Material disabled
+  /// colours instead.
+  Widget _floatingAction(
+    ThemeData theme, {
+    required Object heroTag,
+    required VoidCallback? onPressed,
+    required Widget child,
+    String? tooltip,
+  }) {
+    final scheme = theme.colorScheme;
+    final enabled = onPressed != null;
+    return FloatingActionButton(
+      heroTag: heroTag,
+      tooltip: tooltip,
+      onPressed: onPressed,
+      backgroundColor: enabled ? scheme.primary : scheme.onSurface.withAlpha(31),
+      foregroundColor: enabled
+          ? scheme.onPrimary
+          : scheme.onSurface.withAlpha(97),
+      elevation: enabled ? 6 : 0,
+      shape: const CircleBorder(),
+      child: child,
     );
   }
 
@@ -3346,7 +3398,7 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Row(
             children: [
-              if (!_showSidePalette && !_hasTrailingBar) ...[
+              if (!_showSidePalette && !_hasVerticalBar) ...[
                 IconButton.filledTonal(
                   icon: const Icon(Icons.add_photo_alternate_outlined),
                   tooltip: t('添加文件', 'Add files'),
@@ -3422,9 +3474,9 @@ class _HomePageState extends State<HomePage> {
     return Container(
       color: theme.colorScheme.surfaceContainerHighest,
       padding: EdgeInsets.fromLTRB(
-        hPad,
+        hPad + _leftContentInset,
         vPad,
-        hPad + _sideContentInset,
+        hPad + _rightContentInset,
         vPad,
       ),
       child: Column(
@@ -3657,9 +3709,9 @@ class _HomePageState extends State<HomePage> {
 
     return Card(
       margin: EdgeInsets.fromLTRB(
+        12 + _leftContentInset,
         12,
-        12,
-        12 + _sideContentInset,
+        12 + _rightContentInset,
         0,
       ),
       color: theme.colorScheme.surface,
@@ -4026,9 +4078,9 @@ class _HomePageState extends State<HomePage> {
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
       padding: EdgeInsets.fromLTRB(
-        12,
+        12 + _leftContentInset,
         6,
-        12 + _sideContentInset,
+        12 + _rightContentInset,
         6,
       ),
       child: Row(

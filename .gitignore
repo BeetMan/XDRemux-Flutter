@@ -88,6 +88,7 @@ docs/plans/*
 !docs/plans/live-photo-export-fix.md
 !docs/plans/release-candidate-044.md
 !docs/plans/mac-acceptance-044.md
+!docs/plans/apple-native.md
 !docs/testing/
 docs/testing/*
 !docs/testing/windows-codec-test-02.md
@@ -157,3 +158,7 @@ apps/flutter/ios/SwiftBackend/.build/
 apps/flutter/third_party/ohos/
 # Rust cdylib built for OHOS (regenerate via xdremux/rust/build_ohos.sh)
 apps/flutter/ohos/entry/libs/
+
+# Native Apple app: Rust XCFramework produced by xdremux/rust/build_apple.sh
+apps/apple/Frameworks/
+apps/apple/*.xcodeproj
