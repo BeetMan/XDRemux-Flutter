@@ -229,6 +229,29 @@ extension EngineSmokeTests {
     }
 }
 
+extension EngineSmokeTests {
+    /// Huawei inspection is read-only and never throws on non-Huawei input:
+    /// garbage yields a report with no Huawei markers, and an OPPO sample
+    /// (opt-in) yields no policy input at all.
+    func testHuaweiInspectIsReadOnlyAndNilForNonHuawei() async throws {
+        let garbage = tempDir.appendingPathComponent("garbage.heic")
+        try Data((0..<4096).map { _ in UInt8.random(in: 0...255) }).write(to: garbage)
+        let report = try await XDRemuxEngine.shared.huaweiReport(path: garbage.path)
+        XCTAssertNotEqual(report.isHuaweiHdr, true)
+        XCTAssertNil(report.info)
+        let jpegInfo = await XDRemuxEngine.shared.huaweiPhotoInfo(path: "/nowhere/x.jpg")
+        XCTAssertNil(jpegInfo, "JPEG is never Huawei HDR")
+        if let dir = ProcessInfo.processInfo.environment["XDREMUX_SAMPLE_DIR"],
+           let name = try FileManager.default.contentsOfDirectory(atPath: dir).first(where: { $0.lowercased().hasSuffix(".heic") }) {
+            let sample = URL(fileURLWithPath: dir).appendingPathComponent(name)
+            let before = try Data(contentsOf: sample)
+            let oppoInfo = await XDRemuxEngine.shared.huaweiPhotoInfo(path: sample.path)
+            XCTAssertNil(oppoInfo)
+            XCTAssertEqual(try Data(contentsOf: sample), before, "input untouched")
+        }
+    }
+}
+
 private final class Seen: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

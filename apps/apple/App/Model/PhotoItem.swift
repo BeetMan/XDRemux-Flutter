@@ -37,6 +37,11 @@ struct PhotoItem: Identifiable {
     var motionPhoto: MotionPhotoInfo?
     /// Per-photo override of `ConversionConfig.motionPhotoDefaultMode`.
     var motionMode: MotionPhotoMode?
+    /// Huawei HDR / portrait inspection; `nil` for everything else.
+    var huawei: HuaweiPhotoInfo?
+    /// Set when `HuaweiPhotoPolicy` keeps the photo out of the queue
+    /// (recomputed whenever the config changes).
+    var policyReason: String?
     var state: State = .inspecting
     var savedToPhotos = false
 
@@ -47,15 +52,18 @@ struct PhotoItem: Identifiable {
         return nil
     }
 
-    /// True when the core recognised a ProXDR / Ultra HDR source it can convert.
+    /// True when the core recognised a source it can convert and no policy
+    /// keeps it out of the queue.
     var isConvertible: Bool {
-        inspection?.success == true
+        inspection?.success == true && policyReason == nil
     }
 
     var statusText: String {
         switch state {
         case .inspecting: return String(localized: "正在读取…")
-        case .ready: return isConvertible ? String(localized: "可转换") : (inspection?.errorMessage ?? String(localized: "不支持"))
+        case .ready:
+            if let policyReason { return String(localized: String.LocalizationValue(policyReason)) }
+            return isConvertible ? String(localized: "可转换") : (inspection?.errorMessage ?? String(localized: "不支持"))
         case .converting(let p): return String(localized: "转换中 \(Int(p * 100))%")
         case .done: return String(localized: "已完成")
         case .failed(let m): return String(localized: "失败：\(m)")
@@ -69,6 +77,9 @@ struct PhotoItem: Identifiable {
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
         if let d = details?.dimensionsText { parts.append(d) }
         if isMotionPhoto { parts.append(String(localized: "动态照片")) }
+        if let huawei {
+            parts.append(huawei.portraitReady ? String(localized: "华为人像 → Apple 人像") : String(localized: "华为 HDR"))
+        }
         return parts.joined(separator: " · ")
     }
 }
