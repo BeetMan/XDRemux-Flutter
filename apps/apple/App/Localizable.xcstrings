@@ -591,6 +591,36 @@
         }
       }
     },
+    "华为 HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR"
+          }
+        }
+      }
+    },
+    "华为 HDR 原生兼容 Apple 照片，无需转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR is natively compatible with Apple Photos; no conversion needed"
+          }
+        }
+      }
+    },
+    "华为人像 → Apple 人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei Portrait → Apple Portrait"
+          }
+        }
+      }
+    },
     "原图预览": {
       "localizations": {
         "en": {
