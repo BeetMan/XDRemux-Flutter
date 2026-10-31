@@ -271,6 +271,16 @@
         }
       }
     },
+    "不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a Flutter checkpoint file (xdremux_checkpoint.jsonl)."
+          }
+        }
+      }
+    },
     "不追加 OPPO 私有信息，照片可在 Apple 照片里继续编辑。": {
       "localizations": {
         "en": {
@@ -471,6 +481,16 @@
         }
       }
     },
+    "共 %lld 张照片，%lld 张可分类，%lld 组实况照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld photos, %2$lld categorizable, %3$lld Live Photo pairs"
+          }
+        }
+      }
+    },
     "关于": {
       "localizations": {
         "en": {
@@ -577,6 +597,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Motion Photo handling"
+          }
+        }
+      }
+    },
+    "华为 HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR"
+          }
+        }
+      }
+    },
+    "华为 HDR 原生兼容 Apple 照片，无需转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR is natively compatible with Apple Photos; no conversion needed"
+          }
+        }
+      }
+    },
+    "华为人像 → Apple 人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei Portrait → Apple Portrait"
           }
         }
       }
@@ -701,6 +751,16 @@
         }
       }
     },
+    "复制中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copying…"
+          }
+        }
+      }
+    },
     "失败": {
       "localizations": {
         "en": {
@@ -771,12 +831,32 @@
         }
       }
     },
+    "完成：%lld 张已复制，%lld 张跳过，%lld 张失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done: %1$lld copied, %2$lld skipped, %3$lld failed"
+          }
+        }
+      }
+    },
     "完整保留": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Preserve"
+          }
+        }
+      }
+    },
+    "实况照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photos"
           }
         }
       }
@@ -811,6 +891,16 @@
         }
       }
     },
+    "导入 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Flutter Checkpoint…"
+          }
+        }
+      }
+    },
     "导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。": {
       "localizations": {
         "en": {
@@ -827,6 +917,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Import failed: %@"
+          }
+        }
+      }
+    },
+    "导出 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Flutter Checkpoint…"
           }
         }
       }
@@ -901,6 +1001,16 @@
         }
       }
     },
+    "已在目标位置，跳过": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already in place, skipped"
+          }
+        }
+      }
+    },
     "已存储 %lld 个文件到 %@": {
       "localizations": {
         "en": {
@@ -927,6 +1037,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Done"
+          }
+        }
+      }
+    },
+    "已导入 Flutter 检查点：%lld 张已完成，%lld 张待转换，%lld 张无法读取。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter checkpoint imported: %1$lld done, %2$lld to convert, %3$lld unreadable."
           }
         }
       }
@@ -981,6 +1101,16 @@
         }
       }
     },
+    "开始整理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Organize"
+          }
+        }
+      }
+    },
     "恢复 OPPO 兼容结构、元数据和 OPPO 私有尾部数据，照片在 ColorOS 图库里像原机照片。": {
       "localizations": {
         "en": {
@@ -1021,12 +1151,42 @@
         }
       }
     },
+    "扫描一个文件夹里的 OPPO 原始照片，按拍摄模式复制到分类文件夹；实况照片连同配对视频一起放在“实况照片”下。不做转换，不改动原文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan a folder of OPPO originals and copy them into per-capture-mode folders; Live Photos go under “Live Photos” together with their paired video. Nothing is converted or modified."
+          }
+        }
+      }
+    },
+    "批量整理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Organize"
+          }
+        }
+      }
+    },
     "把上一步的文件传到 iPhone，在 Apple 照片中调整后导出（保留 HEIC）并选回这里。macOS 可直接从 Apple 照片拖到此窗口。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Transfer the file from the previous step to an iPhone, adjust it in Apple Photos, export it (keeping HEIC) and select it here. On macOS you can drag it straight from Apple Photos into this window."
+          }
+        }
+      }
+    },
+    "把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write the current queue as an xdremux_checkpoint.jsonl the Flutter app can read"
           }
         }
       }
@@ -1071,12 +1231,32 @@
         }
       }
     },
+    "按拍摄模式把原始照片复制到分类文件夹，不做转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy originals into per-capture-mode folders; no conversion"
+          }
+        }
+      }
+    },
     "按输出模式分目录": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Sort outputs into mode folders"
+          }
+        }
+      }
+    },
+    "提示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notice"
           }
         }
       }
@@ -1127,6 +1307,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Could not save the queue: %@"
+          }
+        }
+      }
+    },
+    "无法读取 %@，请重新导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot read %@; import it again"
           }
         }
       }
@@ -1221,6 +1411,16 @@
         }
       }
     },
+    "正在扫描…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scanning…"
+          }
+        }
+      }
+    },
     "正在生成 Apple 照片摄影风格编辑副本…": {
       "localizations": {
         "en": {
@@ -1247,6 +1447,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "No permission to add to the photo library; allow it in Settings."
+          }
+        }
+      }
+    },
+    "没有待整理的照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to organize"
           }
         }
       }
@@ -1401,6 +1611,26 @@
         }
       }
     },
+    "该文件夹下没有找到 HEIC / JPEG 照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No HEIC / JPEG photos found in this folder"
+          }
+        }
+      }
+    },
+    "读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the Flutter app's xdremux_checkpoint.jsonl and continue its queue"
+          }
+        }
+      }
+    },
     "读取失败：%@": {
       "localizations": {
         "en": {
@@ -1501,6 +1731,16 @@
         }
       }
     },
+    "输出到…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output To…"
+          }
+        }
+      }
+    },
     "输出未通过结构校验，已丢弃": {
       "localizations": {
         "en": {
@@ -1581,12 +1821,32 @@
         }
       }
     },
+    "选择一个包含 HEIC / JPEG 的文件夹。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a folder containing HEIC / JPEG photos."
+          }
+        }
+      }
+    },
     "选择照片…": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Choose photo…"
+          }
+        }
+      }
+    },
+    "选择照片文件夹…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Photo Folder…"
           }
         }
       }
@@ -1651,12 +1911,42 @@
         }
       }
     },
+    "静态照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Still Photos"
+          }
+        }
+      }
+    },
     "高级": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Advanced"
+          }
+        }
+      }
+    },
+    "默认与照片文件夹相同": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same as the photo folder by default"
+          }
+        }
+      }
+    },
+    "（未分类）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uncategorized"
           }
         }
       }

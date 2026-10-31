@@ -34,7 +34,8 @@ C=$(xcrun simctl get_app_container booted io.github.beetman.xdremux.swiftui data
 xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Documents/samples/a.heic" --convert-all
 ```
 
-The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
+`build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
+skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
 HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
 
 ## Share Extension (iOS)
@@ -91,7 +92,7 @@ xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'generic/plat
 ```
 
 Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim`,
-`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). Apple Silicon only for now
+`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). builds on Apple Silicon; the macOS and simulator slices are arm64 + x86_64 (Intel Macs run the same app)
 (no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
 
 `XDREMUX_SAMPLE_DIR=/path/to/proxdr-heics swift test` additionally converts one real sample

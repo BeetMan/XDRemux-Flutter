@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import XDRemuxModel
 
 /// Root layout, chosen by horizontal size class rather than by platform:
 /// regular width (Mac, iPad, unfolded phones) is sidebar list + detail;
@@ -10,6 +11,10 @@ struct ContentView: View {
     @State private var showFileImporter = false
     @State private var showPhotosPicker = false
     @State private var showRoundTrip = false
+    @State private var showOrganize = false
+    @State private var importingCheckpoint = false
+    @State private var exportingCheckpoint = false
+    @State private var checkpointDocument = TextFileDocument(text: "")
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -76,6 +81,9 @@ struct ContentView: View {
         .sheet(isPresented: $showRoundTrip) {
             RoundTripView(library: model)
         }
+        .sheet(isPresented: $showOrganize) {
+            OrganizeView()
+        }
         .task {
             await model.handleLaunchArguments()
             if model.openRoundTripOnLaunch { showRoundTrip = true }
@@ -103,6 +111,18 @@ struct ContentView: View {
             Button("好") { model.lastError = nil }
         } message: {
             Text(model.lastError ?? "")
+        }
+        .alert("提示", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+            Button("好") { model.notice = nil }
+        } message: {
+            Text(model.notice ?? "")
+        }
+        .fileImporter(isPresented: $importingCheckpoint, allowedContentTypes: [.json, .plainText, .data]) { result in
+            if case .success(let url) = result { Task { await model.importCheckpoint(url) } }
+        }
+        .fileExporter(isPresented: $exportingCheckpoint, document: checkpointDocument, contentType: .plainText,
+                      defaultFilename: FlutterCheckpoint.fileName) { result in
+            if case .failure(let error) = result { model.lastError = error.localizedDescription }
         }
     }
 
@@ -149,6 +169,25 @@ struct ContentView: View {
                 Label("一帧影像，动用两台手机", systemImage: "arrow.triangle.2.circlepath.camera")
             }
             .help("OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据")
+            Button {
+                showOrganize = true
+            } label: {
+                Label("批量整理", systemImage: "folder.badge.gearshape")
+            }
+            .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
+            Button {
+                importingCheckpoint = true
+            } label: {
+                Label("导入 Flutter 检查点…", systemImage: "square.and.arrow.down.on.square")
+            }
+            .help("读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转")
+            Button {
+                checkpointDocument = TextFileDocument(text: model.exportCheckpointJSONL())
+                exportingCheckpoint = true
+            } label: {
+                Label("导出 Flutter 检查点…", systemImage: "square.and.arrow.up.on.square")
+            }
+            .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
             Button {
                 showSettings = true
             } label: {

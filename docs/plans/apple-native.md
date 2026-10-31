@@ -300,6 +300,55 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 未做：Dart 与 ArkTS 端尚未切到这两个导出（它们各自的策略代码仍在），Swift 的 `OutputPlanner` 仍按输出模式分目录，
   未改用 `plan_output` 的 `captureModeFolder`。
 
+
+**P2 遗留：Flutter 检查点互读（2026-11-01，分支 `feat/apple-checkpoint`）**
+
+- Model `FlutterCheckpoint`：按 `checkpoint_model.dart` 的 JSONL 读写（首行 `type: header`，其后 `type: item`），接受 Dart
+  `toIso8601String()` 的无时区本地时间；`journalRecords()` 把 converted / skippedExisting 映射为 succeeded（保留 outputPath）、
+  skippedPolicy 映射为 pending（原生策略重新评估）、failed 保留错误；`from(journal:)` 反向导出，路径经 `~/` 还原为绝对路径。
+  configHash 用同一 payload 的 FNV-1a（Dart `String.hashCode` 不可复现，Flutter 只用它判断配置是否变化）。5 项测试。
+- App："更多"菜单 → 导入 / 导出 Flutter 检查点。导入时输入复制进沙盒、已完成项的输出复制进 outputs 并以"已完成"恢复，
+  沙盒读不到的路径变成可见失败项；导出用 `fileExporter` 写 `xdremux_checkpoint.jsonl`。
+- 未验证：没有用 Flutter 版真实生成的检查点文件做过往返（测试用的是按 Dart 格式手写的样本）；
+  `huaweiPortrait` / `motionPhoto` 两个嵌套对象在再编码时丢弃。
+
+
+**P2 遗留：批量整理页（2026-11-01，分支 `feat/apple-organize`）**
+
+- Model `OrganizePlanner`：与 Flutter `organize_page.dart` / 上游 `categorize` 同一布局
+  `<根>/<静态照片|实况照片>/<拍摄模式文件夹>/<原名>`，实况照片的 MOV 同目录同名；冲突规避"(n)"同时考虑本批已规划的名字
+  （大小写不敏感）与磁盘已有文件，整理进自己所在目录视为重复而不是冲突；`execute` 跳过重复、配对 MOV 只在位置变化时复制、
+  失败逐项记录。5 项测试（含真实临时目录端到端）。
+- App `OrganizeView`（"更多"菜单 → 批量整理）：选文件夹（安全作用域在页面存续期内保持）→ 递归扫描 HEIC/HEIF/JPEG →
+  `xdremux_classify` 取拍摄模式文件夹 → 同名 MOV 经 `xdremux_live_photo_pair_valid` 确认才视为配对 → 按模式分组预览
+  目标目录 → 开始整理。输出目录默认与照片文件夹相同。macOS / iOS 同一视图（iOS 通过"文件"选择文件夹）。
+- 未验证：GUI 走完一遍（只做了编译与 Model 层测试）；iOS 上对"文件"目录的递归枚举是否受安全作用域限制。
+
+
+**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+
+- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
+  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
+  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
+  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
+- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
+  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
+- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
+  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+
+
+**基础设施（2026-11-01，分支 `feat/apple-universal`）：x86_64 切片与 CI 模拟器构建**
+
+- `build_apple.sh` 按架构构建：每个切片对 `XDREMUX_APPLE_ARCHS`（默认 `arm64 x86_64`）各构建 x265（8-bit + Main10，
+  x86_64 用 `_x86_64` 后缀目录）与 Rust staticlib，`libtool` 合并后 `lipo -create` 成胖归档；切片目录名沿用 xcodebuild
+  约定（`macos-arm64_x86_64`、`ios-arm64_x86_64-simulator`）。iOS 真机仍只有 arm64。
+- `build.rs` 新增 `XDREMUX_X265_DIR` / `XDREMUX_X265_MAIN10_DIR` 覆盖，并把 `x86_64-apple-ios`（env 为空）识别为模拟器。
+- `project.yml` 去掉 `EXCLUDED_ARCHS[sdk=iphonesimulator*]`，模拟器包与 Share Extension 都是双架构。
+- CI：Rust 目标加 x86_64 与模拟器，x265 缓存键改为 `…-universal-sim`，构建 `macos ios-sim` 两个切片并用 `lipo -info`
+  断言双架构；新增 `generic/platform=iOS Simulator` 的 App + 扩展构建。
+- 验证：本机 `lipo -info` 两个切片均为 `x86_64 arm64`；`generic/platform=iOS Simulator` 构建出的 App 与 appex 均为胖二进制；
+  Rosetta 下 x86_64 CLI 对 X7 样本转换并 verify 通过；`swift test` 通过。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、
