@@ -2,7 +2,7 @@ name: xdremux
 description: XDRemux cross-platform ProXDR HEIC to ISO 21496-1 HDR converter
 publish_to: 'none'
 
-version: 0.4.5+39
+version: 0.4.6+40
 
 environment:
   sdk: ^3.8.1
@@ -33,6 +33,9 @@ dependencies:
 
   # Share files via system share sheet (ACTION_SEND)
   share_plus: ^13.0.0
+
+  # Zip a Live Photo .pvt bundle directory into one shareable file
+  archive: ^4.0.0
 
   # Receive files shared from other apps (ACTION_SEND/SEND_MULTIPLE)
   receive_sharing_intent: 1.9.0
@@ -77,6 +80,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # GPL-3.0 / x265 license texts for the in-app license page.
+    - assets/licenses/
 
   # Rust core DLL is bundled at build time for Windows;
   # Android copies the .so into jniLibs via Gradle hooks.

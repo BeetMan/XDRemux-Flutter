@@ -226,6 +226,43 @@ Flutter 版生成的检查点文件可被原生版读取。
   拆分有产物；macOS GUI 导入一张动态照片默认 Live Photo 合成，输出 `motion-master_iso.heic` + `.mov`。
 - 未验证：iPhone 照片中 Live Photo 播放与声音（需真机）；Share Extension、批量导出仍待做。
 
+**P3 执行记录（第二批：真正取消、摄影风格 3、按选项校验，2026-10-30，分支 `feat/apple-native-p3b`）**
+
+- 内核（§4.3 取消项落地）：`progress` 注册表的槽位加 `cancelled` 标志，新导出 `xdremux_progress_cancel(handle)`；
+  增益图瓦片构建与 x265 批量编码循环（含并行 worker 线程，句柄在派发前捕获）检查标志，命中即返回
+  `"conversion cancelled"` 失败报告。UI 先申请句柄再派发 worker，因此取消早于认领也会保留。头文件重生成，
+  `extern "C"` 导出 39 个。2 项 Rust 单测。
+- Kit：`convert` 用 `withTaskCancellationHandler` 把 Swift 任务取消映射为 `xdremux_progress_cancel`，返回后抛
+  `CancellationError`；新增 `verifyStylesOutput` / `verifyPortraitOutput` / `injectStyles3`。
+- Model：`ConversionBackend.verifyOutput(path:styles:portrait:)` 与 Flutter `conversion_backend.dart` 一致，
+  按 Rust 配置字节决定是否追加风格 / 人像结构检查；`Styles3Backend` 协议，校验通过后在暂存文件上注入
+  texture_styles + 语义 matte，失败即 `styles3Failed` 且不发布；grain seed 与 Dart `_grainSeedFor` 同一哈希
+  （UTF-16 单元 ×31，31 位掩码），同名文件跨端颗粒一致。取消后暂存目录随 defer 删除，不发布任何文件。
+  5 项新假引擎测试（校验标志、PS3 注入 / 跳过 / 失败、取消清理）。
+- App：每张照片的转换任务可单独取消（列表右键菜单、详情页进度条旁"取消"），工具栏在转换中变为"停止转换"
+  （停止队列并取消正在进行的任务）；取消的照片回到"可转换"。
+- CLI：Ctrl-C 取消当前任务，清理暂存后以 130 退出；JSON 模式输出 `cancelled: true`。
+- 验证：`swift test` 56 项通过（含 opt-in 真实样本：最大样本 40 ms 后取消在 0.24 s 内抛出 `CancellationError`；
+  Apple 标准 + 摄影风格 3 端到端后 `xdremux_verify_styles_output` 通过）；CLI 对 X7 样本 `--styles3` 转换并
+  verify 通过，`kill -INT` 后退出码 130 且输出目录为空；macOS App 构建并以 `--import --convert-all` 冒烟通过。
+- 未验证：GUI 中点击取消（样本转换 1 s 内完成，未人工命中）；摄影风格 3 输出在 Apple 照片里的纹理编辑入口（需真机）。
+
+**P3 执行记录（第三批：iOS 模拟器首次实跑，2026-10-31，分支 `feat/apple-native-ios`）**
+
+- iOS 27.2 模拟器运行时已可用。`build_apple.sh` 构建 `ios-sim` 切片，App 装入 iPhone 18 Pro 模拟器，以 `--import … --convert-all`
+  启动：X7 UHDR 样本与 OPPO 动态照片均转换完成。
+- 修掉三处 iOS 特有问题：
+  1. 工具栏挂在 `NavigationStack` 之外，iOS 上整条工具栏不显示（macOS 由窗口工具栏接住所以没暴露）→ 移到栈内。
+  2. HDR 预览黑图：`kCGImageSourceDecodeToHDR` 的 CGImage 在 iOS 上 `Image(decorative:)` 渲染全黑；改用 `UIImageReader`，
+     并仅在 `UIScreen.potentialEDRHeadroom > 1` 时请求 HDR（模拟器与无 EDR 面板会把 HDR UIImage 画成黑图）。
+  3. journal 绝对路径：iOS（和 macOS 沙盒）容器目录每次安装 / 更新换 UUID，重装后所有项变成"输入副本已不存在"。
+     `QueueJournal.portable/resolved` 把容器内路径存为 `~/…`，容器外（macOS 自选输出目录）保持绝对；schema 不变，
+     旧的绝对路径按原样读取。2 项测试。重装后两项以"已完成"恢复并有 HDR 预览。
+- 验收项达成：详情页"保存到照片"→ 权限 → 以 `.photo + .pairedVideo` 写入一个 asset；模拟器 Photos.sqlite 中
+  `ZKINDSUBTYPE = 2`（Live Photo），DCIM 出现 `IMG_0007.HEIC + .MOV`，"照片"App 显示 LIVE 标记。
+  `PhotosPicker(.current)` 从相册导入 OPPO HEIC 后识别为 X7 UHDR（原始字节未被转码）。
+- 未验证：Live Photo 声音（模拟器无法听）、HDR 亮度（模拟器无 EDR）、真机签名安装。CI 仍只跑 macOS 切片。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、

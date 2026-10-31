@@ -479,6 +479,11 @@ class ConversionConfig {
   /// Default per-card handling for Motion Photos (per-card choice overrides).
   MotionPhotoMode motionPhotoDefaultMode;
 
+  /// Package Live Photo pairs as Apple `.pvt` bundles (`<stem>.pvt/` holding
+  /// the HEIC, MOV and metadata.plist) instead of loose sibling files. On by
+  /// default; settings saved without the key (0.4.5 and earlier) get it too.
+  bool livePhotoBundle;
+
   ConversionConfig({
     this.language = AppLanguage.chinese,
     this.family = Family.auto,
@@ -498,6 +503,7 @@ class ConversionConfig {
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
     this.motionPhotoDefaultMode = MotionPhotoMode.livePhotoPair,
+    this.livePhotoBundle = true,
   });
 
   /// Persist to SharedPreferences.
@@ -520,6 +526,7 @@ class ConversionConfig {
     'autoSaveToGallery': autoSaveToGallery,
     'hardwareEncode': hardwareEncode,
     'motionPhotoDefaultMode': motionPhotoDefaultMode.name,
+    'livePhotoBundle': livePhotoBundle,
   };
 
   factory ConversionConfig.fromJson(Map<String, dynamic> json) {
@@ -562,6 +569,7 @@ class ConversionConfig {
         (e) => e.name == json['motionPhotoDefaultMode'],
         orElse: () => MotionPhotoMode.livePhotoPair,
       ),
+      livePhotoBundle: json['livePhotoBundle'] as bool? ?? true,
     );
   }
 
@@ -584,6 +592,7 @@ class ConversionConfig {
     autoSaveToGallery: autoSaveToGallery,
     hardwareEncode: hardwareEncode,
     motionPhotoDefaultMode: motionPhotoDefaultMode,
+    livePhotoBundle: livePhotoBundle,
   );
 
   /// Compute output path for a given input file.

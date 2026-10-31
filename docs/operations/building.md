@@ -101,7 +101,23 @@ tools/ohos/build_hap.ps1          # 默认 debug JIT（~118MB，仅调试用）
 tools/ohos/build_hap.ps1 -Release # release（~27MB，侧载不可签，仅供有发布证书场景）
 ```
 
-脚本自动从主线 pubspec 同步版本行到 `pubspec.ohos.yaml` 变体；插件为 vendored path 依赖（`tools/ohos/fetch_plugins.sh` 重建，file_picker 除外——vendored v12 门面已入库）。签名材料本机注入（DevEco 自动签名，不入库）。
+脚本自动从主线 pubspec 同步版本行到 `pubspec.ohos.yaml` 变体；插件为 vendored path 依赖（`tools/ohos/fetch_plugins.sh` 重建；file_picker 不拉上游，带 v12 门面的副本在 `28260c0` 起不再跟踪，脚本从其前一提交恢复）。签名材料本机注入（DevEco 自动签名，不入库）。
+
+macOS（Apple Silicon，2026-10-31 验证 0.4.6 profile hap）用 bash 版脚本，依赖 DevEco Studio 自带的 OpenHarmony SDK、hvigor、ohpm、node 与 JBR：
+
+```bash
+bash xdremux/rust/build_ohos.sh          # macOS 默认用 DevEco.app 内的 native SDK 与 ninja
+cp target/aarch64-unknown-linux-ohos/release/libxdremux_core.so \
+   /Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native/llvm/lib/aarch64-linux-ohos/libc++_shared.so \
+   apps/flutter/ohos/entry/libs/arm64-v8a/
+bash tools/ohos/fetch_plugins.sh
+tools/ohos/build_hap.sh --profile        # SDK 默认 ~/.sdks/flutter-ohos-3.41.9-1.0.2
+```
+
+- OHOS Flutter SDK：`git clone --depth 1 --branch '3.41.9+ohos-1.0.2' https://atomgit.com/CPF-Flutter/flutter_flutter.git`（即 `62357a93`），再执行该 SDK 的 `flutter precache --ohos`；`build_hap.sh` 做与 `check_sdk.ps1` 相同的内核校验，macOS 下载的内核哈希与 Windows 基线一致。
+- **需要 Rosetta**：该 fork 只为 macOS 主机提供 x86_64 的 `gen_snapshot`（profile/release AOT 用），未装时报 `bad CPU type`。
+- 脚本内置三处 macOS 适配：`CI=true`（hvigor 调用的 pnpm 无 TTY 会中止）、`NODE_PATH` 指向 DevEco 自带的 `@ohos/hvigor-ohos-plugin`（SDK 内的 flutter-hvigor-plugin 按 SDK 路径解析依赖、找不到它），以及构建后还原被写入本机 SDK 路径的 `ohos/package*.json`。
+- 本机未配置签名时 hvigor 在打包后提示配置 Signing Configs 并返回非零；脚本识别这种情况，以未签名中间产物 `entry-default-unsigned.hap` 为结果。
 
 鸿蒙 SDK 与官方 Flutter SDK 分开管理。可用 `-FlutterSdk C:\SDKs\flutter-ohos-clean` 或环境变量 `XDREMUX_OHOS_FLUTTER_SDK` 指定 OHOS SDK；未指定时仍兼容旧路径 `C:\flutter-ohos`。不要只替换 PATH 后复用另一版本的 cache。准备独立 SDK 后，先用该 SDK 执行 `flutter precache --ohos`，保留 `PUB_HOSTED_URL=https://pub.flutter-io.cn` 与 `FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn` 的项目镜像配置；不要复制旧 SDK 的 `bin/cache`。
 

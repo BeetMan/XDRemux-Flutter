@@ -44,6 +44,7 @@ import 'ffi/xdremux_ffi.dart';
 import 'widgets/photo_details_section.dart';
 import 'widgets/codec_diagnostics_tile.dart';
 import 'services/codec_diagnostics.dart';
+import 'services/license_notices.dart';
 
 /// File extensions accepted by both the picker and the desktop drop target.
 /// JPEG is accepted for Ultra HDR inputs (OPPO Motion Photo stills carry the
@@ -145,6 +146,7 @@ class PlatformLayoutTraits {
 }
 
 void main() {
+  registerAppLicenses();
   runApp(const XdRemuxApp());
 }
 
@@ -492,17 +494,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (restoredItem.status == QueueItemStatus.converted &&
           restoredItem.motionPhoto != null &&
           mpMode == MotionPhotoMode.livePhotoPair) {
-        final movPath = cpItem.outputPath.replaceAll(
-          RegExp(r'\.[^.]+$'),
-          '.mov',
-        );
+        // Checkpoints record the planned flat path; a .pvt item's pair
+        // lives in the sibling bundle instead.
+        final bundled = livePhotoBundledPath(cpItem.outputPath);
+        if (!File(cpItem.outputPath).existsSync() &&
+            File(bundled).existsSync()) {
+          restoredItem.outputPath = bundled;
+        }
+        final movPath = livePhotoMoviePath(restoredItem.outputPath);
+        final bundleDir = livePhotoBundleDir(restoredItem.outputPath);
         var pairOk = false;
         if (File(movPath).existsSync()) {
           try {
-            pairOk = XdRemuxFFI.livePhotoPairValid(
-              cpItem.outputPath,
-              movPath,
-            );
+            pairOk = bundleDir != null
+                ? XdRemuxFFI.livePhotoBundleValid(bundleDir)
+                : XdRemuxFFI.livePhotoPairValid(
+                    restoredItem.outputPath,
+                    movPath,
+                  );
           } catch (_) {
             pairOk = false;
           }
@@ -1752,20 +1761,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    // A retried .pvt item converts at its planned flat path again; composing
+    // then rebuilds (or, with bundling off, replaces) the pair.
+    item.outputPath = livePhotoFlatPath(item.outputPath);
     runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
-    // Live Photo pairing is incompatible with the style state in Photos'
-    // editor (verified 2026-09-02: style+pair -> "无法加载编辑内容").
-    // Keep the pairing pure: no styleMetadata in the paired still.
-    if (item.motionPhoto != null &&
-        item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
-      // PS3 contract (styles + texture + mattes) is now allowed on paired
-      // stills — re-test of the 2026-09-02 "style+pair fails to load" finding
-      // with the full matte contract. Old-styles-only pairs stay pure.
-      if (!runConfig.applePhotographicStyles3) {
-        runConfig.applePhotographicStyles = false;
-      }
-    }
+    // Styles (2 and 3) are kept on Live Photo pairs: when the paired still
+    // declares Photographic Styles, make_live_photo also writes the MOV style
+    // tracks Photos' Live Photo editor needs (live_photo_styles.rs, #46).
     // PS3 injection is Rust-only.
     if (runConfig.backend != ConversionBackend.rust) {
       runConfig.applePhotographicStyles3 = false;
@@ -1824,8 +1827,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       // Huawei Portrait fast path: uses the dedicated remux pipeline
       // instead of the OPPO-based classify/extract/encode path.
       // Styles / Styles 3, when enabled, are attached afterwards so both
-      // stay on together. Live Photo pairing already cleared styles-only
-      // above; Styles 3 is still applied.
+      // stay on together.
       final wantStyles = runConfig.applePhotographicStyles;
       final wantStyles3 = runConfig.applePhotographicStyles3;
       final styleFlags = (wantStyles || wantStyles3 ? XdRemuxFFI.styleLayerStyles : 0) |
@@ -2029,9 +2031,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (item.motionPhoto != null &&
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
-            await MotionPhotoService.composeLivePhoto(
+            item.outputPath = await MotionPhotoService.composeLivePhoto(
               item.inputPath,
               item.outputPath,
+              bundle: runConfig.livePhotoBundle,
             );
           } catch (e) {
             item.status = QueueItemStatus.failed;
@@ -2934,9 +2937,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
               ListTile(
                 leading: const Icon(Icons.share),
-                title: Text(hasLivePhotoOutput(item) ? t('分享配对原文件', 'Share paired originals') : t('分享', 'Share')),
+                title: Text(hasLivePhotoOutput(item)
+                    ? (livePhotoBundleDir(item.outputPath) != null
+                        ? t('分享 .pvt 包', 'Share .pvt bundle')
+                        : t('分享配对原文件', 'Share paired originals'))
+                    : t('分享', 'Share')),
                 subtitle: hasLivePhotoOutput(item)
-                    ? Text(t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
+                    ? Text(livePhotoBundleDir(item.outputPath) != null
+                        ? (sharesLivePhotoBundleDirectly(Platform.operatingSystem)
+                            ? t('直接发送 .pvt 包，苹果设备收到即为 Live Photo', 'Sends the .pvt bundle; Apple devices receive one Live Photo')
+                            : t('打包为 zip 发送；在 Mac 上解压后可导入照片', 'Sent as a zip; unzip on a Mac and import into Photos'))
+                        : t('一起发送 HEIF + MOV，不是仅静图', 'Send HEIF + MOV together, not just the still'))
                     : PlatformX.isOhos
                     ? Text(t('以文件发送原件', 'Send the original as a file'))
                     : null,
@@ -4442,6 +4453,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.autoSaveToGallery = _cfg.autoSaveToGallery;
     widget.config.hardwareEncode = _cfg.hardwareEncode;
     widget.config.motionPhotoDefaultMode = _cfg.motionPhotoDefaultMode;
+    widget.config.livePhotoBundle = _cfg.livePhotoBundle;
     widget.onChanged();
     setState(() {});
   }
@@ -4739,19 +4751,19 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            'Apple 照片摄影风格',
-                            'Apple Photos Photographic Styles',
+                            '摄影风格 2',
+                            'Photographic Styles 2',
                           ),
                         ),
                         subtitle: Text(
                           _cfg.applePhotographicStyles3
                               ? _t(
-                                  '已包含在摄影风格 3 中；如需单独调整，请先关闭摄影风格 3。',
-                                  'Included in Photographic Styles 3; turn that off to change this.',
+                                  '摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。',
+                                  'Photographic Styles 3 includes Photographic Styles 2; turn it off to change this.',
                                 )
                               : _t(
-                                 '生成可在 Apple 照片中继续调节的摄影风格数据；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                                 'Generates Photographic Styles data editable in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                                 '写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                 'Writes Photographic Styles data so tone, color and intensity can be adjusted in Apple Photos; selects Apple Standard output and disables GPU encoding.',
                                ),
                         ),
                         value: _cfg.applePhotographicStyles,
@@ -4774,14 +4786,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(
                           _t(
-                            '摄影风格 3（质感 + 颗粒）',
-                            'Photographic Styles 3 (texture + grain)',
+                            '摄影风格 3',
+                            'Photographic Styles 3',
                           ),
                         ),
                         subtitle: Text(
                           _t(
-                            '输出携带 Standard texture_styles 元数据，可在 Apple 照片中调节质感/颗粒；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                            'Output carries a Standard texture_styles item so Apple Photos offers texture/grain editing; selects Apple Standard output and disables GPU encoding.',
+                            '在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                            'Adds texture (such as Soft Skin, Glow or Film) and grain to Photographic Styles 2, adjustable in Apple Photos on iOS 27 or later; selects Apple Standard output and disables GPU encoding.',
                           ),
                         ),
                         value: _cfg.applePhotographicStyles3,
@@ -5187,6 +5199,25 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Live Photo container: loose HEIC + MOV or one .pvt bundle.
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(t('Live Photo 打包为 .pvt', 'Package Live Photos as .pvt')),
+                      subtitle: Text(
+                        t(
+                          '输出 <名称>.pvt 文件夹（HEIF + MOV + metadata.plist），Mac 照片可直接导入为一个 Live Photo；iOS/macOS 直接分享该包，其他平台打包为 zip。',
+                          'Write a <name>.pvt folder (HEIF + MOV + metadata.plist) that Mac Photos imports as one Live Photo; iOS/macOS share the bundle, other platforms a zip.',
+                        ),
+                      ),
+                      value: _cfg.livePhotoBundle,
+                      dense: true,
+                      onChanged: (v) {
+                        setState(() => _cfg.livePhotoBundle = v);
+                        _emit();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
                     // Concurrency
                     Row(
                       children: [
@@ -5445,6 +5476,22 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     // Cache management (Android / iOS)
                     const Divider(),
                     CodecDiagnosticsTile(english: _cfg.language == AppLanguage.english),
+
+                    const Divider(),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.gavel_outlined),
+                      title: Text(t('开源许可', 'Open source licenses')),
+                      subtitle: Text(
+                        t('GPL-3.0-only；源代码、x265 与第三方组件许可',
+                            'GPL-3.0-only; source code, x265 and third-party licenses'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      onTap: () => showAppLicenses(
+                        context,
+                        english: _cfg.language == AppLanguage.english,
+                      ),
+                    ),
 
                     if (Platform.isAndroid || Platform.isIOS) ...[
                       const Divider(),

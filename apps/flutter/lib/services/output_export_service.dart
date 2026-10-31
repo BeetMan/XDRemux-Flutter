@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:archive/archive_io.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 
@@ -17,6 +18,64 @@ bool hasLivePhotoOutput(QueueItem item) =>
 
 String livePhotoMoviePath(String still) =>
     still.replaceFirst(RegExp(r'\.[^./\\]+$'), '.mov');
+
+/// The `.pvt` Live Photo bundle directory holding [still], or null when the
+/// pair sits loose in the output directory.
+String? livePhotoBundleDir(String still) {
+  final parent = File(still).parent.path;
+  return parent.toLowerCase().endsWith('.pvt') ? parent : null;
+}
+
+/// The planned flat output path of a bundled still:
+/// `<dir>/<stem>.pvt/<stem>.heic` -> `<dir>/<stem>.heic`.
+String livePhotoFlatPath(String still) {
+  final bundle = livePhotoBundleDir(still);
+  if (bundle == null) return still;
+  return '${File(bundle).parent.path}${still.substring(bundle.length)}';
+}
+
+/// Where a still planned at [flat] lands once bundled:
+/// `<dir>/<stem>.heic` -> `<dir>/<stem>.pvt/<stem>.heic`.
+String livePhotoBundledPath(String flat) {
+  final cut = flat.lastIndexOf(RegExp(r'[/\\]')) + 1;
+  final name = flat.substring(cut);
+  final stem = name.replaceFirst(RegExp(r'\.[^.]+$'), '');
+  final separator = cut > 0 ? flat[cut - 1] : Platform.pathSeparator;
+  return '${flat.substring(0, cut)}$stem.pvt$separator$name';
+}
+
+/// Apple share sheets send a `.pvt` directory as a package (AirDrop delivers
+/// it as one Live Photo); elsewhere the share path only takes files.
+bool sharesLivePhotoBundleDirectly(String operatingSystem) =>
+    operatingSystem == 'ios' || operatingSystem == 'macos';
+
+/// Zips a `.pvt` bundle into one shareable file and returns its path.
+typedef LivePhotoBundleArchiver = Future<String> Function(String bundleDir);
+
+/// Zip of [bundleDir] at deflate level 0 (HEIC/MOV are already compressed;
+/// archive 4.x still labels such entries Deflate) in a fresh temp directory.
+/// Entries keep the `<name>.pvt/` prefix, so unzipping on a Mac yields the
+/// bundle that Photos imports as one Live Photo.
+Future<String> zipLivePhotoBundle(String bundleDir) async {
+  final name = Directory(
+    bundleDir,
+  ).uri.pathSegments.lastWhere((s) => s.isNotEmpty);
+  final out = await Directory.systemTemp.createTemp('xdremux-pvt-share-');
+  final zipPath = '${out.path}${Platform.pathSeparator}$name.zip';
+  await Isolate.run(() async {
+    final encoder = ZipFileEncoder()
+      ..create(zipPath, level: ZipFileEncoder.store);
+    await encoder.addDirectory(
+      Directory(bundleDir),
+      filter: (entity, _) =>
+          entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty).startsWith('.')
+          ? ZipFileOperation.skip
+          : ZipFileOperation.include,
+    );
+    await encoder.close();
+  });
+  return zipPath;
+}
 
 enum GalleryExportKind { image, independentPair, livePhoto }
 
@@ -141,10 +200,13 @@ class GalleryExportBatchResult {
 class OutputExportService {
   final OutputExportDestination destination;
   final LivePhotoValidator _validatePair;
+  final LivePhotoBundleArchiver _archiveBundle;
   OutputExportService({
     this.destination = const NativeOutputExportDestination(),
     LivePhotoValidator? validatePair,
-  }) : _validatePair = validatePair ?? _nativeValidate;
+    LivePhotoBundleArchiver? archiveBundle,
+  }) : _validatePair = validatePair ?? _nativeValidate,
+       _archiveBundle = archiveBundle ?? zipLivePhotoBundle;
 
   static Future<bool> _nativeValidate(String still, String movie) =>
       Isolate.run(() => XdRemuxFFI.livePhotoPairValid(still, movie));
@@ -169,6 +231,15 @@ class OutputExportService {
           ),
         );
       }
+    }
+    final bundle = paired ? livePhotoBundleDir(still) : null;
+    if (bundle != null && !await File('$bundle/metadata.plist').exists()) {
+      throw StateError(
+        t(
+          '.pvt 包缺少 metadata.plist，请重新转换。',
+          'The .pvt bundle lacks metadata.plist; convert again.',
+        ),
+      );
     }
     if (paired && !await _validatePair(paths[0], paths[1])) {
       throw StateError(
@@ -227,6 +298,18 @@ class OutputExportService {
 
   Future<void> share(QueueItem item) async {
     final paths = await filesFor(item);
+    final bundle = hasLivePhotoOutput(item)
+        ? livePhotoBundleDir(paths.first)
+        : null;
+    if (bundle != null) {
+      // Android/Windows/Linux/OHOS share sheets cannot send a directory; zip
+      // the bundle there so the HEIF + MOV pair stays together.
+      final shared = sharesLivePhotoBundleDirectly(destination.operatingSystem)
+          ? bundle
+          : await _archiveBundle(bundle);
+      await destination.share([shared], originals: true);
+      return;
+    }
     // Do not swallow missing MOV / platform / presentation errors, and do not
     // call a displayed share sheet a completed transfer.
     await destination.share(paths, originals: hasLivePhotoOutput(item));

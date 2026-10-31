@@ -11,6 +11,8 @@ pub mod container_build;
 pub mod edr;
 pub mod exif;
 pub mod live_photo;
+pub mod live_photo_styles;
+pub mod live_photo_bundle;
 pub mod motion_photo;
 pub mod photo_details;
 pub mod uhdr_jpeg;
@@ -438,6 +440,65 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
         1
     } else {
         0
+    }
+}
+
+/// Package a composed still HEIC + MOV pair into an Apple Live Photo bundle
+/// directory (`bundle_path`, must end with `.pvt`). The pair is verified
+/// first and copied byte-for-byte; an existing bundle of the same name is
+/// replaced. Returns a JSON report with the bundle and inner file paths.
+#[no_mangle]
+pub extern "C" fn xdremux_make_live_photo_bundle(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+    bundle_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if still_path.is_null() || mov_path.is_null() || bundle_path.is_null() {
+            return Err("still/mov/bundle path is missing".into());
+        }
+        let read = |p: *const c_char, what: &str| -> Result<String, String> {
+            unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .map(str::to_string)
+                .map_err(|_| format!("{what} path is not valid UTF-8"))
+        };
+        let still = read(still_path, "still")?;
+        let mov = read(mov_path, "mov")?;
+        let bundle = read(bundle_path, "bundle")?;
+        let paths = live_photo_bundle::write_bundle(
+            std::path::Path::new(&still),
+            std::path::Path::new(&mov),
+            std::path::Path::new(&bundle),
+        )?;
+        Ok(serde_json::json!({
+            "success": true,
+            "bundlePath": paths.bundle.to_string_lossy(),
+            "stillPath": paths.still.to_string_lossy(),
+            "videoPath": paths.movie.to_string_lossy(),
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Validate a `.pvt` Live Photo bundle: metadata.plist present, exactly one
+/// still + one MOV sharing a stem, matching content identifiers. Returns 1
+/// when valid.
+#[no_mangle]
+pub extern "C" fn xdremux_live_photo_bundle_valid(bundle_path: *const c_char) -> u8 {
+    if bundle_path.is_null() {
+        return 0;
+    }
+    match unsafe { CStr::from_ptr(bundle_path) }.to_str() {
+        Ok(p) if live_photo_bundle::bundle_is_valid(std::path::Path::new(p)) => 1,
+        _ => 0,
     }
 }
 
@@ -1260,6 +1321,17 @@ pub extern "C" fn xdremux_progress_begin() -> u32 {
 #[no_mangle]
 pub extern "C" fn xdremux_progress_end(handle: u32) {
     progress::end_progress_with(handle);
+}
+
+/// Ask the conversion running under `handle` (from
+/// [xdremux_progress_begin]) to stop. Safe from any thread. The worker
+/// checks the flag between tiles and returns a failed [ConversionResult]
+/// whose `error_message` is "conversion cancelled"; the caller still owns
+/// the handle and releases it with [xdremux_progress_end]. The partially
+/// written output must be deleted by the caller.
+#[no_mangle]
+pub extern "C" fn xdremux_progress_cancel(handle: u32) {
+    progress::cancel(handle);
 }
 
 #[no_mangle]

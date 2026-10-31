@@ -63,7 +63,7 @@ Linux 使用 `workflow_call` 复用构建；tag 后缀用于资产命名，并�
 鸿蒙不进 CI（见 `operations/ci.md` §2.5）。本地发布：
 
 1. `bash xdremux/rust/build_ohos.sh` 构建 Rust 核心，产物拷到 `apps/flutter/ohos/entry/libs/arm64-v8a/`
-2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）
+2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）；macOS 用 `tools/ohos/build_hap.sh --profile`（需 Rosetta，见 `building.md`）
 3. 取签名构建的 `entry-default-unsigned.hap` 中间产物作为公开包（hap 签名是 zip 块，unsigned 中间产物可直接被侧载工具签名）
 4. 手动挂到 Release 资产
 

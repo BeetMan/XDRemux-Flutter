@@ -74,4 +74,27 @@ final class QueueJournalTests: XCTestCase {
         XCTAssertEqual(byName["lost-input"]?.status, .failed)
         XCTAssertEqual(byName["failed"]?.errorMessage, "x")
     }
+
+    func testPortablePathsRoundTripThroughANewContainer() throws {
+        let old = "/data/Containers/A"
+        let new = "/data/Containers/B"
+        let record = QueueJournal.Record(
+            sourceName: "a.heic", inputPath: "\(old)/Library/Caches/XDRemux/inputs/x.heic", status: .succeeded,
+            outputPath: "\(old)/Documents/outputs/x_iso.heic", pairedVideoPath: "\(old)/Documents/outputs/x_iso.mov",
+            extraVideoPaths: ["/Volumes/External/clip.mp4"])
+        let stored = QueueJournal(records: [record]).portable(home: old)
+        XCTAssertEqual(stored.records[0].inputPath, "~/Library/Caches/XDRemux/inputs/x.heic")
+        XCTAssertEqual(stored.records[0].outputPath, "~/Documents/outputs/x_iso.heic")
+        XCTAssertEqual(stored.records[0].extraVideoPaths, ["/Volumes/External/clip.mp4"], "outside home stays absolute")
+        let data = try JSONEncoder().encode(stored)
+        let restored = try JSONDecoder().decode(QueueJournal.self, from: data).resolved(home: new)
+        XCTAssertEqual(restored.records[0].inputPath, "\(new)/Library/Caches/XDRemux/inputs/x.heic")
+        XCTAssertEqual(restored.records[0].pairedVideoPath, "\(new)/Documents/outputs/x_iso.mov")
+        XCTAssertEqual(restored.records[0].extraVideoPaths, ["/Volumes/External/clip.mp4"])
+    }
+
+    func testLegacyAbsolutePathsStayUntouched() {
+        let j = QueueJournal(records: [QueueJournal.Record(sourceName: "a", inputPath: "/abs/a.heic")])
+        XCTAssertEqual(j.resolved(home: "/home").records[0].inputPath, "/abs/a.heic")
+    }
 }

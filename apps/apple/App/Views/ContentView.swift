@@ -40,10 +40,15 @@ struct ContentView: View {
                 .navigationDestination(for: PhotoItem.ID.self) { id in
                     PhotoDetailView(model: model, itemID: id)
                 }
+                // Inside the stack: a toolbar attached outside a navigation
+                // context is dropped on iOS (macOS puts it in the window).
+                .toolbar { toolbarContent }
             }
             #endif
         }
+        #if os(macOS)
         .toolbar { toolbarContent }
+        #endif
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
         }
@@ -83,12 +88,21 @@ struct ContentView: View {
             } label: {
                 Label("从文件导入", systemImage: "folder.badge.plus")
             }
-            Button {
-                model.convertAll()
-            } label: {
-                Label("全部转换", systemImage: "play.fill")
+            if model.isConverting {
+                Button {
+                    model.cancelBatch()
+                } label: {
+                    Label("停止转换", systemImage: "stop.fill")
+                }
+                .help("停止队列并取消正在进行的转换；已完成的不受影响")
+            } else {
+                Button {
+                    model.convertAll()
+                } label: {
+                    Label("全部转换", systemImage: "play.fill")
+                }
+                .disabled(model.convertibleCount == 0)
             }
-            .disabled(model.convertibleCount == 0 || model.isConverting)
             Button {
                 showRoundTrip = true
             } label: {
@@ -154,6 +168,9 @@ struct PhotoListView: View {
     private func rowMenu(_ item: PhotoItem) -> some View {
         if item.isConvertible, item.state == .ready {
             Button("转换这张") { Task { await model.convert(item.id) } }
+        }
+        if case .converting = item.state {
+            Button("取消转换") { model.cancel(item.id) }
         }
         if case .failed = item.state {
             Button("重试") { Task { await model.retry(item.id) } }

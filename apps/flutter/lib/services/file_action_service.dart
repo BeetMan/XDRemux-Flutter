@@ -89,7 +89,8 @@ class FileActionService {
   }) async {
     if (paths.isEmpty) throw ArgumentError('No files to share');
     for (final path in paths) {
-      if (!await File(path).exists()) {
+      // A `.pvt` Live Photo bundle is shared as a directory on Apple hosts.
+      if (!await File(path).exists() && !await Directory(path).exists()) {
         throw FileSystemException('Missing share resource', path);
       }
     }

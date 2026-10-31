@@ -11,7 +11,7 @@
 
 use crate::motion_photo::OppoMetadata;
 
-const QUICKTIME_EPOCH_OFFSET: u64 = 2_082_844_800;
+pub(crate) const QUICKTIME_EPOCH_OFFSET: u64 = 2_082_844_800;
 const METADATA_TIMESCALE: u32 = 600;
 const CONTENT_IDENTIFIER_KEY: &[u8] = b"com.apple.quicktime.content.identifier";
 const LIVE_PHOTO_AUTO_KEY: &[u8] = b"com.apple.quicktime.live-photo.auto";
@@ -504,23 +504,23 @@ pub fn patch_makernote_inplace(tiff: &mut [u8], replacement: &[u8]) -> Result<bo
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
-struct MovBox {
-    offset: usize,
-    size: usize,
-    kind: [u8; 4],
-    header_size: usize,
+pub(crate) struct MovBox {
+    pub(crate) offset: usize,
+    pub(crate) size: usize,
+    pub(crate) kind: [u8; 4],
+    pub(crate) header_size: usize,
 }
 
 impl MovBox {
-    fn payload_offset(&self) -> usize {
+    pub(crate) fn payload_offset(&self) -> usize {
         self.offset + self.header_size
     }
-    fn end(&self) -> usize {
+    pub(crate) fn end(&self) -> usize {
         self.offset + self.size
     }
 }
 
-fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, String> {
+pub(crate) fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, String> {
     let mut out = Vec::new();
     let mut offset = start;
     while offset < end {
@@ -564,7 +564,7 @@ fn scan_boxes(data: &[u8], start: usize, end: usize) -> Result<Vec<MovBox>, Stri
     Ok(out)
 }
 
-fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+pub(crate) fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     let size = 8 + payload.len();
     if size <= 0xFFFF_FFFF {
         let mut v = Vec::with_capacity(size);
@@ -582,7 +582,7 @@ fn make_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     }
 }
 
-fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> {
+pub(crate) fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> {
     let mut p = Vec::with_capacity(4 + payload.len());
     p.push(version);
     p.extend_from_slice(&flags.to_be_bytes()[1..]);
@@ -590,14 +590,14 @@ fn full_box(kind: &[u8; 4], version: u8, flags: u32, payload: &[u8]) -> Vec<u8> 
     make_box(kind, &p)
 }
 
-fn direct_child<'a>(data: &[u8], parent: &MovBox, kind: &[u8; 4]) -> Result<MovBox, String> {
+pub(crate) fn direct_child<'a>(data: &[u8], parent: &MovBox, kind: &[u8; 4]) -> Result<MovBox, String> {
     scan_boxes(data, parent.payload_offset(), parent.end())?
         .into_iter()
         .find(|b| &b.kind == kind)
         .ok_or_else(|| format!("missing {} box", String::from_utf8_lossy(kind)))
 }
 
-fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
+pub(crate) fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
     let root = MovBox {
         offset: 0,
         size: moov.len(),
@@ -623,14 +623,14 @@ fn movie_timescale(moov: &[u8]) -> Result<(u32, u64), String> {
     Ok((timescale, duration))
 }
 
-fn track_id(moov: &[u8], track: &MovBox) -> Result<u32, String> {
+pub(crate) fn track_id(moov: &[u8], track: &MovBox) -> Result<u32, String> {
     let tkhd = direct_child(moov, track, b"tkhd")?;
     let version = moov[tkhd.payload_offset()];
     let off = tkhd.offset + if version == 0 { 20 } else { 28 };
     Ok(u32::from_be_bytes(moov[off..off + 4].try_into().unwrap()))
 }
 
-fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
+pub(crate) fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
     let mdia = direct_child(moov, track, b"mdia")?;
     let hdlr = direct_child(moov, &mdia, b"hdlr")?;
     if hdlr.size < 20 {
@@ -641,7 +641,7 @@ fn handler_type(moov: &[u8], track: &MovBox) -> Result<[u8; 4], String> {
         .unwrap())
 }
 
-fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
+pub(crate) fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
     let mdia = direct_child(moov, track, b"mdia")?;
     let mdhd = direct_child(moov, &mdia, b"mdhd")?;
     let version = moov[mdhd.payload_offset()];
@@ -654,7 +654,7 @@ fn mdhd_timescale(moov: &[u8], track: &MovBox) -> Result<u32, String> {
 }
 
 /// Sample presentation times (seconds) of a track from stts+ctts.
-fn sample_pts_seconds(moov: &[u8], track: &MovBox) -> Result<Vec<f64>, String> {
+pub(crate) fn sample_pts_seconds(moov: &[u8], track: &MovBox) -> Result<Vec<f64>, String> {
     let timescale = mdhd_timescale(moov, track)?;
     let mdia = direct_child(moov, track, b"mdia")?;
     let minf = direct_child(moov, &mdia, b"minf")?;
@@ -1134,6 +1134,11 @@ fn rebuild_moov(
             continue;
         }
         let mut raw = original[child.offset..child.end()].to_vec();
+        if &child.kind == b"trak" && handler_type(original, &child).ok() == Some(*b"soun") {
+            if let Some(fixed) = quicktime_aac_track(&raw)? {
+                raw = fixed;
+            }
+        }
         if &child.kind == b"mvhd" {
             // next_track_id is the last 4 bytes of mvhd (both versions).
             let pos = raw.len() - 4;
@@ -1144,6 +1149,95 @@ fn rebuild_moov(
     rebuilt.extend_from_slice(metadata_track);
     rebuilt.extend_from_slice(movie_meta);
     Ok(make_box(b"moov", &rebuilt))
+}
+
+/// Rebuild `data[start..end]` (a box payload) with the box at `path`
+/// replaced by `f(payload)`; `Ok(None)` when `path` is absent or `f` declines.
+/// `stsd` keeps its version/flags + entry count prefix.
+fn replace_box_at_path(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    path: &[&[u8; 4]],
+    f: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut out = Vec::with_capacity(end - start + 64);
+    let mut replaced = false;
+    for child in scan_boxes(data, start, end)? {
+        if !replaced && &child.kind == path[0] {
+            let payload = &data[child.payload_offset()..child.end()];
+            let new_payload = if path.len() == 1 {
+                f(payload)
+            } else if &child.kind == b"stsd" {
+                if payload.len() < 8 {
+                    return Err("truncated stsd".into());
+                }
+                replace_box_at_path(data, child.payload_offset() + 8, child.end(), &path[1..], f)?
+                    .map(|entries| [&payload[..8], entries.as_slice()].concat())
+            } else {
+                replace_box_at_path(data, child.payload_offset(), child.end(), &path[1..], f)?
+            };
+            if let Some(p) = new_payload {
+                out.extend_from_slice(&make_box(&child.kind, &p));
+                replaced = true;
+                continue;
+            }
+        }
+        out.extend_from_slice(&data[child.offset..child.end()]);
+    }
+    Ok(replaced.then_some(out))
+}
+
+/// QuickTime form of an ISO `mp4a` audio track, or `None` when it is fine.
+///
+/// Android encoders write a version-0 `mp4a` entry with a bare `esds`. Once
+/// the brand is `qt  ` (required for Photos to pair), Core Media reads the
+/// entry by QuickTime rules, finds no decoder config, and AAC decode fails
+/// with -12848. Passthrough playback still works, but any composition or
+/// export that decodes audio fails, so Photos drops the Live video when it
+/// renders an edit. iPhone AAC MOVs use SoundDescription v1 with the `esds`
+/// inside a `wave` atom; rewrite to that.
+pub(crate) fn quicktime_aac_track(trak: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let root = MovBox {
+        offset: 0,
+        size: trak.len(),
+        kind: *b"trak",
+        header_size: 8,
+    };
+    let path: [&[u8; 4]; 5] = [b"mdia", b"minf", b"stbl", b"stsd", b"mp4a"];
+    Ok(replace_box_at_path(trak, root.payload_offset(), root.end(), &path, &mp4a_v0_to_quicktime)?
+        .map(|payload| make_box(b"trak", &payload)))
+}
+
+fn mp4a_v0_to_quicktime(entry: &[u8]) -> Option<Vec<u8>> {
+    // reserved(6) dref(2) version(2) revision(2) vendor(4) channels(2)
+    // sample_size(2) compression_id(2) packet_size(2) sample_rate(4)
+    if entry.len() < 28 || u16::from_be_bytes([entry[8], entry[9]]) != 0 {
+        return None;
+    }
+    let children = scan_boxes(entry, 28, entry.len()).ok()?;
+    let esds = children.iter().find(|b| &b.kind == b"esds")?;
+    let mut v1 = entry[..8].to_vec();
+    v1.extend_from_slice(&1u16.to_be_bytes()); // version
+    v1.extend_from_slice(&[0u8; 6]); // revision, vendor
+    v1.extend_from_slice(&entry[16..18]); // channels
+    v1.extend_from_slice(&16u16.to_be_bytes());
+    v1.extend_from_slice(&(-2i16).to_be_bytes()); // compressed (variable)
+    v1.extend_from_slice(&0u16.to_be_bytes());
+    v1.extend_from_slice(&entry[24..28]); // sample rate
+    for v in [1024u32, 0, 0, 2] {
+        // samples/packet, bytes/packet, bytes/frame, bytes/sample
+        v1.extend_from_slice(&v.to_be_bytes());
+    }
+    let mut wave = make_box(b"frma", b"mp4a");
+    wave.extend_from_slice(&make_box(b"mp4a", &[0u8; 4]));
+    wave.extend_from_slice(&entry[esds.offset..esds.end()]);
+    wave.extend_from_slice(&make_box(&[0u8; 4], &[])); // terminator
+    v1.extend_from_slice(&make_box(b"wave", &wave));
+    for child in children.iter().filter(|b| &b.kind != b"esds") {
+        v1.extend_from_slice(&entry[child.offset..child.end()]);
+    }
+    Some(v1)
 }
 
 /// Rewrite a Motion Photo video stream as the MOV half of an Apple Live
@@ -1375,7 +1469,13 @@ pub fn make_live_photo(
         return Err("failed to write the Live Photo MakerNote into the still".into());
     }
 
-    let mov = write_live_photo_movie(video, &content_id, still_time, oppo_metadata)?;
+    let mut mov = write_live_photo_movie(video, &content_id, still_time, oppo_metadata)?;
+    // A styled still sends Photos down the styled Live Photo pipeline, which
+    // needs the MOV's linear-thumbnail port; without it Edit aborts.
+    if crate::live_photo_styles::still_has_styles(&still_out) {
+        let level = crate::live_photo_styles::MovieStyleLevel::from_env();
+        mov = crate::live_photo_styles::attach_style_tracks(&mov, &still_out, level)?;
+    }
     Ok((still_out, mov, content_id))
 }
 
@@ -1599,6 +1699,42 @@ mod tests {
         assert!(mov.windows(b"com.apple.quicktime.live-photo.auto".len()).any(
             |window| window == b"com.apple.quicktime.live-photo.auto"
         ));
+    }
+
+    #[test]
+    fn iso_aac_entry_becomes_quicktime_sound_description_v1() {
+        let esds = full_box(b"esds", 0, 0, &[0x03, 0x19, 0, 0, 0, 0x04, 0x11, 0x40, 0x15]);
+        let mut mp4a = vec![0u8; 6];
+        mp4a.extend_from_slice(&1u16.to_be_bytes());
+        mp4a.extend_from_slice(&[0u8; 8]); // version 0, revision, vendor
+        mp4a.extend_from_slice(&1u16.to_be_bytes()); // mono
+        mp4a.extend_from_slice(&16u16.to_be_bytes());
+        mp4a.extend_from_slice(&[0u8; 4]);
+        mp4a.extend_from_slice(&(48_000u32 << 16).to_be_bytes());
+        mp4a.extend_from_slice(&esds);
+        let mut stsd = 1u32.to_be_bytes().to_vec();
+        stsd.extend_from_slice(&make_box(b"mp4a", &mp4a));
+        let stbl = make_box(b"stbl", &full_box(b"stsd", 0, 0, &stsd));
+        let trak = make_box(
+            b"trak",
+            &make_box(b"mdia", &make_box(b"minf", &[make_box(b"smhd", &[0u8; 8]), stbl].concat())),
+        );
+
+        let fixed = quicktime_aac_track(&trak).unwrap().expect("v0 entry is rewritten");
+        let at = fixed.windows(4).position(|w| w == b"mp4a").unwrap() + 4;
+        assert_eq!(&fixed[at + 8..at + 10], &1u16.to_be_bytes(), "SoundDescription v1");
+        assert_eq!(&fixed[at + 16..at + 18], &1u16.to_be_bytes(), "channels kept");
+        assert_eq!(&fixed[at + 20..at + 22], &(-2i16).to_be_bytes());
+        assert_eq!(&fixed[at + 24..at + 28], &(48_000u32 << 16).to_be_bytes());
+        let wave = fixed.windows(4).position(|w| w == b"wave").unwrap();
+        assert_eq!(&fixed[wave + 8..wave + 12], b"frma");
+        assert!(fixed[wave..].windows(esds.len()).any(|w| w == esds.as_slice()));
+        // Every container size still adds up.
+        let top = scan_boxes(&fixed, 0, fixed.len()).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].size, fixed.len());
+        // Already QuickTime: left alone.
+        assert!(quicktime_aac_track(&fixed).unwrap().is_none());
     }
 
     #[test]

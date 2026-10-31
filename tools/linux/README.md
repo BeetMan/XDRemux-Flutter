@@ -3,7 +3,7 @@
 Publishable Linux artifacts are produced from an existing Flutter release bundle.
 Nothing here publishes or uploads anything.
 
-The main development version is 0.4.5 (not yet released). The 0.4.4 names below
+The latest release is 0.4.6. The 0.4.4 names below
 describe the existing preview assets; use the checked-out pubspec version when
 building new candidates. The Linux workflow runs on matching pull requests and
 manual dispatch, with read-only build permissions. The release workflow also

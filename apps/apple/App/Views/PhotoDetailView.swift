@@ -46,7 +46,11 @@ struct PhotoDetailView: View {
         case .converting(let p):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: p)
-                Text(item.statusText).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text(item.statusText).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("取消") { model.cancel(item.id) }.controlSize(.small)
+                }
             }
         case .failed(let message):
             GroupBox {
@@ -158,13 +162,25 @@ struct PhotoDetailView: View {
 /// Shows the HDR output when available, otherwise the SDR input thumbnail.
 struct PreviewCard: View {
     let item: PhotoItem
+    #if os(iOS)
+    // `UIImageReader` with `prefersHighDynamicRange` is the supported HDR
+    // path on iOS; a CGImage decoded with `kCGImageSourceDecodeToHDR`
+    // renders black in `Image(decorative:)` there (seen on iOS 27 simulator).
+    @State private var hdrImage: UIImage?
+    #else
     @State private var hdrImage: CGImage?
+    #endif
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16).fill(.quaternary)
             if let hdrImage {
-                Image(decorative: hdrImage, scale: 1)
+                #if os(iOS)
+                let image = Image(uiImage: hdrImage)
+                #else
+                let image = Image(decorative: hdrImage, scale: 1)
+                #endif
+                image
                     .resizable()
                     .scaledToFit()
                     .allowedDynamicRange(.high)
@@ -184,7 +200,18 @@ struct PreviewCard: View {
         .frame(minHeight: 220, maxHeight: 420)
         .task(id: item.product?.outputURL) {
             guard let url = item.product?.outputURL else { hdrImage = nil; return }
+            #if os(iOS)
+            // A screen without EDR headroom (the simulator, older panels)
+            // draws a high-dynamic-range UIImage black, so only ask for HDR
+            // where it can be shown; the SDR decode still applies the base
+            // image's tone mapping.
+            let wantsHDR = await MainActor.run { UIScreen.main.potentialEDRHeadroom > 1.0 }
+            var configuration = UIImageReader.Configuration()
+            configuration.prefersHighDynamicRange = wantsHDR
+            hdrImage = await UIImageReader(configuration: configuration).image(contentsOf: url)
+            #else
             hdrImage = await Task.detached(priority: .userInitiated) { ImageLoading.hdrImage(at: url) }.value
+            #endif
         }
     }
 

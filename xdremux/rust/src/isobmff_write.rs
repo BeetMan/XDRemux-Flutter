@@ -968,6 +968,7 @@ fn tile_and_encode(
     // 48-tile UHDR gain map) while keyint=1 keeps every tile an independent
     // keyframe with its own VPS/SPS/PPS.
     let mut padded: Vec<Vec<u8>> = Vec::with_capacity(total_tiles as usize);
+    crate::progress::check_cancelled()?;
     for row in 0..rows {
         for col in 0..cols {
             let x0 = col * tile_size;
@@ -993,7 +994,13 @@ fn tile_and_encode(
         pixel_bytes,
         use_420,
     )
-    .map_err(|e| format!("HEVC batch encode: {e}"))?;
+    .map_err(|e| {
+        if e.to_string().contains(crate::progress::CANCELLED_MESSAGE) {
+            crate::progress::CANCELLED_MESSAGE.to_string()
+        } else {
+            format!("HEVC batch encode: {e}")
+        }
+    })?;
     debug_assert_eq!(batch_streams.len(), total_tiles as usize);
 
     for (i, hevc_bs) in batch_streams.iter().enumerate() {

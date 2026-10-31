@@ -664,7 +664,12 @@ fn x265_encode_tiles_inner(
     // extraction) while every other tile is a pure IDR slice — the shape
     // ImageIO's ISO 21496-1 gain-map decoder expects (it reads the decoder
     // config from hvcC, not from each tile).
+    // Captured here: the worker threads below have no progress handle.
+    let progress_handle = crate::progress::current_handle();
     let encode_tile = |idx: usize, tile: &[u8]| -> std::io::Result<Vec<u8>> {
+        if crate::progress::is_cancelled_for(progress_handle) {
+            return Err(io_err(crate::progress::CANCELLED_MESSAGE));
+        }
         unsafe {
             let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr, icc_rgb)?;
             let pic = x265_picture_alloc();
@@ -1441,6 +1446,43 @@ mod tests {
         assert_eq!(hvcc[1] & 0x1f, 2, "SPS profile must be Main10 (2)");
         assert_eq!(hvcc[17] & 0x07, 2, "hvcC bitDepthLuma must be 10-bit");
         assert_eq!(hvcc[18] & 0x07, 2, "hvcC bitDepthChroma must be 10-bit");
+    }
+
+    #[cfg(xdremux_main10)]
+    #[test]
+    fn main10_thumbnail_reconstruction_matches_source_luma() {
+        use std::os::raw::c_int;
+        // Regression for 5512ea7: strides were passed in samples, x265 wants
+        // bytes, so every row was read from half the right offset and the
+        // picture came out as two squeezed copies.
+        let (w, h) = (128u32, 96u32);
+        let mut codes = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                // Asymmetric in x and y so a wrong row step cannot match.
+                let code = ((x * 3 + y * 5) % 256 * 256) as u16;
+                codes.extend_from_slice(&[code, code, code]);
+            }
+        }
+        let (y_plane, u_plane, v_plane) = codes16_to_yuv420_10bit(&codes, w, h);
+        let mut out_ptr: *mut u8 = std::ptr::null_mut();
+        let mut out_len: c_int = 0;
+        let mut psnr = -1.0f64;
+        let status = unsafe {
+            crate::x265_ffi::xdremux_encode_10bit_planes_checked(
+                y_plane.as_ptr(),
+                u_plane.as_ptr(),
+                v_plane.as_ptr(),
+                w as c_int,
+                h as c_int,
+                &mut out_ptr,
+                &mut out_len,
+                &mut psnr,
+            )
+        };
+        assert_eq!(status, 0, "10-bit encode failed");
+        unsafe { crate::x265_ffi::xdremux_free_stream(out_ptr) };
+        assert!(psnr > 35.0, "reconstructed luma PSNR {psnr:.1} dB: input layout is wrong");
     }
 
     #[test]
