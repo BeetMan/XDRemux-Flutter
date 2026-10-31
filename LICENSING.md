@@ -2,9 +2,9 @@
 
 ## 本项目代码
 
-自 v0.4.6 之后的版本起，XDRemux-Flutter 的源代码按 **GNU General Public License 第 3 版（仅第 3 版，GPL-3.0-only）** 授权，全文见 [LICENSE](LICENSE)。范围包括 Flutter / Dart、Rust、Swift / Objective-C、ArkTS、构建与工具脚本，以及项目自写的文档（文件另有声明的除外）。
+自 v0.4.6 起，XDRemux-Flutter 的源代码按 **GNU General Public License 第 3 版（仅第 3 版，GPL-3.0-only）** 授权，全文见 [LICENSE](LICENSE)。范围包括 Flutter / Dart、Rust、Swift / Objective-C、ArkTS、构建与工具脚本，以及项目自写的文档（文件另有声明的除外）。
 
-v0.4.6 及更早的版本按当时附带的 MIT 许可发布，已经发出的授权不受这次变更影响。
+v0.4.5 及更早的版本按当时附带的 MIT 许可发布，已经发出的授权不受这次变更影响。
 
 ## 来自上游 XDRemux 的代码
 
