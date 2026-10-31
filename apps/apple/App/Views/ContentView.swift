@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import XDRemuxModel
 
 /// Root layout, chosen by horizontal size class rather than by platform:
 /// regular width (Mac, iPad, unfolded phones) is sidebar list + detail;
