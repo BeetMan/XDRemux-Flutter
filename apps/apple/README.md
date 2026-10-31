@@ -52,6 +52,7 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux convert ~/Pictures/oppo/*.heic -o ~/Pictures/converted          # OPPO 兼容 (default)
 .build/release/xdremux convert photo.heic -m apple --styles3 --json                     # Apple 标准 + Photographic Styles 3 (post-process + styles verify)
 .build/release/xdremux inspect ~/Pictures/oppo                                          # convertible? family / hdr kind
+.build/release/xdremux plan ~/Pictures/oppo -m apple --styles3                          # core's plan: classification, policy, output name
 .build/release/xdremux details photo.heic                                               # EXIF / HDR summary
 .build/release/xdremux verify out/*.heic                                                # decode + structure check
 .build/release/xdremux capabilities                                                     # encoder paths in this core

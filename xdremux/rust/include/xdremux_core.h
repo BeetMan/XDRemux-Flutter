@@ -313,6 +313,32 @@ uint32_t xdremux_progress_begin(void);
 void xdremux_progress_end(uint32_t handle);
 
 /**
+ * One-call pipeline: convert, verify (ISO gain map, plus the Styles /
+ * Portrait structure checks when requested), and the Photographic Styles 3
+ * post-process. `config_json` uses the front-ends' `ConversionConfig` keys
+ * (see `pipeline.rs`); `handle` is a progress handle from
+ * [xdremux_progress_begin] or 0. Returns JSON (`success`, `stage`,
+ * `cancelled`, `errorMessage`, `mode`, `family`, `edrScale`, `gainMapMax`,
+ * `outputValid`, `verified`, `styles3Applied`); free with
+ * [xdremux_free_string]. On failure the partial output is left for the
+ * caller to delete, like [xdremux_convert_with_progress].
+ */
+char *xdremux_convert_pipeline(const char *input_path,
+                               const char *output_path,
+                               const char *config_json,
+                               uint32_t handle);
+
+/**
+ * Read-only plan for one input: classification (`modeKey`, `folderName`,
+ * `hdrKind`, `family`), `huawei` (`isHdr`, `portraitReady`) or null,
+ * `isMotionPhoto`, the shared Huawei admission `policy`, and `output`
+ * (`fileName`, `captureModeFolder`, `outputModeFolder`). `config_json` as
+ * for [xdremux_convert_pipeline]. Free with [xdremux_free_string].
+ */
+char *xdremux_plan_output(const char *input_path,
+                          const char *config_json);
+
+/**
  * Ask the conversion running under `handle` (from
  * [xdremux_progress_begin]) to stop. Safe from any thread. The worker
  * checks the flag between tiles and returns a failed [ConversionResult]

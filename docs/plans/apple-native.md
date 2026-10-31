@@ -288,6 +288,19 @@ Flutter 版生成的检查点文件可被原生版读取。
   收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
 - 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
 
+**§4.2 落地：PS3 编排与输出规划下沉 Rust（2026-11-01，分支 `feat/core-pipeline`）**
+
+- 内核 `pipeline.rs`：`xdremux_convert_pipeline(input, output, config_json, handle)` 在一次调用里完成转换、按选项校验与
+  摄影风格 3 后处理（再校验）；`xdremux_plan_output(input, config_json)` 只读给出分类、可转换性、华为准入、动态照片与
+  输出文件名。配置用 Dart / Swift `ConversionConfig` 的 JSON 键，枚举到字节的映射与两端 `rustValue` 表一致。
+  5 项单测 + 1 项 opt-in 真实样本（Apple + 摄影风格 3 管线产物通过 styles 结构检查）。导出 43 个，头文件重生成。
+- Swift：Kit `convertPipeline` / `planOutput`；Model 新协议 `PipelineBackend`，`ConversionJob` 在后端支持时优先走一次调用
+  （stage → `coreFailed` / `verificationFailed` / `styles3Failed`，`cancelled` → `CancellationError`），不支持时保留原来的
+  convert / verify / inject 三步（假引擎测试仍覆盖）。2 项新测试。CLI 新增 `xdremux plan`。
+- 未做：Dart 与 ArkTS 端尚未切到这两个导出（它们各自的策略代码仍在），Swift 的 `OutputPlanner` 仍按输出模式分目录，
+  未改用 `plan_output` 的 `captureModeFolder`。
+
+
 **P2 遗留：Flutter 检查点互读（2026-11-01，分支 `feat/apple-checkpoint`）**
 
 - Model `FlutterCheckpoint`：按 `checkpoint_model.dart` 的 JSONL 读写（首行 `type: header`，其后 `type: item`），接受 Dart
