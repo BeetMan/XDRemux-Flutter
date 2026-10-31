@@ -113,6 +113,19 @@ extern "C" {
         out_len: *mut c_int,
     ) -> c_int;
 
+    /// [`xdremux_encode_10bit_planes`] that also reports the PSNR of x265's
+    /// reconstructed luma against `p0` (used by tests to catch layout bugs).
+    pub fn xdremux_encode_10bit_planes_checked(
+        p0: *const u16,
+        p1: *const u16,
+        p2: *const u16,
+        width: c_int,
+        height: c_int,
+        out: *mut *mut u8,
+        out_len: *mut c_int,
+        luma_psnr: *mut f64,
+    ) -> c_int;
+
     /// Release a stream returned by [`xdremux_encode_10bit_planes`].
     pub fn xdremux_free_stream(buffer: *mut u8);
 }

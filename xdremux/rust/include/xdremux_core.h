@@ -312,6 +312,16 @@ uint32_t xdremux_progress_begin(void);
  */
 void xdremux_progress_end(uint32_t handle);
 
+/**
+ * Ask the conversion running under `handle` (from
+ * [xdremux_progress_begin]) to stop. Safe from any thread. The worker
+ * checks the flag between tiles and returns a failed [ConversionResult]
+ * whose `error_message` is "conversion cancelled"; the caller still owns
+ * the handle and releases it with [xdremux_progress_end]. The partially
+ * written output must be deleted by the caller.
+ */
+void xdremux_progress_cancel(uint32_t handle);
+
 struct ConversionResult xdremux_convert(const char *input_path,
                                         const char *output_path,
                                         const struct ConvertConfig *config);
@@ -419,6 +429,21 @@ void xdremux_free_thumbnail(struct ThumbnailResult result);
  * Frees a `ConversionResult` previously returned by this library.
  */
 void xdremux_free_result(struct ConversionResult result);
+
+#if (!defined(XDREMUX_FFMPEG_FALLBACK) && defined(XDREMUX_MAIN10))
+/**
+ * [`xdremux_encode_10bit_planes`] that also reports the PSNR of x265's
+ * reconstructed luma against `p0` (used by tests to catch layout bugs).
+ */
+extern int xdremux_encode_10bit_planes_checked(const uint16_t *p0,
+                                               const uint16_t *p1,
+                                               const uint16_t *p2,
+                                               int width,
+                                               int height,
+                                               uint8_t **out,
+                                               int *out_len,
+                                               double *luma_psnr);
+#endif
 
 #ifdef __cplusplus
 }  // extern "C"

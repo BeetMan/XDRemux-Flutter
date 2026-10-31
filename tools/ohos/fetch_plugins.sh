@@ -21,9 +21,10 @@ clone() { # repo branch dir
 clone flutter_packages br_path_provider-v2.1.5_ohos pkg-path_provider &
 clone flutter_packages br_shared_preferences-v2.5.3_ohos pkg-shared_preferences &
 clone flutter_packages br_url_launcher-v6.3.2_ohos pkg-url_launcher &
-# file_picker is NOT fetched: the vendored copy is committed (with the
-# v12-compat facade in lib/file_picker.dart) because the upstream fork
-# (br_v8.0.7_ohos) predates file_picker v12's static API that the app uses.
+# file_picker is NOT fetched: the upstream fork (br_v8.0.7_ohos) predates
+# file_picker v12's static API that the app uses. Our copy with the v12-compat
+# facade in lib/file_picker.dart was untracked in 28260c0; it is restored
+# from the commit before that (see the end of this script).
 clone fluttertpc_flutter_local_notifications br_v19.5.0_ohos flutter_local_notifications &
 clone fluttertpc_open_filex br_v4.7.0_ohos open_filex &
 clone flutter_permission_handler br_v12.0.1_ohos permission_handler &
@@ -33,6 +34,8 @@ clone fluttertpc_receive_sharing_intent br_v1.8.1_ohos receive_sharing_intent &
 clone fluttertpc_flutter_foreground_task master flutter_foreground_task &
 wait
 
+# Keep an existing file_picker (it is not fetched) across the refresh.
+if [ -d "$DEST/file_picker" ]; then mv "$DEST/file_picker" "$WORK/file_picker.keep"; fi
 rm -rf "$DEST"
 mkdir -p "$DEST/permission_handler"
 cp -r "$WORK/pkg-path_provider/packages/path_provider/path_provider" "$DEST/path_provider"
@@ -49,8 +52,16 @@ cp -r "$WORK/receive_sharing_intent" "$DEST/receive_sharing_intent"
 cp -r "$WORK/gallery_saver" "$DEST/gallery_saver"
 # The vendored fork pins http ^0.13.3; the app uses http ^1.6.0. The fork
 # only uses http for remote-URL downloads, which we never do - relax it.
-sed -i 's|http: \^0.13.3|http: ">=0.13.3 <2.0.0"|' "$DEST/gallery_saver/pubspec.yaml"
+# -i.bak works with both GNU and BSD (macOS) sed.
+sed -i.bak 's|http: \^0.13.3|http: ">=0.13.3 <2.0.0"|' "$DEST/gallery_saver/pubspec.yaml"
+rm -f "$DEST/gallery_saver/pubspec.yaml.bak"
 cp -r "$WORK/share_extend" "$DEST/share_extend"
 cp -r "$WORK/flutter_foreground_task" "$DEST/flutter_foreground_task"
+
+if [ -d "$WORK/file_picker.keep" ]; then
+  mv "$WORK/file_picker.keep" "$DEST/file_picker"
+else
+  git -C "$ROOT" archive 28260c0^ apps/flutter/third_party/ohos/file_picker | tar -x -C "$ROOT"
+fi
 
 echo "vendored OHOS plugins -> $DEST"

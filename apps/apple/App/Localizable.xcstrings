@@ -421,6 +421,26 @@
         }
       }
     },
+    "停止转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop converting"
+          }
+        }
+      }
+    },
+    "停止队列并取消正在进行的转换；已完成的不受影响": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop the queue and cancel the running conversions; finished photos are kept"
+          }
+        }
+      }
+    },
     "全部转换": {
       "localizations": {
         "en": {
@@ -567,6 +587,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "dual stream"
+          }
+        }
+      }
+    },
+    "取消": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        }
+      }
+    },
+    "取消转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel conversion"
           }
         }
       }
@@ -1007,6 +1047,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sort outputs into mode folders"
+          }
+        }
+      }
+    },
+    "摄影风格 3 后处理失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 3 post-process failed: %@"
           }
         }
       }

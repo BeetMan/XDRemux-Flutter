@@ -166,6 +166,69 @@ extension EngineSmokeTests {
     }
 }
 
+extension EngineSmokeTests {
+    /// Opt-in: cancelling the task mid-conversion makes the core stop at its
+    /// next tile (`xdremux_progress_cancel`); the call throws
+    /// `CancellationError` well before a full conversion would finish.
+    func testCancelStopsRealConversionIfSampleProvided() async throws {
+        guard let dir = ProcessInfo.processInfo.environment["XDREMUX_SAMPLE_DIR"] else {
+            throw XCTSkip("set XDREMUX_SAMPLE_DIR to a folder of ProXDR .heic files")
+        }
+        // The largest sample, so the gain-map tile loop is long enough to
+        // be interrupted; a small LHDR file converts in under 300 ms.
+        let inputs = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.lowercased().hasSuffix(".heic") }
+            .map { (dir as NSString).appendingPathComponent($0) }
+            .sorted { a, b in
+                let sa = (try? FileManager.default.attributesOfItem(atPath: a)[.size] as? Int) ?? 0
+                let sb = (try? FileManager.default.attributesOfItem(atPath: b)[.size] as? Int) ?? 0
+                return sa > sb
+            }
+        let input = try XCTUnwrap(inputs.first)
+        let output = tempDir.appendingPathComponent("cancelled_iso.heic").path
+        let config = ConversionConfig().rustConfig
+        let started = ContinuousClock.now
+        let task = Task {
+            try await XDRemuxEngine.shared.convert(input: input, output: output, config: config,
+                                                   progress: { (_: ConversionProgress) in })
+        }
+        try await Task.sleep(for: .milliseconds(40))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("expected CancellationError")
+        } catch is CancellationError {}
+        let elapsed = ContinuousClock.now - started
+        XCTAssertLessThan(elapsed, .seconds(5), "core stopped promptly: \(elapsed)")
+        try? FileManager.default.removeItem(atPath: output)
+    }
+
+    /// Opt-in: Apple mode with Photographic Styles 3 through `ConversionJob`
+    /// passes the styles structure check after the PS3 post-process.
+    func testStyles3EndToEndIfSampleProvided() async throws {
+        guard let dir = ProcessInfo.processInfo.environment["XDREMUX_SAMPLE_DIR"] else {
+            throw XCTSkip("set XDREMUX_SAMPLE_DIR to a folder of ProXDR .heic files")
+        }
+        let inputs = try FileManager.default.contentsOfDirectory(atPath: dir)
+            .filter { $0.lowercased().hasSuffix(".heic") }.sorted()
+        let name = try XCTUnwrap(inputs.first)
+        let input = tempDir.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: dir).appendingPathComponent(name), to: input)
+        var config = ConversionConfig()
+        config.outputMode = .apple
+        config.applePhotographicStyles = true
+        config.applePhotographicStyles3 = true
+        let job = ConversionJob(backend: XDRemuxEngine.shared,
+                                scratchRoot: tempDir.appendingPathComponent("scratch"),
+                                outputRoot: tempDir.appendingPathComponent("out"))
+        let product = try await job.run(input: input, config: config)
+        let styled = try await XDRemuxEngine.shared.verifyStylesOutput(path: product.outputURL.path)
+        XCTAssertTrue(styled, "styles scaffold present after PS3 injection")
+        let plain = try await XDRemuxEngine.shared.verifyOutput(path: product.outputURL.path)
+        XCTAssertTrue(plain)
+    }
+}
+
 private final class Seen: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false

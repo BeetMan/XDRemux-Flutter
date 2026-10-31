@@ -22,6 +22,8 @@ struct Slot {
     total: u32,
     /// Monotonic stamp of the last write; the "current" slot is the max.
     stamp: u64,
+    /// Set by [cancel]; the worker polls it between tiles and aborts.
+    cancelled: bool,
 }
 
 struct Registry {
@@ -63,17 +65,22 @@ pub fn begin_progress_with(handle: u32) -> u32 {
     let registry = guard.as_mut().unwrap();
     // Reuse the slot for this handle if present, else the least-recently
     // written one.
-    let slot = if let Some(s) = registry.slots.iter_mut().find(|s| s.handle == handle) {
-        s
-    } else {
-        registry.slots.iter_mut().min_by_key(|s| s.stamp).unwrap()
-    };
+    // A cancel issued by the UI before the worker claimed the handle must
+    // survive the claim (the UI allocates the handle first, then spawns).
+    let (slot, cancelled) =
+        if let Some(s) = registry.slots.iter_mut().find(|s| s.handle == handle) {
+            let c = s.cancelled;
+            (s, c)
+        } else {
+            (registry.slots.iter_mut().min_by_key(|s| s.stamp).unwrap(), false)
+        };
     *slot = Slot {
         handle,
         stage: 0,
         current: 0,
         total: 0,
         stamp: STAMP.fetch_add(1, Ordering::Relaxed),
+        cancelled,
     };
     TL_HANDLE.with(|h| h.set(handle));
     handle
@@ -130,6 +137,58 @@ pub fn set_progress_for(handle: u32, stage: u32, current: u32, total: u32) {
     }
 }
 
+/// Ask the conversion bound to [handle] to stop at its next check point.
+/// Safe from any thread; unknown handles are ignored. The worker returns a
+/// failed report whose message is [CANCELLED_MESSAGE].
+pub fn cancel(handle: u32) {
+    if handle == 0 {
+        return;
+    }
+    let mut guard = registry();
+    if let Some(registry) = guard.as_mut() {
+        if let Some(slot) = registry.slots.iter_mut().find(|s| s.handle == handle) {
+            slot.cancelled = true;
+        }
+    }
+}
+
+/// Error message carried by a conversion that stopped on [cancel].
+pub const CANCELLED_MESSAGE: &str = "conversion cancelled";
+
+/// The calling thread's handle (0 when none). Worker threads spawned by a
+/// conversion have no handle of their own; they capture this value and poll
+/// [is_cancelled_for].
+pub fn current_handle() -> u32 {
+    TL_HANDLE.with(|h| h.get())
+}
+
+/// True when [cancel] was called for the calling thread's handle.
+pub fn is_cancelled() -> bool {
+    is_cancelled_for(current_handle())
+}
+
+/// True when [cancel] was called for [handle].
+pub fn is_cancelled_for(handle: u32) -> bool {
+    if handle == 0 {
+        return false;
+    }
+    let guard = registry();
+    guard
+        .as_ref()
+        .and_then(|r| r.slots.iter().find(|s| s.handle == handle))
+        .map(|s| s.cancelled)
+        .unwrap_or(false)
+}
+
+/// Check point for long loops: `Err(CANCELLED_MESSAGE)` once cancelled.
+pub fn check_cancelled() -> Result<(), String> {
+    if is_cancelled() {
+        Err(CANCELLED_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// Read progress for a specific handle. Returns `(stage, current, total)` or
 /// `None` when the handle is unknown.
 pub fn read_progress_for(handle: u32) -> Option<(u32, u32, u32)> {
@@ -153,4 +212,32 @@ pub fn read_progress() -> (u32, u32, u32) {
         .max_by_key(|s| s.stamp)
         .map(|s| (s.stage, s.current, s.total))
         .unwrap_or((0, 0, 0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_before_claim_survives_begin() {
+        // UI thread: allocate; worker thread: claim later. Cancel in between.
+        let handle = begin_progress();
+        cancel(handle);
+        begin_progress_with(handle);
+        assert!(is_cancelled());
+        assert_eq!(check_cancelled(), Err(CANCELLED_MESSAGE.to_string()));
+        end_progress();
+        assert!(!is_cancelled());
+    }
+
+    #[test]
+    fn cancel_does_not_leak_into_other_handles() {
+        let a = begin_progress();
+        let b = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        begin_progress_with(b);
+        cancel(a);
+        assert!(!is_cancelled(), "thread is bound to b");
+        end_progress_with(a);
+        end_progress_with(b);
+    }
 }

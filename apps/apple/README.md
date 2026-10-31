@@ -27,7 +27,7 @@ apps/apple/
 ```bash
 cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux convert ~/Pictures/oppo/*.heic -o ~/Pictures/converted          # OPPO 兼容 (default)
-.build/release/xdremux convert photo.heic -m apple --styles3 --json                     # Apple 标准 + Photographic Styles 3
+.build/release/xdremux convert photo.heic -m apple --styles3 --json                     # Apple 标准 + Photographic Styles 3 (post-process + styles verify)
 .build/release/xdremux inspect ~/Pictures/oppo                                          # convertible? family / hdr kind
 .build/release/xdremux details photo.heic                                               # EXIF / HDR summary
 .build/release/xdremux verify out/*.heic                                                # decode + structure check
@@ -36,7 +36,8 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux writeback returned.heic --donor oppo.heic -m oppo                # round trip step 4 → returned.oppo-final.heic
 ```
 
-`convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
+Ctrl-C cancels the running conversion in the core (`xdremux_progress_cancel`), discards the partial
+file and exits 130. `convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
 (`--suffix`, `--no-overwrite` appends ` (2)`, `--categorize` adds a mode folder). Exit status 1 if any
 input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
 results are identical for the same options. x265's own log lines are silenced unless `-v`.
