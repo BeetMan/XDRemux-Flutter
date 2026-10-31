@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../platform_x.dart';
 import 'transfer_intake.dart';
 import 'transfer_models.dart';
 import 'transfer_service.dart';
@@ -100,7 +101,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if ((Platform.isAndroid || Platform.isIOS) &&
+    if (PlatformX.isMobile &&
         (state == AppLifecycleState.paused ||
             state == AppLifecycleState.detached)) {
       unawaited(stop());

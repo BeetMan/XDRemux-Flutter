@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/transfer-ci.yml'
       - '.github/scripts/transfer-ci.ps1'
+      - 'tools/native/build-transfer.*'
+      - 'tools/apple/embed_transfer.sh'
       - 'crates/xdremux-transfer/**'
       - 'crates/xdremux-transfer-ffi/**'
       - 'apps/flutter/lib/**'
@@ -16,6 +18,8 @@ on:
     paths:
       - '.github/workflows/transfer-ci.yml'
       - '.github/scripts/transfer-ci.ps1'
+      - 'tools/native/build-transfer.*'
+      - 'tools/apple/embed_transfer.sh'
       - 'crates/xdremux-transfer/**'
       - 'crates/xdremux-transfer-ffi/**'
       - 'apps/flutter/lib/**'
@@ -75,3 +79,84 @@ jobs:
             ${{ runner.temp }}/transfer-results/*.log
           if-no-files-found: error
           retention-days: 7
+
+  # Rust gate plus a real loopback transfer through the Dart worker on the
+  # other desktop hosts, and cross builds of the iOS framework.
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            library: crates/xdremux-transfer-ffi/target/release/libxdremux_transfer.so
+          - os: macos-latest
+            platform: macos
+            library: crates/xdremux-transfer-ffi/target/release/libxdremux_transfer.dylib
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-ios,aarch64-apple-ios-sim' || '' }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/xdremux-transfer/target
+            crates/xdremux-transfer-ffi/target
+          key: ${{ runner.os }}-transfer-rust-1.97.1-${{ hashFiles('crates/xdremux-transfer/Cargo.lock', 'crates/xdremux-transfer-ffi/Cargo.lock') }}
+      - name: Rust tests, format and clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in xdremux-transfer xdremux-transfer-ffi; do
+            manifest="crates/$crate/Cargo.toml"
+            cargo +1.97.1 test --manifest-path "$manifest" --locked -j 2
+            cargo +1.97.1 fmt --manifest-path "$manifest" -- --check
+            cargo +1.97.1 clippy --manifest-path "$manifest" --all-targets --no-deps --locked -- -D warnings
+          done
+      - name: Build ${{ matrix.platform }} library
+        run: bash tools/native/build-transfer.sh ${{ matrix.platform }}
+      - name: Build iOS framework
+        if: matrix.platform == 'macos'
+        run: bash tools/native/build-transfer.sh ios
+      - name: Worker smoke over loopback HTTPS
+        working-directory: apps/flutter
+        env:
+          # Preserve the hosted source already recorded in pubspec.lock.
+          PUB_HOSTED_URL: https://pub.flutter-io.cn
+        run: |
+          flutter pub get --enforce-lockfile
+          dart run tool/transfer_worker_smoke.dart "$GITHUB_WORKSPACE/${{ matrix.library }}" "$RUNNER_TEMP/worker-${{ matrix.platform }}.json"
+
+  ohos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up OpenHarmony SDK
+        id: ohos-sdk
+        uses: openharmony-rs/setup-ohos-sdk@v1.0.1
+        with:
+          version: '6.1'
+          fixup-path: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-unknown-linux-ohos
+      - name: Build OHOS library
+        env:
+          OHOS_NATIVE: ${{ steps.ohos-sdk.outputs.ohos_sdk_native }}
+        run: |
+          bash tools/native/build-transfer.sh ohos
+          file crates/xdremux-transfer-ffi/target/aarch64-unknown-linux-ohos/release/libxdremux_transfer.so

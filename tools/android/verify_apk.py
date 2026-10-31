@@ -16,7 +16,8 @@ def verify_apk(path):
         abis = {name.split("/")[1] for name in libraries}
         if abis != {"arm64-v8a"}:
             raise ValueError(f"APK must be ARM64-only; found ABIs: {sorted(abis)}")
-        required = {"libapp.so", "libflutter.so", "libxdremux_core.so", "libc++_shared.so"}
+        required = {"libapp.so", "libflutter.so", "libxdremux_core.so",
+                    "libc++_shared.so", "libxdremux_transfer.so"}
         missing = required - {name.rsplit("/", 1)[1] for name in libraries}
         if missing:
             raise ValueError(f"Missing Android native payload: {sorted(missing)}")

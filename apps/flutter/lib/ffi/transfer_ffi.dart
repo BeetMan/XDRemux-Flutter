@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
+import '../platform_x.dart';
 import '../services/transfer/transfer_models.dart';
 
 typedef _CreateN = Int32 Function(Pointer<Uint8>, Size, Pointer<Uint64>);
@@ -17,8 +18,8 @@ typedef _HandleD = int Function(int);
 /// Construct only inside the persistent worker isolate; no image FFI dependency.
 /// The one exception is [available], which only loads and version-checks.
 class TransferBindings {
-  /// Whether this build bundles a compatible transfer library. The release
-  /// pipeline does not build it yet, so entry points must not assume it.
+  /// Whether this build bundles a compatible transfer library. The library
+  /// is optional per build, so entry points must not assume it.
   static final bool available = () {
     try {
       TransferBindings(null);
@@ -29,19 +30,9 @@ class TransferBindings {
   }();
 
   TransferBindings(String? overridePath) {
-    if (overridePath == null && !Platform.isWindows && !Platform.isAndroid) {
-      throw const TransferException('unsupported_platform');
-    }
-    try {
-      final path =
-          overridePath ??
-          (Platform.isWindows
-              ? '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}xdremux_transfer.dll'
-              : 'libxdremux_transfer.so');
-      _library = DynamicLibrary.open(path);
-    } catch (_) {
-      throw const TransferException('library_missing');
-    }
+    _library = overridePath != null
+        ? _open([overridePath])
+        : _open(_candidates());
     try {
       final version = _library
           .lookupFunction<Uint32 Function(), int Function()>(
@@ -75,6 +66,42 @@ class TransferBindings {
     }
   }
   late final DynamicLibrary _library;
+
+  /// Where each platform project installs the library (see
+  /// tools/native/build-transfer.sh and build-transfer.ps1).
+  static List<String> _candidates() {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final sep = Platform.pathSeparator;
+    if (Platform.isWindows) return ['$exeDir${sep}xdremux_transfer.dll'];
+    if (Platform.isAndroid || PlatformX.isOhos) {
+      return ['libxdremux_transfer.so'];
+    }
+    if (Platform.isIOS) {
+      return ['xdremux_transfer.framework/xdremux_transfer'];
+    }
+    if (Platform.isMacOS) {
+      return [
+        '$exeDir/../Frameworks/libxdremux_transfer.dylib',
+        'libxdremux_transfer.dylib',
+      ];
+    }
+    if (Platform.isLinux) {
+      return ['$exeDir/lib/libxdremux_transfer.so', 'libxdremux_transfer.so'];
+    }
+    throw const TransferException('unsupported_platform');
+  }
+
+  static DynamicLibrary _open(List<String> paths) {
+    for (final path in paths) {
+      try {
+        return DynamicLibrary.open(path);
+      } catch (_) {
+        // try the next location
+      }
+    }
+    throw const TransferException('library_missing');
+  }
+
   late final _CreateD _create;
   late final _SubmitD _submit;
   late final _PollD _poll;

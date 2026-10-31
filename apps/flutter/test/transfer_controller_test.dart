@@ -792,6 +792,24 @@ void main() {
       );
     },
   );
+  testWidgets('a .pvt Live Photo is sent as its still and video', (
+    tester,
+  ) async {
+    final bundle = Directory.systemTemp.createTempSync('live').path;
+    final pvt = Directory('$bundle/IMG_1.pvt')..createSync();
+    for (final name in ['IMG_1.HEIC', 'IMG_1.MOV', 'metadata.plist']) {
+      File('${pvt.path}/$name').writeAsBytesSync([1, 2, 3]);
+    }
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TransferPage(controller: controller, initialPaths: [pvt.path]),
+      ),
+    );
+    expect(find.text('IMG_1.HEIC'), findsOneWidget);
+    expect(find.text('IMG_1.MOV'), findsOneWidget);
+    expect(find.text('metadata.plist'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets(
     'a changed discovery identity cannot reach confirmation or send',
     (tester) async {

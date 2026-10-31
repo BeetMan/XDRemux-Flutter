@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'l10n/l10n.dart';
+import 'platform_x.dart';
 import 'services/transfer/transfer_controller.dart';
 import 'services/transfer/transfer_export.dart';
 import 'services/transfer/transfer_models.dart';
@@ -115,11 +116,30 @@ class _TransferPageState extends State<TransferPage> {
   void initState() {
     super.initState();
     transfer = widget.controller ?? TransferController.instance;
-    _paths = List.of(widget.initialPaths);
+    _paths = _expandBundles(widget.initialPaths);
     _selectionSize = _measure(_paths);
     transfer.addListener(_changed);
     transfer.enumerateInterfaces().catchError((_) {});
   }
+
+  /// A Live Photo output is a `.pvt` folder (still, MOV, metadata.plist).
+  /// LocalSend moves files, so send the still and the MOV inside it.
+  static List<String> _expandBundles(List<String> paths) => [
+    for (final path in paths)
+      if (FileSystemEntity.isDirectorySync(path))
+        ...(Directory(path)
+            .listSync(followLinks: false)
+            .whereType<File>()
+            .map((f) => f.path)
+            .where((p) {
+              final name = p.split(Platform.pathSeparator).last;
+              return !name.startsWith('.') && name != 'metadata.plist';
+            })
+            .toList()
+          ..sort())
+      else
+        path,
+  ];
 
   Future<int> _measure(List<String> paths) async {
     var bytes = 0;
@@ -312,7 +332,9 @@ class _TransferPageState extends State<TransferPage> {
   }
 
   Future<void> _pick() async {
-    if (Platform.isAndroid) await transfer.stop();
+    // Android and HarmonyOS pickers background the app, which stops LAN
+    // reception anyway; stop first so it never ends halfway through a batch.
+    if (Platform.isAndroid || PlatformX.isOhos) await transfer.stop();
     final result = await FilePicker.pickFiles();
     if (result.isEmpty) return;
     final paths = result.map((f) => f.path).whereType<String>().toList();
@@ -1401,15 +1423,25 @@ class _TransferPageState extends State<TransferPage> {
                   label: Text(t('加入转换队列', 'Add to conversion queue')),
                 ),
               TextButton.icon(
-                icon: const Icon(Icons.save_alt, size: 18),
+                icon: Icon(
+                  TransferExport.viaShareSheet
+                      ? Icons.ios_share
+                      : Icons.save_alt,
+                  size: 18,
+                ),
                 onPressed: disabled
                     ? null
                     : () => _run(() async {
-                        if (await TransferExport.save(transfer, id, name)) {
+                        if (await TransferExport.save(transfer, id, name) &&
+                            !TransferExport.viaShareSheet) {
                           _notify(t('文件已导出并校验', 'File exported and verified'));
                         }
                       }),
-                label: Text(t('导出文件', 'Export file')),
+                label: Text(
+                  TransferExport.viaShareSheet
+                      ? t('分享或存储', 'Share or save')
+                      : t('导出文件', 'Export file'),
+                ),
               ),
               TextButton.icon(
                 style: TextButton.styleFrom(foregroundColor: scheme.error),

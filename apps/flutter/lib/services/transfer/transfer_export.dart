@@ -1,12 +1,20 @@
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import '../../platform_x.dart';
+import '../file_action_service.dart';
 import 'transfer_controller.dart';
 import 'transfer_models.dart';
 
 /// General files: no gallery API, full-file byte buffers, or fabricated extension.
+/// Android uses SAF, desktops a chosen folder, iOS/HarmonyOS the share sheet.
 class TransferExport {
   static const _channel = MethodChannel('xdremux/transfer-documents');
+
+  /// iOS and HarmonyOS hand the verified copy to the system share sheet
+  /// (Save to Files, Photos, other apps) instead of writing to a folder.
+  static bool get viaShareSheet => Platform.isIOS || PlatformX.isOhos;
   static Future<bool> save(
     TransferController transfer,
     String receiptId,
@@ -47,10 +55,27 @@ class TransferExport {
       }
       return true;
     }
-    if (Platform.isWindows) {
+    if (PlatformX.isDesktop) {
       final directory = await FilePicker.getDirectoryPath();
       if (directory == null) return false;
       await transfer.exportDesktop(receiptId, directory);
+      return true;
+    }
+    if (viaShareSheet) {
+      // One private folder per export; the previous one is no longer needed
+      // once the share sheet that used it has been dismissed.
+      final base = Directory(
+        '${(await getTemporaryDirectory()).path}/transfer-export',
+      );
+      if (await base.exists()) await base.delete(recursive: true);
+      final directory = Directory(
+        '${base.path}/${DateTime.now().microsecondsSinceEpoch}',
+      );
+      await directory.create(recursive: true);
+      await transfer.exportDesktop(receiptId, directory.path);
+      await FileActionService.shareFiles([
+        '${directory.path}${Platform.pathSeparator}$name',
+      ], asOriginalFiles: true);
       return true;
     }
     throw const TransferException('unsupported_platform');
