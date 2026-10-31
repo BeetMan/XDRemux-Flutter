@@ -34,6 +34,8 @@ final class LibraryModel {
     private let journalStore: QueueJournalStore
     private let outputLocation: OutputLocation
     private var convertAllTask: Task<Void, Never>?
+    /// Running single-photo conversions, so each can be cancelled.
+    private var conversionTasks: [PhotoItem.ID: Task<Void, Never>] = [:]
     private var restoring = false
 
     init(engine: XDRemuxEngine = .shared,
@@ -251,24 +253,39 @@ final class LibraryModel {
     // MARK: - Convert
 
     func convert(_ id: PhotoItem.ID) async {
-        guard let item = items.first(where: { $0.id == id }), !item.state.isBusy else { return }
+        guard let item = items.first(where: { $0.id == id }), !item.state.isBusy,
+              conversionTasks[id] == nil else { return }
         let config = self.config
         let job = ConversionJob(backend: engine, scratchRoot: directories.scratch, outputRoot: outputRoot)
         update(id) { $0.state = .converting(0); $0.savedToPhotos = false }
-        do {
-            let mode = item.motionMode ?? config.motionPhotoDefaultMode
-            let product = try await job.run(input: item.inputURL, sourceName: item.sourceName, config: config,
-                                            motionMode: item.isMotionPhoto ? mode : nil) { fraction in
-                Task { @MainActor [weak self] in
-                    self?.update(id) { if case .converting = $0.state { $0.state = .converting(fraction) } }
+        let task = Task { [weak self] in
+            do {
+                let mode = item.motionMode ?? config.motionPhotoDefaultMode
+                let product = try await job.run(input: item.inputURL, sourceName: item.sourceName, config: config,
+                                                motionMode: item.isMotionPhoto ? mode : nil) { fraction in
+                    Task { @MainActor [weak self] in
+                        self?.update(id) { if case .converting = $0.state { $0.state = .converting(fraction) } }
+                    }
                 }
+                self?.update(id) { $0.state = .done(product) }
+            } catch is CancellationError {
+                // The core stopped at its next tile; scratch is gone, nothing published.
+                self?.update(id) { $0.state = .ready }
+            } catch let error as ConversionJobError {
+                self?.update(id) { $0.state = .failed(Self.describe(error)) }
+            } catch {
+                self?.update(id) { $0.state = .failed(String(describing: error)) }
             }
-            update(id) { $0.state = .done(product) }
-        } catch let error as ConversionJobError {
-            update(id) { $0.state = .failed(Self.describe(error)) }
-        } catch {
-            update(id) { $0.state = .failed(String(describing: error)) }
         }
+        conversionTasks[id] = task
+        await task.value
+        conversionTasks[id] = nil
+    }
+
+    /// Stops one running conversion (`xdremux_progress_cancel` in the core);
+    /// the photo goes back to "ready".
+    func cancel(_ id: PhotoItem.ID) {
+        conversionTasks[id]?.cancel()
     }
 
     /// Batch over every ready, convertible item, at most
@@ -294,9 +311,11 @@ final class LibraryModel {
         }
     }
 
+    /// Stops the batch: no further photos start and every running one is cancelled.
     func cancelBatch() {
         convertAllTask?.cancel()
         convertAllTask = nil
+        for task in conversionTasks.values { task.cancel() }
     }
 
     func retry(_ id: PhotoItem.ID) async {
@@ -340,6 +359,7 @@ final class LibraryModel {
         switch error {
         case .coreFailed(let message): return message ?? String(localized: "内核未给出原因")
         case .verificationFailed: return String(localized: "输出未通过结构校验，已丢弃")
+        case .styles3Failed(let message): return String(localized: "摄影风格 3 后处理失败：\(message ?? "")")
         case .livePhotoFailed(let message): return message ?? String(localized: "Live Photo 合成失败")
         case .missingOutput: return String(localized: "内核报告成功但没有写出文件")
         case .samePath: return String(localized: "输出路径与输入相同")

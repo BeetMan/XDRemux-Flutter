@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，38 个 `extern "C"` 函数）、
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，39 个 `extern "C"` 函数）、
 > `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
 > 改导出后用 `tools/apple/check_header.sh` 校验）。
 
@@ -45,6 +45,9 @@
 - `xdremux_progress_begin() -> u32`：申请进度句柄
 - `xdremux_progress_report(handle, current, total)`：Rust 内部上报
 - `xdremux_read_progress_for(handle, buf: *mut u32)`：Dart 轮询（buf 4 个 u32）
+- `xdremux_progress_cancel(handle)`：任意线程请求取消；worker 在下一块瓦片检查点停止，返回失败报告
+  `error_message = "conversion cancelled"`，句柄仍由调用方 `xdremux_progress_end` 释放，残留输出由调用方删除。
+  取消在 worker 认领句柄之前发出也有效（UI 先申请句柄再派发 worker）。
 - `xdremux_progress_end(handle)`：释放
 
 ## 3. 主要导出清单
@@ -61,6 +64,8 @@
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
+| `xdremux_inject_texture_styles` / `xdremux_inject_semantic_mattes` | 摄影风格 3 后处理：在已转换 HEIC 上追加 texture_styles 项与 12 个语义 matte 占位（Dart / Swift 前端在校验通过后按顺序调用） |
+| `xdremux_progress_cancel` | 取消运行中的转换（见 §2.5） |
 
 当报告含 `huaweiPortrait` 时，嵌套对象只描述观察到的 ISOBMFF 资源：
 `edofItemId` / `edofDimensions` / `edofTileItemIds`、`edofAuxiliaryTypes`（`auxC`）、

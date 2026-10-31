@@ -664,7 +664,12 @@ fn x265_encode_tiles_inner(
     // extraction) while every other tile is a pure IDR slice — the shape
     // ImageIO's ISO 21496-1 gain-map decoder expects (it reads the decoder
     // config from hvcC, not from each tile).
+    // Captured here: the worker threads below have no progress handle.
+    let progress_handle = crate::progress::current_handle();
     let encode_tile = |idx: usize, tile: &[u8]| -> std::io::Result<Vec<u8>> {
+        if crate::progress::is_cancelled_for(progress_handle) {
+            return Err(io_err(crate::progress::CANCELLED_MESSAGE));
+        }
         unsafe {
             let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr, icc_rgb)?;
             let pic = x265_picture_alloc();

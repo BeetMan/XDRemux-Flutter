@@ -295,6 +295,16 @@ uint32_t xdremux_progress_begin(void);
  */
 void xdremux_progress_end(uint32_t handle);
 
+/**
+ * Ask the conversion running under `handle` (from
+ * [xdremux_progress_begin]) to stop. Safe from any thread. The worker
+ * checks the flag between tiles and returns a failed [ConversionResult]
+ * whose `error_message` is "conversion cancelled"; the caller still owns
+ * the handle and releases it with [xdremux_progress_end]. The partially
+ * written output must be deleted by the caller.
+ */
+void xdremux_progress_cancel(uint32_t handle);
+
 struct ConversionResult xdremux_convert(const char *input_path,
                                         const char *output_path,
                                         const struct ConvertConfig *config);

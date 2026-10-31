@@ -38,13 +38,123 @@ private struct FakeBackend: ConversionBackend {
         if writesOutput && outcome.success { fs.lock.withLock { _ = fs.files.insert(output) } }
         return outcome
     }
-    func verifyOutput(path: String) async throws -> Bool { verifies }
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool {
+        verifyCalls?.append("\(styles),\(portrait)")
+        return verifies
+    }
+    var verifyCalls: Log?
+}
+
+private final class Log: @unchecked Sendable {
+    let lock = NSLock()
+    var lines: [String] = []
+    func append(_ s: String) { lock.withLock { lines.append(s) } }
+}
+
+/// Fake that also records PS3 injections.
+private struct FakeStylesBackend: ConversionBackend, Styles3Backend {
+    let fs: FakeFS
+    let injections = Progress()
+    var injectionFails = false
+
+    func convert(input: String, output: String, config: RustConvertConfig,
+                 progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
+        fs.lock.withLock { _ = fs.files.insert(output) }
+        return ConversionOutcome(success: true, mode: "lhdr", family: "x7")
+    }
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool { true }
+    func injectStyles3(path: String, grainSeed: UInt64) async throws {
+        if injectionFails { throw CocoaError(.fileWriteUnknown) }
+        injections.record(Double(grainSeed))
+    }
+}
+
+/// Fake whose conversion blocks until the task is cancelled, like the core
+/// stopping at its next tile after `xdremux_progress_cancel`.
+private struct SlowBackend: ConversionBackend {
+    let fs: FakeFS
+    func convert(input: String, output: String, config: RustConvertConfig,
+                 progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
+        fs.lock.withLock { _ = fs.files.insert(output) } // partial file
+        while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(5)) }
+        return ConversionOutcome(success: false, errorMessage: "conversion cancelled")
+    }
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool { true }
 }
 
 final class ConversionJobTests: XCTestCase {
     let scratch = URL(fileURLWithPath: "/scratch")
     let outRoot = URL(fileURLWithPath: "/out")
     let input = URL(fileURLWithPath: "/in/IMG0001.heic")
+
+    func testVerifyFlagsFollowAppleOptions() async throws {
+        let fs = FakeFS()
+        var backend = FakeBackend(outcome: ConversionOutcome(success: true), fs: fs)
+        let calls = Log()
+        backend.verifyCalls = calls
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        _ = try await job.run(input: input, config: config)
+        config.outputMode = .apple; config.applePhotographicStyles = true; config.applePortrait = true
+        _ = try await job.run(input: input, config: config)
+        config.outputMode = .oppo // styles/portrait are gated off in OPPO mode
+        _ = try await job.run(input: input, config: config)
+        XCTAssertEqual(calls.lines, ["false,false", "true,true", "false,false"])
+    }
+
+    func testStyles3InjectsAfterVerificationInAppleMode() async throws {
+        let fs = FakeFS()
+        let backend = FakeStylesBackend(fs: fs)
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.outputMode = .apple; config.applePhotographicStyles3 = true
+        let product = try await job.run(input: input, config: config)
+        XCTAssertTrue(fs.fileExists(product.outputURL))
+        XCTAssertEqual(backend.injections.values, [Double(ConversionJob.grainSeed(for: "IMG0001.heic"))])
+        // Same hash as the Dart `_grainSeedFor` for this name.
+        XCTAssertEqual(ConversionJob.grainSeed(for: "IMG0001.heic"), 1130307681)
+    }
+
+    func testStyles3IsSkippedInOppoMode() async throws {
+        let fs = FakeFS()
+        let backend = FakeStylesBackend(fs: fs)
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.outputMode = .oppo; config.applePhotographicStyles3 = true
+        _ = try await job.run(input: input, config: config)
+        XCTAssertTrue(backend.injections.values.isEmpty)
+    }
+
+    func testStyles3FailurePublishesNothing() async throws {
+        let fs = FakeFS()
+        var backend = FakeStylesBackend(fs: fs)
+        backend.injectionFails = true
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.outputMode = .apple; config.applePhotographicStyles3 = true
+        do {
+            _ = try await job.run(input: input, config: config)
+            XCTFail("expected styles3Failed")
+        } catch ConversionJobError.styles3Failed {
+            XCTAssertFalse(fs.fileExists(URL(fileURLWithPath: "/out/IMG0001_iso.heic")))
+            XCTAssertTrue(fs.files.isEmpty, "scratch cleaned: \(fs.files)")
+        }
+    }
+
+    func testCancellationPublishesNothingAndCleansScratch() async throws {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: SlowBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let input = self.input
+        let task = Task { try await job.run(input: input, config: ConversionConfig()) }
+        try await Task.sleep(for: .milliseconds(30))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("expected CancellationError")
+        } catch is CancellationError {
+            XCTAssertTrue(fs.files.isEmpty, "partial output removed: \(fs.files)")
+        }
+    }
 
     func testSuccessPublishesVerifiedOutput() async throws {
         let fs = FakeFS()
@@ -201,7 +311,7 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
         fs.lock.withLock { _ = fs.files.insert(output) }
         return ConversionOutcome(success: true, mode: "lhdr", family: "x7")
     }
-    func verifyOutput(path: String) async throws -> Bool { true }
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool { true }
     func motionPhotoInfo(path: String) async throws -> MotionPhotoInfo? {
         isMotion ? MotionPhotoInfo(sourceKind: "oppoLpex", durationMs: 3000) : nil
     }

@@ -46,7 +46,11 @@ struct PhotoDetailView: View {
         case .converting(let p):
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: p)
-                Text(item.statusText).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text(item.statusText).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("取消") { model.cancel(item.id) }.controlSize(.small)
+                }
             }
         case .failed(let message):
             GroupBox {
