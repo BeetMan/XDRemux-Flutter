@@ -1,6 +1,6 @@
 # LocalSend core provenance
 
-`vendor/localsend/` is a source subset of [LocalSend v1.18.2](https://github.com/localsend/localsend/tree/af0416be50770a97760f7070684bc667b759a15c/packages/core), commit `af0416be50770a97760f7070684bc667b759a15c`. The original `src/`, `assets/`, `examples/` and `Cargo.toml` are copied, together with the repository's Apache-2.0 `LICENSE`. Original file SHA-256 values are in `vendor/localsend/upstream-files.json`. XDRemux's wrapper is MIT; this does not relicense LocalSend.
+`vendor/localsend/` is a source subset of [LocalSend v1.18.2](https://github.com/localsend/localsend/tree/af0416be50770a97760f7070684bc667b759a15c/packages/core), commit `af0416be50770a97760f7070684bc667b759a15c`. The original `src/`, `assets/`, `examples/` and `Cargo.toml` are copied, together with the repository's Apache-2.0 `LICENSE`. Original file SHA-256 values are in `vendor/localsend/upstream-files.json`. XDRemux's wrapper is GPL-3.0-only (see the repository `LICENSING.md`); this does not relicense LocalSend, which stays Apache-2.0.
 
 XDRemux modifications (all reproducible using `patch-vendor.py`):
 

@@ -58,4 +58,4 @@ cargo build --locked --release --target aarch64-linux-android --target-dir targe
 
 ## 第三方许可
 
-本目录自有验证代码采用项目 MIT 许可。复用的上游 LocalSend 源码按其仓库 Apache-2.0 许可，副本见 `third-party/localsend-LICENSE`。core 的 Cargo manifest 未填写 license 字段，不能仅依赖 metadata 自动识别该项。依赖许可清单见仓库的 P0 证据；正式打包前需补齐实际分发依赖的许可文本与适用声明。
+本目录自有验证代码采用项目的 GPL-3.0-only 许可（见仓库根目录 `LICENSING.md`）。复用的上游 LocalSend 源码按其仓库 Apache-2.0 许可，副本见 `third-party/localsend-LICENSE`。core 的 Cargo manifest 未填写 license 字段，不能仅依赖 metadata 自动识别该项。依赖许可清单见仓库的 P0 证据；正式打包前需补齐实际分发依赖的许可文本与适用声明。

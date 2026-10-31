@@ -3,7 +3,7 @@ name = "xdremux-transfer-poc"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "MIT"
+license = "GPL-3.0-only"
 
 # Deliberately separate from the image-engine workspace and lockfile.
 [workspace]
