@@ -157,82 +157,14 @@ pub fn generate_linear_thumbnail_and_light_maps_with_gain_map(
 ) -> Result<LinearThumbnailOutput, String> {
     const LINEAR_THUMBNAIL_MAX_SIZE: u32 = 1024;
 
-    // Converted OPPO files keep the donor's trailing extension region after
-    // mdat; a claimed box size past EOF makes heif-oxide bail with
-    // Truncated("top-level"). Decode from the valid ISOBMFF prefix only.
-    let mut pos = 0usize;
-    while pos + 8 <= source_heic.len() {
-        let size = u32::from_be_bytes(
-            source_heic[pos..pos + 4].try_into().unwrap(),
-        ) as usize;
-        let (size, hdr) = if size == 1 {
-            if pos + 16 > source_heic.len() {
-                break;
-            }
-            (
-                usize::try_from(u64::from_be_bytes(
-                    source_heic[pos + 8..pos + 16].try_into().unwrap(),
-                ))
-                .unwrap_or(usize::MAX),
-                16,
-            )
-        } else {
-            (size, 8)
-        };
-        if size < hdr || pos + size > source_heic.len() {
-            break;
-        }
-        pos += size;
-    }
-    let good_end = pos;
-    let decodable = if good_end == source_heic.len() || good_end == 0 {
-        source_heic
-    } else {
-        &source_heic[..good_end]
-    };
-
-    let image = heif_oxide::decode_bytes(decodable)
-        .map_err(|e| format!("linear thumb: decode primary: {e:?}"))?;
-    let (rgb, w, h) = match &image.pixels {
-        heif_oxide::Pixels::Rgb8(v) => (v.clone(), image.width, image.height),
-        heif_oxide::Pixels::Rgba8(v) => (
-            v.chunks_exact(4).flat_map(|p| p[..3].iter().copied()).collect(),
-            image.width,
-            image.height,
-        ),
-        heif_oxide::Pixels::Rgb16(v) => (
-            v.chunks_exact(3).flat_map(|p| p.iter().map(|&s| (s >> 8) as u8)).collect(),
-            image.width,
-            image.height,
-        ),
-        heif_oxide::Pixels::Rgba16(v) => (
-            v.chunks_exact(4).flat_map(|p| p[..3].iter().map(|&s| (s >> 8) as u8)).collect(),
-            image.width,
-            image.height,
-        ),
-    };
-    if w == 0 || h == 0 {
-        return Err("linear thumb: decoded primary has zero extent".into());
-    }
+    let (rgb, w, h) = decode_primary_rgb8(source_heic)?;
 
     // Dynamic 32×32 photographic styles light maps derived from decoded primary pixels.
     let (light_c, light_d) = compute_storage_light_maps(&rgb, w, h, orientation);
 
     // Undo the display rotation: rotate CW by the primary's irot amount so
     // the stored (pre-irot) orientation matches the primary's storage.
-    let (mut rgb, mut w, mut h) = (rgb, w, h);
-    for _ in 0..(rotate_cw_quarter_turns % 4) {
-        let mut out = vec![0u8; rgb.len()];
-        for y in 0..h {
-            for x in 0..w {
-                let src = ((y * w + x) * 3) as usize;
-                let dst = ((x * h + (h - 1 - y)) * 3) as usize;
-                out[dst..dst + 3].copy_from_slice(&rgb[src..src + 3]);
-            }
-        }
-        rgb = out;
-        std::mem::swap(&mut w, &mut h);
-    }
+    let (rgb, w, h) = rotate_cw_rgb8(rgb, w, h, rotate_cw_quarter_turns);
 
     // Linearize the display-referred sRGB samples, because Apple Log codes are
     // defined over linear light. Skipping this would make the Photos consumer
@@ -292,6 +224,133 @@ pub fn generate_linear_thumbnail_and_light_maps_with_gain_map(
         bit_depth,
         fit_raster,
     })
+}
+
+/// Encoded Live Photo MOV linear thumbnail (`smart-style-linear-thumbnail`).
+#[derive(Debug, Clone)]
+pub struct MovieLinearThumbnail {
+    /// One length-prefixed IDR access unit, parameter sets stripped.
+    pub sample: Vec<u8>,
+    pub hvcc: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub bit_depth: u8,
+}
+
+/// Build the per-frame linear thumbnail of a Live Photo MOV from its still.
+///
+/// Native iPhone MOVs carry a 128×96 Main10 Apple Log track at the video's
+/// coded geometry. The port has no video decoder, so the still stands in for
+/// every frame: decode the display-oriented primary, rotate it into the
+/// video's coded orientation (`coded_cw_quarter_turns`), resize in linear
+/// light to `width`×`height`, then apply the same baseline exposure and Apple
+/// Log curve as the HEIC linear thumbnail.
+pub fn generate_movie_linear_thumbnail(
+    source_heic: &[u8],
+    coded_cw_quarter_turns: u32,
+    width: u32,
+    height: u32,
+    baseline_exposure: f32,
+) -> Result<MovieLinearThumbnail, String> {
+    let (rgb, w, h) = decode_primary_rgb8(source_heic)?;
+    let (rgb, w, h) = rotate_cw_rgb8(rgb, w, h, coded_cw_quarter_turns);
+    let linear: Vec<f32> = rgb
+        .iter()
+        .map(|&sample| crate::apple_log::srgb8_to_linear(sample) as f32)
+        .collect();
+    let resized = area_resize_linear_rgb(&linear, w, h, width, height)?;
+    let codes16 = crate::apple_log::thumbnail_codes(&resized, baseline_exposure)?;
+    let (stream, hvcc, bit_depth) = encode_linear_thumbnail_codes(&codes16, width, height)?;
+    let idr = crate::hevc::drop_parameter_nals(&stream);
+    Ok(MovieLinearThumbnail {
+        sample: crate::hevc::hevc_byte_stream_to_length_prefixed(&idr),
+        hvcc,
+        width,
+        height,
+        bit_depth,
+    })
+}
+
+/// Decode the primary of a converted HEIC to display-oriented 8-bit RGB.
+fn decode_primary_rgb8(source_heic: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    // Converted OPPO files keep the donor's trailing extension region after
+    // mdat; a claimed box size past EOF makes heif-oxide bail with
+    // Truncated("top-level"). Decode from the valid ISOBMFF prefix only.
+    let mut pos = 0usize;
+    while pos + 8 <= source_heic.len() {
+        let size = u32::from_be_bytes(
+            source_heic[pos..pos + 4].try_into().unwrap(),
+        ) as usize;
+        let (size, hdr) = if size == 1 {
+            if pos + 16 > source_heic.len() {
+                break;
+            }
+            (
+                usize::try_from(u64::from_be_bytes(
+                    source_heic[pos + 8..pos + 16].try_into().unwrap(),
+                ))
+                .unwrap_or(usize::MAX),
+                16,
+            )
+        } else {
+            (size, 8)
+        };
+        if size < hdr || pos + size > source_heic.len() {
+            break;
+        }
+        pos += size;
+    }
+    let good_end = pos;
+    let decodable = if good_end == source_heic.len() || good_end == 0 {
+        source_heic
+    } else {
+        &source_heic[..good_end]
+    };
+
+    let image = heif_oxide::decode_bytes(decodable)
+        .map_err(|e| format!("linear thumb: decode primary: {e:?}"))?;
+    let (rgb, w, h) = match &image.pixels {
+        heif_oxide::Pixels::Rgb8(v) => (v.clone(), image.width, image.height),
+        heif_oxide::Pixels::Rgba8(v) => (
+            v.chunks_exact(4).flat_map(|p| p[..3].iter().copied()).collect(),
+            image.width,
+            image.height,
+        ),
+        heif_oxide::Pixels::Rgb16(v) => (
+            v.chunks_exact(3).flat_map(|p| p.iter().map(|&s| (s >> 8) as u8)).collect(),
+            image.width,
+            image.height,
+        ),
+        heif_oxide::Pixels::Rgba16(v) => (
+            v.chunks_exact(4).flat_map(|p| p[..3].iter().map(|&s| (s >> 8) as u8)).collect(),
+            image.width,
+            image.height,
+        ),
+    };
+    if w == 0 || h == 0 {
+        return Err("linear thumb: decoded primary has zero extent".into());
+    }
+
+    Ok((rgb, w, h))
+}
+
+/// Rotate an interleaved 8-bit RGB raster clockwise by `turns` quarter turns.
+fn rotate_cw_rgb8(rgb: Vec<u8>, w: u32, h: u32, turns: u32) -> (Vec<u8>, u32, u32) {
+    let (mut rgb, mut w, mut h) = (rgb, w, h);
+    for _ in 0..(turns % 4) {
+        let mut out = vec![0u8; rgb.len()];
+        for y in 0..h {
+            for x in 0..w {
+                let src = ((y * w + x) * 3) as usize;
+                let dst = ((x * h + (h - 1 - y)) * 3) as usize;
+                out[dst..dst + 3].copy_from_slice(&rgb[src..src + 3]);
+            }
+        }
+        rgb = out;
+        std::mem::swap(&mut w, &mut h);
+    }
+
+    (rgb, w, h)
 }
 
 /// Rotate an interleaved f32 RGB raster counter-clockwise by `turns` quarter
