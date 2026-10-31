@@ -480,7 +480,8 @@ class ConversionConfig {
   MotionPhotoMode motionPhotoDefaultMode;
 
   /// Package Live Photo pairs as Apple `.pvt` bundles (`<stem>.pvt/` holding
-  /// the HEIC, MOV and metadata.plist) instead of loose sibling files.
+  /// the HEIC, MOV and metadata.plist) instead of loose sibling files. On by
+  /// default; settings saved without the key (0.4.5 and earlier) get it too.
   bool livePhotoBundle;
 
   ConversionConfig({
@@ -502,7 +503,7 @@ class ConversionConfig {
     this.autoSaveToGallery = false,
     this.hardwareEncode = false,
     this.motionPhotoDefaultMode = MotionPhotoMode.livePhotoPair,
-    this.livePhotoBundle = false,
+    this.livePhotoBundle = true,
   });
 
   /// Persist to SharedPreferences.
@@ -568,7 +569,7 @@ class ConversionConfig {
         (e) => e.name == json['motionPhotoDefaultMode'],
         orElse: () => MotionPhotoMode.livePhotoPair,
       ),
-      livePhotoBundle: json['livePhotoBundle'] as bool? ?? false,
+      livePhotoBundle: json['livePhotoBundle'] as bool? ?? true,
     );
   }
 
