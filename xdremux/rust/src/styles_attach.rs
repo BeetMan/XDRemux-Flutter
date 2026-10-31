@@ -100,7 +100,7 @@ fn has_bytes(data: &[u8], needle: &str) -> bool {
     data.windows(n.len()).any(|w| w == n)
 }
 
-fn find_item(parsed: &isobmff::ParsedMeta, uri: &str) -> Option<u32> {
+pub(crate) fn find_item(parsed: &isobmff::ParsedMeta, uri: &str) -> Option<u32> {
     parsed
         .items
         .iter()
@@ -109,7 +109,7 @@ fn find_item(parsed: &isobmff::ParsedMeta, uri: &str) -> Option<u32> {
 }
 
 /// Read an item payload (construction 0 from mdat / 1 from idat).
-fn item_payload_bytes(data: &[u8], parsed: &isobmff::ParsedMeta, item_id: u32) -> Option<Vec<u8>> {
+pub(crate) fn item_payload_bytes(data: &[u8], parsed: &isobmff::ParsedMeta, item_id: u32) -> Option<Vec<u8>> {
     let loc = parsed.iloc_entries.iter().find(|e| e.item_id == item_id)?;
     match loc.construction_method & 0xF {
         0 => {
