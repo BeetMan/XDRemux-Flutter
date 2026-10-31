@@ -1,16 +1,5 @@
 # 原生 Apple（iOS / macOS）前端开发计划
 
-**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
-
-- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
-  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
-  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
-  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
-- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
-  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
-- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
-  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
-
 > 状态：2026-10-30 起草，仅规划，未创建任何代码。模板沿用 `feat/harmony-native` 分支的
 > `docs/plans/harmony-native.md`；鸿蒙原生版已证明"同一 Rust 内核 + 第二个原生前端"可行，
 > 本计划吸收其做法并修正其暴露的问题。
@@ -298,6 +287,18 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 验证：iPhone 18 Pro 模拟器从"照片"分享 OPPO HEIC → 分享面板出现 XDRemux → 提示"已加入 XDRemux：1 张" →
   收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
 - 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
+
+**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+
+- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
+  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
+  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
+  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
+- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
+  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
+- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
+  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+
 
 **基础设施（2026-11-01，分支 `feat/apple-universal`）：x86_64 切片与 CI 模拟器构建**
 
