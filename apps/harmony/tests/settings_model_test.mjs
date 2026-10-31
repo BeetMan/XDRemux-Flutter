@@ -41,7 +41,7 @@ const assertModeTransitions = () => {
   });
   assert.equal(appleFeatures.outputMode, 'apple');
   assert.equal(appleFeatures.strictTmap, true);
-  assert.equal(modeLabel(appleFeatures), 'Apple 标准 · 摄影风格 · 人像数据 · 严格 ISO');
+  assert.equal(modeLabel(appleFeatures), 'Apple 标准 · 摄影风格 2 · 人像数据 · 严格 ISO');
 
   const styles3 = normalizeSettings({
     ...DEFAULT_SETTINGS,

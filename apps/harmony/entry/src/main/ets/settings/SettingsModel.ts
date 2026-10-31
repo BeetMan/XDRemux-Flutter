@@ -258,7 +258,7 @@ export function modeLabel(values: NativeSettings): string {
     if (normalized.applePhotographicStyles3) {
       labels.push('摄影风格 3');
     } else if (normalized.applePhotographicStyles) {
-      labels.push('摄影风格');
+      labels.push('摄影风格 2');
     }
     if (normalized.applePortrait) {
       labels.push('人像数据');

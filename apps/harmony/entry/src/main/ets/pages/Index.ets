@@ -2140,7 +2140,7 @@ struct Index {
       return;
     }
     if (item === undefined || !this.canMakeLivePhotoPair() || this.motionInspection.report === undefined) {
-      this.operationStatus = '请先识别 Motion Photo，并转换 Apple HEIC；旧版摄影风格单独开启时不支持 Live Photo 配对，需改用摄影风格 3 或关闭风格并重新转换';
+      this.operationStatus = '请先识别 Motion Photo，并转换 Apple HEIC；仅开启摄影风格 2 时不支持 Live Photo 配对，需改用摄影风格 3 或关闭风格并重新转换';
       return;
     }
     const result: QueueResult | undefined = item.result;
@@ -2229,7 +2229,7 @@ struct Index {
       await this.inspectSelectedMotionPhoto();
     }
     if (this.selectedItemId !== item.id || !this.canMakeLivePhotoPair()) {
-      this.operationStatus = '旧版摄影风格单独开启时不支持 Live Photo 配对；请选择摄影风格 3 或关闭风格后重新转换';
+      this.operationStatus = '仅开启摄影风格 2 时不支持 Live Photo 配对；请选择摄影风格 3 或关闭风格后重新转换';
       return;
     }
     if (!this.livePhotoPairCache.has(key)) await this.makeSelectedLivePhotoPair();
@@ -5980,7 +5980,7 @@ struct Index {
             .margin({ top: 6, bottom: 4 });
           if (this.gallerySupportsApplePhotoData()) {
             Row() {
-              Text('摄影风格数据')
+              Text('摄影风格 2')
                 .fontSize(14)
                 .fontColor(this.galleryInfoPanelPrimaryTextColor())
                 .layoutWeight(1);
@@ -5993,7 +5993,7 @@ struct Index {
             .width('100%')
             .height(46);
             Row() {
-              Text('摄影风格 3（质感 + 颗粒）')
+              Text('摄影风格 3')
                 .fontSize(14)
                 .fontColor(this.galleryInfoPanelPrimaryTextColor())
                 .layoutWeight(1);
@@ -6799,7 +6799,7 @@ struct Index {
             .width('100%')
             .margin({ top: 6 });
           Row() {
-            Text('摄影风格')
+            Text('摄影风格 2')
               .fontSize(14)
               .fontColor($r('sys.color.font_primary'))
               .layoutWeight(1);
@@ -6819,7 +6819,7 @@ struct Index {
           .width('100%')
           .height(42);
           Row() {
-            Text('摄影风格 3（质感 + 颗粒）')
+            Text('摄影风格 3')
               .fontSize(14)
               .fontColor($r('sys.color.font_primary'))
               .layoutWeight(1);
@@ -7147,7 +7147,7 @@ struct Index {
           .margin({ top: 12, bottom: 4 });
         Text(this.selectedItem()?.result?.applePhotographicStyles === true &&
           this.selectedItem()?.result?.applePhotographicStyles3 !== true
-          ? '当前结果只含旧版摄影风格，不能配对 Live Photo；请改用摄影风格 3 或关闭风格后重新转换。'
+          ? '当前结果只含摄影风格 2，不能配对 Live Photo；请改用摄影风格 3 或关闭风格后重新转换。'
           : this.canMakeLivePhotoPair()
           ? '来源已绑定：当前 Motion Photo 原图 + 同一原图对应的 Apple HEIC 转换结果。'
           : '请先将当前 Motion Photo 原图转换为 Apple HEIC；旧转换记录缺少来源绑定时需重新转换。')
@@ -7420,7 +7420,7 @@ struct Index {
         .width('100%')
         .margin({ top: 4, bottom: 4 });
       Row() {
-        Text('摄影风格数据')
+        Text('摄影风格 2')
           .fontSize(14)
           .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
@@ -7433,7 +7433,7 @@ struct Index {
       .width('100%')
       .margin({ top: 4 });
       Row() {
-        Text('摄影风格 3（质感 + 颗粒）')
+        Text('摄影风格 3')
           .fontSize(14)
           .fontColor($r('sys.color.font_primary'))
           .layoutWeight(1);
@@ -7445,7 +7445,7 @@ struct Index {
       }
       .width('100%')
       .margin({ top: 4 });
-      Text('开启后自动使用 Apple 输出并启用基础摄影风格，用于支持设备上的质感与颗粒编辑；部分图片格式可能无法转换。')
+      Text('摄影风格 2 可在 Apple“照片”中调整色调、颜色和强度；摄影风格 3 在此基础上还可调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。开启后自动使用 Apple 标准输出；部分图片格式可能无法转换。')
         .fontSize(12)
         .fontColor($r('sys.color.font_secondary'))
         .width('100%')
@@ -7899,13 +7899,15 @@ struct Index {
       const settings: NativeSettings = this.queuePhotoSettingsForItem(item, item.modeOverride === undefined
         ? this.committedSettings : this.settingsFromModeSnapshot(item.modeOverride));
       return 'Apple 人像' + (settings.applePhotographicStyles3 ? ' · 摄影风格 3' :
-        (settings.applePhotographicStyles ? ' · 摄影风格' : ''));
+        (settings.applePhotographicStyles ? ' · 摄影风格 2' : ''));
     }
     if (item.modeOverride !== undefined) {
       return this.queuePhotoModeLabel(this.settingsFromModeSnapshot(item.modeOverride));
     }
     if (item.lastAttemptModeLabel.length > 0) {
-      const label: string = item.lastAttemptModeLabel.replace('摄影风格 · 摄影风格 3', '摄影风格 3');
+      // Labels persisted before the Styles 2/3 rename still read "摄影风格".
+      const label: string = item.lastAttemptModeLabel.replace('摄影风格 · 摄影风格 3', '摄影风格 3')
+        .replace(/摄影风格(?! [23])/g, '摄影风格 2');
       return label.startsWith('OPPO 兼容 · 兼容模式：OPPO 兼容') ? 'OPPO 兼容' : label;
     }
     return '使用当前转换设置';
