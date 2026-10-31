@@ -37,6 +37,13 @@ xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Docume
 The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
 HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
 
+## Share Extension (iOS)
+
+`XDRemuxShare` adds XDRemux to the share sheet. It copies the shared photos (HEIC original representation
+first, so Photos does not transcode to JPEG) into the app-group inbox
+`group.io.github.beetman.xdremux.swiftui/Inbox`; the app imports and clears the inbox on launch and
+whenever it returns to the foreground. No conversion runs inside the extension.
+
 ## Command line (macOS)
 
 ```bash

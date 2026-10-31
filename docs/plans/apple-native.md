@@ -274,6 +274,20 @@ Flutter 版生成的检查点文件可被原生版读取。
   macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
 - 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
 
+**P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
+
+- 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
+  运行器的要点：先请求 `public.heic` 文件表示（"自动"格式下 `public.image` 会被转成 JPEG），再退到 heif / jpeg / image /
+  fileURL；文件名按真实类型修正后缀；不做转换（扩展内存上限远低于 8K ProXDR 解码）。
+- 交接改为 App Group 收件箱 `group.io.github.beetman.xdremux.swiftui/Inbox`，去掉 receive_sharing_intent 的 manifest
+  契约；宿主在启动与回到前台（`scenePhase == .active`）时导入并清空收件箱。`SharedInbox.swift` 由两个 target 共用。
+- xcodegen 注意事项：`info.properties` 会重新生成 Info.plist，手写的 `NSExtension` 字典会被覆盖，必须写在 project.yml；
+  macOS 的 App Group 权限需要开发证书签名，所以 macOS 用单独的 `App/XDRemux-macOS.entitlements`
+  （`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`）。
+- 验证：iPhone 18 Pro 模拟器从"照片"分享 OPPO HEIC → 分享面板出现 XDRemux → 提示"已加入 XDRemux：1 张" →
+  收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
+- 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、

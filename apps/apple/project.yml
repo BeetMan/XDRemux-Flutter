@@ -29,6 +29,10 @@ targets:
         product: XDRemuxKit
       - package: XDRemuxKit
         product: XDRemuxModel
+      # iOS share sheet entry; embedded only in the iOS build.
+      - target: XDRemuxShare
+        embed: true
+        platformFilter: iOS
     info:
       path: App/Info.plist
       properties:
@@ -57,6 +61,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
+        # Inbox shared with the Share Extension (iOS); harmless on macOS.
+        com.apple.security.application-groups: [group.io.github.beetman.xdremux.swiftui]
     settings:
       base:
         # Independent identity from the Flutter app (io.github.beetman.xdremux),
@@ -71,6 +77,50 @@ targets:
         OTHER_LDFLAGS: ["$(inherited)", "-lc++"]
         # build_apple.sh produces arm64-only slices (Apple Silicon host, no
         # x86_64 Rust/x265 builds); keep the simulator build to arm64 too.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        # macOS: no app group (needs a development certificate to sign).
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": App/XDRemux-macOS.entitlements
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Release:
+          CODE_SIGN_IDENTITY: "-"
+
+  XDRemuxShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: App/Platform/SharedInbox.swift
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: XDRemux
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        # xcodegen regenerates Info.plist from here, so the extension point
+        # lives in this file rather than in a hand-written plist.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            PHSupportedMediaTypes: [Image]
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 100
+              NSExtensionActivationSupportsFileWithMaxCount: 100
+    entitlements:
+      path: ShareExtension/XDRemuxShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.io.github.beetman.xdremux.swiftui]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.beetman.xdremux.swiftui.share
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: false
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
       configs:
         Debug:
