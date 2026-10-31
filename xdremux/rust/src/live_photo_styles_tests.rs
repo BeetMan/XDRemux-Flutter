@@ -169,7 +169,7 @@ fn thumbnail_level_adds_linear_thumbnail_track_only() {
 
     let moov = moov_of(&out);
     let tracks = traks(moov);
-    assert_eq!(tracks.len(), 3, "video + still-image-time + thumbnail");
+    assert_eq!(tracks.len(), 4, "video + still-image-time + thumbnail + live-photo-info");
     let thumb = tracks[2];
     let raw = &moov[thumb.offset..thumb.end()];
     assert!(contains(raw, THUMBNAIL_TAG));
@@ -184,7 +184,19 @@ fn thumbnail_level_adds_linear_thumbnail_track_only() {
     assert!(!contains(moov, b"smartstyle.bypassed"));
     // mvhd next_track_id follows the new track.
     let mvhd = direct_child(moov, &MovBox { offset: 0, size: moov.len(), kind: *b"moov", header_size: 8 }, b"mvhd").unwrap();
-    assert_eq!(&moov[mvhd.end() - 4..mvhd.end()], &4u32.to_be_bytes());
+    assert_eq!(&moov[mvhd.end() - 4..mvhd.end()], &5u32.to_be_bytes());
+    // live-photo-info: native key atom with dims patched to the coded size,
+    // one native no-face record per frame.
+    let info = tracks[3];
+    let raw = &moov[info.offset..info.end()];
+    assert!(contains(raw, b"com.apple.quicktime.com.apple.quicktime.live-photo-info"));
+    let mut dims = b"dims".to_vec();
+    dims.extend_from_slice(&1728u32.to_be_bytes());
+    dims.extend_from_slice(&1296u32.to_be_bytes());
+    assert!(contains(raw, &dims));
+    let at = chunk_offset(moov, &info);
+    assert_eq!(&out[at..at + 4], &144u32.to_be_bytes());
+    assert_eq!(&out[at + 8..at + 144], LIVE_PHOTO_INFO_RECORD.as_slice());
 }
 
 #[test]
@@ -194,8 +206,8 @@ fn info_level_adds_smartstyle_track_and_movie_keys() {
     let out = attach_with(&mov, &styles(true), MovieStyleLevel::Info, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
     let tracks = traks(moov);
-    assert_eq!(tracks.len(), 4);
-    let info = tracks[3];
+    assert_eq!(tracks.len(), 5);
+    let info = tracks[4];
     let raw = &moov[info.offset..info.end()];
     assert!(contains(raw, SMARTSTYLE_INFO_KEY));
     assert!(contains(raw, b"cdsc\0\0\0\x01"));
@@ -224,18 +236,18 @@ fn full_level_adds_mattes_and_texture_style() {
     let out = attach_with(&mov, &styles(true), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
     let tracks = traks(moov);
-    assert_eq!(tracks.len(), 2 + 1 + 3 + 2);
+    assert_eq!(tracks.len(), 2 + 2 + 3 + 2);
     for tag in MATTE_TAGS {
         assert!(contains(moov, tag));
     }
     assert!(contains(moov, TEXTURESTYLE_INFO_KEY));
     assert!(contains(moov, b"com.apple.quicktime.texturestyle.preset"));
-    let info = tracks[6];
+    let info = tracks[7];
     let at = chunk_offset(moov, &info);
     let size = u32::from_be_bytes(out[at..at + 4].try_into().unwrap()) as usize;
     let dict = parse_bplist_dict(&out[at + 8..at + size]).unwrap();
     assert_eq!(lookup(&dict, "b"), Some(&PlistValue::Real(0.0)));
-    let texture = tracks[7];
+    let texture = tracks[8];
     let at = chunk_offset(moov, &texture);
     let size = u32::from_be_bytes(out[at..at + 4].try_into().unwrap()) as usize;
     let dict = parse_bplist_dict(&out[at + 8..at + size]).unwrap();
@@ -249,7 +261,7 @@ fn full_level_without_texture_skips_texture_track() {
     let seen = std::cell::Cell::new(None);
     let out = attach_with(&mov, &styles(false), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
-    assert_eq!(traks(moov).len(), 2 + 1 + 3 + 1);
+    assert_eq!(traks(moov).len(), 2 + 2 + 3 + 1);
     assert!(!contains(moov, b"texturestyle"));
 }
 
