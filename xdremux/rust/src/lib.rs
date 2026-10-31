@@ -41,6 +41,7 @@ pub mod styles_attach;
 mod styles_consts;
 mod apple_note_payload;
 mod styles_graft;
+pub mod styles_fit;
 pub mod styles_native;
 pub mod styles_scaffold;
 

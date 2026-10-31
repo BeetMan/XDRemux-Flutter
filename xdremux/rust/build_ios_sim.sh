@@ -33,6 +33,22 @@ if [ ! -f vendor/x265/build_ios_sim/libx265.a ]; then
 fi
 cmake --build vendor/x265/build_ios_sim --target x265-static -j8
 
+# Optional Main10 encoder (set XDREMUX_MAIN10=0 to skip); see build_ios.sh.
+if [ "${XDREMUX_MAIN10:-1}" != "0" ]; then
+  echo "==> x265 10-bit (iOS simulator arm64, no assembly)"
+  if [ ! -f vendor/x265/build_ios_sim_10bit/libx265.a ]; then
+    cmake -S vendor/x265/source -B vendor/x265/build_ios_sim_10bit \
+      -DCMAKE_SYSTEM_NAME=iOS \
+      -DCMAKE_OSX_SYSROOT="$X265_SDK" \
+      -DCMAKE_OSX_ARCHITECTURES=arm64 \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+      -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+      -DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF \
+      -DCMAKE_BUILD_TYPE=Release
+  fi
+  cmake --build vendor/x265/build_ios_sim_10bit --target x265-static -j8
+fi
+
 # Workspace root may redirect the target dir (repo root Cargo.toml workspace),
 # so resolve it via cargo metadata instead of assuming ./target.
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')"

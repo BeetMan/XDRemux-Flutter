@@ -14,9 +14,11 @@
 //!     only affects the style-picker preview, not the gate (unverified).
 //!   - styles sky matte: zero mono item + matte XMP sidecar (same approach
 //!     as scaffold.rs; real segmentation is R4).
-//!   - styleMetadata `uri ` item: native bplist with identity styleData
-//!     (864 blocks × 30 f16, 1.0 at [3,7,11] — verified fixed across the
-//!     two available goldens, both 4096×3512).
+//!   - styleMetadata `uri ` item: native bplist. When the linear thumbnail
+//!     is generated, key 1 (864 blocks × 30 f16) and key 3 (GTC) are fitted
+//!     per image (`styles_fit`); otherwise they fall back to the identity
+//!     resources (1.0 at [3,7,11] — verified fixed across the two available
+//!     goldens, both 4096×3512).
 //!
 //! Photo-dependent bplist fields that are currently REFERENCE VALUES from
 //! the golden sample (need image decode to compute — blocked on a decoder):
@@ -248,7 +250,7 @@ fn assemble_styles(
                 out.height,
                 out.stream,
                 out.hvcc,
-                Some((out.light_c, out.light_d)),
+                Some((out.light_c, out.light_d, out.fit_raster)),
             ),
             Err(e) => {
                 // Legacy black placeholder fallback, using the same geometry
@@ -278,9 +280,17 @@ fn assemble_styles(
 
     // ---- style metadata bplist ------------------------------------------
     let mut style_state = StyleStateOverride::identity();
-    if let Some((c, d)) = dynamic_light_maps {
+    if let Some((c, d, fit_raster)) = dynamic_light_maps {
         style_state.light_c = c;
         style_state.light_d = d;
+        // Per-image key 1 / key 3 against the key 4 / h this plist carries.
+        // A failed fit keeps the identity resources (still a valid file).
+        if let Ok(fitted) =
+            crate::styles_fit::fit_style_state(&fit_raster, style_state.tag4, style_state.tag_h)
+        {
+            style_state.key1 = fitted.style_data;
+            style_state.gtc = fitted.global_tone_curve.data;
+        }
     }
     let bplist = build_style_metadata_with(&style_state);
 

@@ -131,6 +131,8 @@ Flutter 侧只有开关与互斥约束：`_stylesRequested`（`apps/flutter/lib/
 
 ### P1（P0 之后，仍无原生依赖，但需要前置信号）
 
+> 2026-10-30：P1-1 / P1-2 已在 `xdremux/rust/src/styles_fit.rs` 实现（单测 + 真实样张探针），真机 A/B 未做；详见 `docs/modules/styles-pipeline.md` §4.1。
+
 - **P1-1 每图 key1 拟合**：落点 `styles_native.rs:608-622` 换为按 12×9×8 网格的 remove-style 局部拟合（算法见 `bb66981b` 的 `source_derived_style_data`）。前置：P0-2 完成，否则拟合对无信息。风险：拟合方向写反（上游注释明确"forward primary-to-styled residual would point the other way"）；写坏后 Photos 拒收或滑块异常，需 A/B 金样。成本 3-5 天。
 - **P1-2 GTC 单调拟合**：落点 `styles_native.rs:677`。注意 `73804f5c` 修正：读回按固定 65535 scale + sRGB 反解，端点不归一化、末位重复一个节点。风险：516 字节布局错一字节即整段失效。成本 1-3 天。
 - **P1-3 key6 统计 + key7 语义比例真实化**：落点 `styles_native.rs:780` TODO 与 `:686-690`。前置：皮肤/人物蒙版来源（`semantic_mattes.rs` 目前零值）。成本 1-3 天。

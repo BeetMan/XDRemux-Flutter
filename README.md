@@ -85,7 +85,7 @@ Flutter 版以转换队列为主要入口：导入照片、查看详情、选择
 
 ### iPhone Duo 适配
 
-iPhone Duo（`iPhone19,4`，iOS 27.1）在屏幕右侧保留了 84pt 宽的系统竖栏区（`UITraitCollection.verticalBarEdge == trailing`）。应用把工具操作放进这条区域，内容仍按 382pt 排版，并按列表长度与折叠状态切换主操作位置；展开后队列改为 3 列网格。
+iPhone Duo（`iPhone19,4`，iOS 27.1）在屏幕右侧保留了 84pt 宽的系统竖栏区（`UITraitCollection.verticalBarEdge == trailing`）。应用把工具操作放进这条区域，内容仍按 382pt 排版，并按列表长度与折叠状态切换主操作位置；展开后队列改为网格（竖屏 2 列、横屏 3 列）。横屏时竖栏若转到左侧，工具操作随之移到左侧，内容同样避开该区域。
 
 | 合上 · 空队列 | 合上 · 队列 ≥ 4 |
 |---|---|

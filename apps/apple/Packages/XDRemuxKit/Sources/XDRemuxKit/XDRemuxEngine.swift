@@ -1,0 +1,156 @@
+import Foundation
+import XDRemuxCoreC
+import XDRemuxModel
+
+/// Swift façade over the Rust C ABI.
+///
+/// All Rust calls are synchronous and CPU-bound (x265 spins its own thread
+/// pool), so they run on a private concurrent queue, never on the main actor.
+/// `maxConcurrency` bounds how many Rust calls run at once (the Flutter app's
+/// `maxConcurrentJobs`); 1 reproduces the HarmonyOS bridge's single mutex.
+public final class XDRemuxEngine: Sendable {
+    public static let shared = XDRemuxEngine()
+
+    private let queue = DispatchQueue(label: "io.github.beetman.xdremux.core", qos: .userInitiated, attributes: .concurrent)
+    private let gate: Gate
+
+    public init(maxConcurrency: Int = 1) {
+        gate = Gate(limit: max(1, maxConcurrency))
+    }
+
+    /// Current bound on simultaneous Rust calls.
+    public var maxConcurrency: Int { gate.limit }
+
+    /// Changes the bound; calls already running are unaffected.
+    public func setMaxConcurrency(_ value: Int) { gate.setLimit(max(1, value)) }
+
+    // MARK: - Synchronous, cheap
+
+    /// Core version from `Cargo.toml` (the single version source).
+    public static func coreVersion() -> String {
+        RustString(taking: xdremux_version()).consume() ?? "unknown"
+    }
+
+    // MARK: - Background calls
+
+    /// Runs a blocking core call on the engine queue under the concurrency gate.
+    func runOnQueue<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
+        try await run(body)
+    }
+
+    private func run<T: Sendable>(_ body: @Sendable @escaping () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [gate] in
+                gate.acquire()
+                defer { gate.release() }
+                continuation.resume(with: Result { try body() })
+            }
+        }
+    }
+
+    /// `xdremux_codec_capabilities`: which encoder paths this build carries.
+    public func codecCapabilities() async throws -> JSONReport {
+        try await run { try JSONReport(consuming: RustString(taking: xdremux_codec_capabilities())) }
+    }
+
+    /// `xdremux_classify`: capture-mode classification. Never throws for an
+    /// unreadable file; inspect `status` instead.
+    public func classify(path: String) async throws -> Classification {
+        try await run { withCPath(path) { Classification(consuming: xdremux_classify($0)) } }
+    }
+
+    /// `xdremux_inspect`: ProXDR structure check without writing output.
+    public func inspect(path: String) async throws -> ConversionReport {
+        try await run { withCPath(path) { ConversionReport(consuming: xdremux_inspect($0)) } }
+    }
+
+    /// `xdremux_inspect_photo_details`: EXIF / HDR / Apple editing metadata
+    /// summary as JSON (`success`, `errorMessage`, `make`, `model`, …).
+    public func photoDetails(path: String) async throws -> JSONReport {
+        try await run {
+            try withCPath(path) { try JSONReport(consuming: RustString(taking: xdremux_inspect_photo_details($0))) }
+        }
+    }
+
+    /// `xdremux_convert_with_progress`. `progress`, when given, is polled on
+    /// the caller's task every `pollInterval` until the call returns.
+    ///
+    /// The output path must differ from the input; Rust refuses in-place
+    /// writes. Callers should pass a task-private temporary path and publish
+    /// only after `xdremux_verify_output` succeeds (plan §3 P1).
+    public func convert(
+        input: String,
+        output: String,
+        config: RustConvertConfig,
+        pollInterval: Duration = .milliseconds(100),
+        progress: (@Sendable (ConversionProgress) -> Void)? = nil
+    ) async throws -> ConversionReport {
+        let handle = xdremux_progress_begin()
+        defer { xdremux_progress_end(handle) }
+
+        let poller: Task<Void, Never>? = progress.map { report in
+            Task.detached {
+                while !Task.isCancelled {
+                    report(Self.readProgress(handle))
+                    try? await Task.sleep(for: pollInterval)
+                }
+            }
+        }
+        defer { poller?.cancel() }
+
+        return try await run {
+            var c = ConvertConfig(
+                oppo_compat: config.oppoCompat,
+                oppo_camera_tail: config.oppoCameraTail,
+                strict_tmap: config.strictTmap,
+                apple_photographic_styles: config.applePhotographicStyles,
+                apple_portrait: config.applePortrait)
+            return withCPath(input) { cin in
+                withCPath(output) { cout in
+                    ConversionReport(consuming: xdremux_convert_with_progress(cin, cout, &c, handle))
+                }
+            }
+        }
+    }
+
+    /// `xdremux_verify_output`: decodes and structure-checks a produced file.
+    public func verifyOutput(path: String) async throws -> Bool {
+        try await run { withCPath(path) { xdremux_verify_output($0) } }
+    }
+
+    // MARK: - Progress
+
+    static func readProgress(_ handle: UInt32) -> ConversionProgress {
+        var buf = [UInt32](repeating: 0, count: 4)
+        xdremux_read_progress_for(handle, &buf)
+        return ConversionProgress(stage: buf[0], current: buf[1], total: buf[2])
+    }
+}
+
+/// Counting gate with an adjustable limit (a semaphore whose capacity can
+/// change at runtime). Waiters block the calling queue thread; the queue is
+/// concurrent so other work still proceeds.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSCondition()
+    private var running = 0
+    private var _limit: Int
+
+    init(limit: Int) { _limit = limit }
+
+    var limit: Int { lock.withLock { _limit } }
+
+    func setLimit(_ value: Int) {
+        lock.lock(); _limit = value; lock.broadcast(); lock.unlock()
+    }
+
+    func acquire() {
+        lock.lock()
+        while running >= _limit { lock.wait() }
+        running += 1
+        lock.unlock()
+    }
+
+    func release() {
+        lock.lock(); running -= 1; lock.broadcast(); lock.unlock()
+    }
+}
