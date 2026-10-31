@@ -40,10 +40,15 @@ struct ContentView: View {
                 .navigationDestination(for: PhotoItem.ID.self) { id in
                     PhotoDetailView(model: model, itemID: id)
                 }
+                // Inside the stack: a toolbar attached outside a navigation
+                // context is dropped on iOS (macOS puts it in the window).
+                .toolbar { toolbarContent }
             }
             #endif
         }
+        #if os(macOS)
         .toolbar { toolbarContent }
+        #endif
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
         }
