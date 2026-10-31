@@ -564,6 +564,7 @@ class XdRemuxService {
   static const _keyCategorizeOutputByMode = 'categorizeOutputByMode';
   static const _keyHardwareEncode = 'hardwareEncode';
   static const _keyMotionPhotoDefaultMode = 'motionPhotoDefaultMode';
+  static const _keyLivePhotoBundle = 'livePhotoBundle';
 
   static Future<ConversionConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -604,6 +605,7 @@ class XdRemuxService {
         (e) => e.name == prefs.getString(_keyMotionPhotoDefaultMode),
         orElse: () => MotionPhotoMode.livePhotoPair,
       ),
+      livePhotoBundle: prefs.getBool(_keyLivePhotoBundle) ?? false,
     );
   }
 
@@ -638,5 +640,6 @@ class XdRemuxService {
       _keyMotionPhotoDefaultMode,
       config.motionPhotoDefaultMode.name,
     );
+    await prefs.setBool(_keyLivePhotoBundle, config.livePhotoBundle);
   }
 }

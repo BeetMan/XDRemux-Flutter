@@ -88,6 +88,7 @@ docs/plans/*
 !docs/plans/live-photo-export-fix.md
 !docs/plans/release-candidate-044.md
 !docs/plans/mac-acceptance-044.md
+!docs/plans/apple-native.md
 !docs/testing/
 docs/testing/*
 !docs/testing/windows-codec-test-02.md
@@ -110,10 +111,19 @@ tools/*
 !tools/ohos/
 tools/ohos/*
 !tools/ohos/*.ps1
+!tools/ohos/build_hap.sh
 # Packaging scripts under tools/ are source, not artifacts - keep them tracked.
 !tools/installer/
 # Linux desktop packaging (AppImage/tar.gz) is source, not downloaded artifacts.
 !tools/linux/
+# Apple SDK preflight sources (not generated probes or bytecode).
+!tools/apple/
+tools/apple/*
+!tools/apple/*.sh
+!tools/apple/test_*.py
+!tools/android/
+tools/android/*
+!tools/android/*.py
 # Research corpus generator (Apple-features Rust port reference outputs).
 !tools/golden_corpus.sh
 # Codec integration sources (not downloaded dependencies or generated media).
@@ -149,3 +159,7 @@ apps/flutter/ios/SwiftBackend/.build/
 apps/flutter/third_party/ohos/
 # Rust cdylib built for OHOS (regenerate via xdremux/rust/build_ohos.sh)
 apps/flutter/ohos/entry/libs/
+
+# Native Apple app: Rust XCFramework produced by xdremux/rust/build_apple.sh
+apps/apple/Frameworks/
+apps/apple/*.xcodeproj

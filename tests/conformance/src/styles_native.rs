@@ -197,8 +197,12 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             })
             .and_then(|p| isobmff::irot_quarter_turns(&p.raw).ok())
             .unwrap_or(0) as u32;
-        match xdremux_core::linear_thumbnail::generate_linear_thumbnail(base, primary_irot_turns) {
-            Ok(pair) => pair,
+        match xdremux_core::linear_thumbnail::generate_linear_thumbnail(
+            base,
+            primary_irot_turns,
+            xdremux_core::styles_native::IDENTITY_BASELINE_EXPOSURE,
+        ) {
+            Ok((stream, hvcc, _width, _height)) => (stream, hvcc),
             Err(e) => {
                 // Legacy black placeholder fallback.
                 let black = vec![0u8; (LT_W * LT_H * 3) as usize];

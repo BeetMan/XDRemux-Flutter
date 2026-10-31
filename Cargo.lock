@@ -1009,6 +1009,7 @@ dependencies = [
  "jpeg-decoder",
  "png 0.17.16",
  "quick-xml",
+ "rust_h265",
  "serde_json",
  "sha2",
  "zstd",

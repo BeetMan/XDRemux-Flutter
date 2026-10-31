@@ -17,7 +17,15 @@ class MotionPhotoService {
 
   /// Compose off the UI thread in an isolated staging directory. Never let
   /// the FFI's source-based filenames overwrite the original in its folder.
-  static Future<void> composeLivePhoto(String inputPath, String outputPath) async {
+  ///
+  /// With [bundle], the pair goes into `<dir>/<stem>.pvt/` (Apple's Live Photo
+  /// bundle) instead of next to [outputPath], and the loose converted still at
+  /// [outputPath] is removed. Returns the still path of the finished pair.
+  static Future<String> composeLivePhoto(
+    String inputPath,
+    String outputPath, {
+    bool bundle = false,
+  }) async {
     final movTarget = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.mov');
     for (final target in [outputPath, movTarget]) {
       if (File(inputPath).absolute.path == File(target).absolute.path ||
@@ -29,17 +37,43 @@ class MotionPhotoService {
     final temp = await getTemporaryDirectory();
     final staging = await temp.createTemp('xdremux-live-');
     try {
-      final report = await Isolate.run(() =>
-          XdRemuxFFI.makeLivePhoto(inputPath, outputPath, staging.path));
+      final report = await Isolate.run(
+        () => XdRemuxFFI.makeLivePhoto(inputPath, outputPath, staging.path),
+      );
       if (report['success'] != true) {
-        throw StateError('${report['errorMessage'] ?? 'Live Photo compose failed'}');
+        throw StateError(
+          '${report['errorMessage'] ?? 'Live Photo compose failed'}',
+        );
       }
       final still = report['stillPath'] as String?;
       final movie = report['videoPath'] as String?;
-      if (still == null || movie == null ||
-          !File(still).existsSync() || !File(movie).existsSync() ||
+      if (still == null ||
+          movie == null ||
+          !File(still).existsSync() ||
+          !File(movie).existsSync() ||
           !XdRemuxFFI.livePhotoPairValid(still, movie)) {
         throw StateError('Live Photo pair is missing or invalid');
+      }
+      if (bundle) {
+        final bundlePath = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.pvt');
+        // Rust re-verifies the pair and swaps the bundle in atomically; a
+        // retry replaces the previous bundle of the same name.
+        final report = await Isolate.run(
+          () => XdRemuxFFI.makeLivePhotoBundle(still, movie, bundlePath),
+        );
+        final bundledStill = report['stillPath'] as String?;
+        if (report['success'] != true || bundledStill == null) {
+          throw StateError(
+            '${report['errorMessage'] ?? 'Live Photo bundle failed'}',
+          );
+        }
+        if (!XdRemuxFFI.livePhotoBundleValid(bundlePath)) {
+          throw StateError('Exported Live Photo bundle failed verification');
+        }
+        // The converted still now lives inside the bundle (with the pairing
+        // MakerNote); drop the unpaired intermediate copy.
+        if (File(outputPath).existsSync()) await File(outputPath).delete();
+        return bundledStill;
       }
       // A retry replaces the sibling MOV, rather than creating a numbered
       // file that checkpoint restoration would not be able to locate.
@@ -48,6 +82,7 @@ class MotionPhotoService {
       if (!XdRemuxFFI.livePhotoPairValid(outputPath, movTarget)) {
         throw StateError('Exported Live Photo pair failed verification');
       }
+      return outputPath;
     } finally {
       await staging.delete(recursive: true);
     }
@@ -82,7 +117,8 @@ class MotionPhotoService {
         audioChannels: (report['audioChannels'] as num?)?.toInt(),
         audioSampleRate: (report['audioSampleRate'] as num?)?.toInt(),
         audioDurationMs: (report['audioDurationMs'] as num?)?.toInt(),
-        presentationTimestampUs: (report['presentationTimestampUs'] as num?)?.toInt(),
+        presentationTimestampUs: (report['presentationTimestampUs'] as num?)
+            ?.toInt(),
         presentationSource: report['presentationSource'] as String?,
         primaryBytes: (report['primaryBytes'] as num?)?.toInt(),
         secondaryBytes: (report['secondaryBytes'] as num?)?.toInt(),
@@ -165,9 +201,7 @@ class MotionPhotoService {
   /// in the still byte range).
   static Future<String> extractStillToTemp(String inputPath) async {
     final temp = await getTemporaryDirectory();
-    final dir = Directory(
-      '${temp.path}${Platform.pathSeparator}motion_still',
-    );
+    final dir = Directory('${temp.path}${Platform.pathSeparator}motion_still');
     await dir.create(recursive: true);
     final report = XdRemuxFFI.motionPhotoSplit(inputPath, dir.path);
     if (report['success'] != true) {

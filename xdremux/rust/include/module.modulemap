@@ -1,0 +1,6 @@
+// Clang module for the xdremux-core C ABI. Swift: `import XDRemuxCoreC`.
+// Packaged into XDRemuxCore.xcframework by xdremux/rust/build_apple.sh.
+module XDRemuxCoreC {
+    header "xdremux_core.h"
+    export *
+}

@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-linux-${{ env.X265_TAG }}-asm
+          key: x265-linux-${{ env.X265_TAG }}-asm-10bit
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -56,6 +56,20 @@ jobs:
             --target x265-static --parallel 2
           cp xdremux/rust/vendor/x265/build_desktop/x265_config.h \
             xdremux/rust/vendor/x265/include/x265_config.h
+          # Optional Main10 encoder for the Styles linear thumbnail: same
+          # sources, EXPORT_C_API=OFF puts the objects in `namespace
+          # x265_10bit` so build.rs can link it next to the 8-bit archive.
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_desktop_10bit \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DXDREMUX_SKIP_RC=ON \
+            -DHIGH_BIT_DEPTH=ON \
+            -DEXPORT_C_API=OFF
+          cmake --build xdremux/rust/vendor/x265/build_desktop_10bit \
+            --target x265-static --parallel 2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -72,6 +86,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Test Apple SDK preflight guard
+        working-directory: .
+        run: python3 -m unittest discover -s tools/apple -p 'test_*.py' -v
+
+      - name: Test Android package ABI guard
+        working-directory: .
+        run: python3 -m unittest discover -s tools/android -p 'test_*.py' -v
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2

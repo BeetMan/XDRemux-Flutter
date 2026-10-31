@@ -3,12 +3,16 @@ name: Linux
 # Builds the Linux desktop release artifacts (AppImage + tar.gz) without
 # publishing, and can optionally attach them to an existing GitHub release.
 #
-# This is intentionally separate from release.yml: the tag-gated release job
-# validates a fixed set of shipping platforms, and Linux is currently a
-# dev/preview target (see docs/operations/building.md). Once Linux becomes a
-# first-class release platform, add this job to release.yml instead of
-# uploading from here.
+# Shared by PR checks, build-only dispatch and release.yml. Linux stays a
+# preview target even though its artifacts now participate in the release gate.
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Asset version (defaults to tag or pubspec)'
+        type: string
+        required: false
+        default: ''
   pull_request:
     branches: [main]
     paths:
@@ -114,12 +118,20 @@ jobs:
         run: |
           set -euo pipefail
           version="$REQUESTED_VERSION"
+          source_version="$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' \
+            apps/flutter/pubspec.yaml | head -n 1)"
+          if [[ -z "$version" && "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
           if [ -z "$version" ]; then
-            version="$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' \
-              apps/flutter/pubspec.yaml | head -n 1)"
+            version="$source_version"
           fi
           if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
             echo "::error::invalid version '$version'"
+            exit 1
+          fi
+          if [[ "${version%%-*}" != "$source_version" ]]; then
+            echo "::error::asset version $version does not match source version $source_version"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -179,7 +191,7 @@ jobs:
   attach-release:
     name: Attach to existing release (manual only)
     needs: linux-x64
-    if: github.event_name == 'workflow_dispatch' && inputs.attach_release_tag != ''
+    if: github.workflow == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.attach_release_tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write

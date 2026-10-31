@@ -28,6 +28,7 @@
 | [apple-photographic-styles.md](formats/apple-photographic-styles.md) | 风格编辑图层结构、bplist、生成策略 |
 | [iso-21496-1-gainmap.md](formats/iso-21496-1-gainmap.md) | 增益映射转换与编码约束 |
 | [hevc-hevc-conventions.md](formats/hevc-hevc-conventions.md) | 范围/矩阵/传输函数实测约定、双解码器验证法、陷阱清单 |
+| [live-photo-pvt.md](formats/live-photo-pvt.md) | Apple Live Photo `.pvt` 包结构、写入规则、照片 App 导入验证 |
 
 ## Rust 模块（modules/）
 
@@ -54,9 +55,17 @@
 | 文档 | 内容 |
 |---|---|
 | [testing/conformance-suite.md](testing/conformance-suite.md) | 对拍套件、golden corpus、加用例流程 |
+| [testing/styles-hdr-device-checklist.md](testing/styles-hdr-device-checklist.md) | Styles HDR 缩略图真机 A/B 测试清单（样本矩阵、自动预检、Photos 步骤、判定口径） |
 | [operations/building.md](operations/building.md) | 跨平台构建（含 Linux 本地开发）、变体说明（含鸿蒙 hap） |
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 四 workflow 剖析、runner 矩阵 |
+| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步 |
+
+## 写作与证据规范
+
+| 文档 | 内容 |
+|---|---|
+| [style-guide.md](style-guide.md) | 术语表、文档类型与模板、证据三类标记（已实测/推断/未验证）、排版与双语规则、提交前清单 |
 
 ## 研究记录（research/）
 
@@ -65,10 +74,15 @@
 | [harmonyos-support.md](research/harmonyos-support.md) | 鸿蒙支持研究全记录（已落地为正式平台） |
 | [motion-photo-parser-differential.md](research/motion-photo-parser-differential.md) | Motion Photo 解析器 Swift/Python/Rust 三方差分（12/12） |
 | [styles-upstream-logic-comparison.md](research/styles-upstream-logic-comparison.md) | key1 布局 + constrained solver 研究（研究闭环定案） |
+| [styles-upstream-20261024-gap.md](research/styles-upstream-20261024-gap.md) | 上游 Styles 分支 vs 我方差距（2026-10-25，含差距矩阵与 P0 建议） |
+| [x265-main10-feasibility-20261025.md](research/x265-main10-feasibility-20261025.md) | x265 Main10（10-bit）可行性：multilib 构建/链接配方、单帧 Rext 坑、接入风险 |
+| [gainmap-decode-feasibility-20261025.md](research/gainmap-decode-feasibility-20261025.md) | tmap 增益图解码可行性：item 布局实测、rust_h265 仅支持 4:2:0、三条可行路径 |
 | [cast-to-key1-study.md](research/cast-to-key1-study.md) | cast→key1 映射研究（结论：不存在文件级映射） |
 | [reverse-key1-eval-20260825.md](research/reverse-key1-eval-20260825.md) | ReverseKey1 Core ML 批量评估（34 样本） |
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
+| [oppo-gallery-17.10.5.md](research/oppo-gallery-17.10.5.md) | ColorOS 相册 17.10.5 静态阅读：HDR / 编辑 / 人像机制、OPPO 尾部布局实测、Find X8 Ultra 前置人像与大水印 |
+| [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#88 进展与差距矩阵（2026-10-30）：Standard key1 identity 争议、GPLv3 改授权、研究仓迁移；含 P0/P1/P2 规划 |
 
 ## 路线图
 
@@ -84,7 +98,12 @@
 
 ## 维护纪律
 
-1. 发版检查单含"相关 docs/ 页面是否更新"
+完整规则见 [style-guide.md](style-guide.md)（术语表、文档模板、证据三类标记）。要点：
+
+1. 发版检查单含"相关 docs/ 页面是否更新"；发版/合并后更新 [operations/current-status.md](operations/current-status.md)
 2. 代码注释引用文档页（如 `// see docs/formats/oppo-watermark.md §band-detection`）
-3. `docs/` 在 .gitignore 中，新增文档需 `git add -f`
-4. 中文为主，box 名/字段名保留英文
+3. `docs/` 在 .gitignore 中，新增文档需 `git add -f docs/<path>`
+4. 中文为主，box 名/字段名保留英文；术语按 style-guide §1.2 锁定写法
+5. 技术断言必须标「已实测 / 推断 / 未验证」并给可复现证据；**CI 绿 ≠ 真机验收**
+6. 引用上游（21Z121Z1/XDRemux）必须写 `branch @ commit` 与是否已并入 `upstream/main`，不能把未合并分支说成"上游已支持"
+

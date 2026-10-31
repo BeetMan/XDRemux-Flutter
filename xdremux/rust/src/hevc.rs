@@ -664,7 +664,12 @@ fn x265_encode_tiles_inner(
     // extraction) while every other tile is a pure IDR slice — the shape
     // ImageIO's ISO 21496-1 gain-map decoder expects (it reads the decoder
     // config from hvcC, not from each tile).
+    // Captured here: the worker threads below have no progress handle.
+    let progress_handle = crate::progress::current_handle();
     let encode_tile = |idx: usize, tile: &[u8]| -> std::io::Result<Vec<u8>> {
+        if crate::progress::is_cancelled_for(progress_handle) {
+            return Err(io_err(crate::progress::CANCELLED_MESSAGE));
+        }
         unsafe {
             let (param, encoder) = open_encoder(width, height, pixel_bytes, use_420, oppo_sdr, icc_rgb)?;
             let pic = x265_picture_alloc();
@@ -1153,6 +1158,17 @@ fn vps_ptl(vps: &[u8]) -> Option<(u8, u32, u8)> {
 /// 4:4:4 encoder), so its hvcC must claim chroma 1 even when the x265 fallback
 /// default is still 4:4:4.
 pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<Vec<u8>> {
+    extract_hvcc_config_with_chroma_and_depth(hevc_data, chroma, 8)
+}
+
+/// Like [`extract_hvcc_config_with_chroma`] but records the bit depth in the
+/// `hvcC` record. The Main10 linear thumbnail needs `bitDepthLuma/Chroma`
+/// = 2 (10-bit) instead of the 8-bit default.
+pub fn extract_hvcc_config_with_chroma_and_depth(
+    hevc_data: &[u8],
+    chroma: u8,
+    bit_depth: u8,
+) -> Option<Vec<u8>> {
     let nal_3b: &[u8] = &[0, 0, 1];
     let nal_4b: &[u8] = &[0, 0, 0, 1];
     let mut nal_positions: Vec<usize> = Vec::new();
@@ -1176,8 +1192,8 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
     let mut vps_nal: Option<&[u8]> = None;
     let mut sps_nal: Option<&[u8]> = None;
     let mut pps_nal: Option<&[u8]> = None;
-    let bit_depth_luma: u8 = 8;
-    let bit_depth_chroma: u8 = 8;
+    let bit_depth_luma: u8 = bit_depth;
+    let bit_depth_chroma: u8 = bit_depth;
 
     for i in 0..nal_positions.len() {
         let start_code_len = if hevc_data[nal_positions[i]..].starts_with(nal_4b) { 4 } else { 3 };
@@ -1258,6 +1274,118 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
 
     Some(hvcc)
 }
+
+/// True when this build linked the optional 10-bit (Main10) x265 archive.
+///
+/// When false the caller must fall back to the 8-bit Apple Log thumbnail; the
+/// 10-bit archive is built per platform and is not required everywhere yet
+/// (see `docs/research/x265-main10-feasibility-20261025.md`).
+pub fn main10_available() -> bool {
+    cfg!(xdremux_main10)
+}
+
+/// Convert one 16-bit Apple Log code (`0..=65535`) to a 10-bit sample.
+///
+/// The 16-bit codes are the native precision of the Styles Linear Thumbnail;
+/// x265's 10-bit build takes samples in `0..=1023`.
+pub fn code16_to_10bit(code: u16) -> u16 {
+    ((u32::from(code) * 1023 + 32_767) / 65_535) as u16
+}
+
+/// RGB (16-bit Apple Log codes) -> planar YUV 4:2:0 at 10-bit, BT.601 limited
+/// range (Y 64..=940, chroma 64..=960) which is what HEVC Main10 HEIF stills
+/// conventionally use.
+pub fn codes16_to_yuv420_10bit(
+    codes16: &[u16],
+    width: u32,
+    height: u32,
+) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
+    let (w, h) = (width as usize, height as usize);
+    let plane = w * h;
+    debug_assert_eq!(codes16.len(), plane * 3);
+    let mut y_plane = vec![0u16; plane];
+    let mut u_full = vec![0f32; plane];
+    let mut v_full = vec![0f32; plane];
+    for i in 0..plane {
+        let r = f32::from(code16_to_10bit(codes16[i * 3])) / 1023.0;
+        let g = f32::from(code16_to_10bit(codes16[i * 3 + 1])) / 1023.0;
+        let b = f32::from(code16_to_10bit(codes16[i * 3 + 2])) / 1023.0;
+        y_plane[i] = (64.0 + 876.0 * (0.299 * r + 0.587 * g + 0.114 * b))
+            .round()
+            .clamp(0.0, 1023.0) as u16;
+        u_full[i] = 512.0 + 896.0 * (-0.168_736 * r - 0.331_264 * g + 0.5 * b);
+        v_full[i] = 512.0 + 896.0 * (0.5 * r - 0.418_688 * g - 0.081_312 * b);
+    }
+    let cw = w.div_ceil(2);
+    let ch = h.div_ceil(2);
+    let mut u_plane = vec![0u16; cw * ch];
+    let mut v_plane = vec![0u16; cw * ch];
+    for cy in 0..ch {
+        for cx in 0..cw {
+            let (mut su, mut sv, mut count) = (0.0f32, 0.0f32, 0.0f32);
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let (x, y) = (cx * 2 + dx, cy * 2 + dy);
+                    if x < w && y < h {
+                        let index = y * w + x;
+                        su += u_full[index];
+                        sv += v_full[index];
+                        count += 1.0;
+                    }
+                }
+            }
+            let index = cy * cw + cx;
+            u_plane[index] = (su / count).round().clamp(0.0, 1023.0) as u16;
+            v_plane[index] = (sv / count).round().clamp(0.0, 1023.0) as u16;
+        }
+    }
+    (y_plane, u_plane, v_plane)
+}
+
+/// Encode one 16-bit Apple Log thumbnail raster as a Main10 HEVC picture.
+///
+/// Returns the Annex-B stream exactly as x265 produced it (parameter sets +
+/// one picture), ready for [`extract_hvcc_config_with_chroma_and_depth`] and
+/// [`drop_parameter_nals`].
+#[cfg(xdremux_main10)]
+pub fn encode_thumbnail_10bit(
+    codes16: &[u16],
+    width: u32,
+    height: u32,
+) -> std::io::Result<Vec<u8>> {
+    use std::os::raw::c_int;
+    if width == 0 || height == 0 {
+        return Err(io_err("10-bit thumbnail: zero extent"));
+    }
+    if codes16.len() != (width as usize) * (height as usize) * 3 {
+        return Err(io_err("10-bit thumbnail: raster size mismatch"));
+    }
+    let (y_plane, u_plane, v_plane) = codes16_to_yuv420_10bit(codes16, width, height);
+    let mut out_ptr: *mut u8 = std::ptr::null_mut();
+    let mut out_len: c_int = 0;
+    let status = unsafe {
+        crate::x265_ffi::xdremux_encode_10bit_planes(
+            y_plane.as_ptr(),
+            u_plane.as_ptr(),
+            v_plane.as_ptr(),
+            width as c_int,
+            height as c_int,
+            &mut out_ptr,
+            &mut out_len,
+        )
+    };
+    if status != 0 || out_ptr.is_null() || out_len <= 0 {
+        return Err(io_err(&format!(
+            "10-bit thumbnail: x265 bridge failed (status {status}, {out_len} bytes)"
+        )));
+    }
+    let stream = unsafe {
+        std::slice::from_raw_parts(out_ptr, out_len as usize).to_vec()
+    };
+    unsafe { crate::x265_ffi::xdremux_free_stream(out_ptr) };
+    Ok(stream)
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -1265,6 +1393,97 @@ pub fn extract_hvcc_config_with_chroma(hevc_data: &[u8], chroma: u8) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code16_to_10bit_endpoints_and_monotonic() {
+        assert_eq!(code16_to_10bit(0), 0);
+        assert_eq!(code16_to_10bit(65535), 1023);
+        assert_eq!(code16_to_10bit(32_768), 512);
+        let mut previous = 0u16;
+        for code in [0u16, 1024, 8192, 32768, 49152, 65535] {
+            let value = code16_to_10bit(code);
+            assert!(value >= previous, "not monotonic at {code}");
+            previous = value;
+        }
+    }
+
+    #[test]
+    fn codes16_to_yuv420_10bit_maps_white_and_black() {
+        let white = vec![65535u16; 4 * 4 * 3];
+        let (y, u, v) = codes16_to_yuv420_10bit(&white, 4, 4);
+        assert_eq!(y.len(), 16);
+        assert_eq!(u.len(), 4, "chroma is half resolution");
+        assert_eq!(v.len(), 4);
+        assert!((i32::from(y[0]) - 940).abs() <= 1, "white Y {}", y[0]);
+        assert!((i32::from(u[0]) - 512).abs() <= 1, "white U {}", u[0]);
+        assert!((i32::from(v[0]) - 512).abs() <= 1, "white V {}", v[0]);
+
+        let black = vec![0u16; 4 * 4 * 3];
+        let (y_black, _, _) = codes16_to_yuv420_10bit(&black, 4, 4);
+        assert!(
+            (i32::from(y_black[0]) - 64).abs() <= 1,
+            "black Y {}",
+            y_black[0]
+        );
+    }
+
+    #[cfg(xdremux_main10)]
+    #[test]
+    fn main10_thumbnail_encode_is_profile_2_and_10bit_hvcc() {
+        assert!(main10_available(), "test only runs with xdremux_main10");
+        // x265 requires at least one CTU per edge (64x64 by default).
+        let (w, h) = (64u32, 64u32);
+        let mut codes = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let code = ((x + y) * 65535 / (w + h - 2)) as u16;
+                codes.extend_from_slice(&[code, code, code]);
+            }
+        }
+        let stream = encode_thumbnail_10bit(&codes, w, h).expect("10-bit encode");
+        assert!(stream.len() > 100, "stream too small: {}", stream.len());
+        let hvcc = extract_hvcc_config_with_chroma_and_depth(&stream, 1, 10).expect("hvcC");
+        assert_eq!(hvcc[1] & 0x1f, 2, "SPS profile must be Main10 (2)");
+        assert_eq!(hvcc[17] & 0x07, 2, "hvcC bitDepthLuma must be 10-bit");
+        assert_eq!(hvcc[18] & 0x07, 2, "hvcC bitDepthChroma must be 10-bit");
+    }
+
+    #[cfg(xdremux_main10)]
+    #[test]
+    fn main10_thumbnail_reconstruction_matches_source_luma() {
+        use std::os::raw::c_int;
+        // Regression for 5512ea7: strides were passed in samples, x265 wants
+        // bytes, so every row was read from half the right offset and the
+        // picture came out as two squeezed copies.
+        let (w, h) = (128u32, 96u32);
+        let mut codes = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                // Asymmetric in x and y so a wrong row step cannot match.
+                let code = ((x * 3 + y * 5) % 256 * 256) as u16;
+                codes.extend_from_slice(&[code, code, code]);
+            }
+        }
+        let (y_plane, u_plane, v_plane) = codes16_to_yuv420_10bit(&codes, w, h);
+        let mut out_ptr: *mut u8 = std::ptr::null_mut();
+        let mut out_len: c_int = 0;
+        let mut psnr = -1.0f64;
+        let status = unsafe {
+            crate::x265_ffi::xdremux_encode_10bit_planes_checked(
+                y_plane.as_ptr(),
+                u_plane.as_ptr(),
+                v_plane.as_ptr(),
+                w as c_int,
+                h as c_int,
+                &mut out_ptr,
+                &mut out_len,
+                &mut psnr,
+            )
+        };
+        assert_eq!(status, 0, "10-bit encode failed");
+        unsafe { crate::x265_ffi::xdremux_free_stream(out_ptr) };
+        assert!(psnr > 35.0, "reconstructed luma PSNR {psnr:.1} dB: input layout is wrong");
+    }
 
     #[test]
     fn hevc_tile_gray_512() {

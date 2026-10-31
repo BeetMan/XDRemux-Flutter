@@ -131,12 +131,14 @@ fn tiff_u32(t: &[u8], off: usize, le: bool) -> Option<u32> {
     })
 }
 
-/// Locate the second image (gain map) via the MPF index IFD.
+/// Locate the second image (gain map) via the MPF index IFD. Returns `None`
+/// when the MP entry table lists only the primary image (OPPO Find N5 master
+/// mode live photos ship such a single-image MPF with no gain map).
 fn extract_gainmap_jpeg(
     data: &[u8],
     tiff_file_pos: usize,
     tiff_len: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<Option<Vec<u8>>, String> {
     let tiff = data
         .get(tiff_file_pos..tiff_file_pos + tiff_len)
         .ok_or("MPF TIFF payload out of range")?;
@@ -151,6 +153,7 @@ fn extract_gainmap_jpeg(
     let ifd_off = tiff_u32(tiff, 4, le).ok_or("MPF IFD offset missing")? as usize;
     let entry_count = tiff_u16(tiff, ifd_off, le).ok_or("MPF IFD truncated")? as usize;
     let mut mp_entries_off = None;
+    let mut mp_entries_len = 0usize;
     for i in 0..entry_count {
         let entry = ifd_off + 2 + i * 12;
         let tag = tiff_u16(tiff, entry, le).ok_or("MPF IFD entry truncated")?;
@@ -159,9 +162,14 @@ fn extract_gainmap_jpeg(
             // for MP entries, so it is always an offset relative to TIFF start.
             let value = tiff_u32(tiff, entry + 8, le).ok_or("MPF MP entry truncated")?;
             mp_entries_off = Some(value as usize);
+            mp_entries_len =
+                tiff_u32(tiff, entry + 4, le).ok_or("MPF MP entry truncated")? as usize;
         }
     }
     let mp_off = mp_entries_off.ok_or("MPF index IFD has no MP entry (0xB002)")?;
+    if mp_entries_len < 32 {
+        return Ok(None);
+    }
     // Entry 0 is the primary image; entry 1 is the gain map.
     let second = mp_off + 16;
     let size = tiff_u32(tiff, second + 4, le).ok_or("MPF gain-map size missing")? as usize;
@@ -179,7 +187,7 @@ fn extract_gainmap_jpeg(
     if !blob.starts_with(&[0xFF, 0xD8]) {
         return Err("MPF gain-map extent is not a JPEG".into());
     }
-    Ok(blob.to_vec())
+    Ok(Some(blob.to_vec()))
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +375,8 @@ pub fn neutral_meta_floats() -> Vec<f32> {
     ]
 }
 
+const HDRGM_NAMESPACE: &[u8] = b"http://ns.adobe.com/hdr-gain-map/1.0/";
+
 /// Returns None for non-JPEG input and identity metadata for ordinary SDR JPEG.
 /// A malformed declared gain map is an error, not an SDR fallback.
 pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
@@ -384,7 +394,22 @@ pub fn parse(data: &[u8]) -> Result<Option<UhdrJpeg>, String> {
             use_base_color_space: true,
         }));
     };
-    let gainmap = extract_gainmap_jpeg(data, tiff_pos, segments.mpf_tiff_len)?;
+    let Some(gainmap) = extract_gainmap_jpeg(data, tiff_pos, segments.mpf_tiff_len)? else {
+        // A single-image MPF is only an SDR JPEG when nothing in the primary
+        // promises a gain map; otherwise the declared gain map is missing.
+        let declares_hdrgm = segments.xmp.as_deref().is_some_and(|xmp| {
+            xmp.windows(HDRGM_NAMESPACE.len()).any(|w| w == HDRGM_NAMESPACE)
+        });
+        if declares_hdrgm || segments.iso_metadata.is_some() {
+            return Err("MPF lists no gain-map image although the primary declares one".into());
+        }
+        return Ok(Some(UhdrJpeg {
+            gainmap_jpeg: IDENTITY_GAINMAP_JPEG.to_vec(),
+            meta_floats: neutral_meta_floats(),
+            exif_tiff: segments.exif_tiff,
+            use_base_color_space: true,
+        }));
+    };
     // Per the Ultra HDR spec the hdrgm tone-map metadata lives in the gain
     // map JPEG's own XMP; fall back to the primary's XMP for producers that
     // put it there instead.
@@ -857,6 +882,51 @@ mod tests {
         assert_eq!(&info.meta_floats[0..3], &[1.0, 1.0, 1.0]);
         assert_eq!(&info.meta_floats[4..7], &[1.0, 1.0, 1.0]);
         assert_eq!(info.meta_floats[19], 0.0);
+    }
+
+    fn single_image_mpf_jpeg(primary_xmp: Option<&[u8]>) -> Vec<u8> {
+        // Find N5 master-mode live photo layout: MPF lists only the primary.
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"MM\x00*");
+        tiff.extend_from_slice(&8u32.to_be_bytes());
+        tiff.extend_from_slice(&2u16.to_be_bytes());
+        tiff.extend_from_slice(&0xB001u16.to_be_bytes());
+        tiff.extend_from_slice(&4u16.to_be_bytes()); // LONG
+        tiff.extend_from_slice(&1u32.to_be_bytes());
+        tiff.extend_from_slice(&1u32.to_be_bytes()); // NumberOfImages = 1
+        tiff.extend_from_slice(&0xB002u16.to_be_bytes());
+        tiff.extend_from_slice(&7u16.to_be_bytes()); // UNDEFINED
+        tiff.extend_from_slice(&16u32.to_be_bytes()); // 1 image * 16 bytes
+        tiff.extend_from_slice(&38u32.to_be_bytes());
+        tiff.extend_from_slice(&0u32.to_be_bytes()); // next IFD
+        tiff.extend_from_slice(&0x0003_0000u32.to_be_bytes());
+        tiff.extend_from_slice(&1000u32.to_be_bytes());
+        tiff.extend_from_slice(&[0; 8]);
+        let mut mpf = b"MPF\0".to_vec();
+        mpf.extend_from_slice(&tiff);
+        let mut file = vec![0xff, 0xd8];
+        if let Some(xmp) = primary_xmp {
+            let mut payload = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+            payload.extend_from_slice(xmp);
+            file.extend(appseg(0xe1, &payload));
+        }
+        file.extend(appseg(0xe2, &mpf));
+        file.extend(&tiny_jpeg(0x44, 64)[2..]);
+        file
+    }
+
+    #[test]
+    fn single_image_mpf_is_treated_as_plain_sdr() {
+        let info = parse(&single_image_mpf_jpeg(None)).expect("ok").expect("identity gain map");
+        assert_eq!(info.gainmap_jpeg, IDENTITY_GAINMAP_JPEG);
+        assert_eq!(info.meta_floats, neutral_meta_floats());
+    }
+
+    #[test]
+    fn single_image_mpf_with_declared_gainmap_is_an_error() {
+        let xmp = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0"/></rdf:RDF></x:xmpmeta>"#;
+        let error = parse(&single_image_mpf_jpeg(Some(xmp))).err().expect("missing gain map");
+        assert!(error.contains("no gain-map image"), "{error}");
     }
 
     #[test]

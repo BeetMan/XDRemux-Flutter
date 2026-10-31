@@ -1,6 +1,6 @@
 # 发版流程
 
-> 触发：推送 `v*` tag 到 GitHub -> `release.yml` 全自动构建四平台产物并挂到 Release。
+> 触发：推送 `v*` tag 到 GitHub -> `release.yml` 构建五个平台产物并挂到 Release；Flutter 鸿蒙另行本地构建和补附件。
 > **tag 与 Release 文案由维护者掌控**：CI 只负责产物，不覆盖手写文案。
 
 ## 1. 发版清单
@@ -24,6 +24,9 @@ XDRemux-Windows-arm64-<tag>-Setup.exe
 XDRemux-Android-<tag>.apk
 XDRemux-iOS-<tag>-unsigned.ipa           （如启用）
 XDRemux-macOS-<tag>.dmg
+XDRemux-Linux-<tag>-x64.AppImage
+XDRemux-Linux-<tag>-x64.tar.gz
+XDRemux-Linux-<tag>-x64.sha256
 XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 ```
 
@@ -37,19 +40,30 @@ XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 | Windows ARM64 | windows-11-arm | arm64 Setup.exe（x265 无汇编） |
 | Android | ubuntu-latest | APK（SDK 36 / build-tools 36.0.0） |
 | macOS | macos-latest | DMG |
-| iOS | macos-latest | unsigned IPA（打包前校验所有 Dart FFI 符号） |
+| iOS | xcode-27，显式选 Xcode 27.1 | unsigned IPA（编译前验证 Duo API，打包前校验所有 Dart FFI 符号） |
+| Linux | ubuntu-22.04（复用 linux.yml） | x64 AppImage / tar.gz / sha256（预览） |
 | publish | ubuntu-latest | 汇总挂载（`needs` 含全部构建 job） |
 
 macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 按 runner 实际 VS 版本选择 CMake 生成器。
 
-`publish` 要求 **windows / android / macos / ios 四个 job 全部成功**，并额外校验四类产物文件都已落地，缺任何一个都不创建 Release（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。
+`publish` 要求 **windows / android / macos / ios / linux 全部成功**，并额外校验各类产物文件都已落地，缺任何一个都不创建 Release（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。
+
+### 3.1 只构建的发版预检
+
+在实际准备分支上运行 `release.yml` 的 `workflow_dispatch`，`platforms=all` 构建五平台，`platforms=ios` / `android` 可单独重跑对应平台；`publish` 仍受 tag ref 门禁保护。不要为了预检创建 `v*` 标签。
+
+Android 仅交付 ARM64。`defaultConfig.ndk` 先清空 Flutter 自动填充的 ABI，再设置 arm64-v8a，CI 显式 `--target-platform android-arm64`。`tools/android/verify_apk.py` 在上传前检查 APK CRC、实际 ABI、必需的 Flutter/AOT/Rust/C++ 库以及每份库的 ELF 架构，不能只看 Gradle 配置或构建成功。
+
+iOS 使用 `xcode-27` 预览 runner，并显式设置 `DEVELOPER_DIR=/Applications/Xcode_27.1.app/Contents/Developer`；该镜像默认仍可能是 27.0，不能只换 runner 名字。`tools/apple/check_ios_sdk.sh` 校验 iPhoneOS SDK >= 27.1，并实际 typecheck `verticalBarEdge` / leading / trailing。应用最低部署目标仍为 iOS 15.0。若 runner 排队或缺少该 Xcode，停止该平台预检，使用装有新 SDK 的 Mac 完成归档，不删除 Duo 代码、不用旧 SDK 伪造成功。
+
+Linux 使用 `workflow_call` 复用构建；tag 后缀用于资产命名，并核对源码版本。独立 Linux 手动上传 job 不会在 Release 调用时执行；统一附件由 `publish` 汇总上传。Flutter OHOS 仍需 §3.5 的本地出包，CI 的 OHOS Rust smoke 不等于 HAP 验收。
 
 ## 3.5 鸿蒙 hap（本地发布流程）
 
 鸿蒙不进 CI（见 `operations/ci.md` §2.5）。本地发布：
 
 1. `bash xdremux/rust/build_ohos.sh` 构建 Rust 核心，产物拷到 `apps/flutter/ohos/entry/libs/arm64-v8a/`
-2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）
+2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）；macOS 用 `tools/ohos/build_hap.sh --profile`（需 Rosetta，见 `building.md`）
 3. 取签名构建的 `entry-default-unsigned.hap` 中间产物作为公开包（hap 签名是 zip 块，unsigned 中间产物可直接被侧载工具签名）
 4. 手动挂到 Release 资产
 

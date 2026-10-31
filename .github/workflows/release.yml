@@ -12,7 +12,7 @@ on:
         description: 'Preflight build scope (tag releases always build all platforms)'
         type: choice
         default: all
-        options: [all, ios]
+        options: [all, ios, android]
 
 permissions:
   contents: write
@@ -24,7 +24,7 @@ env:
 
 jobs:
   windows:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows installer
     runs-on: windows-2022
     steps:
@@ -154,7 +154,7 @@ jobs:
           if-no-files-found: error
 
   windows-arm64:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: Windows ARM64 installer (experimental)
     # Flutter publishes no Windows ARM64 SDK for the pinned version (verified
     # 2026-10-21: "Unable to determine Flutter version for channel: stable
@@ -350,11 +350,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+          key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
           # Tag-triggered runs cannot hit main-branch caches (see the Windows
           # job above); restore-keys falls back to the latest main-branch build.
           restore-keys: |
-            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v3-${{ env.ANDROID_NDK_VERSION }}
+            x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
 
       - name: Build x265
         if: steps.x265-cache.outputs.cache-hit != 'true'
@@ -394,6 +394,26 @@ jobs:
             --target x265-static --parallel 2
           cp xdremux/rust/vendor/x265/build_android/x265_config.h \
             xdremux/rust/vendor/x265/include/x265_config.h
+          # Optional Main10 encoder for the Styles linear thumbnail. Same
+          # sources, EXPORT_C_API=OFF puts the objects in namespace x265_10bit
+          # so build.rs links it next to the 8-bit archive.
+          cmake -S xdremux/rust/vendor/x265/source \
+            -B xdremux/rust/vendor/x265/build_android_10bit \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_CLI=OFF \
+            -DENABLE_SVE=OFF \
+            -DENABLE_SVE2=OFF \
+            -DENABLE_SVE2_BITPERM=OFF \
+            -DXDREMUX_SKIP_RC=ON \
+            -DHIGH_BIT_DEPTH=ON \
+            -DEXPORT_C_API=OFF
+          cmake --build xdremux/rust/vendor/x265/build_android_10bit \
+            --target x265-static --parallel 2
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -487,7 +507,10 @@ jobs:
 
       - name: Build Android APK
         working-directory: apps/flutter
-        run: flutter build apk --release --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+        run: flutter build apk --release --target-platform android-arm64 --build-name="$APP_VERSION" --build-number="$APP_BUILD_NUMBER"
+
+      - name: Verify Android ABI and native payload
+        run: python3 tools/android/verify_apk.py apps/flutter/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Rename APK for release
         shell: bash
@@ -503,7 +526,7 @@ jobs:
           if-no-files-found: error
 
   macos:
-    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'ios'
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
     name: macOS DMG
     runs-on: macos-latest
     steps:
@@ -614,20 +637,27 @@ jobs:
           if-no-files-found: error
 
   ios:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'android'
     name: iOS unsigned IPA
-    runs-on: macos-latest
+    # macos-latest still selects Xcode 26.x. Duo uses typed iOS 27.1 APIs.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Verify iPhone Duo SDK and APIs
+        run: bash tools/apple/check_ios_sdk.sh
 
       - name: Restore x265 iOS build
         id: x265-cache
         uses: actions/cache@v4
         with:
           path: xdremux/rust/vendor/x265
-          key: x265-ios-${{ env.X265_TAG }}
-          restore-keys: |
-            x265-ios-${{ env.X265_TAG }}
+          # SDK-specific cache: do not reuse Xcode 26 object files.
+          # -main10: the cached tree now also holds build_ios_10bit.
+          key: x265-ios-sdk27.1-main10-${{ env.X265_TAG }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -722,6 +752,11 @@ jobs:
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
           if-no-files-found: error
 
+  linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all'
+    name: Linux preview packages
+    uses: ./.github/workflows/linux.yml
+
   publish:
     name: Publish GitHub Release
     # Every shipping platform must have built before the release exists: a
@@ -731,7 +766,7 @@ jobs:
     # gate: it is experimental and continue-on-error.
     # windows-arm64 must still be in `needs` (not the gate): its artifact upload
     # races the download otherwise (pre.2 shipped without it).
-    needs: [windows, windows-arm64, android, macos, ios]
+    needs: [windows, windows-arm64, android, macos, ios, linux]
     # Folded to one line on purpose: the expression parser must see a single
     # string, not YAML newlines.
     if: >-
@@ -740,6 +775,7 @@ jobs:
       && needs.android.result == 'success'
       && needs.macos.result == 'success'
       && needs.ios.result == 'success'
+      && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -761,7 +797,10 @@ jobs:
             "dist/windows-installer/XDRemux-Windows-*-Setup.exe" \
             "dist/android-apk/XDRemux-Android-*.apk" \
             "dist/macos-dmg/XDRemux-macOS-*.dmg" \
-            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa"; do
+            "dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa" \
+            "dist/linux-x64-release/XDRemux-Linux-*.AppImage" \
+            "dist/linux-x64-release/XDRemux-Linux-*.tar.gz" \
+            "dist/linux-x64-release/XDRemux-Linux-*.sha256"; do
             if compgen -G "$pattern" >/dev/null; then
               echo "found: $pattern"
             else
@@ -785,3 +824,6 @@ jobs:
             dist/android-apk/XDRemux-Android-*.apk
             dist/macos-dmg/XDRemux-macOS-*.dmg
             dist/ios-ipa/XDRemux-iOS-*-unsigned.ipa
+            dist/linux-x64-release/XDRemux-Linux-*.AppImage
+            dist/linux-x64-release/XDRemux-Linux-*.tar.gz
+            dist/linux-x64-release/XDRemux-Linux-*.sha256

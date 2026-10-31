@@ -11,6 +11,7 @@ pub mod container_build;
 pub mod edr;
 pub mod exif;
 pub mod live_photo;
+pub mod live_photo_bundle;
 pub mod motion_photo;
 pub mod photo_details;
 pub mod uhdr_jpeg;
@@ -26,6 +27,7 @@ pub mod isobmff_write;
 pub mod jpeg_decode;
 mod jpeg_color;
 mod jpeg_gainmap_metadata;
+pub mod apple_log;
 pub mod linear_thumbnail;
 pub mod progress;
 pub mod preview;
@@ -40,6 +42,7 @@ pub mod styles_attach;
 mod styles_consts;
 mod apple_note_payload;
 mod styles_graft;
+pub mod styles_fit;
 pub mod styles_native;
 pub mod styles_scaffold;
 
@@ -468,6 +471,65 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
         1
     } else {
         0
+    }
+}
+
+/// Package a composed still HEIC + MOV pair into an Apple Live Photo bundle
+/// directory (`bundle_path`, must end with `.pvt`). The pair is verified
+/// first and copied byte-for-byte; an existing bundle of the same name is
+/// replaced. Returns a JSON report with the bundle and inner file paths.
+#[no_mangle]
+pub extern "C" fn xdremux_make_live_photo_bundle(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+    bundle_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if still_path.is_null() || mov_path.is_null() || bundle_path.is_null() {
+            return Err("still/mov/bundle path is missing".into());
+        }
+        let read = |p: *const c_char, what: &str| -> Result<String, String> {
+            unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .map(str::to_string)
+                .map_err(|_| format!("{what} path is not valid UTF-8"))
+        };
+        let still = read(still_path, "still")?;
+        let mov = read(mov_path, "mov")?;
+        let bundle = read(bundle_path, "bundle")?;
+        let paths = live_photo_bundle::write_bundle(
+            std::path::Path::new(&still),
+            std::path::Path::new(&mov),
+            std::path::Path::new(&bundle),
+        )?;
+        Ok(serde_json::json!({
+            "success": true,
+            "bundlePath": paths.bundle.to_string_lossy(),
+            "stillPath": paths.still.to_string_lossy(),
+            "videoPath": paths.movie.to_string_lossy(),
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Validate a `.pvt` Live Photo bundle: metadata.plist present, exactly one
+/// still + one MOV sharing a stem, matching content identifiers. Returns 1
+/// when valid.
+#[no_mangle]
+pub extern "C" fn xdremux_live_photo_bundle_valid(bundle_path: *const c_char) -> u8 {
+    if bundle_path.is_null() {
+        return 0;
+    }
+    match unsafe { CStr::from_ptr(bundle_path) }.to_str() {
+        Ok(p) if live_photo_bundle::bundle_is_valid(std::path::Path::new(p)) => 1,
+        _ => 0,
     }
 }
 
@@ -1292,6 +1354,17 @@ pub extern "C" fn xdremux_progress_end(handle: u32) {
     progress::end_progress_with(handle);
 }
 
+/// Ask the conversion running under `handle` (from
+/// [xdremux_progress_begin]) to stop. Safe from any thread. The worker
+/// checks the flag between tiles and returns a failed [ConversionResult]
+/// whose `error_message` is "conversion cancelled"; the caller still owns
+/// the handle and releases it with [xdremux_progress_end]. The partially
+/// written output must be deleted by the caller.
+#[no_mangle]
+pub extern "C" fn xdremux_progress_cancel(handle: u32) {
+    progress::cancel(handle);
+}
+
 #[no_mangle]
 pub extern "C" fn xdremux_convert(
     input_path: *const c_char,
@@ -1736,7 +1809,14 @@ fn xdremux_convert_impl(
                 }
             }
             if apple_photographic_styles {
-                if let Err(error) = finalize_native_styles(&standard_output, output) {
+                // Path 3 of the gain-map feasibility note: hand the already
+                // reconstructed gain-map plane to the thumbnail generator so
+                // the Apple Log codes carry HDR headroom without decoding the
+                // HEVC-coded tmap gain map.
+                let gain_map = thumbnail_gain_map(&extracted, &source);
+                if let Err(error) =
+                    finalize_native_styles(&standard_output, output, gain_map.as_ref())
+                {
                     let _ = std::fs::remove_file(&standard_output);
                     return ConversionResult {
                         success: false,
@@ -1785,10 +1865,167 @@ fn xdremux_convert_impl(
     }
 }
 
-fn finalize_native_styles(base_path: &str, output_path: &str) -> Result<(), String> {
+/// Decide whether the stored gain map lives in the presentation frame.
+///
+/// Mirrors the writer's `primary_is_presentation_oriented` rule: EXIF
+/// orientation non-normal **and** the primary's `irot` absent or zero means the
+/// tiles are already presentation-oriented, so the gain map was oriented to
+/// that frame too.
+fn gain_map_needs_orientation(
+    orientation: exif::ExifOrientation,
+    primary_irot_quarter_turns: Option<u8>,
+) -> bool {
+    !matches!(orientation, exif::ExifOrientation::Normal)
+        && primary_irot_quarter_turns == Some(0)
+}
+
+/// Orientation the stored gain map needs to match the decoded thumbnail base.
+///
+/// The writer keeps the gain map in the primary's storage orientation, and
+/// orients it to the presentation frame only when the primary tiles are already
+/// presentation-oriented (EXIF orientation non-normal **and** `irot` absent or
+/// zero). The linear thumbnail decodes the presentation-oriented base and
+/// un-rotates it with `irot`, so for that same case the in-memory gain-map
+/// plane has to be oriented here too; otherwise a rotated source would apply
+/// the gain map along the wrong axes.
+fn gain_map_plane_orientation(source: &[u8]) -> Option<exif::ExifOrientation> {
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    let idat = isobmff::find_idat_box(source);
+    let orientation = exif::read_heif_exif_orientation(
+        source,
+        &meta.items,
+        &meta.iloc_entries,
+        idat.as_ref(),
+    )
+    .ok()?;
+    if matches!(orientation, exif::ExifOrientation::Normal) {
+        return None;
+    }
+    let primary_irot = meta
+        .ipma_entries
+        .iter()
+        .find(|entry| entry.item_id == meta.primary_id)
+        .and_then(|entry| {
+            entry.associations.iter().find_map(|(index, _)| {
+                meta.props
+                    .iter()
+                    .find(|property| property.index == *index && property.ptype == "irot")
+            })
+        })
+        .and_then(|property| isobmff::irot_quarter_turns(&property.raw).ok());
+    if gain_map_needs_orientation(orientation, primary_irot) {
+        Some(orientation)
+    } else {
+        None
+    }
+}
+
+/// Apply [`gain_map_plane_orientation`] to a single-channel gain plane.
+fn orient_gain_plane(
+    luma: Vec<u8>,
+    width: u32,
+    height: u32,
+    orientation: Option<exif::ExifOrientation>,
+) -> (Vec<u8>, u32, u32) {
+    let Some(orientation) = orientation else {
+        return (luma, width, height);
+    };
+    match isobmff_write::orient_gainmap_pixels(
+        &luma,
+        width,
+        height,
+        1,
+        width as usize,
+        orientation,
+    ) {
+        Ok(oriented) => oriented,
+        Err(_) => (luma, width, height),
+    }
+}
+
+/// Build the gain-map plane for the linear thumbnail from data the conversion
+/// pipeline already decoded ("path 3" of the gain-map feasibility note): the
+/// UHDR gain-map JPEG, or the LHDR mask run through the same knee
+/// reconstruction the writer uses. Returns `None` when the source carries no
+/// usable headroom, leaving the thumbnail on the SDR-only path.
+fn thumbnail_gain_map(
+    extracted: &container::ExtractedLhdr,
+    source: &[u8],
+) -> Option<linear_thumbnail::OwnedGainMap> {
+    let orientation = gain_map_plane_orientation(source);
+    if let Some(gainmap_jpeg) = extracted.gainmap_data.as_deref() {
+        let (rgb, width, height) = jpeg_decode::decode_jpeg_to_rgb(gainmap_jpeg).ok()?;
+        if width == 0 || height == 0 || rgb.len() % 3 != 0 {
+            return None;
+        }
+        let luma: Vec<u8> = rgb
+            .chunks_exact(3)
+            .map(|pixel| {
+                let value = 0.299 * f32::from(pixel[0])
+                    + 0.587 * f32::from(pixel[1])
+                    + 0.114 * f32::from(pixel[2]);
+                value.round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        let info = iso21496::parse_oppo_uhdr_info(&extracted.meta_floats).ok()?;
+        let min_gain = info
+            .ratio_min
+            .iter()
+            .copied()
+            .fold(f32::MAX, f32::min)
+            .max(1.0);
+        let max_gain = info.ratio_max.iter().copied().fold(f32::MIN, f32::max);
+        if !(max_gain > 1.0) || !max_gain.is_finite() {
+            return None;
+        }
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain,
+            max_gain,
+        });
+    }
+    if let Some(mask_jpeg) = extracted.mask_data.as_deref() {
+        let (mask_pixels, width, height) = jpeg_decode::decode_jpeg_to_gray(mask_jpeg).ok()?;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let edr = edr::edr_scale_calculator(&extracted.meta_floats);
+        if !(edr > 1.0) || !edr.is_finite() {
+            return None;
+        }
+        let version = extracted.meta_floats.first().copied().unwrap_or(3.0);
+        let luma = gainmap::reconstruct(
+            &mask_pixels,
+            width as usize,
+            height as usize,
+            width as usize,
+            edr,
+            version,
+        );
+        let (luma, width, height) = orient_gain_plane(luma, width, height, orientation);
+        return Some(linear_thumbnail::OwnedGainMap {
+            luma,
+            width,
+            height,
+            min_gain: 1.0,
+            max_gain: edr,
+        });
+    }
+    None
+}
+
+fn finalize_native_styles(
+    base_path: &str,
+    output_path: &str,
+    gain_map: Option<&linear_thumbnail::OwnedGainMap>,
+) -> Result<(), String> {
     let base = std::fs::read(base_path)
         .map_err(|e| format!("read Rust Styles base output: {e}"))?;
-    let styled = styles_native::styles_native(&base)
+    let plane = gain_map.map(|owned| owned.plane());
+    let styled = styles_native::styles_native_with_gain_map(&base, plane.as_ref())
         .map_err(|e| format!("Rust Photographic Styles: {e}"))?;
     std::fs::write(output_path, styled)
         .map_err(|e| format!("write Rust Photographic Styles output: {e}"))?;
@@ -2726,6 +2963,54 @@ pub extern "C" fn xdremux_free_result(result: ConversionResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gain_plane_orientation_follows_exif_transform() {
+        // 3x2 luma plane rotated 90 degrees clockwise becomes 2x3.
+        let luma = vec![1u8, 2, 3, 4, 5, 6];
+        let (rotated, width, height) = orient_gain_plane(
+            luma.clone(),
+            3,
+            2,
+            Some(crate::exif::ExifOrientation::Rotate90Clockwise),
+        );
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(rotated.len(), luma.len());
+        assert_ne!(rotated, luma, "rotation must reorder the pixels");
+
+        // No orientation means the plane is passed through untouched.
+        let (same, same_w, same_h) = orient_gain_plane(luma.clone(), 3, 2, None);
+        assert_eq!((same_w, same_h), (3, 2));
+        assert_eq!(same, luma);
+    }
+
+    #[test]
+    fn gain_map_orientation_decision_matches_writer_rule() {
+        use crate::exif::ExifOrientation;
+        // Normal EXIF never needs the extra transform.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Normal,
+            Some(0)
+        ));
+        // Presentation-oriented primary (non-normal EXIF, irot == 0).
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(0)
+        ));
+        assert!(gain_map_needs_orientation(
+            ExifOrientation::FlipHorizontal,
+            Some(0)
+        ));
+        // Storage-oriented primary keeps `irot`, so the gain map stays as-is.
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            Some(1)
+        ));
+        assert!(!gain_map_needs_orientation(
+            ExifOrientation::Rotate90Clockwise,
+            None
+        ));
+    }
 
     #[test]
     fn lossy_gainmap_promotion_is_rejected_only_for_clean_iso_output() {
