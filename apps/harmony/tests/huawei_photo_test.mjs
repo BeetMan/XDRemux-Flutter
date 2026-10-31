@@ -30,7 +30,7 @@ assert.throws(() => verifyStillExtraction('{"success":false,"errorMessage":"bad 
 assert.throws(() => verifyStillExtraction('{"success":true,"stillBytes":0}'), /提取失败/);
 assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: false, applePhotographicStyles3: false }), true);
 assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: true }), true);
-assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: false }), false);
+assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: false }), true);
 assert.equal(livePhotoStylesCompatible({}), false);
 assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles-native","texture"]}'), true);
 assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles"]}'), false);

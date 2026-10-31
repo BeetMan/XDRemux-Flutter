@@ -47,9 +47,10 @@ export function livePhotoStylesCompatible(result: {
   applePhotographicStyles?: boolean;
   applePhotographicStyles3?: boolean;
 }): boolean {
-  // Older results have no immutable style record, so require reconversion.
-  return result.applePhotographicStyles !== undefined &&
-    (result.applePhotographicStyles !== true || result.applePhotographicStyles3 === true);
+  // Styles 2 and 3 both pair since core 0.4.6 writes the MOV style tracks
+  // Photos' Live Photo editor needs (main #46/#51). Older results have no
+  // immutable style record, so require reconversion.
+  return result.applePhotographicStyles !== undefined;
 }
 
 export function mergeHuaweiInspection(details: NativePhotoDetails, json: string): NativePhotoDetails {

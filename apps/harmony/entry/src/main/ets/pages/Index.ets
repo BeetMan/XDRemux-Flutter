@@ -2141,7 +2141,7 @@ struct Index {
       return;
     }
     if (item === undefined || !this.canMakeLivePhotoPair() || this.motionInspection.report === undefined) {
-      this.operationStatus = '请先识别 Motion Photo，并转换 Apple HEIC；仅开启摄影风格 2 时不支持 Live Photo 配对，需改用摄影风格 3 或关闭风格并重新转换';
+      this.operationStatus = '请先识别 Motion Photo，并转换 Apple HEIC；旧版本的转换结果缺少风格记录，需重新转换';
       return;
     }
     const result: QueueResult | undefined = item.result;
@@ -2230,7 +2230,7 @@ struct Index {
       await this.inspectSelectedMotionPhoto();
     }
     if (this.selectedItemId !== item.id || !this.canMakeLivePhotoPair()) {
-      this.operationStatus = '仅开启摄影风格 2 时不支持 Live Photo 配对；请选择摄影风格 3 或关闭风格后重新转换';
+      this.operationStatus = '当前转换结果不能配对 Live Photo；旧版本的结果缺少风格记录，请重新转换';
       return;
     }
     if (!this.livePhotoPairCache.has(key)) await this.makeSelectedLivePhotoPair();
@@ -7197,10 +7197,7 @@ struct Index {
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 12, bottom: 4 });
-        Text(this.selectedItem()?.result?.applePhotographicStyles === true &&
-          this.selectedItem()?.result?.applePhotographicStyles3 !== true
-          ? '当前结果只含摄影风格 2，不能配对 Live Photo；请改用摄影风格 3 或关闭风格后重新转换。'
-          : this.canMakeLivePhotoPair()
+        Text(this.canMakeLivePhotoPair()
           ? '来源已绑定：当前 Motion Photo 原图 + 同一原图对应的 Apple HEIC 转换结果。'
           : '请先将当前 Motion Photo 原图转换为 Apple HEIC；旧转换记录缺少来源绑定时需重新转换。')
           .fontSize(12)
