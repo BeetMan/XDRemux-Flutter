@@ -22,7 +22,7 @@ cd "$(dirname "$0")"   # -> xdremux/rust
 NATIVE="${OHOS_NATIVE:-C:/PROGRA~1/Huawei/DEVECO~1/sdk/default/OPENHA~1/native}"
 TARGET=aarch64-unknown-linux-ohos
 TARGET_UNDERSCORE=${TARGET//-/_}
-TARGET_UPPER=${TARGET_UNDERSCORE^^}
+TARGET_UPPER=$(printf %s "$TARGET_UNDERSCORE" | tr "[:lower:]" "[:upper:]")  # bash 3.2 (macOS) has no ${x^^}
 LLVM_TARGET=aarch64-linux-ohos
 SYSROOT="$NATIVE/sysroot"
 
@@ -42,7 +42,7 @@ echo "==> x265 (OHOS arm64-v8a, no assembly)"
 if [ ! -f vendor/x265/build_ohos/libx265.a ]; then
   cmake -S vendor/x265/source -B vendor/x265/build_ohos \
     -G Ninja \
-    "${NINJA[@]}" \
+    ${NINJA[@]+"${NINJA[@]}"} \
     -DCMAKE_TOOLCHAIN_FILE="$NATIVE/build/cmake/ohos.toolchain.cmake" \
     -DOHOS_ARCH=arm64-v8a \
     -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
