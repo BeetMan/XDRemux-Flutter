@@ -1,6 +1,6 @@
 # 摄影风格管线（styles pipeline）
 
-> 对应代码：`styles_scaffold.rs` -> `styles_native.rs`（主路径）、`styles_graft.rs`（金样移植）、`styles_bplist.rs`（bplist 写入器）、`styles_consts.rs`（常量表）。
+> 对应代码：`styles_scaffold.rs` -> `styles_native.rs`（主路径）、`styles_fit.rs`（每图 key 1 / GTC 拟合）、`styles_graft.rs`（金样移植）、`styles_attach.rs`（给已有 HEIC 补风格项）、`styles_bplist.rs`（bplist 写入器）、`styles_consts.rs`（常量表）；摄影风格 3：`texture_styles.rs`、`semantic_mattes.rs`；实况：`live_photo_styles.rs`。
 >
 > 目标：把 OPPO 原始照片转换为**可在 Apple 照片中继续编辑**的 HEIC——保留摄影风格编辑图（Photographic Styles graph），使 iPhone 上的风格调整可以叠加在转换结果之上。
 
@@ -92,9 +92,9 @@ Apple 风格文件的核心是 `cdsc` / `auxl` / `dimg` 引用网络：
 Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platform>_10bit`（Windows 也接受 `build_windows_10bit/Release`），`build.rs` 会自动把它复制成唯一库名 `x265-main10` 并定义 `cfg(xdremux_main10)`；库缺失时自动回退 8-bit。构建配方与坑位见 `docs/research/x265-main10-feasibility-20261025.md`。CI 已在 Ubuntu 上同时构建 8-bit 与 10-bit 归档（`.github/workflows/ci.yml`），所以 `cargo test --workspace` 会覆盖 Main10 路径。
 
 后续（P1）：
-1. ~~10-bit Main10 编码~~ **已完成（构建期可选）**；剩余：为 Linux / Android / iOS / OHOS 产出 10-bit 静态库并纳入 CI；
-2. 增益图解码（HEVC tile 解码）打通后，把 base 分辨率的 gain map 应用到线性光再重采样，恢复 HDR 高光；
-3. 真机 A/B：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度与 10-bit 缩略图接受度。
+1. ~~10-bit Main10 编码~~ **已完成**：Android / iOS / 鸿蒙发布包为 10-bit（0.4.6），Linux（`ci.yml`）与 macOS（`apple-ci.yml`）CI 构建 10-bit；macOS / Windows 发布包仍 8-bit；Main10 行步长 bug 已修（`7721321`，见 `modules/hevc-x265.md` §1.1）；
+2. ~~增益图应用~~ **转换路径已完成**（内存增益图乘入 scene-linear，`3bc256a`）；剩余：原生 Apple tmap 文件重编码需解 HEVC 增益图（`rust_h265` 仅支持 4:2:0，见 `docs/research/gainmap-decode-feasibility-20261025.md`）；
+3. 真机 A/B（0.4.6 已在 iPhone 16e 与 macOS 27.2 做维护者验收，完整清单未跑）：对照原生文件在 Photos 风格选择器里的观感，确认 baseline exposure 的绝对亮度与 10-bit 缩略图接受度。
 
 ## 4.1 每图 styleData：key 1 / key 3 拟合（2026-10-30）
 
@@ -112,6 +112,28 @@ Main10 启用方式：把 10-bit x265 静态库存到 `vendor/x265/build_<platfo
 **已实测（2026-10-30，key 1 色格判定，消费端模型）**：上游 PR #88 指出 Standard 的 key 1 按 primary→thumbnail 拟合会把 gain-map 比值（含 h/key4 = 0.46 的曝光比）塞进有界多项式，clamp 后交叉项填满，在 Photos 里画出 12×9 色格。用 `examples/styles_key1_color_probe` 从上面 3 张转换输出里读回 key 1、在同一主图的线性光栅上回放（`styles_fit::apply_style_data`，与上游 `apple_style_apply_local` 同一数学）：ΔE76 均值 2.15–2.93、p95 5.1–6.2、最大 15–23，ΔL* −0.6 ~ −2.6，色度偏移按 12×9 格分布（相邻格均值差 0.8–1.2 ΔE，格表里 0.x ↔ 4–7 的跳变）；identity payload 为 0；**不带增益图重拟合给出几乎相同的均值**，即偏移来自曝光比本身而非增益图。结论：机理复现、幅度可见（超过 JND），但因盒子更窄（±1/8、±1/16）没到上游宽盒子报告的"红/绿/青色格"量级；拟合没达到目标却引入色偏。**已实测（2026-10-30，macOS 27.2 照片，维护者拉滑块）**：`IMG20260802135928`、`IMG20260814202514` 连续无色块；`IMG20260822150037`（带白色水印边框）调节时色块变化突兀、水印区域出现图案状效果——正是模型里色度偏移块最大的那张，色格在真实 Photos 上**部分复现（1/3）**。**已实施：Standard key 1 回 identity，保留 key 3 GTC 与线性缩略图**（`styles_native.rs::apply_per_image_fit` 只取 GTC；回归测试 `per_image_fit_keeps_standard_key1_identity_and_fits_gtc`；重新转换 3 张样张后用 `styles_key1_color_probe` 读回 key 1 = identity、ΔE 0；**macOS 27.2 照片复验（10-30，维护者）：水印样张 `IMG20260822150037` 用 identity key 1 的输出拉滑块，效果合理，突兀色块与水印区图案消失**）。证据、命令与完整格表：`docs/research/styles-key1-color-grid-20261030.md`。
 
 **未验证**：上述 Photos 观感（修前/修后）没有留截图；iPhone 照片上的同一结论（按 macOS 与 iOS 照片同一编辑引擎推断）；拟合前后滑块观感与原生的主观 A/B；key 1 空间格采用显示方向（照抄上游）在旋转样本上的表现；key 4 / h 仍为固定参考值，per-image `linear_metadata` 未跟进。
+
+## 4.2 摄影风格 3（纹理风格 + 语义 matte）
+
+转换并校验通过后由前端（Dart `conversion_backend.dart`、Swift `Styles3Backend`）按顺序调用两个后处理导出，失败即不发布：
+
+- `xdremux_inject_texture_styles`（`texture_styles.rs`）：追加 `uri metadata` 项，content type `tag:apple.com,2026:photo:metadata:texture_styles`，`cdsc` 指向主图，载荷为 Standard textureInfo bplist（Preset=Standard、TextureStylePeopleDataVersion=3、FilmGrainSeed 等，照抄原生拍摄契约）。颗粒种子由文件名哈希得出，Dart 与 Swift 两端算法一致，同名文件跨端颗粒相同。
+- `xdremux_inject_semantic_mattes`（`semantic_mattes.rs`）：追加原生 iPhone 拍摄必带的 12 个 `2026:photo:aux:semantic*` matte（768×576 8-bit HEVC，各带 `auxC`，`auxl → [primary, tmap]`），内容为全黑占位，只为让风格 3 编辑器找到各部位；华为人像会把人物轮廓写进 `semanticpersonmatte`。
+- 非 OPPO 照片走 `xdremux_attach_style_layers`（`flags` 位 0/1/2 = 2023 styles / 纹理 / 语义 matte），华为人像 remux 后用它补风格，免二次编码。
+
+## 4.3 风格实况：MOV 伴随轨道（0.4.6）
+
+照片 App 编辑带风格的 Live Photo 时，会在视频侧也建风格分支，要求 MOV 具备原生 iOS 27 实况 MOV 的风格轨道；缺失时 macOS 27.2「照片」点编辑会断言退出。`live_photo.rs::make_live_photo` 在静帧带风格 plist 时调用 `live_photo_styles::attach_style_tracks`，只追加、不改原视频样本：
+
+| 级别（`XDREMUX_LIVE_STYLE_TRACKS`） | 追加内容 |
+|---|---|
+| `thumbnail` | auxv 线性缩略图轨（HEVC Main10 128×96，按视频 coded 几何；colr nclc 9/1/9、apple-log、`tref vmap`，tag `video-map.smart-style-linear-thumbnail`） |
+| `info` | + smartstyle-info mebx 轨（`{0:16, 3, 4, 5, h}`）与 `smartstyle.*` movie keys |
+| `full`（默认） | + 空的 sky / person / skin matte 轨、texturestyle-info 轨与 `texturestyle.*` keys（静帧无纹理项时不写纹理部分） |
+
+所有级别都写 `com.apple.quicktime.live-photo-info` mebx 轨（原生 iOS 27 key atom，尺寸改为 coded size，每帧重复一条无人脸记录），照片 App 的 `photographicStyleLearn` 要读它。静帧代替每一帧，不解视频；`smartstyle.bypassed = 1` 与原生一致。`examples/lp_style_tracks` 可给已有配对补轨道。
+
+**已实测**：macOS 27.2「照片」与 iPhone 16e 上编辑、调风格、保存后实况与颜色保留（`fba61cb`、`2ea4963`、`52399b6`、0.4.6 验收）。**未验证**：其他系统版本；matte 轨道为空对编辑效果的影响。
 
 ## 5. 诊断工具
 

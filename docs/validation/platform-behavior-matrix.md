@@ -1,4 +1,4 @@
-# 平台行为矩阵（Windows / Android / macOS / iOS / 鸿蒙）
+# 平台行为矩阵（Windows / Android / macOS / iOS / 鸿蒙；Linux 与原生 Apple 见 §1.1）
 
 > 用于冻结平台边界，避免导入、输出和队列逻辑继续分叉。
 
@@ -14,6 +14,11 @@
 | 分享 | `share_plus` | `share_plus` | `share_plus` | Runner 原生 `UIActivityViewController` | share_extend（vendored fork） |
 | 打开输出 | Explorer 定位 | `open_filex` + `image/*` | Finder 定位 | `open_filex` + HEIC UTI | open_filex fork |
 | 批量后台 | 托盘 / 桌面进程 | Foreground Service | 托盘 / 桌面进程 | 不承诺后台持续转换 | 桌面级进程（无前台服务需求） |
+
+### 1.1 不在上表中的目标（2026-10-31）
+
+- **Linux x64（Flutter，预览发布）**：Rust FFI（`bundle/lib` 内的 .so）；XDG Desktop Portal 文件选择与 GTK 拖放；无平台原生解码通道（缩略图走 Rust 回退）；不提供保存到系统图库与托盘；「在文件夹中显示」用 `xdg-open` 打开所在目录。依据：`architecture/platform-backend.md`、`main.dart` `_revealInExplorer`。其余行未逐项核对，补列前需实机确认。
+- **原生 Apple（SwiftUI，`apps/apple`，未发布）**：文件导入、拖放、iOS PhotosPicker（保留 HEIC 原始字节）；输入复制到容器内，journal 以 `~/…` 存容器内路径；iOS 以 `.photo` + `.pairedVideo` 写入照片库，macOS 用保存面板 / 选文件夹整组存储 / 访达定位；不产出 `.pvt`。计划 P4 要求逐项对照本矩阵的 macOS / iOS 两列，差异要么修掉要么写入本页。依据：`docs/plans/apple-native.md` P3 执行记录。
 
 ## 2. 当前导入流程
 
@@ -41,7 +46,7 @@
 
 ## 3. 已确认的产品规则
 
-- Rust 是 Windows、Android、iOS 的默认转换引擎。
+- Rust 是所有平台与所有前端（Flutter、鸿蒙原生、原生 Apple）的默认且唯一的产品转换引擎；Swift/Vision 后端只是研究路径。
 - 输入照片先物化为 App 可持续访问的副本，再进入队列。
 - Android 的“所有文件访问”不是必需权限；只用于尝试保留原始路径和 GPS。
 - Android 用户拒绝该权限时仍允许继续导入，但使用 `content://` 原始字节副本。

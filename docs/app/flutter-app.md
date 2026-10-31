@@ -17,8 +17,8 @@
 
 见 `architecture/overview.md` §3 的服务清单表。分层规则：
 
-- **UI 页面只调 service**，不直接摸 FFI / MethodChannel
-- `xdremux_service.dart` 是 Rust FFI 的唯一门面：负责平台分流、`Isolate.run` 包装、JSON 报告 -> 异常 的翻译
+- 页面优先调 service，不直接摸 MethodChannel；FFI 以 `xdremux_service.dart` 为主门面（平台分流、`Isolate.run` 包装、JSON 报告 -> 异常 的翻译）
+- 现状（2026-10-31）：`main.dart`、`organize_page.dart` 以及 `motion_photo_service`、`output_export_service`、`photo_details_service`、`codec_diagnostics`、`conversion_backend` 也直接 import `ffi/xdremux_ffi.dart`；新增 FFI 调用优先放进 service，不要再从页面直连
 - `motion_photo_service.dart` 动态照片：异步识别（入队即跑）、拆分、逐卡策略应用
 - `apple_oppo_workflow_service.dart` 编排工作流三动作：`createAppleStylesCopy` / `writebackReturnedPhoto` / `preserveAppleReturnedPhoto`
 
@@ -37,6 +37,7 @@ Android `MainActivity.kt`：
 | `xdremux/hevc-probe` | MediaCodec HEVC 能力探测 |
 | `xdremux/hw-encode` | 硬件编码（`MediaCodecHevcEncoder.kt`） |
 | `xdremux/thumbnail` | ImageDecoder 缩略图 |
+| `xdremux/file-import` | 从 content URI 导入文件（`importFromUri`）、探测路径可读性（`probePath`） |
 
 macOS/iOS：Swift 后端桥（研究路径，见 `architecture/platform-backend.md` §4）+ iOS Share Extension（`ios/Share Extension/ShareViewController.swift`，接收相册分享）。
 

@@ -11,7 +11,9 @@
    不设全局转换策略；设置页只提供「默认策略」选择（默认跳过），
    卡片上的选择覆盖默认值。理由：动态照片是少数派但意图差异大，
    默认跳过保证批量转换不被意外拖入不熟悉的行为；想要的人逐张点开。
-   **Live Photo 档强制关闭 styles**（Apple 结构性拦截联合编辑，2026-09-02/03 定论）。
+   ~~Live Photo 档强制关闭 styles~~（2026-09-02/03 定论，**0.4.6 已推翻**）：只要 MOV 带上照片 App
+   风格编辑需要的伴随轨道（`live_photo_styles.rs`，PR #46），摄影风格 2/3 都保留在实况上（`52399b6`），
+   macOS 27.2「照片」与 iPhone 16e 可编辑、保存后实况与颜色保留。
    Huawei/OpenHarmony 动态照片虽然静帧是 Apple 可读 HDR，但不走普通
    `skip-native-hdr` 队列项；识别为 `huaweiOpenHarmonyMotionPhoto` 后仍显示上述策略菜单。
 
@@ -85,4 +87,5 @@
 ## 3b 已交付说明（原「不做」清单作废项）
 
 - ~~不做 Live Photo 合成~~ → 已交付：`live_photo.rs` MOV 重写 + MakerNote 配对，UI 第四档策略
+- 0.4.6 追加：默认打包为 `.pvt`（`live_photo_bundle.rs`，设置可关，见 `formats/live-photo-pvt.md`）；静帧带风格时 MOV 追加风格伴随轨道（`live_photo_styles.rs`）；安卓 AAC 音频写为 QuickTime 声音描述
 - 仍不做：视频预览播放；输出文件命名规则不变

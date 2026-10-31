@@ -7,15 +7,19 @@
 
 | 函数 | 职责 |
 |---|---|
-| `restore_visible_watermark(donor, returned, ...) -> Result<(Vec<u8>, Report)>` | 入口：解码、合成、重编码、容器重建 |
+| `restore_on_donor_graph(donor, returned) -> Result<Vec<u8>, String>` | **生产入口**（`lib.rs` 写回路径调用）：解码、尺寸校验、合成、原地重编码主图；保留回传文件的主图 ID 与 tmap/增益图引用图 |
+| `restore_visible_watermark(donor, returned) -> Result<Vec<u8>, String>` | 另一入口：同样合成后原地重写；写回主路径不调用 |
+| `restore_watermark_canvas(...)` | 合成：PNG 载荷画布路径，失败回退边框带 |
 | `detect_frame_bands(rgba, w, h) -> Result<Vec<(u32,u32)>>` | 边框带检测（pub，探针可用） |
 | `container::watermark_canvas_rect` | PNG 载荷型画布矩形（含 inset） |
 | `container::watermark_overlay_rect` | PNG 实际覆盖矩形（蒙版用） |
-| `rewrite_primary_grid(source, rgb, w, h) -> Result<Vec<u8>>` | 新 tile/grid 替换主图（通用容器手术） |
+| `rewrite_primary_grid_in_place(source, rgb, w, h, oppo_native_tmap)` | 原地替换主图 tile 码流，**不改主图 ID、不改 iref/iinf 图** |
+| `rewrite_primary_grid(...)` | 旧的「新 tile/grid + pitm 切换」手术；自 `1689aab`（2026-08-21）起无调用方，仅保留定义 |
 
-## 2. restore_visible_watermark 流程与不变量
+## 2. restore_on_donor_graph 流程与不变量
 
 ```
+0. 调用方先剥离回传文件的 OPPO 尾部（container::strip_oppo_tail）
 1. 解码 donor + returned；尺寸不一致 -> Err（失败关闭）
 2. 水印区域判定：
    PNG 载荷路径（watermark + watermark.config 存在且几何自洽）
@@ -24,22 +28,25 @@
      -> 行区间整带复制
    两者都失败 -> Err
 3. 合成光栅 -> 512×512 tile -> x265_encode_tiles_oppo_sdr（4:2:0）
-4. rewrite_primary_grid：追加 tile payload 到 mdat、新 tile/grid infe、
-   pitm 指向新 grid、iloc（新 tile construction_method=0，grid 走 idat）、
-   iref 更新（旧主图引用改指新 grid + 新 dimg）、ipma 继承模板属性
-5. 剥离旧 footer -> 追加 donor 完整 OPPO 尾部
+4. rewrite_primary_grid_in_place：新 tile 数必须等于原 grid 的 tile 数；
+   沿用原 tile item ID，iloc 改指新码流，首 tile 模板的 hvcC 属性换成新 hvcC；
+   iinf / iref 原样保留（Photos 缩略图渲染器靠这些关系找 OPPO 水印叠层，
+   回传文件的 tmap/增益图挂在主图 ID 上）；oppo_native_tmap=true 时把 idat 中
+   62 字节的 Apple tmap 换成 OPPO 原生 tmap 载荷
+5. 调用方（lib.rs）剥离旧增益图（strip_existing_gain_map_graph）并追加 donor 完整 OPPO 尾部
 ```
 
 不变量（改动时自检）：
 
 1. **编码约定唯一**：本模块的重编码必须走 `x265_encode_tiles_oppo_sdr`（BT.601 limited 数据 + full 标记），否则水印渲染观感与原图不一致
-2. **属性继承**：新 tile 关联属性 = 回传文件首 tile 模板（剔除旧 hvcC，push 新 hvcC）；新 grid = 回传 grid 模板。继承的 nclx 与编码约定一致，勿改
-3. **tile 0 带参数集**：hvcC 从 tile 0 流提取（VPS/SPS/PPS 只出现一次，`repeat-headers=0`），`extract_hvcc_config_with_chroma` 的 chroma 参数必须与实际码流一致
-4. **失败关闭**：任何几何不自洽（PNG 尺寸≠配置尺寸、宽度约束不满足、四角框色不一致）直接 Err，不输出"尽力而为"的结果
+2. **属性继承**：只替换首 tile 模板关联的 hvcC 属性，其余属性与 grid 原样保留。继承的 nclx 与编码约定一致，勿改
+3. **图不动**：主图 ID、iref、iinf 不变；不要改回切 pitm 的旧手术，否则 tmap 引用与水印叠层会断
+4. **tile 0 带参数集**：hvcC 从 tile 0 流提取（VPS/SPS/PPS 只出现一次，`repeat-headers=0`），`extract_hvcc_config_with_chroma` 的 chroma 参数必须与实际码流一致
+5. **失败关闭**：任何几何不自洽（PNG 尺寸≠配置尺寸、宽度约束不满足、四角框色不一致）直接 Err，不输出"尽力而为"的结果
 
-## 3. rewrite_primary_grid 的通用性
+## 3. 原地重写的通用性
 
-它不感知水印语义，只做"把一个新栅格以 tile grid 形式替换主图"的容器手术。除水印恢复外，凡需要替换主图像素的路径（未来的蒙版恢复等）都可复用。注意它假设 primary 是 image grid 且 tile 关联属性可从首 tile 模板复制。
+`rewrite_primary_grid_in_place` 不感知水印语义，只做"用同尺寸新栅格替换主图 tile 码流"。凡需要替换主图像素且必须保留引用图的路径都可复用。前提：primary 是 image grid、新栅格与原 grid 同尺寸同 tile 数。旧的 `rewrite_primary_grid`（新 grid + pitm 切换、旧 item 孤儿化）会让挂在旧主图 ID 上的 tmap 引用失效，已不再使用。
 
 ## 4. 测试与探针
 
