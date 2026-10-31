@@ -263,6 +263,17 @@ Flutter 版生成的检查点文件可被原生版读取。
   `PhotosPicker(.current)` 从相册导入 OPPO HEIC 后识别为 X7 UHDR（原始字节未被转码）。
 - 未验证：Live Photo 声音（模拟器无法听）、HDR 亮度（模拟器无 EDR）、真机签名安装。CI 仍只跑 macOS 切片。
 
+**§8 补充：工具栏与布局按 HIG 收敛（2026-11-01，分支 `feat/apple-toolbar`）**
+
+- 布局不再按平台硬编码：`horizontalSizeClass == .compact` 走 `NavigationStack`，其余（Mac、iPad、展开的折叠屏）走
+  `NavigationSplitView`；`PhotoListView` 由父视图指定"推入详情"还是"侧栏选中"。
+- 工具栏从五个同级图标收成三组：**导入**（iOS 为菜单：从照片 / 从文件，macOS 直接选文件）、**主动作**（全部转换 /
+  停止转换，`.borderedProminent`，紧凑宽度放 `.bottomBar` 并显示数量）、**更多**（一帧影像、设置，`.secondaryAction`，
+  iOS 折叠成 ⋯ 菜单）。`PhotosPicker` 改为 `.photosPicker(isPresented:)` 修饰器，因为 picker 按钮不能放进 `Menu`。
+- 实测：iPhone 18 Pro 顶部"+ ⋯"胶囊、底部"全部转换（1）"玻璃主按钮；iPhone Duo 侧栏只剩两项，主动作在底部；
+  macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
+- 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、
