@@ -1,5 +1,16 @@
 # 原生 Apple（iOS / macOS）前端开发计划
 
+**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+
+- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
+  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
+  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
+  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
+- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
+  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
+- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
+  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+
 > 状态：2026-10-30 起草，仅规划，未创建任何代码。模板沿用 `feat/harmony-native` 分支的
 > `docs/plans/harmony-native.md`；鸿蒙原生版已证明"同一 Rust 内核 + 第二个原生前端"可行，
 > 本计划吸收其做法并修正其暴露的问题。
@@ -288,16 +299,17 @@ Flutter 版生成的检查点文件可被原生版读取。
   收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
 - 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
 
-**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+**基础设施（2026-11-01，分支 `feat/apple-universal`）：x86_64 切片与 CI 模拟器构建**
 
-- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
-  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
-  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
-  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
-- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
-  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
-- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
-  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+- `build_apple.sh` 按架构构建：每个切片对 `XDREMUX_APPLE_ARCHS`（默认 `arm64 x86_64`）各构建 x265（8-bit + Main10，
+  x86_64 用 `_x86_64` 后缀目录）与 Rust staticlib，`libtool` 合并后 `lipo -create` 成胖归档；切片目录名沿用 xcodebuild
+  约定（`macos-arm64_x86_64`、`ios-arm64_x86_64-simulator`）。iOS 真机仍只有 arm64。
+- `build.rs` 新增 `XDREMUX_X265_DIR` / `XDREMUX_X265_MAIN10_DIR` 覆盖，并把 `x86_64-apple-ios`（env 为空）识别为模拟器。
+- `project.yml` 去掉 `EXCLUDED_ARCHS[sdk=iphonesimulator*]`，模拟器包与 Share Extension 都是双架构。
+- CI：Rust 目标加 x86_64 与模拟器，x265 缓存键改为 `…-universal-sim`，构建 `macos ios-sim` 两个切片并用 `lipo -info`
+  断言双架构；新增 `generic/platform=iOS Simulator` 的 App + 扩展构建。
+- 验证：本机 `lipo -info` 两个切片均为 `x86_64 arm64`；`generic/platform=iOS Simulator` 构建出的 App 与 appex 均为胖二进制；
+  Rosetta 下 x86_64 CLI 对 X7 样本转换并 verify 通过；`swift test` 通过。
 
 ### P4：跨端回归与发布
 
