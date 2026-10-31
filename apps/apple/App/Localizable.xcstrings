@@ -331,6 +331,16 @@
         }
       }
     },
+    "从文件导入 OPPO 原始照片（也可以拖到窗口里）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import OPPO originals from files (or drop them on the window)"
+          }
+        }
+      }
+    },
     "从照片导入": {
       "localizations": {
         "en": {
@@ -447,6 +457,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Convert All"
+          }
+        }
+      }
+    },
+    "全部转换（%lld）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert All (%lld)"
           }
         }
       }
@@ -767,6 +787,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Run one Photographic Styles conversion on the selected OPPO original to produce the working file for editing on iPhone."
+          }
+        }
+      }
+    },
+    "导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import"
           }
         }
       }

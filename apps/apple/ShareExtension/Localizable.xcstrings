@@ -1,0 +1,56 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "已加入 XDRemux：%lld 张。打开 XDRemux 继续转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %lld to XDRemux. Open XDRemux to convert."
+          }
+        }
+      }
+    },
+    "已加入 XDRemux：%lld 张，跳过 %lld 张非 HEIC / JPEG 文件。打开 XDRemux 继续转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %1$lld to XDRemux, skipped %2$lld non-HEIC / JPEG files. Open XDRemux to convert."
+          }
+        }
+      }
+    },
+    "无法访问共享收件箱。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The shared inbox is not available."
+          }
+        }
+      }
+    },
+    "正在交给 XDRemux…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handing over to XDRemux…"
+          }
+        }
+      }
+    },
+    "没有可用的 HEIC / JPEG 照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No HEIC / JPEG photos to add."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

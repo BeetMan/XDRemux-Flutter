@@ -7,21 +7,24 @@ import UniformTypeIdentifiers
 /// permission is needed. We ask for the HEIC representation specifically:
 /// the default "compatible" transfer re-encodes to JPEG and loses the ProXDR
 /// container, which is the whole point of the app.
-struct PhotosImportButton: View {
+///
+/// Presented from a toolbar menu item through `isPresented`, since a
+/// `PhotosPicker` button cannot sit inside a `Menu`.
+struct PhotosImportModifier: ViewModifier {
+    @Binding var isPresented: Bool
     @Bindable var model: LibraryModel
     @State private var selection: [PhotosPickerItem] = []
 
-    var body: some View {
-        PhotosPicker(selection: $selection, maxSelectionCount: 50,
-                     matching: .images, preferredItemEncoding: .current) {
-            Label("从照片导入", systemImage: "photo.badge.plus")
-        }
-        .onChange(of: selection) { _, items in
-            guard !items.isEmpty else { return }
-            let picked = items
-            selection = []
-            Task { await importPicked(picked) }
-        }
+    func body(content: Content) -> some View {
+        content
+            .photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: 50,
+                          matching: .images, preferredItemEncoding: .current)
+            .onChange(of: selection) { _, items in
+                guard !items.isEmpty else { return }
+                let picked = items
+                selection = []
+                Task { await importPicked(picked) }
+            }
     }
 
     private func importPicked(_ items: [PhotosPickerItem]) async {
@@ -41,6 +44,12 @@ struct PhotosImportButton: View {
                 model.lastError = String(localized: "读取照片失败：\(error.localizedDescription)")
             }
         }
+    }
+}
+
+extension View {
+    func photosImport(isPresented: Binding<Bool>, model: LibraryModel) -> some View {
+        modifier(PhotosImportModifier(isPresented: isPresented, model: model))
     }
 }
 #endif

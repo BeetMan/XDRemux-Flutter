@@ -1,53 +1,74 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Root layout. macOS: sidebar list + detail. iPhone/iPad: list that pushes
-/// the detail. Both share `LibraryModel`.
+/// Root layout, chosen by horizontal size class rather than by platform:
+/// regular width (Mac, iPad, unfolded phones) is sidebar list + detail;
+/// compact width is a list that pushes the detail. Both share `LibraryModel`.
 struct ContentView: View {
     @State private var model = LibraryModel()
     @State private var showSettings = false
     @State private var showFileImporter = false
+    @State private var showPhotosPicker = false
     @State private var showRoundTrip = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
 
     static let importTypes: [UTType] = [.heic, .heif, .jpeg]
 
+    private var isCompact: Bool {
+        #if os(iOS)
+        sizeClass == .compact
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         Group {
-            #if os(macOS)
-            NavigationSplitView {
-                PhotoListView(model: model)
-                    .navigationSplitViewColumnWidth(min: 260, ideal: 320)
-            } detail: {
-                if let item = model.selectedItem {
-                    PhotoDetailView(model: model, itemID: item.id)
-                } else {
-                    EmptyLibraryView(onImport: { showFileImporter = true })
+            if isCompact {
+                NavigationStack {
+                    Group {
+                        if model.items.isEmpty {
+                            EmptyLibraryView(onImport: { showFileImporter = true })
+                        } else {
+                            PhotoListView(model: model, pushesDetail: true)
+                        }
+                    }
+                    .navigationDestination(for: PhotoItem.ID.self) { id in
+                        PhotoDetailView(model: model, itemID: id)
+                    }
+                    // Inside the stack: a toolbar attached outside a navigation
+                    // context is dropped on iOS (macOS puts it in the window).
+                    .toolbar { toolbarContent }
                 }
-            }
-            .dropDestination(for: URL.self) { urls, _ in
-                Task { await model.importFiles(urls) }
-                return true
-            }
-            #else
-            NavigationStack {
-                Group {
-                    if model.items.isEmpty {
-                        EmptyLibraryView(onImport: { showFileImporter = true })
+            } else {
+                NavigationSplitView {
+                    PhotoListView(model: model, pushesDetail: false)
+                        .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                        #if os(iOS)
+                        .toolbar { toolbarContent }
+                        #endif
+                } detail: {
+                    if let item = model.selectedItem {
+                        PhotoDetailView(model: model, itemID: item.id)
                     } else {
-                        PhotoListView(model: model)
+                        EmptyLibraryView(onImport: { showFileImporter = true })
                     }
                 }
-                .navigationDestination(for: PhotoItem.ID.self) { id in
-                    PhotoDetailView(model: model, itemID: id)
+                #if os(macOS)
+                .dropDestination(for: URL.self) { urls, _ in
+                    Task { await model.importFiles(urls) }
+                    return true
                 }
-                // Inside the stack: a toolbar attached outside a navigation
-                // context is dropped on iOS (macOS puts it in the window).
-                .toolbar { toolbarContent }
+                #endif
             }
-            #endif
         }
         #if os(macOS)
         .toolbar { toolbarContent }
+        #else
+        .photosImport(isPresented: $showPhotosPicker, model: model)
         #endif
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
@@ -58,7 +79,15 @@ struct ContentView: View {
         .task {
             await model.handleLaunchArguments()
             if model.openRoundTripOnLaunch { showRoundTrip = true }
+            await model.drainSharedInbox()
         }
+        #if os(iOS)
+        // Photos shared through the extension while the app was in the
+        // background are picked up when it comes to the front.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.drainSharedInbox() } }
+        }
+        #endif
         // Finder "Open With", Dock drop, and iOS "Open in XDRemux" hand files here.
         .onOpenURL { url in
             Task { await model.importFiles([url]) }
@@ -77,32 +106,43 @@ struct ContentView: View {
         }
     }
 
+    /// HIG: a toolbar carries the few most-used actions and lets the system
+    /// lay them out per device (a side rail on devices whose status area is
+    /// on the right). Import is one item (a menu on iOS), the batch action is
+    /// the one prominent item, and the rest go to `.secondaryAction`, which
+    /// iOS folds into an overflow menu. On compact phones the batch action
+    /// sits in the bottom bar where the thumb is.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItem(placement: .primaryAction) {
             #if os(iOS)
-            PhotosImportButton(model: model)
-            #endif
+            Menu {
+                Button {
+                    showPhotosPicker = true
+                } label: {
+                    Label("从照片导入", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("从文件导入", systemImage: "folder")
+                }
+            } label: {
+                Label("导入", systemImage: "plus")
+            }
+            #else
             Button {
                 showFileImporter = true
             } label: {
-                Label("从文件导入", systemImage: "folder.badge.plus")
+                Label("导入", systemImage: "plus")
             }
-            if model.isConverting {
-                Button {
-                    model.cancelBatch()
-                } label: {
-                    Label("停止转换", systemImage: "stop.fill")
-                }
-                .help("停止队列并取消正在进行的转换；已完成的不受影响")
-            } else {
-                Button {
-                    model.convertAll()
-                } label: {
-                    Label("全部转换", systemImage: "play.fill")
-                }
-                .disabled(model.convertibleCount == 0)
-            }
+            .help("从文件导入 OPPO 原始照片（也可以拖到窗口里）")
+            #endif
+        }
+        ToolbarItem(placement: batchPlacement) {
+            batchActionButton
+        }
+        ToolbarItemGroup(placement: .secondaryAction) {
             Button {
                 showRoundTrip = true
             } label: {
@@ -114,6 +154,47 @@ struct ContentView: View {
             } label: {
                 Label("设置", systemImage: "slider.horizontal.3")
             }
+        }
+    }
+
+    /// Compact phones: bottom bar, where the thumb is. Elsewhere: primary.
+    private var batchPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        isCompact ? .bottomBar : .primaryAction
+        #else
+        .primaryAction
+        #endif
+    }
+
+    /// The one prominent toolbar item: start the batch, or stop it.
+    @ViewBuilder
+    private var batchActionButton: some View {
+        if model.isConverting {
+            Button(role: .destructive) {
+                model.cancelBatch()
+            } label: {
+                if isCompact {
+                    Text("停止转换").fontWeight(.semibold).padding(.horizontal, 8)
+                } else {
+                    Label("停止转换", systemImage: "stop.fill")
+                }
+            }
+            .help("停止队列并取消正在进行的转换；已完成的不受影响")
+        } else {
+            Button {
+                model.convertAll()
+            } label: {
+                let title: LocalizedStringKey = model.convertibleCount > 0 ? "全部转换（\(model.convertibleCount)）" : "全部转换"
+                if isCompact {
+                    // The bottom bar renders a Label as its icon alone; a
+                    // text-only button keeps the name and the count.
+                    Text(title).fontWeight(.semibold).padding(.horizontal, 8)
+                } else {
+                    Label(title, systemImage: "play.fill")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.convertibleCount == 0)
         }
     }
 }
@@ -136,31 +217,39 @@ struct EmptyLibraryView: View {
 /// The library list: one row per imported photo.
 struct PhotoListView: View {
     @Bindable var model: LibraryModel
+    /// `true` inside a `NavigationStack` (rows push the detail); `false`
+    /// as the sidebar of a split view (rows select).
+    var pushesDetail: Bool
 
     var body: some View {
-        #if os(macOS)
-        List(selection: $model.selectedID) {
-            ForEach(model.items) { item in
-                PhotoRow(item: item).tag(item.id)
-                    .contextMenu { rowMenu(item) }
+        Group {
+            if pushesDetail {
+                List {
+                    ForEach(model.items) { item in
+                        NavigationLink(value: item.id) {
+                            PhotoRow(item: item)
+                        }
+                        .contextMenu { rowMenu(item) }
+                        .swipeActions {
+                            Button(role: .destructive) { model.remove(item.id) } label: { Label("移出", systemImage: "trash") }
+                                .disabled(item.state.isBusy)
+                        }
+                    }
+                }
+            } else {
+                List(selection: $model.selectedID) {
+                    ForEach(model.items) { item in
+                        PhotoRow(item: item).tag(item.id)
+                            .contextMenu { rowMenu(item) }
+                    }
+                }
             }
         }
         .navigationTitle("XDRemux")
+        #if os(macOS)
         .navigationSubtitle("Rust 内核 \(model.coreVersion)")
         #else
-        List {
-            ForEach(model.items) { item in
-                NavigationLink(value: item.id) {
-                    PhotoRow(item: item)
-                }
-                .swipeActions {
-                    Button(role: .destructive) { model.remove(item.id) } label: { Label("移出", systemImage: "trash") }
-                        .disabled(item.state.isBusy)
-                }
-            }
-        }
-        .navigationTitle("XDRemux")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(pushesDetail ? .large : .inline)
         #endif
     }
 

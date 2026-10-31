@@ -153,6 +153,17 @@ final class LibraryModel {
     /// launch (scripting, CI smoke, "open with" from a shell). Paths must be
     /// readable without security scope, so this is a developer/automation
     /// entry, not the user-facing import.
+    /// Imports what the Share Extension left in the app-group inbox, then
+    /// removes it (the import made its own sandbox copy). iOS only.
+    func drainSharedInbox() async {
+        #if os(iOS)
+        let pending = SharedInbox.pending()
+        guard !pending.isEmpty else { return }
+        await importFiles(pending)
+        for url in pending { try? FileManager.default.removeItem(at: url) }
+        #endif
+    }
+
     func handleLaunchArguments(_ arguments: [String] = CommandLine.arguments) async {
         if arguments.contains("--round-trip") { openRoundTripOnLaunch = true }
         guard let start = arguments.firstIndex(of: "--import") else { return }
