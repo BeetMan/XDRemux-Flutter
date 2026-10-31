@@ -9,7 +9,8 @@
 #
 # Prereqs:
 #   - DevEco Studio installed with the OpenHarmony native SDK
-#     (default: "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native")
+#     (default: "C:/Program Files/Huawei/DevEco Studio/sdk/default/openharmony/native";
+#     on macOS the SDK bundled in /Applications/DevEco-Studio.app)
 #   - rustup target add aarch64-unknown-linux-ohos
 #
 # Env override: OHOS_NATIVE=/path/to/openharmony/native
@@ -19,19 +20,30 @@
 set -euo pipefail
 cd "$(dirname "$0")"   # -> xdremux/rust
 
-NATIVE="${OHOS_NATIVE:-C:/PROGRA~1/Huawei/DEVECO~1/sdk/default/OPENHA~1/native}"
+if [[ "$OSTYPE" == darwin* ]]; then
+  DEFAULT_NATIVE=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/native
+else
+  DEFAULT_NATIVE=C:/PROGRA~1/Huawei/DEVECO~1/sdk/default/OPENHA~1/native
+fi
+NATIVE="${OHOS_NATIVE:-$DEFAULT_NATIVE}"
 TARGET=aarch64-unknown-linux-ohos
 TARGET_UNDERSCORE=${TARGET//-/_}
-TARGET_UPPER=${TARGET_UNDERSCORE^^}
+# tr instead of ${var^^}: macOS ships bash 3.2.
+TARGET_UPPER=$(printf '%s' "$TARGET_UNDERSCORE" | tr '[:lower:]' '[:upper:]')
 LLVM_TARGET=aarch64-linux-ohos
 SYSROOT="$NATIVE/sysroot"
 
 # DevEco on Windows ships .exe binaries; the public Linux SDK (CI) layout
-# differs and system cmake/ninja work there.
+# differs and system cmake/ninja work there. On macOS the system usually has
+# no ninja, so use the one bundled with the DevEco SDK.
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
   CLANGXX="$NATIVE/llvm/bin/clang++.exe"
   CMAKE_BIN=("$NATIVE/build-tools/cmake/bin/cmake.exe")
   NINJA=("-DCMAKE_MAKE_PROGRAM=$NATIVE/build-tools/cmake/bin/ninja.exe")
+elif [[ "$OSTYPE" == darwin* ]]; then
+  CLANGXX="$NATIVE/llvm/bin/clang++"
+  CMAKE_BIN=("$NATIVE/build-tools/cmake/bin/cmake")
+  NINJA=("-DCMAKE_MAKE_PROGRAM=$NATIVE/build-tools/cmake/bin/ninja")
 else
   CLANGXX="$NATIVE/llvm/bin/clang++"
   CMAKE_BIN=(cmake)
@@ -42,7 +54,7 @@ echo "==> x265 (OHOS arm64-v8a, no assembly)"
 if [ ! -f vendor/x265/build_ohos/libx265.a ]; then
   cmake -S vendor/x265/source -B vendor/x265/build_ohos \
     -G Ninja \
-    "${NINJA[@]}" \
+    ${NINJA[@]+"${NINJA[@]}"} \
     -DCMAKE_TOOLCHAIN_FILE="$NATIVE/build/cmake/ohos.toolchain.cmake" \
     -DOHOS_ARCH=arm64-v8a \
     -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
@@ -61,7 +73,7 @@ if [ "${XDREMUX_MAIN10:-1}" != "0" ]; then
   if [ ! -f vendor/x265/build_ohos_10bit/libx265.a ]; then
     cmake -S vendor/x265/source -B vendor/x265/build_ohos_10bit \
       -G Ninja \
-      "${NINJA[@]}" \
+      ${NINJA[@]+"${NINJA[@]}"} \
       -DCMAKE_TOOLCHAIN_FILE="$NATIVE/build/cmake/ohos.toolchain.cmake" \
       -DOHOS_ARCH=arm64-v8a \
       -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
