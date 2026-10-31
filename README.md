@@ -230,4 +230,4 @@ Linux 桌面本地开发使用同一 Flutter 3.47.7。系统依赖为 clang、cm
 
 本项目基于 [21Z121Z1/XDRemux](https://github.com/21Z121Z1/XDRemux) 的研究与原版 Swift / Python 实现开展跨平台移植，感谢上游作者及提供样片、验证与反馈的贡献者。
 
-仓库许可见 [LICENSE](LICENSE)，第三方组件遵循各自许可证。Apple 私有框架相关路径用于 macOS / iOS 侧载研究，不用于 App Store 分发。
+本项目自 v0.4.6 之后的版本起按 [GPL-3.0-only](LICENSE) 授权（v0.4.6 及更早版本为 MIT）；来自上游的代码与第三方组件的许可说明见 [LICENSING.md](LICENSING.md)。Apple 私有框架相关路径用于 macOS / iOS 侧载研究，不用于 App Store 分发。
