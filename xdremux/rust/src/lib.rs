@@ -30,6 +30,7 @@ mod jpeg_color;
 mod jpeg_gainmap_metadata;
 pub mod apple_log;
 pub mod linear_thumbnail;
+pub mod pipeline;
 pub mod progress;
 pub mod preview;
 pub mod sdr_source;
@@ -1321,6 +1322,68 @@ pub extern "C" fn xdremux_progress_begin() -> u32 {
 #[no_mangle]
 pub extern "C" fn xdremux_progress_end(handle: u32) {
     progress::end_progress_with(handle);
+}
+
+/// One-call pipeline: convert, verify (ISO gain map, plus the Styles /
+/// Portrait structure checks when requested), and the Photographic Styles 3
+/// post-process. `config_json` uses the front-ends' `ConversionConfig` keys
+/// (see `pipeline.rs`); `handle` is a progress handle from
+/// [xdremux_progress_begin] or 0. Returns JSON (`success`, `stage`,
+/// `cancelled`, `errorMessage`, `mode`, `family`, `edrScale`, `gainMapMax`,
+/// `outputValid`, `verified`, `styles3Applied`); free with
+/// [xdremux_free_string]. On failure the partial output is left for the
+/// caller to delete, like [xdremux_convert_with_progress].
+#[no_mangle]
+pub extern "C" fn xdremux_convert_pipeline(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config_json: *const c_char,
+    handle: u32,
+) -> *mut c_char {
+    let read = |p: *const c_char| -> Option<String> {
+        if p.is_null() {
+            None
+        } else {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_string)
+        }
+    };
+    let report = match (read(input_path), read(output_path)) {
+        (Some(i), Some(o)) => {
+            pipeline::run_pipeline(&i, &o, &read(config_json).unwrap_or_default(), handle)
+        }
+        _ => serde_json::json!({
+            "success": false, "stage": "config", "errorMessage": "path is missing or not UTF-8"
+        }),
+    };
+    CString::new(report.to_string())
+        .map(CString::into_raw)
+        .unwrap_or(ptr::null_mut())
+}
+
+/// Read-only plan for one input: classification (`modeKey`, `folderName`,
+/// `hdrKind`, `family`), `huawei` (`isHdr`, `portraitReady`) or null,
+/// `isMotionPhoto`, the shared Huawei admission `policy`, and `output`
+/// (`fileName`, `captureModeFolder`, `outputModeFolder`). `config_json` as
+/// for [xdremux_convert_pipeline]. Free with [xdremux_free_string].
+#[no_mangle]
+pub extern "C" fn xdremux_plan_output(
+    input_path: *const c_char,
+    config_json: *const c_char,
+) -> *mut c_char {
+    let read = |p: *const c_char| -> Option<String> {
+        if p.is_null() {
+            None
+        } else {
+            unsafe { CStr::from_ptr(p) }.to_str().ok().map(str::to_string)
+        }
+    };
+    let report = match read(input_path) {
+        Some(i) => pipeline::plan_output(&i, &read(config_json).unwrap_or_default()),
+        None => serde_json::json!({ "success": false, "errorMessage": "path is missing or not UTF-8" }),
+    };
+    CString::new(report.to_string())
+        .map(CString::into_raw)
+        .unwrap_or(ptr::null_mut())
 }
 
 /// Ask the conversion running under `handle` (from

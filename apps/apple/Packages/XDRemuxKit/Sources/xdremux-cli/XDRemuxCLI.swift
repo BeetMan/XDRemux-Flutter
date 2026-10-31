@@ -18,7 +18,7 @@ struct XDRemuxCLI: AsyncParsableCommand {
             editable in Apple Photos. Rust core \(XDRemuxEngine.coreVersion()).
             """,
         version: XDRemuxEngine.coreVersion(),
-        subcommands: [Convert.self, EditCopy.self, Writeback.self, Inspect.self, Classify.self, Details.self,
+        subcommands: [Convert.self, EditCopy.self, Writeback.self, Inspect.self, Plan.self, Classify.self, Details.self,
                       Verify.self, Capabilities.self],
         defaultSubcommand: Convert.self)
 }
@@ -482,6 +482,37 @@ struct Verify: AsyncParsableCommand {
             }
         }
         if failures > 0 { throw ExitCode(1) }
+    }
+}
+
+struct Plan: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show the core's plan for each photo: classification, Huawei / Motion Photo policy, output name.",
+        discussion: "This is xdremux_plan_output, the same decision every front-end uses before converting. Read-only.")
+
+    @OptionGroup var files: InputFiles
+    @OptionGroup var options: ConversionOptions
+    @OptionGroup var format: OutputFormat
+
+    mutating func run() async throws {
+        let config = options.config
+        for input in try files.resolved() {
+            let plan = try await XDRemuxEngine.shared.planOutput(path: input.path, config: config)
+            if format.json {
+                emitJSON(["input": input.path, "convertible": plan.convertible as Any, "convertError": plan.convertError as Any,
+                          "modeKey": plan.classification?.modeKey as Any, "folderName": plan.classification?.folderName as Any,
+                          "hdrKind": plan.classification?.hdrKind as Any, "family": plan.classification?.family as Any,
+                          "huaweiHdr": plan.huawei?.isHdr as Any, "isMotionPhoto": plan.isMotionPhoto as Any,
+                          "admitted": plan.policy?.admitted as Any, "policyReason": plan.policy?.reason as Any,
+                          "outputFileName": plan.output?.fileName as Any])
+            } else {
+                let c = plan.classification
+                let policy = plan.policy.map { $0.admitted ? "admitted" : "skipped: \($0.reason ?? "")" } ?? "?"
+                print("\(input.lastPathComponent): \(plan.convertible == true ? "convertible" : "not convertible")"
+                      + " · \(c?.family ?? "-")/\(c?.hdrKind ?? "-") · \(c?.folderName ?? "uncategorized")"
+                      + (plan.isMotionPhoto == true ? " · motion photo" : "") + " · \(policy) → \(plan.output?.fileName ?? "-")")
+            }
+        }
     }
 }
 
