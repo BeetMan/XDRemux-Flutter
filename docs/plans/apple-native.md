@@ -288,6 +288,17 @@ Flutter 版生成的检查点文件可被原生版读取。
   收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
 - 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
 
+**P2 遗留：Flutter 检查点互读（2026-11-01，分支 `feat/apple-checkpoint`）**
+
+- Model `FlutterCheckpoint`：按 `checkpoint_model.dart` 的 JSONL 读写（首行 `type: header`，其后 `type: item`），接受 Dart
+  `toIso8601String()` 的无时区本地时间；`journalRecords()` 把 converted / skippedExisting 映射为 succeeded（保留 outputPath）、
+  skippedPolicy 映射为 pending（原生策略重新评估）、failed 保留错误；`from(journal:)` 反向导出，路径经 `~/` 还原为绝对路径。
+  configHash 用同一 payload 的 FNV-1a（Dart `String.hashCode` 不可复现，Flutter 只用它判断配置是否变化）。5 项测试。
+- App："更多"菜单 → 导入 / 导出 Flutter 检查点。导入时输入复制进沙盒、已完成项的输出复制进 outputs 并以"已完成"恢复，
+  沙盒读不到的路径变成可见失败项；导出用 `fileExporter` 写 `xdremux_checkpoint.jsonl`。
+- 未验证：没有用 Flutter 版真实生成的检查点文件做过往返（测试用的是按 Dart 格式手写的样本）；
+  `huaweiPortrait` / `motionPhoto` 两个嵌套对象在再编码时丢弃。
+
 ### P4：跨端回归与发布
 
 - 相同输入、相同配置，对比原生 Apple、Flutter macOS / iOS 与 Rust CLI 基线输出的容器结构、有效 EXIF、

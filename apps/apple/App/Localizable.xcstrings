@@ -271,6 +271,16 @@
         }
       }
     },
+    "不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not a Flutter checkpoint file (xdremux_checkpoint.jsonl)."
+          }
+        }
+      }
+    },
     "不追加 OPPO 私有信息，照片可在 Apple 照片里继续编辑。": {
       "localizations": {
         "en": {
@@ -811,6 +821,16 @@
         }
       }
     },
+    "导入 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Flutter Checkpoint…"
+          }
+        }
+      }
+    },
     "导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。": {
       "localizations": {
         "en": {
@@ -827,6 +847,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Import failed: %@"
+          }
+        }
+      }
+    },
+    "导出 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Flutter Checkpoint…"
           }
         }
       }
@@ -931,6 +961,16 @@
         }
       }
     },
+    "已导入 Flutter 检查点：%lld 张已完成，%lld 张待转换，%lld 张无法读取。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter checkpoint imported: %1$lld done, %2$lld to convert, %3$lld unreadable."
+          }
+        }
+      }
+    },
     "已恢复": {
       "localizations": {
         "en": {
@@ -1031,6 +1071,16 @@
         }
       }
     },
+    "把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write the current queue as an xdremux_checkpoint.jsonl the Flutter app can read"
+          }
+        }
+      }
+    },
     "拍摄时间": {
       "localizations": {
         "en": {
@@ -1081,6 +1131,16 @@
         }
       }
     },
+    "提示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notice"
+          }
+        }
+      }
+    },
     "摄影风格 3 后处理失败：%@": {
       "localizations": {
         "en": {
@@ -1127,6 +1187,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Could not save the queue: %@"
+          }
+        }
+      }
+    },
+    "无法读取 %@，请重新导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot read %@; import it again"
           }
         }
       }
@@ -1397,6 +1467,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Settings"
+          }
+        }
+      }
+    },
+    "读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the Flutter app's xdremux_checkpoint.jsonl and continue its queue"
           }
         }
       }
