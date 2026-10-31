@@ -1,5 +1,13 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-10-31：发布原生 0.5.3（内核 0.4.6）
+
+- 用户在主线同步完成后要求发布下一版。合并 `release/0.4.6-prep`（`c649570`，含主线 `60b2b48`），共享 Rust 内核为 `0.4.6`；原生元数据升为 `0.5.3` / code `50300`，`.arkui`、API26 目标 / API18 最低兼容及持久化 schema 不变。
+- 本轮原生功能：Live Photo 导出 / 分享 `.pvt.zip`（新增 N-API `livePhotoBundleMake`）、图库 Live Photo「转换单张」走队列单项转换、导出按原照片命名、摄影风格 2 可配对 Live Photo（跟进 #51）；修复图库面板点击穿透到隐藏缩略图条、摄影风格 2 / 3 命名。
+- 首次在 macOS（Apple Silicon，DevEco Studio 26.0）构建发布包：从提交树导出干净的 `apps/harmony`，清空 `signingConfigs` 后 `devecocli build --product default --build-mode debug`，日志为跳过签名而非签名失败。unsigned HAP 8,489,203 字节，SHA256 `AE971A81D0176EF0A62D2EA1EF6066FC3F2A78CF2B8A69DB513809150166A7C3`；暂存核心 6,662,104 字节 / `1E1252DFBA3514E665AA1C2754B6EC19BE973BBA34B0280BB28B51995C709FA2`，包内剥离核心 5,234,872 字节 / `A1F67B4C490B0E0BC2656E2CFD5F0F1313889A15FE85835D1D1776425CFC549C`。
+- 校验：Rust 核心 299 passed / 3 ignored；17 份 Node、5 项 verifier、PS3 C++ 通过；HAP 身份/版本/API、`app.debug:true` / `buildMode:debug`、ZIP CRC、25 个桥接符号可解析、核心版本 `0.4.6`，`hap-sign-tool verify-app` 报 No Hap Signing Block。
+- 真机 Pura X View（HarmonyOS 7.0.0.111）开发自签覆盖安装 0.5.3 并启动；此前同源构建已验证「完成」不再切换照片、Live Photo 单张只转换一项、`.pvt` 打包至保存选择器。未验证 `.pvt.zip` 实际保存后在 Mac「照片」导入、分享面板发送及带风格 Live Photo 的「照片」编辑效果。
+
 ## 2026-10-25：授权发布原生 0.5.2
 
 - 用户在开发构建完成后要求像上一版本一样发布 release tag；以 `harmony-v0.5.2` 独立发布，保留 Flutter Latest 和既有 0.5.1 资产。
