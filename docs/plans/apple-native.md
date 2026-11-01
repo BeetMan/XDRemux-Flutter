@@ -334,7 +334,10 @@ Flutter 版生成的检查点文件可被原生版读取。
   Mac 侧用 `ExternalPeerTests` 发一张 1.9 MB HEIC → 模拟器弹出待接收 → 接收 → 传输记录"已完成"、收件箱出现文件 →
   加入照片列表。macOS 版打开传输页正常。
 - 注意：模拟器自动化工具对 UISwitch 的点击不生效（拖动才行），手指没问题；接收开关改成 @State + onChange 的标准写法。
-- 未验证：iPhone 真机（无多播授权，自动发现应报 `discovery_unavailable`，手动 IP 可用）；向官方 LocalSend 发送方向；PIN。
+- 与官方 LocalSend（Mac，1.18.x）双向：模拟器点选发现到的 LocalSend → 指纹确认 → "发送 3 个文件"（原始照片）→ LocalSend 弹出
+  "iPhone Duo (XDRemux) 想要发送给你 3 个文件" → 接受 → 三个文件落在 ~/Downloads，SHA-256 与源文件一致，模拟器侧传输记录"已完成"。
+- 顺带发现 main 上 `ConversionConfigTests.testDefaultsMatchDart` 自 #64 起失败（默认语言改为 `system`），修在 PR #69，并 cherry-pick 到本分支。
+- 未验证：iPhone 真机（无多播授权，自动发现应报 `discovery_unavailable`，手动 IP 可用）；PIN。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
