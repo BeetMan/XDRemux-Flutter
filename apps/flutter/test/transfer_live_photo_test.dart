@@ -19,7 +19,7 @@ void main() {
     expect(isLivePhotoZip(zip), isTrue);
     final out = Directory('${temp.path}/out')..createSync();
     final parts = await extractLivePhotoZip(zip, out.path, 'IMG_1.pvt.zip');
-    expect(parts.bundle, '${out.path}/IMG_1.pvt');
+    expect(parts.bundle, '${out.path}${Platform.pathSeparator}IMG_1.pvt');
     expect(File(parts.still).readAsStringSync(), 'still');
     expect(File(parts.movie).readAsStringSync(), 'movie');
     expect(File('${parts.bundle}/metadata.plist').existsSync(), isTrue);
