@@ -74,7 +74,8 @@ the files must be readable from inside the app sandbox (e.g. its container's `Do
 
 Source language is Simplified Chinese; `App/Localizable.xcstrings` carries the English translations
 (terminology matches the Flutter app: Apple Standard / OPPO Compatible). Strings outside SwiftUI views
-go through `String(localized:)`. Test with `-AppleLanguages "(en)"`.
+go through `L(_:)` (see Language below), never `String(localized:)` directly, so the in-app language
+setting applies to them too. Test with `-AppleLanguages "(en)"` or the Settings picker.
 
 ## Build
 
