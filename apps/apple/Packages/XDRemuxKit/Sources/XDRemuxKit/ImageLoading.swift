@@ -34,6 +34,19 @@ public enum ImageLoading {
             ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
+    /// Full-size SDR decode: the base image alone, gain map ignored. This is
+    /// what a viewer without HDR support shows, so the app can compare.
+    public static func sdrImage(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceDecodeRequest: kCGImageSourceDecodeToSDR,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        return CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
     /// Pixel size from the container header without decoding.
     public static func pixelSize(at url: URL) -> CGSize? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),

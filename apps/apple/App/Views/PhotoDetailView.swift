@@ -2,11 +2,13 @@ import SwiftUI
 import XDRemuxKit
 import XDRemuxModel
 
-/// Detail-first flow (plan §8.3): what the core found, the options that
-/// apply to this photo, one "convert" button, then the HDR result and export.
+/// Detail-first flow (plan §8.3): the preview, the options that apply to
+/// this photo with one "convert" button (or the HDR result and export), and
+/// what the core read about the file folded away at the end.
 struct PhotoDetailView: View {
     @Bindable var model: LibraryModel
     let itemID: PhotoItem.ID
+    @State private var showInfo = false
 
     private var item: PhotoItem? { model.items.first { $0.id == itemID } }
 
@@ -16,7 +18,8 @@ struct PhotoDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     PreviewCard(item: item)
                     statusSection(item)
-                    infoSection(item)
+                    // The options are the body of the page; the metadata the
+                    // core read is reference material and collapses below.
                     if item.isConvertible, item.product == nil {
                         if item.isMotionPhoto { motionSection(item) }
                         optionsSection(item)
@@ -24,6 +27,7 @@ struct PhotoDetailView: View {
                     if let product = item.product {
                         ResultSection(model: model, item: item, product: product)
                     }
+                    infoSection(item)
                 }
                 .padding()
                 .frame(maxWidth: 720, alignment: .leading)
@@ -72,9 +76,20 @@ struct PhotoDetailView: View {
     }
 
     private func infoSection(_ item: PhotoItem) -> some View {
-        GroupBox("照片信息") {
+        GroupBox {
+            DisclosureGroup(isExpanded: $showInfo) {
+                infoGrid(item).padding(.top, 8)
+            } label: {
+                Text("照片信息").font(.headline)
+            }
+            // A section header, not a link: keep the accent off the label.
+            .tint(.primary)
+        }
+    }
+
+    private func infoGrid(_ item: PhotoItem) -> some View {
             InfoGrid {
-                InfoRow("拍摄设备", [item.details?.make, item.details?.model].compactMap { $0 }.joined(separator: " "))
+                InfoRow("拍摄设备", deviceName(item))
                 InfoRow("尺寸", item.details?.dimensionsText)
                 InfoRow("拍摄时间", item.details?.dateTime)
                 InfoRow("曝光", item.details?.exposureSummary)
@@ -95,7 +110,16 @@ struct PhotoDetailView: View {
                                        m.hasAudio == true ? String(localized: "有声音") : nil].compactMap { $0 }.joined(separator: " · "))
                 }
             }
-        }
+    }
+
+    /// "OPPO Find X8 Ultra", not "OPPO OPPO Find X8 Ultra": OPPO's model
+    /// tag already carries the make.
+    private func deviceName(_ item: PhotoItem) -> String? {
+        let make = item.details?.make?.trimmingCharacters(in: .whitespaces) ?? ""
+        let model = item.details?.model?.trimmingCharacters(in: .whitespaces) ?? ""
+        if model.isEmpty { return make.isEmpty ? nil : make }
+        if make.isEmpty || model.lowercased().hasPrefix(make.lowercased()) { return model }
+        return "\(make) \(model)"
     }
 
     private func motionSection(_ item: PhotoItem) -> some View {
@@ -160,32 +184,37 @@ struct PhotoDetailView: View {
 }
 
 /// Shows the HDR output when available, otherwise the SDR input thumbnail.
+/// With an HDR output on screen, a press-and-hold button shows the SDR base
+/// image instead (what a viewer without HDR support would display), as the
+/// HarmonyOS app does; releasing restores HDR.
 struct PreviewCard: View {
     let item: PhotoItem
     #if os(iOS)
     // `UIImageReader` with `prefersHighDynamicRange` is the supported HDR
     // path on iOS; a CGImage decoded with `kCGImageSourceDecodeToHDR`
     // renders black in `Image(decorative:)` there (seen on iOS 27 simulator).
-    @State private var hdrImage: UIImage?
+    typealias PreviewImage = UIImage
     #else
-    @State private var hdrImage: CGImage?
+    typealias PreviewImage = CGImage
     #endif
+    @State private var hdrImage: PreviewImage?
+    @State private var sdrImage: PreviewImage?
+    @State private var comparingSDR = false
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 16).fill(.quaternary)
             if let hdrImage {
-                #if os(iOS)
-                let image = Image(uiImage: hdrImage)
-                #else
-                let image = Image(decorative: hdrImage, scale: 1)
-                #endif
-                image
+                let showSDR = comparingSDR && sdrImage != nil
+                previewImage(showSDR ? sdrImage! : hdrImage)
                     .resizable()
                     .scaledToFit()
-                    .allowedDynamicRange(.high)
+                    .allowedDynamicRange(showSDR ? .standard : .high)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(alignment: .topLeading) { badge("HDR 输出") }
+                    .overlay(alignment: .topLeading) { badge(showSDR ? "SDR 效果" : "HDR 输出") }
+                    // Top corner, opposite the badge: the bottom edge is
+                    // where OPPO's watermark strip sits.
+                    .overlay(alignment: .topTrailing) { sdrCompareButton }
             } else if let thumb = item.thumbnail {
                 Image(decorative: thumb, scale: 1)
                     .resizable()
@@ -199,20 +228,64 @@ struct PreviewCard: View {
         .frame(maxWidth: .infinity)
         .frame(minHeight: 220, maxHeight: 420)
         .task(id: item.product?.outputURL) {
-            guard let url = item.product?.outputURL else { hdrImage = nil; return }
-            #if os(iOS)
-            // A screen without EDR headroom (the simulator, older panels)
-            // draws a high-dynamic-range UIImage black, so only ask for HDR
-            // where it can be shown; the SDR decode still applies the base
-            // image's tone mapping.
-            let wantsHDR = await MainActor.run { UIScreen.main.potentialEDRHeadroom > 1.0 }
-            var configuration = UIImageReader.Configuration()
-            configuration.prefersHighDynamicRange = wantsHDR
-            hdrImage = await UIImageReader(configuration: configuration).image(contentsOf: url)
-            #else
-            hdrImage = await Task.detached(priority: .userInitiated) { ImageLoading.hdrImage(at: url) }.value
-            #endif
+            hdrImage = nil
+            sdrImage = nil
+            comparingSDR = false
+            guard let url = item.product?.outputURL else { return }
+            hdrImage = await Self.decode(url, hdr: true)
+            // Decoded up front so the hold shows SDR without a visible delay.
+            sdrImage = await Self.decode(url, hdr: false)
         }
+    }
+
+    private func previewImage(_ image: PreviewImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(decorative: image, scale: 1)
+        #endif
+    }
+
+    /// Hold to see the SDR base image, release to return to HDR. A button
+    /// (not a toggle) so the comparison reads as a glance, like the
+    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down.
+    private var sdrCompareButton: some View {
+        Label("SDR", systemImage: "circle.lefthalf.filled")
+            .font(.caption.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(comparingSDR ? AnyShapeStyle(.tint) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+            .foregroundStyle(comparingSDR ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .padding(10)
+            .contentShape(Capsule())
+            .onLongPressGesture(minimumDuration: 0, maximumDistance: 40) {
+                // Fires on release when the hold ended inside the button.
+            } onPressingChanged: { pressing in
+                comparingSDR = pressing
+            }
+            .disabled(sdrImage == nil)
+            .opacity(sdrImage == nil ? 0.5 : 1)
+            .accessibilityLabel("按住显示 SDR 效果，松开恢复 HDR")
+            .accessibilityAddTraits(.isButton)
+            .help("按住查看没有 HDR 时这张照片的样子")
+    }
+
+    private static func decode(_ url: URL, hdr: Bool) async -> PreviewImage? {
+        #if os(iOS)
+        // A screen without EDR headroom (the simulator, older panels)
+        // draws a high-dynamic-range UIImage black, so only ask for HDR
+        // where it can be shown; the SDR decode still applies the base
+        // image's tone mapping.
+        let hasHeadroom = await MainActor.run { UIScreen.main.potentialEDRHeadroom > 1.0 }
+        let wantsHDR = hdr && hasHeadroom
+        var configuration = UIImageReader.Configuration()
+        configuration.prefersHighDynamicRange = wantsHDR
+        return await UIImageReader(configuration: configuration).image(contentsOf: url)
+        #else
+        return await Task.detached(priority: .userInitiated) {
+            hdr ? ImageLoading.hdrImage(at: url) : ImageLoading.sdrImage(at: url)
+        }.value
+        #endif
     }
 
     private func badge(_ text: LocalizedStringKey) -> some View {

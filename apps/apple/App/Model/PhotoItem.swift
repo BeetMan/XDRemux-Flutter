@@ -71,9 +71,11 @@ struct PhotoItem: Identifiable {
     }
 
     /// Short line for the list row: "x7 · lhdr · 4096 × 3072".
+    /// One line under the file name in the list. The device family (X6 /
+    /// X7) stays in the detail page's photo info; it says nothing a user
+    /// picking a photo to convert needs here.
     var summaryText: String {
         var parts: [String] = []
-        if let f = classification?.family { parts.append(f.uppercased()) }
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
         if let d = details?.dimensionsText { parts.append(d) }
         if isMotionPhoto { parts.append(String(localized: "动态照片")) }

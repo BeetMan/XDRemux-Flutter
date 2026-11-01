@@ -274,6 +274,21 @@ Flutter 版生成的检查点文件可被原生版读取。
   macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
 - 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
 
+**§8 补充：详情页以转换选项为主体、SDR 对比、列表卡片（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 详情页顺序改为：预览 → 状态 → **转换选项 / 转换结果**（页面主体）→ **照片信息**（`DisclosureGroup`，默认收起）。
+  内核读到的元数据是参考资料，不该挡在"转换这张"前面。
+- 预览卡在显示 HDR 输出时，右上角多一个"◐ SDR"胶囊：按住显示 SDR 基图（iOS 用 `UIImageReader`
+  `prefersHighDynamicRange = false`，macOS 用 `kCGImageSourceDecodeToSDR`，`ImageLoading.sdrImage`），松开恢复 HDR。
+  与鸿蒙版同一交互（按下 / 抬起），`onLongPressGesture(minimumDuration: 0)` 的 `onPressingChanged` 实现；
+  SDR 图在 HDR 图之后预解码，按下无等待。放右上角是因为底边是 OPPO 水印条。
+- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、尺寸、动态照片、华为标记；
+  缩略图 60pt，三行间距 4pt、上下留 4pt；状态行改用 HStack 而不是 `Label`——列表里 `Label` 的图标会被对齐到
+  列表图标列，离文字一截。详情页"拍摄设备"去掉重复的厂商前缀（OPPO 的 Model 已含 "OPPO"）。
+- 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；
+  列表三张卡片状态图标与文字对齐。已装到 iPhone 16e（无 App Group 的真机构建）。
+- 未验证：真机上按住 SDR 的亮度差异（模拟器无 EDR，两张图一样）。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

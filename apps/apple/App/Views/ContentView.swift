@@ -312,18 +312,21 @@ struct PhotoRow: View {
     let item: PhotoItem
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             ThumbnailView(image: item.thumbnail)
-                .frame(width: 56, height: 56)
-            VStack(alignment: .leading, spacing: 3) {
+                .frame(width: 60, height: 60)
+            // Three lines at body / caption / caption; the spacing keeps
+            // them readable as separate lines without outgrowing the thumb.
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.sourceName).lineLimit(1).font(.body)
                 Text(item.summaryText.isEmpty ? " " : item.summaryText)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 statusLine
+                    .frame(minHeight: 16, alignment: .leading)
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -331,10 +334,20 @@ struct PhotoRow: View {
         switch item.state {
         case .converting(let p):
             ProgressView(value: p).progressViewStyle(.linear)
+        // An HStack rather than Label: inside the row a Label's icon takes
+        // the list's icon alignment and floats away from the text.
         case .done:
-            Label(item.statusText, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                Text(item.statusText)
+            }
+            .font(.caption).foregroundStyle(.green)
         case .failed:
-            Label(item.statusText, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).lineLimit(1)
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(item.statusText).lineLimit(1)
+            }
+            .font(.caption).foregroundStyle(.red)
         default:
             Text(item.statusText).font(.caption).foregroundStyle(item.isConvertible ? Color.secondary : Color.orange)
         }
