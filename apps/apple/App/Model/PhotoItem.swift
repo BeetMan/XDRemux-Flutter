@@ -66,21 +66,21 @@ struct PhotoItem: Identifiable {
 
     var statusText: String {
         switch state {
-        case .inspecting: return String(localized: "正在读取…")
+        case .inspecting: return L("正在读取…")
         case .ready:
-            if let policyReason { return String(localized: String.LocalizationValue(policyReason)) }
-            return isConvertible ? String(localized: "可转换") : (inspection?.errorMessage ?? String(localized: "不支持"))
+            if let policyReason { return L(String.LocalizationValue(policyReason)) }
+            return isConvertible ? L("可转换") : (inspection?.errorMessage ?? L("不支持"))
         case .converting(let p):
             // The fraction is banded by stage in the kit, so the label can
             // name the stage the way the Flutter app does.
             switch ConversionProgress.Phase(fraction: p) {
-            case .extract: return String(localized: "解析元数据…")
-            case .decode: return String(localized: "解码增益图…")
-            case .encode: return String(localized: "编码 HEVC \(Int(p * 100))%")
-            case .assemble: return String(localized: "组装输出…")
+            case .extract: return L("解析元数据…")
+            case .decode: return L("解码增益图…")
+            case .encode: return L("编码 HEVC \(Int(p * 100))%")
+            case .assemble: return L("组装输出…")
             }
-        case .done: return String(localized: "已完成")
-        case .failed(let m): return String(localized: "失败：\(m)")
+        case .done: return L("已完成")
+        case .failed(let m): return L("失败：\(m)")
         }
     }
 
@@ -92,9 +92,9 @@ struct PhotoItem: Identifiable {
         var parts: [String] = []
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
         if let mp = details?.megapixelsText { parts.append(mp) }
-        if isMotionPhoto { parts.append(String(localized: "动态照片")) }
+        if isMotionPhoto { parts.append(L("动态照片")) }
         if let huawei {
-            parts.append(huawei.portraitReady ? String(localized: "华为人像 → Apple 人像") : String(localized: "华为 HDR"))
+            parts.append(huawei.portraitReady ? L("华为人像 → Apple 人像") : L("华为 HDR"))
         }
         return parts.joined(separator: " · ")
     }

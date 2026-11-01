@@ -19,12 +19,12 @@ struct OrganizeView: View {
                     .font(.callout).foregroundStyle(.secondary)
                 HStack {
                     Button("选择照片文件夹…") { pickingInput = true }
-                    Text(model.inputRoot?.path ?? String(localized: "尚未选择")).lineLimit(1).truncationMode(.middle)
+                    Text(model.inputRoot?.path ?? L("尚未选择")).lineLimit(1).truncationMode(.middle)
                         .foregroundStyle(.secondary)
                 }
                 HStack {
                     Button("输出到…") { pickingOutput = true }.disabled(model.inputRoot == nil)
-                    Text(model.outputRoot?.path ?? String(localized: "默认与照片文件夹相同")).lineLimit(1).truncationMode(.middle)
+                    Text(model.outputRoot?.path ?? L("默认与照片文件夹相同")).lineLimit(1).truncationMode(.middle)
                         .foregroundStyle(.secondary)
                 }
                 if let status = model.status {
@@ -42,7 +42,7 @@ struct OrganizeView: View {
                                         .foregroundStyle(.secondary)
                                     VStack(alignment: .leading) {
                                         Text(entry.item.sourceURL.lastPathComponent).lineLimit(1)
-                                        Text(entry.isDuplicate ? String(localized: "已在目标位置，跳过") : entry.destination.deletingLastPathComponent().path)
+                                        Text(entry.isDuplicate ? L("已在目标位置，跳过") : entry.destination.deletingLastPathComponent().path)
                                             .font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
                                     }
                                 }
@@ -61,7 +61,7 @@ struct OrganizeView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(model.copying ? String(localized: "复制中…") : String(localized: "开始整理")) {
+                    Button(model.copying ? L("复制中…") : L("开始整理")) {
                         Task { await model.execute() }
                     }
                     .disabled(model.groups.isEmpty || model.scanning || model.copying)
@@ -100,7 +100,7 @@ final class OrganizeModel {
     private let supported: Set<String> = ["heic", "heif", "jpg", "jpeg"]
 
     var layout: OrganizePlanner.Layout {
-        .init(stillFolder: String(localized: "静态照片"), liveFolder: String(localized: "实况照片"))
+        .init(stillFolder: L("静态照片"), liveFolder: L("实况照片"))
     }
 
     func scan(_ root: URL) async {
@@ -109,7 +109,7 @@ final class OrganizeModel {
         inputRoot = root
         outputRoot = nil
         scanning = true; progress = 0; items = []; groups = []
-        status = String(localized: "正在扫描…")
+        status = L("正在扫描…")
         defer { scanning = false }
 
         // Files first (one pass), then classify; a same-stem MOV becomes the
@@ -127,7 +127,7 @@ final class OrganizeModel {
         }
         photos.sort { $0.path < $1.path }
         guard !photos.isEmpty else {
-            status = String(localized: "该文件夹下没有找到 HEIC / JPEG 照片")
+            status = L("该文件夹下没有找到 HEIC / JPEG 照片")
             return
         }
         var live = 0
@@ -142,7 +142,7 @@ final class OrganizeModel {
             progress = Double(index + 1) / Double(photos.count)
         }
         let categorized = items.filter { $0.folderName != nil }.count
-        status = String(localized: "共 \(items.count) 张照片，\(categorized) 张可分类，\(live) 组实况照片")
+        status = L("共 \(items.count) 张照片，\(categorized) 张可分类，\(live) 组实况照片")
         replan()
     }
 
@@ -155,7 +155,7 @@ final class OrganizeModel {
     private func replan() {
         guard let root = outputRoot ?? inputRoot else { return }
         let plan = OrganizePlanner.plan(items, root: root, layout: layout) { FileManager.default.fileExists(atPath: $0.path) }
-        let uncategorized = String(localized: "（未分类）")
+        let uncategorized = L("（未分类）")
         var byName: [String: [OrganizePlanner.Entry]] = [:]
         for entry in plan { byName[entry.item.folderName ?? uncategorized, default: []].append(entry) }
         groups = byName.keys.sorted { a, b in
@@ -168,7 +168,7 @@ final class OrganizeModel {
     func execute() async {
         guard !copying else { return }
         copying = true; progress = 0
-        status = String(localized: "复制中…")
+        status = L("复制中…")
         defer { copying = false }
         let entries = groups.flatMap(\.entries)
         let outcome = await Task.detached(priority: .userInitiated) { [entries] in
@@ -178,7 +178,7 @@ final class OrganizeModel {
             }
         }.value
         progress = 1
-        status = String(localized: "完成：\(outcome.copied) 张已复制，\(outcome.skipped) 张跳过，\(outcome.failed.count) 张失败")
+        status = L("完成：\(outcome.copied) 张已复制，\(outcome.skipped) 张跳过，\(outcome.failed.count) 张失败")
         replan()
     }
 

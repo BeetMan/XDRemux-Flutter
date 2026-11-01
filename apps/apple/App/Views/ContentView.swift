@@ -124,6 +124,10 @@ struct ContentView: View {
                       defaultFilename: FlutterCheckpoint.fileName) { result in
             if case .failure(let error) = result { model.lastError = error.localizedDescription }
         }
+        // In-app language: Text keys resolve against this locale; model
+        // strings go through L() (see L10n.swift). Last in the chain so the
+        // sheets and alerts above inherit it too.
+        .environment(\.locale, model.config.language.localeIdentifier.map(Locale.init(identifier:)) ?? .autoupdatingCurrent)
     }
 
     /// HIG: a toolbar carries the few most-used actions and lets the system

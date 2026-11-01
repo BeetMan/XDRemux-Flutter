@@ -4,8 +4,19 @@ import Foundation
 // keys are kept identical to the Dart `name`s so settings and checkpoints can
 // be read by either front-end (docs/plans/apple-native.md §3 P2).
 
+/// UI language. `system` follows the device; the Flutter app only knows
+/// the explicit two, so a checkpoint from it never carries `system`.
 public enum AppLanguage: String, Codable, CaseIterable, Sendable {
-    case chinese, english
+    case system, chinese, english
+
+    /// The `.lproj` folder / `Locale` identifier, `nil` for `system`.
+    public var localeIdentifier: String? {
+        switch self {
+        case .system: return nil
+        case .chinese: return "zh-Hans"
+        case .english: return "en"
+        }
+    }
 }
 
 public enum Family: String, Codable, CaseIterable, Sendable {
@@ -88,7 +99,7 @@ public struct RustConvertConfig: Equatable, Sendable {
 
 /// Persistent conversion settings. Defaults match the Dart constructor.
 public struct ConversionConfig: Codable, Equatable, Sendable {
-    public var language: AppLanguage = .chinese
+    public var language: AppLanguage = .system
     public var family: Family = .auto
     public var outputMode: OutputMode = .oppo
     public var outputDirectory: String? = nil

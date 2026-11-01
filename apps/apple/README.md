@@ -114,3 +114,11 @@ The core staticlib does not carry link flags: anything linking `XDRemuxCore` mus
 Bundle ID `io.github.beetman.xdremux.swiftui`, distinct from the Flutter app
 (`io.github.beetman.xdremux`) so both install side by side. Release artefacts and signing are
 not set up yet (plan §5).
+
+## Language
+
+Settings → 语言 / Language switches the UI between the device language, Simplified Chinese and English without a
+restart. `Text` keys follow the `locale` environment set at the root of `ContentView`; strings built in model code go
+through `L(_:)` (`App/Platform/L10n.swift`). To pull new keys into `App/Localizable.xcstrings`, run
+`xcodebuild -exportLocalizations -project XDRemux.xcodeproj -localizationPath out -exportLanguage en -sdk iphonesimulator ARCHS=arm64`
+and translate the untranslated units; a plain `xcodebuild build` does not update the catalog.

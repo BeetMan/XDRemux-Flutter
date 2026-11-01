@@ -15,6 +15,7 @@ final class LibraryModel {
         didSet {
             try? settingsStore.save(config)
             engine.setMaxConcurrency(config.maxConcurrentJobs)
+            L10n.apply(config.language)
             applyPolicies()
         }
     }
@@ -68,6 +69,7 @@ final class LibraryModel {
         self.config = settingsStore.load()
         self.outputRoot = directories.outputs
         try? directories.ensureExists()
+        L10n.apply(config.language)
         engine.setMaxConcurrency(config.maxConcurrentJobs)
         outputRoot = outputLocation.resolve(fallback: directories.outputs)
         restoreJournal()
@@ -114,10 +116,10 @@ final class LibraryModel {
                         pairedVideoURL: record.pairedVideoPath.map(URL.init(fileURLWithPath:)),
                         extraVideoURLs: (record.extraVideoPaths ?? []).map(URL.init(fileURLWithPath:))))
                 } else {
-                    item.state = .failed(String(localized: "记录不完整，请重新转换"))
+                    item.state = .failed(L("记录不完整，请重新转换"))
                 }
             case .failed:
-                item.state = .failed(record.errorMessage ?? String(localized: "失败"))
+                item.state = .failed(record.errorMessage ?? L("失败"))
             }
             return item
         }
@@ -150,7 +152,7 @@ final class LibraryModel {
                                        pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
-        do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = String(localized: "无法保存队列状态：\(error.localizedDescription)") }
+        do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = L("无法保存队列状态：\(error.localizedDescription)") }
     }
 
     var selectedItem: PhotoItem? {
@@ -182,7 +184,7 @@ final class LibraryModel {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let text = try? String(contentsOf: url, encoding: .utf8),
               let checkpoint = FlutterCheckpoint.parse(jsonl: text) else {
-            lastError = String(localized: "不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。")
+            lastError = L("不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。")
             return
         }
         isImporting = true
@@ -192,7 +194,7 @@ final class LibraryModel {
             let input = URL(fileURLWithPath: record.inputPath)
             guard let copy = try? copyIntoInputs(input) else {
                 var item = PhotoItem(sourceName: record.sourceName, inputURL: input)
-                item.state = .failed(String(localized: "无法读取 \(record.inputPath)，请重新导入"))
+                item.state = .failed(L("无法读取 \(record.inputPath)，请重新导入"))
                 items.append(item); unreadable += 1
                 continue
             }
@@ -204,7 +206,7 @@ final class LibraryModel {
                                                      outcome: record.outcome ?? ConversionOutcome(success: true), config: config))
                 restored += 1
             } else if record.status == .failed {
-                item.state = .failed(record.errorMessage ?? String(localized: "失败"))
+                item.state = .failed(record.errorMessage ?? L("失败"))
             } else {
                 item.state = .inspecting; redo += 1
             }
@@ -212,7 +214,7 @@ final class LibraryModel {
             if selectedID == nil { selectedID = item.id }
             await inspect(item.id, keepState: true)
         }
-        notice = String(localized: "已导入 Flutter 检查点：\(restored) 张已完成，\(redo) 张待转换，\(unreadable) 张无法读取。")
+        notice = L("已导入 Flutter 检查点：\(restored) 张已完成，\(redo) 张待转换，\(unreadable) 张无法读取。")
     }
 
     /// The native queue as a Flutter checkpoint (paths absolute, as the
@@ -271,7 +273,7 @@ final class LibraryModel {
                 if selectedID == nil { selectedID = item.id }
                 await inspect(item.id)
             } catch {
-                lastError = String(localized: "导入 \(url.lastPathComponent) 失败：\(error.localizedDescription)")
+                lastError = L("导入 \(url.lastPathComponent) 失败：\(error.localizedDescription)")
             }
         }
     }
@@ -287,7 +289,7 @@ final class LibraryModel {
             if selectedID == nil { selectedID = item.id }
             await inspect(item.id)
         } catch {
-            lastError = String(localized: "导入 \(name) 失败：\(error.localizedDescription)")
+            lastError = L("导入 \(name) 失败：\(error.localizedDescription)")
         }
     }
 
@@ -342,7 +344,7 @@ final class LibraryModel {
         } catch {
             update(id) { item in
                 item.thumbnail = thumbnail
-                if !keepState || item.state == .inspecting { item.state = .failed(String(localized: "读取失败：\(String(describing: error))")) }
+                if !keepState || item.state == .inspecting { item.state = .failed(L("读取失败：\(String(describing: error))")) }
             }
         }
     }
@@ -511,12 +513,12 @@ final class LibraryModel {
 
     private static func describe(_ error: ConversionJobError) -> String {
         switch error {
-        case .coreFailed(let message): return message ?? String(localized: "内核未给出原因")
-        case .verificationFailed: return String(localized: "输出未通过结构校验，已丢弃")
-        case .styles3Failed(let message): return String(localized: "摄影风格 3 后处理失败：\(message ?? "")")
-        case .livePhotoFailed(let message): return message ?? String(localized: "Live Photo 合成失败")
-        case .missingOutput: return String(localized: "内核报告成功但没有写出文件")
-        case .samePath: return String(localized: "输出路径与输入相同")
+        case .coreFailed(let message): return message ?? L("内核未给出原因")
+        case .verificationFailed: return L("输出未通过结构校验，已丢弃")
+        case .styles3Failed(let message): return L("摄影风格 3 后处理失败：\(message ?? "")")
+        case .livePhotoFailed(let message): return message ?? L("Live Photo 合成失败")
+        case .missingOutput: return L("内核报告成功但没有写出文件")
+        case .samePath: return L("输出路径与输入相同")
         }
     }
 }

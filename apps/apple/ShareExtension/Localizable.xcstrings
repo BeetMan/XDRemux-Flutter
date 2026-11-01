@@ -6,7 +6,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Added %lld to XDRemux. Open XDRemux to convert."
+            "value": "Added %lld photos to XDRemux. Open XDRemux to convert them."
           }
         }
       }
@@ -16,7 +16,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Added %1$lld to XDRemux, skipped %2$lld non-HEIC / JPEG files. Open XDRemux to convert."
+            "value": "Added %1$lld photos to XDRemux and skipped %2$lld that are not HEIC or JPEG. Open XDRemux to convert them."
           }
         }
       }
@@ -46,7 +46,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No HEIC / JPEG photos to add."
+            "value": "No HEIC or JPEG photos to add."
           }
         }
       }

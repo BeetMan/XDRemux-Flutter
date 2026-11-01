@@ -10,6 +10,13 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("语言") {
+                    Picker("语言", selection: $model.config.language) {
+                        Text("跟随系统").tag(AppLanguage.system)
+                        Text(verbatim: "简体中文").tag(AppLanguage.chinese)
+                        Text(verbatim: "English").tag(AppLanguage.english)
+                    }
+                }
                 Section("输出") {
                     Picker("输出模式", selection: $model.config.outputMode) {
                         Text("OPPO 兼容").tag(OutputMode.oppo)
@@ -99,29 +106,29 @@ struct SettingsView: View {
 
     static func title(_ mode: OppoCompatMode) -> String {
         switch mode {
-        case .auto: return String(localized: "自动")
-        case .on: return String(localized: "开启")
-        case .tail: return String(localized: "仅尾部")
-        case .iso: return String(localized: "ISO")
-        case .isoNoLocal: return String(localized: "ISO（无本地）")
-        case .isoGraph: return String(localized: "ISO 图")
-        case .off: return String(localized: "关闭")
+        case .auto: return L("自动")
+        case .on: return L("开启")
+        case .tail: return L("仅尾部")
+        case .iso: return L("ISO")
+        case .isoNoLocal: return L("ISO（无本地）")
+        case .isoGraph: return L("ISO 图")
+        case .off: return L("关闭")
         }
     }
 
     static func title(_ mode: OppoCameraTailMode) -> String {
         switch mode {
-        case .automatic: return String(localized: "自动")
-        case .off: return String(localized: "不保留")
-        case .watermark: return String(localized: "仅水印")
-        case .compact: return String(localized: "精简")
-        case .preserve: return String(localized: "完整保留")
-        case .preserveWithoutPortrait: return String(localized: "保留（去人像）")
-        case .preserveWithoutPortraitOrPrivateHdr: return String(localized: "保留（去人像与私有 HDR）")
-        case .preserveWithoutPrivateUhdr: return String(localized: "保留（去私有 UHDR）")
-        case .preserveWithoutPrivateHdr: return String(localized: "保留（去私有 HDR）")
-        case .preserveNoUhdr: return String(localized: "保留（无 UHDR）")
-        case .preserveNoHdr: return String(localized: "保留（无 HDR）")
+        case .automatic: return L("自动")
+        case .off: return L("不保留")
+        case .watermark: return L("仅水印")
+        case .compact: return L("精简")
+        case .preserve: return L("完整保留")
+        case .preserveWithoutPortrait: return L("保留（去人像）")
+        case .preserveWithoutPortraitOrPrivateHdr: return L("保留（去人像与私有 HDR）")
+        case .preserveWithoutPrivateUhdr: return L("保留（去私有 UHDR）")
+        case .preserveWithoutPrivateHdr: return L("保留（去私有 HDR）")
+        case .preserveNoUhdr: return L("保留（无 UHDR）")
+        case .preserveNoHdr: return L("保留（无 HDR）")
         }
     }
 }

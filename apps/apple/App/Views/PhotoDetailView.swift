@@ -105,13 +105,13 @@ struct PhotoDetailView: View {
                     InfoRow("EDR scale", String(format: "%.3f", i.edrScale))
                     InfoRow("Gain map 上限", String(format: "%.3f", i.gainMapMax))
                 }
-                if item.details?.applePhotographicStyles == true { InfoRow("Apple 摄影风格", String(localized: "已包含")) }
-                if item.details?.applePortrait == true { InfoRow("Apple 人像", String(localized: "已包含")) }
+                if item.details?.applePhotographicStyles == true { InfoRow("Apple 摄影风格", L("已包含")) }
+                if item.details?.applePortrait == true { InfoRow("Apple 人像", L("已包含")) }
                 if let m = item.motionPhoto {
                     InfoRow("动态照片", [m.sourceKind, m.durationText,
                                        m.videoWidth.flatMap { w in m.videoHeight.map { "\(w) × \($0)" } },
-                                       m.isDualStream ? String(localized: "双流") : nil,
-                                       m.hasAudio == true ? String(localized: "有声音") : nil].compactMap { $0 }.joined(separator: " · "))
+                                       m.isDualStream ? L("双流") : nil,
+                                       m.hasAudio == true ? L("有声音") : nil].compactMap { $0 }.joined(separator: " · "))
                 }
             }
     }
@@ -342,14 +342,14 @@ struct ResultSection: View {
         GroupBox("转换结果") {
             VStack(alignment: .leading, spacing: 12) {
                 InfoGrid {
-                    InfoRow("输出模式", product.config.outputMode == .oppo ? String(localized: "OPPO 兼容") : String(localized: "Apple 标准"))
+                    InfoRow("输出模式", product.config.outputMode == .oppo ? L("OPPO 兼容") : L("Apple 标准"))
                     InfoRow("文件", product.outputURL.lastPathComponent)
                     if let mov = product.pairedVideoURL { InfoRow("Live Photo 视频", mov.lastPathComponent) }
                     if !product.extraVideoURLs.isEmpty {
                         InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "))
                     }
                     InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
-                    InfoRow("校验", String(localized: "通过（可解码 + 结构检查）"))
+                    InfoRow("校验", L("通过（可解码 + 结构检查）"))
                 }
                 ExportButtons(model: model, item: item, product: product)
             }

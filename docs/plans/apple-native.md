@@ -297,6 +297,18 @@ Flutter 版生成的检查点文件可被原生版读取。
   `scratch/previews/<id>.heic`，预览卡显示它并标"HDR 预览"，SDR 对比按钮同样可用；真正转换完成或移出照片时删掉。
   成本就是一次转换（Mac 上 18 MP 0.4 s、59 MP 1.4 s）。模拟器实测：打开详情约 1 s 后出现 HDR 预览。
 
+**§8 补充：应用内语言与英文文案（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 设置页新增"语言"：跟随系统 / 简体中文 / English，存在 `ConversionConfig.language`（`AppLanguage` 增加 `system`，默认值改为它；
+  Flutter 检查点不含该字段，互读不受影响）。
+- 生效机制：SwiftUI `Text` 键跟随根视图末尾设置的 `.environment(\.locale)`（放在 `.sheet` / `.alert` 之后，弹层才继承）；
+  模型层字符串改走 `L(_:)`（`App/Platform/L10n.swift`），它用对应 `.lproj` 的 Bundle 调 `String(localized:bundle:locale:)`。
+  App 内 99 处 `String(localized:)` 全部替换。分享扩展仍跟系统语言。
+- 字符串表：`xcodebuild build` 不会回写 `.xcstrings`，用 `xcodebuild -exportLocalizations -sdk iphonesimulator ARCHS=arm64`
+  提取出 223 个键（28 个缺英文），重写全部英文；`SWIFT_EMIT_LOC_STRINGS` 打开以便提取。新增 `App/InfoPlist.xcstrings`
+  （照片库权限说明的英文）。
+- 实测（iPhone Duo 模拟器）：设置切到 English 后列表、详情、设置弹层即时切换，无需重启。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
