@@ -130,7 +130,8 @@ class TransferPage extends StatefulWidget {
   State<TransferPage> createState() => _TransferPageState();
 }
 
-class _TransferPageState extends State<TransferPage> {
+class _TransferPageState extends State<TransferPage>
+    with WidgetsBindingObserver {
   late final TransferController transfer;
   final _host = TextEditingController(),
       _port = TextEditingController(text: '53319');
@@ -154,6 +155,7 @@ class _TransferPageState extends State<TransferPage> {
     ];
     _selectionSize = _measure(_paths);
     transfer.addListener(_changed);
+    WidgetsBinding.instance.addObserver(this);
     transfer.enumerateInterfaces().catchError((_) {});
     if (_paths.length != initial.length) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -164,6 +166,19 @@ class _TransferPageState extends State<TransferPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !transfer.receiving) _run(_enableReceiving);
       });
+    }
+  }
+
+  /// Mobile reception stops in the background; coming back to this page
+  /// resumes it, so discovery and receiving need no extra tap.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        widget.autoReceive &&
+        !transfer.receiving &&
+        !_working &&
+        !transfer.busy) {
+      _run(_enableReceiving);
     }
   }
 
@@ -211,6 +226,7 @@ class _TransferPageState extends State<TransferPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     transfer.removeListener(_changed);
     _host.dispose();
     _port.dispose();
@@ -960,6 +976,20 @@ class _TransferPageState extends State<TransferPage> {
           ],
         ),
         if (transfer.receiving && transfer.ready != null) ...[
+          FutureBuilder<String>(
+            future: TransferController.deviceName(),
+            builder: (context, snapshot) => snapshot.hasData
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      t(
+                        '其他设备看到的本机名称：${snapshot.data}',
+                        'Other devices see this one as: ${snapshot.data}',
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
           const SizedBox(height: 8),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
@@ -1112,10 +1142,7 @@ class _TransferPageState extends State<TransferPage> {
           ? t('正在自动发现附近设备', 'Discovering nearby devices')
           : transfer.receiving
           ? t('自动发现已关闭', 'Discovery disabled')
-          : t(
-              '在「接收」页开启接收后会自动发现附近设备',
-              'Enable receiving to discover nearby devices',
-            ),
+          : t('尚未搜索附近设备', 'Not searching for nearby devices'),
       trailing: transfer.receiving
           ? IconButton(
               key: const ValueKey('refresh-discovery'),
@@ -1125,6 +1152,18 @@ class _TransferPageState extends State<TransferPage> {
             )
           : null,
       children: [
+        // Discovery rides on reception (LocalSend answers announcements from
+        // its own listener), so searching here simply turns both on.
+        if (!transfer.receiving)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              key: const ValueKey('start-discovery'),
+              icon: const Icon(Icons.radar),
+              onPressed: disabled ? null : () => _run(_enableReceiving),
+              label: Text(t('搜索附近设备', 'Find nearby devices')),
+            ),
+          ),
         if (transfer.discoveryError != null)
           _hint(context, transferErrorText(transfer.discoveryError!)),
         if (transfer.receiving && transfer.peers.isEmpty)

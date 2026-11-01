@@ -904,6 +904,22 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('the send tab can start discovery itself', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.runAsync(
+      () => tester.tap(find.byKey(const ValueKey('start-discovery'))),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(controller.receiving, isTrue);
+    expect(find.byKey(const ValueKey('start-discovery')), findsNothing);
+    await tester.runAsync(controller.stop);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('a terminated runtime returns the page to explicit enable', (
     tester,
   ) async {

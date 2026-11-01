@@ -48,6 +48,32 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   String? discoveryInterface;
   DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
   static const _multicast = MethodChannel('xdremux/transfer-discovery');
+  static const _traits = MethodChannel('xdremux/platform-traits');
+  static Future<String>? _deviceName;
+
+  /// Name other devices see: the model on phones ("OPPO Find X8 Ultra",
+  /// "iPhone 16e"), the computer name on desktops.
+  static Future<String> deviceName() => _deviceName ??= () async {
+    String? name;
+    try {
+      if (Platform.isAndroid) {
+        name = await _multicast.invokeMethod<String>('modelName');
+      } else if (Platform.isIOS) {
+        name = await _traits.invokeMethod<String>('getModelName');
+      } else if (PlatformX.isOhos) {
+        name = 'HarmonyOS';
+      } else if (Platform.isWindows) {
+        name = Platform.environment['COMPUTERNAME'];
+      } else {
+        name = Platform.localHostname
+            .replaceFirst(RegExp(r'\.local$'), '')
+            .replaceAll('-', ' ');
+      }
+    } catch (_) {}
+    name = name?.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
+    if (name == null || name.isEmpty) return 'XDRemux';
+    return name.length > 64 ? name.substring(0, 64) : name;
+  }();
   String? error;
   Map<String, dynamic>? ready;
   final Map<String, Map<String, dynamic>> transfers = {};
@@ -241,7 +267,11 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final dir = await _support();
       _checkStartup(generation);
-      final available = await native.start(supportRoot: dir.path, bind: bind);
+      final available = await native.start(
+        supportRoot: dir.path,
+        bind: bind,
+        alias: await deviceName(),
+      );
       _checkStartup(generation);
       if (!available.available) {
         throw TransferException(available.reason ?? 'closed');
