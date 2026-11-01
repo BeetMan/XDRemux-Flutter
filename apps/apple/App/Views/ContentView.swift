@@ -15,12 +15,25 @@ struct ContentView: View {
     @State private var importingCheckpoint = false
     @State private var exportingCheckpoint = false
     @State private var checkpointDocument = TextFileDocument(text: "")
+    /// Regular width (iPad, unfolded phones): both columns up from the
+    /// start. Left to its default the split view opens with the sidebar
+    /// hidden on an unfolded phone, leaving a lone toolbar capsule.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
     #endif
 
     static let importTypes: [UTType] = [.heic, .heif, .jpeg]
+
+    /// The Photos picker exists on iOS only.
+    private var photosImportAction: (() -> Void)? {
+        #if os(iOS)
+        { showPhotosPicker = true }
+        #else
+        nil
+        #endif
+    }
 
     private var isCompact: Bool {
         #if os(iOS)
@@ -36,7 +49,8 @@ struct ContentView: View {
                 NavigationStack {
                     Group {
                         if model.items.isEmpty {
-                            EmptyLibraryView(onImport: { showFileImporter = true })
+                            EmptyLibraryView(onImport: { showFileImporter = true },
+                                             onImportPhotos: photosImportAction)
                         } else {
                             PhotoListView(model: model, pushesDetail: true)
                         }
@@ -49,7 +63,7 @@ struct ContentView: View {
                     .toolbar { toolbarContent }
                 }
             } else {
-                NavigationSplitView {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
                     PhotoListView(model: model, pushesDetail: false)
                         // Capped so an unfolded phone keeps room for the
                         // two-column detail; without a max the balanced
@@ -62,9 +76,13 @@ struct ContentView: View {
                     if let item = model.selectedItem {
                         PhotoDetailView(model: model, itemID: item.id)
                     } else {
-                        EmptyLibraryView(onImport: { showFileImporter = true })
+                        EmptyLibraryView(onImport: { showFileImporter = true },
+                                         onImportPhotos: photosImportAction)
                     }
                 }
+                // Side by side rather than detail-over-sidebar, so the list
+                // stays in reach while a photo is open.
+                .navigationSplitViewStyle(.balanced)
                 #if os(macOS)
                 .dropDestination(for: URL.self) { urls, _ in
                     Task { await model.importFiles(urls) }
@@ -186,6 +204,10 @@ struct ContentView: View {
                 Label("批量整理", systemImage: "folder.badge.gearshape")
             }
             .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
+            // Checkpoint interop only makes sense where both apps see the
+            // same paths; on iOS the two sandboxes cannot, so the entries
+            // would import as unreadable.
+            #if os(macOS)
             Button {
                 importingCheckpoint = true
             } label: {
@@ -199,6 +221,7 @@ struct ContentView: View {
                 Label("导出 Flutter 检查点…", systemImage: "square.and.arrow.up.on.square")
             }
             .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
+            #endif
             Button {
                 showSettings = true
             } label: {
@@ -207,12 +230,24 @@ struct ContentView: View {
         }
     }
 
-    /// Compact phones: bottom bar, where the thumb is. Elsewhere: primary.
+    /// iOS: the bottom bar of the list column, where the thumb is on a
+    /// phone and where a text button keeps its name and count on an iPad
+    /// or unfolded phone (a `.primaryAction` Label collapses to an icon
+    /// there). macOS: the window toolbar.
     private var batchPlacement: ToolbarItemPlacement {
         #if os(iOS)
-        isCompact ? .bottomBar : .primaryAction
+        .bottomBar
         #else
         .primaryAction
+        #endif
+    }
+
+    /// Text-only on iOS (see `batchPlacement`); icon + text on macOS.
+    private var batchIsTextOnly: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
         #endif
     }
 
@@ -223,7 +258,7 @@ struct ContentView: View {
             Button(role: .destructive) {
                 model.cancelBatch()
             } label: {
-                if isCompact {
+                if batchIsTextOnly {
                     Text("停止转换").fontWeight(.semibold).padding(.horizontal, 8)
                 } else {
                     Label("停止转换", systemImage: "stop.fill")
@@ -235,7 +270,7 @@ struct ContentView: View {
                 model.convertAll()
             } label: {
                 let title: LocalizedStringKey = model.convertibleCount > 0 ? "全部转换（\(model.convertibleCount)）" : "全部转换"
-                if isCompact {
+                if batchIsTextOnly {
                     // The bottom bar renders a Label as its icon alone; a
                     // text-only button keeps the name and the count.
                     Text(title).fontWeight(.semibold).padding(.horizontal, 8)
@@ -251,6 +286,10 @@ struct ContentView: View {
 
 struct EmptyLibraryView: View {
     let onImport: () -> Void
+    /// iOS only: photos usually live in the library, so that is the
+    /// prominent action and Files the secondary one. macOS has no library
+    /// source and keeps the single Files button.
+    var onImportPhotos: (() -> Void)? = nil
 
     var body: some View {
         ContentUnavailableView {
@@ -258,8 +297,22 @@ struct EmptyLibraryView: View {
         } description: {
             Text("导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。")
         } actions: {
-            Button("从文件导入", action: onImport)
-                .buttonStyle(.borderedProminent)
+            if let onImportPhotos {
+                VStack(spacing: 12) {
+                    Button(action: onImportPhotos) {
+                        Label("从照片导入", systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button(action: onImport) {
+                        Label("从文件导入", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .controlSize(.large)
+            } else {
+                Button("从文件导入", action: onImport)
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 }
@@ -299,7 +352,9 @@ struct PhotoListView: View {
         #if os(macOS)
         .navigationSubtitle("Rust 内核 \(model.coreVersion)")
         #else
-        .navigationBarTitleDisplayMode(pushesDetail ? .large : .inline)
+        // Large in both layouts: as a sidebar column the inline title was
+        // crowded out by the toolbar and the column had no name at all.
+        .navigationBarTitleDisplayMode(.large)
         #endif
     }
 
@@ -329,7 +384,9 @@ struct PhotoRow: View {
             // Three lines at body / caption / caption; the spacing keeps
             // them readable as separate lines without outgrowing the thumb.
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.sourceName).lineLimit(1).font(.body)
+                // Middle truncation keeps the distinguishing tail of
+                // IMG2026…1729.heic visible in a narrow sidebar.
+                Text(item.sourceName).lineLimit(1).truncationMode(.middle).font(.body)
                 Text(item.summaryText.isEmpty ? " " : item.summaryText)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 statusLine
