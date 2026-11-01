@@ -5,7 +5,9 @@ import XCTest
 final class ConversionConfigTests: XCTestCase {
     func testDefaultsMatchDart() {
         let c = ConversionConfig()
-        XCTAssertEqual(c.language, .chinese)
+        // The one deliberate difference from the Dart defaults: the Apple
+        // app follows the device language until the user picks one.
+        XCTAssertEqual(c.language, .system)
         XCTAssertEqual(c.family, .auto)
         XCTAssertEqual(c.outputMode, .oppo)
         XCTAssertEqual(c.oppoCompatibility, .on)
