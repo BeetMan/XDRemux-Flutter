@@ -34,7 +34,8 @@ C=$(xcrun simctl get_app_container booted io.github.beetman.xdremux.swiftui data
 xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Documents/samples/a.heic" --convert-all
 ```
 
-The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
+`build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
+skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
 HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
 
 ## Share Extension (iOS)
@@ -51,6 +52,7 @@ cd apps/apple/Packages/XDRemuxKit && swift build -c release --product xdremux
 .build/release/xdremux convert ~/Pictures/oppo/*.heic -o ~/Pictures/converted          # OPPO 兼容 (default)
 .build/release/xdremux convert photo.heic -m apple --styles3 --json                     # Apple 标准 + Photographic Styles 3 (post-process + styles verify)
 .build/release/xdremux inspect ~/Pictures/oppo                                          # convertible? family / hdr kind
+.build/release/xdremux plan ~/Pictures/oppo -m apple --styles3                          # core's plan: classification, policy, output name
 .build/release/xdremux details photo.heic                                               # EXIF / HDR summary
 .build/release/xdremux verify out/*.heic                                                # decode + structure check
 .build/release/xdremux capabilities                                                     # encoder paths in this core
@@ -72,7 +74,8 @@ the files must be readable from inside the app sandbox (e.g. its container's `Do
 
 Source language is Simplified Chinese; `App/Localizable.xcstrings` carries the English translations
 (terminology matches the Flutter app: Apple Standard / OPPO Compatible). Strings outside SwiftUI views
-go through `String(localized:)`. Test with `-AppleLanguages "(en)"`.
+go through `L(_:)` (see Language below), never `String(localized:)` directly, so the in-app language
+setting applies to them too. Test with `-AppleLanguages "(en)"` or the Settings picker.
 
 ## Build
 
@@ -90,7 +93,7 @@ xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'generic/plat
 ```
 
 Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim`,
-`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). Apple Silicon only for now
+`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). builds on Apple Silicon; the macOS and simulator slices are arm64 + x86_64 (Intel Macs run the same app)
 (no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
 
 `XDREMUX_SAMPLE_DIR=/path/to/proxdr-heics swift test` additionally converts one real sample
@@ -112,3 +115,11 @@ The core staticlib does not carry link flags: anything linking `XDRemuxCore` mus
 Bundle ID `io.github.beetman.xdremux.swiftui`, distinct from the Flutter app
 (`io.github.beetman.xdremux`) so both install side by side. Release artefacts and signing are
 not set up yet (plan §5).
+
+## Language
+
+Settings → 语言 / Language switches the UI between the device language, Simplified Chinese and English without a
+restart. `Text` keys follow the `locale` environment set at the root of `ContentView`; strings built in model code go
+through `L(_:)` (`App/Platform/L10n.swift`). To pull new keys into `App/Localizable.xcstrings`, run
+`xcodebuild -exportLocalizations -project XDRemux.xcodeproj -localizationPath out -exportLanguage en -sdk iphonesimulator ARCHS=arm64`
+and translate the untranslated units; a plain `xcodebuild build` does not update the catalog.

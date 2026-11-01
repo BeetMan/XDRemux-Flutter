@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import XDRemuxModel
 
 /// Root layout, chosen by horizontal size class rather than by platform:
 /// regular width (Mac, iPad, unfolded phones) is sidebar list + detail;
@@ -10,6 +11,10 @@ struct ContentView: View {
     @State private var showFileImporter = false
     @State private var showPhotosPicker = false
     @State private var showRoundTrip = false
+    @State private var showOrganize = false
+    @State private var importingCheckpoint = false
+    @State private var exportingCheckpoint = false
+    @State private var checkpointDocument = TextFileDocument(text: "")
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -65,6 +70,10 @@ struct ContentView: View {
                 #endif
             }
         }
+        // Strings built in model code (status lines, summaries) are plain
+        // `Text(String)`, which SwiftUI does not re-evaluate when only the
+        // locale changes; rebuilding the tree on a language switch does.
+        .id(model.config.language)
         #if os(macOS)
         .toolbar { toolbarContent }
         #else
@@ -75,6 +84,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showRoundTrip) {
             RoundTripView(library: model)
+        }
+        .sheet(isPresented: $showOrganize) {
+            OrganizeView()
         }
         .task {
             await model.handleLaunchArguments()
@@ -104,6 +116,22 @@ struct ContentView: View {
         } message: {
             Text(model.lastError ?? "")
         }
+        .alert("提示", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+            Button("好") { model.notice = nil }
+        } message: {
+            Text(model.notice ?? "")
+        }
+        .fileImporter(isPresented: $importingCheckpoint, allowedContentTypes: [.json, .plainText, .data]) { result in
+            if case .success(let url) = result { Task { await model.importCheckpoint(url) } }
+        }
+        .fileExporter(isPresented: $exportingCheckpoint, document: checkpointDocument, contentType: .plainText,
+                      defaultFilename: FlutterCheckpoint.fileName) { result in
+            if case .failure(let error) = result { model.lastError = error.localizedDescription }
+        }
+        // In-app language: Text keys resolve against this locale; model
+        // strings go through L() (see L10n.swift). Last in the chain so the
+        // sheets and alerts above inherit it too.
+        .environment(\.locale, model.config.language.localeIdentifier.map(Locale.init(identifier:)) ?? .autoupdatingCurrent)
     }
 
     /// HIG: a toolbar carries the few most-used actions and lets the system
@@ -149,6 +177,25 @@ struct ContentView: View {
                 Label("一帧影像，动用两台手机", systemImage: "arrow.triangle.2.circlepath.camera")
             }
             .help("OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据")
+            Button {
+                showOrganize = true
+            } label: {
+                Label("批量整理", systemImage: "folder.badge.gearshape")
+            }
+            .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
+            Button {
+                importingCheckpoint = true
+            } label: {
+                Label("导入 Flutter 检查点…", systemImage: "square.and.arrow.down.on.square")
+            }
+            .help("读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转")
+            Button {
+                checkpointDocument = TextFileDocument(text: model.exportCheckpointJSONL())
+                exportingCheckpoint = true
+            } label: {
+                Label("导出 Flutter 检查点…", systemImage: "square.and.arrow.up.on.square")
+            }
+            .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
             Button {
                 showSettings = true
             } label: {
@@ -273,18 +320,21 @@ struct PhotoRow: View {
     let item: PhotoItem
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 16) {
             ThumbnailView(image: item.thumbnail)
-                .frame(width: 56, height: 56)
-            VStack(alignment: .leading, spacing: 3) {
+                .frame(width: 60, height: 60)
+            // Three lines at body / caption / caption; the spacing keeps
+            // them readable as separate lines without outgrowing the thumb.
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.sourceName).lineLimit(1).font(.body)
                 Text(item.summaryText.isEmpty ? " " : item.summaryText)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 statusLine
+                    .frame(minHeight: 16, alignment: .leading)
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -292,10 +342,20 @@ struct PhotoRow: View {
         switch item.state {
         case .converting(let p):
             ProgressView(value: p).progressViewStyle(.linear)
+        // An HStack rather than Label: inside the row a Label's icon takes
+        // the list's icon alignment and floats away from the text.
         case .done:
-            Label(item.statusText, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                Text(item.statusText)
+            }
+            .font(.caption).foregroundStyle(.green)
         case .failed:
-            Label(item.statusText, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).lineLimit(1)
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(item.statusText).lineLimit(1)
+            }
+            .font(.caption).foregroundStyle(.red)
         default:
             Text(item.statusText).font(.caption).foregroundStyle(item.isConvertible ? Color.secondary : Color.orange)
         }

@@ -6,7 +6,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Added %lld to XDRemux. Open XDRemux to convert."
+            "value": "Added %lld photos to XDRemux. Open XDRemux to convert them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 XDRemux：%lld 张。打开 XDRemux 继续转换。"
           }
         }
       }
@@ -16,7 +22,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Added %1$lld to XDRemux, skipped %2$lld non-HEIC / JPEG files. Open XDRemux to convert."
+            "value": "Added %1$lld photos to XDRemux and skipped %2$lld that are not HEIC or JPEG. Open XDRemux to convert them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 XDRemux：%lld 张，跳过 %lld 张非 HEIC / JPEG 文件。打开 XDRemux 继续转换。"
           }
         }
       }
@@ -28,6 +40,12 @@
             "state": "translated",
             "value": "The shared inbox is not available."
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问共享收件箱。"
+          }
         }
       }
     },
@@ -38,6 +56,12 @@
             "state": "translated",
             "value": "Handing over to XDRemux…"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在交给 XDRemux…"
+          }
         }
       }
     },
@@ -46,7 +70,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No HEIC / JPEG photos to add."
+            "value": "No HEIC or JPEG photos to add."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的 HEIC / JPEG 照片。"
           }
         }
       }

@@ -274,6 +274,46 @@ Flutter 版生成的检查点文件可被原生版读取。
   macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
 - 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
 
+**§8 补充：详情页以转换选项为主体、SDR 对比、列表卡片（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 详情页顺序改为：预览 → 状态 → **转换选项 / 转换结果**（页面主体）→ **照片信息**（`DisclosureGroup`，默认收起）。
+  内核读到的元数据是参考资料，不该挡在"转换这张"前面。
+- 预览卡在显示 HDR 输出时，右上角多一个"◐ SDR"胶囊：按住显示 SDR 基图（iOS 用 `UIImageReader`
+  `prefersHighDynamicRange = false`，macOS 用 `kCGImageSourceDecodeToSDR`，`ImageLoading.sdrImage`），松开恢复 HDR。
+  与鸿蒙版同一交互（按下 / 抬起），`onLongPressGesture(minimumDuration: 0)` 的 `onPressingChanged` 实现；
+  SDR 图在 HDR 图之后预解码，按下无等待。放右上角是因为底边是 OPPO 水印条。
+- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、像素数（"58.7 MP"，精确尺寸在照片信息里）、动态照片、华为标记；
+  缩略图 60pt，三行间距 4pt、上下留 4pt；状态行改用 HStack 而不是 `Label`——列表里 `Label` 的图标会被对齐到
+  列表图标列，离文字一截。详情页"拍摄设备"去掉重复的厂商前缀（OPPO 的 Model 已含 "OPPO"）。
+- 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；
+  列表三张卡片状态图标与文字对齐。已装到 iPhone 16e（无 App Group 的真机构建）。
+- 未验证：真机上按住 SDR 的亮度差异（模拟器无 EDR，两张图一样）。
+- 第二轮（同分支）：列表图文间距 12 → 16pt；摄影风格文案对齐 Flutter 版（"摄影风格 2 / 3"，开 3 时 2 置灰并说明已包含）；
+  进度条改为**分阶段分段**：`ConversionProgress.fraction` 把解析 / 解码 / 编码 / 组装映射到 4–10% / 12–20% / 20–95% / 97%
+  （之前只有 current/total，前两阶段一直 0%，组装阶段直接 100%，阶段间内核回报 stage 0 还会让条跳回 0），
+  模型侧取 max 保证单调，状态文字按阶段显示（"解析元数据… / 解码增益图… / 编码 HEVC 42% / 组装输出…"）。
+- **转换前看 HDR**：ImageIO 看不到 OPPO 原片里的增益图（探针：源文件无 ISO / Apple gain map aux，解码 headroom 1.0），
+  所以预览只能走内核。打开详情时 `LibraryModel.preparePreview` 用 Apple 模式、不带风格在后台把这张转进
+  `scratch/previews/<id>.heic`，预览卡显示它并标"HDR 预览"，SDR 对比按钮同样可用；真正转换完成或移出照片时删掉。
+  成本就是一次转换（Mac 上 18 MP 0.4 s、59 MP 1.4 s）。模拟器实测：打开详情约 1 s 后出现 HDR 预览。
+
+**§8 补充：应用内语言与英文文案（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 设置页新增"语言"：跟随系统 / 简体中文 / English，存在 `ConversionConfig.language`（`AppLanguage` 增加 `system`，默认值改为它；
+  Flutter 检查点不含该字段，互读不受影响）。
+- 生效机制：SwiftUI `Text` 键跟随根视图末尾设置的 `.environment(\.locale)`（放在 `.sheet` / `.alert` 之后，弹层才继承）；
+  模型层字符串改走 `L(_:)`（`App/Platform/L10n.swift`），它用对应 `.lproj` 的 Bundle 调 `String(localized:bundle:locale:)`。
+  App 内 99 处 `String(localized:)` 全部替换。分享扩展仍跟系统语言。
+- 字符串表：`xcodebuild build` 不会回写 `.xcstrings`，用 `xcodebuild -exportLocalizations -sdk iphonesimulator ARCHS=arm64`
+  提取出 223 个键（28 个缺英文），重写全部英文；`SWIFT_EMIT_LOC_STRINGS` 打开以便提取。新增 `App/InfoPlist.xcstrings`
+  （照片库权限说明的英文）。
+- 实测（iPhone Duo 模拟器）：设置切到 English 后列表、详情、设置弹层即时切换，无需重启。
+- 修正（真机反馈"选简体中文后列表仍是英文"，系统语言为英文时复现）：两个原因。其一，源语言为 zh-Hans 的字符串表
+  编译后只生成 `en.lproj`，`L()` 找不到 `zh-Hans.lproj` 就回落到系统语言——给表里每个键补显式 zh-Hans 条目（值同键），
+  编译即生成 `zh-Hans.lproj`；其二，列表行的 `Text(String)` 输入未变时 SwiftUI 不重算，只有 `Text` 键随 locale 更新——
+  根视图按 `config.language` 加 `.id`，切换时重建整棵树（放在 `.sheet` 之前，设置弹层本身不被打断）。
+  用 `-AppleLanguages "(en)"` 启动模拟器复现并验证：选简体中文后状态行、摘要行全部中文；再切 English 即时生效。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
@@ -287,6 +327,67 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 验证：iPhone 18 Pro 模拟器从"照片"分享 OPPO HEIC → 分享面板出现 XDRemux → 提示"已加入 XDRemux：1 张" →
   收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
 - 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
+
+**§4.2 落地：PS3 编排与输出规划下沉 Rust（2026-11-01，分支 `feat/core-pipeline`）**
+
+- 内核 `pipeline.rs`：`xdremux_convert_pipeline(input, output, config_json, handle)` 在一次调用里完成转换、按选项校验与
+  摄影风格 3 后处理（再校验）；`xdremux_plan_output(input, config_json)` 只读给出分类、可转换性、华为准入、动态照片与
+  输出文件名。配置用 Dart / Swift `ConversionConfig` 的 JSON 键，枚举到字节的映射与两端 `rustValue` 表一致。
+  5 项单测 + 1 项 opt-in 真实样本（Apple + 摄影风格 3 管线产物通过 styles 结构检查）。导出 43 个，头文件重生成。
+- Swift：Kit `convertPipeline` / `planOutput`；Model 新协议 `PipelineBackend`，`ConversionJob` 在后端支持时优先走一次调用
+  （stage → `coreFailed` / `verificationFailed` / `styles3Failed`，`cancelled` → `CancellationError`），不支持时保留原来的
+  convert / verify / inject 三步（假引擎测试仍覆盖）。2 项新测试。CLI 新增 `xdremux plan`。
+- 未做：Dart 与 ArkTS 端尚未切到这两个导出（它们各自的策略代码仍在），Swift 的 `OutputPlanner` 仍按输出模式分目录，
+  未改用 `plan_output` 的 `captureModeFolder`。
+
+
+**P2 遗留：Flutter 检查点互读（2026-11-01，分支 `feat/apple-checkpoint`）**
+
+- Model `FlutterCheckpoint`：按 `checkpoint_model.dart` 的 JSONL 读写（首行 `type: header`，其后 `type: item`），接受 Dart
+  `toIso8601String()` 的无时区本地时间；`journalRecords()` 把 converted / skippedExisting 映射为 succeeded（保留 outputPath）、
+  skippedPolicy 映射为 pending（原生策略重新评估）、failed 保留错误；`from(journal:)` 反向导出，路径经 `~/` 还原为绝对路径。
+  configHash 用同一 payload 的 FNV-1a（Dart `String.hashCode` 不可复现，Flutter 只用它判断配置是否变化）。5 项测试。
+- App："更多"菜单 → 导入 / 导出 Flutter 检查点。导入时输入复制进沙盒、已完成项的输出复制进 outputs 并以"已完成"恢复，
+  沙盒读不到的路径变成可见失败项；导出用 `fileExporter` 写 `xdremux_checkpoint.jsonl`。
+- 未验证：没有用 Flutter 版真实生成的检查点文件做过往返（测试用的是按 Dart 格式手写的样本）；
+  `huaweiPortrait` / `motionPhoto` 两个嵌套对象在再编码时丢弃。
+
+
+**P2 遗留：批量整理页（2026-11-01，分支 `feat/apple-organize`）**
+
+- Model `OrganizePlanner`：与 Flutter `organize_page.dart` / 上游 `categorize` 同一布局
+  `<根>/<静态照片|实况照片>/<拍摄模式文件夹>/<原名>`，实况照片的 MOV 同目录同名；冲突规避"(n)"同时考虑本批已规划的名字
+  （大小写不敏感）与磁盘已有文件，整理进自己所在目录视为重复而不是冲突；`execute` 跳过重复、配对 MOV 只在位置变化时复制、
+  失败逐项记录。5 项测试（含真实临时目录端到端）。
+- App `OrganizeView`（"更多"菜单 → 批量整理）：选文件夹（安全作用域在页面存续期内保持）→ 递归扫描 HEIC/HEIF/JPEG →
+  `xdremux_classify` 取拍摄模式文件夹 → 同名 MOV 经 `xdremux_live_photo_pair_valid` 确认才视为配对 → 按模式分组预览
+  目标目录 → 开始整理。输出目录默认与照片文件夹相同。macOS / iOS 同一视图（iOS 通过"文件"选择文件夹）。
+- 未验证：GUI 走完一遍（只做了编译与 Model 层测试）；iOS 上对"文件"目录的递归枚举是否受安全作用域限制。
+
+
+**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+
+- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
+  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
+  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
+  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
+- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
+  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
+- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
+  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+
+
+**基础设施（2026-11-01，分支 `feat/apple-universal`）：x86_64 切片与 CI 模拟器构建**
+
+- `build_apple.sh` 按架构构建：每个切片对 `XDREMUX_APPLE_ARCHS`（默认 `arm64 x86_64`）各构建 x265（8-bit + Main10，
+  x86_64 用 `_x86_64` 后缀目录）与 Rust staticlib，`libtool` 合并后 `lipo -create` 成胖归档；切片目录名沿用 xcodebuild
+  约定（`macos-arm64_x86_64`、`ios-arm64_x86_64-simulator`）。iOS 真机仍只有 arm64。
+- `build.rs` 新增 `XDREMUX_X265_DIR` / `XDREMUX_X265_MAIN10_DIR` 覆盖，并把 `x86_64-apple-ios`（env 为空）识别为模拟器。
+- `project.yml` 去掉 `EXCLUDED_ARCHS[sdk=iphonesimulator*]`，模拟器包与 Share Extension 都是双架构。
+- CI：Rust 目标加 x86_64 与模拟器，x265 缓存键改为 `…-universal-sim`，构建 `macos ios-sim` 两个切片并用 `lipo -info`
+  断言双架构；新增 `generic/platform=iOS Simulator` 的 App + 扩展构建。
+- 验证：本机 `lipo -info` 两个切片均为 `x86_64 arm64`；`generic/platform=iOS Simulator` 构建出的 App 与 appex 均为胖二进制；
+  Rosetta 下 x86_64 CLI 对 X7 样本转换并 verify 通过；`swift test` 通过。
 
 ### P4：跨端回归与发布
 

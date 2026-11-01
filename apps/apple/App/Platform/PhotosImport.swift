@@ -32,7 +32,7 @@ struct PhotosImportModifier: ViewModifier {
             let hasHEIC = item.supportedContentTypes.contains { $0.conforms(to: .heic) || $0.conforms(to: .heif) }
             let hasJPEG = item.supportedContentTypes.contains { $0.conforms(to: .jpeg) }
             guard hasHEIC || hasJPEG else {
-                model.lastError = String(localized: "跳过一张不是 HEIC / JPEG 的照片。")
+                model.lastError = L("跳过一张不是 HEIC / JPEG 的照片。")
                 continue
             }
             do {
@@ -41,7 +41,7 @@ struct PhotosImportModifier: ViewModifier {
                 let stem = item.itemIdentifier.map { String($0.prefix(8)) } ?? "IMG_\(index + 1)"
                 await model.importMaterialised(name: "\(stem).\(ext)", data: data)
             } catch {
-                model.lastError = String(localized: "读取照片失败：\(error.localizedDescription)")
+                model.lastError = L("读取照片失败：\(error.localizedDescription)")
             }
         }
     }

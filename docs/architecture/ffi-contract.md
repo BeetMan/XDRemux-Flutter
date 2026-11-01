@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，39 个 `extern "C"` 函数）、
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，43 个 `extern "C"` 函数）、
 > `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
 > 改导出后用 `tools/apple/check_header.sh` 校验）。
 
@@ -50,6 +50,25 @@
   取消在 worker 认领句柄之前发出也有效（UI 先申请句柄再派发 worker）。
 - `xdremux_progress_end(handle)`：释放
 
+### 2.6 管线与规划（JSON 配置）
+
+`xdremux_convert_pipeline(input, output, config_json, handle) -> char*` 在内核里完成
+"转换 → 校验（ISO 增益图 + 按选项追加摄影风格 / 人像结构检查）→ 摄影风格 3 后处理（texture_styles + 语义 matte，
+再校验）"，返回 JSON：`success`、`stage`（`config` / `convert` / `verify` / `styles3` / `done`）、`cancelled`、
+`errorMessage`、`mode`、`family`、`edrScale`、`gainMapMax`、`outputValid`、`verified`、`styles3Applied`、`grainSeed`。
+失败时残留输出由调用方删除；`handle` 与 §2.5 相同，取消时 `cancelled = true`。
+
+`xdremux_plan_output(input, config_json) -> char*` 只读：`classification`（modeKey / folderName / status / hdrKind /
+family）、`convertible` 与 `convertError`、`huawei`（isHdr / hasXtstyle / portraitReady，非华为为 null）、`isMotionPhoto`、
+`policy`（华为准入：普通华为 HDR 跳过，摄影风格 / 人像可转换 / 动态照片放行）、`output`（fileName、
+captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按输出模式分目录，两者都给）。
+
+`config_json` 的键与 Dart / Swift `ConversionConfig` 一致：`outputMode`、`oppoCompatibility`、`oppoCameraTail`、
+`strictTmap`、`applePhotographicStyles`、`applePhotographicStyles3`、`applePortrait`、`fileNameSuffix`、
+`categorizeOutputByMode`；缺省键取共享默认值，枚举名到 `ConvertConfig` 字节的映射在 `pipeline.rs`（与两端
+`rustValue` 表一致，Apple 输出强制 compat=0 / tail=0，摄影风格 3 蕴含摄影风格）。颗粒种子用 Dart `_grainSeedFor`
+的哈希。两个返回值都用 `xdremux_free_string` 释放。
+
 ## 3. 主要导出清单
 
 | 函数 | 用途 |
@@ -67,6 +86,7 @@
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 | `xdremux_inject_texture_styles` / `xdremux_inject_semantic_mattes` | 摄影风格 3 后处理：在已转换 HEIC 上追加 texture_styles 项与 12 个语义 matte 占位（Dart / Swift 前端在校验通过后按顺序调用） |
 | `xdremux_progress_cancel` | 取消运行中的转换（见 §2.5） |
+| `xdremux_convert_pipeline` / `xdremux_plan_output` | 一次调用的转换管线与只读输出规划（见 §2.6），三端共用的策略 |
 
 当报告含 `huaweiPortrait` 时，嵌套对象只描述观察到的 ISOBMFF 资源：
 `edofItemId` / `edofDimensions` / `edofTileItemIds`、`edofAuxiliaryTypes`（`auxC`）、
