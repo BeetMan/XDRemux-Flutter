@@ -2531,47 +2531,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           controller: _transfer,
           initialPaths: paths,
           sourceLabel: source,
+          autoReceive: true,
+          sources: [
+            for (final item in _queue)
+              if (File(item.inputPath).existsSync())
+                TransferSource(
+                  name: item.inputPath.split(Platform.pathSeparator).last,
+                  original: item.inputPath,
+                  converted:
+                      item.status.isSuccessful &&
+                          FileSystemEntity.typeSync(item.outputPath) !=
+                              FileSystemEntityType.notFound
+                      ? item.outputPath
+                      : null,
+                ),
+          ],
         ),
       ),
-    );
-  }
-
-  Future<void> _openTransferActions() async {
-    final index = _selectedIndex;
-    if (index == null || index >= _queue.length) {
-      await _openTransfer();
-      return;
-    }
-    final item = _queue[index];
-    final source = await showModalBottomSheet<bool>(
-      context: context,
-      useSafeArea: true,
-      builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            title: Text(t('发送原文件', 'Send original file')),
-            onTap: () => Navigator.pop(ctx, false),
-          ),
-          if (item.isSuccessful)
-            ListTile(
-              title: Text(t('发送转换结果', 'Send converted file')),
-              onTap: () => Navigator.pop(ctx, true),
-            ),
-          ListTile(
-            title: Text(t('打开互传', 'Open local transfer')),
-            onTap: () {
-              Navigator.pop(ctx);
-              _openTransfer();
-            },
-          ),
-        ],
-      ),
-    );
-    if (!mounted || source == null) return;
-    await _openTransfer(
-      paths: [source ? item.outputPath : item.inputPath],
-      source: source ? t('转换结果', 'Converted file') : t('原文件', 'Original file'),
     );
   }
 
@@ -3195,7 +3171,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           key: const ValueKey('open-local-transfer'),
           icon: const Icon(Icons.wifi_tethering),
           tooltip: t('局域网互传', 'Local transfer'),
-          onPressed: _openTransferActions,
+          onPressed: _openTransfer,
         ),
       if (!compact)
         IconButton(

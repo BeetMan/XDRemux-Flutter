@@ -86,16 +86,38 @@ String _bytes(int n) {
 String _fingerprint(String value) =>
     RegExp('.{1,8}').allMatches(value).map((m) => m.group(0)).join(' ');
 
+/// A conversion-queue item that the send tab can pick from.
+class TransferSource {
+  const TransferSource({
+    required this.name,
+    required this.original,
+    this.converted,
+  });
+  final String name;
+  final String original;
+
+  /// Converted output (a file or a `.pvt` Live Photo folder), when present.
+  final String? converted;
+}
+
 class TransferPage extends StatefulWidget {
   const TransferPage({
     super.key,
     this.controller,
     this.initialPaths = const [],
     this.sourceLabel,
+    this.sources = const [],
+    this.autoReceive = false,
   });
   final TransferController? controller;
   final List<String> initialPaths;
   final String? sourceLabel;
+
+  /// Conversion-queue items offered by "Add from conversion list".
+  final List<TransferSource> sources;
+
+  /// Start receiving (and so discovery) as soon as the page opens.
+  final bool autoReceive;
   @override
   State<TransferPage> createState() => _TransferPageState();
 }
@@ -110,6 +132,7 @@ class _TransferPageState extends State<TransferPage> {
   Future<int>? _selectionSize;
   Map<String, dynamic>? _peer;
   bool _working = false, _canLeave = false, _allPaths = false;
+  bool _manual = false, _showPin = false;
   String? _message;
   final Map<String, int> _visibleFiles = {};
   @override
@@ -120,7 +143,15 @@ class _TransferPageState extends State<TransferPage> {
     _selectionSize = _measure(_paths);
     transfer.addListener(_changed);
     transfer.enumerateInterfaces().catchError((_) {});
+    if (widget.autoReceive && !transfer.receiving) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !transfer.receiving) _run(_enableReceiving);
+      });
+    }
   }
+
+  Future<void> _enableReceiving() =>
+      transfer.enableReceiving(port: int.tryParse(_listenPort.text) ?? 0);
 
   /// A Live Photo output is a `.pvt` folder (still, MOV, metadata.plist).
   /// LocalSend moves files, so send the still and the MOV inside it.
@@ -334,14 +365,157 @@ class _TransferPageState extends State<TransferPage> {
   Future<void> _pick() async {
     // Android and HarmonyOS pickers background the app, which stops LAN
     // reception anyway; stop first so it never ends halfway through a batch.
-    if (Platform.isAndroid || PlatformX.isOhos) await transfer.stop();
-    final result = await FilePicker.pickFiles();
-    if (result.isEmpty) return;
-    final paths = result.map((f) => f.path).whereType<String>().toList();
-    if (paths.length != result.length) {
-      throw const TransferException('invalid_input');
+    // Reception comes back afterwards, so discovery keeps working.
+    final resume =
+        (Platform.isAndroid || PlatformX.isOhos) && transfer.receiving;
+    if (resume) await transfer.stop();
+    try {
+      final result = await FilePicker.pickFiles();
+      if (result.isEmpty) return;
+      final paths = result.map((f) => f.path).whereType<String>().toList();
+      if (paths.length != result.length) {
+        throw const TransferException('invalid_input');
+      }
+      if (mounted) _addPaths(paths);
+    } finally {
+      if (resume && mounted && !transfer.receiving) await _enableReceiving();
     }
-    if (mounted) _setPaths(paths);
+  }
+
+  void _addPaths(List<String> paths) {
+    final seen = _paths.toSet();
+    _setPaths([
+      ..._paths,
+      for (final p in _expandBundles(paths))
+        if (seen.add(p)) p,
+    ]);
+  }
+
+  Future<void> _pickFromQueue() async {
+    final sources = widget.sources;
+    var converted = sources.any((s) => s.converted != null);
+    final chosen = <int>{
+      for (var i = 0; i < sources.length; i++)
+        if (!converted || sources[i].converted != null) i,
+    };
+    final paths = await showModalBottomSheet<List<String>>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, update) {
+          bool usable(int i) => !converted || sources[i].converted != null;
+          final picked = chosen.where(usable).toList()..sort();
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.8,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    t('从转换列表添加', 'Add from conversion list'),
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: SegmentedButton<bool>(
+                    segments: [
+                      ButtonSegment(
+                        value: true,
+                        label: Text(t('转换结果', 'Converted')),
+                        enabled: sources.any((s) => s.converted != null),
+                      ),
+                      ButtonSegment(
+                        value: false,
+                        label: Text(t('原文件', 'Originals')),
+                      ),
+                    ],
+                    selected: {converted},
+                    onSelectionChanged: (v) => update(() {
+                      converted = v.first;
+                      chosen
+                        ..clear()
+                        ..addAll([
+                          for (var i = 0; i < sources.length; i++)
+                            if (usable(i)) i,
+                        ]);
+                    }),
+                  ),
+                ),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (var i = 0; i < sources.length; i++)
+                        CheckboxListTile(
+                          key: ValueKey('queue-source-$i'),
+                          value: usable(i) && chosen.contains(i),
+                          title: Text(
+                            sources[i].name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: usable(i)
+                              ? null
+                              : Text(t('尚未转换', 'Not converted yet')),
+                          onChanged: usable(i)
+                              ? (v) => update(
+                                  () => v == true
+                                      ? chosen.add(i)
+                                      : chosen.remove(i),
+                                )
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: FilledButton(
+                    key: const ValueKey('add-queue-sources'),
+                    onPressed: picked.isEmpty
+                        ? null
+                        : () => Navigator.pop(ctx, [
+                            for (final i in picked)
+                              converted
+                                  ? sources[i].converted!
+                                  : sources[i].original,
+                          ]),
+                    child: Text(
+                      t('添加 ${picked.length} 项', 'Add ${picked.length}'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    if (paths != null && mounted) _addPaths(paths);
+  }
+
+  Future<void> _importAll() async {
+    var added = 0, skipped = 0;
+    for (final row in transfer.inbox.values.toList()) {
+      if (!transferImageName(row['name'] as String)) continue;
+      final ack = await transfer.importReceipt(row['id'] as String);
+      if (ack.status == TransferIntakeStatus.added) {
+        added++;
+      } else if (ack.status != TransferIntakeStatus.duplicate) {
+        skipped++;
+      }
+    }
+    _notify(
+      t(
+        '已加入转换队列 $added 张${skipped > 0 ? '，$skipped 张未加入' : ''}',
+        'Added $added to the conversion queue${skipped > 0 ? ', $skipped not added' : ''}',
+      ),
+    );
   }
 
   Future<bool> _confirmDelete(String name) async =>
@@ -371,82 +545,139 @@ class _TransferPageState extends State<TransferPage> {
       for (final row in transfer.transfers.values)
         if (row['phase'] == 'pending' && row['direction'] == 'receive') row,
     ];
-    final history = [
+    List<Map<String, dynamic>> history(String direction) => [
       for (final row in transfer.transfers.values)
-        if (!offers.contains(row)) row,
+        if (!offers.contains(row) && row['direction'] == direction) row,
     ];
     final error =
         _message ??
         (transfer.error == null ? null : transferErrorText(transfer.error!));
+    // Errors and incoming offers sit on top of whichever tab is open.
+    Widget tab(String key, List<Widget> children) => LayoutBuilder(
+      builder: (context, constraints) {
+        final side = constraints.maxWidth > 792
+            ? (constraints.maxWidth - 760) / 2
+            : 16.0;
+        return SingleChildScrollView(
+          key: ValueKey(key),
+          padding: EdgeInsets.fromLTRB(side, 16, side, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (error != null) ...[
+                _errorBanner(context, error),
+                const SizedBox(height: 12),
+              ],
+              for (final row in offers) ...[
+                _offerCard(row, disabled),
+                const SizedBox(height: 12),
+              ],
+              ...children,
+            ],
+          ),
+        );
+      },
+    );
+    final sent = history('send'), received = history('receive');
     return PopScope(
       canPop: _canLeave,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _leave();
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(t('局域网互传', 'Local transfer')),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: disabled ? null : _leave,
-          ),
-          actions: [
-            IconButton(
-              tooltip: t('忘记设备指纹', 'Forget fingerprints'),
-              icon: const Icon(Icons.key_off),
-              onPressed: disabled ? null : () => _run(transfer.forgetPeers),
+      child: DefaultTabController(
+        length: 2,
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(t('局域网互传', 'Local transfer')),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: disabled ? null : _leave,
             ),
-          ],
-          bottom: disabled
-              ? const PreferredSize(
-                  preferredSize: Size.fromHeight(4),
-                  child: LinearProgressIndicator(),
-                )
-              : null,
-        ),
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final side = constraints.maxWidth > 792
-                  ? (constraints.maxWidth - 760) / 2
-                  : 16.0;
-              return SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(side, 16, side, 32),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (error != null) ...[
-                      _errorBanner(context, error),
-                      const SizedBox(height: 12),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: _chip(
+                  context,
+                  transfer.receiving
+                      ? t('可被发现', 'Visible')
+                      : t('不可被发现', 'Hidden'),
+                  active: transfer.receiving,
+                ),
+              ),
+              IconButton(
+                tooltip: t('忘记设备指纹', 'Forget fingerprints'),
+                icon: const Icon(Icons.key_off),
+                onPressed: disabled ? null : () => _run(transfer.forgetPeers),
+              ),
+            ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(kTextTabBarHeight + 4),
+              child: Column(
+                children: [
+                  TabBar(
+                    tabs: [
+                      Tab(
+                        key: const ValueKey('tab-send'),
+                        text: t('发送', 'Send'),
+                      ),
+                      Tab(
+                        key: const ValueKey('tab-receive'),
+                        child: Badge(
+                          isLabelVisible: offers.isNotEmpty,
+                          label: Text('${offers.length}'),
+                          child: Text(t('接收', 'Receive')),
+                        ),
+                      ),
                     ],
-                    for (final row in offers) ...[
-                      _offerCard(row, disabled),
-                      const SizedBox(height: 12),
-                    ],
-                    _receiveSection(context, disabled),
-                    const SizedBox(height: 12),
-                    _sendSection(context, disabled),
+                  ),
+                  SizedBox(
+                    height: 4,
+                    child: disabled ? const LinearProgressIndicator() : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          body: SafeArea(
+            child: TabBarView(
+              children: [
+                tab('send-tab', [
+                  _filesCard(context, disabled),
+                  const SizedBox(height: 12),
+                  _deviceCard(context, disabled),
+                  const SizedBox(height: 12),
+                  ..._sendAction(context, disabled),
+                  if (sent.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _section(
+                      context,
+                      icon: Icons.upload,
+                      title: t('发送记录', 'Sent'),
+                      children: [
+                        for (final row in sent) _transferCard(row, disabled),
+                      ],
+                    ),
+                  ],
+                ]),
+                tab('receive-tab', [
+                  _receiveSection(context, disabled),
+                  if (received.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     _section(
                       context,
-                      icon: Icons.swap_vert,
-                      title: t('传输记录', 'Transfers'),
-                      subtitle: t(
-                        '本次开启以来的发送和接收',
-                        'Sent and received since transfer was opened',
-                      ),
+                      icon: Icons.download,
+                      title: t('接收记录', 'Received'),
                       children: [
-                        if (history.isEmpty)
-                          _empty(context, t('暂无传输', 'No transfers yet')),
-                        for (final row in history) _transferCard(row, disabled),
+                        for (final row in received)
+                          _transferCard(row, disabled),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _inboxSection(context, disabled),
                   ],
-                ),
-              );
-            },
+                  const SizedBox(height: 12),
+                  _inboxSection(context, disabled),
+                ]),
+              ],
+            ),
           ),
         ),
       ),
@@ -499,29 +730,6 @@ class _TransferPageState extends State<TransferPage> {
             ...children,
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _step(BuildContext context, String number, String label) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 8),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 11,
-            backgroundColor: theme.colorScheme.primaryContainer,
-            child: Text(
-              number,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(label, style: theme.textTheme.titleSmall),
-        ],
       ),
     );
   }
@@ -723,7 +931,8 @@ class _TransferPageState extends State<TransferPage> {
   }
 
   Widget _receiveSection(BuildContext context, bool disabled) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final port = transfer.ready == null
         ? null
         : (transfer.ready!['address'] as String).split(':').last;
@@ -733,12 +942,12 @@ class _TransferPageState extends State<TransferPage> {
       title: t('本机接收', 'Receive on this device'),
       subtitle: transfer.receiving
           ? t(
-              '同一网络中的设备现在可以找到本机并发送文件',
-              'Devices on this network can now find this device and send files',
+              '附近设备可以找到本机；收到的文件需要你确认后才会保存',
+              'Nearby devices can find this one; files are saved only after you accept',
             )
           : t(
-              '开启后其他设备才能发现本机，同时开启自动发现。手机切到后台或离开此页会停止。',
-              'Enable to be discoverable and to discover others. Mobile reception stops in the background or when leaving this page.',
+              '开启后才能被发现和收文件。手机切到后台或离开此页会停止。',
+              'Enable to be found and receive. Mobile reception stops in the background or when leaving this page.',
             ),
       trailing: _chip(
         context,
@@ -748,184 +957,175 @@ class _TransferPageState extends State<TransferPage> {
         active: transfer.receiving,
       ),
       children: [
-        DropdownButtonFormField<String>(
-          key: const ValueKey('discovery-interface'),
-          initialValue: transfer.discoveryInterface ?? '',
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: t('接收和自动发现使用的网卡', 'Network for receiving and discovery'),
-          ),
-          items: [
-            DropdownMenuItem(
-              value: '',
-              child: Text(
-                t('所有网卡（含 VPN/虚拟网卡）', 'All networks (including VPN/virtual)'),
-              ),
+        if (!transfer.receiving) ...[
+          DropdownButtonFormField<String>(
+            key: const ValueKey('discovery-interface'),
+            initialValue: transfer.discoveryInterface ?? '',
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: t('使用的网卡', 'Network'),
             ),
-            for (final entry in transfer.interfaces.entries)
+            items: [
               DropdownMenuItem(
-                value: entry.key,
+                value: '',
                 child: Text(
-                  '${entry.value} · ${entry.key}',
-                  overflow: TextOverflow.ellipsis,
+                  t('所有网卡（含 VPN/虚拟网卡）', 'All networks (including VPN/virtual)'),
                 ),
               ),
-            if (transfer.discoveryInterface != null &&
-                !transfer.interfaces.containsKey(transfer.discoveryInterface))
-              DropdownMenuItem(
-                value: transfer.discoveryInterface,
-                child: Text(
-                  t(
-                    '原网卡已断开，请重新选择',
-                    'Previous network disconnected; choose again',
+              for (final entry in transfer.interfaces.entries)
+                DropdownMenuItem(
+                  value: entry.key,
+                  child: Text(
+                    '${entry.value} · ${entry.key}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (transfer.discoveryInterface != null &&
+                  !transfer.interfaces.containsKey(transfer.discoveryInterface))
+                DropdownMenuItem(
+                  value: transfer.discoveryInterface,
+                  child: Text(
+                    t(
+                      '原网卡已断开，请重新选择',
+                      'Previous network disconnected; choose again',
+                    ),
+                  ),
+                ),
+            ],
+            onChanged: disabled
+                ? null
+                : (value) => setState(() {
+                    transfer.discoveryInterface = value == '' ? null : value;
+                  }),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Row(
+          children: [
+            if (!transfer.receiving) ...[
+              SizedBox(
+                width: 120,
+                child: TextField(
+                  key: const ValueKey('listen-port'),
+                  controller: _listenPort,
+                  enabled: !disabled,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: t('接收端口', 'Receive port'),
                   ),
                 ),
               ),
-          ],
-          onChanged: disabled || transfer.receiving
-              ? null
-              : (value) => setState(() {
-                  transfer.discoveryInterface = value == '' ? null : value;
-                }),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 130,
-              child: TextField(
-                key: const ValueKey('listen-port'),
-                controller: _listenPort,
-                enabled: !disabled && !transfer.receiving,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: t('接收端口', 'Receive port'),
+              const SizedBox(width: 12),
+            ],
+            Expanded(
+              child: FilledButton.icon(
+                key: const ValueKey('receive-toggle'),
+                style: transfer.receiving
+                    ? FilledButton.styleFrom(
+                        backgroundColor: scheme.surfaceContainerHighest,
+                        foregroundColor: scheme.onSurface,
+                      )
+                    : null,
+                icon: Icon(
+                  transfer.receiving ? Icons.stop : Icons.wifi_tethering,
                 ),
+                label: Text(
+                  transfer.receiving
+                      ? t('停止接收', 'Stop receiving')
+                      : t('开启接收', 'Enable receiving'),
+                ),
+                onPressed: disabled
+                    ? null
+                    : () => _run(
+                        () => transfer.receiving
+                            ? transfer.stop()
+                            : _enableReceiving(),
+                      ),
               ),
-            ),
-            FilledButton.icon(
-              key: const ValueKey('receive-toggle'),
-              icon: Icon(
-                transfer.receiving ? Icons.stop : Icons.wifi_tethering,
-              ),
-              label: Text(
-                transfer.receiving
-                    ? t('停止接收', 'Stop receiving')
-                    : t('开启接收', 'Enable receiving'),
-              ),
-              onPressed: disabled
-                  ? null
-                  : () => _run(
-                      () => transfer.receiving
-                          ? transfer.stop()
-                          : transfer.enableReceiving(
-                              port: int.tryParse(_listenPort.text) ?? 0,
-                            ),
-                    ),
             ),
           ],
         ),
         if (transfer.receiving && transfer.ready != null) ...[
           const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              border: Border.all(color: scheme.outlineVariant),
-              borderRadius: BorderRadius.circular(12),
+          Text(
+            t(
+              '本机证书指纹（对方核对时与这里比对）',
+              'This device fingerprint (compare it when the sender verifies)',
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  t(
-                    '对方找不到本机时，可在对方输入以下地址',
-                    'If the other device cannot find this one, enter an address below there',
-                  ),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                for (final ip in transfer.addresses)
-                  Row(
-                    children: [
-                      Expanded(child: SelectableText('$ip:$port')),
-                      IconButton(
-                        tooltip: t('复制', 'Copy'),
-                        icon: const Icon(Icons.copy, size: 18),
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: '$ip:$port'),
-                          );
-                          _notify(t('已复制 $ip:$port', 'Copied $ip:$port'));
-                        },
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 8),
-                Text(
-                  t('本机证书指纹', 'This device fingerprint'),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 4),
-                _fingerprintBox(
-                  context,
-                  transfer.ready!['fingerprint'] as String,
-                ),
-              ],
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          _fingerprintBox(context, transfer.ready!['fingerprint'] as String),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: EdgeInsets.zero,
+            shape: const Border(),
+            collapsedShape: const Border(),
+            title: Text(
+              t('对方找不到本机？', 'Not found by the other device?'),
+              style: theme.textTheme.bodyMedium,
             ),
+            children: [
+              _hint(
+                context,
+                t(
+                  '在对方的「发送」页手动输入以下任一地址',
+                  'Enter one of these addresses on the other device',
+                ),
+              ),
+              for (final ip in transfer.addresses)
+                Row(
+                  children: [
+                    Expanded(child: SelectableText('$ip:$port')),
+                    IconButton(
+                      tooltip: t('复制', 'Copy'),
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: '$ip:$port'),
+                        );
+                        _notify(t('已复制 $ip:$port', 'Copied $ip:$port'));
+                      },
+                    ),
+                  ],
+                ),
+            ],
           ),
         ],
       ],
     );
   }
 
-  Widget _sendSection(BuildContext context, bool disabled) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
+  Widget _filesCard(BuildContext context, bool disabled) {
+    final scheme = Theme.of(context).colorScheme;
     final visiblePaths = _allPaths ? 64 : 5;
-    final blocked = _paths.isEmpty
-        ? t('先选择要发送的文件', 'Choose files to send first')
-        : !confirmedPeer
-        ? t('先选择并核对接收设备', 'Choose and verify a receiving device first')
-        : null;
     return _section(
       context,
-      icon: Icons.send,
-      title: t('发送文件', 'Send files'),
-      subtitle: widget.sourceLabel,
+      icon: Icons.photo_library_outlined,
+      title: t('要发送的文件', 'Files to send'),
+      subtitle: _paths.isEmpty
+          ? widget.sourceLabel
+          : null,
+      trailing: _paths.isEmpty
+          ? null
+          : TextButton(
+              onPressed: disabled ? null : () => _setPaths(const []),
+              child: Text(t('清空', 'Clear')),
+            ),
       children: [
-        _step(context, '1', t('选择文件', 'Choose files')),
-        Row(
-          children: [
-            Expanded(
-              child: FutureBuilder<int>(
-                future: _selectionSize,
-                builder: (_, snapshot) => Text(
-                  _paths.isEmpty
-                      ? t('尚未选择文件', 'No files selected')
-                      : '${_paths.length} ${t('文件', 'files')} · '
-                            '${snapshot.hasError
-                                ? t('文件不可读，请重新选择', 'Unreadable file; select again')
-                                : snapshot.hasData
-                                ? _bytes(snapshot.data!)
-                                : t('统计大小中…', 'Calculating size…')}',
-                ),
-              ),
+        if (_paths.isNotEmpty)
+          FutureBuilder<int>(
+            future: _selectionSize,
+            builder: (_, snapshot) => _hint(
+              context,
+              '${_paths.length} ${t('文件', 'files')} · '
+              '${snapshot.hasError
+                  ? t('文件不可读，请重新选择', 'Unreadable file; select again')
+                  : snapshot.hasData
+                  ? _bytes(snapshot.data!)
+                  : t('统计大小中…', 'Calculating size…')}',
             ),
-            if (_paths.isNotEmpty)
-              TextButton(
-                onPressed: disabled ? null : () => _setPaths(const []),
-                child: Text(t('清空', 'Clear')),
-              ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.attach_file),
-              onPressed: disabled ? null : () => _run(_pick),
-              label: Text(t('选择文件', 'Choose files')),
-            ),
-          ],
-        ),
+          ),
         for (final path in _paths.take(visiblePaths))
           Row(
             children: [
@@ -971,47 +1171,70 @@ class _TransferPageState extends State<TransferPage> {
                   ),
           ),
         const SizedBox(height: 8),
-        _step(context, '2', t('选择接收设备', 'Choose a receiving device')),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Expanded(
-              child: Text(
-                transfer.discovering
-                    ? t('自动发现已开启', 'Discovery enabled')
-                    : transfer.receiving
-                    ? t('自动发现已关闭', 'Discovery disabled')
-                    : t(
-                        '开启本机接收后会自动发现附近设备',
-                        'Enable receiving to discover nearby devices',
-                      ),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+            if (widget.sources.isNotEmpty)
+              FilledButton.tonalIcon(
+                key: const ValueKey('add-from-queue'),
+                icon: const Icon(Icons.playlist_add_check),
+                onPressed: disabled ? null : _pickFromQueue,
+                label: Text(t('从转换列表添加', 'From conversion list')),
               ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.attach_file),
+              onPressed: disabled ? null : () => _run(_pick),
+              label: Text(t('选择文件', 'Choose files')),
             ),
-            if (transfer.receiving)
-              TextButton(
-                key: const ValueKey('refresh-discovery'),
-                onPressed: disabled ? null : () => _run(transfer.discover),
-                child: Text(t('重新发现', 'Discover again')),
-              ),
           ],
         ),
+      ],
+    );
+  }
+
+  Widget _deviceCard(BuildContext context, bool disabled) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
+    final manual =
+        _manual || transfer.peers.isEmpty || _host.text.isNotEmpty;
+    return _section(
+      context,
+      icon: Icons.devices,
+      title: t('发给谁', 'Send to'),
+      subtitle: transfer.discovering
+          ? t('正在自动发现附近设备', 'Discovering nearby devices')
+          : transfer.receiving
+          ? t('自动发现已关闭', 'Discovery disabled')
+          : t(
+              '在「接收」页开启接收后会自动发现附近设备',
+              'Enable receiving to discover nearby devices',
+            ),
+      trailing: transfer.receiving
+          ? IconButton(
+              key: const ValueKey('refresh-discovery'),
+              tooltip: t('重新发现', 'Discover again'),
+              icon: const Icon(Icons.refresh),
+              onPressed: disabled ? null : () => _run(transfer.discover),
+            )
+          : null,
+      children: [
         if (transfer.discoveryError != null)
           _hint(context, transferErrorText(transfer.discoveryError!)),
         if (transfer.receiving && transfer.peers.isEmpty)
           _hint(
             context,
             t(
-              '暂未找到设备。多播可能被网络阻止；可使用下方 IP/端口直连。',
-              'No devices yet. Multicast may be blocked; direct IP/port remains available.',
+              '暂未找到设备。确认对方也打开了互传；多播被网络阻止时可用 IP 直连。',
+              'No devices yet. Make sure the other device has transfer open; use a direct IP if multicast is blocked.',
             ),
           ),
         for (final peer in transfer.peers)
           ListTile(
             key: ValueKey('peer-${peer['fingerprint']}'),
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.devices),
+            leading: const Icon(Icons.smartphone),
             title: Text(peer['alias'] as String),
             subtitle: Text(peer['address'] as String),
             selected:
@@ -1019,45 +1242,52 @@ class _TransferPageState extends State<TransferPage> {
             trailing:
                 confirmedPeer && _peer!['fingerprint'] == peer['fingerprint']
                 ? const Icon(Icons.verified_user)
-                : Text(t('核对', 'Verify')),
+                : Text(t('选择', 'Select')),
             onTap: disabled ? null : () => _run(() => _selectPeer(peer)),
           ),
-        const SizedBox(height: 4),
-        Wrap(
-          spacing: 12,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 230,
-              child: TextField(
-                key: const ValueKey('peer-host'),
-                controller: _host,
-                enabled: !disabled,
-                onChanged: (_) => setState(() => _peer = null),
-                decoration: InputDecoration(
-                  labelText: t('对方 IP 地址', 'Peer IP address'),
+        if (!manual)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() => _manual = true),
+              child: Text(t('输入 IP 地址', 'Enter an IP address')),
+            ),
+          )
+        else
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('peer-host'),
+                  controller: _host,
+                  enabled: !disabled,
+                  onChanged: (_) => setState(() => _peer = null),
+                  decoration: InputDecoration(
+                    labelText: t('对方 IP 地址', 'Peer IP address'),
+                  ),
                 ),
               ),
-            ),
-            SizedBox(
-              width: 120,
-              child: TextField(
-                key: const ValueKey('peer-port'),
-                controller: _port,
-                enabled: !disabled,
-                keyboardType: TextInputType.number,
-                onChanged: (_) => setState(() => _peer = null),
-                decoration: InputDecoration(labelText: t('对方端口', 'Peer port')),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 84,
+                child: TextField(
+                  key: const ValueKey('peer-port'),
+                  controller: _port,
+                  enabled: !disabled,
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() => _peer = null),
+                  decoration: InputDecoration(labelText: t('端口', 'Port')),
+                ),
               ),
-            ),
-            OutlinedButton(
-              key: const ValueKey('connect-peer'),
-              onPressed: disabled ? null : () => _run(_connect),
-              child: Text(t('连接并核对', 'Connect and verify')),
-            ),
-          ],
-        ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: const ValueKey('connect-peer'),
+                onPressed: disabled ? null : () => _run(_connect),
+                child: Text(t('连接', 'Connect')),
+              ),
+            ],
+          ),
         if (confirmedPeer)
           Container(
             margin: const EdgeInsets.only(top: 12),
@@ -1095,21 +1325,38 @@ class _TransferPageState extends State<TransferPage> {
               ],
             ),
           ),
-        const SizedBox(height: 8),
-        _step(context, '3', t('发送', 'Send')),
+      ],
+    );
+  }
+
+  List<Widget> _sendAction(BuildContext context, bool disabled) {
+    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
+    final blocked = _paths.isEmpty
+        ? t('先添加要发送的文件', 'Add files to send first')
+        : !confirmedPeer
+        ? t('先选择并核对接收设备', 'Choose and verify a receiving device first')
+        : null;
+    return [
+      if (_showPin)
         TextField(
           controller: _pin,
           enabled: !disabled,
           obscureText: true,
           maxLength: 128,
           decoration: InputDecoration(
-            labelText: t('对方接收 PIN（如有）', 'Receiver PIN (if required)'),
+            labelText: t('对方接收 PIN', 'Receiver PIN'),
           ),
         ),
-        FilledButton.icon(
+      SizedBox(
+        height: 52,
+        child: FilledButton.icon(
           key: const ValueKey('send-files'),
           icon: const Icon(Icons.send),
-          label: Text(t('发送所列文件', 'Send listed files')),
+          label: Text(
+            _paths.isEmpty
+                ? t('发送', 'Send')
+                : t('发送 ${_paths.length} 个文件', 'Send ${_paths.length} files'),
+          ),
           onPressed: disabled || blocked != null
               ? null
               : () => _run(() async {
@@ -1120,15 +1367,28 @@ class _TransferPageState extends State<TransferPage> {
                   );
                   _notify(
                     t(
-                      '发送任务已建立，进度见传输记录',
-                      'Send task started; see Transfers for progress',
+                      '已开始发送，进度见下方发送记录',
+                      'Sending started; see Sent below for progress',
                     ),
                   );
                 }),
         ),
-        if (blocked != null && !disabled) _hint(context, blocked),
-      ],
-    );
+      ),
+      Row(
+        children: [
+          Expanded(
+            child: blocked != null && !disabled
+                ? _hint(context, blocked)
+                : const SizedBox.shrink(),
+          ),
+          if (!_showPin)
+            TextButton(
+              onPressed: () => setState(() => _showPin = true),
+              child: Text(t('对方要求 PIN？', 'Receiver needs a PIN?')),
+            ),
+        ],
+      ),
+    ];
   }
 
   Widget _transferCard(Map<String, dynamic> row, bool disabled) {
@@ -1345,6 +1605,18 @@ class _TransferPageState extends State<TransferPage> {
         ),
       ),
       if (transfer.inbox.isEmpty) _empty(context, t('收件箱为空', 'Inbox is empty')),
+      if (transfer.inbox.values.any(
+        (r) => transferImageName(r['name'] as String),
+      ))
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: FilledButton.tonalIcon(
+            key: const ValueKey('import-all'),
+            icon: const Icon(Icons.playlist_add),
+            onPressed: disabled ? null : () => _run(_importAll),
+            label: Text(t('全部照片加入转换队列', 'Add all photos to the conversion queue')),
+          ),
+        ),
       for (final receipt in transfer.inbox.values)
         _receiptCard(receipt, disabled),
       if (transfer.moreInbox)

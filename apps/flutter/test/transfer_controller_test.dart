@@ -792,6 +792,49 @@ void main() {
       );
     },
   );
+  testWidgets('conversion list adds converted outputs, then originals', (
+    tester,
+  ) async {
+    final dir = Directory.systemTemp.createTempSync('queue').path;
+    for (final name in ['A.HEIC', 'A_iso.heic', 'B.HEIC']) {
+      File('$dir/$name').writeAsBytesSync([1]);
+    }
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TransferPage(
+          controller: controller,
+          sources: [
+            TransferSource(
+              name: 'A.HEIC',
+              original: '$dir/A.HEIC',
+              converted: '$dir/A_iso.heic',
+            ),
+            TransferSource(name: 'B.HEIC', original: '$dir/B.HEIC'),
+          ],
+        ),
+      ),
+    );
+    Future<void> add() async {
+      await tester.tap(find.byKey(const ValueKey('add-from-queue')));
+      await tester.pumpAndSettle();
+    }
+
+    await add();
+    expect(find.text('尚未转换'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('add-queue-sources')));
+    await tester.pumpAndSettle();
+    expect(find.text('A_iso.heic'), findsOneWidget);
+    expect(find.text('B.HEIC'), findsNothing);
+    await add();
+    await tester.tap(find.text('原文件'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('add-queue-sources')));
+    await tester.pumpAndSettle();
+    expect(find.text('A_iso.heic'), findsOneWidget);
+    expect(find.text('A.HEIC'), findsOneWidget);
+    expect(find.text('B.HEIC'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('a .pvt Live Photo is sent as its still and video', (
     tester,
   ) async {
@@ -858,14 +901,14 @@ void main() {
       await tester.scrollUntilVisible(
         retry,
         300,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: _tabScroll,
       );
       expect(tester.widget<TextButton>(retry).onPressed, isNull);
       final device = find.byKey(ValueKey('peer-${'B' * 64}'));
       await tester.scrollUntilVisible(
         device,
         -300,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: _tabScroll,
       );
       await tester.pumpAndSettle();
       await tester.tap(device);
@@ -878,7 +921,7 @@ void main() {
       await tester.scrollUntilVisible(
         retry,
         300,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: _tabScroll,
       );
       await tester.pumpAndSettle();
       await tester.tap(retry);
@@ -902,6 +945,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: TransferPage(controller: controller)),
     );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pumpAndSettle();
     await tester.runAsync(() => controller.enableReceiving());
     await tester.pump();
     expect(find.text('停止接收'), findsOneWidget);
@@ -921,6 +966,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: TransferPage(controller: controller)),
     );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pumpAndSettle();
     await tester.runAsync(
       () => tester.tap(find.byKey(const ValueKey('receive-toggle'))),
     );
@@ -966,7 +1013,7 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('接收全部'),
         200,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: _tabScroll,
       );
       expect(find.text('接收全部'), findsOneWidget);
       expect(native.calls.any((c) => c['command'] == 'decide'), isFalse);
@@ -1007,3 +1054,16 @@ void main() {
     },
   );
 }
+
+/// The vertical scroll view of whichever transfer tab is showing.
+final _tabScroll = find
+    .descendant(
+      of: find.byWidgetPredicate(
+        (w) =>
+            w is SingleChildScrollView &&
+            (w.key == const ValueKey('send-tab') ||
+                w.key == const ValueKey('receive-tab')),
+      ),
+      matching: find.byType(Scrollable),
+    )
+    .first;
