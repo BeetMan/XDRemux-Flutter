@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var importingCheckpoint = false
     @State private var exportingCheckpoint = false
     @State private var checkpointDocument = TextFileDocument(text: "")
+    /// Regular width (iPad, unfolded phones): both columns up from the
+    /// start. Left to its default the split view opens with the sidebar
+    /// hidden on an unfolded phone, leaving a lone toolbar capsule.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -59,7 +63,7 @@ struct ContentView: View {
                     .toolbar { toolbarContent }
                 }
             } else {
-                NavigationSplitView {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
                     PhotoListView(model: model, pushesDetail: false)
                         .navigationSplitViewColumnWidth(min: 260, ideal: 320)
                         #if os(iOS)
@@ -73,6 +77,9 @@ struct ContentView: View {
                                          onImportPhotos: photosImportAction)
                     }
                 }
+                // Side by side rather than detail-over-sidebar, so the list
+                // stays in reach while a photo is open.
+                .navigationSplitViewStyle(.balanced)
                 #if os(macOS)
                 .dropDestination(for: URL.self) { urls, _ in
                     Task { await model.importFiles(urls) }
@@ -220,12 +227,24 @@ struct ContentView: View {
         }
     }
 
-    /// Compact phones: bottom bar, where the thumb is. Elsewhere: primary.
+    /// iOS: the bottom bar of the list column, where the thumb is on a
+    /// phone and where a text button keeps its name and count on an iPad
+    /// or unfolded phone (a `.primaryAction` Label collapses to an icon
+    /// there). macOS: the window toolbar.
     private var batchPlacement: ToolbarItemPlacement {
         #if os(iOS)
-        isCompact ? .bottomBar : .primaryAction
+        .bottomBar
         #else
         .primaryAction
+        #endif
+    }
+
+    /// Text-only on iOS (see `batchPlacement`); icon + text on macOS.
+    private var batchIsTextOnly: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
         #endif
     }
 
@@ -236,7 +255,7 @@ struct ContentView: View {
             Button(role: .destructive) {
                 model.cancelBatch()
             } label: {
-                if isCompact {
+                if batchIsTextOnly {
                     Text("停止转换").fontWeight(.semibold).padding(.horizontal, 8)
                 } else {
                     Label("停止转换", systemImage: "stop.fill")
@@ -248,7 +267,7 @@ struct ContentView: View {
                 model.convertAll()
             } label: {
                 let title: LocalizedStringKey = model.convertibleCount > 0 ? "全部转换（\(model.convertibleCount)）" : "全部转换"
-                if isCompact {
+                if batchIsTextOnly {
                     // The bottom bar renders a Label as its icon alone; a
                     // text-only button keeps the name and the count.
                     Text(title).fontWeight(.semibold).padding(.horizontal, 8)
@@ -330,7 +349,9 @@ struct PhotoListView: View {
         #if os(macOS)
         .navigationSubtitle("Rust 内核 \(model.coreVersion)")
         #else
-        .navigationBarTitleDisplayMode(pushesDetail ? .large : .inline)
+        // Large in both layouts: as a sidebar column the inline title was
+        // crowded out by the toolbar and the column had no name at all.
+        .navigationBarTitleDisplayMode(.large)
         #endif
     }
 
@@ -360,7 +381,9 @@ struct PhotoRow: View {
             // Three lines at body / caption / caption; the spacing keeps
             // them readable as separate lines without outgrowing the thumb.
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.sourceName).lineLimit(1).font(.body)
+                // Middle truncation keeps the distinguishing tail of
+                // IMG2026…1729.heic visible in a narrow sidebar.
+                Text(item.sourceName).lineLimit(1).truncationMode(.middle).font(.body)
                 Text(item.summaryText.isEmpty ? " " : item.summaryText)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 statusLine
