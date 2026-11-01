@@ -2538,12 +2538,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 TransferSource(
                   name: item.inputPath.split(Platform.pathSeparator).last,
                   original: item.inputPath,
-                  converted:
-                      item.status.isSuccessful &&
-                          FileSystemEntity.typeSync(item.outputPath) !=
-                              FileSystemEntityType.notFound
-                      ? item.outputPath
-                      : null,
+                  converted: item.isSuccessful &&
+                          File(item.outputPath).existsSync()
+                      ? outputTransferPaths(item)
+                      : const [],
                 ),
           ],
         ),
@@ -2979,7 +2977,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     switch (action) {
       case _OutputAction.sendOutput:
         await _openTransfer(
-          paths: [item.outputPath],
+          paths: outputTransferPaths(item),
           source: t('转换结果', 'Converted file'),
         );
       case _OutputAction.details:

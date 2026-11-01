@@ -91,13 +91,14 @@ class TransferSource {
   const TransferSource({
     required this.name,
     required this.original,
-    this.converted,
+    this.converted = const [],
   });
   final String name;
   final String original;
 
-  /// Converted output (a file or a `.pvt` Live Photo folder), when present.
-  final String? converted;
+  /// Converted output files (a Live Photo is its still and MOV, or its `.pvt`
+  /// folder); empty until converted.
+  final List<String> converted;
 }
 
 class TransferPage extends StatefulWidget {
@@ -393,10 +394,10 @@ class _TransferPageState extends State<TransferPage> {
 
   Future<void> _pickFromQueue() async {
     final sources = widget.sources;
-    var converted = sources.any((s) => s.converted != null);
+    var converted = sources.any((s) => s.converted.isNotEmpty);
     final chosen = <int>{
       for (var i = 0; i < sources.length; i++)
-        if (!converted || sources[i].converted != null) i,
+        if (!converted || sources[i].converted.isNotEmpty) i,
     };
     final paths = await showModalBottomSheet<List<String>>(
       context: context,
@@ -404,7 +405,7 @@ class _TransferPageState extends State<TransferPage> {
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, update) {
-          bool usable(int i) => !converted || sources[i].converted != null;
+          bool usable(int i) => !converted || sources[i].converted.isNotEmpty;
           final picked = chosen.where(usable).toList()..sort();
           return ConstrainedBox(
             constraints: BoxConstraints(
@@ -428,7 +429,7 @@ class _TransferPageState extends State<TransferPage> {
                       ButtonSegment(
                         value: true,
                         label: Text(t('转换结果', 'Converted')),
-                        enabled: sources.any((s) => s.converted != null),
+                        enabled: sources.any((s) => s.converted.isNotEmpty),
                       ),
                       ButtonSegment(
                         value: false,
@@ -481,9 +482,10 @@ class _TransferPageState extends State<TransferPage> {
                         ? null
                         : () => Navigator.pop(ctx, [
                             for (final i in picked)
-                              converted
-                                  ? sources[i].converted!
-                                  : sources[i].original,
+                              if (converted)
+                                ...sources[i].converted
+                              else
+                                sources[i].original,
                           ]),
                     child: Text(
                       t('添加 ${picked.length} 项', 'Add ${picked.length}'),

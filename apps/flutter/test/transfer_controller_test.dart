@@ -807,7 +807,7 @@ void main() {
             TransferSource(
               name: 'A.HEIC',
               original: '$dir/A.HEIC',
-              converted: '$dir/A_iso.heic',
+              converted: ['$dir/A_iso.heic'],
             ),
             TransferSource(name: 'B.HEIC', original: '$dir/B.HEIC'),
           ],
