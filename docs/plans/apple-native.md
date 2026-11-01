@@ -314,6 +314,12 @@ Flutter 版生成的检查点文件可被原生版读取。
   根视图按 `config.language` 加 `.id`，切换时重建整棵树（放在 `.sheet` 之前，设置弹层本身不被打断）。
   用 `-AppleLanguages "(en)"` 启动模拟器复现并验证：选简体中文后状态行、摘要行全部中文；再切 English 即时生效。
 
+**§8 补充：Flutter 检查点菜单仅 macOS（2026-11-01，分支 `feat/apple-checkpoint-mac-only`）**
+
+- "导入 / 导出 Flutter 检查点…"只在 macOS 的更多菜单里显示。iOS 上两个 App 的沙箱互不可见，检查点里的路径对不上，
+  导入只会得到一排"无法读取"；导入 / 导出的实现与 `FlutterCheckpoint` 不变，iOS 只是不露出入口。
+- 空状态页：iOS 上主按钮改为"从照片导入"，"从文件导入"降为次按钮（照片多半在相册里，文件 App 是绕路）；macOS 仍只有文件导入。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
