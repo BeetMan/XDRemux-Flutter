@@ -22,6 +22,15 @@ struct ContentView: View {
 
     static let importTypes: [UTType] = [.heic, .heif, .jpeg]
 
+    /// The Photos picker exists on iOS only.
+    private var photosImportAction: (() -> Void)? {
+        #if os(iOS)
+        { showPhotosPicker = true }
+        #else
+        nil
+        #endif
+    }
+
     private var isCompact: Bool {
         #if os(iOS)
         sizeClass == .compact
@@ -36,7 +45,8 @@ struct ContentView: View {
                 NavigationStack {
                     Group {
                         if model.items.isEmpty {
-                            EmptyLibraryView(onImport: { showFileImporter = true })
+                            EmptyLibraryView(onImport: { showFileImporter = true },
+                                             onImportPhotos: photosImportAction)
                         } else {
                             PhotoListView(model: model, pushesDetail: true)
                         }
@@ -59,7 +69,8 @@ struct ContentView: View {
                     if let item = model.selectedItem {
                         PhotoDetailView(model: model, itemID: item.id)
                     } else {
-                        EmptyLibraryView(onImport: { showFileImporter = true })
+                        EmptyLibraryView(onImport: { showFileImporter = true },
+                                         onImportPhotos: photosImportAction)
                     }
                 }
                 #if os(macOS)
@@ -183,6 +194,10 @@ struct ContentView: View {
                 Label("批量整理", systemImage: "folder.badge.gearshape")
             }
             .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
+            // Checkpoint interop only makes sense where both apps see the
+            // same paths; on iOS the two sandboxes cannot, so the entries
+            // would import as unreadable.
+            #if os(macOS)
             Button {
                 importingCheckpoint = true
             } label: {
@@ -196,6 +211,7 @@ struct ContentView: View {
                 Label("导出 Flutter 检查点…", systemImage: "square.and.arrow.up.on.square")
             }
             .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
+            #endif
             Button {
                 showSettings = true
             } label: {
@@ -248,6 +264,10 @@ struct ContentView: View {
 
 struct EmptyLibraryView: View {
     let onImport: () -> Void
+    /// iOS only: photos usually live in the library, so that is the
+    /// prominent action and Files the secondary one. macOS has no library
+    /// source and keeps the single Files button.
+    var onImportPhotos: (() -> Void)? = nil
 
     var body: some View {
         ContentUnavailableView {
@@ -255,8 +275,22 @@ struct EmptyLibraryView: View {
         } description: {
             Text("导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。")
         } actions: {
-            Button("从文件导入", action: onImport)
-                .buttonStyle(.borderedProminent)
+            if let onImportPhotos {
+                VStack(spacing: 12) {
+                    Button(action: onImportPhotos) {
+                        Label("从照片导入", systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button(action: onImport) {
+                        Label("从文件导入", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .controlSize(.large)
+            } else {
+                Button("从文件导入", action: onImport)
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 }
