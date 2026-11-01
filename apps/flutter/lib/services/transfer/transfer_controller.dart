@@ -418,6 +418,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       if (!_ownsRuntime(native, generation)) return;
       var dirty = page['resync'] == true;
       var ended = false;
+      // Idle ticks (no events, no discovery poll) must not rebuild listeners.
+      var changed = (page['events'] as List).isNotEmpty;
       for (final body in page['events'] as List) {
         if (body['kind'] == 'event') {
           final e = body['event'] as Map;
@@ -473,6 +475,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           _discoveryTask == null &&
           DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
         _lastDiscoveryPoll = DateTime.now();
+        changed = true;
         final revision = _discoveryRevision;
         try {
           final state = await native.command({'command': 'discovery_status'});
@@ -504,7 +507,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             await loadInbox();
           }
         }
-      } else {
+      } else if (changed) {
         notifyListeners();
       }
     } catch (e) {

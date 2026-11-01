@@ -2897,9 +2897,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final action = await showModalBottomSheet<_OutputAction>(
       context: context,
       useSafeArea: true,
+      isScrollControlled: true,
       builder: (ctx) {
         return SafeArea(
-          child: Column(
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (Platform.isAndroid || Platform.isIOS)
@@ -2929,18 +2931,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     : null,
                 onTap: () => Navigator.pop(ctx, _OutputAction.share),
               ),
-              if (TransferBindings.available) ...[
+              if (TransferBindings.available)
                 ListTile(
                   leading: const Icon(Icons.send),
-                  title: Text(t('局域网发送原文件', 'Send original over LAN')),
-                  onTap: () => Navigator.pop(ctx, _OutputAction.sendOriginal),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.send_outlined),
-                  title: Text(t('局域网发送转换结果', 'Send converted file over LAN')),
+                  title: Text(t('局域网发送', 'Send over LAN')),
+                  subtitle: Text(t('发送转换结果；原文件可在互传页添加', 'Sends the converted file; add originals on the transfer page')),
                   onTap: () => Navigator.pop(ctx, _OutputAction.sendOutput),
                 ),
-              ],
               ListTile(
                 leading: const Icon(Icons.open_in_new),
                 title: Text(t('打开', 'Open')),
@@ -2969,6 +2966,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ],
           ),
+          ),
         );
       },
     );
@@ -2979,11 +2977,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     switch (action) {
-      case _OutputAction.sendOriginal:
-        await _openTransfer(
-          paths: [item.inputPath],
-          source: t('原文件', 'Original file'),
-        );
       case _OutputAction.sendOutput:
         await _openTransfer(
           paths: [item.outputPath],
@@ -5953,7 +5946,6 @@ enum _OutputAction {
   open,
   details,
   reconvert,
-  sendOriginal,
   sendOutput,
 }
 
