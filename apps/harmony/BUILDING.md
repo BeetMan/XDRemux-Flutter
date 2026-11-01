@@ -28,10 +28,14 @@ DevEco Studio's bundled SDK, ohpm, hvigor and hdc work on Apple Silicon. `xdremu
 
 ```bash
 rustup target add aarch64-unknown-linux-ohos
+rustup toolchain install 1.97.1 --profile minimal --target aarch64-unknown-linux-ohos
 bash xdremux/rust/build_ohos.sh
+tools/native/build-transfer.sh ohos
 tools/ohos/prepare_harmony_native.sh
 cd apps/harmony && devecocli build --product default --build-mode debug
 ```
+
+`tools/native/build-transfer.sh ohos` builds the LocalSend transfer adapter (`crates/xdremux-transfer-ffi`, pinned Rust 1.97.1). The bridge links it, so the staging helper refuses to continue without it. The PowerShell staging script does not stage it yet; on Windows copy `libxdremux_transfer.so` into `entry/libs/arm64-v8a/` yourself.
 
 For a release package, build from a clean export whose `build-profile.json5` has no `signingConfigs`, so the build log shows signing was skipped rather than failed.
 

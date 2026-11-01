@@ -14,6 +14,7 @@
 #include <string>
 
 #include "ps3_pipeline.h"
+#include "transfer_bridge.h"
 
 // Keep this declaration byte-for-byte compatible with xdremux/rust/src/lib.rs.
 // The Rust result owns all six string pointers until the by-value free function
@@ -1424,6 +1425,12 @@ napi_value initialize(napi_env env, napi_value exports)
         {"progressBegin", nullptr, progress_begin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressRead", nullptr, progress_read, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"progressEnd", nullptr, progress_end, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferAbiVersion", nullptr, xdremux_transfer_napi::abi_version, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferCreate", nullptr, xdremux_transfer_napi::create, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferSubmit", nullptr, xdremux_transfer_napi::submit, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferPoll", nullptr, xdremux_transfer_napi::poll, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferStop", nullptr, xdremux_transfer_napi::stop, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"transferRelease", nullptr, xdremux_transfer_napi::release, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     if (napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors) != napi_ok) {
         napi_throw_error(env, nullptr, "unable to define native module properties");

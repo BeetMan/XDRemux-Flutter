@@ -17,7 +17,21 @@ set_target_properties(xdremux_core PROPERTIES
     IMPORTED_NO_SONAME TRUE
 )
 
-add_library(entry SHARED napi_bridge.cpp)
+# LocalSend transfer adapter (crates/xdremux-transfer-ffi), staged next to the
+# core by prepare_harmony_native.sh after tools/native/build-transfer.sh ohos.
+set(XDREMUX_TRANSFER_SO "${ENTRY_DIR}/libs/arm64-v8a/libxdremux_transfer.so")
+if(NOT EXISTS "${XDREMUX_TRANSFER_SO}")
+    message(FATAL_ERROR
+        "Missing ${XDREMUX_TRANSFER_SO}; run tools/native/build-transfer.sh ohos and the staging helper first")
+endif()
+
+add_library(xdremux_transfer SHARED IMPORTED GLOBAL)
+set_target_properties(xdremux_transfer PROPERTIES
+    IMPORTED_LOCATION "${XDREMUX_TRANSFER_SO}"
+    IMPORTED_NO_SONAME TRUE
+)
+
+add_library(entry SHARED napi_bridge.cpp transfer_bridge.cpp)
 target_compile_features(entry PRIVATE cxx_std_17)
 target_compile_options(entry PRIVATE -Wall -Wextra)
-target_link_libraries(entry PUBLIC xdremux_core libace_napi.z.so)
+target_link_libraries(entry PUBLIC xdremux_core xdremux_transfer libace_napi.z.so)

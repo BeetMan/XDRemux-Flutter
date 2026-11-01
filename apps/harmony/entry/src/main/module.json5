@@ -56,6 +56,13 @@
           }
         ]
       }
+    ],
+    // LocalSend device transfer: LAN HTTPS listener/client and UDP multicast
+    // discovery. Both are system_grant; the listener only runs while the
+    // transfer sheet is open.
+    "requestPermissions": [
+      { "name": "ohos.permission.INTERNET" },
+      { "name": "ohos.permission.GET_NETWORK_INFO" }
     ]
   }
 }

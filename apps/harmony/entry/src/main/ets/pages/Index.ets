@@ -114,6 +114,18 @@ import {
   parseLivePhotoBundleReport
 } from '../queue/LivePhotoBundleZip';
 import type { LivePhotoBundleFile, LivePhotoBundleReport } from '../queue/LivePhotoBundleZip';
+import { TransferController } from '../transfer/TransferController';
+import type { TransferBridge, TransferLease } from '../transfer/TransferController';
+import {
+  TransferSession,
+  formatTransferBytes,
+  groupedFingerprint,
+  isTransferPhotoName,
+  shortFingerprint
+} from '../transfer/TransferModel';
+import type {
+  TransferActivity, TransferOffer, TransferOfferFile, TransferPeer, TransferReceipt
+} from '../transfer/TransferModel';
 import { ps3OptionsFor, stableGrainSeed } from '../queue/Ps3Model';
 import { convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompatible,
   mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
@@ -202,6 +214,29 @@ class OriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
   assetCompatibleCapability: QueueHeicCompatibleCapability = new QueueHeicCompatibleCapability();
 }
 
+interface TransferSendSource {
+  source: string;
+  name: string;
+}
+
+/** Immutable copy of the polled transfer session for rendering. */
+interface TransferView {
+  running: boolean;
+  ready: boolean;
+  address: string;
+  fingerprint: string;
+  discoveryError: string;
+  peers: Array<TransferPeer>;
+  offers: Array<TransferOffer>;
+  activities: Array<TransferActivity>;
+  receipts: Array<TransferReceipt>;
+}
+
+const EMPTY_TRANSFER_VIEW: TransferView = {
+  running: false, ready: false, address: '', fingerprint: '', discoveryError: '',
+  peers: [], offers: [], activities: [], receipts: []
+};
+
 @Entry
 @Component
 struct Index {
@@ -255,6 +290,16 @@ struct Index {
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
   @State private livePhotoBundleBusy: boolean = false;
   @State private livePhotoBundleStatus: string = '';
+  // LocalSend device transfer (sheet). The session lives in the controller;
+  // every change publishes a fresh transferView so the sheet re-renders.
+  @State private transferVisible: boolean = false;
+  @State private transferView: TransferView = EMPTY_TRANSFER_VIEW;
+  @State private transferBusy: boolean = false;
+  @State private transferStatus: string = '';
+  @State private transferSendSources: Array<TransferSendSource> = [];
+  @State private transferSendLabel: string = '';
+  private transferController: TransferController | undefined = undefined;
+  private transferDiscoveryTimer: number = -1;
   @State private mainTabIndex: number = 1;
   @State private galleryDetailVisible: boolean = false;
   @State private galleryDetailMounted: boolean = false;
@@ -2506,6 +2551,510 @@ struct Index {
       this.pageBusy = false;
       this.syncQueue();
     }
+  }
+
+  // ---------- LocalSend device transfer ----------
+
+  private transferBridge(): TransferBridge {
+    return {
+      abiVersion: (): number => xdremuxNative.transferAbiVersion() as number,
+      create: (configJson: string): number => xdremuxNative.transferCreate(configJson) as number,
+      submit: (handle: number, requestJson: string): number =>
+        xdremuxNative.transferSubmit(handle, requestJson) as number,
+      poll: (handle: number, maxEvents: number, maxBytes: number): string =>
+        xdremuxNative.transferPoll(handle, maxEvents, maxBytes) as string,
+      stop: (handle: number): number => xdremuxNative.transferStop(handle) as number,
+      release: (handle: number): number => xdremuxNative.transferRelease(handle) as number
+    };
+  }
+
+  private transferRunning(): boolean {
+    return this.transferController !== undefined && this.transferController.running;
+  }
+
+  private publishTransferView(): void {
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined) {
+      this.transferView = EMPTY_TRANSFER_VIEW;
+      return;
+    }
+    const session: TransferSession = controller.session;
+    this.transferView = {
+      running: controller.running,
+      ready: controller.running && session.ready,
+      address: session.address,
+      fingerprint: session.fingerprint,
+      discoveryError: session.discoveryError,
+      peers: session.peers.slice(),
+      offers: session.offers.slice(),
+      // Copy rows: the session mutates activities in place on progress.
+      activities: session.activities.map((activity: TransferActivity): TransferActivity => ({
+        id: activity.id, direction: activity.direction, label: activity.label, fileCount: activity.fileCount,
+        bytes: activity.bytes, total: activity.total, status: activity.status, error: activity.error
+      })),
+      receipts: session.receipts.slice()
+    };
+  }
+
+  private openTransfer(sources: Array<TransferSendSource>, label: string): void {
+    this.transferSendSources = sources;
+    this.transferSendLabel = label;
+    this.transferStatus = '';
+    this.transferVisible = true;
+    // Choosing "send" is the explicit action: start the service so nearby
+    // devices appear. Plain opening from Settings still waits for the user.
+    if (sources.length > 0 && !this.transferRunning()) void this.startTransfer();
+  }
+
+  private openTransferForSelected(): void {
+    const item: QueueItem | undefined = this.selectedItem();
+    const result: QueueResult | undefined = item?.result;
+    if (item === undefined || result === undefined) return;
+    const output: string = result.outputPath;
+    const outputLeaf: string = output.substring(output.lastIndexOf('/') + 1);
+    const extension: string = outputLeaf.lastIndexOf('.') > 0 ? outputLeaf.substring(outputLeaf.lastIndexOf('.')) : '.heic';
+    const stem: string = livePhotoExportStem(item.displayName, outputLeaf.substring(0, outputLeaf.length - extension.length));
+    const key: string = this.livePhotoPairCacheKey(item);
+    const pair: LivePhotoPairResult | undefined = key.length === 0 ? undefined : this.livePhotoPairCache.get(key);
+    if (pair !== undefined && pair.convertedStillPath === output) {
+      // Send the verified pair; receivers such as LocalSend on iPhone keep the
+      // same-stem HEIC + MOV together.
+      this.openTransfer([
+        { source: pair.stillPath, name: stem + '.heic' },
+        { source: pair.movPath, name: stem + '.mov' }
+      ], stem + '（Live Photo）');
+    } else {
+      this.openTransfer([{ source: output, name: stem + extension }], stem + extension);
+    }
+  }
+
+  private async startTransfer(): Promise<void> {
+    if (this.transferBusy || this.transferRunning()) return;
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) return;
+    this.transferBusy = true;
+    this.transferStatus = '正在开启接收…';
+    try {
+      if (this.transferController === undefined) {
+        this.transferController = new TransferController(this.transferBridge(), (): void => {
+          this.publishTransferView();
+        });
+      }
+      const model: string = (deviceInfo.marketName ?? '').trim();
+      await this.transferController.start({
+        root: context.filesDir + '/transfer',
+        alias: ('XDRemux · ' + (model.length > 0 ? model : '鸿蒙')).substring(0, 64),
+        bind: '0.0.0.0:53319'
+      });
+      await this.transferController.refreshReceipts();
+      this.transferStatus = '';
+      await this.refreshTransferDiscovery();
+      this.transferDiscoveryTimer = setInterval((): void => {
+        void this.pollTransferDiscovery();
+      }, 3000);
+    } catch (error) {
+      this.transferStatus = this.errorMessage(error);
+    } finally {
+      this.transferBusy = false;
+    }
+  }
+
+  private async refreshTransferDiscovery(): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined || !controller.running) return;
+    try {
+      await controller.refreshDiscovery();
+    } catch (error) {
+      this.transferStatus = '设备发现失败：' + this.errorMessage(error);
+    }
+  }
+
+  private async pollTransferDiscovery(): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined || !controller.running || this.transferBusy) return;
+    try {
+      await controller.discoveryStatus();
+      if (controller.session.resyncNeeded) await controller.refreshReceipts();
+    } catch (error) {
+      // Discovery status is advisory; keep the last peer list.
+    }
+  }
+
+  private async stopTransfer(): Promise<void> {
+    if (this.transferDiscoveryTimer >= 0) {
+      clearInterval(this.transferDiscoveryTimer);
+      this.transferDiscoveryTimer = -1;
+    }
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined) return;
+    this.transferBusy = true;
+    try {
+      await controller.stop();
+    } finally {
+      this.transferBusy = false;
+      this.publishTransferView();
+    }
+  }
+
+  private closeTransfer(): void {
+    this.transferVisible = false;
+    this.transferSendSources = [];
+    this.transferSendLabel = '';
+    // Leaving the sheet stops listening; never keep the LAN port open unseen.
+    void this.stopTransfer();
+  }
+
+  private async decideTransferOffer(offer: TransferOffer, accept: boolean): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined) return;
+    try {
+      await controller.decide(offer.sessionId, accept);
+      this.transferStatus = accept ? '已接受，正在接收…' : '已拒绝';
+    } catch (error) {
+      this.transferStatus = (accept ? '接受' : '拒绝') + '失败：' + this.errorMessage(error);
+    }
+  }
+
+  private confirmTransferSend(peer: TransferPeer): void {
+    this.getUIContext().showAlertDialog({
+      title: '发送到 ' + (peer.alias.length > 0 ? peer.alias : peer.address),
+      message: this.transferSendLabel + '\n' + peer.address + '\n\n对方证书指纹：\n' + groupedFingerprint(peer.fingerprint) +
+        '\n\n只在确认这是你的设备时发送。对方需要在 LocalSend 中接受。',
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: {
+        value: '发送',
+        action: (): void => {
+          void this.sendTransfer(peer);
+        }
+      }
+    });
+  }
+
+  /** Copy sources under their user-facing names; LocalSend sends basenames as-is. */
+  private async stageTransferSend(cacheDir: string): Promise<Array<string>> {
+    const directory: string = cacheDir + '/transfer-send';
+    if (await fileIo.access(directory)) await fileIo.rmdir(directory);
+    await fileIo.mkdir(directory);
+    const staged: Array<string> = [];
+    for (const source of this.transferSendSources) {
+      const stat: fileIo.Stat = await fileIo.lstat(source.source);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size <= 0) {
+        throw new Error('要发送的文件不可用：' + source.name);
+      }
+      const target: string = directory + '/' + source.name;
+      await this.copySandboxPath(source.source, target);
+      staged.push(target);
+    }
+    return staged;
+  }
+
+  private async sendTransfer(peer: TransferPeer): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    const context = this.getUIContext().getHostContext();
+    if (controller === undefined || !controller.running || context === undefined ||
+      this.transferSendSources.length === 0 || this.transferBusy) return;
+    this.transferBusy = true;
+    this.transferStatus = '正在发送到 ' + peer.alias + '，等待对方接受…';
+    try {
+      const paths: Array<string> = await this.stageTransferSend(context.cacheDir);
+      await controller.send(peer, paths, this.transferSendLabel);
+      // The activity row now tracks acceptance, progress and the outcome.
+      this.transferStatus = '';
+    } catch (error) {
+      this.transferStatus = '发送失败：' + this.errorMessage(error);
+    } finally {
+      this.transferBusy = false;
+    }
+  }
+
+  private async saveTransferReceiptToGallery(receipt: TransferReceipt): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    const library: HarmonyGalleryLibrary | undefined = this.galleryLibrary;
+    if (controller === undefined || library === undefined || !this.galleryLibraryReady || this.transferBusy) {
+      this.transferStatus = '本地图库尚未加载';
+      return;
+    }
+    this.transferBusy = true;
+    try {
+      // The lease keeps the received data file immutable while we copy it.
+      const lease: TransferLease = await controller.acquireReceipt(receipt.id);
+      try {
+        const item: GalleryLibraryItem = await library.importPhoto(lease.path, receipt.name);
+        const tile: GalleryPhotoTile = { item: item, path: library.pathFor(item) };
+        this.galleryPhotos = [tile, ...this.galleryPhotos];
+        this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
+        this.galleryMediaCount += 1;
+      } finally {
+        await controller.releaseReceipt(lease);
+      }
+      this.transferStatus = '已存入本地图库：' + receipt.name;
+    } catch (error) {
+      this.transferStatus = '存入图库失败：' + this.errorMessage(error);
+    } finally {
+      this.transferBusy = false;
+    }
+  }
+
+  private async deleteTransferReceipt(receipt: TransferReceipt): Promise<void> {
+    const controller: TransferController | undefined = this.transferController;
+    if (controller === undefined || this.transferBusy) return;
+    try {
+      await controller.deleteReceipt(receipt.id);
+    } catch (error) {
+      this.transferStatus = '删除失败：' + this.errorMessage(error);
+    }
+  }
+
+  private transferActivityText(activity: TransferActivity): string {
+    const direction: string = activity.direction === 'send' ? '发送' : '接收';
+    const state: string = activity.status === 'pending' ? '等待确认'
+      : activity.status === 'active' ? '进行中'
+      : activity.status === 'done' ? '完成' : '失败';
+    const size: string = activity.total > 0
+      ? formatTransferBytes(activity.bytes) + ' / ' + formatTransferBytes(activity.total) : '';
+    return direction + ' · ' + (activity.label.length > 0 ? activity.label : String(activity.fileCount) + ' 个文件') +
+      ' · ' + state + (size.length > 0 ? ' · ' + size : '') + (activity.error.length > 0 ? ' · ' + activity.error : '');
+  }
+
+  @Builder
+  private transferSectionTitle(title: string) {
+    Text(title)
+      .fontSize(15)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('sys.color.font_primary'))
+      .width('100%')
+      .margin({ top: 18, bottom: 6 });
+  }
+
+  @Builder
+  private transferSheet() {
+    Scroll() {
+      Column() {
+        Column() {
+          Column() {
+            Text(this.transferView.running ? (this.transferView.ready ? '接收已开启' : '正在启动…') : '接收未开启')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_primary'))
+              .width('100%');
+            if (this.transferView.ready) {
+              Text('端口 ' + this.transferView.address.split(':').pop() +
+                ' · 指纹 ' + shortFingerprint(this.transferView.fingerprint))
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 4 });
+            } else {
+              Text('与同一局域网内运行 LocalSend 的手机或电脑互传照片。开启后才会监听局域网端口；关闭此面板即停止。')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 4 });
+            }
+            Button(this.transferView.running ? '停止接收' : '开启接收')
+              .width('100%')
+              .height(44)
+              .margin({ top: 10 })
+              .enabled(!this.transferBusy)
+              .onClick((): void => {
+                if (this.transferView.running) {
+                  void this.stopTransfer();
+                } else {
+                  void this.startTransfer();
+                }
+              });
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(14);
+
+          if (this.transferStatus.length > 0) {
+            Text(this.transferStatus)
+              .fontSize(13)
+              .fontColor(this.transferStatus.includes('失败') ? '#B3261E' : $r('sys.color.font_secondary'))
+              .width('100%')
+              .margin({ top: 8 });
+          }
+
+          if (this.transferSendSources.length > 0) {
+            this.transferSectionTitle('要发送');
+            Text(this.transferSendLabel + ' · ' + String(this.transferSendSources.length) + ' 个文件；在下方选择设备')
+              .fontSize(13)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%');
+          }
+
+          if (this.transferView.running) {
+            Row() {
+              Text('附近设备')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'))
+                .layoutWeight(1);
+              Button('刷新')
+                .fontSize(13)
+                .height(32)
+                .enabled(!this.transferBusy)
+                .onClick((): void => {
+                  void this.refreshTransferDiscovery();
+                });
+            }
+            .width('100%')
+            .margin({ top: 18, bottom: 6 });
+            if (this.transferView.discoveryError.length > 0) {
+              Text('设备发现不可用；对方仍可用本机地址向这里发送。')
+                .fontSize(12)
+                .fontColor('#B3261E')
+                .width('100%');
+            }
+            if (this.transferView.peers.length === 0) {
+              Text('尚未发现设备。请确认对方打开了 LocalSend，并与本机在同一 Wi-Fi。')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%');
+            }
+            ForEach(this.transferView.peers, (peer: TransferPeer) => {
+              Row() {
+                Column() {
+                  Text(peer.alias.length > 0 ? peer.alias : '未命名设备')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.font_primary'))
+                    .width('100%');
+                  Text(peer.address + ' · ' + shortFingerprint(peer.fingerprint))
+                    .fontSize(12)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .width('100%');
+                }
+                .layoutWeight(1);
+                if (this.transferSendSources.length > 0) {
+                  Button('发送')
+                    .fontSize(13)
+                    .height(34)
+                    .enabled(!this.transferBusy)
+                    .onClick((): void => {
+                      this.confirmTransferSend(peer);
+                    });
+                }
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 8 });
+            }, (peer: TransferPeer): string => peer.fingerprint + '@' + peer.address);
+
+            if (this.transferView.offers.length > 0) {
+              this.transferSectionTitle('待确认的接收');
+              ForEach(this.transferView.offers, (offer: TransferOffer) => {
+                Column() {
+                  Text(offer.alias + ' 想发送 ' + String(offer.files.length) + ' 个文件（' +
+                    formatTransferBytes(offer.files.reduce((sum: number, file: TransferOfferFile): number => sum + file.size, 0)) + '）')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.font_primary'))
+                    .width('100%');
+                  Text(offer.files.slice(0, 4).map((file: TransferOfferFile): string => file.name).join('、') +
+                    (offer.files.length > 4 ? ' 等' : '') + ' · 指纹 ' + shortFingerprint(offer.fingerprint))
+                    .fontSize(12)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .width('100%')
+                    .margin({ top: 2 });
+                  Row({ space: 8 }) {
+                    Button('拒绝')
+                      .layoutWeight(1)
+                      .height(38)
+                      .backgroundColor($r('sys.color.background_secondary'))
+                      .fontColor($r('sys.color.font_primary'))
+                      .onClick((): void => {
+                        void this.decideTransferOffer(offer, false);
+                      });
+                    Button('接收')
+                      .layoutWeight(1)
+                      .height(38)
+                      .onClick((): void => {
+                        void this.decideTransferOffer(offer, true);
+                      });
+                  }
+                  .width('100%')
+                  .margin({ top: 8 });
+                }
+                .width('100%')
+                .padding(12)
+                .backgroundColor($r('sys.color.background_secondary'))
+                .borderRadius(12)
+                .margin({ bottom: 8 });
+              }, (offer: TransferOffer): string => offer.sessionId);
+            }
+          }
+
+          if (this.transferView.activities.length > 0) {
+            this.transferSectionTitle('传输记录');
+            ForEach(this.transferView.activities, (activity: TransferActivity) => {
+              Column() {
+                Text(this.transferActivityText(activity))
+                  .fontSize(12)
+                  .fontColor(activity.status === 'failed' ? '#B3261E' : $r('sys.color.font_primary'))
+                  .width('100%');
+                if (activity.status === 'active' && activity.total > 0) {
+                  Progress({ value: activity.bytes, total: activity.total, type: ProgressType.Linear })
+                    .width('100%')
+                    .margin({ top: 4 });
+                }
+              }
+              .width('100%')
+              .margin({ bottom: 8 });
+            }, (activity: TransferActivity): string =>
+              activity.id + activity.status + String(activity.bytes) + activity.error);
+          }
+
+          if (this.transferView.running && this.transferView.receipts.length > 0) {
+            this.transferSectionTitle('收件箱');
+            ForEach(this.transferView.receipts, (receipt: TransferReceipt) => {
+              Row({ space: 8 }) {
+                Column() {
+                  Text(receipt.name)
+                    .fontSize(14)
+                    .fontColor($r('sys.color.font_primary'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%');
+                  Text(formatTransferBytes(receipt.size))
+                    .fontSize(12)
+                    .fontColor($r('sys.color.font_secondary'))
+                    .width('100%');
+                }
+                .layoutWeight(1);
+                if (isTransferPhotoName(receipt.name)) {
+                  Button('存入图库')
+                    .fontSize(13)
+                    .height(34)
+                    .enabled(!this.transferBusy)
+                    .onClick((): void => {
+                      void this.saveTransferReceiptToGallery(receipt);
+                    });
+                }
+                Button('删除')
+                  .fontSize(13)
+                  .height(34)
+                  .backgroundColor($r('sys.color.background_secondary'))
+                  .fontColor($r('sys.color.font_primary'))
+                  .enabled(!this.transferBusy)
+                  .onClick((): void => {
+                    void this.deleteTransferReceipt(receipt);
+                  });
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 8 });
+            }, (receipt: TransferReceipt): string => receipt.id);
+          }
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Start)
+      .padding({ left: 18, right: 18, bottom: 32 });
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off);
   }
 
   private async startBatchExport(): Promise<void> {
@@ -7660,6 +8209,17 @@ struct Index {
                 }
               }
 
+              if (this.selectedItemRequired().result !== undefined) {
+                Button('发送到其他设备（LocalSend）')
+                  .width('100%')
+                  .height(44)
+                  .margin({ top: 10 })
+                  .enabled(!this.pageBusy && !this.queueRunning)
+                  .onClick((): void => {
+                    this.openTransferForSelected();
+                  });
+              }
+
               this.motionPhotoPanel();
 
               if (this.selectedShareRequiresReselection()) {
@@ -7740,6 +8300,33 @@ struct Index {
           .backgroundColor($r('sys.color.background_secondary'))
           .borderRadius(14)
           .margin({ bottom: 10 });
+
+          Row() {
+            Column() {
+              Text('设备互传（LocalSend）')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'))
+                .width('100%');
+              Text('与局域网内的 LocalSend 设备收发照片（实验）')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .margin({ top: 2 });
+            }
+            .layoutWeight(1);
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(18)
+              .fontColor([$r('sys.color.font_secondary')]);
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor($r('sys.color.background_secondary'))
+          .borderRadius(14)
+          .margin({ bottom: 10 })
+          .onClick((): void => {
+            this.openTransfer([], '');
+          });
 
           if (this.settingsWarning.length > 0) {
             Text(this.settingsWarning)
@@ -8868,7 +9455,14 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'));
+    .backgroundColor($r('sys.color.background_primary'))
+    .bindSheet(this.transferVisible, this.transferSheet(), {
+      height: SheetSize.LARGE,
+      title: { title: '设备互传' },
+      onDisappear: (): void => {
+        this.closeTransfer();
+      }
+    });
   }
 
 }

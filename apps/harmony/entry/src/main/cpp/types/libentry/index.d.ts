@@ -78,3 +78,9 @@ export const convert: (
 export const progressBegin: () => number;
 export const progressRead: (handle: number) => Progress;
 export const progressEnd: (handle: number) => void;
+export const transferAbiVersion: () => number;
+export const transferCreate: (configJson: string) => number;
+export const transferSubmit: (handle: number, requestJson: string) => number;
+export const transferPoll: (handle: number, maxEvents: number, maxBytes: number) => string;
+export const transferStop: (handle: number) => number;
+export const transferRelease: (handle: number) => number;
