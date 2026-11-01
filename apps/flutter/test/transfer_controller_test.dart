@@ -26,6 +26,7 @@ class _Native extends TransferService {
   final discovered = <Map<String, dynamic>>[];
   final receipts = <Map<String, dynamic>>[];
   final events = <Map<String, dynamic>>[];
+  String? lastAlias;
   @override
   Future<TransferAvailability> start({
     required String supportRoot,
@@ -35,6 +36,7 @@ class _Native extends TransferService {
     String? pin,
   }) async {
     startCalls++;
+    lastAlias = alias;
     startEntered?.complete();
     await startGate;
     if (startError != null) return TransferAvailability(false, startError);
@@ -904,6 +906,41 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('a renamed device announces its new name', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pumpAndSettle();
+    final edit = find.byKey(const ValueKey('edit-device-name'));
+    for (var i = 0; i < 10 && edit.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    await tester.tap(edit);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('device-name-field')),
+      '  Desk Phone ',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-device-name')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Desk Phone'), findsOneWidget);
+    // Reception announces the saved name.
+    await tester.runAsync(() => controller.enableReceiving());
+    expect(native.lastAlias, 'Desk Phone');
+    await tester.runAsync(controller.stop);
+    await tester.runAsync(() => TransferController.setDeviceName(null));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('the send tab can start discovery itself', (tester) async {
     await tester.pumpWidget(
       MaterialApp(home: TransferPage(controller: controller)),

@@ -183,6 +183,29 @@ class _TransferPageState extends State<TransferPage>
     }
   }
 
+  Future<String> _nameFuture = TransferController.deviceName();
+
+  Future<void> _renameDevice(String current) async {
+    final model = await TransferController.modelName();
+    if (!mounted) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _DeviceNameDialog(current: current, model: model),
+    );
+    if (name == null || !mounted) return;
+    await _run(() async {
+      await TransferController.setDeviceName(name);
+      setState(() {
+        _nameFuture = TransferController.deviceName();
+      });
+      // The name is announced by the running listener; restart it.
+      if (transfer.receiving) {
+        await transfer.stop();
+        await _enableReceiving();
+      }
+    });
+  }
+
   Future<void> _enableReceiving() =>
       transfer.enableReceiving(port: int.tryParse(_listenPort.text) ?? 0);
 
@@ -393,8 +416,8 @@ class _TransferPageState extends State<TransferPage>
         title: Text(t('重试未确认成功的文件？', 'Retry unacknowledged files?')),
         content: Text(
           t(
-            '已收到成功回执的文件不会重发。回执丢失时，对端可能已经保存，重试可能产生副本。源文件必须与上次准备的内容一致。',
-            'Acknowledged files are excluded. A lost acknowledgement may leave an existing copy on the receiver. Retried sources must match the previous prepared content.',
+            '已发送成功的文件不会重发。',
+            'Files already delivered are not sent again.',
           ),
         ),
         actions: [
@@ -1070,21 +1093,35 @@ class _TransferPageState extends State<TransferPage>
             ),
           ],
         ),
-        if (transfer.receiving && transfer.ready != null) ...[
-          FutureBuilder<String>(
-            future: TransferController.deviceName(),
-            builder: (context, snapshot) => snapshot.hasData
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      t(
-                        '其他设备看到的本机名称：${snapshot.data}',
-                        'Other devices see this one as: ${snapshot.data}',
+        FutureBuilder<String>(
+          future: _nameFuture,
+          builder: (context, snapshot) => snapshot.hasData
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          t(
+                            '其他设备看到的本机名称：${snapshot.data}',
+                            'Other devices see this one as: ${snapshot.data}',
+                          ),
+                        ),
                       ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
+                      IconButton(
+                        key: const ValueKey('edit-device-name'),
+                        tooltip: t('修改名称', 'Rename'),
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        onPressed: disabled
+                            ? null
+                            : () => _renameDevice(snapshot.data!),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+        if (transfer.receiving && transfer.ready != null) ...[
           const SizedBox(height: 8),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
@@ -1636,13 +1673,6 @@ class _TransferPageState extends State<TransferPage>
       ],
     ),
     children: [
-      _hint(
-        context,
-        t(
-          '原件保存在应用私有收件箱。导入转换队列和导出会另建副本，请预留额外空间。',
-          'Originals stay in the private inbox. Queue import and export create extra copies; allow additional space.',
-        ),
-      ),
       if (transfer.inbox.isEmpty) _empty(context, t('收件箱为空', 'Inbox is empty')),
       if (transfer.inbox.values.any(
         (r) => transferImageName(r['name'] as String),
@@ -1705,8 +1735,7 @@ class _TransferPageState extends State<TransferPage>
                     Text(name, overflow: TextOverflow.ellipsis),
                     Text(
                       '${live ? '${t('实况照片', 'Live Photo')} · ' : ''}'
-                      '${_bytes(row['size'] as int)} · '
-                      '${row['peer_hash_present'] == true ? t('长度与对端哈希已核对', 'Length and peer hash verified') : t('长度已核对；无对端哈希', 'Length verified; peer supplied no hash')}',
+                      '${_bytes(row['size'] as int)}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -1777,7 +1806,7 @@ class _TransferPageState extends State<TransferPage>
                     : () => _run(() async {
                         if (await TransferExport.save(transfer, id, name) &&
                             !TransferExport.viaShareSheet) {
-                          _notify(t('文件已导出并校验', 'File exported and verified'));
+                          _notify(t('已导出', 'Exported'));
                         }
                       }),
                 label: Text(
@@ -1806,4 +1835,51 @@ class _TransferPageState extends State<TransferPage>
       ),
     );
   }
+}
+
+/// Owns its text controller, so it outlives the dialog's exit animation.
+class _DeviceNameDialog extends StatefulWidget {
+  const _DeviceNameDialog({required this.current, required this.model});
+  final String current, model;
+  @override
+  State<_DeviceNameDialog> createState() => _DeviceNameDialogState();
+}
+
+class _DeviceNameDialogState extends State<_DeviceNameDialog> {
+  late final _field = TextEditingController(text: widget.current);
+
+  @override
+  void dispose() {
+    _field.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(t('本机名称', 'Device name')),
+    content: TextField(
+      key: const ValueKey('device-name-field'),
+      controller: _field,
+      autofocus: true,
+      maxLength: 64,
+      decoration: InputDecoration(
+        helperText: t(
+          '留空则使用型号：${widget.model}',
+          'Leave empty to use the model: ${widget.model}',
+        ),
+      ),
+      onSubmitted: (v) => Navigator.pop(context, v),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(t('取消', 'Cancel')),
+      ),
+      FilledButton(
+        key: const ValueKey('save-device-name'),
+        onPressed: () => Navigator.pop(context, _field.text),
+        child: Text(t('保存', 'Save')),
+      ),
+    ],
+  );
 }
