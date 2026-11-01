@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "date": "2026-10-21",
+  "baseCommit": "b6859457d9d822f5f39b008054f296a3aa3fe406",
+  "status": "Windows covered exit and Android controlled startup/Home/force-stop/lock/unlock cases passed; full P3.2 remains pending",
+  "fixes": [
+    "reset native pending close flag after a failed or unhandled Dart close reply, preserving explicit retry",
+    "share pending cleanup between production window and tray exit; retry cleanup after approval failure"
+  ],
+  "checks": {
+    "flutterTests": 84,
+    "realClassifierHomeQueueFixtureEnabled": true,
+    "flutterAnalyze": "No issues found",
+    "desktopLifecycleUnitTests": 4
+  },
+  "releaseWindow": {
+    "target": "tool/transfer_desktop_close_app.dart",
+    "actualOsCloseInput": true,
+    "productionControllerWorkerExitOwnerAndRunner": true,
+    "preFix": {
+      "ownedCleanupFailureInjected": true,
+      "closeAttempts": 2,
+      "stopCalls": 1,
+      "windowRemainedOpen": true,
+      "ownedBlockedFixtureTerminatedAfterEvidence": true
+    },
+    "postFix": {
+      "firstFailurePreservesWindow": true,
+      "secondExplicitCloseRetriesCleanup": true,
+      "stopCalls": 2,
+      "processExited": true,
+      "receivePortExclusivelyRebound": true
+    },
+    "drain": {
+      "baselineBytes": 65536,
+      "baselineAcknowledged": true,
+      "secondDeclaredBytes": 2097152,
+      "partialBytesIndependentlyObservedDuringClose": 180217,
+      "realReceiptLeaseHeld": true,
+      "duplicateCloseStopCalls": 1,
+      "windowWaitedForReadRelease": true,
+      "leasedCopyCompletedBeforeExit": true,
+      "processExited": true,
+      "receivePortExclusivelyRebound": true,
+      "stagingEmptyBeforeReopeningNativeStorage": true,
+      "onlyCommittedBaselinePublished": true,
+      "independentBaselineCopyAndReceiptSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+      "sameRootRestartIdentityPersists": true,
+      "sameRootRestartNewRuntime": true,
+      "sameRootRestartReceptionOff": true
+    },
+    "firstDrainAttemptLimit": "partial upload had timed out before close; counted only for read waiting, followed by fresh-directory validation observing partial bytes during both close attempts"
+  },
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "5a05e360d85d7afb05cec476ff64723de928406f2cb61a2d35d144fb1eaf25dc",
+      "aotSha256": "2abf52f7b90341982b635ed5d9950ad5ce799f5dfc10d0a43521b978d906c6ce",
+      "transferLibrarySha256": "26b93b247dcdd83ec151178bbc5e13ff767853b3938ad2599e66729dd1bc7a3d",
+      "sameLibraryAsWindowValidation": true,
+      "imageLibraryUnchanged": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "targetSdk": 36,
+      "installed": false,
+      "apkSha256": "a423f7d8cc7f94266c48181bcac60e053882d3dacf2fd8fc1977315758204a76",
+      "packagedTransferLibrarySha256": "0df41d41986362e813e9f60bbd1a3fa862c40d52cd2753759de63609a731a147",
+      "integrationTestPluginAbsent": true,
+      "licensePresent": true
+    }
+  },
+  "transferAbi": "1.3",
+  "transferCoreAndAbiSourceChanged": false,
+  "networkOrFirewallSettingsChanged": false,
+  "phoneOperatedThisRound": true,
+  "mainWorkspaceChanged": false,
+  "androidLifecycle": {
+    "status": "covered_cases_passed",
+    "date": "2026-10-24",
+    "previousStatus": "Home/force-stop/lock covered on 2026-10-22; unlock recovery was not run",
+    "testApplicationId": "io.github.beetman.xdremux.transferdev",
+    "cases": [
+      "home",
+      "kill",
+      "lock",
+      "startup-directory",
+      "startup-native"
+    ],
+    "unlockRecovery": "passed_same_process_human_unlock",
+    "startupGateRelease": "after_foreground_return; no background-immediate cleanup claim",
+    "report": "local-transfer-startup-android-report.json"
+  },
+  "scopeLimits": [
+    "injected cleanup failure is controlled fixture behavior, not OS disk failure",
+    "real managed read lease is intentionally held and then copies an owned synthetic file",
+    "opaque loopback TLS relay holds a partial request; no real Wi-Fi or interface change",
+    "release fixture uses production components; normal main full interaction remains pending",
+    "tray concurrency/failure covered by unit tests, not tray menu UI",
+    "graceful window close is not process kill or OS shutdown/logoff"
+  ],
+  "pending": [
+    "Android other OEM reclaim modes",
+    "real Wi-Fi loss/network switch",
+    "VPN/multi-NIC/AP isolation",
+    "permission denial/revocation",
+    "normal main and tray menu full desktop interaction",
+    "OS shutdown/logoff",
+    "older official and same-host official clients",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ],
+  "lastUpdated": "2026-10-24"
+}

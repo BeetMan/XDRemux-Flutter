@@ -605,7 +605,25 @@ class ConversionConfig {
     String? captureModeFolderName,
   }) {
     final input = File(inputPath);
-    final baseDirectory = outputDirectory ?? fallbackDir ?? input.parent.path;
+    // Imported transfer inputs are checkpoint-owned; defaults must never write
+    // converted output beside them, including after settings changes/restart.
+    final bucketParts = input.parent.uri.pathSegments
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final bucket = bucketParts.isEmpty ? '' : bucketParts.last;
+    final parent = input.parent.parent;
+    final parentParts = parent.uri.pathSegments
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final transferInput =
+        RegExp(r'^transfer-[0-9a-f-]{36}$').hasMatch(bucket) &&
+        parentParts.isNotEmpty &&
+        parentParts.last == 'xdremux_checkpoint_inputs';
+    final transferOutput = transferInput
+        ? '${parent.parent.path}${Platform.pathSeparator}xdremux_transfer_outputs${Platform.pathSeparator}${bucket.substring(9)}'
+        : null;
+    final baseDirectory =
+        outputDirectory ?? fallbackDir ?? transferOutput ?? input.parent.path;
     // Android: capture-mode subdirectories are handled by the gallery album
     // (Pictures/<mode>), not the file system. Desktop: use subdirectories.
     final useSubdir =

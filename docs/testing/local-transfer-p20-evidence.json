@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-18",
+  "phase": "P2.0",
+  "branch": "codex/local-transfer",
+  "abiVersion": 65536,
+  "rust": "1.97.1",
+  "coreTests": 17,
+  "adapterTests": 2,
+  "fmtPassed": true,
+  "clippyPassed": true,
+  "windows": {
+    "passed": true,
+    "abi": 65536,
+    "files": 3,
+    "bytes": 2097178,
+    "independentHashes": true,
+    "checks": [
+      "unicode_and_empty",
+      "prepared_progress_terminal_ids",
+      "snapshot_paging",
+      "operation_recovery",
+      "lease_delete_busy",
+      "managed_delete",
+      "buffer_cap_and_free",
+      "invalid_input_handle",
+      "pending_send_stop",
+      "idempotent_stop",
+      "stale_handle",
+      "port_and_root_reopen"
+    ],
+    "maxCallMilliseconds": {
+      "create": 0.192,
+      "free_string": 0.007,
+      "poll": 0.072,
+      "release": 0.035,
+      "stop": 0.008,
+      "submit": 0.062
+    },
+    "librarySha256": "32f1a428a0a25fe77ae48571c8cd88c80373b0df0aee96365349317fc4f6ad86",
+    "libraryBytes": 6817280
+  },
+  "android": {
+    "target": "aarch64-linux-android",
+    "ndk": "28.2.13676358",
+    "api": 24,
+    "device": "PKJ110",
+    "android": 17,
+    "deviceApi": 37,
+    "context": "ADB shell, C dlopen harness",
+    "result": {
+      "passed": true,
+      "abi": 65536,
+      "rounds": 3,
+      "samePortAndRootReopened": true,
+      "stableCertificate": true,
+      "newInstances": true,
+      "snapshot": true,
+      "invalidHandlesAndInputs": true,
+      "pairedBufferFree": true
+    },
+    "libraryBytes": 6633792,
+    "librarySha256": "def76eb5719c8565c3b8fb0028c093e98654f6152b506a70942c57341310662e",
+    "deployedHashMatches": true
+  },
+  "deferred": [
+    "Dart worker and queue handoff",
+    "Flutter application packaging and permissions",
+    "App LAN interoperability",
+    "Discovery",
+    "Apple",
+    "HarmonyOS"
+  ]
+}

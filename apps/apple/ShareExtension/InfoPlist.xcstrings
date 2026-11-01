@@ -1,12 +1,32 @@
 {
-  "sourceLanguage": "zh-Hans",
-  "strings": {
-    "CFBundleDisplayName": {
-      "shouldTranslate": false
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "XDRemux"
+          }
+        }
+      },
+      "shouldTranslate" : false
     },
-    "CFBundleName": {
-      "shouldTranslate": false
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "XDRemuxShare"
+          }
+        }
+      },
+      "shouldTranslate" : false
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }

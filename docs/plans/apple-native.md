@@ -339,6 +339,30 @@ Flutter 版生成的检查点文件可被原生版读取。
   照片信息；不足则沿用纵向堆叠（手机）。Duo 展开态详情栏实测 547pt（侧栏封顶 300pt 后），刚好进两栏；macOS 窗口也走两栏。
 - 侧栏 `navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 300)`：`.balanced` 风格不设 max 会把侧栏分走一半屏幕。
 - 未验证：iPad 实机；Duo 展开横屏姿态。
+**局域网传输（LocalSend v2）接入（2026-11-01，分支 `feat/apple-transfer`，基于 `rebase/local-transfer-20261028` + main）**
+
+- 传输核心复用 `crates/xdremux-transfer-ffi`（C ABI 1.3，Rust 1.97.1），以**动态**框架打包：`tools/apple/build_transfer_xcframework.sh`
+  产出 `apps/apple/Frameworks/XDRemuxTransferCore.xcframework`（ios-arm64 / ios-arm64-simulator / macos-arm64，每片含
+  Headers + module map，Swift 直接 `import XDRemuxTransferCore`）。不做静态是因为图像内核已是 Rust staticlib，两个 Rust
+  staticlib 链进同一二进制会在分配器 / unwind 符号上冲突；独立镜像没有这个问题。链接期 strip + install_name 沿用
+  `build-transfer.sh` 的做法（rustc 事后 strip 会让 iOS dyld 拒载）。
+- 工程必须显式给 `LD_RUNPATH_SEARCH_PATHS` 加 `@executable_path/../Frameworks`（macOS）/ `@executable_path/Frameworks`（iOS），
+  否则 macOS 版启动即 dyld "Library not loaded"（xcodegen 默认只有 /usr/lib/swift 与 PackageFrameworks）。
+- Swift 包新增 `XDRemuxTransfer`：`TransferBridge`（C 调用）、Codable 模型（对应 model.rs）、`TransferService` actor
+  （create → 轮询循环 → 按 operation_id 把 result 记录配回等待中的命令；事件走 AsyncStream；stop 等到 phase 3 再 release）、
+  `LocalNetwork.ipv4Interfaces`。测试 `XDRemuxTransferTests`：回环双服务 probe → send → offer → decide → committed → 租约读回 →
+  snapshot/receipts/delete 全通过；另有两个按环境变量启用的测试（向外部对端发送、绑定指定 LAN 地址）。
+- App：`TransferModel`（@Observable，服务只在传输页打开期间存活，接收需显式开关；指纹按会话确认）+ `TransferView`
+  （接收开关 / 本机地址与指纹 / 待接收 / 发送到（发现的设备 + 手动 IP:端口）/ 传输记录 / 收件箱→加入照片列表 / 删除）；
+  入口在 ⋯ 菜单"局域网传输"。Info.plist `NSLocalNetworkUsageDescription`；macOS 沙箱加 network.client / network.server。
+- 实测（iPhone Duo 模拟器 + Mac）：开启接收绑定 192.168.31.175:53319，多播发现找到了 Mac 上运行的官方 LocalSend；
+  Mac 侧用 `ExternalPeerTests` 发一张 1.9 MB HEIC → 模拟器弹出待接收 → 接收 → 传输记录"已完成"、收件箱出现文件 →
+  加入照片列表。macOS 版打开传输页正常。
+- 注意：模拟器自动化工具对 UISwitch 的点击不生效（拖动才行），手指没问题；接收开关改成 @State + onChange 的标准写法。
+- 与官方 LocalSend（Mac，1.18.x）双向：模拟器点选发现到的 LocalSend → 指纹确认 → "发送 3 个文件"（原始照片）→ LocalSend 弹出
+  "iPhone Duo (XDRemux) 想要发送给你 3 个文件" → 接受 → 三个文件落在 ~/Downloads，SHA-256 与源文件一致，模拟器侧传输记录"已完成"。
+- 顺带发现 main 上 `ConversionConfigTests.testDefaultsMatchDart` 自 #64 起失败（默认语言改为 `system`），修在 PR #69，并 cherry-pick 到本分支。
+- 未验证：iPhone 真机（无多播授权，自动发现应报 `discovery_unavailable`，手动 IP 可用）；PIN。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 

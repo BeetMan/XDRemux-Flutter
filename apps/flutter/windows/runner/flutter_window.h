@@ -39,6 +39,10 @@ class FlutterWindow : public Win32Window {
   // Method channel for rendering HEIC thumbnails natively (WIC) on demand.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       thumbnail_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> transfer_lifecycle_;
+  bool transfer_close_ready_ = false;
+  bool transfer_close_requested_ = false;
+  bool transfer_allow_close_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

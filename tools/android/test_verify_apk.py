@@ -9,7 +9,8 @@ from verify_apk import verify_apk
 def fixture(abi="arm64-v8a", missing=None, wrong_machine=None, extra_abi=None):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as package:
-        for name in ("libapp.so", "libflutter.so", "libxdremux_core.so", "libc++_shared.so"):
+        for name in ("libapp.so", "libflutter.so", "libxdremux_core.so", "libc++_shared.so",
+                     "libxdremux_transfer.so"):
             if name == missing:
                 continue
             header = bytearray(64)
@@ -39,6 +40,10 @@ class AndroidABIGuardTest(unittest.TestCase):
     def test_missing_required_library_fails(self):
         with self.assertRaisesRegex(ValueError, "Missing Android native payload"):
             verify_apk(fixture(missing="libxdremux_core.so"))
+
+    def test_missing_transfer_library_fails(self):
+        with self.assertRaises(ValueError):
+            verify_apk(fixture(missing="libxdremux_transfer.so"))
 
     def test_mislabeled_elf_fails(self):
         with self.assertRaisesRegex(ValueError, "Not an ARM64 ELF"):

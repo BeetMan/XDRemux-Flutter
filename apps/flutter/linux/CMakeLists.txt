@@ -216,3 +216,16 @@ else()
     "Rust core library not found (looked in target/release and target/debug). "
     "Build it with: cargo build -p xdremux-core --release")
 endif()
+
+# Optional transfer capability: build separately with
+# tools/native/build-transfer.sh linux; never pull it into the image engine.
+set(XDREMUX_TRANSFER_SO "${CMAKE_CURRENT_SOURCE_DIR}/../../../crates/xdremux-transfer-ffi/target/release/libxdremux_transfer.so")
+if(DEFINED ENV{XDREMUX_LINUX_TRANSFER_SO} AND NOT "$ENV{XDREMUX_LINUX_TRANSFER_SO}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{XDREMUX_LINUX_TRANSFER_SO}" XDREMUX_TRANSFER_SO)
+  if(NOT EXISTS "${XDREMUX_TRANSFER_SO}")
+    message(FATAL_ERROR "Explicit transfer library does not exist")
+  endif()
+endif()
+if(EXISTS "${XDREMUX_TRANSFER_SO}")
+  install(FILES "${XDREMUX_TRANSFER_SO}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+endif()

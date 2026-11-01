@@ -278,6 +278,28 @@ final class LibraryModel {
         }
     }
 
+    /// App-private root for the local-transfer service (certificate,
+    /// staging, inbox). Next to `inputs`, so it is on the same volume and
+    /// survives like the rest of the library.
+    var transferRoot: URL {
+        directories.inputs.deletingLastPathComponent().appendingPathComponent("transfer", isDirectory: true)
+    }
+
+    /// Copies a file into the library under a name of the caller's choosing
+    /// (a received transfer: the leased path is called `data`).
+    func importFile(at url: URL, named name: String) async {
+        do {
+            let copy = directories.inputs.appendingPathComponent("\(UUID().uuidString)-\(name)")
+            try FileManager.default.copyItem(at: url, to: copy)
+            let item = PhotoItem(sourceName: name, inputURL: copy)
+            items.append(item)
+            if selectedID == nil { selectedID = item.id }
+            await inspect(item.id)
+        } catch {
+            lastError = L("导入 \(name) 失败：\(error.localizedDescription)")
+        }
+    }
+
     /// Imports a file the platform layer already materialised (Photos picker
     /// data, share extension inbox).
     func importMaterialised(name: String, data: Data) async {

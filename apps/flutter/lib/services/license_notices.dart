@@ -7,10 +7,12 @@ const String sourceCodeUrl = 'https://github.com/BeetMan/XDRemux-Flutter';
 
 const String _xdremuxLicenseAsset = 'assets/licenses/XDRemux-GPL-3.0.txt';
 const String _x265LicenseAsset = 'assets/licenses/x265-GPL-2.0.txt';
+const String _localSendLicenseAsset = 'assets/licenses/LocalSend-Apache-2.0.txt';
 
-/// Adds the app's own license and the statically linked x265 core to the
-/// [LicenseRegistry], next to the Dart/Flutter package licenses Flutter
-/// collects on its own. Safe to call more than once.
+/// Adds the app's own license, the statically linked x265 core and the
+/// vendored LocalSend transfer core to the [LicenseRegistry], next to the
+/// Dart/Flutter package licenses Flutter collects on its own. Safe to call
+/// more than once.
 void registerAppLicenses() {
   if (_registered) return;
   _registered = true;
@@ -22,6 +24,10 @@ void registerAppLicenses() {
     yield LicenseEntryWithLineBreaks(
       const <String>['x265'],
       await rootBundle.loadString(_x265LicenseAsset),
+    );
+    yield LicenseEntryWithLineBreaks(
+      const <String>['LocalSend'],
+      await rootBundle.loadString(_localSendLicenseAsset),
     );
   });
 }

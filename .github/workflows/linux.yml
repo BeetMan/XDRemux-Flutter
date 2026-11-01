@@ -103,6 +103,11 @@ jobs:
       - name: Build Rust core
         run: cargo build --locked -p xdremux-core --release
 
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          bash tools/native/build-transfer.sh linux
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:

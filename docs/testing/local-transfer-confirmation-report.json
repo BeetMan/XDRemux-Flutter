@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "date": "2026-10-21",
+  "baseCommit": "c1c1d28226bb875edf305847d99bfabc76bb116b",
+  "scope": "Flutter confirmation state and async send dispatch boundary",
+  "status": "covered confirmation cases passed; full platform/network matrix remains pending",
+  "regressionBeforeFix": {
+    "targetedCasesFailed": 7
+  },
+  "checks": {
+    "flutterTests": 93,
+    "confirmationRegressions": 7,
+    "realDllTests": 2,
+    "realDllTestsEnabled": true,
+    "classifierHomeQueueFixtureEnabled": true,
+    "flutterAnalyze": "No issues found"
+  },
+  "realDllWorker": {
+    "passed": true,
+    "scope": "Windows real DLL and Dart worker over owned loopback HTTPS",
+    "checks": [
+      "revocation_before_dispatch_sends_no_metadata_or_content",
+      "selected_receiver_and_source_snapshot_survive_async_startup"
+    ],
+    "receivedFiles": 1,
+    "receivedBytes": 65536,
+    "independentSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+    "sourceUnchanged": true,
+    "unselectedReceiverReceivedNothing": true,
+    "librarySha256": "26b93b247dcdd83ec151178bbc5e13ff767853b3938ad2599e66729dd1bc7a3d"
+  },
+  "behavior": [
+    "reconnect failure/cancellation clears stale selected peer",
+    "endpoint and PIN fields disabled while working",
+    "forget revokes badge, send and retry availability",
+    "send snapshots selected recipient and paths before async startup",
+    "confirmation checked again immediately before dispatch",
+    "malformed confirmation identity returns identity_mismatch"
+  ],
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "dc6e7021667e1ecba2b3c82256fb8dd352b5c301e6b3f98710ce09208723d969",
+      "aotSha256": "625ba434b1e32152598251ead83851180f06688ef4e95cd521cca16d6d4fc291",
+      "transferLibrarySha256": "26b93b247dcdd83ec151178bbc5e13ff767853b3938ad2599e66729dd1bc7a3d",
+      "sameLibraryAsNativeTests": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "targetSdk": 36,
+      "installed": false,
+      "apkSha256": "83e905ac0c85ac25df76ee5394daa0cc8b7010995f1c62fd2716cf24092fb8fc",
+      "packagedTransferLibrarySha256": "0df41d41986362e813e9f60bbd1a3fa862c40d52cd2753759de63609a731a147",
+      "integrationTestPluginAbsent": true,
+      "licensePresent": true
+    }
+  },
+  "transferAbi": "1.3",
+  "transferNativeAndLockfilesChanged": false,
+  "mainWorkspaceChanged": false,
+  "phoneOperated": false,
+  "osNetworkOrFirewallChanged": false,
+  "limits": [
+    "revocation before dispatch does not cancel already submitted transfers",
+    "path list snapshot is not a file-content snapshot; native snapshot/validation remains in force",
+    "real DLL tests use owned loopback HTTPS, not a device or real network transition"
+  ],
+  "pending": [
+    "Android device lifecycle and partial-upload validation",
+    "real Wi-Fi/network switch",
+    "VPN/multi-NIC/AP isolation and permission revocation",
+    "older/same-host official clients",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

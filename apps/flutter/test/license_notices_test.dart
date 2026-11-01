@@ -20,14 +20,21 @@ void main() {
     expect(text, contains('Version 2, June 1991'));
   });
 
-  test('registry lists XDRemux and x265 licenses', () async {
+  test('LocalSend license asset matches the vendored copy', () {
+    final asset = File('assets/licenses/LocalSend-Apache-2.0.txt').readAsStringSync();
+    final vendored = File('../../crates/xdremux-transfer/vendor/localsend/LICENSE').readAsStringSync();
+    expect(asset, vendored, reason: 'copy the vendored LocalSend LICENSE to the asset');
+    expect(asset, contains('Version 2.0, January 2004'));
+  });
+
+  test('registry lists XDRemux, x265 and LocalSend licenses', () async {
     resetAppLicensesForTest();
     registerAppLicenses();
     final packages = <String>{};
     await for (final entry in LicenseRegistry.licenses) {
       packages.addAll(entry.packages);
     }
-    expect(packages, containsAll(<String>['XDRemux', 'x265']));
+    expect(packages, containsAll(<String>['XDRemux', 'x265', 'LocalSend']));
   });
 
   test('legalese names the license and the source URL', () {

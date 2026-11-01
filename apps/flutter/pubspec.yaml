@@ -13,6 +13,8 @@ dependencies:
 
   # FFI bridge to Rust core
   ffi: ^2.1.0
+  # Streaming integrity verification for local-transfer checkpoint copies.
+  crypto: 3.0.7
 
   # File/folder picking across platforms
   file_picker: ^12.1.1  # v12 moves to built-in Kotlin (KGP warning) and win32 v6
@@ -67,8 +69,6 @@ dependencies:
 dev_dependencies:
   # Isolated application-support profile for desktop integration tests.
   path_provider_platform_interface: 2.1.3
-  # Source-integrity hashing for the packaged Windows FFI smoke test.
-  crypto: 3.0.7
   flutter_test:
     sdk: flutter
   integration_test:

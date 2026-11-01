@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "baseCommit": "1b4baac543d3ec9cc434b12c9c9ccdbdeb963c5d",
+  "status": "scripts prepared; local rehearsal passed; real network/device validation not run",
+  "deviceValidation": "not_run",
+  "manualRunExecuted": false,
+  "scope": "Windows native ABI sender to Android receiver harness; reverse direction and official coexistence remain pending",
+  "checks": {
+    "pythonOfflineTests": 7,
+    "pythonSyntax": true,
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true,
+    "preparedRunUnused": true
+  },
+  "localRehearsal": {
+    "schema": 1,
+    "passed": true,
+    "mode": "self-test",
+    "phase": "complete",
+    "realNetworkValidation": "not_run",
+    "direction": "Windows native sender -> receiver",
+    "networkSettingsChangedByScript": false,
+    "relayTerminatesTls": false,
+    "relayCutInjected": true,
+    "checks": [
+      "one_ack_and_actual_partial_before_outage",
+      "failed_transfer_preserves_ack_set",
+      "staging_clean_after_explicit_restart",
+      "same_identity_explicit_retry_excludes_acked",
+      "two_unique_receipts_and_independent_hashes",
+      "sources_unchanged"
+    ],
+    "scope": "controlled_loopback_rehearsal",
+    "phoneOperated": false,
+    "limits": [
+      "raw native ABI sender; ordinary Flutter page/worker UI not exercised",
+      "opaque relay provides a controlled upload window; not a direct-path performance test",
+      "manual Wi-Fi/settings interaction can also trigger Android foreground-stop policy",
+      "two failed TCP probes and operator confirmation do not isolate the OS-level outage cause",
+      "Windows-to-Android only; reverse direction and official-client coexistence remain pending"
+    ],
+    "ackedBeforeOutage": [
+      "pnet-one.bin"
+    ],
+    "partialBytesBeforeOutage": 16377,
+    "failureCode": "network",
+    "endpointChanged": true,
+    "retryFiles": [
+      "pnet-two.bin"
+    ],
+    "independentHashes": true,
+    "receivedFiles": 2,
+    "sameIdentity": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "preparedFixture": {
+    "run": "8583dfe8324044aa",
+    "files": 2,
+    "bytes": 4194304,
+    "deviceValidation": "not_run"
+  },
+  "packaging": {
+    "network": {
+      "applicationId": "io.github.beetman.xdremux.transferdev",
+      "sha256": "341df7645fd5517418c4772194882b30a9facafa0467a78062d00d1ee2299faa",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    },
+    "main": {
+      "applicationId": "io.github.beetman.xdremux",
+      "sha256": "3dcf868df9f131a066d142dab1f55931d357660e4f0f5320170039304539cabc",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    }
+  },
+  "phoneOperated": false,
+  "osNetworkOrFirewallChanged": false,
+  "productionControllerCoreAndAbiSourceChanged": false,
+  "nativeLibrariesChanged": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "transferAbi": "1.3",
+  "pending": [
+    "real manual Wi-Fi interruption/reconnect",
+    "real changed-IP case",
+    "Android-to-Windows direction",
+    "official-client coexistence",
+    "VPN/multi-NIC/AP isolation/permission revocation",
+    "full ordinary Flutter UI interaction",
+    "Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}
