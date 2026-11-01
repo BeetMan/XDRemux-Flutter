@@ -119,7 +119,7 @@ void main() {
         await tester.scrollUntilVisible(
           find.byKey(const ValueKey('connect-peer')),
           200,
-          scrollable: find.byType(Scrollable).first,
+          scrollable: _sendScroll,
         );
         tester
             .widget<OutlinedButton>(find.byKey(const ValueKey('connect-peer')))
@@ -132,21 +132,13 @@ void main() {
               'Connect UI: ${tester.widget<Text>(message).data}',
             );
           }
-          return find
-                  .byKey(const ValueKey('confirm-peer'))
-                  .evaluate()
-                  .isNotEmpty
+          return tester
+                      .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
+                      .onPressed !=
+                  null
               ? true
               : null;
         });
-        final expected = RegExp('.{1,8}')
-            .allMatches(peer['fingerprint'] as String)
-            .map((m) => m.group(0))
-            .join(' ');
-        expect(find.text(expected), findsWidgets);
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('confirm-peer')))
-            .onPressed!();
         await tester.pump(const Duration(milliseconds: 400));
         await tester.ensureVisible(find.byKey(const ValueKey('send-files')));
         tester
@@ -185,7 +177,7 @@ void main() {
           await tester.scrollUntilVisible(
             find.text('接收全部'),
             250,
-            scrollable: find.byType(Scrollable).first,
+            scrollable: _sendScroll,
           );
           await tester.pump(const Duration(milliseconds: 400));
           expect(find.text('接收全部').hitTestable(), findsOneWidget);
@@ -326,3 +318,11 @@ void main() {
     timeout: const Timeout(Duration(minutes: 20)),
   );
 }
+
+/// The vertical scroll view of the transfer page's send tab.
+final _sendScroll = find
+    .descendant(
+      of: find.byKey(const ValueKey('send-tab')),
+      matching: find.byType(Scrollable),
+    )
+    .first;

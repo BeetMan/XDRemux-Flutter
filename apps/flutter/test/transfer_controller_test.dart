@@ -462,33 +462,25 @@ void main() {
       '127.0.0.1',
     );
     await tester.tap(find.byKey(const ValueKey('connect-peer')));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.byKey(const ValueKey('confirm-peer')));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('已确认设备身份'), findsOneWidget);
+    expect(find.text('已选择'), findsOneWidget);
   }
 
-  for (final outcome in ['cancelled', 'network']) {
+  for (final outcome in ['network']) {
     testWidgets(
       'confirmation boundary: reconnect $outcome clears the previous selection',
       (tester) async {
         await showConfirmedPage(tester);
-        if (outcome == 'network') native.probeError = 'network';
+        native.probeError = outcome;
         await tester.tap(find.byKey(const ValueKey('connect-peer')));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
         await tester.pump(const Duration(milliseconds: 400));
-        if (outcome == 'cancelled') {
-          await tester.tap(
-            find.descendant(
-              of: find.byType(AlertDialog),
-              matching: find.text('取消'),
-            ),
-          );
-          await tester.pump(const Duration(milliseconds: 400));
-        }
-        expect(find.text('已确认设备身份'), findsNothing);
+        expect(find.text('已选择'), findsNothing);
         expect(
           tester
               .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
@@ -515,12 +507,8 @@ void main() {
           .widget<TextField>(find.byKey(const ValueKey('peer-port')))
           .enabled;
       gate.complete();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.text('取消'),
-        ),
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpWidget(const SizedBox.shrink());
@@ -529,34 +517,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'confirmation boundary: forgetting removes the identity badge and send action',
-    (tester) async {
-      native.direction = 'send';
-      native.phase = 'failed';
-      native.retryAvailable = true;
-      await showConfirmedPage(tester);
-      await tester.tap(find.byTooltip('忘记设备指纹'));
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('已确认设备身份'), findsNothing);
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
-            .onPressed,
-        isNull,
-      );
-      expect(
-        tester
-            .widget<TextButton>(find.byKey(const ValueKey('retry-receive-1')))
-            .onPressed,
-        isNull,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
   test(
     'file metadata cannot be sent before fingerprint confirmation; forgetting revokes trust',
     () async {
@@ -872,8 +832,12 @@ void main() {
       final device = find.byKey(ValueKey('peer-${'C' * 64}'));
       await tester.ensureVisible(device);
       await tester.tap(device);
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byKey(const ValueKey('confirm-peer')), findsNothing);
+      expect(find.text('已选择'), findsNothing);
+      expect(find.textContaining('设备身份发生变化'), findsOneWidget);
       expect(
         native.calls.where(
           (c) => ['send', 'send_batch', 'retry_send'].contains(c['command']),
@@ -915,8 +879,6 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(device);
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.byKey(const ValueKey('confirm-peer')));
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
@@ -995,7 +957,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(
-    'page requires identity confirmation and explicit offer acceptance',
+    'page requires a selected device and explicit offer acceptance',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -1038,15 +1000,12 @@ void main() {
         '127.0.0.1',
       );
       await tester.tap(find.byKey(const ValueKey('connect-peer')));
-      // The page intentionally animates a progress bar while the dialog is open.
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byKey(const ValueKey('confirm-peer')), findsOneWidget);
-      expect(native.calls.any((c) => c['command'] == 'send'), isFalse);
-      await tester.tap(find.byKey(const ValueKey('confirm-peer')));
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump(const Duration(milliseconds: 400));
+      // Selecting a device never sends by itself.
+      expect(native.calls.any((c) => c['command'] == 'send'), isFalse);
       expect(
         (tester.widget<FilledButton>(
           find.byKey(const ValueKey('send-files')),

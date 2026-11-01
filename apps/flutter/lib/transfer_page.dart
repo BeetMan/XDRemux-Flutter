@@ -58,8 +58,8 @@ String transferErrorText(String code) => switch (code) {
     'No photo library access; allow it in system settings',
   ),
   'identity_mismatch' => t(
-    '设备身份发生变化，请重新核对指纹',
-    'Device identity changed; confirm its fingerprint again',
+    '设备身份发生变化，请重新选择设备',
+    'Device identity changed; select the device again',
   ),
   'authentication' => t('接收端 PIN 不正确', 'Receiver PIN was not accepted'),
   'declined' => t('对方拒绝了接收', 'The receiver declined'),
@@ -92,9 +92,6 @@ String _bytes(int n) {
   }
   return '${value.toStringAsFixed(1)} ${units[unit]}';
 }
-
-String _fingerprint(String value) =>
-    RegExp('.{1,8}').allMatches(value).map((m) => m.group(0)).join(' ');
 
 /// A conversion-queue item that the send tab can pick from.
 class TransferSource {
@@ -251,6 +248,9 @@ class _TransferPageState extends State<TransferPage> {
     });
   }
 
+  /// Like LocalSend, picking a device selects it directly. The probe still
+  /// pins its certificate, and a discovered device must answer with the
+  /// identity it advertised.
   Future<void> _connect({Map<String, dynamic>? expected}) async {
     setState(() => _peer = null);
     final peer = await transfer.probe(
@@ -258,76 +258,11 @@ class _TransferPageState extends State<TransferPage> {
       int.tryParse(_port.text) ?? 0,
     );
     if (!mounted) return;
-    final fp = peer['fingerprint'] as String;
-    if (expected != null && fp != expected['fingerprint']) {
+    if (expected != null && peer['fingerprint'] != expected['fingerprint']) {
       throw const TransferException('identity_mismatch');
     }
-    var remember = false;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: Text(t('核对设备身份', 'Confirm device identity')),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (peer['alias'] is String)
-                    Text(
-                      peer['alias'] as String,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  Text(peer['address'] as String),
-                  const SizedBox(height: 12),
-                  Text(
-                    t(
-                      '在对方设备核对完整指纹，确认后才发送文件清单和内容。',
-                      'Compare the complete fingerprint on the other device before sending file metadata or content.',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _fingerprintBox(context, fp),
-                  if (transfer.trusted.contains(fp.toUpperCase()))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        t(
-                          '此指纹曾被你记住',
-                          'You previously remembered this fingerprint',
-                        ),
-                      ),
-                    ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: remember,
-                    title: Text(t('记住此指纹', 'Remember this fingerprint')),
-                    onChanged: (v) => update(() => remember = v ?? false),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t('取消', 'Cancel')),
-            ),
-            FilledButton(
-              key: const ValueKey('confirm-peer'),
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t('已核对', 'Confirmed')),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed == true) {
-      await transfer.confirmPeer(peer, remember: remember);
-      if (mounted) setState(() => _peer = peer);
-    }
+    await transfer.confirmPeer(peer, remember: false);
+    if (mounted) setState(() => _peer = peer);
   }
 
   Future<void> _selectPeer(Map<String, dynamic> peer) async {
@@ -618,11 +553,6 @@ class _TransferPageState extends State<TransferPage> {
                   active: transfer.receiving,
                 ),
               ),
-              IconButton(
-                tooltip: t('忘记设备指纹', 'Forget fingerprints'),
-                icon: const Icon(Icons.key_off),
-                onPressed: disabled ? null : () => _run(transfer.forgetPeers),
-              ),
             ],
             bottom: PreferredSize(
               preferredSize: const Size.fromHeight(kTextTabBarHeight + 4),
@@ -832,22 +762,6 @@ class _TransferPageState extends State<TransferPage> {
     );
   }
 
-  Widget _fingerprintBox(BuildContext context, String fingerprint) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        _fingerprint(fingerprint),
-        style: const TextStyle(fontFamily: 'monospace', height: 1.5),
-      ),
-    );
-  }
-
   Widget _offerCard(Map<String, dynamic> row, bool disabled) {
     final id = row['id'] as String;
     final theme = Theme.of(context);
@@ -900,20 +814,6 @@ class _TransferPageState extends State<TransferPage> {
                   ),
                 ),
               ),
-            if (row['peer_fingerprint'] != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                t(
-                  '对方证书指纹，可在对方设备上核对',
-                  'Sender fingerprint; compare on the sender',
-                ),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onPrimaryContainer,
-                ),
-              ),
-              const SizedBox(height: 4),
-              _fingerprintBox(context, row['peer_fingerprint'] as String),
-            ],
             if (!transfer.receiving)
               _hint(
                 context,
@@ -956,7 +856,7 @@ class _TransferPageState extends State<TransferPage> {
       title: t('本机接收', 'Receive on this device'),
       subtitle: transfer.receiving
           ? t(
-              '附近设备可以找到本机；收到的文件需要你确认后才会保存',
+              '附近设备可以找到本机；收到的文件需要你点接收后才会保存',
               'Nearby devices can find this one; files are saved only after you accept',
             )
           : t(
@@ -1060,16 +960,7 @@ class _TransferPageState extends State<TransferPage> {
           ],
         ),
         if (transfer.receiving && transfer.ready != null) ...[
-          const SizedBox(height: 16),
-          Text(
-            t(
-              '本机证书指纹（对方核对时与这里比对）',
-              'This device fingerprint (compare it when the sender verifies)',
-            ),
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 4),
-          _fingerprintBox(context, transfer.ready!['fingerprint'] as String),
+          const SizedBox(height: 8),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             childrenPadding: EdgeInsets.zero,
@@ -1255,7 +1146,7 @@ class _TransferPageState extends State<TransferPage> {
                 confirmedPeer && _peer!['fingerprint'] == peer['fingerprint'],
             trailing:
                 confirmedPeer && _peer!['fingerprint'] == peer['fingerprint']
-                ? const Icon(Icons.verified_user)
+                ? const Icon(Icons.check_circle)
                 : Text(t('选择', 'Select')),
             onTap: disabled ? null : () => _run(() => _selectPeer(peer)),
           ),
@@ -1312,14 +1203,14 @@ class _TransferPageState extends State<TransferPage> {
             ),
             child: Row(
               children: [
-                Icon(Icons.verified_user, color: scheme.onSecondaryContainer),
+                Icon(Icons.check_circle, color: scheme.onSecondaryContainer),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        t('已确认设备身份', 'Device identity confirmed'),
+                        t('已选择', 'Selected'),
                         style: TextStyle(
                           color: scheme.onSecondaryContainer,
                           fontWeight: FontWeight.w600,
@@ -1348,7 +1239,7 @@ class _TransferPageState extends State<TransferPage> {
     final blocked = _paths.isEmpty
         ? t('先添加要发送的文件', 'Add files to send first')
         : !confirmedPeer
-        ? t('先选择并核对接收设备', 'Choose and verify a receiving device first')
+        ? t('先选择接收设备', 'Choose a receiving device first')
         : null;
     return [
       if (_showPin)
@@ -1551,8 +1442,8 @@ class _TransferPageState extends State<TransferPage> {
               _hint(
                 context,
                 t(
-                  '先连接并核对原接收设备，再重试',
-                  'Connect and verify the original receiver before retrying',
+                  '先选择原接收设备，再重试',
+                  'Select the original receiver before retrying',
                 ),
               ),
             TextButton(

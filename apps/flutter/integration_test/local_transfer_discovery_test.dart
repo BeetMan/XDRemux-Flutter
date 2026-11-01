@@ -146,31 +146,23 @@ void main() {
           await tester.scrollUntilVisible(
             tile,
             -250,
-            scrollable: find.byType(Scrollable).first,
+            scrollable: _sendScroll,
           );
           tester.widget<ListTile>(tile).onTap!();
           await until<bool>(() async {
             await tester.pump();
-            return find
-                    .byKey(const ValueKey('confirm-peer'))
-                    .evaluate()
-                    .isNotEmpty
+            return tester
+                        .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
+                        .onPressed !=
+                    null
                 ? true
                 : null;
           });
-          final fp = RegExp('.{1,8}')
-              .allMatches(expected['fingerprint'] as String)
-              .map((m) => m.group(0))
-              .join(' ');
-          expect(find.text(fp), findsWidgets);
-          tester
-              .widget<FilledButton>(find.byKey(const ValueKey('confirm-peer')))
-              .onPressed!();
           await tester.pump(const Duration(milliseconds: 400));
           await tester.scrollUntilVisible(
             find.byKey(const ValueKey('send-files')),
             250,
-            scrollable: find.byType(Scrollable).first,
+            scrollable: _sendScroll,
           );
           tester
               .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
@@ -194,7 +186,7 @@ void main() {
               await tester.scrollUntilVisible(
                 retry,
                 250,
-                scrollable: find.byType(Scrollable).first,
+                scrollable: _sendScroll,
               );
               tester.widget<TextButton>(retry).onPressed!();
               await tester.pump(const Duration(milliseconds: 400));
@@ -227,7 +219,7 @@ void main() {
           await tester.scrollUntilVisible(
             find.text(label),
             250,
-            scrollable: find.byType(Scrollable).first,
+            scrollable: _sendScroll,
           );
           await tester.pump(const Duration(milliseconds: 400));
           if (decline) {
@@ -327,3 +319,11 @@ void main() {
     timeout: const Timeout(Duration(minutes: 12)),
   );
 }
+
+/// The vertical scroll view of the transfer page's send tab.
+final _sendScroll = find
+    .descendant(
+      of: find.byKey(const ValueKey('send-tab')),
+      matching: find.byType(Scrollable),
+    )
+    .first;

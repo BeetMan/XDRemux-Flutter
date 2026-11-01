@@ -95,26 +95,24 @@ void main() {
         await tester.scrollUntilVisible(
           tile,
           -250,
-          scrollable: find.byType(Scrollable).first,
+          scrollable: _sendScroll,
         );
         tester.widget<ListTile>(tile).onTap!();
-        final confirm = find.byKey(const ValueKey('confirm-peer'));
         await until<bool>(() async {
           await tester.pump();
-          return confirm.evaluate().isNotEmpty ? true : null;
+          return tester
+                      .widget<FilledButton>(find.byKey(const ValueKey('send-files')))
+                      .onPressed !=
+                  null
+              ? true
+              : null;
         });
-        final fp = RegExp('.{1,8}')
-            .allMatches(expected['fingerprint'] as String)
-            .map((m) => m.group(0))
-            .join(' ');
-        expect(find.text(fp), findsWidgets);
-        tester.widget<FilledButton>(confirm).onPressed!();
         await tester.pump(const Duration(milliseconds: 400));
         final send = find.byKey(const ValueKey('send-files'));
         await tester.scrollUntilVisible(
           send,
           250,
-          scrollable: find.byType(Scrollable).first,
+          scrollable: _sendScroll,
         );
         await stage('sending');
         tester.widget<FilledButton>(send).onPressed!();
@@ -156,7 +154,7 @@ void main() {
         await tester.scrollUntilVisible(
           accept,
           250,
-          scrollable: find.byType(Scrollable).first,
+          scrollable: _sendScroll,
         );
         tester.widget<FilledButton>(accept).onPressed!();
         await until<bool>(() async {
@@ -204,3 +202,11 @@ void main() {
     timeout: const Timeout(Duration(minutes: 22)),
   );
 }
+
+/// The vertical scroll view of the transfer page's send tab.
+final _sendScroll = find
+    .descendant(
+      of: find.byKey(const ValueKey('send-tab')),
+      matching: find.byType(Scrollable),
+    )
+    .first;
