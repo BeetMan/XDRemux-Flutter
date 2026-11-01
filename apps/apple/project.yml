@@ -74,6 +74,8 @@ targets:
         # Independent identity from the Flutter app (io.github.beetman.xdremux),
         # so both can be installed side by side (plan §5).
         PRODUCT_BUNDLE_IDENTIFIER: io.github.beetman.xdremux.swiftui
+        # Same artwork as the Flutter app (App/Assets.xcassets, iOS + macOS idioms).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_STYLE: Automatic
