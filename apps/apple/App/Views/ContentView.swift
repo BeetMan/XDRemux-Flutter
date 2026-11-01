@@ -51,7 +51,10 @@ struct ContentView: View {
             } else {
                 NavigationSplitView {
                     PhotoListView(model: model, pushesDetail: false)
-                        .navigationSplitViewColumnWidth(min: 260, ideal: 320)
+                        // Capped so an unfolded phone keeps room for the
+                        // two-column detail; without a max the balanced
+                        // style hands the sidebar half the screen.
+                        .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 300)
                         #if os(iOS)
                         .toolbar { toolbarContent }
                         #endif
