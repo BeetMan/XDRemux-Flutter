@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'l10n/l10n.dart';
 import 'platform_x.dart';
 import 'services/output_export_service.dart';
+import 'services/xdremux_service.dart';
 import 'services/transfer/transfer_controller.dart';
 import 'services/transfer/transfer_export.dart';
 import 'services/transfer/transfer_live_photo.dart';
@@ -186,6 +187,100 @@ class _TransferPageState extends State<TransferPage>
       transfer.enableReceiving(port: int.tryParse(_listenPort.text) ?? 0);
 
   final Map<String, String> _bundleZips = {};
+  final Map<String, Future<Uint8List?>> _previews = {};
+
+  /// Receipts stay in private storage, so previews render from the leased
+  /// file (a Live Photo zip through its still) and are cached per size.
+  Future<Uint8List?> _preview(Map<String, dynamic> row, int size) {
+    final id = row['id'] as String;
+    final name = row['name'] as String;
+    return _previews['$id@$size'] ??= transfer
+        .withReceipt(id, (lease) async {
+          var path = lease['path'] as String;
+          Directory? temp;
+          try {
+            if (isLivePhotoZip(name)) {
+              temp = await Directory.systemTemp.createTemp('xdremux-preview-');
+              path = await extractLivePhotoStill(path, temp.path);
+            }
+            return await XdRemuxService.generateThumbnail(
+              path,
+              maxPixelSize: size,
+            );
+          } finally {
+            await temp?.delete(recursive: true).catchError((_) => temp!);
+          }
+        })
+        .then<Uint8List?>((bytes) => bytes, onError: (_) => null);
+  }
+
+  Widget _thumbnail(Map<String, dynamic> row, IconData fallback) {
+    final scheme = Theme.of(context).colorScheme;
+    final placeholder = Container(
+      color: scheme.surfaceContainerHighest,
+      child: Icon(fallback, color: scheme.onSurfaceVariant),
+    );
+    return InkWell(
+      key: ValueKey('preview-${row['id']}'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showPreview(row),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox.square(
+          dimension: 64,
+          child: FutureBuilder<Uint8List?>(
+            future: _preview(row, 256),
+            builder: (_, snapshot) => snapshot.data == null
+                ? placeholder
+                : Image.memory(
+                    snapshot.data!,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPreview(Map<String, dynamic> row) => showDialog<void>(
+    context: context,
+    builder: (ctx) => Dialog(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: FutureBuilder<Uint8List?>(
+              future: _preview(row, 2048),
+              builder: (_, snapshot) => switch (snapshot) {
+                AsyncSnapshot(hasData: true, :final data?) => InteractiveViewer(
+                  child: Image.memory(data),
+                ),
+                AsyncSnapshot(connectionState: ConnectionState.done) =>
+                  Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text(t('无法预览此文件', 'No preview available')),
+                  ),
+                _ => const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: CircularProgressIndicator(),
+                ),
+              },
+            ),
+          ),
+          ListTile(
+            title: Text(row['name'] as String, overflow: TextOverflow.ellipsis),
+            trailing: IconButton(
+              tooltip: t('关闭', 'Close'),
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   /// A Live Photo output is a `.pvt` folder. LocalSend moves files, so it
   /// travels as `<stem>.pvt.zip`, which the receiving app unpacks again.
@@ -1590,14 +1685,18 @@ class _TransferPageState extends State<TransferPage>
         children: [
           Row(
             children: [
-              Icon(
-                live
-                    ? Icons.motion_photos_on_outlined
-                    : image
-                    ? Icons.image_outlined
-                    : Icons.insert_drive_file_outlined,
-                color: scheme.onSurfaceVariant,
-              ),
+              if (live || image)
+                _thumbnail(
+                  row,
+                  live
+                      ? Icons.motion_photos_on_outlined
+                      : Icons.image_outlined,
+                )
+              else
+                Icon(
+                  Icons.insert_drive_file_outlined,
+                  color: scheme.onSurfaceVariant,
+                ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(

@@ -140,7 +140,10 @@ class MainActivity : FlutterActivity() {
                             result.error("bad_args", "path is required", null)
                             return@setMethodCallHandler
                         }
-                        thumbnailCache[path]?.let {
+                        // Keyed by size too: a small list thumbnail must not
+                        // answer a later full-size preview of the same file.
+                        val cacheKey = "$path@$maxPixelSize"
+                        thumbnailCache[cacheKey]?.let {
                             if (it != null) result.success(it) else result.success(null)
                             return@setMethodCallHandler
                         }
@@ -149,7 +152,7 @@ class MainActivity : FlutterActivity() {
                             // ConcurrentHashMap rejects null values (putVal
                             // throws NPE), so only cache successful decodes. A
                             // failed decode is worth retrying next time anyway.
-                            if (jpeg != null) thumbnailCache[path] = jpeg
+                            if (jpeg != null) thumbnailCache[cacheKey] = jpeg
                             runOnUiThread { result.success(jpeg) }
                         }
                     }

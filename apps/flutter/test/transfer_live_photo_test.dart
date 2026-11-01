@@ -35,6 +35,17 @@ void main() {
     );
   });
 
+  test('the preview still comes out of a received zip', () async {
+    final pvt = Directory('${temp.path}/IMG_2.pvt')..createSync();
+    File('${pvt.path}/IMG_2.heic').writeAsStringSync('still');
+    File('${pvt.path}/IMG_2.mov').writeAsStringSync('movie');
+    final zip = await zipLivePhotoBundle(pvt.path);
+    final out = Directory('${temp.path}/preview')..createSync();
+    final still = await extractLivePhotoStill(zip, out.path);
+    expect(File(still).readAsStringSync(), 'still');
+    expect(out.listSync(), hasLength(1));
+  });
+
   for (final entry in [
     '../evil.heic',
     'IMG_1.pvt/../evil.mov',

@@ -86,3 +86,32 @@ Future<LivePhotoParts> extractLivePhotoZip(
   final sep = Platform.pathSeparator;
   return LivePhotoParts(bundle, '$bundle$sep$still', '$bundle$sep$movie');
 }
+
+/// Writes only the still of a received `.pvt.zip` into [directory], for a
+/// preview, and returns its path.
+Future<String> extractLivePhotoStill(String zipPath, String directory) =>
+    Isolate.run(() {
+      final input = InputFileStream(zipPath);
+      try {
+        final stills = [
+          for (final entry in ZipDecoder().decodeStream(input))
+            if (entry.isFile &&
+                RegExp(
+                  r'^[^/]+\.pvt/[^/.][^/]*\.(heic|heif|jpe?g)$',
+                  caseSensitive: false,
+                ).hasMatch(entry.name))
+              entry,
+        ];
+        if (stills.length != 1) {
+          throw const TransferException('invalid_live_photo');
+        }
+        final path =
+            '$directory${Platform.pathSeparator}${stills.single.name.split('/').last}';
+        final out = OutputFileStream(path);
+        stills.single.writeContent(out);
+        out.closeSync();
+        return path;
+      } finally {
+        input.closeSync();
+      }
+    });
