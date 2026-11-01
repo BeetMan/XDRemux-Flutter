@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var showPhotosPicker = false
     @State private var showRoundTrip = false
     @State private var showOrganize = false
+    @State private var showTransfer = false
     @State private var importingCheckpoint = false
     @State private var exportingCheckpoint = false
     @State private var checkpointDocument = TextFileDocument(text: "")
@@ -87,6 +88,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showOrganize) {
             OrganizeView()
+        }
+        .sheet(isPresented: $showTransfer) {
+            TransferView(library: model)
         }
         .task {
             await model.handleLaunchArguments()
@@ -183,6 +187,12 @@ struct ContentView: View {
                 Label("批量整理", systemImage: "folder.badge.gearshape")
             }
             .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
+            Button {
+                showTransfer = true
+            } label: {
+                Label("局域网传输", systemImage: "wifi")
+            }
+            .help("与同一局域网内的 XDRemux / LocalSend 设备互传照片")
             Button {
                 importingCheckpoint = true
             } label: {

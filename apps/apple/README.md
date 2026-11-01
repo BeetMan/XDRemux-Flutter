@@ -123,3 +123,13 @@ restart. `Text` keys follow the `locale` environment set at the root of `Content
 through `L(_:)` (`App/Platform/L10n.swift`). To pull new keys into `App/Localizable.xcstrings`, run
 `xcodebuild -exportLocalizations -project XDRemux.xcodeproj -localizationPath out -exportLanguage en -sdk iphonesimulator ARCHS=arm64`
 and translate the untranslated units; a plain `xcodebuild build` does not update the catalog.
+
+## Local network transfer
+
+`⋯ → 局域网传输` sends photos to, and receives them from, another XDRemux or LocalSend device (LocalSend v2 over mTLS).
+The core is `crates/xdremux-transfer-ffi`, packaged as a dynamic framework by
+`tools/apple/build_transfer_xcframework.sh` (Rust 1.97.1; `XDREMUX_TRANSFER_SLICES="macos ios-sim"` for a dev box without
+device signing). The Swift side is the `XDRemuxTransfer` package target; `swift test --filter XDRemuxTransferTests` runs a
+loopback round trip, and `XDREMUX_TRANSFER_PEER=ip:port XDREMUX_TRANSFER_FILE=/path swift test --filter ExternalPeer`
+sends one file to a device that is receiving. Multicast discovery needs Apple's multicast entitlement on a real iPhone;
+without it the page still works with a typed `IP:port`.

@@ -1,8 +1,56 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "%1$lld 个文件 · %2$@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld files · %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 个文件 · %2$@"
+          }
+        }
+      }
+    },
     "%lld": {
       "shouldTranslate": false
+    },
+    "%lld 个文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个文件"
+          }
+        }
+      }
+    },
+    "%lld 个文件 · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld files · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "new",
+            "value": "%1$lld 个文件 · %2$@"
+          }
+        }
+      }
     },
     "Apple 人像": {
       "localizations": {
@@ -537,6 +585,22 @@
         }
       }
     },
+    "与同一局域网内的 XDRemux / LocalSend 设备互传照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send photos to and receive them from XDRemux or LocalSend on the same network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与同一局域网内的 XDRemux / LocalSend 设备互传照片"
+          }
+        }
+      }
+    },
     "严格 ISO 21496-1 tmap": {
       "localizations": {
         "en": {
@@ -645,6 +709,86 @@
           "stringUnit": {
             "state": "translated",
             "value": "从照片导入"
+          }
+        }
+      }
+    },
+    "传输中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transferring"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输中"
+          }
+        }
+      }
+    },
+    "传输失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输失败：%@"
+          }
+        }
+      }
+    },
+    "传输服务已停止。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The transfer service has stopped."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输服务已停止。"
+          }
+        }
+      }
+    },
+    "传输服务异常停止：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The transfer service stopped unexpectedly: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输服务异常停止：%@"
+          }
+        }
+      }
+    },
+    "传输记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfers"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输记录"
           }
         }
       }
@@ -1001,6 +1145,22 @@
         }
       }
     },
+    "准备中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备中…"
+          }
+        }
+      }
+    },
     "出错了": {
       "localizations": {
         "en": {
@@ -1045,6 +1205,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "分类状态"
+          }
+        }
+      }
+    },
+    "删除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除"
+          }
+        }
+      }
+    },
+    "加入照片列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to Photos List"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入照片列表"
           }
         }
       }
@@ -1145,6 +1337,22 @@
         }
       }
     },
+    "原始照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Originals"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原始照片"
+          }
+        }
+      }
+    },
     "原机水印": {
       "localizations": {
         "en": {
@@ -1177,6 +1385,54 @@
         }
       }
     },
+    "发送 %lld 个文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send %lld Files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送 %lld 个文件"
+          }
+        }
+      }
+    },
+    "发送内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送内容"
+          }
+        }
+      }
+    },
+    "发送到": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send To"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送到"
+          }
+        }
+      }
+    },
     "取消": {
       "localizations": {
         "en": {
@@ -1205,6 +1461,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消转换"
+          }
+        }
+      }
+    },
+    "只发送不接收时不会监听端口。开启接收后会自动查找附近设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending alone opens no port. Turning on receiving also looks for nearby devices."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只发送不接收时不会监听端口。开启接收后会自动查找附近设备。"
           }
         }
       }
@@ -1269,6 +1541,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 iPhone 上编辑"
+          }
+        }
+      }
+    },
+    "在局域网接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive on Local Network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在局域网接收"
           }
         }
       }
@@ -1449,6 +1737,22 @@
         }
       }
     },
+    "存储空间不足。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enough storage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储空间不足。"
+          }
+        }
+      }
+    },
     "完成": {
       "localizations": {
         "en": {
@@ -1525,6 +1829,118 @@
           "stringUnit": {
             "state": "translated",
             "value": "对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。"
+          }
+        }
+      }
+    },
+    "对方 IP:端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peer IP:port"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方 IP:端口"
+          }
+        }
+      }
+    },
+    "对方在 XDRemux 或 LocalSend 里输入本机地址即可发送；每次传输都需要你在这里接受。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter this address in XDRemux or LocalSend on the other device to send here. Every transfer waits for you to accept it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方在 XDRemux 或 LocalSend 里输入本机地址即可发送；每次传输都需要你在这里接受。"
+          }
+        }
+      }
+    },
+    "对方拒绝了这次传输。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device declined this transfer."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方拒绝了这次传输。"
+          }
+        }
+      }
+    },
+    "对方要求 PIN 码。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device requires a PIN."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方要求 PIN 码。"
+          }
+        }
+      }
+    },
+    "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate fingerprint of %1$@:\n%2$@\n\nCheck that it matches the fingerprint shown on the other device before sending."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。"
+          }
+        }
+      }
+    },
+    "对方设备 %@ 的证书指纹：\n%@\n\n请与对方屏幕上显示的指纹核对一致后再发送。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate fingerprint of %@:\n%@\n\nCheck that it matches the fingerprint shown on the other device before sending."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "new",
+            "value": "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。"
+          }
+        }
+      }
+    },
+    "对方设备的证书与之前确认的不一致，请重新连接并核对指纹。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device's certificate differs from the one you confirmed. Connect again and check the fingerprint."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方设备的证书与之前确认的不一致，请重新连接并核对指纹。"
           }
         }
       }
@@ -1653,6 +2069,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "尺寸"
+          }
+        }
+      }
+    },
+    "局域网传输": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Network Transfer"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "局域网传输"
           }
         }
       }
@@ -1833,6 +2265,22 @@
         }
       }
     },
+    "已接受": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已接受"
+          }
+        }
+      }
+    },
     "已选择 OPPO 原始照片：%@": {
       "localizations": {
         "en": {
@@ -1897,6 +2345,38 @@
         }
       }
     },
+    "开启后本机会在局域网监听这个端口；离开此页即停止。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When on, this device listens on this port on the local network. Leaving this page stops it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启后本机会在局域网监听这个端口；离开此页即停止。"
+          }
+        }
+      }
+    },
+    "开启接收后，收到的文件会出现在这里。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files you receive appear here once receiving is on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启接收后，收到的文件会出现在这里。"
+          }
+        }
+      }
+    },
     "开始整理": {
       "localizations": {
         "en": {
@@ -1909,6 +2389,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "开始整理"
+          }
+        }
+      }
+    },
+    "待接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incoming"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待接收"
           }
         }
       }
@@ -2089,6 +2585,22 @@
         }
       }
     },
+    "拒绝": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拒绝"
+          }
+        }
+      }
+    },
     "按 OPPO 原始照片恢复可见原机水印": {
       "localizations": {
         "en": {
@@ -2165,6 +2677,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "按输出模式分目录"
+          }
+        }
+      }
+    },
+    "接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接收"
           }
         }
       }
@@ -2293,6 +2821,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "摄影风格数据让 Apple“照片”能像对 iPhone 照片一样调整色调、颜色和强度。"
+          }
+        }
+      }
+    },
+    "收件箱": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inbox"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收件箱"
+          }
+        }
+      }
+    },
+    "收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Received files stay inside the app. Add one to the photos list to convert it; deleting only removes this copy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。"
           }
         }
       }
@@ -2441,6 +3001,38 @@
         }
       }
     },
+    "本机地址": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机地址"
+          }
+        }
+      }
+    },
+    "本机指纹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fingerprint"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机指纹"
+          }
+        }
+      }
+    },
     "机型家族": {
       "localizations": {
         "en": {
@@ -2521,6 +3113,22 @@
         }
       }
     },
+    "正在查找同一局域网内开启了接收的设备…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for devices on this network that are receiving…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在查找同一局域网内开启了接收的设备…"
+          }
+        }
+      }
+    },
     "正在生成 Apple 照片摄影风格编辑副本…": {
       "localizations": {
         "en": {
@@ -2581,6 +3189,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "没有写入照片库的权限，可在“设置”里允许。"
+          }
+        }
+      }
+    },
+    "没有可发送的文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to Send"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可发送的文件"
+          }
+        }
+      }
+    },
+    "没有可发送的文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is nothing to send."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可发送的文件。"
+          }
+        }
+      }
+    },
+    "没有可用的局域网地址，请先连接 Wi-Fi。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local network address. Connect to Wi-Fi first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的局域网地址，请先连接 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "没有可用的局域网地址，请连接 Wi-Fi 后重试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local network address. Connect to Wi-Fi and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的局域网地址，请连接 Wi-Fi 后重试。"
           }
         }
       }
@@ -2713,6 +3385,38 @@
         }
       }
     },
+    "确认并连接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm and Connect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认并连接"
+          }
+        }
+      }
+    },
+    "确认设备指纹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm Device Fingerprint"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认设备指纹"
+          }
+        }
+      }
+    },
     "移出": {
       "localizations": {
         "en": {
@@ -2725,6 +3429,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "移出"
+          }
+        }
+      }
+    },
+    "端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端口"
+          }
+        }
+      }
+    },
+    "端口已被占用，换一个端口再试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That port is in use. Try another one."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端口已被占用，换一个端口再试。"
+          }
+        }
+      }
+    },
+    "等待对方确认…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the other device to accept…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待对方确认…"
           }
         }
       }
@@ -2777,6 +3529,22 @@
         }
       }
     },
+    "网络": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络"
+          }
+        }
+      }
+    },
     "自动": {
       "localizations": {
         "en": {
@@ -2789,6 +3557,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动"
+          }
+        }
+      }
+    },
+    "自动发现不可用，请手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic discovery is unavailable. Enter the other device's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现不可用，请手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "自动发现在这台设备上不可用（需要 Apple 的多播授权），请手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic discovery is unavailable on this device (it needs Apple's multicast entitlement). Enter the other device's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现在这台设备上不可用（需要 Apple 的多播授权），请手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "自动发现失败：%@。可以手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic discovery failed: %@. You can enter the other device's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现失败：%@。可以手动输入对方的 IP:端口。"
           }
         }
       }
@@ -2933,6 +3749,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "语言"
+          }
+        }
+      }
+    },
+    "请先连接并确认对方设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to and confirm the other device first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先连接并确认对方设备。"
+          }
+        }
+      }
+    },
+    "请输入对方的 IP:端口，例如 192.168.1.20:53317": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter the other device's IP:port, for example 192.168.1.20:53317"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入对方的 IP:端口，例如 192.168.1.20:53317"
           }
         }
       }
@@ -3209,6 +4057,22 @@
         }
       }
     },
+    "还没有收到文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No files received yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有收到文件。"
+          }
+        }
+      }
+    },
     "这张照片不是可转换的 ProXDR / Ultra HDR 文件。": {
       "localizations": {
         "en": {
@@ -3221,6 +4085,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "这张照片不是可转换的 ProXDR / Ultra HDR 文件。"
+          }
+        }
+      }
+    },
+    "连不上对方设备，确认两台设备在同一个 Wi-Fi 下，且对方已开启接收。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot reach the other device. Make sure both are on the same Wi-Fi and receiving is on there."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连不上对方设备，确认两台设备在同一个 Wi-Fi 下，且对方已开启接收。"
+          }
+        }
+      }
+    },
+    "连接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接"
           }
         }
       }
@@ -3381,6 +4277,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "重试"
+          }
+        }
+      }
+    },
+    "重试需要先重新连接并确认同一台设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To retry, connect to and confirm the same device again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试需要先重新连接并确认同一台设备。"
           }
         }
       }

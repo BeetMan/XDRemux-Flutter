@@ -83,9 +83,27 @@ jobs:
       - name: Build XDRemuxCore.xcframework (macOS + simulator, arm64 + x86_64)
         run: XDREMUX_APPLE_SLICES="macos ios-sim" xdremux/rust/build_apple.sh
 
+      # The local-transfer core (LocalSend v2) is its own workspace pinned
+      # to Rust 1.97.1 and ships as a dynamic framework next to the core.
+      - name: Set up Rust 1.97.1 for the transfer crate
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-apple-darwin, aarch64-apple-ios-sim
+
+      - name: Cache transfer crate target
+        uses: actions/cache@v4
+        with:
+          path: crates/xdremux-transfer-ffi/target
+          key: transfer-apple-${{ runner.os }}-${{ hashFiles('crates/xdremux-transfer-ffi/Cargo.lock', 'crates/xdremux-transfer/Cargo.lock') }}
+
+      - name: Build XDRemuxTransferCore.xcframework (macOS + simulator)
+        run: XDREMUX_TRANSFER_SLICES="macos ios-sim" tools/apple/build_transfer_xcframework.sh
+
       - name: Check slice architectures
         run: |
           set -euo pipefail
+          cat apps/apple/Frameworks/XDRemuxTransferCore.xcframework/BUILD_RECORD.txt
           fw=apps/apple/Frameworks/XDRemuxCore.xcframework
           cat "$fw/BUILD_RECORD.txt"
           for lib in "$fw"/macos-*/libXDRemuxCore.a "$fw"/ios-*-simulator/libXDRemuxCore.a; do
