@@ -282,7 +282,7 @@ Flutter 版生成的检查点文件可被原生版读取。
   `prefersHighDynamicRange = false`，macOS 用 `kCGImageSourceDecodeToSDR`，`ImageLoading.sdrImage`），松开恢复 HDR。
   与鸿蒙版同一交互（按下 / 抬起），`onLongPressGesture(minimumDuration: 0)` 的 `onPressingChanged` 实现；
   SDR 图在 HDR 图之后预解码，按下无等待。放右上角是因为底边是 OPPO 水印条。
-- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、尺寸、动态照片、华为标记；
+- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、像素数（"58.7 MP"，精确尺寸在照片信息里）、动态照片、华为标记；
   缩略图 60pt，三行间距 4pt、上下留 4pt；状态行改用 HStack 而不是 `Label`——列表里 `Label` 的图标会被对齐到
   列表图标列，离文字一截。详情页"拍摄设备"去掉重复的厂商前缀（OPPO 的 Model 已含 "OPPO"）。
 - 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；

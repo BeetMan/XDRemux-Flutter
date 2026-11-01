@@ -77,7 +77,7 @@ struct PhotoItem: Identifiable {
     var summaryText: String {
         var parts: [String] = []
         if let k = classification?.hdrKind { parts.append(k.uppercased()) }
-        if let d = details?.dimensionsText { parts.append(d) }
+        if let mp = details?.megapixelsText { parts.append(mp) }
         if isMotionPhoto { parts.append(String(localized: "动态照片")) }
         if let huawei {
             parts.append(huawei.portraitReady ? String(localized: "华为人像 → Apple 人像") : String(localized: "华为 HDR"))
