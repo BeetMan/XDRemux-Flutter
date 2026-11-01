@@ -333,6 +333,12 @@ Flutter 版生成的检查点文件可被原生版读取。
   辅助功能路径 `button 5/6/7 of group 3 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1`，
   `osascript` 可点。
 - 未验证：真机（iPhone 16e 非折叠屏，看不到展开态）；iPad 实机。
+**§8 补充：详情页宽屏两栏（2026-11-01，分支 `feat/apple-duo-detail-columns`）**
+
+- `PhotoDetailView` 用 `GeometryReader` 量自己的宽度：≥ 520pt 时左边预览卡撑满高度、右边 280pt 的滚动栏放状态 / 转换选项（或结果）/
+  照片信息；不足则沿用纵向堆叠（手机）。Duo 展开态详情栏实测 547pt（侧栏封顶 300pt 后），刚好进两栏；macOS 窗口也走两栏。
+- 侧栏 `navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 300)`：`.balanced` 风格不设 max 会把侧栏分走一半屏幕。
+- 未验证：iPad 实机；Duo 展开横屏姿态。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 

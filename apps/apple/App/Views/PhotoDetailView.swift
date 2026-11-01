@@ -12,26 +12,35 @@ struct PhotoDetailView: View {
 
     private var item: PhotoItem? { model.items.first { $0.id == itemID } }
 
+    /// Below this width the page stacks (phone); at or above it the photo
+    /// takes the left and the controls the right (unfolded Duo, iPad, Mac).
+    static let twoColumnMinWidth: CGFloat = 520
+    static let controlsColumnWidth: CGFloat = 280
+
     var body: some View {
         if let item {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    PreviewCard(item: item)
-                    statusSection(item)
-                    // The options are the body of the page; the metadata the
-                    // core read is reference material and collapses below.
-                    if item.isConvertible, item.product == nil {
-                        if item.isMotionPhoto { motionSection(item) }
-                        optionsSection(item)
+            GeometryReader { geo in
+                if geo.size.width >= Self.twoColumnMinWidth {
+                    HStack(alignment: .top, spacing: 16) {
+                        PreviewCard(item: item, fillsHeight: true)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 20) { sections(item) }
+                        }
+                        .frame(width: Self.controlsColumnWidth)
                     }
-                    if let product = item.product {
-                        ResultSection(model: model, item: item, product: product)
+                    .padding()
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            PreviewCard(item: item)
+                            sections(item)
+                        }
+                        .padding()
+                        .frame(maxWidth: 720, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                     }
-                    infoSection(item)
                 }
-                .padding()
-                .frame(maxWidth: 720, alignment: .leading)
-                .frame(maxWidth: .infinity)
             }
             .navigationTitle(item.sourceName)
             #if os(iOS)
@@ -46,6 +55,21 @@ struct PhotoDetailView: View {
     }
 
     // MARK: Sections
+
+    /// Everything but the preview: status, then the options (the body of
+    /// the page) or the result, then the metadata folded away.
+    @ViewBuilder
+    private func sections(_ item: PhotoItem) -> some View {
+        statusSection(item)
+        if item.isConvertible, item.product == nil {
+            if item.isMotionPhoto { motionSection(item) }
+            optionsSection(item)
+        }
+        if let product = item.product {
+            ResultSection(model: model, item: item, product: product)
+        }
+        infoSection(item)
+    }
 
     @ViewBuilder
     private func statusSection(_ item: PhotoItem) -> some View {
@@ -207,6 +231,9 @@ struct PhotoDetailView: View {
 /// HarmonyOS app does; releasing restores HDR.
 struct PreviewCard: View {
     let item: PhotoItem
+    /// Two-column layout: the card fills the column instead of capping at
+    /// a fixed height.
+    var fillsHeight = false
     /// The converted output, or the pre-conversion HDR preview the model
     /// rendered through the same core (`LibraryModel.preparePreview`).
     private var hdrURL: URL? { item.product?.outputURL ?? item.previewURL }
@@ -262,7 +289,7 @@ struct PreviewCard: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: 220, maxHeight: 420)
+        .frame(minHeight: 220, maxHeight: fillsHeight ? .infinity : 420)
         .task(id: hdrURL) {
             hdrImage = nil
             sdrImage = nil
