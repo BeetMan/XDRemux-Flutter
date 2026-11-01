@@ -308,6 +308,11 @@ Flutter 版生成的检查点文件可被原生版读取。
   提取出 223 个键（28 个缺英文），重写全部英文；`SWIFT_EMIT_LOC_STRINGS` 打开以便提取。新增 `App/InfoPlist.xcstrings`
   （照片库权限说明的英文）。
 - 实测（iPhone Duo 模拟器）：设置切到 English 后列表、详情、设置弹层即时切换，无需重启。
+- 修正（真机反馈"选简体中文后列表仍是英文"，系统语言为英文时复现）：两个原因。其一，源语言为 zh-Hans 的字符串表
+  编译后只生成 `en.lproj`，`L()` 找不到 `zh-Hans.lproj` 就回落到系统语言——给表里每个键补显式 zh-Hans 条目（值同键），
+  编译即生成 `zh-Hans.lproj`；其二，列表行的 `Text(String)` 输入未变时 SwiftUI 不重算，只有 `Text` 键随 locale 更新——
+  根视图按 `config.language` 加 `.id`，切换时重建整棵树（放在 `.sheet` 之前，设置弹层本身不被打断）。
+  用 `-AppleLanguages "(en)"` 启动模拟器复现并验证：选简体中文后状态行、摘要行全部中文；再切 English 即时生效。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 

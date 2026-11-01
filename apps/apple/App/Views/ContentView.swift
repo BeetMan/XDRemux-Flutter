@@ -70,6 +70,10 @@ struct ContentView: View {
                 #endif
             }
         }
+        // Strings built in model code (status lines, summaries) are plain
+        // `Text(String)`, which SwiftUI does not re-evaluate when only the
+        // locale changes; rebuilding the tree on a language switch does.
+        .id(model.config.language)
         #if os(macOS)
         .toolbar { toolbarContent }
         #else
