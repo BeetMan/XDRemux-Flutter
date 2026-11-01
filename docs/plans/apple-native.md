@@ -274,6 +274,41 @@ Flutter 版生成的检查点文件可被原生版读取。
   macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
 - 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
 
+**§8 补充：详情页以转换选项为主体、SDR 对比、列表卡片（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 详情页顺序改为：预览 → 状态 → **转换选项 / 转换结果**（页面主体）→ **照片信息**（`DisclosureGroup`，默认收起）。
+  内核读到的元数据是参考资料，不该挡在"转换这张"前面。
+- 预览卡在显示 HDR 输出时，右上角多一个"◐ SDR"胶囊：按住显示 SDR 基图（iOS 用 `UIImageReader`
+  `prefersHighDynamicRange = false`，macOS 用 `kCGImageSourceDecodeToSDR`，`ImageLoading.sdrImage`），松开恢复 HDR。
+  与鸿蒙版同一交互（按下 / 抬起），`onLongPressGesture(minimumDuration: 0)` 的 `onPressingChanged` 实现；
+  SDR 图在 HDR 图之后预解码，按下无等待。放右上角是因为底边是 OPPO 水印条。
+- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、像素数（"58.7 MP"，精确尺寸在照片信息里）、动态照片、华为标记；
+  缩略图 60pt，三行间距 4pt、上下留 4pt；状态行改用 HStack 而不是 `Label`——列表里 `Label` 的图标会被对齐到
+  列表图标列，离文字一截。详情页"拍摄设备"去掉重复的厂商前缀（OPPO 的 Model 已含 "OPPO"）。
+- 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；
+  列表三张卡片状态图标与文字对齐。已装到 iPhone 16e（无 App Group 的真机构建）。
+- 未验证：真机上按住 SDR 的亮度差异（模拟器无 EDR，两张图一样）。
+- 第二轮（同分支）：列表图文间距 12 → 16pt；摄影风格文案对齐 Flutter 版（"摄影风格 2 / 3"，开 3 时 2 置灰并说明已包含）；
+  进度条改为**分阶段分段**：`ConversionProgress.fraction` 把解析 / 解码 / 编码 / 组装映射到 4–10% / 12–20% / 20–95% / 97%
+  （之前只有 current/total，前两阶段一直 0%，组装阶段直接 100%，阶段间内核回报 stage 0 还会让条跳回 0），
+  模型侧取 max 保证单调，状态文字按阶段显示（"解析元数据… / 解码增益图… / 编码 HEVC 42% / 组装输出…"）。
+- **转换前看 HDR**：ImageIO 看不到 OPPO 原片里的增益图（探针：源文件无 ISO / Apple gain map aux，解码 headroom 1.0），
+  所以预览只能走内核。打开详情时 `LibraryModel.preparePreview` 用 Apple 模式、不带风格在后台把这张转进
+  `scratch/previews/<id>.heic`，预览卡显示它并标"HDR 预览"，SDR 对比按钮同样可用；真正转换完成或移出照片时删掉。
+  成本就是一次转换（Mac 上 18 MP 0.4 s、59 MP 1.4 s）。模拟器实测：打开详情约 1 s 后出现 HDR 预览。
+
+**§8 补充：应用内语言与英文文案（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 设置页新增"语言"：跟随系统 / 简体中文 / English，存在 `ConversionConfig.language`（`AppLanguage` 增加 `system`，默认值改为它；
+  Flutter 检查点不含该字段，互读不受影响）。
+- 生效机制：SwiftUI `Text` 键跟随根视图末尾设置的 `.environment(\.locale)`（放在 `.sheet` / `.alert` 之后，弹层才继承）；
+  模型层字符串改走 `L(_:)`（`App/Platform/L10n.swift`），它用对应 `.lproj` 的 Bundle 调 `String(localized:bundle:locale:)`。
+  App 内 99 处 `String(localized:)` 全部替换。分享扩展仍跟系统语言。
+- 字符串表：`xcodebuild build` 不会回写 `.xcstrings`，用 `xcodebuild -exportLocalizations -sdk iphonesimulator ARCHS=arm64`
+  提取出 223 个键（28 个缺英文），重写全部英文；`SWIFT_EMIT_LOC_STRINGS` 打开以便提取。新增 `App/InfoPlist.xcstrings`
+  （照片库权限说明的英文）。
+- 实测（iPhone Duo 模拟器）：设置切到 English 后列表、详情、设置弹层即时切换，无需重启。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

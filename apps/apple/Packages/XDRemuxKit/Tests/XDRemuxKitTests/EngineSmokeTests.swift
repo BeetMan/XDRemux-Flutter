@@ -93,7 +93,7 @@ final class EngineSmokeTests: XCTestCase {
         let p = XDRemuxEngine.readProgress(handle)
         XCTAssertEqual(p.current, 3)
         XCTAssertEqual(p.total, 10)
-        XCTAssertEqual(p.fraction, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(p.tileRatio, 0.3, accuracy: 1e-9)
         xdremux_progress_end(handle)
     }
 

@@ -52,6 +52,14 @@ public struct PhotoDetails: Decodable, Equatable, Sendable {
         return "\(width) × \(height)"
     }
 
+    /// "58.7 MP" for the list, where the exact pixel counts are noise; one
+    /// decimal below 10 MP ("2.1 MP"), whole numbers above ("50 MP").
+    public var megapixelsText: String? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        let mp = Double(width) * Double(height) / 1_000_000
+        return mp < 10 ? String(format: "%.1f MP", mp) : String(format: "%.0f MP", mp)
+    }
+
     /// "f/1.8 · 1/120 s · ISO 100 · 5.6mm" from whatever EXIF is present.
     /// Rust already formats each value with its unit or prefix.
     public var exposureSummary: String? {

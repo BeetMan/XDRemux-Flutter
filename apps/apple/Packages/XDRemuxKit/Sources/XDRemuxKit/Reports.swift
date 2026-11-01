@@ -99,13 +99,56 @@ public struct JSONReport: Sendable {
     }
 }
 
-/// Snapshot of a progress handle: `stage` is the Rust-defined stage index.
+/// Snapshot of a progress handle: `stage` is the Rust-defined stage index
+/// (0 idle, 1 extract, 2 decode, 3 encode tiles, 4 assemble).
 public struct ConversionProgress: Equatable, Sendable {
     public let stage: UInt32
     public let current: UInt32
     public let total: UInt32
 
+    public init(stage: UInt32, current: UInt32, total: UInt32) {
+        self.stage = stage
+        self.current = current
+        self.total = total
+    }
+
+    /// What the bar should show: each stage owns a band of the bar, so the
+    /// early stages (which report no counts) still move it, tile encoding
+    /// fills the bulk, and assembly sits just short of done. Stage 0 maps
+    /// to 0 (callers keep the previous value if they want monotonic bars).
     public var fraction: Double {
+        switch stage {
+        case 1: return Phase.extract.band.lowerBound
+        case 2: return Phase.decode.band.lowerBound
+        case 3:
+            let band = Phase.encode.band
+            let ratio = total == 0 ? 0 : min(1, Double(current) / Double(total))
+            return band.lowerBound + (band.upperBound - band.lowerBound) * ratio
+        case 4: return Phase.assemble.band.lowerBound
+        default: return 0
+        }
+    }
+
+    /// Plain tile ratio, without the stage banding.
+    public var tileRatio: Double {
         total == 0 ? 0 : Double(current) / Double(total)
+    }
+
+    public enum Phase: Equatable, Sendable, CaseIterable {
+        case extract, decode, encode, assemble
+
+        public var band: ClosedRange<Double> {
+            switch self {
+            case .extract: return 0.04...0.10
+            case .decode: return 0.12...0.20
+            case .encode: return 0.20...0.95
+            case .assemble: return 0.97...1.0
+            }
+        }
+
+        /// The phase a banded `fraction` came from.
+        public init(fraction: Double) {
+            self = Phase.allCases.last { fraction >= $0.band.lowerBound } ?? .extract
+        }
     }
 }
