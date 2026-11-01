@@ -835,9 +835,7 @@ void main() {
     expect(find.text('B.HEIC'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
-  testWidgets('a .pvt Live Photo is sent as its still and video', (
-    tester,
-  ) async {
+  testWidgets('a .pvt Live Photo is sent as one .pvt.zip', (tester) async {
     final bundle = Directory.systemTemp.createTempSync('live').path;
     final pvt = Directory('$bundle/IMG_1.pvt')..createSync();
     for (final name in ['IMG_1.HEIC', 'IMG_1.MOV', 'metadata.plist']) {
@@ -848,9 +846,14 @@ void main() {
         home: TransferPage(controller: controller, initialPaths: [pvt.path]),
       ),
     );
-    expect(find.text('IMG_1.HEIC'), findsOneWidget);
-    expect(find.text('IMG_1.MOV'), findsOneWidget);
-    expect(find.text('metadata.plist'), findsNothing);
+    for (var i = 0; i < 20 && find.text('IMG_1.pvt.zip').evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+    }
+    expect(find.text('IMG_1.pvt.zip'), findsOneWidget);
+    expect(find.text('IMG_1.HEIC'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(

@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'l10n/l10n.dart';
 import 'platform_x.dart';
+import 'services/output_export_service.dart';
 import 'services/transfer/transfer_controller.dart';
 import 'services/transfer/transfer_export.dart';
+import 'services/transfer/transfer_live_photo.dart';
 import 'services/transfer/transfer_models.dart';
 import 'transfer_storage_dialog.dart';
 
@@ -47,6 +49,14 @@ String transferErrorText(String code) => switch (code) {
     'Connection failed: check address, port, LAN and firewall',
   ),
   'no_space' => t('可用空间不足，请清理后重试', 'Not enough free space'),
+  'invalid_live_photo' => t(
+    '实况照片包内容不完整，原文件已保留在收件箱',
+    'The Live Photo package is incomplete; the inbox original is retained',
+  ),
+  'permission_denied' => t(
+    '没有相册权限，请在系统设置中允许后重试',
+    'No photo library access; allow it in system settings',
+  ),
   'identity_mismatch' => t(
     '设备身份发生变化，请重新核对指纹',
     'Device identity changed; confirm its fingerprint again',
@@ -140,10 +150,19 @@ class _TransferPageState extends State<TransferPage> {
   void initState() {
     super.initState();
     transfer = widget.controller ?? TransferController.instance;
-    _paths = _expandBundles(widget.initialPaths);
+    final initial = widget.initialPaths;
+    _paths = [
+      for (final p in initial)
+        if (!FileSystemEntity.isDirectorySync(p)) p,
+    ];
     _selectionSize = _measure(_paths);
     transfer.addListener(_changed);
     transfer.enumerateInterfaces().catchError((_) {});
+    if (_paths.length != initial.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _run(() => _addPaths(initial));
+      });
+    }
     if (widget.autoReceive && !transfer.receiving) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !transfer.receiving) _run(_enableReceiving);
@@ -154,24 +173,15 @@ class _TransferPageState extends State<TransferPage> {
   Future<void> _enableReceiving() =>
       transfer.enableReceiving(port: int.tryParse(_listenPort.text) ?? 0);
 
-  /// A Live Photo output is a `.pvt` folder (still, MOV, metadata.plist).
-  /// LocalSend moves files, so send the still and the MOV inside it.
-  static List<String> _expandBundles(List<String> paths) => [
-    for (final path in paths)
-      if (FileSystemEntity.isDirectorySync(path))
-        ...(Directory(path)
-            .listSync(followLinks: false)
-            .whereType<File>()
-            .map((f) => f.path)
-            .where((p) {
-              final name = p.split(Platform.pathSeparator).last;
-              return !name.startsWith('.') && name != 'metadata.plist';
-            })
-            .toList()
-          ..sort())
-      else
-        path,
-  ];
+  final Map<String, String> _bundleZips = {};
+
+  /// A Live Photo output is a `.pvt` folder. LocalSend moves files, so it
+  /// travels as `<stem>.pvt.zip`, which the receiving app unpacks again.
+  Future<String?> _resolve(String path) async {
+    if (!FileSystemEntity.isDirectorySync(path)) return path;
+    if (!path.toLowerCase().endsWith('.pvt')) return null;
+    return _bundleZips[path] ??= await zipLivePhotoBundle(path);
+  }
 
   Future<int> _measure(List<String> paths) async {
     var bytes = 0;
@@ -377,18 +387,20 @@ class _TransferPageState extends State<TransferPage> {
       if (paths.length != result.length) {
         throw const TransferException('invalid_input');
       }
-      if (mounted) _addPaths(paths);
+      if (mounted) await _addPaths(paths);
     } finally {
       if (resume && mounted && !transfer.receiving) await _enableReceiving();
     }
   }
 
-  void _addPaths(List<String> paths) {
+  Future<void> _addPaths(List<String> paths) async {
+    final resolved = [for (final p in paths) await _resolve(p)];
+    if (!mounted) return;
     final seen = _paths.toSet();
     _setPaths([
       ..._paths,
-      for (final p in _expandBundles(paths))
-        if (seen.add(p)) p,
+      for (final p in resolved)
+        if (p != null && seen.add(p)) p,
     ]);
   }
 
@@ -498,7 +510,7 @@ class _TransferPageState extends State<TransferPage> {
         },
       ),
     );
-    if (paths != null && mounted) _addPaths(paths);
+    if (paths != null && mounted) await _run(() => _addPaths(paths));
   }
 
   Future<void> _importAll() async {
@@ -1635,6 +1647,7 @@ class _TransferPageState extends State<TransferPage> {
     final id = row['id'] as String;
     final name = row['name'] as String;
     final image = transferImageName(name);
+    final live = isLivePhotoZip(name);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
@@ -1648,7 +1661,11 @@ class _TransferPageState extends State<TransferPage> {
           Row(
             children: [
               Icon(
-                image ? Icons.image_outlined : Icons.insert_drive_file_outlined,
+                live
+                    ? Icons.motion_photos_on_outlined
+                    : image
+                    ? Icons.image_outlined
+                    : Icons.insert_drive_file_outlined,
                 color: scheme.onSurfaceVariant,
               ),
               const SizedBox(width: 12),
@@ -1658,6 +1675,7 @@ class _TransferPageState extends State<TransferPage> {
                   children: [
                     Text(name, overflow: TextOverflow.ellipsis),
                     Text(
+                      '${live ? '${t('实况照片', 'Live Photo')} · ' : ''}'
                       '${_bytes(row['size'] as int)} · '
                       '${row['peer_hash_present'] == true ? t('长度与对端哈希已核对', 'Length and peer hash verified') : t('长度已核对；无对端哈希', 'Length verified; peer supplied no hash')}',
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -1696,6 +1714,28 @@ class _TransferPageState extends State<TransferPage> {
                         }),
                   label: Text(t('加入转换队列', 'Add to conversion queue')),
                 ),
+              if (live && TransferExport.savesLivePhoto)
+                TextButton.icon(
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  onPressed: disabled
+                      ? null
+                      : () => _run(() async {
+                          await TransferExport.saveLivePhoto(
+                            transfer,
+                            id,
+                            name,
+                          );
+                          _notify(
+                            Platform.isIOS
+                                ? t('已存为实况照片', 'Saved as a Live Photo')
+                                : t(
+                                    '已存入相册（HEIF + MOV）',
+                                    'Saved to the gallery (HEIF + MOV)',
+                                  ),
+                          );
+                        }),
+                  label: Text(t('存入相册', 'Save to Photos')),
+                ),
               TextButton.icon(
                 icon: Icon(
                   TransferExport.viaShareSheet
@@ -1714,6 +1754,8 @@ class _TransferPageState extends State<TransferPage> {
                 label: Text(
                   TransferExport.viaShareSheet
                       ? t('分享或存储', 'Share or save')
+                      : live && PlatformX.isDesktop
+                      ? t('导出为 .pvt', 'Export as .pvt')
                       : t('导出文件', 'Export file'),
                 ),
               ),
