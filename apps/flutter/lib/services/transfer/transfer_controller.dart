@@ -49,11 +49,38 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
   static const _multicast = MethodChannel('xdremux/transfer-discovery');
   static const _traits = MethodChannel('xdremux/platform-traits');
-  static Future<String>? _deviceName;
+  static Future<String>? _modelName;
+  static const _aliasKey = 'transfer.alias.v1';
 
-  /// Name other devices see: the model on phones ("OPPO Find X8 Ultra",
-  /// "iPhone 16e"), the computer name on desktops.
-  static Future<String> deviceName() => _deviceName ??= () async {
+  /// Name other devices see: the user's own name if set, otherwise the
+  /// model ([modelName]).
+  static Future<String> deviceName() async {
+    final custom = (await SharedPreferences.getInstance()).getString(_aliasKey);
+    return custom == null || custom.isEmpty ? modelName() : custom;
+  }
+
+  /// Saves a custom name (trimmed, at most 64 characters, no control
+  /// characters); null or blank restores the model name. Takes effect the
+  /// next time reception starts.
+  static Future<void> setDeviceName(String? name) async {
+    final prefs = await SharedPreferences.getInstance();
+    final clean = _cleanName(name);
+    if (clean == null) {
+      await prefs.remove(_aliasKey);
+    } else {
+      await prefs.setString(_aliasKey, clean);
+    }
+  }
+
+  static String? _cleanName(String? name) {
+    final clean = name?.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
+    if (clean == null || clean.isEmpty) return null;
+    return clean.length > 64 ? clean.substring(0, 64) : clean;
+  }
+
+  /// The model on phones ("OPPO Find X8 Ultra", "iPhone 16e"), the computer
+  /// name on desktops.
+  static Future<String> modelName() => _modelName ??= () async {
     String? name;
     try {
       if (Platform.isAndroid) {
@@ -70,9 +97,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             .replaceAll('-', ' ');
       }
     } catch (_) {}
-    name = name?.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
-    if (name == null || name.isEmpty) return 'XDRemux';
-    return name.length > 64 ? name.substring(0, 64) : name;
+    return _cleanName(name) ?? 'XDRemux';
   }();
   String? error;
   Map<String, dynamic>? ready;
