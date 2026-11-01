@@ -77,7 +77,12 @@ class TransferBindings {
       return ['libxdremux_transfer.so'];
     }
     if (Platform.isIOS) {
-      return ['xdremux_transfer.framework/xdremux_transfer'];
+      // dlopen treats a path containing '/' as literal (cwd-relative), so name
+      // the embedded framework through the app bundle or the rpath.
+      return [
+        '$exeDir/Frameworks/xdremux_transfer.framework/xdremux_transfer',
+        '@rpath/xdremux_transfer.framework/xdremux_transfer',
+      ];
     }
     if (Platform.isMacOS) {
       return [
