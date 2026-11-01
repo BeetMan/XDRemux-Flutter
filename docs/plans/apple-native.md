@@ -320,6 +320,20 @@ Flutter 版生成的检查点文件可被原生版读取。
   导入只会得到一排"无法读取"；导入 / 导出的实现与 `FlutterCheckpoint` 不变，iOS 只是不露出入口。
 - 空状态页：iOS 上主按钮改为"从照片导入"，"从文件导入"降为次按钮（照片多半在相册里，文件 App 是绕路）；macOS 仍只有文件导入。
 
+**§8 补充：App 图标与折叠屏展开态（2026-11-01，分支 `feat/apple-icon-duo`）**
+
+- 图标：`App/Assets.xcassets/AppIcon.appiconset` 直接复用 Flutter 版的 iOS（19 档）与 macOS（10 档）图标文件，一个
+  appiconset 同时含 iphone / ipad / mac idiom；`ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`。模拟器主屏与 macOS 产物
+  （`AppIcon.icns`）都已确认。
+- Duo 展开态（regular 宽度，走 `NavigationSplitView`）原状：侧栏默认收起，只剩一枚工具栏胶囊漂在左上，空状态独占右栏，
+  主动作"全部转换"退化成纯图标。改法：`columnVisibility = .all` + `.navigationSplitViewStyle(.balanced)` 双栏常驻；
+  侧栏大标题 XDRemux；iOS 上批量按钮一律放列表栏的 `.bottomBar`（纯文字，保留数量），不再按 compact 区分；
+  文件名 `truncationMode(.middle)`，窄侧栏里能看到 `IMG2026…1729.heic` 的尾号。
+- Xcode 27 的模拟器宿主是 `DeviceHub.app`（没有 Simulator.app）；Duo 的折叠 / 展开竖屏 / 展开横屏是它窗口底部的三个姿态按钮，
+  辅助功能路径 `button 5/6/7 of group 3 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1`，
+  `osascript` 可点。
+- 未验证：真机（iPhone 16e 非折叠屏，看不到展开态）；iPad 实机。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
