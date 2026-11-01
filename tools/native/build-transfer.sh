@@ -25,6 +25,24 @@ TARGET_DIR="$CRATE/target"
 TOOLCHAIN="${XDREMUX_TRANSFER_TOOLCHAIN:-1.97.1}"
 NAME=xdremux_transfer
 
+# Apple dylibs: set the install name and strip at link time (-x -S).
+# rustc's post-link strip (profile strip = true) leaves a LINKEDIT string
+# pool that iOS dyld rejects as mis-aligned, hiding the transfer entry.
+apple_link() {
+  export CARGO_PROFILE_RELEASE_STRIP=false
+  export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-x,-S,-install_name,$1"
+}
+
+# Fail the build when dyld would refuse to load the library.
+apple_check() {
+  local report
+  report="$(xcrun dyld_info -platform "$1" 2>&1)" || true
+  if printf '%s' "$report" | grep -qi 'mis-aligned\|malformed'; then
+    echo "error: dyld rejects $1: $report" >&2
+    exit 1
+  fi
+}
+
 build() {
   cargo "+$TOOLCHAIN" build --manifest-path "$MANIFEST" --target-dir "$TARGET_DIR" \
     --locked --release "$@"
@@ -38,7 +56,6 @@ ios_framework() {
   rm -rf "$fw"
   mkdir -p "$fw"
   cp "$TARGET_DIR/$triple/release/lib$NAME.dylib" "$fw/$NAME"
-  install_name_tool -id "@rpath/$NAME.framework/$NAME" "$fw/$NAME"
   cat > "$fw/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -61,8 +78,9 @@ PLIST
 
 case "$PLATFORM" in
   macos)
+    apple_link "@rpath/lib$NAME.dylib"
     build
-    install_name_tool -id "@rpath/lib$NAME.dylib" "$TARGET_DIR/release/lib$NAME.dylib"
+    apple_check "$TARGET_DIR/release/lib$NAME.dylib"
     echo "$TARGET_DIR/release/lib$NAME.dylib"
     ;;
   linux)
@@ -71,11 +89,14 @@ case "$PLATFORM" in
     ;;
   ios)
     export IPHONEOS_DEPLOYMENT_TARGET=15.0
+    apple_link "@rpath/$NAME.framework/$NAME"
     build --target aarch64-apple-ios
     build --target aarch64-apple-ios-sim
     STAGE="$TARGET_DIR/ios-frameworks"
     ios_framework aarch64-apple-ios iPhoneOS "$STAGE/device"
     ios_framework aarch64-apple-ios-sim iPhoneSimulator "$STAGE/simulator"
+    apple_check "$STAGE/device/$NAME.framework/$NAME"
+    apple_check "$STAGE/simulator/$NAME.framework/$NAME"
     rm -rf "$TARGET_DIR/$NAME.xcframework"
     xcodebuild -create-xcframework \
       -framework "$STAGE/device/$NAME.framework" \
