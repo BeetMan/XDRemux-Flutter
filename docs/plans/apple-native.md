@@ -288,6 +288,14 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；
   列表三张卡片状态图标与文字对齐。已装到 iPhone 16e（无 App Group 的真机构建）。
 - 未验证：真机上按住 SDR 的亮度差异（模拟器无 EDR，两张图一样）。
+- 第二轮（同分支）：列表图文间距 12 → 16pt；摄影风格文案对齐 Flutter 版（"摄影风格 2 / 3"，开 3 时 2 置灰并说明已包含）；
+  进度条改为**分阶段分段**：`ConversionProgress.fraction` 把解析 / 解码 / 编码 / 组装映射到 4–10% / 12–20% / 20–95% / 97%
+  （之前只有 current/total，前两阶段一直 0%，组装阶段直接 100%，阶段间内核回报 stage 0 还会让条跳回 0），
+  模型侧取 max 保证单调，状态文字按阶段显示（"解析元数据… / 解码增益图… / 编码 HEVC 42% / 组装输出…"）。
+- **转换前看 HDR**：ImageIO 看不到 OPPO 原片里的增益图（探针：源文件无 ISO / Apple gain map aux，解码 headroom 1.0），
+  所以预览只能走内核。打开详情时 `LibraryModel.preparePreview` 用 Apple 模式、不带风格在后台把这张转进
+  `scratch/previews/<id>.heic`，预览卡显示它并标"HDR 预览"，SDR 对比按钮同样可用；真正转换完成或移出照片时删掉。
+  成本就是一次转换（Mac 上 18 MP 0.4 s、59 MP 1.4 s）。模拟器实测：打开详情约 1 s 后出现 HDR 预览。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 

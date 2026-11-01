@@ -312,7 +312,7 @@ struct PhotoRow: View {
     let item: PhotoItem
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 16) {
             ThumbnailView(image: item.thumbnail)
                 .frame(width: 60, height: 60)
             // Three lines at body / caption / caption; the spacing keeps

@@ -45,6 +45,12 @@ struct PhotoItem: Identifiable {
     var state: State = .inspecting
     var savedToPhotos = false
 
+    enum PreviewState: Equatable { case none, rendering, ready, failed }
+    /// Pre-conversion HDR preview: the core's Apple-mode output in the
+    /// cache, shown until the real conversion replaces it.
+    var previewURL: URL?
+    var previewState: PreviewState = .none
+
     var isMotionPhoto: Bool { motionPhoto != nil }
 
     var product: ConversionProduct? {
@@ -64,7 +70,15 @@ struct PhotoItem: Identifiable {
         case .ready:
             if let policyReason { return String(localized: String.LocalizationValue(policyReason)) }
             return isConvertible ? String(localized: "可转换") : (inspection?.errorMessage ?? String(localized: "不支持"))
-        case .converting(let p): return String(localized: "转换中 \(Int(p * 100))%")
+        case .converting(let p):
+            // The fraction is banded by stage in the kit, so the label can
+            // name the stage the way the Flutter app does.
+            switch ConversionProgress.Phase(fraction: p) {
+            case .extract: return String(localized: "解析元数据…")
+            case .decode: return String(localized: "解码增益图…")
+            case .encode: return String(localized: "编码 HEVC \(Int(p * 100))%")
+            case .assemble: return String(localized: "组装输出…")
+            }
         case .done: return String(localized: "已完成")
         case .failed(let m): return String(localized: "失败：\(m)")
         }

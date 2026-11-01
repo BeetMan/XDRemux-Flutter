@@ -43,10 +43,26 @@ struct SettingsView: View {
                         }
                     }
                 } else {
-                    Section("Apple 标准") {
-                        Toggle("Apple 摄影风格", isOn: $model.config.applePhotographicStyles)
-                        Toggle("摄影风格 3（纹理与颗粒）", isOn: $model.config.applePhotographicStyles3)
-                        Toggle("Apple 人像数据", isOn: $model.config.applePortrait)
+                    Section {
+                        Toggle(isOn: $model.config.applePhotographicStyles) {
+                            Text("摄影风格 2")
+                            Text(model.config.applePhotographicStyles3
+                                 ? "摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。"
+                                 : "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。")
+                        }
+                        .disabled(model.config.applePhotographicStyles3)
+                        Toggle(isOn: $model.config.applePhotographicStyles3) {
+                            Text("摄影风格 3")
+                            Text("在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。")
+                        }
+                        Toggle(isOn: $model.config.applePortrait) {
+                            Text("Apple 人像数据")
+                            Text("写入人像深度与蒙版，Apple“照片”可继续调整景深与焦点。")
+                        }
+                    } header: {
+                        Text("Apple 标准")
+                    } footer: {
+                        Text("Apple 标准输出不写入 OPPO 私有信息，文件可在 Apple“照片”里继续编辑。")
                     }
                 }
 

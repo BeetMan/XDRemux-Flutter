@@ -361,10 +361,16 @@ final class LibraryModel {
                 let product = try await job.run(input: item.inputURL, sourceName: item.sourceName, config: config,
                                                 motionMode: item.isMotionPhoto ? mode : nil) { fraction in
                     Task { @MainActor [weak self] in
-                        self?.update(id) { if case .converting = $0.state { $0.state = .converting(fraction) } }
+                        self?.update(id) {
+                            // Monotonic: the core reports stage 0 between
+                            // phases, and a bar that jumps back reads as a
+                            // restart.
+                            if case .converting(let previous) = $0.state { $0.state = .converting(max(previous, fraction)) }
+                        }
                     }
                 }
                 self?.update(id) { $0.state = .done(product) }
+                self?.discardPreview(id)
             } catch is CancellationError {
                 // The core stopped at its next tile; scratch is gone, nothing published.
                 self?.update(id) { $0.state = .ready }
@@ -422,9 +428,60 @@ final class LibraryModel {
 
     func remove(_ id: PhotoItem.ID) {
         guard let item = items.first(where: { $0.id == id }), !item.state.isBusy else { return }
+        discardPreview(id)
         items.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: item.inputURL)
         if selectedID == id { selectedID = items.first?.id }
+    }
+
+    // MARK: - HDR preview before conversion
+
+    private var previewTasks: [PhotoItem.ID: Task<Void, Never>] = [:]
+
+    /// Renders the photo through the core (Apple mode, no styles) into the
+    /// cache so the detail page can show the HDR result before the user
+    /// converts. Idempotent; the detail page calls it on appear.
+    func preparePreview(_ id: PhotoItem.ID) async {
+        guard let item = items.first(where: { $0.id == id }),
+              item.isConvertible, item.product == nil,
+              item.previewState == .none, previewTasks[id] == nil else { return }
+        let dir = directories.scratch.appendingPathComponent("previews", isDirectory: true)
+        let output = dir.appendingPathComponent("\(id.uuidString).heic")
+        update(id) { $0.previewState = .rendering }
+        let engine = self.engine
+        let input = item.inputURL
+        let task = Task.detached(priority: .utility) { [weak self] in
+            var ok = false
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let config = RustConvertConfig(oppoCompat: 0, oppoCameraTail: 0, strictTmap: 0,
+                                               applePhotographicStyles: 0, applePortrait: 0)
+                let report = try await engine.convert(input: input.path, output: output.path, config: config)
+                ok = report.success && FileManager.default.fileExists(atPath: output.path)
+            } catch {
+                ok = false
+            }
+            let done = ok
+            await MainActor.run { [weak self] in
+                self?.update(id) {
+                    $0.previewURL = done ? output : nil
+                    $0.previewState = done ? .ready : .failed
+                }
+            }
+        }
+        previewTasks[id] = task
+        await task.value
+        previewTasks[id] = nil
+    }
+
+    /// Drops the cached preview once the real output exists or the photo
+    /// leaves the library.
+    private func discardPreview(_ id: PhotoItem.ID) {
+        previewTasks[id]?.cancel()
+        previewTasks[id] = nil
+        guard let item = items.first(where: { $0.id == id }) else { return }
+        if let url = item.previewURL { try? FileManager.default.removeItem(at: url) }
+        update(id) { $0.previewURL = nil; $0.previewState = .none }
     }
 
     func clearFinished() {

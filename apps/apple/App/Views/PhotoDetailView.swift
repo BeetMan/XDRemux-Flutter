@@ -37,6 +37,9 @@ struct PhotoDetailView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            // HDR before converting: the core renders the same output into
+            // the cache (sub-second for a typical photo on an M-series Mac).
+            .task(id: item.id) { await model.preparePreview(item.id) }
         } else {
             ContentUnavailableView("照片已移出", systemImage: "photo")
         }
@@ -52,6 +55,7 @@ struct PhotoDetailView: View {
                 ProgressView(value: p)
                 HStack {
                     Text(item.statusText).font(.caption).foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
                     Spacer()
                     Button("取消") { model.cancel(item.id) }.controlSize(.small)
                 }
@@ -148,6 +152,17 @@ struct PhotoDetailView: View {
         }
     }
 
+    /// Same wording as the Flutter app's settings page.
+    private var stylesHint: LocalizedStringKey {
+        if model.config.applePhotographicStyles3 {
+            return "摄影风格 3 已包含摄影风格 2：色调、颜色、强度之外，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。"
+        }
+        if model.config.applePhotographicStyles {
+            return "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。"
+        }
+        return "摄影风格数据让 Apple“照片”能像对 iPhone 照片一样调整色调、颜色和强度。"
+    }
+
     private func optionsSection(_ item: PhotoItem) -> some View {
         GroupBox("转换选项") {
             VStack(alignment: .leading, spacing: 12) {
@@ -158,14 +173,17 @@ struct PhotoDetailView: View {
                 .pickerStyle(.segmented)
 
                 Text(model.config.outputMode == .oppo
-                     ? "恢复 OPPO 兼容结构、元数据和 OPPO 私有尾部数据，照片在 ColorOS 图库里像原机照片。"
-                     : "不追加 OPPO 私有信息，照片可在 Apple 照片里继续编辑。")
+                     ? "兼容 OPPO / 一加相册的标准文件格式，恢复原机结构与私有尾部数据，支持后续编辑。"
+                     : "面向 Apple“照片”的兼容文件格式，不写入 OPPO 私有信息，支持继续调节摄影风格。")
                     .font(.caption).foregroundStyle(.secondary)
 
                 if model.config.outputMode == .apple {
-                    Toggle("Apple 摄影风格", isOn: $model.config.applePhotographicStyles)
-                    Toggle("摄影风格 3（纹理与颗粒）", isOn: $model.config.applePhotographicStyles3)
+                    Toggle("摄影风格 2", isOn: $model.config.applePhotographicStyles)
+                        .disabled(model.config.applePhotographicStyles3)
+                    Toggle("摄影风格 3", isOn: $model.config.applePhotographicStyles3)
                     Toggle("Apple 人像数据", isOn: $model.config.applePortrait)
+                    Text(stylesHint)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Button {
@@ -189,6 +207,10 @@ struct PhotoDetailView: View {
 /// HarmonyOS app does; releasing restores HDR.
 struct PreviewCard: View {
     let item: PhotoItem
+    /// The converted output, or the pre-conversion HDR preview the model
+    /// rendered through the same core (`LibraryModel.preparePreview`).
+    private var hdrURL: URL? { item.product?.outputURL ?? item.previewURL }
+    private var isPreview: Bool { item.product == nil && item.previewURL != nil }
     #if os(iOS)
     // `UIImageReader` with `prefersHighDynamicRange` is the supported HDR
     // path on iOS; a CGImage decoded with `kCGImageSourceDecodeToHDR`
@@ -211,7 +233,9 @@ struct PreviewCard: View {
                     .scaledToFit()
                     .allowedDynamicRange(showSDR ? .standard : .high)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(alignment: .topLeading) { badge(showSDR ? "SDR 效果" : "HDR 输出") }
+                    .overlay(alignment: .topLeading) {
+                        badge(showSDR ? "SDR 效果" : (isPreview ? "HDR 预览" : "HDR 输出"))
+                    }
                     // Top corner, opposite the badge: the bottom edge is
                     // where OPPO's watermark strip sits.
                     .overlay(alignment: .topTrailing) { sdrCompareButton }
@@ -221,17 +245,29 @@ struct PreviewCard: View {
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .topLeading) { badge("原图预览") }
+                    .overlay(alignment: .bottomTrailing) {
+                        if item.previewState == .rendering {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini)
+                                Text("正在生成 HDR 预览…")
+                            }
+                            .font(.caption2)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(10)
+                        }
+                    }
             } else {
                 ProgressView()
             }
         }
         .frame(maxWidth: .infinity)
         .frame(minHeight: 220, maxHeight: 420)
-        .task(id: item.product?.outputURL) {
+        .task(id: hdrURL) {
             hdrImage = nil
             sdrImage = nil
             comparingSDR = false
-            guard let url = item.product?.outputURL else { return }
+            guard let url = hdrURL else { return }
             hdrImage = await Self.decode(url, hdr: true)
             // Decoded up front so the hold shows SDR without a visible delay.
             sdrImage = await Self.decode(url, hdr: false)
