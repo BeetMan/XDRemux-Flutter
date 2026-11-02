@@ -29,11 +29,11 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-windows-${{ env.X265_TAG }}-asm
@@ -153,7 +153,7 @@ jobs:
           Copy-Item $src $dst
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: apps/flutter/build/installer/XDRemux-Windows-${{ env.TAG_VERSION }}-Setup.exe
@@ -172,11 +172,11 @@ jobs:
     runs-on: windows-11-arm
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-windows-arm64-${{ env.X265_TAG }}
@@ -328,7 +328,7 @@ jobs:
           Copy-Item $src $dst
 
       - name: Upload Windows ARM64 installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-arm64-installer
           path: apps/flutter/build/installer/XDRemux-Windows-arm64-${{ env.TAG_VERSION }}-Setup.exe
@@ -340,10 +340,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -366,7 +366,7 @@ jobs:
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
@@ -543,7 +543,7 @@ jobs:
             "apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-$TAG_VERSION.apk"
 
       - name: Upload Android APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-${{ env.TAG_VERSION }}.apk
@@ -555,11 +555,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-macos-${{ env.X265_TAG }}
@@ -664,7 +664,7 @@ jobs:
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: apps/flutter/build/dmg/XDRemux-macOS-${{ env.TAG_VERSION }}.dmg
@@ -679,14 +679,14 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify iPhone Duo SDK and APIs
         run: bash tools/apple/check_ios_sdk.sh
 
       - name: Restore x265 iOS build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           # SDK-specific cache: do not reuse Xcode 26 object files.
@@ -787,7 +787,7 @@ jobs:
           zip -qry "XDRemux-iOS-$TAG_VERSION-unsigned.ipa" Payload
 
       - name: Upload iOS IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-ipa
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
@@ -820,10 +820,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -852,7 +852,7 @@ jobs:
           test "$missing" -eq 0
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: false
           # Tags carrying a -suffix (v0.1.9-pre.1) publish as pre-release so
