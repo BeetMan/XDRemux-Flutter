@@ -20,6 +20,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""
+          # v2 denies warnings via CARGO_BUILD_WARNINGS by default; keep
+          # warnings non-fatal as before (rustflags "" did this under v1).
+          build-warnings: ""
 
       - name: Install ffmpeg (encoder fallback)
         run: brew install ffmpeg
@@ -45,6 +48,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""
+          # v2 denies warnings via CARGO_BUILD_WARNINGS by default; keep
+          # warnings non-fatal as before (rustflags "" did this under v1).
+          build-warnings: ""
 
       - name: Build workspace
         run: cargo build --workspace
