@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install native dependencies
         shell: bash
@@ -29,7 +29,7 @@ jobs:
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-linux-${{ env.X265_TAG }}-asm-10bit
@@ -85,7 +85,7 @@ jobs:
         working-directory: apps/flutter
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Test Apple SDK preflight guard
         working-directory: .

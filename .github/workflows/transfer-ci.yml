@@ -40,7 +40,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
@@ -50,7 +50,7 @@ jobs:
           flutter-version: 3.47.9
           channel: stable
           cache: true
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -59,7 +59,7 @@ jobs:
             crates/xdremux-transfer-ffi/target/debug
             crates/xdremux-transfer-ffi/target/release
           key: ${{ runner.os }}-transfer-rust-1.97.1-${{ hashFiles('crates/xdremux-transfer/Cargo.lock', 'crates/xdremux-transfer-ffi/Cargo.lock') }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Run transfer gate
@@ -71,7 +71,7 @@ jobs:
         run: ./.github/scripts/transfer-ci.ps1 -ReportRoot "$env:RUNNER_TEMP/transfer-results"
       - name: Retain reports and diagnostic logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: transfer-windows-${{ github.sha }}
           path: |
@@ -96,7 +96,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
@@ -107,7 +107,7 @@ jobs:
           flutter-version: 3.47.9
           channel: stable
           cache: true
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -143,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up OpenHarmony SDK
         id: ohos-sdk
         uses: openharmony-rs/setup-ohos-sdk@v1.0.1

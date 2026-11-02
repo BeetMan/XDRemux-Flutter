@@ -14,12 +14,15 @@ jobs:
       # CI builds (same as the CI workflow's smoke job).
       XDREMUX_USE_FFMPEG: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
           rustflags: ""
+          # v2 denies warnings via CARGO_BUILD_WARNINGS by default; keep
+          # warnings non-fatal as before (rustflags "" did this under v1).
+          build-warnings: ""
 
       - name: Install ffmpeg (encoder fallback)
         run: brew install ffmpeg
@@ -39,12 +42,15 @@ jobs:
     env:
       XDREMUX_USE_FFMPEG: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
           rustflags: ""
+          # v2 denies warnings via CARGO_BUILD_WARNINGS by default; keep
+          # warnings non-fatal as before (rustflags "" did this under v1).
+          build-warnings: ""
 
       - name: Build workspace
         run: cargo build --workspace

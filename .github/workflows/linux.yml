@@ -51,7 +51,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install native dependencies
         run: |
@@ -69,7 +69,7 @@ jobs:
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           # Never reuse objects compiled on ubuntu-latest with a newer glibc.
@@ -187,7 +187,7 @@ jobs:
           cat dist/*.sha256
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x64-release
           path: dist/*
@@ -202,7 +202,7 @@ jobs:
       contents: write
     steps:
       - name: Download built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-x64-release
           path: dist
