@@ -92,6 +92,10 @@ targets:
         # and the macOS app dies at launch with "Library not loaded".
         "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]": ["$(inherited)", "@executable_path/../Frameworks", "@loader_path/../Frameworks"]
         "LD_RUNPATH_SEARCH_PATHS[sdk=iphone*]": ["$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"]
+        # The transfer core ships an arm64-only simulator slice (no
+        # x86_64-apple-ios build), so a generic simulator build must not
+        # try to link an x86_64 app.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         # macOS: no app group (needs a development certificate to sign).
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": App/XDRemux-macOS.entitlements
       configs:
