@@ -339,6 +339,15 @@ Flutter 版生成的检查点文件可被原生版读取。
   照片信息；不足则沿用纵向堆叠（手机）。Duo 展开态详情栏实测 547pt（侧栏封顶 300pt 后），刚好进两栏；macOS 窗口也走两栏。
 - 侧栏 `navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 300)`：`.balanced` 风格不设 max 会把侧栏分走一半屏幕。
 - 未验证：iPad 实机；Duo 展开横屏姿态。
+
+**§8 补充：窄屏两栏给照片让位（2026-11-03，分支 `feat/apple-detail-photo-space`）**
+
+- Duo 展开态 951pt：侧栏 280 + 选项栏 280 + 边距后照片只剩约 340pt。现在 iOS 上窗口宽度 < 1000pt 时，点选一张照片即把
+  `columnVisibility` 切到 `.detailOnly`，照片一栏拿到约 540pt；导航栏自带的侧栏按钮把列表拉回来。窗口变宽越过阈值
+  （旋转 / iPad 分屏调整）时恢复 `.all`；iPad 全屏与 macOS 不受影响。窗口宽度由根视图 `background` 里的 `GeometryReader` 回报。
+- 两栏模式下预览卡的灰色底板在 HDR / 输出图解码后隐藏：列高远大于照片，底板只会框住一大片空白。
+- 实测（Duo 模拟器）：点行 → 侧栏收起、照片撑满高度；侧栏按钮 → 列表回来。启动时恢复的选中项不触发收起（宽度尚未量到），
+  首屏仍是列表 + 详情。未验证：iPad 实机横竖屏切换。
 **局域网传输（LocalSend v2）接入（2026-11-01，分支 `feat/apple-transfer`，基于 `rebase/local-transfer-20261028` + main）**
 
 - 传输核心复用 `crates/xdremux-transfer-ffi`（C ABI 1.3，Rust 1.97.1），以**动态**框架打包：`tools/apple/build_transfer_xcframework.sh`
