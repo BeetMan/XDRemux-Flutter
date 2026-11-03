@@ -252,7 +252,11 @@ struct PreviewCard: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16).fill(.quaternary)
+            // In the two-column layout the column is far taller than the
+            // photo, so the grey plate would frame mostly empty space.
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.quaternary)
+                .opacity(fillsHeight && hdrImage != nil ? 0 : 1)
             if let hdrImage {
                 let showSDR = comparingSDR && sdrImage != nil
                 previewImage(showSDR ? sdrImage! : hdrImage)

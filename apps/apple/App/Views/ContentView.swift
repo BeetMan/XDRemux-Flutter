@@ -20,6 +20,13 @@ struct ContentView: View {
     /// start. Left to its default the split view opens with the sidebar
     /// hidden on an unfolded phone, leaving a lone toolbar capsule.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Window width, for the narrow-regular rule below.
+    @State private var windowWidth: CGFloat = 0
+    /// Below this width (an unfolded phone, a narrow iPad split) the sidebar
+    /// and the two-column detail cannot both fit while leaving the photo a
+    /// useful size, so opening a photo hides the sidebar; the toolbar's
+    /// sidebar button brings the list back. Wider windows keep both.
+    static let narrowRegularWidth: CGFloat = 1000
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -84,6 +91,20 @@ struct ContentView: View {
                 // Side by side rather than detail-over-sidebar, so the list
                 // stays in reach while a photo is open.
                 .navigationSplitViewStyle(.balanced)
+                #if os(iOS)
+                .onChange(of: model.selectedID) { _, id in
+                    if id != nil, windowWidth > 0, windowWidth < Self.narrowRegularWidth {
+                        withAnimation { columnVisibility = .detailOnly }
+                    }
+                }
+                .onChange(of: windowWidth) { old, new in
+                    // Folding back to compact rebuilds as a stack; growing
+                    // past the threshold (rotation, iPad resize) restores the list.
+                    if new >= Self.narrowRegularWidth, old < Self.narrowRegularWidth {
+                        columnVisibility = .all
+                    }
+                }
+                #endif
                 #if os(macOS)
                 .dropDestination(for: URL.self) { urls, _ in
                     Task { await model.importFiles(urls) }
@@ -96,6 +117,13 @@ struct ContentView: View {
         // `Text(String)`, which SwiftUI does not re-evaluate when only the
         // locale changes; rebuilding the tree on a language switch does.
         .id(model.config.language)
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { windowWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in windowWidth = w }
+            }
+        }
         #if os(macOS)
         .toolbar { toolbarContent }
         #else
