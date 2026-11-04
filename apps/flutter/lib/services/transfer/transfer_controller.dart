@@ -56,6 +56,37 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
   static const _multicast = MethodChannel('xdremux/transfer-discovery');
   static const _traits = MethodChannel('xdremux/platform-traits');
+  static const _keepAwakeChannel = MethodChannel('xdremux/keep-awake');
+  bool _awake = false;
+
+  /// Phones stop reception when they sleep or leave the foreground, so keep
+  /// the screen on while any transfer is still moving.
+  void _syncKeepAwake() {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    final active =
+        receiving &&
+        transfers.values.any(
+          (t) => const [
+            'preparing',
+            'accepted',
+            'transferring',
+          ].contains(t['phase']),
+        );
+    if (active == _awake) return;
+    _awake = active;
+    unawaited(
+      (Platform.isIOS
+              ? _traits.invokeMethod<void>('setKeepAwake', active)
+              : _keepAwakeChannel.invokeMethod<void>('set', active))
+          .catchError((_) {}),
+    );
+  }
+
+  @override
+  void notifyListeners() {
+    _syncKeepAwake();
+    super.notifyListeners();
+  }
   static Future<String>? _modelName;
   static const _aliasKey = 'transfer.alias.v1';
 

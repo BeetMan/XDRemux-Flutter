@@ -56,6 +56,21 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         transferDocuments.configure(MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xdremux/transfer-documents"))
         transferMulticast.configure(MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xdremux/transfer-discovery"))
+        // Keeps the screen on while a LAN transfer runs; reception stops
+        // when the app leaves the foreground.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xdremux/keep-awake")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "set") {
+                    val on = call.arguments == true
+                    runOnUiThread {
+                        if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    result.success(null)
+                } else {
+                    result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, batteryChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

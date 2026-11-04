@@ -453,6 +453,10 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         result(["verticalBarEdge": edge])
       case "getModelName":
         result(Self.modelName())
+      case "setKeepAwake":
+        // Keeps the screen on while a LAN transfer runs.
+        UIApplication.shared.isIdleTimerDisabled = call.arguments as? Bool ?? false
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
