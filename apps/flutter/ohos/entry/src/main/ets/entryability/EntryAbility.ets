@@ -7,6 +7,7 @@ import { image } from '@kit.ImageKit';
 import { fileUri } from '@kit.CoreFileKit';
 import systemShare from '@hms.collaboration.systemShare';
 import fs from '@ohos.file.fs';
+import { deviceInfo } from '@kit.BasicServicesKit';
 
 /// Handles xdremux/share: shared files arrive as file:// URIs in systemShare
 /// records, which dart:io cannot read, so we copy them into the app cache
@@ -217,6 +218,17 @@ function copyUriToCache(context: common.UIAbilityContext, uri: string): string {
   return dest;
 }
 
+/** Marketing name ("HUAWEI Mate 70 Pro") for the LAN transfer alias. */
+class DeviceNameHandler implements MethodCallHandler {
+  onMethodCall(call: MethodCall, result: MethodResult): void {
+    if (call.method !== 'modelName') {
+      result.notImplemented();
+      return;
+    }
+    result.success(deviceInfo.marketName || `${deviceInfo.brand} ${deviceInfo.productModel}`.trim());
+  }
+}
+
 export default class EntryAbility extends FlutterAbility {
   configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
@@ -228,5 +240,7 @@ export default class EntryAbility extends FlutterAbility {
     galleryChannel.setMethodCallHandler(new GalleryPickHandler(this.context));
     const thumbnailChannel = new MethodChannel(messenger, 'xdremux/thumbnail');
     thumbnailChannel.setMethodCallHandler(new ThumbnailHandler());
+    const deviceChannel = new MethodChannel(messenger, 'xdremux/device');
+    deviceChannel.setMethodCallHandler(new DeviceNameHandler());
   }
 }

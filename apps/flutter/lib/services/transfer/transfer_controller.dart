@@ -126,7 +126,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       } else if (Platform.isIOS) {
         name = await _traits.invokeMethod<String>('getModelName');
       } else if (PlatformX.isOhos) {
-        name = 'HarmonyOS';
+        name = await const MethodChannel(
+          'xdremux/device',
+        ).invokeMethod<String>('modelName');
       } else if (Platform.isWindows) {
         name = Platform.environment['COMPUTERNAME'];
       } else {
