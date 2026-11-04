@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xdremux/services/transfer/transfer_controller.dart';
 import 'package:xdremux/services/transfer/transfer_models.dart';
 import 'package:xdremux/services/transfer/transfer_service.dart';
+import 'package:xdremux/services/xdremux_service.dart';
 import 'package:xdremux/transfer_page.dart';
 
 class _Native extends TransferService {
@@ -818,6 +819,45 @@ void main() {
       controller.peers.where((p) => p['address'] == '127.0.0.1:53317'),
       hasLength(1),
     );
+  });
+
+  testWidgets('a still and its same-named MOV read as one Live Photo', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    native.receipts.addAll([
+      {'id': 'a', 'name': 'IMG_7.HEIC', 'size': 3},
+      {'id': 'b', 'name': 'IMG_7.MOV', 'size': 3},
+      {'id': 'c', 'name': 'notes.txt', 'size': 3},
+    ]);
+    XdRemuxService.thumbnailRendererForTesting = (_, _) async => null;
+    addTearDown(() => XdRemuxService.thumbnailRendererForTesting = null);
+    await tester.runAsync(controller.ensureLocal);
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.textContaining('实况照片'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('clear-inbox')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('confirm-clear-inbox')));
+    for (var i = 0; i < 10 && controller.inbox.isNotEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(controller.inbox, isEmpty);
+    expect(
+      native.calls.where((c) => c['command'] == 'delete_receipt'),
+      hasLength(3),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('a .pvt Live Photo is sent as one .pvt.zip', (tester) async {

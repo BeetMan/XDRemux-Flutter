@@ -227,10 +227,7 @@ class _TransferPageState extends State<TransferPage>
               temp = await Directory.systemTemp.createTemp('xdremux-preview-');
               path = await extractLivePhotoStill(path, temp.path);
             }
-            return await XdRemuxService.generateThumbnail(
-              path,
-              maxPixelSize: size,
-            );
+            return await XdRemuxService.getThumbnail(path, maxPixelSize: size);
           } finally {
             await temp?.delete(recursive: true).catchError((_) => temp!);
           }
@@ -581,6 +578,86 @@ class _TransferPageState extends State<TransferPage>
       ),
     );
     if (paths != null && mounted) await _run(() => _addPaths(paths));
+  }
+
+  /// The `.mov` received alongside a still of the same name: how LocalSend
+  /// and loose XDRemux pairs carry a Live Photo.
+  Map<String, dynamic>? _pairedMovie(Map<String, dynamic> row) {
+    final name = row['name'] as String;
+    if (!transferImageName(name)) return null;
+    final stem = name.substring(0, name.lastIndexOf('.')).toLowerCase();
+    for (final other in transfer.inbox.values) {
+      if ((other['name'] as String).toLowerCase() == '$stem.mov') return other;
+    }
+    return null;
+  }
+
+  bool _isPairedMovie(Map<String, dynamic> row) {
+    final name = (row['name'] as String).toLowerCase();
+    if (!name.endsWith('.mov')) return false;
+    final stem = name.substring(0, name.length - 4);
+    return transfer.inbox.values.any((other) {
+      final n = (other['name'] as String).toLowerCase();
+      return transferImageName(n) && n.substring(0, n.lastIndexOf('.')) == stem;
+    });
+  }
+
+  Future<void> _saveAll() async {
+    var saved = 0, failed = 0;
+    for (final row in transfer.inbox.values.toList()) {
+      final name = row['name'] as String;
+      // A paired MOV is saved together with its still.
+      if (!TransferExport.galleryName(name) || _isPairedMovie(row)) continue;
+      try {
+        await TransferExport.saveToGallery(
+          transfer,
+          row,
+          movie: _pairedMovie(row),
+        );
+        saved++;
+      } catch (_) {
+        failed++;
+      }
+    }
+    _notify(
+      t(
+        '已存入相册 $saved 项${failed > 0 ? '，$failed 项失败' : ''}',
+        'Saved $saved to Photos${failed > 0 ? ', $failed failed' : ''}',
+      ),
+    );
+  }
+
+  Future<void> _clearInbox() async {
+    final count = transfer.inbox.length;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(t('清空收件箱？', 'Clear the inbox?')),
+        content: Text(
+          t(
+            '删除收件箱里的 $count 个文件。已存入相册或导出的副本不受影响。',
+            'Deletes $count inbox files. Copies already saved or exported stay.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(t('取消', 'Cancel')),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-clear-inbox'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(t('清空', 'Clear')),
+          ),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    await _run(() async {
+      for (final id in transfer.inbox.keys.toList()) {
+        await transfer.deleteReceipt(id);
+      }
+    });
   }
 
   Future<void> _importAll() async {
@@ -1700,16 +1777,42 @@ class _TransferPageState extends State<TransferPage>
     ),
     children: [
       if (transfer.inbox.isEmpty) _empty(context, t('收件箱为空', 'Inbox is empty')),
-      if (transfer.inbox.values.any(
-        (r) => transferImageName(r['name'] as String),
-      ))
+      if (transfer.inbox.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: FilledButton.tonalIcon(
-            key: const ValueKey('import-all'),
-            icon: const Icon(Icons.playlist_add),
-            onPressed: disabled ? null : () => _run(_importAll),
-            label: Text(t('全部照片加入转换队列', 'Add all photos to the conversion queue')),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (TransferExport.savesToGallery &&
+                  transfer.inbox.values.any(
+                    (r) => TransferExport.galleryName(r['name'] as String),
+                  ))
+                FilledButton.tonalIcon(
+                  key: const ValueKey('save-all'),
+                  icon: const Icon(Icons.photo_library_outlined),
+                  onPressed: disabled ? null : () => _run(_saveAll),
+                  label: Text(t('全部存入相册', 'Save all to Photos')),
+                ),
+              if (transfer.inbox.values.any(
+                (r) => transferImageName(r['name'] as String),
+              ))
+                FilledButton.tonalIcon(
+                  key: const ValueKey('import-all'),
+                  icon: const Icon(Icons.playlist_add),
+                  onPressed: disabled ? null : () => _run(_importAll),
+                  label: Text(t('全部加入转换队列', 'Queue all photos')),
+                ),
+              TextButton.icon(
+                key: const ValueKey('clear-inbox'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                icon: const Icon(Icons.delete_sweep_outlined),
+                onPressed: disabled ? null : _clearInbox,
+                label: Text(t('清空', 'Clear')),
+              ),
+            ],
           ),
         ),
       for (final receipt in transfer.inbox.values)
@@ -1728,7 +1831,8 @@ class _TransferPageState extends State<TransferPage>
     final id = row['id'] as String;
     final name = row['name'] as String;
     final image = transferImageName(name);
-    final live = isLivePhotoZip(name);
+    final movie = _pairedMovie(row);
+    final live = isLivePhotoZip(name) || movie != null;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
@@ -1798,23 +1902,27 @@ class _TransferPageState extends State<TransferPage>
                         }),
                   label: Text(t('加入转换队列', 'Add to conversion queue')),
                 ),
-              if (live && TransferExport.savesLivePhoto)
+              if (TransferExport.savesToGallery &&
+                  TransferExport.galleryName(name))
                 TextButton.icon(
+                  key: ValueKey('save-$id'),
                   icon: const Icon(Icons.photo_library_outlined, size: 18),
                   onPressed: disabled
                       ? null
                       : () => _run(() async {
-                          await TransferExport.saveLivePhoto(
+                          await TransferExport.saveToGallery(
                             transfer,
-                            id,
-                            name,
+                            row,
+                            movie: movie,
                           );
                           _notify(
-                            Platform.isIOS
+                            !live
+                                ? t('已存入相册', 'Saved to Photos')
+                                : Platform.isIOS
                                 ? t('已存为实况照片', 'Saved as a Live Photo')
                                 : t(
-                                    '已存入相册（HEIF + MOV）',
-                                    'Saved to the gallery (HEIF + MOV)',
+                                    '已存入相册（照片 + 视频）',
+                                    'Saved to the gallery (photo + video)',
                                   ),
                           );
                         }),
