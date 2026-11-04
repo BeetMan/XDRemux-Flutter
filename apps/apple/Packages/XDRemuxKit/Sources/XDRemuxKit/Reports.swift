@@ -14,7 +14,7 @@ public enum XDRemuxError: Error, Equatable, Sendable {
 
 /// Swift copy of `ClassificationResult`; the Rust struct is freed before this
 /// value is returned.
-public struct Classification: Equatable, Sendable {
+public struct Classification: Codable, Equatable, Sendable {
     public let modeKey: String?
     public let folderName: String?
     public let status: String?
@@ -26,6 +26,21 @@ public struct Classification: Equatable, Sendable {
     public let hdrKind: String?
     /// "x6" or "x7", nil when unknown.
     public let family: String?
+
+    /// Memberwise: for the app's inspection cache and for tests.
+    public init(modeKey: String?, folderName: String?, status: String?, rawUserComment: String? = nil,
+                hasTagFlags: Bool = false, tagFlags: UInt64 = 0, unknownFlags: UInt64 = 0,
+                hdrKind: String?, family: String?) {
+        self.modeKey = modeKey
+        self.folderName = folderName
+        self.status = status
+        self.rawUserComment = rawUserComment
+        self.hasTagFlags = hasTagFlags
+        self.tagFlags = tagFlags
+        self.unknownFlags = unknownFlags
+        self.hdrKind = hdrKind
+        self.family = family
+    }
 
     init(consuming result: ClassificationResult) {
         defer { xdremux_free_classification_result(result) }
@@ -43,13 +58,22 @@ public struct Classification: Equatable, Sendable {
 
 /// Swift copy of `ConversionResult` (returned by `xdremux_inspect`,
 /// `xdremux_convert*`). The Rust struct is freed before this value is returned.
-public struct ConversionReport: Equatable, Sendable {
+public struct ConversionReport: Codable, Equatable, Sendable {
     public let success: Bool
     public let mode: String?
     public let family: String?
     public let edrScale: Double
     public let gainMapMax: Double
     public let errorMessage: String?
+
+    public init(success: Bool, mode: String?, family: String?, edrScale: Double, gainMapMax: Double, errorMessage: String?) {
+        self.success = success
+        self.mode = mode
+        self.family = family
+        self.edrScale = edrScale
+        self.gainMapMax = gainMapMax
+        self.errorMessage = errorMessage
+    }
 
     init(consuming result: ConversionResult) {
         defer { xdremux_free_result(result) }

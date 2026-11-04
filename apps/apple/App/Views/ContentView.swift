@@ -103,6 +103,13 @@ struct ContentView: View {
                     if new >= Self.narrowRegularWidth, old < Self.narrowRegularWidth {
                         columnVisibility = .all
                     }
+                    // First measurement: the selection restored at launch
+                    // happened before the width was known.
+                    // Set on the next run loop turn: a change made during
+                    // the split view's first layout pass is dropped.
+                    if old == 0, new > 0, new < Self.narrowRegularWidth, model.selectedID != nil {
+                        DispatchQueue.main.async { columnVisibility = .detailOnly }
+                    }
                 }
                 #endif
                 #if os(macOS)
@@ -391,7 +398,8 @@ struct PhotoListView: View {
         .navigationSubtitle("Rust 内核 \(model.coreVersion)")
         #else
         // Large in both layouts: as a sidebar column the inline title was
-        // crowded out by the toolbar and the column had no name at all.
+        // crowded out by the toolbar and the column had no name at all
+        // (`inlineLarge` loses it the same way).
         .navigationBarTitleDisplayMode(.large)
         #endif
     }
@@ -406,6 +414,9 @@ struct PhotoListView: View {
         }
         if case .failed = item.state {
             Button("重试") { Task { await model.retry(item.id) } }
+        }
+        if item.product != nil {
+            Button("重新转换") { model.reconvert(item.id) }
         }
         Button("移出", role: .destructive) { model.remove(item.id) }
             .disabled(item.state.isBusy)

@@ -15,7 +15,7 @@ struct PhotoDetailView: View {
     /// Below this width the page stacks (phone); at or above it the photo
     /// takes the left and the controls the right (unfolded Duo, iPad, Mac).
     static let twoColumnMinWidth: CGFloat = 520
-    static let controlsColumnWidth: CGFloat = 280
+    static let controlsColumnWidth: CGFloat = 300
 
     var body: some View {
         if let item {
@@ -28,6 +28,9 @@ struct PhotoDetailView: View {
                             VStack(alignment: .leading, spacing: 20) { sections(item) }
                         }
                         .frame(width: Self.controlsColumnWidth)
+                        // Label-over-value rows: two columns of text do not
+                        // fit a 300pt column without wrapping every value.
+                        .environment(\.infoRowsStacked, true)
                     }
                     .padding()
                 } else {
@@ -123,7 +126,7 @@ struct PhotoDetailView: View {
                 InfoRow("曝光", item.details?.exposureSummary)
                 InfoRow("HDR 类型", item.classification?.hdrKind?.uppercased())
                 InfoRow("机型家族", item.classification?.family?.uppercased())
-                InfoRow("拍摄模式", item.classification?.modeKey)
+                InfoRow("拍摄模式", captureModeName(item.classification?.modeKey))
                 InfoRow("分类状态", item.classification?.status)
                 if let i = item.inspection, i.success {
                     InfoRow("EDR scale", String(format: "%.3f", i.edrScale))
@@ -138,6 +141,30 @@ struct PhotoDetailView: View {
                                        m.hasAudio == true ? L("有声音") : nil].compactMap { $0 }.joined(separator: " · "))
                 }
             }
+    }
+
+    /// The core's mode keys, named as the Flutter app and the organizer's
+    /// folders name them.
+    private func captureModeName(_ key: String?) -> String? {
+        switch key {
+        case nil: return nil
+        case "master": return L("大师模式")
+        case "ricoh-gr": return "RICOH GR"
+        case "professional": return L("专业模式")
+        case "portrait": return L("人像")
+        case "night": return L("夜景")
+        case "panorama": return L("全景")
+        case "time-lapse": return L("延时摄影")
+        case "ultra-high-resolution": return L("超清")
+        case "id-photo": return L("证件照")
+        case "sticker": return L("贴纸")
+        case "enhanced-text": return L("超级文本")
+        case "group-photo": return L("合影")
+        case "double-exposure": return L("双重曝光")
+        case "beauty": return L("美颜")
+        case "normal": return L("普通拍照")
+        case let other?: return other
+        }
     }
 
     /// "OPPO Find X8 Ultra", not "OPPO OPPO Find X8 Ultra": OPPO's model
@@ -374,18 +401,38 @@ struct ResultSection: View {
             VStack(alignment: .leading, spacing: 12) {
                 InfoGrid {
                     InfoRow("输出模式", product.config.outputMode == .oppo ? L("OPPO 兼容") : L("Apple 标准"))
-                    InfoRow("文件", product.outputURL.lastPathComponent)
-                    if let mov = product.pairedVideoURL { InfoRow("Live Photo 视频", mov.lastPathComponent) }
+                    InfoRow("文件", product.outputURL.lastPathComponent, singleLine: true)
+                    if let mov = product.pairedVideoURL { InfoRow("Live Photo 视频", mov.lastPathComponent, singleLine: true) }
                     if !product.extraVideoURLs.isEmpty {
-                        InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "))
+                        InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "), singleLine: true)
                     }
                     InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
                     InfoRow("校验", L("通过（可解码 + 结构检查）"))
                 }
                 ExportButtons(model: model, item: item, product: product)
+                // Another mode for the same photo, without re-importing it.
+                Button {
+                    model.reconvert(item.id)
+                } label: {
+                    Label("重新转换", systemImage: "arrow.counterclockwise")
+                }
+                .controlSize(.small)
             }
             .padding(.top, 4)
         }
+    }
+}
+
+/// Set on the narrow controls column: `InfoRow` stacks the label above the
+/// value instead of using two grid columns.
+private struct InfoRowsStackedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var infoRowsStacked: Bool {
+        get { self[InfoRowsStackedKey.self] }
+        set { self[InfoRowsStackedKey.self] = newValue }
     }
 }
 
@@ -402,19 +449,40 @@ struct InfoGrid<Content: View>: View {
 struct InfoRow: View {
     let label: LocalizedStringKey
     let value: String?
+    /// File names: one line, truncated in the middle, rather than broken
+    /// mid-word across lines.
+    var singleLine = false
+    @Environment(\.infoRowsStacked) private var stacked
 
-    init(_ label: LocalizedStringKey, _ value: String?) {
+    init(_ label: LocalizedStringKey, _ value: String?, singleLine: Bool = false) {
         self.label = label
         self.value = value
+        self.singleLine = singleLine
     }
 
     var body: some View {
         if let value, !value.isEmpty {
-            GridRow {
-                Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-                Text(value).textSelection(.enabled)
+            if stacked {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label).font(.caption).foregroundStyle(.secondary)
+                    valueText(value)
+                }
+                .padding(.bottom, 4)
+            } else {
+                GridRow {
+                    Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    valueText(value)
+                }
+                .font(.callout)
             }
-            .font(.callout)
         }
+    }
+
+    private func valueText(_ value: String) -> some View {
+        Text(value)
+            .textSelection(.enabled)
+            .lineLimit(singleLine ? 1 : nil)
+            .truncationMode(.middle)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -601,6 +601,22 @@
         }
       }
     },
+    "专业模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pro"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专业模式"
+          }
+        }
+      }
+    },
     "严格 ISO 21496-1 tmap": {
       "localizations": {
         "en": {
@@ -613,6 +629,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "严格 ISO 21496-1 tmap"
+          }
+        }
+      }
+    },
+    "人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人像"
           }
         }
       }
@@ -949,6 +981,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "停止队列并取消正在进行的转换；已完成的不受影响"
+          }
+        }
+      }
+    },
+    "全景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panorama"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全景"
           }
         }
       }
@@ -1385,6 +1433,22 @@
         }
       }
     },
+    "双重曝光": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double exposure"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "双重曝光"
+          }
+        }
+      }
+    },
     "发送 %lld 个文件": {
       "localizations": {
         "en": {
@@ -1513,6 +1577,22 @@
         }
       }
     },
+    "合影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Group photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "合影"
+          }
+        }
+      }
+    },
     "同时转换 %lld 张": {
       "localizations": {
         "en": {
@@ -1637,6 +1717,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "复制中…"
+          }
+        }
+      }
+    },
+    "夜景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Night"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "夜景"
+          }
+        }
+      }
+    },
+    "大师模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Master"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大师模式"
           }
         }
       }
@@ -2313,6 +2425,22 @@
         }
       }
     },
+    "延时摄影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time-lapse"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "延时摄影"
+          }
+        }
+      }
+    },
     "建议选择未经转换的 OPPO 原始照片；它也是后续恢复原机水印和元数据的来源。": {
       "localizations": {
         "en": {
@@ -2917,6 +3045,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法读取 %@，请重新导入"
+          }
+        }
+      }
+    },
+    "普通拍照": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "普通拍照"
           }
         }
       }
@@ -3545,6 +3689,22 @@
         }
       }
     },
+    "美颜": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beauty"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "美颜"
+          }
+        }
+      }
+    },
     "自动": {
       "localizations": {
         "en": {
@@ -3721,6 +3881,22 @@
         }
       }
     },
+    "证件照": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证件照"
+          }
+        }
+      }
+    },
     "该文件夹下没有找到 HEIC / JPEG 照片": {
       "localizations": {
         "en": {
@@ -3829,6 +4005,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "读取照片失败：%@"
+          }
+        }
+      }
+    },
+    "贴纸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sticker"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "贴纸"
+          }
+        }
+      }
+    },
+    "超清": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ultra HD"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "超清"
+          }
+        }
+      }
+    },
+    "超级文本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enhanced text"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "超级文本"
           }
         }
       }
@@ -4261,6 +4485,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "通过（可解码 + 结构检查）"
+          }
+        }
+      }
+    },
+    "重新转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert again"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新转换"
           }
         }
       }
