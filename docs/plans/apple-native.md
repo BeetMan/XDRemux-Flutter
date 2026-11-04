@@ -362,6 +362,11 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 没做成：侧栏大标题在折叠 / 展开后在"展开态"与"收起态"之间跳动。试过 `toolbarTitleDisplayMode(.inlineLarge)`，侧栏里标题直接消失，
   已回退为 `.large`。
 - 注意：Duo 模拟器同时被另一个会话使用，验证期间对方覆盖安装过一次旧版本；重新转换只验证了按钮出现，未走完整流程。
+
+**§8 补充：详情分栏阈值 520 → 800pt（2026-11-04，分支 `feat/apple-detail-stack-threshold`）**
+
+- Duo 展开态列表打开时详情区约 670pt，左右分栏后照片只有 340pt，不如纵向堆叠；现在这个宽度堆叠，照片横贯整个详情区。
+  收起列表（约 950pt）、iPad 横屏、macOS 仍走分栏；iPad 竖屏带侧栏（约 550pt）改为堆叠。
 **局域网传输（LocalSend v2）接入（2026-11-01，分支 `feat/apple-transfer`，基于 `rebase/local-transfer-20261028` + main）**
 
 - 传输核心复用 `crates/xdremux-transfer-ffi`（C ABI 1.3，Rust 1.97.1），以**动态**框架打包：`tools/apple/build_transfer_xcframework.sh`
