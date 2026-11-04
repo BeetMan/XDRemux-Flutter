@@ -44,6 +44,13 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   bool discovering = false;
   String? discoveryError;
   final List<Map<String, dynamic>> peers = [];
+
+  /// Peers found by [scanSubnet]; kept across multicast updates.
+  final Map<String, Map<String, dynamic>> _scanned = {};
+  bool scanning = false;
+  Future<void>? _scanTask;
+  DateTime _receivingSince = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _autoScanned = false;
   final Map<String, String> interfaces = {};
   String? discoveryInterface;
   DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
@@ -193,6 +200,85 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// LocalSend's fallback when multicast finds nothing: try every /24
+  /// neighbour of this device's IPv4 addresses on the LocalSend ports, then
+  /// identify the ones that answer. Results merge into [peers].
+  Future<void> scanSubnet() =>
+      _scanTask ??= _scanNow().whenComplete(() => _scanTask = null);
+
+  Future<void> _scanNow() async {
+    if (!receiving || stopping) return;
+    final generation = _stopGeneration;
+    bool current() => generation == _stopGeneration && receiving && !stopping;
+    final own = [
+      for (final a in addresses)
+        if (InternetAddress.tryParse(a)?.type == InternetAddressType.IPv4) a,
+    ];
+    final targets = <(String, int)>[
+      for (final prefix in {
+        for (final a in own) a.substring(0, a.lastIndexOf('.')),
+      })
+        for (var i = 1; i < 255; i++)
+          if (!own.contains('$prefix.$i'))
+            for (final port in const [53319, 53317]) ('$prefix.$i', port),
+    ];
+    if (targets.isEmpty) return;
+    scanning = true;
+    notifyListeners();
+    try {
+      final open = <(String, int)>[];
+      for (var i = 0; i < targets.length; i += 128) {
+        await Future.wait([
+          for (final target in targets.skip(i).take(128))
+            Socket.connect(
+                  target.$1,
+                  target.$2,
+                  timeout: const Duration(milliseconds: 600),
+                )
+                .then((socket) {
+                  socket.destroy();
+                  open.add(target);
+                })
+                .catchError((_) {}),
+        ]);
+        if (!current()) return;
+      }
+      final self = (ready?['fingerprint'] as String?)?.toUpperCase();
+      for (final (host, port) in open) {
+        try {
+          final peer = await probe(host, port);
+          if (!current()) return;
+          final fp = (peer['fingerprint'] as String?)?.toUpperCase();
+          if (fp == null || fp == self) continue;
+          _scanned[fp] = {
+            ...peer,
+            'alias': peer['alias'] ?? host,
+            'address': '$host:$port',
+          };
+        } catch (_) {
+          // Not a LocalSend peer, or it declined; skip it.
+        }
+      }
+      _mergeScanned();
+    } finally {
+      if (generation == _stopGeneration) {
+        scanning = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _mergeScanned() {
+    for (final peer in _scanned.values) {
+      final fp = (peer['fingerprint'] as String).toUpperCase();
+      if (!peers.any(
+        (p) => (p['fingerprint'] as String?)?.toUpperCase() == fp,
+      )) {
+        peers.add(peer);
+      }
+    }
+  }
+
   Future<void> discover() {
     if (!receiving || stopping) {
       return Future<void>.error(const TransferException('closed'));
@@ -257,6 +343,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           (p) => Map<String, dynamic>.from(p as Map),
         ),
       );
+    _mergeScanned();
     if (!discovering) {
       try {
         await _setMulticast(
@@ -305,6 +392,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
       ready = native.ready;
       receiving = receive;
+      _receivingSince = DateTime.now();
+      _autoScanned = false;
       trusted.addAll(
         (await SharedPreferences.getInstance()).getStringList(
               'transfer.trusted.v1',
@@ -530,6 +619,14 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           _discoveryTask == null &&
           DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
         _lastDiscoveryPoll = DateTime.now();
+        // Multicast is often blocked (and iOS needs Apple's multicast
+        // entitlement), so after a few quiet seconds scan the subnet once.
+        if (peers.isEmpty &&
+            !_autoScanned &&
+            DateTime.now().difference(_receivingSince).inSeconds >= 3) {
+          _autoScanned = true;
+          unawaited(scanSubnet().catchError((_) {}));
+        }
         changed = true;
         final revision = _discoveryRevision;
         try {
@@ -813,6 +910,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     receiving = false;
     discovering = false;
     peers.clear();
+    _scanned.clear();
+    scanning = false;
     _timer?.cancel();
     _polling = null;
     // New startup must load its own state, without sharing an old query future.

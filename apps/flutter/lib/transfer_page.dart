@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -1280,7 +1281,13 @@ class _TransferPageState extends State<TransferPage>
               key: const ValueKey('refresh-discovery'),
               tooltip: t('重新发现', 'Discover again'),
               icon: const Icon(Icons.refresh),
-              onPressed: disabled ? null : () => _run(transfer.discover),
+              onPressed: disabled || transfer.scanning
+                  ? null
+                  : () => _run(() async {
+                      await transfer.discover();
+                      // Runs in the background; the page stays usable.
+                      unawaited(transfer.scanSubnet().catchError((_) {}));
+                    }),
             )
           : null,
       children: [
@@ -1298,7 +1305,26 @@ class _TransferPageState extends State<TransferPage>
           ),
         if (transfer.discoveryError != null)
           _hint(context, transferErrorText(transfer.discoveryError!)),
-        if (transfer.receiving && transfer.peers.isEmpty)
+        if (transfer.scanning)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _hint(
+                    context,
+                    t('正在扫描局域网…', 'Scanning the local network…'),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else if (transfer.receiving && transfer.peers.isEmpty)
           _hint(
             context,
             t(

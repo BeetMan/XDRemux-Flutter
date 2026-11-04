@@ -797,6 +797,29 @@ void main() {
     expect(find.text('B.HEIC'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  test('a subnet scan finds a peer that multicast missed', () async {
+    final server = await ServerSocket.bind('127.0.0.1', 53317);
+    final accepted = server.listen((socket) => socket.destroy());
+    addTearDown(() async {
+      await accepted.cancel();
+      await server.close();
+    });
+    await controller.enableReceiving();
+    controller.addresses = ['127.0.0.9'];
+    await controller.scanSubnet();
+    expect(controller.scanning, isFalse);
+    final found = controller.peers.singleWhere(
+      (p) => p['address'] == '127.0.0.1:53317',
+    );
+    expect(found['fingerprint'], 'B' * 64);
+    // A later multicast update keeps the scanned peer.
+    await controller.discover();
+    expect(
+      controller.peers.where((p) => p['address'] == '127.0.0.1:53317'),
+      hasLength(1),
+    );
+  });
+
   testWidgets('a .pvt Live Photo is sent as one .pvt.zip', (tester) async {
     final bundle = Directory.systemTemp.createTempSync('live').path;
     final pvt = Directory('$bundle/IMG_1.pvt')..createSync();
