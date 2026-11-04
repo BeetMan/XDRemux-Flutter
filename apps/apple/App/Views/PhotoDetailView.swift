@@ -12,9 +12,11 @@ struct PhotoDetailView: View {
 
     private var item: PhotoItem? { model.items.first { $0.id == itemID } }
 
-    /// Below this width the page stacks (phone); at or above it the photo
-    /// takes the left and the controls the right (unfolded Duo, iPad, Mac).
-    static let twoColumnMinWidth: CGFloat = 520
+    /// Below this width the page stacks; at or above it the photo takes
+    /// the left and the controls the right. An unfolded Duo with the list
+    /// open (~670pt) stacks: split there, the photo got ~340pt. With the
+    /// list hidden (~950pt), on an iPad in landscape and on the Mac it splits.
+    static let twoColumnMinWidth: CGFloat = 800
     static let controlsColumnWidth: CGFloat = 300
 
     var body: some View {
