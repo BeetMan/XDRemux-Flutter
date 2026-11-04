@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import XDRemuxKit
@@ -125,8 +126,37 @@ final class LibraryModel {
         }
         restoring = false
         selectedID = items.first?.id
-        let ids = items.filter { FileManager.default.fileExists(atPath: $0.inputURL.path) }.map(\.id)
-        Task { for id in ids { await inspect(id, keepState: true) } }
+        let present = items.filter { FileManager.default.fileExists(atPath: $0.inputURL.path) }.map(\.id)
+        let cache = inspectionCache
+        Task {
+            // Cached first (disk only, no core calls), so a library of a few
+            // hundred photos is on screen at once; the rest go through the core.
+            var uncached: [PhotoItem.ID] = []
+            for id in present {
+                if let (snapshot, thumbnail) = await Task.detached(priority: .userInitiated, operation: { cache.load(id) }).value {
+                    apply(snapshot, thumbnail: thumbnail, to: id, keepState: true)
+                } else {
+                    uncached.append(id)
+                }
+            }
+            for id in uncached { await inspect(id, keepState: true) }
+        }
+    }
+
+    private var inspectionCache: InspectionCache { InspectionCache(root: directories.inspections) }
+
+    private func apply(_ snapshot: InspectionSnapshot, thumbnail: CGImage?, to id: PhotoItem.ID, keepState: Bool) {
+        let config = self.config
+        update(id) { item in
+            item.classification = snapshot.classification
+            item.inspection = snapshot.inspection
+            item.details = snapshot.details
+            item.motionPhoto = snapshot.motionPhoto
+            item.huawei = snapshot.huawei
+            item.thumbnail = thumbnail
+            if !keepState || item.state == .inspecting { item.state = .ready }
+            item.policyReason = Self.policyReason(for: item, config: config)
+        }
     }
 
     private func persistJournal() {
@@ -352,17 +382,10 @@ final class LibraryModel {
             let (c, i, d) = try await (classification, inspection, details)
             let m = try? await motion
             let h = await huawei
-            let config = self.config
-            update(id) { item in
-                item.classification = c
-                item.inspection = i
-                item.details = d
-                item.motionPhoto = m
-                item.huawei = h
-                item.thumbnail = thumbnail
-                if !keepState || item.state == .inspecting { item.state = .ready }
-                item.policyReason = Self.policyReason(for: item, config: config)
-            }
+            let snapshot = InspectionSnapshot(classification: c, inspection: i, details: d, motionPhoto: m, huawei: h)
+            apply(snapshot, thumbnail: thumbnail, to: id, keepState: keepState)
+            let cache = inspectionCache
+            Task.detached(priority: .utility) { cache.store(id, snapshot: snapshot, thumbnail: thumbnail) }
         } catch {
             update(id) { item in
                 item.thumbnail = thumbnail
@@ -450,9 +473,21 @@ final class LibraryModel {
         await convert(id)
     }
 
+    /// Back to the options with the old output gone, so the same photo can
+    /// be converted again in another mode without re-importing it.
+    func reconvert(_ id: PhotoItem.ID) {
+        guard let item = items.first(where: { $0.id == id }), let product = item.product else { return }
+        for url in [product.outputURL] + [product.pairedVideoURL].compactMap({ $0 }) + product.extraVideoURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        update(id) { $0.state = .ready; $0.savedToPhotos = false }
+        Task { await preparePreview(id) }
+    }
+
     func remove(_ id: PhotoItem.ID) {
         guard let item = items.first(where: { $0.id == id }), !item.state.isBusy else { return }
         discardPreview(id)
+        inspectionCache.remove(id)
         items.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: item.inputURL)
         if selectedID == id { selectedID = items.first?.id }
@@ -553,6 +588,8 @@ struct AppDirectories: Sendable {
     let outputs: URL
     /// Queue journal (`queue.json`), next to outputs so it survives cache purges.
     var journal: URL { outputs.deletingLastPathComponent().appendingPathComponent("queue.json") }
+    /// Inspection snapshots + thumbnails (`InspectionCache`), a cache like scratch.
+    var inspections: URL { scratch.deletingLastPathComponent().appendingPathComponent("inspections", isDirectory: true) }
 
     static var standard: AppDirectories {
         let fm = FileManager.default

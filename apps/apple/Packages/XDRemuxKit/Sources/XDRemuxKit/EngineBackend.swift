@@ -26,7 +26,7 @@ extension XDRemuxEngine: Styles3Backend {}
 /// Decoded `xdremux_inspect_photo_details` report. Keys follow
 /// `xdremux/rust/src/photo_details.rs`; all fields are optional because Rust
 /// omits what it could not read.
-public struct PhotoDetails: Decodable, Equatable, Sendable {
+public struct PhotoDetails: Codable, Equatable, Sendable {
     public var success: Bool
     public var errorMessage: String?
     public var make: String?

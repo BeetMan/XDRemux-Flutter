@@ -348,6 +348,20 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 两栏模式下预览卡的灰色底板在 HDR / 输出图解码后隐藏：列高远大于照片，底板只会框住一大片空白。
 - 实测（Duo 模拟器）：点行 → 侧栏收起、照片撑满高度；侧栏按钮 → 列表回来。启动时恢复的选中项不触发收起（宽度尚未量到），
   首屏仍是列表 + 详情。未验证：iPad 实机横竖屏切换。
+
+**§8 补充：复查后的一轮打磨（2026-11-04，分支 `feat/apple-polish-round`）**
+
+- 窄选项栏排版：两栏模式下 `InfoRow` 走环境值 `infoRowsStacked`，标签在上、值在下；文件名一行中间截断；选项栏 280 → 300pt。
+- 转换完成后可"重新转换"（结果区按钮 + 列表右键菜单）：`LibraryModel.reconvert` 删掉旧输出与配对视频、状态回到 ready、重做 HDR 预览，
+  转换选项重新出现，可换模式再转一次，不必移出重导。
+- 启动不再全量重读：`InspectionCache`（Caches/XDRemux/inspections/<id>.json + .jpg）保存 `inspect` 的分类 / 检查 / EXIF /
+  动态照片 / 华为信息和 512px 缩略图；`Classification`、`ConversionReport`、`PhotoDetails` 补了 Codable 与公开构造器。
+  恢复时命中缓存的项直接上屏，只有未命中的再过内核；移出照片时清缓存。Duo 实测 9 张照片相对冷启动从一轮"正在读取…"变为约 2 秒全部就位。
+- 启动时恢复的选中项也会收起侧栏：首次量到窗口宽度后在下一个 run loop 设置 `.detailOnly`（第一轮布局里直接改会被丢弃）。
+- 照片信息"拍摄模式"按内核的 mode key 映射为中文 / 英文名（大师模式、专业模式、人像……），不再显示 `master`。
+- 没做成：侧栏大标题在折叠 / 展开后在"展开态"与"收起态"之间跳动。试过 `toolbarTitleDisplayMode(.inlineLarge)`，侧栏里标题直接消失，
+  已回退为 `.large`。
+- 注意：Duo 模拟器同时被另一个会话使用，验证期间对方覆盖安装过一次旧版本；重新转换只验证了按钮出现，未走完整流程。
 **局域网传输（LocalSend v2）接入（2026-11-01，分支 `feat/apple-transfer`，基于 `rebase/local-transfer-20261028` + main）**
 
 - 传输核心复用 `crates/xdremux-transfer-ffi`（C ABI 1.3，Rust 1.97.1），以**动态**框架打包：`tools/apple/build_transfer_xcframework.sh`
