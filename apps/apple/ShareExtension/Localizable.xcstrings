@@ -1,0 +1,86 @@
+{
+  "sourceLanguage": "zh-Hans",
+  "strings": {
+    "已加入 XDRemux：%lld 张。打开 XDRemux 继续转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %lld photos to XDRemux. Open XDRemux to convert them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 XDRemux：%lld 张。打开 XDRemux 继续转换。"
+          }
+        }
+      }
+    },
+    "已加入 XDRemux：%lld 张，跳过 %lld 张非 HEIC / JPEG 文件。打开 XDRemux 继续转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %1$lld photos to XDRemux and skipped %2$lld that are not HEIC or JPEG. Open XDRemux to convert them."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 XDRemux：%lld 张，跳过 %lld 张非 HEIC / JPEG 文件。打开 XDRemux 继续转换。"
+          }
+        }
+      }
+    },
+    "无法访问共享收件箱。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The shared inbox is not available."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法访问共享收件箱。"
+          }
+        }
+      }
+    },
+    "正在交给 XDRemux…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handing over to XDRemux…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在交给 XDRemux…"
+          }
+        }
+      }
+    },
+    "没有可用的 HEIC / JPEG 照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No HEIC or JPEG photos to add."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的 HEIC / JPEG 照片。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

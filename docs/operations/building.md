@@ -129,7 +129,7 @@ tools/ohos/build_hap.sh --profile        # SDK 默认 ~/.sdks/flutter-ohos-3.41.
 
 Linux 目标位于 `apps/flutter/linux/`，与 Windows/macOS 共用同一套 Dart 代码与 Rust FFI 核心；发布形态为 AppImage / tar.gz（预览资产），打包脚本见 `tools/linux/package_linux.sh`。
 
-系统依赖：Flutter 3.47.7（`.fvmrc`）、clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator、libnotify。`file_picker` 在 Linux 走 XDG Desktop Portal（需要 `xdg-desktop-portal` 及桌面后端），不需要 zenity。
+系统依赖：Flutter 3.47.9（`.fvmrc`）、clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator、libnotify。`file_picker` 在 Linux 走 XDG Desktop Portal（需要 `xdg-desktop-portal` 及桌面后端），不需要 zenity。
 
 x265 静态库（Linux 宿主）：
 

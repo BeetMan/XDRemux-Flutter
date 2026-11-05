@@ -186,7 +186,10 @@ class Checkpoint {
   /// Serialize to JSONL string (header on first line, items on subsequent lines).
   String toJsonl() {
     final buffer = StringBuffer();
-    buffer.writeln(jsonEncode(header.toJson()));
+    // Resuming appends queue items to an existing checkpoint, so the declared
+    // count is taken from the items written here. Transfer storage cleanup
+    // treats a count mismatch as a torn file and refuses to delete anything.
+    buffer.writeln(jsonEncode({...header.toJson(), 'totalJobs': items.length}));
     for (final item in items) {
       buffer.writeln(jsonEncode(item.toJson()));
     }

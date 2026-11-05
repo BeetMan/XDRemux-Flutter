@@ -123,6 +123,23 @@ void main() {
     });
     tearDown(() => temp.delete(recursive: true));
 
+    test('LAN transfer sends the whole bundle, not just the still', () async {
+      expect(outputTransferPaths(item), [bundle]);
+      final loose = QueueItem(
+        id: 'loose',
+        inputPath: item.inputPath,
+        outputPath: '${temp.path}/flat.heic',
+        status: QueueItemStatus.converted,
+        motionPhoto: item.motionPhoto,
+      );
+      await File('${temp.path}/flat.heic').writeAsString('still');
+      await File('${temp.path}/flat.mov').writeAsString('movie');
+      expect(outputTransferPaths(loose), [
+        '${temp.path}/flat.heic',
+        '${temp.path}/flat.mov',
+      ]);
+    });
+
     OutputExportService service(
       _Destination destination, {
       List<String>? archived,

@@ -46,8 +46,14 @@ android {
 
     defaultConfig {
         applicationId = "io.github.beetman.xdremux"
+        manifestPlaceholders["transferAppLabel"] = if (System.getenv("XDREMUX_TRANSFER_TEST_APP") == "true")
+            "XDRemux Transfer Test" else "XDRemux"
+        // Isolated device validation alongside the user's installed app.
+        if (System.getenv("XDREMUX_TRANSFER_TEST_APP") == "true") {
+            applicationIdSuffix = ".transferdev"
+        }
         minSdk = 24
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36 // SDK 37 requires a separate ACCESS_LOCAL_NETWORK runtime flow.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -89,6 +95,29 @@ android {
     }
 }
 
+// Separately built optional native capability; ordinary image builds do not invoke Cargo.
+val transferSoOverride = System.getenv("XDREMUX_ANDROID_TRANSFER_SO")
+val transferSo = if (!transferSoOverride.isNullOrBlank()) file(transferSoOverride) else
+    rootProject.file("../../../crates/xdremux-transfer-ffi/target/aarch64-linux-android/release/libxdremux_transfer.so")
+if (!transferSoOverride.isNullOrBlank() && !transferSo.isFile) {
+    throw GradleException("Explicit transfer library does not exist")
+}
+if (transferSo.isFile) {
+    val transferJni = layout.buildDirectory.dir("generated/localTransfer/jni")
+    val transferAssets = layout.buildDirectory.dir("generated/localTransfer/assets")
+    // Materialized paths plus explicit preBuild dependencies (AGP 9 disallows Providers here).
+    android.sourceSets.getByName("main").jniLibs.srcDir(transferJni.get().asFile)
+    android.sourceSets.getByName("main").assets.srcDir(transferAssets.get().asFile)
+    val copyTransfer = tasks.register<Copy>("copyTransferLibrary") {
+        from(transferSo); into(transferJni.map { it.dir("arm64-v8a") })
+    }
+    val copyTransferLicense = tasks.register<Copy>("copyTransferLicense") {
+        from(rootProject.file("../../../crates/xdremux-transfer/vendor/localsend/LICENSE"))
+        into(transferAssets.map { it.dir("licenses") }); rename { "LocalSend-Apache-2.0.txt" }
+    }
+    tasks.named("preBuild").configure { dependsOn(copyTransfer, copyTransferLicense) }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
@@ -101,4 +130,9 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    if (System.getenv("XDREMUX_TRANSFER_TEST_APP") == "true") {
+        // Flutter excludes dev plugins from release APKs. This isolated test target
+        // needs IntegrationTestPlugin; the production application never links it.
+        implementation(project(":integration_test"))
+    }
 }

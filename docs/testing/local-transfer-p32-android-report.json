@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "date": "2026-10-22",
+  "baseCommit": "5e1dec99ef50a624f92ead79d3d76ce057802066",
+  "status": "covered Android Home, force-stop and lock scenarios passed; full P3.2 remains pending",
+  "device": {
+    "model": "PKJ110",
+    "android": "17",
+    "sdk": 37
+  },
+  "scope": "Release fixture using production controller, worker, transfer page, Android runner and latest native transfer library",
+  "fixtureFix": {
+    "initialAttemptPassed": false,
+    "reason": "ADB could not read synthetic export because File.copy preserved inbox mode 0600",
+    "change": "stream a separately created synthetic external export; do not alter managed inbox file permissions"
+  },
+  "deviceValidation": {
+    "schema": 1,
+    "run": "9e6b47e808274f11",
+    "passed": true,
+    "date": "2026-10-21T16:36:00.377059+00:00",
+    "cases": {
+      "home": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "stagingClean": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true
+      },
+      "kill": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "crashLeftoversObserved": true,
+        "newProcessBoot": true,
+        "noAutomaticLanOnReturn": true,
+        "explicitRestart": true,
+        "stagingClean": true,
+        "baselineHashPreserved": true,
+        "identityPersists": true
+      },
+      "lock": {
+        "partialBytesBefore": 262144,
+        "declaredBytes": 2097152,
+        "tcpClosed": true,
+        "systemMulticastLockReleased": true,
+        "partialNotPublishedBefore": true,
+        "powerPolicyEvidence": [
+          "showing=true",
+          "inputRestricted=true",
+          "interactiveState=INTERACTIVE_STATE_SLEEP"
+        ],
+        "pausedAndControllerStopped": true,
+        "stagingCleanBeforeProcessStop": true,
+        "onlyBaselinePublished": true,
+        "unlockRecoveryNotRun": true
+      }
+    },
+    "networkSettingsChanged": false,
+    "originalApplicationTouched": false,
+    "baseline": {
+      "name": "p32-complete.bin",
+      "size": 65536,
+      "sha256": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2"
+    }
+  },
+  "checks": {
+    "flutterAnalyze": "No issues found",
+    "hostPythonSyntax": true,
+    "independentHostHash": true,
+    "latestNativeLibraryMatchesPriorTerminalBuild": true,
+    "originalApplicationMetadataUnchanged": true,
+    "independentMainRestoredAndStopped": true
+  },
+  "packaging": {
+    "lifecycle": {
+      "applicationId": "io.github.beetman.xdremux.transferdev",
+      "sha256": "819a8eb5966d6d2ed7ee6efce3c9881938a7b4911227fac7ecaeb3c6b60c01df",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": true
+    },
+    "main-test": {
+      "applicationId": "io.github.beetman.xdremux.transferdev",
+      "sha256": "8668261e2f84880eca98bcd96f34e50a9af37c67b5f4c5221997e3eecdbc8436",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": true
+    },
+    "main-production": {
+      "applicationId": "io.github.beetman.xdremux",
+      "sha256": "bb5853af2b40c473af54b32026477164d1640d3c16218ef846ea357bd9879574",
+      "targetSdk": 36,
+      "transferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    }
+  },
+  "transferAbi": "1.3",
+  "coreAndAbiSourceChanged": false,
+  "networkOrFirewallSettingsChanged": false,
+  "mainWorkspaceChanged": false,
+  "limits": [
+    "force-stop is not low-memory reclaim, recent-task swipe or every OEM termination mode",
+    "explicit fixture commands do not replace full ordinary main UI acceptance",
+    "lock state observed before final test-package cleanup; unlock recovery not executed"
+  ],
+  "pending": [
+    "unlock recovery",
+    "real network change/VPN/multi-NIC/AP isolation/permission revocation",
+    "Android large batch",
+    "older/same-host official clients",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

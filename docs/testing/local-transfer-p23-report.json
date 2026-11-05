@@ -1,0 +1,303 @@
+{
+  "schema": 1,
+  "dates": [
+    "2026-10-20",
+    "2026-10-21"
+  ],
+  "branch": "codex/local-transfer",
+  "baseCommit": "a0ecadd3f1d17f2fe6c659839bb6e867a8cc86ae",
+  "status": "P2.3 functional slice passed; full platform/network matrix pending",
+  "environment": {
+    "host": "Windows x64",
+    "device": "PKJ110 Android 17 API 37 ARM64",
+    "rust": "1.97.1",
+    "flutter": "3.44.5",
+    "dart": "3.12.2",
+    "ndk": "28.2.13676358",
+    "transport": "direct LAN HTTPS / IPv4 multicast; no forwarding or firewall changes"
+  },
+  "checks": {
+    "rustCoreTests": 24,
+    "rustAbiTests": 2,
+    "strictClippy": [
+      "core",
+      "ffi"
+    ],
+    "rustFmt": [
+      "core",
+      "ffi"
+    ],
+    "flutterTests": 72,
+    "flutterAnalyze": "No issues found"
+  },
+  "appInterop": {
+    "testTarget": "integration_test/local_transfer_discovery_test.dart",
+    "testApplicationId": "io.github.beetman.xdremux.transferdev",
+    "fixtures": [
+      {
+        "name": "xdremux-poc-clip.mov",
+        "size": 2194,
+        "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a"
+      },
+      {
+        "name": "xdremux-poc-empty.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "xdremux-poc-payload.bin",
+        "size": 16777216,
+        "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b"
+      },
+      {
+        "name": "xdremux-poc-photo.heic",
+        "size": 1800239,
+        "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+      },
+      {
+        "name": "xdremux-poc-photo.jpg",
+        "size": 248,
+        "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954"
+      }
+    ],
+    "bytesPerDirection": 18579897,
+    "windows": {
+      "stage": "done",
+      "role": "windows",
+      "files": 5,
+      "hashesMatch": true,
+      "multicastVerified": true,
+      "declinedRetryVerified": false,
+      "stopVerified": true
+    },
+    "android": {
+      "stage": "done",
+      "role": "android",
+      "files": 5,
+      "hashesMatch": true,
+      "multicastVerified": true,
+      "declinedRetryVerified": true,
+      "stopVerified": true
+    },
+    "windowsExportsIndependentlyHashed": 5,
+    "method": "Discovered device selection; independent expected fingerprint, HTTPS re-probe and production confirmation callbacks; widget clicks covered separately. Windows declined first offer, Android explicitly retried.",
+    "validatedBeforeFinalWindowsPublicationFix": true,
+    "integrationLibrarySourceSha256": {
+      "windows": "3787693119d7ef614e5824d1d513b5485d60c9c1fa703509c3d4d23806a1ecf0",
+      "android": "9b457384e419f44747e4f93d588f27ef72eb9f958b93e30ea728c8919788d09c"
+    }
+  },
+  "androidMainLifecycle": {
+    "homeTcp": false,
+    "foregroundMulticastLock": true,
+    "foregroundTcp": true,
+    "homeMulticastLock": false,
+    "returnForegroundTcp": false,
+    "returnUiRequiresEnable": true
+  },
+  "scale": [
+    {
+      "result": {
+        "passed": true,
+        "rounds": [
+          {
+            "bytesPerFile": 16777216,
+            "diskHashesMatch": true,
+            "files": 1,
+            "kind": "baseline",
+            "snapshotFiles": 1,
+            "sourceUnchanged": true,
+            "totalBytes": 16777216,
+            "transferMs": 62,
+            "verificationMs": 30
+          },
+          {
+            "bytesPerFile": 2147483648,
+            "diskHashesMatch": true,
+            "files": 1,
+            "kind": "large",
+            "snapshotFiles": 1,
+            "sourceUnchanged": true,
+            "totalBytes": 2147483648,
+            "transferMs": 7658,
+            "verificationMs": 3732
+          },
+          {
+            "bytesPerFile": 1024,
+            "diskHashesMatch": true,
+            "files": 1000,
+            "kind": "many",
+            "snapshotFiles": 1000,
+            "sourceUnchanged": true,
+            "totalBytes": 1024000,
+            "transferMs": 13703,
+            "verificationMs": 5516
+          }
+        ],
+        "scope": "Windows/native loopback HTTPS synthetic scale; not device throughput"
+      },
+      "processMetrics": {
+        "samplePeriodMs": 100,
+        "peakSampledBytes": 18456576,
+        "stagePeakSampledBytes": {
+          "large": 13099008,
+          "many": 18456576,
+          "baseline": 10809344
+        },
+        "exitCode": 0,
+        "cpuSeconds": 32.34375
+      }
+    },
+    {
+      "result": {
+        "passed": true,
+        "rounds": [
+          {
+            "bytesPerFile": 16777216,
+            "diskHashesMatch": true,
+            "files": 1,
+            "kind": "baseline",
+            "snapshotFiles": 1,
+            "sourceUnchanged": true,
+            "totalBytes": 16777216,
+            "transferMs": 71,
+            "verificationMs": 26
+          },
+          {
+            "bytesPerFile": 2147483648,
+            "diskHashesMatch": true,
+            "files": 1,
+            "kind": "large",
+            "snapshotFiles": 1,
+            "sourceUnchanged": true,
+            "totalBytes": 2147483648,
+            "transferMs": 7187,
+            "verificationMs": 3444
+          },
+          {
+            "bytesPerFile": 1024,
+            "diskHashesMatch": true,
+            "files": 1000,
+            "kind": "many",
+            "snapshotFiles": 1000,
+            "sourceUnchanged": true,
+            "totalBytes": 1024000,
+            "transferMs": 12672,
+            "verificationMs": 4709
+          }
+        ],
+        "scope": "Windows/native loopback HTTPS synthetic scale; not device throughput"
+      },
+      "processMetrics": {
+        "cpuSeconds": 30.46875,
+        "exitCode": 0,
+        "peakSampledBytes": 18542592,
+        "samplePeriodMs": 100
+      }
+    }
+  ],
+  "windowsAbiSmoke": {
+    "passed": true,
+    "abi": 65539,
+    "files": 3,
+    "bytes": 2097178,
+    "independentHashes": true,
+    "checks": [
+      "unicode_and_empty",
+      "prepared_progress_terminal_ids",
+      "snapshot_paging",
+      "operation_recovery",
+      "lease_delete_busy",
+      "managed_delete",
+      "buffer_cap_and_free",
+      "invalid_input_handle",
+      "pending_send_stop",
+      "idempotent_stop",
+      "stale_handle",
+      "port_and_root_reopen",
+      "1000_send_batch",
+      "1000_file_snapshot_pages",
+      "1000_disk_hashes"
+    ],
+    "maxCallMilliseconds": {
+      "create": 0.2,
+      "free_string": 0.078,
+      "poll": 0.319,
+      "release": 0.786,
+      "stop": 0.008,
+      "submit": 0.458
+    },
+    "librarySha256": "947f3e3b1302e2ef216fd044b29e4de4995fbbe82121150dc65f532e574cc047",
+    "libraryBytes": 7150592
+  },
+  "dartWorkerSmoke": {
+    "passed": true,
+    "date": "2026-10-21",
+    "abi": 65539,
+    "checks": [
+      "missing_library_degrades",
+      "no_space_propagates",
+      "worker_https_transfer",
+      "unicode_private_copy_hash",
+      "same_name_isolated",
+      "ack_loss_retry",
+      "concurrent_click_coalescing",
+      "opaque_mov_not_queued",
+      "inbox_delete_keeps_checkpoint",
+      "stop_waits_for_active_copy",
+      "restart_root_port_and_receipts"
+    ],
+    "transferredFiles": 4,
+    "bytes": 71303181,
+    "originalAndCopiesHashMatch": true,
+    "librarySha256": "947f3e3b1302e2ef216fd044b29e4de4995fbbe82121150dc65f532e574cc047"
+  },
+  "packaging": {
+    "android": {
+      "releaseBuild": true,
+      "main": "lib/main.dart",
+      "applicationId": "io.github.beetman.xdremux",
+      "minSdk": 24,
+      "targetSdk": 36,
+      "installed": false,
+      "apkSha256": "bf50bf5cb32c0402823d0e8f7a7d72dce94f2a91184d5386f9adb9418256e982",
+      "sourceLibrarySha256": "02ae51d38b216339e2c7dafee7c5d7732cc82646117cd5e68660f6e139f6c65e",
+      "packagedLibrarySha256": "d9cdea5fb62ea165da2cc56d2c140abbdb6ec0b09a67b97213185356d9b84549",
+      "matchesNdkStripUnneeded": true,
+      "licenseEntries": [
+        "assets/licenses/LocalSend-Apache-2.0.txt"
+      ],
+      "integrationTestPluginAbsent": true
+    },
+    "windows": {
+      "releaseBuild": true,
+      "main": "lib/main.dart",
+      "librarySha256": "947f3e3b1302e2ef216fd044b29e4de4995fbbe82121150dc65f532e574cc047",
+      "licenseFiles": [
+        "data\\licenses\\LocalSend-Apache-2.0.txt"
+      ]
+    }
+  },
+  "knownFailureAndFix": {
+    "observed": "Windows directory publication MoveFileExW errno 5 during 1000-file batch; closing owned async handle alone did not prevent recurrence",
+    "fix": "Finish async writes; sync and close owned standard file before publication. Windows retries errno 5/32/33 eight times with 450 ms total backoff, always atomic no-replace. Persistent failures remain errors.",
+    "regressions": [
+      "128-file receive/hash",
+      "persistent lock fails within bound",
+      "short lock recovers",
+      "existing target unchanged"
+    ],
+    "finalScaleConsecutivePasses": 2
+  },
+  "pending": [
+    "final application with official/older LocalSend clients",
+    "same-host official client coexistence and real VPN/multi-NIC matrix",
+    "AP isolation and denied/revoked permissions",
+    "network loss/switch, lockscreen/process kill, full window exit matrix",
+    "2 GiB/1000 file Android/Flutter and picker scale",
+    "Apple validation",
+    "HarmonyOS runtime explicitly deferred",
+    "real Live Photo/gallery validation",
+    "mainline merge and release"
+  ]
+}

@@ -73,6 +73,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [local-transfer-poc.md](research/local-transfer-poc.md) | 内置传输 P0：固定 LocalSend Rust 核心、Windows/Android 双向保真及平台边界 |
 | [harmonyos-support.md](research/harmonyos-support.md) | 鸿蒙支持研究全记录（已落地为正式平台） |
 | [motion-photo-parser-differential.md](research/motion-photo-parser-differential.md) | Motion Photo 解析器 Swift/Python/Rust 三方差分（12/12） |
 | [styles-upstream-logic-comparison.md](research/styles-upstream-logic-comparison.md) | key1 布局 + constrained solver 研究（研究闭环定案） |
@@ -88,11 +89,12 @@
 | [huawei-xmage-format.md](research/huawei-xmage-format.md) | 华为相机 HDR（XMAGE）表示法与能否纳入转换管线、鸿蒙图库输出需求 |
 | [oppo-proxdr-families.md](research/oppo-proxdr-families.md) | Find N3 / Find X8 Ultra ProXDR 采样分析（2026-09） |
 | [iphone-18-pro-notes.md](research/iphone-18-pro-notes.md) | iPhone 18 Pro（iOS 27）新拍摄模式：样张 EXIF / MakerNote / 容器结构 |
-| [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#88 进展与差距矩阵（2026-10-30）：Standard key1 identity 争议、GPLv3 改授权、研究仓迁移；含 P0/P1/P2 规划 |
+| [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#90 进展与差距矩阵（2026-10-30，11-04 追加复查）：Standard key1 identity 定案、GPLv3 改授权、研究仓迁移、显式 BT.2020 PQ/HLG 导出；含 P0/P1/P2 规划 |
 
 ## 路线图
 
 - [`docs/plans/apple-native.md`](plans/apple-native.md)：原生 Apple（SwiftUI）前端计划与 P0–P3 执行记录（进行中）
+- [内置局域网文件传输开发计划](plans/local-transfer-plan.md)：LocalSend 互操作、独立 Rust 服务、Flutter 收发及照片资源分组（2026-10-17，P0 Windows/Android 验证通过，P1 待开发）。
 - [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
 - [`docs/plans/huawei-to-apple-plan.md`](plans/huawei-to-apple-plan.md)：Mate 70 原生 HDR 识别、XMAGE 风格、人像与 Live Photo 研究计划（普通 HDR 无需转换）
 - [`docs/plans/sample-collection-202608.md`](plans/sample-collection-202608.md)：样本采集计划（A~E 组状态见 v0.4-roadmap 与设备兼容矩阵）

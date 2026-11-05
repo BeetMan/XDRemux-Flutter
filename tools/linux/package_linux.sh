@@ -291,6 +291,9 @@ stage_bundle "$bundle_dir" "$pkg_root/bundle"
 cp -f "$desktop_file" "$pkg_root/xdremux.desktop"
 cp -f "$icon_file" "$pkg_root/xdremux.png"
 cp -f "$installer_file" "$pkg_root/install.sh"
+# GPL-3.0-only notice shipped with the binaries (see LICENSING.md).
+cp -f "$repo_root/LICENSE" "$pkg_root/LICENSE"
+cp -f "$repo_root/LICENSING.md" "$pkg_root/LICENSING.md"
 chmod a+r "$pkg_root/xdremux.desktop" "$pkg_root/xdremux.png"
 chmod 755 "$pkg_root/install.sh"
 
@@ -362,6 +365,8 @@ log "staging AppDir"
 appdir="$work_dir/AppDir"
 stage_bundle "$bundle_dir" "$appdir/usr/bin"
 cp -f "$icon_file" "$appdir/xdremux.png"
+mkdir -p "$appdir/usr/share/doc/xdremux"
+cp -f "$repo_root/LICENSE" "$repo_root/LICENSING.md" "$appdir/usr/share/doc/xdremux/"
 chmod a+r "$appdir/xdremux.png"
 # Root-level desktop file used for AppImage desktop integration.
 sed 's|^Exec=.*|Exec=xdremux %F|' "$desktop_file" > "$appdir/xdremux.desktop"

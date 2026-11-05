@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/localsend/localsend.git",
+  "tag": "v1.18.2",
+  "commit": "af0416be50770a97760f7070684bc667b759a15c",
+  "corePath": "packages/core",
+  "coreVersion": "0.1.0",
+  "features": ["http", "multicast"],
+  "protocolVersion": "2.2",
+  "toolchain": "1.97.1",
+  "dependencyLockfile": "Cargo.lock",
+  "checkoutVerifier": "bootstrap.ps1",
+  "submodules": false
+}

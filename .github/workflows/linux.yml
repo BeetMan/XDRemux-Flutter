@@ -51,7 +51,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install native dependencies
         run: |
@@ -69,7 +69,7 @@ jobs:
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           # Never reuse objects compiled on ubuntu-latest with a newer glibc.
@@ -103,11 +103,16 @@ jobs:
       - name: Build Rust core
         run: cargo build --locked -p xdremux-core --release
 
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          bash tools/native/build-transfer.sh linux
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
           cache: true
 
       - name: Resolve release version
@@ -182,7 +187,7 @@ jobs:
           cat dist/*.sha256
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x64-release
           path: dist/*
@@ -197,7 +202,7 @@ jobs:
       contents: write
     steps:
       - name: Download built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: linux-x64-release
           path: dist

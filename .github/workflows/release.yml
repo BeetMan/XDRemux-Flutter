@@ -29,11 +29,11 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-windows-${{ env.X265_TAG }}-asm
@@ -77,7 +77,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
           cache: true
 
       - name: Resolve release version
@@ -110,6 +110,12 @@ jobs:
 
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
+
+      - name: Build local transfer library
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          ./tools/native/build-transfer.ps1 -Platform windows
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
@@ -147,7 +153,7 @@ jobs:
           Copy-Item $src $dst
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: apps/flutter/build/installer/XDRemux-Windows-${{ env.TAG_VERSION }}-Setup.exe
@@ -166,11 +172,11 @@ jobs:
     runs-on: windows-11-arm
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-windows-arm64-${{ env.X265_TAG }}
@@ -217,7 +223,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
           # The windows-11-arm image reports an x64 runner arch, so the default
           # resolves to the x64 SDK; the preflight proved that the resulting
           # `flutter build windows` output is x64 too (PE 0x8664), which the
@@ -252,6 +258,15 @@ jobs:
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
 
+      # ring needs clang for aarch64-pc-windows-msvc. Without the library the
+      # installer still ships and hides the transfer entry.
+      - name: Build local transfer library
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          ./tools/native/build-transfer.ps1 -Platform windows
+
       - name: Install Dart dependencies
         working-directory: apps/flutter
         run: flutter pub get --enforce-lockfile
@@ -278,7 +293,11 @@ jobs:
           if ((Test-Path $src) -and -not (Test-Path $dst)) {
             Copy-Item $src $dst -Recurse
           }
-          foreach ($name in @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')) {
+          $names = @('xdremux.exe', 'xdremux_core.dll', 'flutter_windows.dll')
+          if (Test-Path (Join-Path $dst 'runner/Release/xdremux_transfer.dll')) {
+            $names += 'xdremux_transfer.dll'
+          }
+          foreach ($name in $names) {
             $path = Join-Path $dst "runner/Release/$name"
             $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
             $pe = [BitConverter]::ToInt32($bytes, 0x3c)
@@ -309,7 +328,7 @@ jobs:
           Copy-Item $src $dst
 
       - name: Upload Windows ARM64 installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-arm64-installer
           path: apps/flutter/build/installer/XDRemux-Windows-arm64-${{ env.TAG_VERSION }}-Setup.exe
@@ -321,10 +340,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -347,7 +366,7 @@ jobs:
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-android-arm64-${{ env.X265_TAG }}-asm-ndk-v4-${{ env.ANDROID_NDK_VERSION }}
@@ -427,7 +446,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
           cache: true
 
       - name: Resolve release version
@@ -470,6 +489,11 @@ jobs:
       - name: Build Rust Android library
         working-directory: xdremux/rust
         run: cargo ndk -t arm64-v8a -o ../../apps/flutter/android/app/src/main/jniLibs build --release
+
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target aarch64-linux-android
+          bash tools/native/build-transfer.sh android
 
       - name: Bundle Android C++ runtime
         shell: bash
@@ -519,7 +543,7 @@ jobs:
             "apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-$TAG_VERSION.apk"
 
       - name: Upload Android APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: apps/flutter/build/app/outputs/flutter-apk/XDRemux-Android-${{ env.TAG_VERSION }}.apk
@@ -531,11 +555,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Restore x265 build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           key: x265-macos-${{ env.X265_TAG }}
@@ -567,7 +591,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
 
       - name: Resolve release version
         shell: bash
@@ -584,6 +608,11 @@ jobs:
 
       - name: Build Rust core
         run: cargo build -p xdremux-core --release
+
+      - name: Build local transfer library
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          bash tools/native/build-transfer.sh macos
 
       - name: Install Dart dependencies
         working-directory: apps/flutter
@@ -604,6 +633,8 @@ jobs:
           # load the Rust core. Fail here instead of patching it up afterwards.
           test -f "$DY" || { echo "Rust dylib missing from the bundle" >&2; exit 1; }
           test -x "$DY" || { echo "Rust dylib is not executable" >&2; exit 1; }
+          test -f "$APP/Contents/Frameworks/libxdremux_transfer.dylib" || {
+            echo "Local transfer dylib missing from the bundle" >&2; exit 1; }
           # The copy phase runs before CodeSign, so both the dylib and the app
           # seal must be intact. A post-build copy would break the seal.
           codesign -v --deep --strict "$APP"
@@ -622,6 +653,9 @@ jobs:
           # (it is embedded in the Mach-O, not in an extended attribute).
           cp -R "$APP" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
+          # GPL-3.0-only notice next to the app (see LICENSING.md).
+          cp LICENSE "$STAGE/LICENSE.txt"
+          cp LICENSING.md "$STAGE/LICENSING.md"
           test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
           test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
           hdiutil create -volname XDRemux \
@@ -630,7 +664,7 @@ jobs:
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: apps/flutter/build/dmg/XDRemux-macOS-${{ env.TAG_VERSION }}.dmg
@@ -645,14 +679,14 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify iPhone Duo SDK and APIs
         run: bash tools/apple/check_ios_sdk.sh
 
       - name: Restore x265 iOS build
         id: x265-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: xdremux/rust/vendor/x265
           # SDK-specific cache: do not reuse Xcode 26 object files.
@@ -692,11 +726,16 @@ jobs:
           # it at the runner's current iPhoneOS SDK.
           bash xdremux/rust/build_ios.sh
 
+      - name: Build local transfer framework
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --target aarch64-apple-ios --target aarch64-apple-ios-sim
+          bash tools/native/build-transfer.sh ios
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.47.7
+          flutter-version: 3.47.9
 
       - name: Resolve release version
         shell: bash
@@ -740,13 +779,15 @@ jobs:
             fi
           done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
           echo 'Validated all Dart runtime FFI exports in the iOS archive.'
+          test -f "$APP/Frameworks/xdremux_transfer.framework/xdremux_transfer" || {
+            echo "Local transfer framework missing from the app" >&2; exit 1; }
           mkdir -p apps/flutter/build/ios/ipa/Payload
           cp -R "$APP" apps/flutter/build/ios/ipa/Payload/
           cd apps/flutter/build/ios/ipa
           zip -qry "XDRemux-iOS-$TAG_VERSION-unsigned.ipa" Payload
 
       - name: Upload iOS IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-ipa
           path: apps/flutter/build/ios/ipa/XDRemux-iOS-${{ env.TAG_VERSION }}-unsigned.ipa
@@ -779,10 +820,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -811,7 +852,7 @@ jobs:
           test "$missing" -eq 0
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: false
           # Tags carrying a -suffix (v0.1.9-pre.1) publish as pre-release so
