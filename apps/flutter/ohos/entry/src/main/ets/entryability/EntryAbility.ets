@@ -96,14 +96,18 @@ class GalleryPickHandler implements MethodCallHandler {
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
-    if (call.method !== 'pickImages') {
+    // pickMedia (LAN transfer) also takes videos and keeps original names.
+    const media = call.method === 'pickMedia';
+    if (call.method !== 'pickImages' && !media) {
       result.notImplemented();
       return;
     }
     const picker = new photoAccessHelper.PhotoViewPicker();
     const opts = new HeicSelectOptions();
-    opts.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
-    opts.maxSelectNumber = 9;
+    opts.MIMEType = media
+      ? photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE
+      : photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    opts.maxSelectNumber = media ? 100 : 9;
     picker.select(opts)
       .then((res: photoAccessHelper.PhotoSelectResult) => {
         const uris = res.photoUris;
@@ -114,7 +118,7 @@ class GalleryPickHandler implements MethodCallHandler {
         const paths: string[] = [];
         for (const uri of uris) {
           try {
-            paths.push(copyUriToCache(this.context, uri));
+            paths.push(media ? copyUriKeepingName(this.context, uri) : copyUriToCache(this.context, uri));
           } catch (e) {
             console.error(`copyUriToCache failed for ${uri}: ${e}`);
           }
@@ -213,6 +217,18 @@ function copyUriToCache(context: common.UIAbilityContext, uri: string): string {
   const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
   const name = uri.substring(uri.lastIndexOf('/') + 1) || `shared-${Date.now()}`;
   const dest = `${context.cacheDir}/${Date.now()}-${name}`;
+  fs.copyFileSync(file.fd, dest);
+  fs.closeSync(file);
+  return dest;
+}
+
+/// Copies [uri] into its own cache folder under its original file name.
+function copyUriKeepingName(context: common.UIAbilityContext, uri: string): string {
+  const dir = `${context.cacheDir}/transfer-picks/${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  fs.mkdirSync(dir, true);
+  const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+  const name = uri.substring(uri.lastIndexOf('/') + 1) || 'shared';
+  const dest = `${dir}/${name}`;
   fs.copyFileSync(file.fd, dest);
   fs.closeSync(file);
   return dest;

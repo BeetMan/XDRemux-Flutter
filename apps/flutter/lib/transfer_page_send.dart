@@ -198,6 +198,12 @@ extension _SendTab on _TransferPageState {
                 label: Text(t('从转换列表添加', 'From conversion list')),
               ),
             OutlinedButton.icon(
+              key: const ValueKey('pick-photos'),
+              icon: const Icon(Icons.photo_library_outlined),
+              onPressed: disabled ? null : () => _run(() => _pick(media: true)),
+              label: Text(t('选择照片', 'Choose photos')),
+            ),
+            OutlinedButton.icon(
               icon: const Icon(Icons.attach_file),
               onPressed: disabled ? null : () => _run(_pick),
               label: Text(t('选择文件', 'Choose files')),

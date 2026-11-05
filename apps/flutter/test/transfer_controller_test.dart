@@ -782,6 +782,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    expect(find.byKey(const ValueKey('pick-photos')), findsOneWidget);
     await add();
     expect(find.text('尚未转换'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('add-queue-sources')));

@@ -335,7 +335,13 @@ class _TransferPageState extends State<TransferPage>
     }
   }
 
-  Future<void> _pick() async {
+  static const _photoPickerChannel = MethodChannel('xdremux/photo-picker');
+  static const _ohosGalleryChannel = MethodChannel('xdremux/gallery');
+
+  /// Files, or with [media] photos and videos. iOS and HarmonyOS open the
+  /// system photo picker (a Live Photo comes back as a `.pvt` folder), the
+  /// others a file picker filtered to media.
+  Future<void> _pick({bool media = false}) async {
     // Android and HarmonyOS pickers background the app, which stops LAN
     // reception anyway; stop first so it never ends halfway through a batch.
     // Reception comes back afterwards, so discovery keeps working.
@@ -343,12 +349,23 @@ class _TransferPageState extends State<TransferPage>
         (Platform.isAndroid || PlatformX.isOhos) && transfer.receiving;
     if (resume) await transfer.stop();
     try {
-      final result = await FilePicker.pickFiles();
-      if (result.isEmpty) return;
-      final paths = result.map((f) => f.path).whereType<String>().toList();
-      if (paths.length != result.length) {
-        throw const TransferException('invalid_input');
+      final List<String> paths;
+      if (media && (Platform.isIOS || PlatformX.isOhos)) {
+        final channel = Platform.isIOS
+            ? _photoPickerChannel
+            : _ohosGalleryChannel;
+        final picked = await channel.invokeMethod<List<dynamic>>('pickMedia');
+        paths = (picked ?? []).whereType<String>().toList();
+      } else {
+        final result = await FilePicker.pickFiles(
+          type: media ? FileType.media : FileType.any,
+        );
+        paths = result.map((f) => f.path).whereType<String>().toList();
+        if (paths.length != result.length) {
+          throw const TransferException('invalid_input');
+        }
       }
+      if (paths.isEmpty) return;
       if (mounted) await _addPaths(paths);
     } finally {
       if (resume && mounted && !transfer.receiving) await _enableReceiving();
