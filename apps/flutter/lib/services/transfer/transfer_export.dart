@@ -105,31 +105,67 @@ class TransferExport {
     (lease) => extractLivePhotoZip(lease['path'] as String, directory, name),
   );
 
-  /// Gallery save is offered where the photo library takes a Live Photo
-  /// (iOS) or its HEIF + MOV pair (Android).
-  static bool get savesLivePhoto => Platform.isIOS || Platform.isAndroid;
+  /// Photos and videos go straight to the photo library on phones.
+  static bool get savesToGallery => Platform.isIOS || Platform.isAndroid;
 
-  /// Unpacks a received `.pvt.zip` and saves it to the photo library.
-  static Future<void> saveLivePhoto(
+  static bool galleryName(String name) =>
+      transferImageName(name) ||
+      transferVideoName(name) ||
+      isLivePhotoZip(name);
+
+  /// Saves a received photo, video or `.pvt.zip` to the photo library. A
+  /// still with its paired [movie] receipt (or a `.pvt.zip`) becomes one
+  /// Live Photo on iOS and an image + video pair on Android.
+  static Future<void> saveToGallery(
     TransferController transfer,
-    String receiptId,
-    String name,
-  ) async {
-    final temp = await Directory.systemTemp.createTemp('xdremux-live-in-');
+    Map<String, dynamic> row, {
+    Map<String, dynamic>? movie,
+  }) async {
+    final temp = await Directory.systemTemp.createTemp('xdremux-gallery-');
     try {
-      final parts = await _unpack(transfer, receiptId, temp.path, name);
+      final id = row['id'] as String, name = row['name'] as String;
+      String? still, video;
+      if (isLivePhotoZip(name)) {
+        final parts = await _unpack(transfer, id, temp.path, name);
+        still = parts.still;
+        video = parts.movie;
+      } else if (transferVideoName(name)) {
+        video = await _copy(transfer, id, temp.path, name);
+      } else {
+        still = await _copy(transfer, id, temp.path, name);
+        if (movie != null) {
+          video = await _copy(
+            transfer,
+            movie['id'] as String,
+            temp.path,
+            movie['name'] as String,
+          );
+        }
+      }
       const gallery = NativeOutputExportDestination();
-      if (Platform.isIOS) {
-        await gallery.saveLivePhoto(parts.still, parts.movie);
+      if (Platform.isIOS && still != null && video != null) {
+        await gallery.saveLivePhoto(still, video);
         return;
       }
       if (!await gallery.galleryPermission()) {
         throw const TransferException('permission_denied');
       }
-      await gallery.saveImage(parts.still, null);
-      await gallery.saveVideo(parts.movie, null);
+      if (still != null) await gallery.saveImage(still, null);
+      if (video != null) await gallery.saveVideo(video, null);
     } finally {
       await temp.delete(recursive: true).catchError((_) => temp);
     }
   }
+
+  /// The photo library needs a real file name, so copy the private receipt.
+  static Future<String> _copy(
+    TransferController transfer,
+    String id,
+    String directory,
+    String name,
+  ) => transfer.withReceipt(id, (lease) async {
+    final out = '$directory${Platform.pathSeparator}$name';
+    await File(lease['path'] as String).copy(out);
+    return out;
+  });
 }

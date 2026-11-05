@@ -44,16 +44,81 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
   bool discovering = false;
   String? discoveryError;
   final List<Map<String, dynamic>> peers = [];
+
+  /// Peers found by [scanSubnet]; kept across multicast updates.
+  final Map<String, Map<String, dynamic>> _scanned = {};
+  bool scanning = false;
+  Future<void>? _scanTask;
+  DateTime _receivingSince = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _autoScanned = false;
   final Map<String, String> interfaces = {};
   String? discoveryInterface;
   DateTime _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
   static const _multicast = MethodChannel('xdremux/transfer-discovery');
   static const _traits = MethodChannel('xdremux/platform-traits');
-  static Future<String>? _deviceName;
+  static const _keepAwakeChannel = MethodChannel('xdremux/keep-awake');
+  bool _awake = false;
 
-  /// Name other devices see: the model on phones ("OPPO Find X8 Ultra",
-  /// "iPhone 16e"), the computer name on desktops.
-  static Future<String> deviceName() => _deviceName ??= () async {
+  /// Phones stop reception when they sleep or leave the foreground, so keep
+  /// the screen on while any transfer is still moving.
+  void _syncKeepAwake() {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    final active =
+        receiving &&
+        transfers.values.any(
+          (t) => const [
+            'preparing',
+            'accepted',
+            'transferring',
+          ].contains(t['phase']),
+        );
+    if (active == _awake) return;
+    _awake = active;
+    unawaited(
+      (Platform.isIOS
+              ? _traits.invokeMethod<void>('setKeepAwake', active)
+              : _keepAwakeChannel.invokeMethod<void>('set', active))
+          .catchError((_) {}),
+    );
+  }
+
+  @override
+  void notifyListeners() {
+    _syncKeepAwake();
+    super.notifyListeners();
+  }
+  static Future<String>? _modelName;
+  static const _aliasKey = 'transfer.alias.v1';
+
+  /// Name other devices see: the user's own name if set, otherwise the
+  /// model ([modelName]).
+  static Future<String> deviceName() async {
+    final custom = (await SharedPreferences.getInstance()).getString(_aliasKey);
+    return custom == null || custom.isEmpty ? modelName() : custom;
+  }
+
+  /// Saves a custom name (trimmed, at most 64 characters, no control
+  /// characters); null or blank restores the model name. Takes effect the
+  /// next time reception starts.
+  static Future<void> setDeviceName(String? name) async {
+    final prefs = await SharedPreferences.getInstance();
+    final clean = _cleanName(name);
+    if (clean == null) {
+      await prefs.remove(_aliasKey);
+    } else {
+      await prefs.setString(_aliasKey, clean);
+    }
+  }
+
+  static String? _cleanName(String? name) {
+    final clean = name?.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
+    if (clean == null || clean.isEmpty) return null;
+    return clean.length > 64 ? clean.substring(0, 64) : clean;
+  }
+
+  /// The model on phones ("OPPO Find X8 Ultra", "iPhone 16e"), the computer
+  /// name on desktops.
+  static Future<String> modelName() => _modelName ??= () async {
     String? name;
     try {
       if (Platform.isAndroid) {
@@ -61,7 +126,9 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       } else if (Platform.isIOS) {
         name = await _traits.invokeMethod<String>('getModelName');
       } else if (PlatformX.isOhos) {
-        name = 'HarmonyOS';
+        name = await const MethodChannel(
+          'xdremux/device',
+        ).invokeMethod<String>('modelName');
       } else if (Platform.isWindows) {
         name = Platform.environment['COMPUTERNAME'];
       } else {
@@ -70,9 +137,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
             .replaceAll('-', ' ');
       }
     } catch (_) {}
-    name = name?.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), '').trim();
-    if (name == null || name.isEmpty) return 'XDRemux';
-    return name.length > 64 ? name.substring(0, 64) : name;
+    return _cleanName(name) ?? 'XDRemux';
   }();
   String? error;
   Map<String, dynamic>? ready;
@@ -168,6 +233,85 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// LocalSend's fallback when multicast finds nothing: try every /24
+  /// neighbour of this device's IPv4 addresses on the LocalSend ports, then
+  /// identify the ones that answer. Results merge into [peers].
+  Future<void> scanSubnet() =>
+      _scanTask ??= _scanNow().whenComplete(() => _scanTask = null);
+
+  Future<void> _scanNow() async {
+    if (!receiving || stopping) return;
+    final generation = _stopGeneration;
+    bool current() => generation == _stopGeneration && receiving && !stopping;
+    final own = [
+      for (final a in addresses)
+        if (InternetAddress.tryParse(a)?.type == InternetAddressType.IPv4) a,
+    ];
+    final targets = <(String, int)>[
+      for (final prefix in {
+        for (final a in own) a.substring(0, a.lastIndexOf('.')),
+      })
+        for (var i = 1; i < 255; i++)
+          if (!own.contains('$prefix.$i'))
+            for (final port in const [53319, 53317]) ('$prefix.$i', port),
+    ];
+    if (targets.isEmpty) return;
+    scanning = true;
+    notifyListeners();
+    try {
+      final open = <(String, int)>[];
+      for (var i = 0; i < targets.length; i += 128) {
+        await Future.wait([
+          for (final target in targets.skip(i).take(128))
+            Socket.connect(
+                  target.$1,
+                  target.$2,
+                  timeout: const Duration(milliseconds: 600),
+                )
+                .then((socket) {
+                  socket.destroy();
+                  open.add(target);
+                })
+                .catchError((_) {}),
+        ]);
+        if (!current()) return;
+      }
+      final self = (ready?['fingerprint'] as String?)?.toUpperCase();
+      for (final (host, port) in open) {
+        try {
+          final peer = await probe(host, port);
+          if (!current()) return;
+          final fp = (peer['fingerprint'] as String?)?.toUpperCase();
+          if (fp == null || fp == self) continue;
+          _scanned[fp] = {
+            ...peer,
+            'alias': peer['alias'] ?? host,
+            'address': '$host:$port',
+          };
+        } catch (_) {
+          // Not a LocalSend peer, or it declined; skip it.
+        }
+      }
+      _mergeScanned();
+    } finally {
+      if (generation == _stopGeneration) {
+        scanning = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _mergeScanned() {
+    for (final peer in _scanned.values) {
+      final fp = (peer['fingerprint'] as String).toUpperCase();
+      if (!peers.any(
+        (p) => (p['fingerprint'] as String?)?.toUpperCase() == fp,
+      )) {
+        peers.add(peer);
+      }
+    }
+  }
+
   Future<void> discover() {
     if (!receiving || stopping) {
       return Future<void>.error(const TransferException('closed'));
@@ -232,6 +376,7 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           (p) => Map<String, dynamic>.from(p as Map),
         ),
       );
+    _mergeScanned();
     if (!discovering) {
       try {
         await _setMulticast(
@@ -280,6 +425,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
       _lastDiscoveryPoll = DateTime.fromMillisecondsSinceEpoch(0);
       ready = native.ready;
       receiving = receive;
+      _receivingSince = DateTime.now();
+      _autoScanned = false;
       trusted.addAll(
         (await SharedPreferences.getInstance()).getStringList(
               'transfer.trusted.v1',
@@ -505,6 +652,14 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
           _discoveryTask == null &&
           DateTime.now().difference(_lastDiscoveryPoll).inSeconds >= 1) {
         _lastDiscoveryPoll = DateTime.now();
+        // Multicast is often blocked (and iOS needs Apple's multicast
+        // entitlement), so after a few quiet seconds scan the subnet once.
+        if (peers.isEmpty &&
+            !_autoScanned &&
+            DateTime.now().difference(_receivingSince).inSeconds >= 3) {
+          _autoScanned = true;
+          unawaited(scanSubnet().catchError((_) {}));
+        }
         changed = true;
         final revision = _discoveryRevision;
         try {
@@ -788,6 +943,8 @@ class TransferController extends ChangeNotifier with WidgetsBindingObserver {
     receiving = false;
     discovering = false;
     peers.clear();
+    _scanned.clear();
+    scanning = false;
     _timer?.cancel();
     _polling = null;
     // New startup must load its own state, without sharing an old query future.

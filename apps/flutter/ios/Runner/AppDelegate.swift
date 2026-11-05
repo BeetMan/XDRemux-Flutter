@@ -65,6 +65,8 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
 
   private let swiftProgressStreamHandler = SwiftBackendProgressStreamHandler()
   private var pendingPhotoPickerResult: FlutterResult?
+  /// The LAN-transfer picker also takes videos and keeps Live Photos whole.
+  private var pickingMedia = false
 
   /// A single Photos asset with two resources. Do not move the app's originals
   /// or fall back to a still-only save when permission/pair import fails.
@@ -128,7 +130,7 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     return topViewController(from: root)
   }
 
-  private func presentPhotoPicker(result: @escaping FlutterResult) {
+  private func presentPhotoPicker(media: Bool, result: @escaping FlutterResult) {
     guard pendingPhotoPickerResult == nil else {
       result(FlutterError(
         code: "picker_busy",
@@ -147,12 +149,13 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     }
 
     var configuration = PHPickerConfiguration(photoLibrary: PHPhotoLibrary.shared())
-    configuration.filter = .images
+    configuration.filter = media ? .any(of: [.images, .videos]) : .images
     configuration.selectionLimit = 0
     configuration.preferredAssetRepresentationMode = .current
     let picker = PHPickerViewController(configuration: configuration)
     picker.delegate = self
     pendingPhotoPickerResult = result
+    pickingMedia = media
     presenter.present(picker, animated: true)
   }
 
@@ -164,6 +167,10 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
     guard let completion else { return }
     guard !results.isEmpty else {
       completion([])
+      return
+    }
+    if pickingMedia {
+      Self.copyPickedMedia(results, completion: completion)
       return
     }
 
@@ -211,6 +218,52 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
 
     group.notify(queue: .main) {
       completion(paths)
+    }
+  }
+
+  /// Copies each pick under its original name, in selection order. A Live
+  /// Photo loads as a `.pvt` folder (still + MOV), which the transfer page
+  /// zips; anything else is the original file.
+  private static func copyPickedMedia(
+    _ results: [PHPickerResult],
+    completion: @escaping FlutterResult
+  ) {
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var paths = [String?](repeating: nil, count: results.count)
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("XDRemuxTransferPicks", isDirectory: true)
+
+    for (index, result) in results.enumerated() {
+      let provider = result.itemProvider
+      group.enter()
+      provider.loadFileRepresentation(forTypeIdentifier: UTType.item.identifier) { sourceURL, _ in
+        defer { group.leave() }
+        guard let sourceURL else { return }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory) else {
+          return
+        }
+        let stem = provider.suggestedName.flatMap { $0.isEmpty ? nil : $0 }
+          ?? sourceURL.deletingPathExtension().lastPathComponent
+        let ext = isDirectory.boolValue ? "pvt" : sourceURL.pathExtension
+        let name = ext.isEmpty ? stem : "\(stem).\(ext)"
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+          try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+          let destination = directory.appendingPathComponent(name)
+          try FileManager.default.copyItem(at: sourceURL, to: destination)
+          lock.lock()
+          paths[index] = destination.path
+          lock.unlock()
+        } catch {
+          // A single unavailable asset should not discard the other picks.
+        }
+      }
+    }
+
+    group.notify(queue: .main) {
+      completion(paths.compactMap { $0 })
     }
   }
 
@@ -364,12 +417,12 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       binaryMessenger: messenger
     )
     photoPickerChannel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "pickPhotos" else {
+      guard call.method == "pickPhotos" || call.method == "pickMedia" else {
         result(FlutterMethodNotImplemented)
         return
       }
       DispatchQueue.main.async {
-        self?.presentPhotoPicker(result: result)
+        self?.presentPhotoPicker(media: call.method == "pickMedia", result: result)
       }
     }
 
@@ -453,6 +506,10 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
         result(["verticalBarEdge": edge])
       case "getModelName":
         result(Self.modelName())
+      case "setKeepAwake":
+        // Keeps the screen on while a LAN transfer runs.
+        UIApplication.shared.isIdleTimerDisabled = call.arguments as? Bool ?? false
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }

@@ -43,3 +43,8 @@ bool transferImageName(String name) {
   final lower = name.toLowerCase();
   return ['.heic', '.heif', '.jpg', '.jpeg'].any(lower.endsWith);
 }
+
+bool transferVideoName(String name) {
+  final lower = name.toLowerCase();
+  return ['.mov', '.mp4', '.m4v'].any(lower.endsWith);
+}

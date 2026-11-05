@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xdremux/services/transfer/transfer_controller.dart';
 import 'package:xdremux/services/transfer/transfer_models.dart';
 import 'package:xdremux/services/transfer/transfer_service.dart';
+import 'package:xdremux/services/xdremux_service.dart';
 import 'package:xdremux/transfer_page.dart';
 
 class _Native extends TransferService {
@@ -26,6 +27,7 @@ class _Native extends TransferService {
   final discovered = <Map<String, dynamic>>[];
   final receipts = <Map<String, dynamic>>[];
   final events = <Map<String, dynamic>>[];
+  String? lastAlias;
   @override
   Future<TransferAvailability> start({
     required String supportRoot,
@@ -35,6 +37,7 @@ class _Native extends TransferService {
     String? pin,
   }) async {
     startCalls++;
+    lastAlias = alias;
     startEntered?.complete();
     await startGate;
     if (startError != null) return TransferAvailability(false, startError);
@@ -779,6 +782,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    expect(find.byKey(const ValueKey('pick-photos')), findsOneWidget);
     await add();
     expect(find.text('尚未转换'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('add-queue-sources')));
@@ -795,6 +799,68 @@ void main() {
     expect(find.text('B.HEIC'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  test('a subnet scan finds a peer that multicast missed', () async {
+    final server = await ServerSocket.bind('127.0.0.1', 53317);
+    final accepted = server.listen((socket) => socket.destroy());
+    addTearDown(() async {
+      await accepted.cancel();
+      await server.close();
+    });
+    await controller.enableReceiving();
+    controller.addresses = ['127.0.0.9'];
+    await controller.scanSubnet();
+    expect(controller.scanning, isFalse);
+    final found = controller.peers.singleWhere(
+      (p) => p['address'] == '127.0.0.1:53317',
+    );
+    expect(found['fingerprint'], 'B' * 64);
+    // A later multicast update keeps the scanned peer.
+    await controller.discover();
+    expect(
+      controller.peers.where((p) => p['address'] == '127.0.0.1:53317'),
+      hasLength(1),
+    );
+  });
+
+  testWidgets('a still and its same-named MOV read as one Live Photo', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    native.receipts.addAll([
+      {'id': 'a', 'name': 'IMG_7.HEIC', 'size': 3},
+      {'id': 'b', 'name': 'IMG_7.MOV', 'size': 3},
+      {'id': 'c', 'name': 'notes.txt', 'size': 3},
+    ]);
+    XdRemuxService.thumbnailRendererForTesting = (_, _) async => null;
+    addTearDown(() => XdRemuxService.thumbnailRendererForTesting = null);
+    await tester.runAsync(controller.ensureLocal);
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.textContaining('实况照片'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('clear-inbox')));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('confirm-clear-inbox')));
+    for (var i = 0; i < 10 && controller.inbox.isNotEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(controller.inbox, isEmpty);
+    expect(
+      native.calls.where((c) => c['command'] == 'delete_receipt'),
+      hasLength(3),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('a .pvt Live Photo is sent as one .pvt.zip', (tester) async {
     final bundle = Directory.systemTemp.createTempSync('live').path;
     final pvt = Directory('$bundle/IMG_1.pvt')..createSync();
@@ -904,6 +970,41 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets('a renamed device announces its new name', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: TransferPage(controller: controller)),
+    );
+    await tester.tap(find.byKey(const ValueKey('tab-receive')));
+    await tester.pumpAndSettle();
+    final edit = find.byKey(const ValueKey('edit-device-name'));
+    for (var i = 0; i < 10 && edit.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    await tester.tap(edit);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('device-name-field')),
+      '  Desk Phone ',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-device-name')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Desk Phone'), findsOneWidget);
+    // Reception announces the saved name.
+    await tester.runAsync(() => controller.enableReceiving());
+    expect(native.lastAlias, 'Desk Phone');
+    await tester.runAsync(controller.stop);
+    await tester.runAsync(() => TransferController.setDeviceName(null));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   testWidgets('the send tab can start discovery itself', (tester) async {
     await tester.pumpWidget(
       MaterialApp(home: TransferPage(controller: controller)),

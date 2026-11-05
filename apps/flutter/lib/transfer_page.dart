@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,9 @@ import 'services/transfer/transfer_export.dart';
 import 'services/transfer/transfer_live_photo.dart';
 import 'services/transfer/transfer_models.dart';
 import 'transfer_storage_dialog.dart';
+
+part 'transfer_page_receive.dart';
+part 'transfer_page_send.dart';
 
 String transferErrorText(String code) => switch (code) {
   'batch_too_large' => t(
@@ -183,104 +187,13 @@ class _TransferPageState extends State<TransferPage>
     }
   }
 
+  Future<String> _nameFuture = TransferController.deviceName();
+
   Future<void> _enableReceiving() =>
       transfer.enableReceiving(port: int.tryParse(_listenPort.text) ?? 0);
 
   final Map<String, String> _bundleZips = {};
   final Map<String, Future<Uint8List?>> _previews = {};
-
-  /// Receipts stay in private storage, so previews render from the leased
-  /// file (a Live Photo zip through its still) and are cached per size.
-  Future<Uint8List?> _preview(Map<String, dynamic> row, int size) {
-    final id = row['id'] as String;
-    final name = row['name'] as String;
-    return _previews['$id@$size'] ??= transfer
-        .withReceipt(id, (lease) async {
-          var path = lease['path'] as String;
-          Directory? temp;
-          try {
-            if (isLivePhotoZip(name)) {
-              temp = await Directory.systemTemp.createTemp('xdremux-preview-');
-              path = await extractLivePhotoStill(path, temp.path);
-            }
-            return await XdRemuxService.generateThumbnail(
-              path,
-              maxPixelSize: size,
-            );
-          } finally {
-            await temp?.delete(recursive: true).catchError((_) => temp!);
-          }
-        })
-        .then<Uint8List?>((bytes) => bytes, onError: (_) => null);
-  }
-
-  Widget _thumbnail(Map<String, dynamic> row, IconData fallback) {
-    final scheme = Theme.of(context).colorScheme;
-    final placeholder = Container(
-      color: scheme.surfaceContainerHighest,
-      child: Icon(fallback, color: scheme.onSurfaceVariant),
-    );
-    return InkWell(
-      key: ValueKey('preview-${row['id']}'),
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => _showPreview(row),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox.square(
-          dimension: 64,
-          child: FutureBuilder<Uint8List?>(
-            future: _preview(row, 256),
-            builder: (_, snapshot) => snapshot.data == null
-                ? placeholder
-                : Image.memory(
-                    snapshot.data!,
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showPreview(Map<String, dynamic> row) => showDialog<void>(
-    context: context,
-    builder: (ctx) => Dialog(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: FutureBuilder<Uint8List?>(
-              future: _preview(row, 2048),
-              builder: (_, snapshot) => switch (snapshot) {
-                AsyncSnapshot(hasData: true, :final data?) => InteractiveViewer(
-                  child: Image.memory(data),
-                ),
-                AsyncSnapshot(connectionState: ConnectionState.done) =>
-                  Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(t('无法预览此文件', 'No preview available')),
-                  ),
-                _ => const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: CircularProgressIndicator(),
-                ),
-              },
-            ),
-          ),
-          ListTile(
-            title: Text(row['name'] as String, overflow: TextOverflow.ellipsis),
-            trailing: IconButton(
-              tooltip: t('关闭', 'Close'),
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.pop(ctx),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
 
   /// A Live Photo output is a `.pvt` folder. LocalSend moves files, so it
   /// travels as `<stem>.pvt.zip`, which the receiving app unpacks again.
@@ -297,6 +210,9 @@ class _TransferPageState extends State<TransferPage>
     }
     return bytes;
   }
+
+  /// setState for the tab extensions in the part files.
+  void _update(VoidCallback change) => setState(change);
 
   void _changed() {
     if (mounted) setState(() {});
@@ -393,8 +309,8 @@ class _TransferPageState extends State<TransferPage>
         title: Text(t('重试未确认成功的文件？', 'Retry unacknowledged files?')),
         content: Text(
           t(
-            '已收到成功回执的文件不会重发。回执丢失时，对端可能已经保存，重试可能产生副本。源文件必须与上次准备的内容一致。',
-            'Acknowledged files are excluded. A lost acknowledgement may leave an existing copy on the receiver. Retried sources must match the previous prepared content.',
+            '已发送成功的文件不会重发。',
+            'Files already delivered are not sent again.',
           ),
         ),
         actions: [
@@ -419,7 +335,13 @@ class _TransferPageState extends State<TransferPage>
     }
   }
 
-  Future<void> _pick() async {
+  static const _photoPickerChannel = MethodChannel('xdremux/photo-picker');
+  static const _ohosGalleryChannel = MethodChannel('xdremux/gallery');
+
+  /// Files, or with [media] photos and videos. iOS and HarmonyOS open the
+  /// system photo picker (a Live Photo comes back as a `.pvt` folder), the
+  /// others a file picker filtered to media.
+  Future<void> _pick({bool media = false}) async {
     // Android and HarmonyOS pickers background the app, which stops LAN
     // reception anyway; stop first so it never ends halfway through a batch.
     // Reception comes back afterwards, so discovery keeps working.
@@ -427,12 +349,23 @@ class _TransferPageState extends State<TransferPage>
         (Platform.isAndroid || PlatformX.isOhos) && transfer.receiving;
     if (resume) await transfer.stop();
     try {
-      final result = await FilePicker.pickFiles();
-      if (result.isEmpty) return;
-      final paths = result.map((f) => f.path).whereType<String>().toList();
-      if (paths.length != result.length) {
-        throw const TransferException('invalid_input');
+      final List<String> paths;
+      if (media && (Platform.isIOS || PlatformX.isOhos)) {
+        final channel = Platform.isIOS
+            ? _photoPickerChannel
+            : _ohosGalleryChannel;
+        final picked = await channel.invokeMethod<List<dynamic>>('pickMedia');
+        paths = (picked ?? []).whereType<String>().toList();
+      } else {
+        final result = await FilePicker.pickFiles(
+          type: media ? FileType.media : FileType.any,
+        );
+        paths = result.map((f) => f.path).whereType<String>().toList();
+        if (paths.length != result.length) {
+          throw const TransferException('invalid_input');
+        }
       }
+      if (paths.isEmpty) return;
       if (mounted) await _addPaths(paths);
     } finally {
       if (resume && mounted && !transfer.receiving) await _enableReceiving();
@@ -448,134 +381,6 @@ class _TransferPageState extends State<TransferPage>
       for (final p in resolved)
         if (p != null && seen.add(p)) p,
     ]);
-  }
-
-  Future<void> _pickFromQueue() async {
-    final sources = widget.sources;
-    var converted = sources.any((s) => s.converted.isNotEmpty);
-    final chosen = <int>{
-      for (var i = 0; i < sources.length; i++)
-        if (!converted || sources[i].converted.isNotEmpty) i,
-    };
-    final paths = await showModalBottomSheet<List<String>>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, update) {
-          bool usable(int i) => !converted || sources[i].converted.isNotEmpty;
-          final picked = chosen.where(usable).toList()..sort();
-          return ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(ctx).height * 0.8,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    t('从转换列表添加', 'Add from conversion list'),
-                    style: Theme.of(ctx).textTheme.titleMedium,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SegmentedButton<bool>(
-                    segments: [
-                      ButtonSegment(
-                        value: true,
-                        label: Text(t('转换结果', 'Converted')),
-                        enabled: sources.any((s) => s.converted.isNotEmpty),
-                      ),
-                      ButtonSegment(
-                        value: false,
-                        label: Text(t('原文件', 'Originals')),
-                      ),
-                    ],
-                    selected: {converted},
-                    onSelectionChanged: (v) => update(() {
-                      converted = v.first;
-                      chosen
-                        ..clear()
-                        ..addAll([
-                          for (var i = 0; i < sources.length; i++)
-                            if (usable(i)) i,
-                        ]);
-                    }),
-                  ),
-                ),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (var i = 0; i < sources.length; i++)
-                        CheckboxListTile(
-                          key: ValueKey('queue-source-$i'),
-                          value: usable(i) && chosen.contains(i),
-                          title: Text(
-                            sources[i].name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: usable(i)
-                              ? null
-                              : Text(t('尚未转换', 'Not converted yet')),
-                          onChanged: usable(i)
-                              ? (v) => update(
-                                  () => v == true
-                                      ? chosen.add(i)
-                                      : chosen.remove(i),
-                                )
-                              : null,
-                        ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: FilledButton(
-                    key: const ValueKey('add-queue-sources'),
-                    onPressed: picked.isEmpty
-                        ? null
-                        : () => Navigator.pop(ctx, [
-                            for (final i in picked)
-                              if (converted)
-                                ...sources[i].converted
-                              else
-                                sources[i].original,
-                          ]),
-                    child: Text(
-                      t('添加 ${picked.length} 项', 'Add ${picked.length}'),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-    if (paths != null && mounted) await _run(() => _addPaths(paths));
-  }
-
-  Future<void> _importAll() async {
-    var added = 0, skipped = 0;
-    for (final row in transfer.inbox.values.toList()) {
-      if (!transferImageName(row['name'] as String)) continue;
-      final ack = await transfer.importReceipt(row['id'] as String);
-      if (ack.status == TransferIntakeStatus.added) {
-        added++;
-      } else if (ack.status != TransferIntakeStatus.duplicate) {
-        skipped++;
-      }
-    }
-    _notify(
-      t(
-        '已加入转换队列 $added 张${skipped > 0 ? '，$skipped 张未加入' : ''}',
-        'Added $added to the conversion queue${skipped > 0 ? ', $skipped not added' : ''}',
-      ),
-    );
   }
 
   Future<bool> _confirmDelete(String name) async =>
@@ -873,937 +678,51 @@ class _TransferPageState extends State<TransferPage>
     );
   }
 
-  Widget _offerCard(Map<String, dynamic> row, bool disabled) {
-    final id = row['id'] as String;
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final allFiles = transfer.files[id] ?? <Map<String, dynamic>>[];
-    final total = allFiles.fold<int>(0, (sum, f) => sum + (f['size'] as int));
-    final shown = _visibleFiles[id] ?? 5;
-    return Card(
-      key: ValueKey('offer-$id'),
-      color: scheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.move_to_inbox, color: scheme.onPrimaryContainer),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    t(
-                      '${row['alias'] ?? '对方设备'} 想发送 ${row['file_count']} 个文件',
-                      '${row['alias'] ?? 'A device'} wants to send ${row['file_count']} files',
-                    ),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (allFiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '${[for (final f in allFiles.take(shown)) f['name'] as String].join('、')}'
-                  '${allFiles.length > shown ? ' …' : ''} · ${_bytes(total)}',
-                  style: TextStyle(color: scheme.onPrimaryContainer),
-                ),
-              ),
-            if (allFiles.length > shown)
-              TextButton(
-                onPressed: () => setState(() => _visibleFiles[id] = shown + 64),
-                child: Text(
-                  t(
-                    '显示更多文件（已显示 $shown / ${allFiles.length}），接收确认适用于整批',
-                    'Show more ($shown / ${allFiles.length}); acceptance applies to the entire batch',
-                  ),
-                ),
-              ),
-            if (!transfer.receiving)
-              _hint(
-                context,
-                t('接收已关闭，重新开启后才能接收', 'Receiving is off; enable it to accept'),
-              ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                FilledButton(
-                  onPressed: disabled || !transfer.receiving
-                      ? null
-                      : () => _run(() => transfer.decide(id, true)),
-                  child: Text(t('接收全部', 'Accept all')),
-                ),
-                OutlinedButton(
-                  onPressed: disabled
-                      ? null
-                      : () => _run(() => transfer.decide(id, false)),
-                  child: Text(t('拒绝', 'Decline')),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+}
+
+/// Owns its text controller, so it outlives the dialog's exit animation.
+class _DeviceNameDialog extends StatefulWidget {
+  const _DeviceNameDialog({required this.current, required this.model});
+  final String current, model;
+  @override
+  State<_DeviceNameDialog> createState() => _DeviceNameDialogState();
+}
+
+class _DeviceNameDialogState extends State<_DeviceNameDialog> {
+  late final _field = TextEditingController(text: widget.current);
+
+  @override
+  void dispose() {
+    _field.dispose();
+    super.dispose();
   }
 
-  Widget _receiveSection(BuildContext context, bool disabled) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final port = transfer.ready == null
-        ? null
-        : (transfer.ready!['address'] as String).split(':').last;
-    return _section(
-      context,
-      icon: Icons.wifi_tethering,
-      title: t('本机接收', 'Receive on this device'),
-      subtitle: transfer.receiving
-          ? t(
-              '附近设备可以找到本机；收到的文件需要你点接收后才会保存',
-              'Nearby devices can find this one; files are saved only after you accept',
-            )
-          : t(
-              '开启后才能被发现和收文件。手机切到后台或离开此页会停止。',
-              'Enable to be found and receive. Mobile reception stops in the background or when leaving this page.',
-            ),
-      trailing: _chip(
-        context,
-        transfer.receiving
-            ? t('正在接收', 'Receiving enabled')
-            : t('接收已关闭', 'Receiving disabled'),
-        active: transfer.receiving,
-      ),
-      children: [
-        if (!transfer.receiving) ...[
-          DropdownButtonFormField<String>(
-            key: const ValueKey('discovery-interface'),
-            initialValue: transfer.discoveryInterface ?? '',
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: t('使用的网卡', 'Network'),
-            ),
-            items: [
-              DropdownMenuItem(
-                value: '',
-                child: Text(
-                  t('所有网卡（含 VPN/虚拟网卡）', 'All networks (including VPN/virtual)'),
-                ),
-              ),
-              for (final entry in transfer.interfaces.entries)
-                DropdownMenuItem(
-                  value: entry.key,
-                  child: Text(
-                    '${entry.value} · ${entry.key}',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              if (transfer.discoveryInterface != null &&
-                  !transfer.interfaces.containsKey(transfer.discoveryInterface))
-                DropdownMenuItem(
-                  value: transfer.discoveryInterface,
-                  child: Text(
-                    t(
-                      '原网卡已断开，请重新选择',
-                      'Previous network disconnected; choose again',
-                    ),
-                  ),
-                ),
-            ],
-            onChanged: disabled
-                ? null
-                : (value) => setState(() {
-                    transfer.discoveryInterface = value == '' ? null : value;
-                  }),
-          ),
-          const SizedBox(height: 12),
-        ],
-        Row(
-          children: [
-            if (!transfer.receiving) ...[
-              SizedBox(
-                width: 120,
-                child: TextField(
-                  key: const ValueKey('listen-port'),
-                  controller: _listenPort,
-                  enabled: !disabled,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: t('接收端口', 'Receive port'),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-            ],
-            Expanded(
-              child: FilledButton.icon(
-                key: const ValueKey('receive-toggle'),
-                style: transfer.receiving
-                    ? FilledButton.styleFrom(
-                        backgroundColor: scheme.surfaceContainerHighest,
-                        foregroundColor: scheme.onSurface,
-                      )
-                    : null,
-                icon: Icon(
-                  transfer.receiving ? Icons.stop : Icons.wifi_tethering,
-                ),
-                label: Text(
-                  transfer.receiving
-                      ? t('停止接收', 'Stop receiving')
-                      : t('开启接收', 'Enable receiving'),
-                ),
-                onPressed: disabled
-                    ? null
-                    : () => _run(
-                        () => transfer.receiving
-                            ? transfer.stop()
-                            : _enableReceiving(),
-                      ),
-              ),
-            ),
-          ],
-        ),
-        if (transfer.receiving && transfer.ready != null) ...[
-          FutureBuilder<String>(
-            future: TransferController.deviceName(),
-            builder: (context, snapshot) => snapshot.hasData
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      t(
-                        '其他设备看到的本机名称：${snapshot.data}',
-                        'Other devices see this one as: ${snapshot.data}',
-                      ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          const SizedBox(height: 8),
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: EdgeInsets.zero,
-            shape: const Border(),
-            collapsedShape: const Border(),
-            title: Text(
-              t('对方找不到本机？', 'Not found by the other device?'),
-              style: theme.textTheme.bodyMedium,
-            ),
-            children: [
-              _hint(
-                context,
-                t(
-                  '在对方的「发送」页手动输入以下任一地址',
-                  'Enter one of these addresses on the other device',
-                ),
-              ),
-              for (final ip in transfer.addresses)
-                Row(
-                  children: [
-                    Expanded(child: SelectableText('$ip:$port')),
-                    IconButton(
-                      tooltip: t('复制', 'Copy'),
-                      icon: const Icon(Icons.copy, size: 18),
-                      onPressed: () async {
-                        await Clipboard.setData(
-                          ClipboardData(text: '$ip:$port'),
-                        );
-                        _notify(t('已复制 $ip:$port', 'Copied $ip:$port'));
-                      },
-                    ),
-                  ],
-                ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _filesCard(BuildContext context, bool disabled) {
-    final scheme = Theme.of(context).colorScheme;
-    final visiblePaths = _allPaths ? 64 : 5;
-    return _section(
-      context,
-      icon: Icons.photo_library_outlined,
-      title: t('要发送的文件', 'Files to send'),
-      subtitle: _paths.isEmpty
-          ? widget.sourceLabel
-          : null,
-      trailing: _paths.isEmpty
-          ? null
-          : TextButton(
-              onPressed: disabled ? null : () => _setPaths(const []),
-              child: Text(t('清空', 'Clear')),
-            ),
-      children: [
-        if (_paths.isNotEmpty)
-          FutureBuilder<int>(
-            future: _selectionSize,
-            builder: (_, snapshot) => _hint(
-              context,
-              '${_paths.length} ${t('文件', 'files')} · '
-              '${snapshot.hasError
-                  ? t('文件不可读，请重新选择', 'Unreadable file; select again')
-                  : snapshot.hasData
-                  ? _bytes(snapshot.data!)
-                  : t('统计大小中…', 'Calculating size…')}',
-            ),
-          ),
-        for (final path in _paths.take(visiblePaths))
-          Row(
-            children: [
-              Icon(
-                transferImageName(path)
-                    ? Icons.image_outlined
-                    : Icons.insert_drive_file_outlined,
-                size: 18,
-                color: scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  File(path).uri.pathSegments.last,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              IconButton(
-                tooltip: t('移除', 'Remove'),
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: disabled
-                    ? null
-                    : () => _setPaths(List.of(_paths)..remove(path)),
-              ),
-            ],
-          ),
-        if (_paths.length > visiblePaths)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _allPaths
-                ? Text(
-                    t('共 ${_paths.length} 个文件', '${_paths.length} files total'),
-                  )
-                : TextButton(
-                    onPressed: () => setState(() => _allPaths = true),
-                    child: Text(
-                      t(
-                        '显示其余 ${_paths.length - visiblePaths} 个',
-                        'Show ${_paths.length - visiblePaths} more',
-                      ),
-                    ),
-                  ),
-          ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            if (widget.sources.isNotEmpty)
-              FilledButton.tonalIcon(
-                key: const ValueKey('add-from-queue'),
-                icon: const Icon(Icons.playlist_add_check),
-                onPressed: disabled ? null : _pickFromQueue,
-                label: Text(t('从转换列表添加', 'From conversion list')),
-              ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.attach_file),
-              onPressed: disabled ? null : () => _run(_pick),
-              label: Text(t('选择文件', 'Choose files')),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _deviceCard(BuildContext context, bool disabled) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
-    final manual =
-        _manual || transfer.peers.isEmpty || _host.text.isNotEmpty;
-    return _section(
-      context,
-      icon: Icons.devices,
-      title: t('发给谁', 'Send to'),
-      subtitle: transfer.discovering
-          ? t('正在自动发现附近设备', 'Discovering nearby devices')
-          : transfer.receiving
-          ? t('自动发现已关闭', 'Discovery disabled')
-          : t('尚未搜索附近设备', 'Not searching for nearby devices'),
-      trailing: transfer.receiving
-          ? IconButton(
-              key: const ValueKey('refresh-discovery'),
-              tooltip: t('重新发现', 'Discover again'),
-              icon: const Icon(Icons.refresh),
-              onPressed: disabled ? null : () => _run(transfer.discover),
-            )
-          : null,
-      children: [
-        // Discovery rides on reception (LocalSend answers announcements from
-        // its own listener), so searching here simply turns both on.
-        if (!transfer.receiving)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.tonalIcon(
-              key: const ValueKey('start-discovery'),
-              icon: const Icon(Icons.radar),
-              onPressed: disabled ? null : () => _run(_enableReceiving),
-              label: Text(t('搜索附近设备', 'Find nearby devices')),
-            ),
-          ),
-        if (transfer.discoveryError != null)
-          _hint(context, transferErrorText(transfer.discoveryError!)),
-        if (transfer.receiving && transfer.peers.isEmpty)
-          _hint(
-            context,
-            t(
-              '暂未找到设备。确认对方也打开了互传；多播被网络阻止时可用 IP 直连。',
-              'No devices yet. Make sure the other device has transfer open; use a direct IP if multicast is blocked.',
-            ),
-          ),
-        for (final peer in transfer.peers)
-          ListTile(
-            key: ValueKey('peer-${peer['fingerprint']}'),
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.smartphone),
-            title: Text(peer['alias'] as String),
-            subtitle: Text(peer['address'] as String),
-            selected:
-                confirmedPeer && _peer!['fingerprint'] == peer['fingerprint'],
-            trailing:
-                confirmedPeer && _peer!['fingerprint'] == peer['fingerprint']
-                ? const Icon(Icons.check_circle)
-                : Text(t('选择', 'Select')),
-            onTap: disabled ? null : () => _run(() => _selectPeer(peer)),
-          ),
-        if (!manual)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => setState(() => _manual = true),
-              child: Text(t('输入 IP 地址', 'Enter an IP address')),
-            ),
-          )
-        else
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: TextField(
-                  key: const ValueKey('peer-host'),
-                  controller: _host,
-                  enabled: !disabled,
-                  onChanged: (_) => setState(() => _peer = null),
-                  decoration: InputDecoration(
-                    labelText: t('对方 IP 地址', 'Peer IP address'),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 84,
-                child: TextField(
-                  key: const ValueKey('peer-port'),
-                  controller: _port,
-                  enabled: !disabled,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setState(() => _peer = null),
-                  decoration: InputDecoration(labelText: t('端口', 'Port')),
-                ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                key: const ValueKey('connect-peer'),
-                onPressed: disabled ? null : () => _run(_connect),
-                child: Text(t('连接', 'Connect')),
-              ),
-            ],
-          ),
-        if (confirmedPeer)
-          Container(
-            margin: const EdgeInsets.only(top: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: scheme.secondaryContainer,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.check_circle, color: scheme.onSecondaryContainer),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        t('已选择', 'Selected'),
-                        style: TextStyle(
-                          color: scheme.onSecondaryContainer,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Text(
-                        [
-                          if (_peer!['alias'] is String)
-                            _peer!['alias'] as String,
-                          _peer!['address'] as String,
-                        ].join(' · '),
-                        style: TextStyle(color: scheme.onSecondaryContainer),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  List<Widget> _sendAction(BuildContext context, bool disabled) {
-    final confirmedPeer = _peer != null && transfer.isPeerConfirmed(_peer!);
-    final blocked = _paths.isEmpty
-        ? t('先添加要发送的文件', 'Add files to send first')
-        : !confirmedPeer
-        ? t('先选择接收设备', 'Choose a receiving device first')
-        : null;
-    return [
-      if (_showPin)
-        TextField(
-          controller: _pin,
-          enabled: !disabled,
-          obscureText: true,
-          maxLength: 128,
-          decoration: InputDecoration(
-            labelText: t('对方接收 PIN', 'Receiver PIN'),
-          ),
-        ),
-      SizedBox(
-        height: 52,
-        child: FilledButton.icon(
-          key: const ValueKey('send-files'),
-          icon: const Icon(Icons.send),
-          label: Text(
-            _paths.isEmpty
-                ? t('发送', 'Send')
-                : t('发送 ${_paths.length} 个文件', 'Send ${_paths.length} files'),
-          ),
-          onPressed: disabled || blocked != null
-              ? null
-              : () => _run(() async {
-                  await transfer.send(
-                    _peer!,
-                    _paths,
-                    pin: _pin.text.isEmpty ? null : _pin.text,
-                  );
-                  _notify(
-                    t(
-                      '已开始发送，进度见下方发送记录',
-                      'Sending started; see Sent below for progress',
-                    ),
-                  );
-                }),
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(t('本机名称', 'Device name')),
+    content: TextField(
+      key: const ValueKey('device-name-field'),
+      controller: _field,
+      autofocus: true,
+      maxLength: 64,
+      decoration: InputDecoration(
+        helperText: t(
+          '留空则使用型号：${widget.model}',
+          'Leave empty to use the model: ${widget.model}',
         ),
       ),
-      Row(
-        children: [
-          Expanded(
-            child: blocked != null && !disabled
-                ? _hint(context, blocked)
-                : const SizedBox.shrink(),
-          ),
-          if (!_showPin)
-            TextButton(
-              onPressed: () => setState(() => _showPin = true),
-              child: Text(t('对方要求 PIN？', 'Receiver needs a PIN?')),
-            ),
-        ],
-      ),
-    ];
-  }
-
-  Widget _transferCard(Map<String, dynamic> row, bool disabled) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final id = row['id'] as String;
-    final phase = row['phase'] as String;
-    final send = row['direction'] == 'send';
-    final allFiles = transfer.files[id] ?? <Map<String, dynamic>>[];
-    final shown = _visibleFiles[id] ?? 64;
-    final total = allFiles.fold<int>(0, (sum, f) => sum + (f['size'] as int));
-    final moved = allFiles.fold<int>(0, (sum, f) => sum + (f['bytes'] as int));
-    final complete = allFiles
-        .where((f) => ['sent', 'committed'].contains(f['phase']))
-        .length;
-    final canRetry =
-        _peer != null &&
-        transfer.isPeerConfirmed(_peer!) &&
-        _peer!['fingerprint'] == row['peer_fingerprint'];
-    const labels = {
-      'preparing': ['准备文件', 'Preparing'],
-      'pending': ['等待对方确认', 'Waiting for confirmation'],
-      'accepted': ['已接受', 'Accepted'],
-      'transferring': ['传输中', 'Transferring'],
-      'completed': ['已完成', 'Completed'],
-      'failed': ['未完成', 'Failed'],
-    };
-    final label = labels[phase] ?? ['等待', 'Waiting'];
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(send ? Icons.upload : Icons.download, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${send ? t('发送', 'Send') : t('接收', 'Receive')}'
-                  '${row['alias'] != null ? ' · ${row['alias']}' : ''}'
-                  ' · ${row['file_count']} ${t('文件', 'files')}',
-                  style: theme.textTheme.titleSmall,
-                ),
-              ),
-              _chip(
-                context,
-                t(label[0], label[1]),
-                active: !['completed', 'failed'].contains(phase),
-              ),
-            ],
-          ),
-          if (row['error'] != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                transferErrorText(row['error'] as String),
-                style: TextStyle(color: scheme.error),
-              ),
-            ),
-          if (allFiles.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              '${t('整批进度', 'Batch progress')}: $complete/${row['file_count']} · ${_bytes(moved)} / ${_bytes(total)}',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: total == 0
-                  ? complete / allFiles.length
-                  : (moved / total).clamp(0, 1),
-            ),
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: EdgeInsets.zero,
-              shape: const Border(),
-              collapsedShape: const Border(),
-              title: Text(
-                t('文件明细（${allFiles.length}）', 'Files (${allFiles.length})'),
-                style: theme.textTheme.bodyMedium,
-              ),
-              children: [
-                for (final file in allFiles.take(shown))
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${file['name']} · ${_bytes(file['size'] as int)}',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            Text(
-                              file['error'] != null
-                                  ? transferErrorText(file['error'] as String)
-                                  : switch (file['phase']) {
-                                      'sent' => t('已发送', 'Sent'),
-                                      'committed' => t('已接收', 'Received'),
-                                      'transferring' => t(
-                                        '传输中',
-                                        'Transferring',
-                                      ),
-                                      _ => t('等待', 'Waiting'),
-                                    },
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                        LinearProgressIndicator(
-                          value: file['size'] == 0
-                              ? (['sent', 'committed'].contains(file['phase'])
-                                    ? 1
-                                    : 0)
-                              : ((file['bytes'] as int) / (file['size'] as int))
-                                    .clamp(0, 1)
-                                    .toDouble(),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (allFiles.length > shown)
-                  TextButton(
-                    onPressed: () =>
-                        setState(() => _visibleFiles[id] = shown + 64),
-                    child: Text(
-                      t(
-                        '显示更多文件（已显示 $shown / ${allFiles.length}）',
-                        'Show more ($shown / ${allFiles.length})',
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-          if (row['retry_available'] == true) ...[
-            if (!canRetry)
-              _hint(
-                context,
-                t(
-                  '先选择原接收设备，再重试',
-                  'Select the original receiver before retrying',
-                ),
-              ),
-            TextButton(
-              key: ValueKey('retry-$id'),
-              onPressed: disabled || !canRetry
-                  ? null
-                  : () => _run(() => _retry(id)),
-              child: Text(t('重试未确认成功的文件', 'Retry unacknowledged files')),
-            ),
-          ],
-          if (!['completed', 'failed'].contains(phase))
-            TextButton(
-              onPressed: disabled
-                  ? null
-                  : () => _run(() => transfer.cancel(id)),
-              child: Text(t('取消传输', 'Cancel transfer')),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _inboxSection(BuildContext context, bool disabled) => _section(
-    context,
-    icon: Icons.inbox,
-    title: t('收件箱', 'Inbox'),
-    trailing: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          key: const ValueKey('refresh-inbox'),
-          tooltip: t('刷新', 'Refresh'),
-          icon: const Icon(Icons.refresh),
-          onPressed: disabled
-              ? null
-              : () => _run(() async {
-                  await transfer.ensureLocal();
-                  await transfer.refresh();
-                }),
-        ),
-        IconButton(
-          key: const ValueKey('manage-transfer-storage'),
-          tooltip: t('存储管理', 'Storage'),
-          icon: const Icon(Icons.cleaning_services_outlined),
-          onPressed: disabled
-              ? null
-              : () => showDialog<void>(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (_) => TransferStorageDialog(
-                    controller: transfer,
-                    errorText: transferErrorText,
-                  ),
-                ),
-        ),
-      ],
+      onSubmitted: (v) => Navigator.pop(context, v),
     ),
-    children: [
-      _hint(
-        context,
-        t(
-          '原件保存在应用私有收件箱。导入转换队列和导出会另建副本，请预留额外空间。',
-          'Originals stay in the private inbox. Queue import and export create extra copies; allow additional space.',
-        ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(t('取消', 'Cancel')),
       ),
-      if (transfer.inbox.isEmpty) _empty(context, t('收件箱为空', 'Inbox is empty')),
-      if (transfer.inbox.values.any(
-        (r) => transferImageName(r['name'] as String),
-      ))
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: FilledButton.tonalIcon(
-            key: const ValueKey('import-all'),
-            icon: const Icon(Icons.playlist_add),
-            onPressed: disabled ? null : () => _run(_importAll),
-            label: Text(t('全部照片加入转换队列', 'Add all photos to the conversion queue')),
-          ),
-        ),
-      for (final receipt in transfer.inbox.values)
-        _receiptCard(receipt, disabled),
-      if (transfer.moreInbox)
-        TextButton(
-          onPressed: disabled ? null : () => _run(() => transfer.loadInbox()),
-          child: Text(t('加载更多', 'Load more')),
-        ),
+      FilledButton(
+        key: const ValueKey('save-device-name'),
+        onPressed: () => Navigator.pop(context, _field.text),
+        child: Text(t('保存', 'Save')),
+      ),
     ],
   );
-
-  Widget _receiptCard(Map<String, dynamic> row, bool disabled) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final id = row['id'] as String;
-    final name = row['name'] as String;
-    final image = transferImageName(name);
-    final live = isLivePhotoZip(name);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      decoration: BoxDecoration(
-        border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (live || image)
-                _thumbnail(
-                  row,
-                  live
-                      ? Icons.motion_photos_on_outlined
-                      : Icons.image_outlined,
-                )
-              else
-                Icon(
-                  Icons.insert_drive_file_outlined,
-                  color: scheme.onSurfaceVariant,
-                ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, overflow: TextOverflow.ellipsis),
-                    Text(
-                      '${live ? '${t('实况照片', 'Live Photo')} · ' : ''}'
-                      '${_bytes(row['size'] as int)} · '
-                      '${row['peer_hash_present'] == true ? t('长度与对端哈希已核对', 'Length and peer hash verified') : t('长度已核对；无对端哈希', 'Length verified; peer supplied no hash')}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          Wrap(
-            spacing: 4,
-            children: [
-              if (image)
-                TextButton.icon(
-                  icon: const Icon(Icons.playlist_add, size: 18),
-                  onPressed: disabled
-                      ? null
-                      : () => _run(() async {
-                          final ack = await transfer.importReceipt(id);
-                          _notify(switch (ack.status) {
-                            TransferIntakeStatus.added => t(
-                              '已加入转换队列',
-                              'Added to conversion queue',
-                            ),
-                            TransferIntakeStatus.duplicate => t(
-                              '已在转换队列中',
-                              'Already in conversion queue',
-                            ),
-                            _ => t(
-                              '未加入队列，收件箱文件已保留',
-                              'Not added; inbox file retained',
-                            ),
-                          });
-                        }),
-                  label: Text(t('加入转换队列', 'Add to conversion queue')),
-                ),
-              if (live && TransferExport.savesLivePhoto)
-                TextButton.icon(
-                  icon: const Icon(Icons.photo_library_outlined, size: 18),
-                  onPressed: disabled
-                      ? null
-                      : () => _run(() async {
-                          await TransferExport.saveLivePhoto(
-                            transfer,
-                            id,
-                            name,
-                          );
-                          _notify(
-                            Platform.isIOS
-                                ? t('已存为实况照片', 'Saved as a Live Photo')
-                                : t(
-                                    '已存入相册（HEIF + MOV）',
-                                    'Saved to the gallery (HEIF + MOV)',
-                                  ),
-                          );
-                        }),
-                  label: Text(t('存入相册', 'Save to Photos')),
-                ),
-              TextButton.icon(
-                icon: Icon(
-                  TransferExport.viaShareSheet
-                      ? Icons.ios_share
-                      : Icons.save_alt,
-                  size: 18,
-                ),
-                onPressed: disabled
-                    ? null
-                    : () => _run(() async {
-                        if (await TransferExport.save(transfer, id, name) &&
-                            !TransferExport.viaShareSheet) {
-                          _notify(t('文件已导出并校验', 'File exported and verified'));
-                        }
-                      }),
-                label: Text(
-                  TransferExport.viaShareSheet
-                      ? t('分享或存储', 'Share or save')
-                      : live && PlatformX.isDesktop
-                      ? t('导出为 .pvt', 'Export as .pvt')
-                      : t('导出文件', 'Export file'),
-                ),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: scheme.error),
-                icon: const Icon(Icons.delete_outline, size: 18),
-                onPressed: disabled
-                    ? null
-                    : () => _run(() async {
-                        if (await _confirmDelete(name)) {
-                          await transfer.deleteReceipt(id);
-                        }
-                      }),
-                label: Text(t('删除', 'Delete')),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }
