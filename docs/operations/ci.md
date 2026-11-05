@@ -1,6 +1,6 @@
 # CI 剖析
 
-> 五个 workflow：`.github/workflows/ci.yml`（日常）、`conformance.yml`（一致性）、`ohos-ci.yml`（鸿蒙 Rust 冒烟）、`linux.yml`（Linux PR/可复用构建）、`release.yml`（发版及只构建预检，见 `operations/releasing.md`）。
+> 六个 workflow：`.github/workflows/ci.yml`（日常）、`conformance.yml`（一致性）、`apple-ci.yml`（原生 SwiftUI 应用）、`ohos-ci.yml`（鸿蒙 Rust 冒烟）、`linux.yml`（Linux PR/可复用构建）、`release.yml`（发版及只构建预检，见 `operations/releasing.md`）。
 
 ## 1. ci.yml（push/PR 日常）
 
@@ -16,6 +16,13 @@
 - 金样语料不入库，CI 只跑无样本路径（见 `testing/conformance-suite.md`）
 - fixture 门禁测试（14 个上游 Motion Photo fixture 对拍）在 fixtures 缺失时优雅跳过（`require_fixtures()` 守卫，2026-09 修）
 
+## 2.4 apple-ci.yml（原生 Apple 应用）
+
+- 触发：push 到 `main` 或 PR，且改动落在 `apps/apple/**`、`xdremux/rust/**`、`tools/apple/**` 或本 workflow；也可手动 dispatch。
+- 单 job，`macos-latest`：构建 x265（按 `X265_TAG` 缓存）→ `tools/apple/check_header.sh` 校验已提交的 `xdremux_core.h` 与 cbindgen 输出一致 → `XDREMUX_APPLE_SLICES=macos xdremux/rust/build_apple.sh` 只构建 macOS 切片的 `XDRemuxCore.xcframework` → `apps/apple/Packages/XDRemuxKit` 下 `swift test` → 构建 `xdremux` CLI 并冒烟（`--version`、`capabilities`、随机字节 `inspect` 必须失败）→ `xcodegen generate` + `xcodebuild` 构建未签名的 macOS Debug App。
+- **不覆盖**：iOS 切片与 iOS 模拟器（本地用 `build_apple.sh` 的 `ios-sim` 切片，见 `apps/apple/README.md`）、签名、真机照片 App 验收。原生 Apple 应用尚未进入 `release.yml`。
+- 改了 FFI 导出却没重新生成头文件时，本 workflow 在 header 检查一步失败。
+
 ## 2.5 ohos-ci.yml（鸿蒙）
 
 - 范围**只做 Rust 核心冒烟**：公开 SDK 上 `build_ohos.sh` 构建 `libxdremux_core.so`
@@ -30,8 +37,9 @@ Job 结构与缓存策略：
 - **版本解析**：pubspec `^version:` 正则 -> TAG_VERSION -> 资产命名
 - **Windows**：NASM 安装 -> x265 -> Rust -> Flutter -> Inno Setup（`BuildArch` 参数）
 - **Android**：SDK 36 约束（runner 无 API 37）+ JVM target 分插件对齐已固化在构建脚本
-- **publish job**：汇集 dist/ 下各产物挂到 Release；不生成/覆盖 Release 文案；`needs` 必须包含全部构建 job（含 windows-arm64——曾因漏 needs 导致 pre.2 缺 ARM64 包，`0eb097b` 修）
-- 鸿蒙 hap 不进 release.yml：本地 `build_hap.ps1` 构建（profile 模式）后手动挂资产
+- **publish job**：汇集 dist/ 下各产物挂到 Release；不生成/覆盖 Release 文案；`needs` 必须包含全部构建 job（`[windows, windows-arm64, android, macos, ios, linux]`；曾因漏 needs 导致 pre.2 缺 ARM64 包，`0eb097b` 修）
+- **windows-arm64**：`continue-on-error: true`，只做实验性构建、不出安装包，失败不阻断 publish（与 README「不提供 Windows ARM64 安装包」一致）
+- 鸿蒙 hap 不进 release.yml：本地构建（Windows `tools/ohos/build_hap.ps1`，macOS `tools/ohos/build_hap.sh`，见 `operations/building.md`）后手动挂资产
 - iOS 使用 `xcode-27`，显式选择 Xcode 27.1，先检查 SDK/API，再构建归档和校验 FFI；不降级 Duo 功能来适配旧 SDK。
 - Linux 通过 `linux.yml` 的 `workflow_call` 构建，与四个既有平台一起参与 publish 成功和附件存在性门禁；保持预览平台标记。独立 Linux 上传 job 不在被 Release 调用时运行。
 - `workflow_dispatch` 只构建候选产物；无 tag ref 不执行 publish，也不创建 Release。
@@ -42,9 +50,10 @@ Job 结构与缓存策略：
 |---|---|---|
 | windows-2022 | x64 构建 | - |
 | windows-11-arm | ARM64 构建 | 公开仓库免费原生 ARM runner |
-| ubuntu-latest | Android + publish | - |
+| ubuntu-latest | Android + publish、ci.yml、conformance.yml、ohos-ci.yml | - |
+| macos-latest | macOS DMG、apple-ci.yml | arm64；x265 NASM 汇编仅 x86，arm64 上关闭 |
 
-macOS DMG 使用 `macos-latest`；iOS 使用 `xcode-27` + 显式 Xcode 27.1；Linux 使用 `ubuntu-22.04`。Xcode 预览 runner 的容量/排队问题需要单独记录，不用旧 SDK 构建替代 Duo 版本。
+iOS 使用 `xcode-27` + 显式 Xcode 27.1；Linux 使用 `ubuntu-22.04`。Xcode 预览 runner 的容量/排队问题需要单独记录，不用旧 SDK 构建替代 Duo 版本。
 
 ## 5. 修改 workflow 的纪律
 

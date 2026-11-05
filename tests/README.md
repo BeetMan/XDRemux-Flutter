@@ -4,13 +4,12 @@ This directory is reserved for repository-level validation that is not tied to a
 
 Use this directory for tests and validation harnesses that compare converter behavior across entry points, inspect HEIF/ISOBMFF structure, or validate ISO gain-map metadata.
 
-Recommended split:
+Current layout:
 
-- `tests/fixtures/` for small synthetic metadata fixtures that are safe to commit.
-- `tests/golden/` for expected metadata snapshots, hashes, or text outputs.
-- `tests/validation/` for scripts that inspect output files without requiring a graphical app.
+- `tests/conformance/` holds the conformance crate (`xdremux-conformance`) and `driver.py`. See `docs/testing/conformance-suite.md`.
+- Real photos and golden corpora are not committed. Policy is in `fixtures/README.md`.
 
-macOS app-specific UI and ViewModel tests can remain under `apps/macos/XDRemuxApp/Tests/`. Converter correctness tests should live here so they are not coupled to the app project layout.
+App-specific tests live with each app. Flutter tests are in `apps/flutter/test/` (`flutter test`). Native Apple tests are in `apps/apple/Packages/XDRemuxKit/Tests/` (`swift test`; build the XCFramework first). Converter correctness tests belong in the Rust core or here, so they do not depend on any app layout.
 
 ## Running tests
 

@@ -1,6 +1,9 @@
 # 原生 Apple（iOS / macOS）前端开发计划
 
-> 状态：2026-10-30 起草，仅规划，未创建任何代码。模板沿用 `feat/harmony-native` 分支的
+> 状态：2026-10-30 起草；同日起按本计划在 `main` 的 `apps/apple/` 实施，2026-10-31 已完成 P0–P2 与 P3 三批
+> （动态照片 / Live Photo、真正取消与摄影风格 3、iOS 模拟器首次实跑），P3 的 Share Extension、批量导出与 P4 未开始；
+> 执行记录见各阶段末尾，当前用法见 `apps/apple/README.md`。§2 目录为最初规划，与实际目录的差异以 README 为准。
+> 模板沿用 `feat/harmony-native` 分支的
 > `docs/plans/harmony-native.md`；鸿蒙原生版已证明"同一 Rust 内核 + 第二个原生前端"可行，
 > 本计划吸收其做法并修正其暴露的问题。
 

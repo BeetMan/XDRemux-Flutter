@@ -1,6 +1,6 @@
 # ISOBMFF 容器层模块
 
-> 对应代码：`isobmff.rs`（解析）、`isobmff_write.rs`（构造）、`watermark_codec.rs` 的 `rewrite_primary_grid`（容器手术）。约 20K 行核心中占最大比重的一层。
+> 对应代码：`isobmff.rs`（解析）、`isobmff_write.rs`（构造）、`watermark_codec.rs` 的 `rewrite_primary_grid_in_place`（容器手术）。约 40K 行核心中占比重最大的一层之一。
 
 ## 1. 解析（isobmff.rs）
 
@@ -16,9 +16,15 @@ box 工厂函数：`make_box`、`make_infe_box`、`make_iinf_box`、`make_iloc_b
 
 iloc 重建的关键：追加新 mdat 内容后，**所有 box 偏移重算**（meta 长度变化 -> mdat data_start 变化 -> 每个 entry 的 extent 绝对偏移平移）。
 
-## 3. rewrite_primary_grid（容器手术模板）
+## 3. 主图替换手术
 
-"用新栅格（512×512 tile grid）替换主图"的通用手术，步骤与不变量：
+### 3.1 rewrite_primary_grid_in_place（现行）
+
+写回路径自 `1689aab`（2026-08-21）起使用：沿用原 tile item ID，只把 iloc 改指新码流、替换 hvcC 属性；主图 ID、iinf、iref 原样保留，因此挂在主图上的 tmap/增益图与 OPPO 水印叠层关系不断。前提是新栅格与原 grid 同尺寸、同 tile 数。细节见 `modules/watermark-restore.md` §2。
+
+### 3.2 rewrite_primary_grid（旧模板，已无调用方）
+
+"用新栅格（512×512 tile grid）替换主图"的旧手术，保留作参考。步骤：
 
 1. 解析回传文件 meta；找到 primary（必须是 image grid）及其 dimg 引用的旧 tile 集合
 2. 新 tile item（`hvc1`，construction_method=0，extent 指向 mdat 追加区）；新 grid item（走 idat，construction_method=1）

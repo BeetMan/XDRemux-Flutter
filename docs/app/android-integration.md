@@ -14,7 +14,7 @@
 
 | 组件 | 职责 |
 |---|---|
-| `MainActivity.kt` | 四个 MethodChannel（电池 / HEVC 探测 / 硬编码 / 缩略图） |
+| `MainActivity.kt` | 五个 MethodChannel（电池 / HEVC 探测 / 硬编码 / 缩略图 / 文件导入） |
 | `MediaCodecHevcEncoder.kt` | MediaCodec 硬件 HEVC 编码（硬件_encoder 服务探测/使用） |
 | `flutter_foreground_task` | 后台转换前台服务 + 通知 |
 | `receive_sharing_intent`（固定 1.8.1） | 接收相册分享 |
