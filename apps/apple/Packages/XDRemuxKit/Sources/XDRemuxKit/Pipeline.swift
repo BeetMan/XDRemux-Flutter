@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import XDRemuxCoreC
 import XDRemuxModel
 
@@ -115,10 +116,29 @@ extension XDRemuxEngine {
     }
 }
 
+extension XDRemuxEngine {
+    static let hardwareLog = Logger(subsystem: "io.github.beetman.xdremux", category: "hardware-encode")
+}
+
 extension XDRemuxEngine: PipelineBackend {
     public func runPipeline(input: String, output: String, config: ConversionConfig,
                             progress: @escaping @Sendable (Double) -> Void) async throws -> PipelineOutcome {
-        let r = try await convertPipeline(input: input, output: output, config: config) { progress($0.fraction) }
+        var hardware: PipelineReport?
+        if Self.hardwareTilesApplicable(config) {
+            // Hardware tiles first; an input the core cannot tile, or an
+            // output that does not verify, falls back to the x265 pipeline.
+            do {
+                hardware = try await convertHardwareTiles(input: input, output: output, config: config) { progress($0.fraction) }
+            } catch let failure as HardwareTilesError {
+                Self.hardwareLog.notice("hardware path skipped for \((input as NSString).lastPathComponent, privacy: .public): \(String(describing: failure), privacy: .public)")
+            }
+        }
+        let r: PipelineReport
+        if let hardware {
+            r = hardware
+        } else {
+            r = try await convertPipeline(input: input, output: output, config: config) { progress($0.fraction) }
+        }
         return PipelineOutcome(success: r.success, stage: r.stage ?? "", cancelled: r.cancelled ?? false,
                                errorMessage: r.errorMessage,
                                outcome: ConversionOutcome(success: r.success, mode: r.mode, family: r.family,

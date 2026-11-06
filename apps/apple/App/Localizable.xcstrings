@@ -4968,6 +4968,70 @@
           }
         }
       }
+    },
+    "硬件编码（VideoToolbox）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hardware encoding (VideoToolbox)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "硬件编码（VideoToolbox）"
+          }
+        }
+      }
+    },
+    "编码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encoding"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编码"
+          }
+        }
+      }
+    },
+    "这台设备没有可用的硬件 HEVC 编码器。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device has no hardware HEVC encoder."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备没有可用的硬件 HEVC 编码器。"
+          }
+        }
+      }
+    },
+    "用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encodes the gain map with the system's hardware encoder, much faster than the built-in x265; Photographic Styles and Portrait still use the built-in encoder. Photos that cannot be tiled fall back automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

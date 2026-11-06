@@ -428,6 +428,26 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测（Duo 模拟器）：Mac 把 `XDR_STYLES2_LIVE.pvt.zip`（11.5 MB，store）发到模拟器 → 收件箱显示 Live Photo → 存入照片 →
   照片 App 中为 Live Photo；加入列表得到 `XDR_STYLES2_LIVE.heic`。macOS 构建通过。
 
+**硬件编码：VideoToolbox 分块路径（2026-11-06，分支 `feat/apple-hardware-encode`）**
+
+- 与 Flutter 同一条路：`xdremux_prepare_tiles`（内核解码增益图、切 512×512 的 8-bit I420 块）→ 平台逐块编成单帧 IDR 的
+  Annex-B HEVC → `xdremux_assemble_tiles` 装 HEIC → `xdremux_verify_output`。底图原样拷贝，硬编只涉及增益图。
+- `XDRemuxKit/HardwareTiles.swift`：`VideoToolboxTileEncoder` 一个会话编所有块（HEVC Main、关键帧间隔 1、不重排、
+  Quality 0.9、NV12 全范围 + 709 附件；macOS 要求硬件编码器）；输出用 `CMVideoFormatDescriptionGetHEVCParameterSetAtIndex`
+  取 VPS/SPS/PPS 前置到每一块（内核取首块参数集建 hvcC，其余剥掉），AVCC 长度前缀改 4 字节起始码——不再像 Flutter 那样
+  按字节扫 hvcC，也没有全局 `isFirstTile`，并发安全。`XDRemuxEngine.convertHardwareTiles` 在内核队列里一次完成
+  prepare → 编码循环（`xdremux_progress_report` 实时进度、取消标志）→ assemble，再 verify；不能分块 / 装配失败 / 校验失败
+  抛 `HardwareTilesError`，`runPipeline` 捕获后回退 x265 管线。门槛与 Flutter 一致并多排除人像：`hardwareEncode` 开、
+  摄影风格 2/3 关、人像关、`VideoToolboxTileEncoder.isAvailable`。
+- 设置页新增"编码"段：硬件编码开关，无编码器时禁用并说明。
+- 测试：合成块编码出 VPS/SPS/PPS + IRAP；门槛判定；`XDREMUX_SAMPLE_DIR` 下真实样本走硬件路径并 verify；
+  `XDREMUX_HW_KEEP_DIR` 可同时留下 x265 输出做对照。
+- 实测（M 系列 Mac）：oppo-camera-heic 首张样本，增益图 2048×1536 → 74 块，硬件路径整轮 0.11 s（x265 管线约 0.37 s）；
+  ffprobe：两份输出各 122 个 HEVC 流，增益图块都是 Main、yuvj420p、全范围（x265 为 Main Still Picture）；ImageIO
+  以 DecodeToHDR 解到线性 sRGB 对比，平均差 5e-7、最大 0.006。
+- 未验证：iOS 真机（模拟器里 VideoToolbox 给的是宿主 Mac 的编码器，路径能跑但不代表真机）；大样本上的整体提速比例；OPPO 兼容模式输出的尾部与 tmap（装配由内核
+  按 `oppo_compat` 处理，逻辑与 Flutter 相同，但本轮只测了 Apple 标准）。
+
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
