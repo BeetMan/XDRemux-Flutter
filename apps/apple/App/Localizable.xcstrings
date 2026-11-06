@@ -1273,22 +1273,6 @@
         }
       }
     },
-    "加入照片列表": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add to Photos List"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "加入照片列表"
-          }
-        }
-      }
-    },
     "动态照片": {
       "localizations": {
         "en": {
@@ -3257,22 +3241,6 @@
         }
       }
     },
-    "正在查找同一局域网内开启了接收的设备…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Looking for devices on this network that are receiving…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找同一局域网内开启了接收的设备…"
-          }
-        }
-      }
-    },
     "正在生成 Apple 照片摄影风格编辑副本…": {
       "localizations": {
         "en": {
@@ -3733,38 +3701,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动发现不可用，请手动输入对方的 IP:端口。"
-          }
-        }
-      }
-    },
-    "自动发现在这台设备上不可用（需要 Apple 的多播授权），请手动输入对方的 IP:端口。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Automatic discovery is unavailable on this device (it needs Apple's multicast entitlement). Enter the other device's IP:port."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动发现在这台设备上不可用（需要 Apple 的多播授权），请手动输入对方的 IP:端口。"
-          }
-        }
-      }
-    },
-    "自动发现失败：%@。可以手动输入对方的 IP:端口。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Automatic discovery failed: %@. You can enter the other device's IP:port."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动发现失败：%@。可以手动输入对方的 IP:端口。"
           }
         }
       }
@@ -4645,6 +4581,358 @@
           "stringUnit": {
             "state": "translated",
             "value": "（未分类）"
+          }
+        }
+      }
+    },
+    "设备名": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备名"
+          }
+        }
+      }
+    },
+    "保存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存"
+          }
+        }
+      }
+    },
+    "其他设备看到的名字。留空则使用设备名。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The name other devices see. Leave empty to use the device name."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他设备看到的名字。留空则使用设备名。"
+          }
+        }
+      }
+    },
+    "清空收件箱？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear the inbox?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空收件箱？"
+          }
+        }
+      }
+    },
+    "清空": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空"
+          }
+        }
+      }
+    },
+    "删除收件箱里的 %lld 个文件。已存入照片或加入列表的副本不受影响。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deletes %lld inbox files. Copies already saved to Photos or added to the list stay."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除收件箱里的 %lld 个文件。已存入照片或加入列表的副本不受影响。"
+          }
+        }
+      }
+    },
+    "接收全部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept all"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接收全部"
+          }
+        }
+      }
+    },
+    "扫描网段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan subnet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描网段"
+          }
+        }
+      }
+    },
+    "正在逐个尝试本网段的地址，大约需要十几秒…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trying every address on this subnet, about ten seconds…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在逐个尝试本网段的地址，大约需要十几秒…"
+          }
+        }
+      }
+    },
+    "自动发现在这台设备上不可用（需要 Apple 的多播授权）。可以扫描网段，或手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery is unavailable on this device (it needs Apple's multicast entitlement). Scan the subnet, or enter the peer's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现在这台设备上不可用（需要 Apple 的多播授权）。可以扫描网段，或手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "自动发现失败：%@。可以扫描网段，或手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery failed: %@. Scan the subnet, or enter the peer's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现失败：%@。可以扫描网段，或手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "正在查找同一局域网内开启了接收的设备；几秒后没找到会自动扫描网段。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for devices on this network that are receiving; after a few seconds the subnet is scanned."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在查找同一局域网内开启了接收的设备；几秒后没找到会自动扫描网段。"
+          }
+        }
+      }
+    },
+    "全部存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save all to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部存入照片"
+          }
+        }
+      }
+    },
+    "全部加入列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add all to list"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部加入列表"
+          }
+        }
+      }
+    },
+    "Live Photo · ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo · "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo · "
+          }
+        }
+      }
+    },
+    "Live Photo 视频，随同名照片一起处理 · ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo video, handled with the photo of the same name · "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo 视频，随同名照片一起处理 · "
+          }
+        }
+      }
+    },
+    "· 已存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· Saved to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· 已存入照片"
+          }
+        }
+      }
+    },
+    "存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存入照片"
+          }
+        }
+      }
+    },
+    "加入列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to list"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入列表"
+          }
+        }
+      }
+    },
+    "已加入 %lld 张照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %lld photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 %lld 张照片"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 项，%lld 项失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %lld to Photos, %lld failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 项，%lld 项失败"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %lld to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 项"
           }
         }
       }
