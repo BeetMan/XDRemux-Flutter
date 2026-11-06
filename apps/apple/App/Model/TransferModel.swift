@@ -349,28 +349,61 @@ final class TransferModel {
     }
 
     /// Copies a received file into the library under its original name
-    /// while holding the receipt lease, then releases it.
+    /// while holding the receipt lease, then releases it. A `.pvt.zip`
+    /// contributes its still.
     func importReceipt(_ receipt: TransferReceipt, into library: LibraryModel) async {
         isBusy = true
         defer { isBusy = false }
         do {
-            try await withLease(receipt) { path in
-                await library.importFile(at: path, named: receipt.name)
+            if isLivePhotoZip(receipt) {
+                let temp = try Self.makeTemp()
+                defer { try? FileManager.default.removeItem(at: temp) }
+                let parts = try await unpack(receipt, into: temp)
+                await library.importFile(at: parts.still, named: parts.still.lastPathComponent)
+            } else {
+                try await withLease(receipt) { path in
+                    await library.importFile(at: path, named: receipt.name)
+                }
             }
         } catch {
             self.error = Self.describe(error)
         }
     }
 
-    /// Queues every received still; paired videos ride along with the
-    /// library's own Live Photo handling, so they are skipped here.
+    /// Queues every received still (and the still of each `.pvt.zip`);
+    /// paired videos ride along with the library's own Live Photo handling,
+    /// so they are skipped here.
     func importAll(into library: LibraryModel) async {
         var count = 0
-        for receipt in inbox where LivePhotoPairing.isStill(receipt.name) {
+        for receipt in inbox where queues(receipt) {
             await importReceipt(receipt, into: library)
             count += 1
         }
         notice = L("已加入 \(count) 张照片")
+    }
+
+    /// Whether "add to list" applies: a still, or a Live Photo zip.
+    func queues(_ receipt: TransferReceipt) -> Bool {
+        LivePhotoPairing.isStill(receipt.name) || isLivePhotoZip(receipt)
+    }
+
+    func isLivePhotoZip(_ receipt: TransferReceipt) -> Bool {
+        LivePhotoZip.isLivePhotoZip(receipt.name)
+    }
+
+    private func unpack(_ receipt: TransferReceipt, into directory: URL) async throws -> LivePhotoZip.Parts {
+        var parts: LivePhotoZip.Parts?
+        try await withLease(receipt) { path in
+            parts = try LivePhotoZip.unpack(path, name: receipt.name, into: directory)
+        }
+        guard let parts else { throw LivePhotoZip.Failure.invalidLivePhoto }
+        return parts
+    }
+
+    private static func makeTemp() throws -> URL {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("transfer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        return temp
     }
 
     /// The `.mov` received alongside this still, if any (a Live Photo).
@@ -387,7 +420,8 @@ final class TransferModel {
     /// videos, except a video that is saved together with its still.
     func savesToPhotos(_ receipt: TransferReceipt) -> Bool {
         #if os(iOS)
-        (LivePhotoPairing.isStill(receipt.name) || LivePhotoPairing.isVideo(receipt.name)) && !isPairedMovie(receipt)
+        (LivePhotoPairing.isStill(receipt.name) || LivePhotoPairing.isVideo(receipt.name) || isLivePhotoZip(receipt))
+            && !isPairedMovie(receipt)
         #else
         false
         #endif
@@ -400,13 +434,16 @@ final class TransferModel {
     func saveToPhotos(_ receipt: TransferReceipt) async -> Bool? {
         isBusy = true
         defer { isBusy = false }
-        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("transfer-save-\(UUID().uuidString)", isDirectory: true)
+        guard let temp = try? Self.makeTemp() else { return nil }
         defer { try? FileManager.default.removeItem(at: temp) }
         do {
-            try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
             // The photo library wants real file names; copy out of the private inbox.
             var still: URL?, video: URL?
-            if LivePhotoPairing.isStill(receipt.name) {
+            if isLivePhotoZip(receipt) {
+                let parts = try await unpack(receipt, into: temp)
+                still = parts.still
+                video = parts.movie
+            } else if LivePhotoPairing.isStill(receipt.name) {
                 still = try await copyOut(receipt, to: temp)
                 if let movie = pairedMovie(for: receipt) { video = try await copyOut(movie, to: temp) }
             } else {
@@ -417,6 +454,9 @@ final class TransferModel {
             savedToPhotos.insert(receipt.id)
             if let movie = pairedMovie(for: receipt) { savedToPhotos.insert(movie.id) }
             return live
+        } catch let failure as LivePhotoZip.Failure {
+            self.error = Self.describe(failure)
+            return nil
         } catch {
             self.error = PhotosLibrary.describe(error)
             return nil
@@ -532,6 +572,13 @@ final class TransferModel {
 
     /// Stable core codes → sentences. Unknown codes are shown as-is.
     static func describe(_ error: Error) -> String {
+        if let failure = error as? LivePhotoZip.Failure {
+            switch failure {
+            case .invalidLivePhoto: return L("这个 .pvt.zip 不是有效的 Live Photo 包。")
+            case .alreadyExists: return L("同名的 Live Photo 包已存在。")
+            }
+        }
+        if error is ZipArchive.Failure { return L("这个 .pvt.zip 不是有效的 Live Photo 包。") }
         switch code(error) {
         case "port_in_use": return L("端口已被占用，换一个端口再试。")
         case "identity_mismatch": return L("对方设备的证书与之前确认的不一致，请重新连接并核对指纹。")

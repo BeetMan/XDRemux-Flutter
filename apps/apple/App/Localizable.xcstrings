@@ -4936,6 +4936,38 @@
           }
         }
       }
+    },
+    "这个 .pvt.zip 不是有效的 Live Photo 包。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This .pvt.zip is not a valid Live Photo bundle."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个 .pvt.zip 不是有效的 Live Photo 包。"
+          }
+        }
+      }
+    },
+    "同名的 Live Photo 包已存在。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A Live Photo bundle with this name already exists."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同名的 Live Photo 包已存在。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

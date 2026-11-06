@@ -413,8 +413,20 @@ Flutter 版生成的检查点文件可被原生版读取。
   Live Photo 对 → "全部存入照片" → 照片 App 里出现该资源；单张"存入照片"弹系统授权后写入。macOS 构建通过。
 - 自动扫描实测（设备日志）：开启接收约 4 秒后扫 506 个目标，8 秒结束；网段里 192.168.31.168 两个端口都"接受连接"但对任何
   路径回 HTTP 403（某个全端口应答的设备），`probe` 拒掉，peers=0——敲端口只做初筛，身份以 probe 为准。
-- 未验证：扫描真正找到对端（模拟器与 Mac 共用 IP，自身地址被排除，局域网里当时没有别的 LocalSend）；真机亮屏；`.pvt.zip`
-  打包的 Live Photo（Flutter 发送格式）尚未解包，收件箱只按普通文件显示。
+- 未验证：扫描真正找到对端（模拟器与 Mac 共用 IP，自身地址被排除，局域网里当时没有别的 LocalSend）；真机亮屏。
+
+**收件箱解包 `.pvt.zip` Live Photo（2026-11-06，分支 `feat/apple-transfer-pvt-zip`）**
+
+- Flutter 端把 `.pvt` 包以 store 方式压成 `<stem>.pvt.zip`（条目 `<stem>.pvt/<file>`）发送；Apple 没有公开的解压 API，
+  `XDRemuxTransfer` 包加了 `ZipArchive`（只读：中央目录 + stored / deflate，deflate 走 `Compression` 的 raw zlib；不支持
+  zip64 与加密）和 `LivePhotoZip`（校验规则与 `transfer_live_photo.dart` 一致：条目只能在 `<stem>.pvt/` 下一层、无隐藏文件、
+  恰好一张静帧一个 MOV；`unpack` 到 `<目录>/<stem>.pvt`，`extractStill` 只取静帧）。
+- 收件箱：`.pvt.zip` 行标 "Live Photo"，"存入照片"解包后以静帧 + 配对视频写成一个 Live Photo 资源，"加入列表"导入其中的静帧；
+  批量操作同样覆盖。错误码：`invalidLivePhoto` / `alreadyExists` / zip 结构错误 → 中文提示。
+- 测试：用系统 `zip`（-0 与 deflate 两种）打包后解包、字节一致、重复解包报 already exists、缺 MOV 拒绝且不留目录、包外多余条目拒绝、
+  非 zip 数据报 notZip。
+- 实测（Duo 模拟器）：Mac 把 `XDR_STYLES2_LIVE.pvt.zip`（11.5 MB，store）发到模拟器 → 收件箱显示 Live Photo → 存入照片 →
+  照片 App 中为 Live Photo；加入列表得到 `XDR_STYLES2_LIVE.heic`。macOS 构建通过。
 
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
