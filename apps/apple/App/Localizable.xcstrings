@@ -5032,6 +5032,70 @@
           }
         }
       }
+    },
+    "照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片"
+          }
+        }
+      }
+    },
+    "转换完成后自动存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Photos after conversion"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换完成后自动存入照片"
+          }
+        }
+      }
+    },
+    "批量转换结束后把成功的照片存入照片库，Live Photo 成对保存；已存入的不会重复保存。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When a batch finishes, successful photos are added to your photo library; Live Photos are saved as pairs. Photos already saved are not saved again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "批量转换结束后把成功的照片存入照片库，Live Photo 成对保存；已存入的不会重复保存。"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 张；%@ 未存入：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %1$lld to Photos; %2$@ was not saved: %3$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 张；%@ 未存入：%@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

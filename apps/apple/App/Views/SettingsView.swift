@@ -88,6 +88,16 @@ struct SettingsView: View {
                     }
                 }
 
+                #if os(iOS)
+                Section {
+                    Toggle("转换完成后自动存入照片", isOn: $model.config.autoSaveToGallery)
+                } header: {
+                    Text("照片")
+                } footer: {
+                    Text("批量转换结束后把成功的照片存入照片库，Live Photo 成对保存；已存入的不会重复保存。")
+                }
+                #endif
+
                 Section("高级") {
                     Toggle("严格 ISO 21496-1 tmap", isOn: $model.config.strictTmap)
                     Picker("机型家族", selection: $model.config.family) {

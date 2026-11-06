@@ -418,6 +418,7 @@ final class LibraryModel {
                 }
                 self?.update(id) { $0.state = .done(product) }
                 self?.discardPreview(id)
+                self?.autoSaveAfterConvert(id)
             } catch is CancellationError {
                 // The core stopped at its next tile; scratch is gone, nothing published.
                 self?.update(id) { $0.state = .ready }
@@ -458,6 +459,7 @@ final class LibraryModel {
                 }
             }
             convertAllTask = nil
+            if config.autoSaveToGallery { await saveAllToPhotos() }
         }
     }
 
@@ -559,6 +561,47 @@ final class LibraryModel {
 
     func markSavedToPhotos(_ id: PhotoItem.ID) {
         update(id) { $0.savedToPhotos = true }
+    }
+
+    // MARK: - Photos auto-save (iOS)
+
+    /// Finished photos not yet in the library, in queue order.
+    var unsavedProducts: [PhotoItem] {
+        items.filter { $0.product != nil && !$0.savedToPhotos }
+    }
+
+    private var savingToPhotos = false
+
+    /// Settings → 转换完成后自动存入照片. A batch saves once at the end
+    /// (like Flutter); a photo converted on its own is saved right away.
+    private func autoSaveAfterConvert(_ id: PhotoItem.ID) {
+        #if os(iOS)
+        guard config.autoSaveToGallery, convertAllTask == nil else { return }
+        Task { await saveAllToPhotos() }
+        #endif
+    }
+
+    /// Saves every finished photo that is not in the library yet (Live
+    /// Photo pairs as one asset). The first failure stops the pass and is
+    /// reported once; the photos already saved keep their mark.
+    func saveAllToPhotos() async {
+        #if os(iOS)
+        guard !savingToPhotos else { return }
+        savingToPhotos = true
+        defer { savingToPhotos = false }
+        var saved = 0
+        for item in unsavedProducts {
+            guard let product = item.product else { continue }
+            do {
+                try await PhotosLibrary.save(product)
+                markSavedToPhotos(item.id)
+                saved += 1
+            } catch {
+                notice = L("已存入照片 \(saved) 张；\(item.sourceName) 未存入：\(PhotosLibrary.describe(error))")
+                return
+            }
+        }
+        #endif
     }
 
     // MARK: - Helpers
