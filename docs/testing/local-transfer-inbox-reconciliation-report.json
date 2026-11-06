@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "date": "2026-10-25",
+  "baseCommit": "8eb554f3605911c581159e50ae1849c83b21bb8b",
+  "scope": "Inbox removal ordering over delayed pages and queued commits; runtime overlay reset",
+  "status": "local controlled regressions and production builds passed; device and real network checks pending",
+  "beforeFix": {
+    "controlledCases": 6,
+    "failed": 5,
+    "rejectedDeleteControlPassed": 1,
+    "realDllAssertionFailed": true
+  },
+  "fixtureTiming": {
+    "controllerPolling": "explicitly scheduled",
+    "nativeWorkerPolling": "unchanged",
+    "initialAutomaticPollingAttempt": "fixture timeout",
+    "initialTimeoutCountedAsProductionFailure": false
+  },
+  "checks": {
+    "newControlledRegressions": 6,
+    "newRealDllTests": 1,
+    "flutterTests": 140,
+    "existingRealDllTests": 4,
+    "realDllTestsEnabled": true,
+    "classifierHomeQueueFixtureEnabled": true,
+    "flutterAnalyze": "No issues found",
+    "dartFormat": true
+  },
+  "controlledCases": [
+    "stale_reset_and_load_more_pages_cannot_undo_confirmed_deletion",
+    "deleted_last_row_preserves_native_cursor_and_more_pages",
+    "queued_commit_cannot_undo_confirmed_deletion",
+    "deletion_event_wins_over_inflight_page_without_transient_resurrection",
+    "rejected_deletion_preserves_receipt_and_explicit_retry",
+    "replacement_runtime_does_not_inherit_old_commit_overlay_or_delete_reply"
+  ],
+  "existingRealDllStartup": {
+    "passed": true,
+    "scope": "Real Windows DLL and worker, owned loopback HTTPS",
+    "checks": [
+      "local_start_cancelled_port_and_root_reusable",
+      "receive_start_cancelled_port_and_root_reusable"
+    ],
+    "stopWaitedForNativeStartup": true,
+    "receiveAndDiscoveryRemainOff": true,
+    "noMetadataDispatch": true,
+    "receivePortRebound": true,
+    "sameRootIdentityPreserved": true,
+    "explicitRestartNewRuntime": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "existingRealDllConfirmation": {
+    "passed": true,
+    "scope": "Windows real DLL and Dart worker over owned loopback HTTPS",
+    "checks": [
+      "revocation_before_dispatch_sends_no_metadata_or_content",
+      "selected_receiver_and_source_snapshot_survive_async_startup"
+    ],
+    "receivedFiles": 1,
+    "receivedBytes": 65536,
+    "independentSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+    "sourceUnchanged": true,
+    "unselectedReceiverReceivedNothing": true,
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "newRealDllInbox": {
+    "passed": true,
+    "scope": "Real Windows DLL and worker over owned loopback HTTPS; one synthetic inbox file",
+    "controllerPolling": "explicitly scheduled by fixture",
+    "nativeWorkerPollingUnchanged": true,
+    "leasedDeletionRejectedWithBusy": true,
+    "leasedFileHashPreserved": true,
+    "acknowledgedDeletionRemovedDiskFile": true,
+    "nativeReceiptsEmpty": true,
+    "olderNativePageCannotResurrectReceipt": true,
+    "explicitRestartInboxEmpty": true,
+    "sameRootIdentityPreserved": true,
+    "sourceUnchanged": true,
+    "receivedBytes": 65536,
+    "independentSha256": "4b640d85ab3ba30fd02c9fc9db4a8928f416322ad27022ea58a65aaee68a4df2",
+    "librarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583"
+  },
+  "packaging": {
+    "windows": {
+      "normalMainReleaseBuilt": true,
+      "exeSha256": "900e3da0930bcd040a096a51d545d75135632fc85cd7e87688ad2323f26a2d80",
+      "aotSha256": "6ad639393451e3801e578645a56cfcc89aa17f55084816bf486ae654da0d97a6",
+      "transferLibrarySha256": "3f550460205a355c802f8da8b07e7b56bcca6906812b7043c2620e49d9ac7583",
+      "sameLibraryAsRealDllTests": true,
+      "imageLibraryUnchanged": true,
+      "licensePresent": true
+    },
+    "android": {
+      "normalMainReleaseBuilt": true,
+      "applicationId": "io.github.beetman.xdremux",
+      "minSdk": 24,
+      "targetSdk": 36,
+      "apkSha256": "7db50f837c92653af355f649c911456c5bfa22195c70a8d076d126c227a2b181",
+      "packagedTransferLibrarySha256": "89fd03b8a09b4ce03db799455693417b5a69d4911e92ef49439098cef37bb62a",
+      "transferLibraryUnchanged": true,
+      "licensePresent": true,
+      "integrationTestPluginAbsent": true,
+      "installed": false
+    }
+  },
+  "sourceSha256": {
+    "apps/flutter/lib/services/transfer/transfer_controller.dart": "fdb42349b3618a91d12cdf4304cff4c1ce051852870c52e244c597338455da95",
+    "apps/flutter/test/transfer_inbox_reconciliation_test.dart": "6756202abc49296d809a7ff69e8c149c8f67b2814c90154ceaa8b95b0b9a0a0f",
+    "apps/flutter/test/transfer_inbox_native_test.dart": "86b94a18e2c09dd3f40a7fcd303b61fb658fb5dfb28b68fcfce77af1c0bc91c1"
+  },
+  "transferAbi": "1.3",
+  "nativeLibrariesChanged": false,
+  "coreAndAbiSourceChanged": false,
+  "lockfilesChanged": false,
+  "phoneOperated": false,
+  "networkOrFirewallSettingsChanged": false,
+  "mainWorkspaceTouchedByThisTask": false,
+  "limits": [
+    "new unit checks use controlled delayed pages/events, not Android hardware",
+    "new real DLL fixture explicitly schedules controller poll; raw service accepts one synthetic loopback file",
+    "existing real DLL checks use owned loopback services, not a LAN device",
+    "no forced deadline for native disposal, held file reads or platform lock operations",
+    "does not establish cause of earlier Android background snapshot timeouts"
+  ],
+  "pending": [
+    "device lifecycle and multicast retest of this controller revision",
+    "real Wi-Fi outage and network switch",
+    "VPN/multi-NIC/AP isolation and permission revocation",
+    "Android reverse direction and official/same-host client coexistence",
+    "ordinary UI full matrix and Android large batch",
+    "Apple",
+    "HarmonyOS deferred"
+  ]
+}

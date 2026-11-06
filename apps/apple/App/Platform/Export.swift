@@ -1,8 +1,6 @@
 import SwiftUI
 import XDRemuxModel
-#if os(iOS)
-import Photos
-#else
+#if os(macOS)
 import AppKit
 #endif
 
@@ -74,35 +72,15 @@ struct FileExportButtons: View {
 
     #if os(iOS)
     private func saveToPhotos() async {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            message = String(localized: "没有写入照片库的权限，可在“设置”里允许。")
-            return
-        }
         let still = primary
         let pairedVideo = livePhoto ? files.dropFirst().first { $0.pathExtension.lowercased() == "mov" } : nil
         let clips = files.dropFirst().filter { $0 != pairedVideo && ["mp4", "mov"].contains($0.pathExtension.lowercased()) }
         do {
-            try await PHPhotoLibrary.shared().performChanges {
-                let request = PHAssetCreationRequest.forAsset()
-                let options = PHAssetResourceCreationOptions()
-                options.originalFilename = still.lastPathComponent
-                request.addResource(with: .photo, fileURL: still, options: options)
-                if let mov = pairedVideo {
-                    let movOptions = PHAssetResourceCreationOptions()
-                    movOptions.originalFilename = mov.lastPathComponent
-                    request.addResource(with: .pairedVideo, fileURL: mov, options: movOptions)
-                }
-            }
-            for clip in clips {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: clip, options: nil)
-                }
-            }
+            let live = try await PhotosLibrary.save(still: still, pairedVideo: pairedVideo, clips: clips)
             onSavedToPhotos?()
-            message = pairedVideo != nil ? String(localized: "已作为 Live Photo 保存到照片库。") : String(localized: "已作为新照片保存到照片库。")
+            message = live ? L("已作为 Live Photo 保存到照片库。") : L("已作为新照片保存到照片库。")
         } catch {
-            message = String(localized: "保存失败：\(error.localizedDescription)")
+            message = PhotosLibrary.describe(error)
         }
     }
     #else
@@ -121,7 +99,7 @@ struct FileExportButtons: View {
             panel.canChooseDirectories = true
             panel.canChooseFiles = false
             panel.canCreateDirectories = true
-            panel.prompt = String(localized: "存储到此文件夹")
+            panel.prompt = L("存储到此文件夹")
             guard panel.runModal() == .OK, let folder = panel.url else { return }
             copy(files, to: folder, renamingFirstTo: nil)
         }
@@ -137,9 +115,9 @@ struct FileExportButtons: View {
                 }
                 try FileManager.default.copyItem(at: file, to: destination)
             }
-            message = files.count == 1 ? String(localized: "已存储到 \(folder.path)") : String(localized: "已存储 \(files.count) 个文件到 \(folder.path)")
+            message = files.count == 1 ? L("已存储到 \(folder.path)") : L("已存储 \(files.count) 个文件到 \(folder.path)")
         } catch {
-            message = String(localized: "存储失败：\(error.localizedDescription)")
+            message = L("存储失败：\(error.localizedDescription)")
         }
     }
     #endif

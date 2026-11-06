@@ -26,7 +26,7 @@ extension XDRemuxEngine: Styles3Backend {}
 /// Decoded `xdremux_inspect_photo_details` report. Keys follow
 /// `xdremux/rust/src/photo_details.rs`; all fields are optional because Rust
 /// omits what it could not read.
-public struct PhotoDetails: Decodable, Equatable, Sendable {
+public struct PhotoDetails: Codable, Equatable, Sendable {
     public var success: Bool
     public var errorMessage: String?
     public var make: String?
@@ -50,6 +50,14 @@ public struct PhotoDetails: Decodable, Equatable, Sendable {
     public var dimensionsText: String? {
         guard let width, let height else { return nil }
         return "\(width) × \(height)"
+    }
+
+    /// "58.7 MP" for the list, where the exact pixel counts are noise; one
+    /// decimal below 10 MP ("2.1 MP"), whole numbers above ("50 MP").
+    public var megapixelsText: String? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        let mp = Double(width) * Double(height) / 1_000_000
+        return mp < 10 ? String(format: "%.1f MP", mp) : String(format: "%.0f MP", mp)
     }
 
     /// "f/1.8 · 1/120 s · ISO 100 · 5.6mm" from whatever EXIF is present.

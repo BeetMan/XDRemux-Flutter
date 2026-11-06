@@ -6,7 +6,7 @@
 
 ```
 XDRemux-Flutter/
-├── xdremux/rust/            # Rust 核心引擎（~20K 行）
+├── xdremux/rust/            # Rust 核心引擎（~40K 行，2026-10-31）
 │   ├── src/
 │   │   ├── container.rs        # HEIF 容器层：tail 解析/重建、水印几何
 │   │   ├── isobmff.rs          # ISO BMFF box 解析
@@ -21,20 +21,33 @@ XDRemux-Flutter/
 │   │   ├── jpeg_decode.rs      # JPEG 解码（增益映射载荷）
 │   │   ├── uhdr_jpeg.rs        # Ultra HDR JPEG 输入（MPF + hdrgm，合成源容器）
 │   │   ├── motion_photo.rs     # 动态照片识别/拆分（Android V1/MicroVideo/mpvd/OPPO LPEX）
-│   │   ├── live_photo.rs       # Live Photo 配对合成（MOV 重写 + MakerNote）
-│   │   ├── linear_thumbnail.rs # linear thumbnail 真生成
+│   │   ├── live_photo.rs       # Live Photo 配对合成（MOV 重写 + MakerNote；安卓 AAC 写为 QuickTime 声音描述）
+│   │   ├── live_photo_bundle.rs # Live Photo `.pvt` 包（HEIC + MOV + metadata.plist）
+│   │   ├── live_photo_styles.rs # 风格实况的 MOV 伴随轨道（线性缩略图 / smartstyle-info / live-photo-info / matte）
+│   │   ├── linear_thumbnail.rs # 线性缩略图生成（Apple Log 码 + 增益图）
+│   │   ├── apple_log.rs        # Apple Log 传递函数
+│   │   ├── heif_decode.rs / huawei_heic.rs # HEIF 解码、华为 HEIC 识别
+│   │   ├── photo_details.rs    # 照片详情（EXIF / HDR 摘要）
+│   │   ├── codec_capabilities.rs # 编码路径能力报告（8/10-bit）
 │   │   ├── styles_bplist.rs    # Apple 二进制 plist 写入器
 │   │   ├── styles_scaffold.rs  # 风格容器脚手架
-│   │   ├── styles_native.rs    # 原生风格装配（蒙版/天空分层）
+│   │   ├── styles_native.rs    # 原生风格装配（蒙版/天空分层；Standard key 1 identity）
+│   │   ├── styles_fit.rs       # 每图 key 1 / GTC 拟合
+│   │   ├── styles_attach.rs    # 风格附加
+│   │   ├── texture_styles.rs / semantic_mattes.rs # 摄影风格 3：纹理风格与语义 matte
 │   │   ├── styles_graft.rs     # 从金样移植风格图
 │   │   ├── portrait*.rs        # 人像模式（disparity/depth/graft/scaffold）
 │   │   ├── watermark_codec.rs  # 水印恢复（画布路径 + 边框带检测）
 │   │   ├── progress.rs         # 进度句柄
 │   │   ├── x265_ffi.rs         # x265 FFI 绑定
-│   │   ├── x265_helper.c       # C++ 桥（picture/param 结构体字段）
-│   │   └── lib.rs              # FFI 导出层（28 个 C ABI 函数）
+│   │   ├── x265_helper.c       # C 桥（picture/param 结构体字段）
+│   │   ├── x265_10bit_bridge.cpp # Main10（10-bit x265）桥
+│   │   ├── libheif_helper.cpp  # libheif 辅助
+│   │   └── lib.rs              # FFI 导出层（41 个 C ABI 函数，见 ffi-contract.md）
 │   ├── examples/               # 诊断探针（styles_diag/wb_probe/tail_dump/mp_probe 等）
-│   ├── build_ios.sh            # iOS 交叉编译（x265 + Rust 静态库）
+│   ├── include/xdremux_core.h  # cbindgen 生成的 C 头文件（已提交，apple-ci 校验）
+│   ├── build_ios.sh / build_ios_sim.sh # iOS 真机 / 模拟器交叉编译（x265 8/10-bit + Rust 静态库）
+│   ├── build_apple.sh          # 原生 Apple 前端用的 XDRemuxCore.xcframework
 │   └── build_ohos.sh           # 鸿蒙交叉编译（x265 + Rust cdylib）
 ├── apps/flutter/            # Flutter 跨平台应用
 │   ├── lib/
@@ -47,25 +60,30 @@ XDRemux-Flutter/
 │   ├── ios/SwiftBackend/                   # iOS Swift 后端（研究路径）
 │   ├── ohos/                               # 鸿蒙（HarmonyOS NEXT）工程
 │   └── third_party/ohos/                   # vendored 鸿蒙插件（含 file_picker v12 门面）
+├── apps/apple/              # 原生 SwiftUI 前端（iOS 17 / macOS 14，未发布，见 apps/apple/README.md）
+│   ├── App/                                # 多平台 SwiftUI target
+│   └── Packages/XDRemuxKit/                # C ABI 的 Swift 封装、纯 Swift 模型、macOS CLI `xdremux`
 ├── tests/conformance/       # 一致性测试套件（独立 crate）
 ├── tools/installer/         # Inno Setup 安装脚本 + 发布说明
-├── tools/ohos/              # 鸿蒙构建脚本（build_hap.ps1 / fetch_plugins.sh / ohpm shim）
-└── .github/workflows/       # CI/发布流水线（ci / conformance / ohos-ci / release）
+├── tools/ohos/              # 鸿蒙构建脚本（build_hap.ps1 / build_hap.sh（macOS）/ fetch_plugins.sh / ohpm shim）
+├── tools/apple/             # 头文件一致性校验、iOS SDK 检查
+└── .github/workflows/       # CI/发布流水线（ci / conformance / apple-ci / ohos-ci / linux / release）
 ```
 
 ## 2. 分层架构
 
 ```
 ┌─────────────────────────────────────────────┐
-│ Flutter UI（页面 + 服务）                     │
-│   apple_oppo_workflow / organize / portrait  │
-├─────────────────────────────────────────────┤
-│ Dart FFI 绑定（xdremux_ffi.dart）            │
-│   Isolate 隔离 + JSON 报告协议               │
+│ Flutter UI（页面 + 服务）  │ 原生前端          │
+│   apple_oppo_workflow /    │ SwiftUI（apps/apple）│
+│   organize / portrait      │ ArkUI（鸿蒙分支） │
+├────────────────────────────┼────────────────┤
+│ Dart FFI（xdremux_ffi.dart）│ C 头文件 /      │
+│   Isolate + JSON 报告协议   │ XCFramework、.so │
 ├─────────────────────────────────────────────┤
 │ Rust 核心（libxdremux_core）                 │
 │   转换 / 写回 / 分类 / 缩略图 / 进度          │
-│   x265 静态内建（四平台）                     │
+│   x265 静态内建（全平台，可选 Main10）                     │
 ├─────────────────────────────────────────────┤
 │ 平台层（解码预览 / 文件访问 / 前台服务）       │
 │   WIC / ImageDecoder / ImageIO / SAF        │
@@ -74,7 +92,7 @@ XDRemux-Flutter/
 
 核心设计原则：
 
-1. **Rust 核心承载全部媒体处理**，五平台（Windows/Android/macOS/iOS/鸿蒙）行为一致；Linux 本地开发目标复用同一核心；平台原生 API 只做 UI 集成辅助（解码预览、文件选择、通知）
+1. **Rust 核心承载全部媒体处理**，六平台（Windows/Android/macOS/iOS/Linux/鸿蒙）与三个前端（Flutter、鸿蒙 ArkUI 原生、Apple SwiftUI 原生）共用同一核心；平台原生 API 只做 UI 集成辅助（解码预览、文件选择、通知）
 2. **失败关闭**：格式不认识、几何不匹配、尺寸不一致都直接报错，不输出猜测结果
 3. **输出可编辑优先**：目标是"Apple 照片里能继续编辑 / ColorOS 图库里像原机照片"，不承诺与 Apple 原生逐像素等价
 
@@ -83,8 +101,12 @@ XDRemux-Flutter/
 | 服务 | 职责 |
 |---|---|
 | `apple_oppo_workflow_service` | 主工作流编排：生成 Apple 副本、写回、保留模式 |
-| `xdremux_service` | Rust FFI 调用门面（含平台分流） |
+| `xdremux_service` | Rust FFI 调用的主门面（含平台分流）；部分服务与页面也直接用 `ffi/xdremux_ffi.dart` |
 | `motion_photo_service` | 动态照片异步识别、拆分与策略应用 |
+| `output_export_service` | 输出导出与分享（`.pvt` 包在 iOS/macOS 直接分享，其他平台打包 `.pvt.zip`） |
+| `photo_details_service` | 照片详情（EXIF / HDR 摘要） |
+| `codec_diagnostics` | 编码路径诊断（8/10-bit、硬件编码） |
+| `huawei_photo_policy` | 华为照片处理策略 |
 | `conversion_backend` | 后端选择（Rust / Swift） |
 | `checkpoint_service` + `checkpoint_model` | 中断恢复（donor 与回传文件配对） |
 | `picked_file_resolver` | 工作流文件选择（保留 GPS） |

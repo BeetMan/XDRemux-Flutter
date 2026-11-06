@@ -14,6 +14,7 @@
 | Android | .so（arm64-v8a） | `DynamicLibrary.open('libxdremux_core.so')` | `cargo ndk -t arm64-v8a` -> jniLibs |
 | iOS | 静态库 | `DynamicLibrary.process()` | `build_ios.sh`（x265 + Rust 静态库进 Frameworks） |
 | 鸿蒙 | .so（arm64-v8a，`aarch64-unknown-linux-ohos`） | `DynamicLibrary.open('libxdremux_core.so')` | `build_ohos.sh`（DevEco NDK 交叉，产物拷到 `ohos/entry/libs/arm64-v8a/`） |
+| 原生 Apple（SwiftUI，未发布） | 静态 `XDRemuxCore.xcframework`（macOS / iOS / iOS 模拟器切片） | Swift 经 `XDRemuxCoreC` 模块直接引用符号 | `build_apple.sh`（`XDREMUX_APPLE_SLICES` 选切片）；CI 见 `apple-ci.yml`（仅 macOS 切片） |
 
 历史注记：macOS/iOS 曾走 Swift ImageIO 写回路径（`AppleReturnedPhotoWritebackBridge.swift`），但它缺少烘焙型边框水印回退和 OPPO 范围约定编码，v0.3.1 起弃用，代码保留为研究路径。
 
@@ -52,6 +53,6 @@
 - **macOS**：必须打包最新构建的 Rust dylib（曾出现打包过期 dylib 的 bug，见提交 `e95d88c`/`71bd443`）
 - **Android**：release 构建锁定 SDK 36 / build-tools 36.0.0（CI runner 无 API 37），`receive_sharing_intent` 固定 1.8.1，JVM target 按插件分别对齐
 - **iOS**：未签名 IPA 侧载分发；TestFlight/公证未配置
-- **鸿蒙**：**发布默认 profile 模式**（AOT + `debug:true`，~34MB）——Development Profile 只能签 debug:true 的包，release 模式包（debug:false）侧载工具全拒；debug JIT 包 118MB 不可取。签名用 DevEco 自动签名材料（本机注入，不入库）；hap 签名是 zip 块而非文件。构建必须用 PowerShell（Git Bash 会触发嵌套 bat 递归炸弹）。插件走 vendored path 依赖 + `pubspec.ohos.yaml` 变体（`tools/ohos/build_hap.ps1` 自动同步版本行）
+- **鸿蒙**：**发布默认 profile 模式**（AOT + `debug:true`，~34MB）——Development Profile 只能签 debug:true 的包，release 模式包（debug:false）侧载工具全拒；debug JIT 包 118MB 不可取。签名用 DevEco 自动签名材料（本机注入，不入库）；hap 签名是 zip 块而非文件。Windows 上构建必须用 PowerShell（Git Bash 会触发嵌套 bat 递归炸弹）；macOS 上用 `tools/ohos/build_hap.sh`（2026-10-31 起，见 `operations/building.md`）。插件走 vendored path 依赖 + `pubspec.ohos.yaml` 变体（`tools/ohos/build_hap.ps1` 自动同步版本行）
 - **Windows ARM64**：`windows-11-arm` 原生 runner，x265 `-A ARM64 -DENABLE_ASSEMBLY=OFF`，Inno Setup `BuildArch` 参数化
 - **Linux（预览发布）**：`bundle/lib/libxdremux_core.so` 由 `linux/CMakeLists.txt` 从 `target/release`（回退 `target/debug`）安装；CMake 过滤掉 Linux 不用的 `tray_manager`/`jni` 插件以收敛运行依赖；发布包为 AppImage / tar.gz（`tools/linux/package_linux.sh`），保持 glibc 2.35（Ubuntu 22.04+）基线并打包兼容版 `libnuma.so.1`；核心里的 `__isoc23_strtol` 兼容 shim 用于抹平 glibc 2.38 链接要求

@@ -28,7 +28,13 @@ targets:
       - package: XDRemuxKit
         product: XDRemuxKit
       - package: XDRemuxKit
+        product: XDRemuxTransfer
+      - package: XDRemuxKit
         product: XDRemuxModel
+      # iOS share sheet entry; embedded only in the iOS build.
+      - target: XDRemuxShare
+        embed: true
+        platformFilter: iOS
     info:
       path: App/Info.plist
       properties:
@@ -49,6 +55,7 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes: [public.jpeg]
         NSPhotoLibraryAddUsageDescription: 转换结果写入照片库需要此权限。
+        NSLocalNetworkUsageDescription: 在同一局域网内与其他设备互传照片需要此权限。
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
@@ -57,21 +64,83 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
+        # Local-network transfer (LocalSend v2): HTTPS listener + client.
+        com.apple.security.network.server: true
+        com.apple.security.network.client: true
+        # Inbox shared with the Share Extension (iOS); harmless on macOS.
+        com.apple.security.application-groups: [group.io.github.beetman.xdremux.swiftui]
     settings:
       base:
         # Independent identity from the Flutter app (io.github.beetman.xdremux),
         # so both can be installed side by side (plan §5).
         PRODUCT_BUNDLE_IDENTIFIER: io.github.beetman.xdremux.swiftui
+        # Same artwork as the Flutter app (App/Assets.xcassets, iOS + macOS idioms).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_STYLE: Automatic
+        # Let the build extract Text / String(localized:) keys into the
+        # string catalogs, so new copy shows up for translation.
+        SWIFT_EMIT_LOC_STRINGS: true
+        LOCALIZATION_PREFERS_STRING_CATALOGS: true
         ENABLE_USER_SCRIPT_SANDBOXING: true
         GENERATE_INFOPLIST_FILE: false
         # x265 is C++; the Rust staticlib carries no link flags of its own.
         OTHER_LDFLAGS: ["$(inherited)", "-lc++"]
-        # build_apple.sh produces arm64-only slices (Apple Silicon host, no
-        # x86_64 Rust/x265 builds); keep the simulator build to arm64 too.
+        # The transfer core is a dynamic framework embedded in the bundle;
+        # without these dyld only searches /usr/lib/swift and PackageFrameworks
+        # and the macOS app dies at launch with "Library not loaded".
+        "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]": ["$(inherited)", "@executable_path/../Frameworks", "@loader_path/../Frameworks"]
+        "LD_RUNPATH_SEARCH_PATHS[sdk=iphone*]": ["$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks"]
+        # The transfer core ships an arm64-only simulator slice (no
+        # x86_64-apple-ios build), so a generic simulator build must not
+        # try to link an x86_64 app.
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        # macOS: no app group (needs a development certificate to sign).
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": App/XDRemux-macOS.entitlements
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Release:
+          CODE_SIGN_IDENTITY: "-"
+
+  XDRemuxShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: App/Platform/SharedInbox.swift
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: XDRemux
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        # xcodegen regenerates Info.plist from here, so the extension point
+        # lives in this file rather than in a hand-written plist.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            PHSupportedMediaTypes: [Image]
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 100
+              NSExtensionActivationSupportsFileWithMaxCount: 100
+    entitlements:
+      path: ShareExtension/XDRemuxShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.io.github.beetman.xdremux.swiftui]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.beetman.xdremux.swiftui.share
+        SWIFT_VERSION: "5.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_EMIT_LOC_STRINGS: true
+        LOCALIZATION_PREFERS_STRING_CATALOGS: true
+        GENERATE_INFOPLIST_FILE: false
       configs:
         Debug:
           CODE_SIGN_IDENTITY: "-"

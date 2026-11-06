@@ -69,6 +69,33 @@ private struct FakeStylesBackend: ConversionBackend, Styles3Backend {
     }
 }
 
+/// Fake that offers the one-call pipeline; `convert` / `verifyOutput` must
+/// never be reached when it is present.
+private struct FakePipelineBackend: ConversionBackend, PipelineBackend {
+    let fs: FakeFS
+    var stage = "done"
+    var success = true
+    var cancelled = false
+    let calls = Log()
+
+    func convert(input: String, output: String, config: RustConvertConfig,
+                 progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
+        XCTFail("convert must not be called when the pipeline is available"); return ConversionOutcome(success: false)
+    }
+    func verifyOutput(path: String, styles: Bool, portrait: Bool) async throws -> Bool {
+        XCTFail("verifyOutput must not be called when the pipeline is available"); return false
+    }
+    func runPipeline(input: String, output: String, config: ConversionConfig,
+                     progress: @escaping @Sendable (Double) -> Void) async throws -> PipelineOutcome {
+        calls.append("pipeline \(config.outputMode.rawValue) styles3=\(config.applePhotographicStyles3)")
+        if success { fs.lock.withLock { _ = fs.files.insert(output) } }
+        progress(0.5)
+        return PipelineOutcome(success: success, stage: stage, cancelled: cancelled, errorMessage: success ? nil : "stage \(stage)",
+                               outcome: ConversionOutcome(success: success, mode: "uhdr", family: "x7", edrScale: 4.9),
+                               outputValid: stage == "verify" ? false : nil, styles3Applied: config.applePhotographicStyles3)
+    }
+}
+
 /// Fake whose conversion blocks until the task is cancelled, like the core
 /// stopping at its next tile after `xdremux_progress_cancel`.
 private struct SlowBackend: ConversionBackend {
@@ -86,6 +113,50 @@ final class ConversionJobTests: XCTestCase {
     let scratch = URL(fileURLWithPath: "/scratch")
     let outRoot = URL(fileURLWithPath: "/out")
     let input = URL(fileURLWithPath: "/in/IMG0001.heic")
+
+    func testPipelineBackendIsPreferredAndPublishes() async throws {
+        let fs = FakeFS()
+        let backend = FakePipelineBackend(fs: fs)
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.outputMode = .apple; config.applePhotographicStyles3 = true
+        let product = try await job.run(input: input, config: config)
+        XCTAssertEqual(product.outputURL.path, "/out/IMG0001_iso.heic")
+        XCTAssertEqual(product.outcome.family, "x7")
+        XCTAssertEqual(backend.calls.lines, ["pipeline apple styles3=true"])
+        XCTAssertTrue(fs.fileExists(product.outputURL))
+    }
+
+    func testPipelineStagesMapToJobErrors() async throws {
+        for (stage, expected) in [("convert", "coreFailed"), ("verify", "verificationFailed"), ("styles3", "styles3Failed")] {
+            let fs = FakeFS()
+            var backend = FakePipelineBackend(fs: fs)
+            backend.stage = stage; backend.success = false
+            let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+            do {
+                _ = try await job.run(input: input, config: ConversionConfig())
+                XCTFail("expected failure for stage \(stage)")
+            } catch let error as ConversionJobError {
+                let name: String
+                switch error {
+                case .coreFailed: name = "coreFailed"
+                case .verificationFailed: name = "verificationFailed"
+                case .styles3Failed: name = "styles3Failed"
+                default: name = String(describing: error)
+                }
+                XCTAssertEqual(name, expected, "stage \(stage)")
+                XCTAssertTrue(fs.files.isEmpty, "nothing published for stage \(stage)")
+            }
+        }
+        let fs = FakeFS()
+        var backend = FakePipelineBackend(fs: fs)
+        backend.cancelled = true; backend.success = false
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        do {
+            _ = try await job.run(input: input, config: ConversionConfig())
+            XCTFail("expected CancellationError")
+        } catch is CancellationError {}
+    }
 
     func testVerifyFlagsFollowAppleOptions() async throws {
         let fs = FakeFS()

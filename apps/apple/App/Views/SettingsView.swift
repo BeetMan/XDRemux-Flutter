@@ -1,15 +1,24 @@
 import SwiftUI
+import XDRemuxKit
 import XDRemuxModel
 
 /// Global defaults. Changes apply to conversions started afterwards; a running
 /// conversion keeps the snapshot it started with (ConversionJob copies config).
 struct SettingsView: View {
+    private let hardwareEncodeAvailable = VideoToolboxTileEncoder.isAvailable
     @Bindable var model: LibraryModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("语言") {
+                    Picker("语言", selection: $model.config.language) {
+                        Text("跟随系统").tag(AppLanguage.system)
+                        Text(verbatim: "简体中文").tag(AppLanguage.chinese)
+                        Text(verbatim: "English").tag(AppLanguage.english)
+                    }
+                }
                 Section("输出") {
                     Picker("输出模式", selection: $model.config.outputMode) {
                         Text("OPPO 兼容").tag(OutputMode.oppo)
@@ -43,10 +52,39 @@ struct SettingsView: View {
                         }
                     }
                 } else {
-                    Section("Apple 标准") {
-                        Toggle("Apple 摄影风格", isOn: $model.config.applePhotographicStyles)
-                        Toggle("摄影风格 3（纹理与颗粒）", isOn: $model.config.applePhotographicStyles3)
-                        Toggle("Apple 人像数据", isOn: $model.config.applePortrait)
+                    Section {
+                        Toggle(isOn: $model.config.applePhotographicStyles) {
+                            Text("摄影风格 2")
+                            Text(model.config.applePhotographicStyles3
+                                 ? "摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。"
+                                 : "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。")
+                        }
+                        .disabled(model.config.applePhotographicStyles3)
+                        Toggle(isOn: $model.config.applePhotographicStyles3) {
+                            Text("摄影风格 3")
+                            Text("在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。")
+                        }
+                        Toggle(isOn: $model.config.applePortrait) {
+                            Text("Apple 人像数据")
+                            Text("写入人像深度与蒙版，Apple“照片”可继续调整景深与焦点。")
+                        }
+                    } header: {
+                        Text("Apple 标准")
+                    } footer: {
+                        Text("Apple 标准输出不写入 OPPO 私有信息，文件可在 Apple“照片”里继续编辑。")
+                    }
+                }
+
+                Section {
+                    Toggle("硬件编码（VideoToolbox）", isOn: $model.config.hardwareEncode)
+                        .disabled(!hardwareEncodeAvailable)
+                } header: {
+                    Text("编码")
+                } footer: {
+                    if !hardwareEncodeAvailable {
+                        Text("这台设备没有可用的硬件 HEVC 编码器。")
+                    } else {
+                        Text("用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。")
                     }
                 }
 
@@ -83,29 +121,29 @@ struct SettingsView: View {
 
     static func title(_ mode: OppoCompatMode) -> String {
         switch mode {
-        case .auto: return String(localized: "自动")
-        case .on: return String(localized: "开启")
-        case .tail: return String(localized: "仅尾部")
-        case .iso: return String(localized: "ISO")
-        case .isoNoLocal: return String(localized: "ISO（无本地）")
-        case .isoGraph: return String(localized: "ISO 图")
-        case .off: return String(localized: "关闭")
+        case .auto: return L("自动")
+        case .on: return L("开启")
+        case .tail: return L("仅尾部")
+        case .iso: return L("ISO")
+        case .isoNoLocal: return L("ISO（无本地）")
+        case .isoGraph: return L("ISO 图")
+        case .off: return L("关闭")
         }
     }
 
     static func title(_ mode: OppoCameraTailMode) -> String {
         switch mode {
-        case .automatic: return String(localized: "自动")
-        case .off: return String(localized: "不保留")
-        case .watermark: return String(localized: "仅水印")
-        case .compact: return String(localized: "精简")
-        case .preserve: return String(localized: "完整保留")
-        case .preserveWithoutPortrait: return String(localized: "保留（去人像）")
-        case .preserveWithoutPortraitOrPrivateHdr: return String(localized: "保留（去人像与私有 HDR）")
-        case .preserveWithoutPrivateUhdr: return String(localized: "保留（去私有 UHDR）")
-        case .preserveWithoutPrivateHdr: return String(localized: "保留（去私有 HDR）")
-        case .preserveNoUhdr: return String(localized: "保留（无 UHDR）")
-        case .preserveNoHdr: return String(localized: "保留（无 HDR）")
+        case .automatic: return L("自动")
+        case .off: return L("不保留")
+        case .watermark: return L("仅水印")
+        case .compact: return L("精简")
+        case .preserve: return L("完整保留")
+        case .preserveWithoutPortrait: return L("保留（去人像）")
+        case .preserveWithoutPortraitOrPrivateHdr: return L("保留（去人像与私有 HDR）")
+        case .preserveWithoutPrivateUhdr: return L("保留（去私有 UHDR）")
+        case .preserveWithoutPrivateHdr: return L("保留（去私有 HDR）")
+        case .preserveNoUhdr: return L("保留（无 UHDR）")
+        case .preserveNoHdr: return L("保留（无 HDR）")
         }
     }
 }

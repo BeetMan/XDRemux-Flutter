@@ -44,6 +44,16 @@ String livePhotoBundledPath(String flat) {
   return '${flat.substring(0, cut)}$stem.pvt$separator$name';
 }
 
+/// Every file a converted [item] consists of: the still plus its MOV for a
+/// Live Photo (the `.pvt` folder when bundled), otherwise the output alone.
+List<String> outputTransferPaths(QueueItem item) {
+  if (!hasLivePhotoOutput(item)) return [item.outputPath];
+  final bundle = livePhotoBundleDir(item.outputPath);
+  if (bundle != null) return [bundle];
+  final movie = livePhotoMoviePath(item.outputPath);
+  return [item.outputPath, if (File(movie).existsSync()) movie];
+}
+
 /// Apple share sheets send a `.pvt` directory as a package (AirDrop delivers
 /// it as one Live Photo); elsewhere the share path only takes files.
 bool sharesLivePhotoBundleDirectly(String operatingSystem) =>

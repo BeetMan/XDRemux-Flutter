@@ -1,6 +1,9 @@
 # 原生 Apple（iOS / macOS）前端开发计划
 
-> 状态：2026-10-30 起草，仅规划，未创建任何代码。模板沿用 `feat/harmony-native` 分支的
+> 状态：2026-10-30 起草；同日起按本计划在 `main` 的 `apps/apple/` 实施，2026-10-31 已完成 P0–P2 与 P3 三批
+> （动态照片 / Live Photo、真正取消与摄影风格 3、iOS 模拟器首次实跑），P3 的 Share Extension、批量导出与 P4 未开始；
+> 执行记录见各阶段末尾，当前用法见 `apps/apple/README.md`。§2 目录为最初规划，与实际目录的差异以 README 为准。
+> 模板沿用 `feat/harmony-native` 分支的
 > `docs/plans/harmony-native.md`；鸿蒙原生版已证明"同一 Rust 内核 + 第二个原生前端"可行，
 > 本计划吸收其做法并修正其暴露的问题。
 
@@ -262,6 +265,264 @@ Flutter 版生成的检查点文件可被原生版读取。
   `ZKINDSUBTYPE = 2`（Live Photo），DCIM 出现 `IMG_0007.HEIC + .MOV`，"照片"App 显示 LIVE 标记。
   `PhotosPicker(.current)` 从相册导入 OPPO HEIC 后识别为 X7 UHDR（原始字节未被转码）。
 - 未验证：Live Photo 声音（模拟器无法听）、HDR 亮度（模拟器无 EDR）、真机签名安装。CI 仍只跑 macOS 切片。
+
+**§8 补充：工具栏与布局按 HIG 收敛（2026-11-01，分支 `feat/apple-toolbar`）**
+
+- 布局不再按平台硬编码：`horizontalSizeClass == .compact` 走 `NavigationStack`，其余（Mac、iPad、展开的折叠屏）走
+  `NavigationSplitView`；`PhotoListView` 由父视图指定"推入详情"还是"侧栏选中"。
+- 工具栏从五个同级图标收成三组：**导入**（iOS 为菜单：从照片 / 从文件，macOS 直接选文件）、**主动作**（全部转换 /
+  停止转换，`.borderedProminent`，紧凑宽度放 `.bottomBar` 并显示数量）、**更多**（一帧影像、设置，`.secondaryAction`，
+  iOS 折叠成 ⋯ 菜单）。`PhotosPicker` 改为 `.photosPicker(isPresented:)` 修饰器，因为 picker 按钮不能放进 `Menu`。
+- 实测：iPhone 18 Pro 顶部"+ ⋯"胶囊、底部"全部转换（1）"玻璃主按钮；iPhone Duo 侧栏只剩两项，主动作在底部；
+  macOS 窗口工具栏"导入 + 主动作"与次级项。iOS 26 底部栏会把 `Label` 画成纯图标，紧凑宽度用纯文字按钮。
+- 未验证：折叠屏展开到 regular 宽度时的分栏（模拟器当前状态为 compact）。
+
+**§8 补充：详情页以转换选项为主体、SDR 对比、列表卡片（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 详情页顺序改为：预览 → 状态 → **转换选项 / 转换结果**（页面主体）→ **照片信息**（`DisclosureGroup`，默认收起）。
+  内核读到的元数据是参考资料，不该挡在"转换这张"前面。
+- 预览卡在显示 HDR 输出时，右上角多一个"◐ SDR"胶囊：按住显示 SDR 基图（iOS 用 `UIImageReader`
+  `prefersHighDynamicRange = false`，macOS 用 `kCGImageSourceDecodeToSDR`，`ImageLoading.sdrImage`），松开恢复 HDR。
+  与鸿蒙版同一交互（按下 / 抬起），`onLongPressGesture(minimumDuration: 0)` 的 `onPressingChanged` 实现；
+  SDR 图在 HDR 图之后预解码，按下无等待。放右上角是因为底边是 OPPO 水印条。
+- 主列表卡片：第二行不再显示机型家族（X6 / X7，详情页"照片信息"里仍有），只留 HDR 类型、像素数（"58.7 MP"，精确尺寸在照片信息里）、动态照片、华为标记；
+  缩略图 60pt，三行间距 4pt、上下留 4pt；状态行改用 HStack 而不是 `Label`——列表里 `Label` 的图标会被对齐到
+  列表图标列，离文字一截。详情页"拍摄设备"去掉重复的厂商前缀（OPPO 的 Model 已含 "OPPO"）。
+- 实测（iPhone Duo 模拟器）：未转换照片打开即见选项与"转换这张"；转换完成后结果区替换选项区，照片信息展开 / 收起正常；
+  列表三张卡片状态图标与文字对齐。已装到 iPhone 16e（无 App Group 的真机构建）。
+- 未验证：真机上按住 SDR 的亮度差异（模拟器无 EDR，两张图一样）。
+- 第二轮（同分支）：列表图文间距 12 → 16pt；摄影风格文案对齐 Flutter 版（"摄影风格 2 / 3"，开 3 时 2 置灰并说明已包含）；
+  进度条改为**分阶段分段**：`ConversionProgress.fraction` 把解析 / 解码 / 编码 / 组装映射到 4–10% / 12–20% / 20–95% / 97%
+  （之前只有 current/total，前两阶段一直 0%，组装阶段直接 100%，阶段间内核回报 stage 0 还会让条跳回 0），
+  模型侧取 max 保证单调，状态文字按阶段显示（"解析元数据… / 解码增益图… / 编码 HEVC 42% / 组装输出…"）。
+- **转换前看 HDR**：ImageIO 看不到 OPPO 原片里的增益图（探针：源文件无 ISO / Apple gain map aux，解码 headroom 1.0），
+  所以预览只能走内核。打开详情时 `LibraryModel.preparePreview` 用 Apple 模式、不带风格在后台把这张转进
+  `scratch/previews/<id>.heic`，预览卡显示它并标"HDR 预览"，SDR 对比按钮同样可用；真正转换完成或移出照片时删掉。
+  成本就是一次转换（Mac 上 18 MP 0.4 s、59 MP 1.4 s）。模拟器实测：打开详情约 1 s 后出现 HDR 预览。
+
+**§8 补充：应用内语言与英文文案（2026-11-01，分支 `feat/apple-detail-layout`）**
+
+- 设置页新增"语言"：跟随系统 / 简体中文 / English，存在 `ConversionConfig.language`（`AppLanguage` 增加 `system`，默认值改为它；
+  Flutter 检查点不含该字段，互读不受影响）。
+- 生效机制：SwiftUI `Text` 键跟随根视图末尾设置的 `.environment(\.locale)`（放在 `.sheet` / `.alert` 之后，弹层才继承）；
+  模型层字符串改走 `L(_:)`（`App/Platform/L10n.swift`），它用对应 `.lproj` 的 Bundle 调 `String(localized:bundle:locale:)`。
+  App 内 99 处 `String(localized:)` 全部替换。分享扩展仍跟系统语言。
+- 字符串表：`xcodebuild build` 不会回写 `.xcstrings`，用 `xcodebuild -exportLocalizations -sdk iphonesimulator ARCHS=arm64`
+  提取出 223 个键（28 个缺英文），重写全部英文；`SWIFT_EMIT_LOC_STRINGS` 打开以便提取。新增 `App/InfoPlist.xcstrings`
+  （照片库权限说明的英文）。
+- 实测（iPhone Duo 模拟器）：设置切到 English 后列表、详情、设置弹层即时切换，无需重启。
+- 修正（真机反馈"选简体中文后列表仍是英文"，系统语言为英文时复现）：两个原因。其一，源语言为 zh-Hans 的字符串表
+  编译后只生成 `en.lproj`，`L()` 找不到 `zh-Hans.lproj` 就回落到系统语言——给表里每个键补显式 zh-Hans 条目（值同键），
+  编译即生成 `zh-Hans.lproj`；其二，列表行的 `Text(String)` 输入未变时 SwiftUI 不重算，只有 `Text` 键随 locale 更新——
+  根视图按 `config.language` 加 `.id`，切换时重建整棵树（放在 `.sheet` 之前，设置弹层本身不被打断）。
+  用 `-AppleLanguages "(en)"` 启动模拟器复现并验证：选简体中文后状态行、摘要行全部中文；再切 English 即时生效。
+
+**§8 补充：Flutter 检查点菜单仅 macOS（2026-11-01，分支 `feat/apple-checkpoint-mac-only`）**
+
+- "导入 / 导出 Flutter 检查点…"只在 macOS 的更多菜单里显示。iOS 上两个 App 的沙箱互不可见，检查点里的路径对不上，
+  导入只会得到一排"无法读取"；导入 / 导出的实现与 `FlutterCheckpoint` 不变，iOS 只是不露出入口。
+- 空状态页：iOS 上主按钮改为"从照片导入"，"从文件导入"降为次按钮（照片多半在相册里，文件 App 是绕路）；macOS 仍只有文件导入。
+
+**§8 补充：App 图标与折叠屏展开态（2026-11-01，分支 `feat/apple-icon-duo`）**
+
+- 图标：`App/Assets.xcassets/AppIcon.appiconset` 直接复用 Flutter 版的 iOS（19 档）与 macOS（10 档）图标文件，一个
+  appiconset 同时含 iphone / ipad / mac idiom；`ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`。模拟器主屏与 macOS 产物
+  （`AppIcon.icns`）都已确认。
+- Duo 展开态（regular 宽度，走 `NavigationSplitView`）原状：侧栏默认收起，只剩一枚工具栏胶囊漂在左上，空状态独占右栏，
+  主动作"全部转换"退化成纯图标。改法：`columnVisibility = .all` + `.navigationSplitViewStyle(.balanced)` 双栏常驻；
+  侧栏大标题 XDRemux；iOS 上批量按钮一律放列表栏的 `.bottomBar`（纯文字，保留数量），不再按 compact 区分；
+  文件名 `truncationMode(.middle)`，窄侧栏里能看到 `IMG2026…1729.heic` 的尾号。
+- Xcode 27 的模拟器宿主是 `DeviceHub.app`（没有 Simulator.app）；Duo 的折叠 / 展开竖屏 / 展开横屏是它窗口底部的三个姿态按钮，
+  辅助功能路径 `button 5/6/7 of group 3 of splitter group 1 of group 1 of splitter group 1 of group 1 of window 1`，
+  `osascript` 可点。
+- 未验证：真机（iPhone 16e 非折叠屏，看不到展开态）；iPad 实机。
+**§8 补充：详情页宽屏两栏（2026-11-01，分支 `feat/apple-duo-detail-columns`）**
+
+- `PhotoDetailView` 用 `GeometryReader` 量自己的宽度：≥ 520pt 时左边预览卡撑满高度、右边 280pt 的滚动栏放状态 / 转换选项（或结果）/
+  照片信息；不足则沿用纵向堆叠（手机）。Duo 展开态详情栏实测 547pt（侧栏封顶 300pt 后），刚好进两栏；macOS 窗口也走两栏。
+- 侧栏 `navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 300)`：`.balanced` 风格不设 max 会把侧栏分走一半屏幕。
+- 未验证：iPad 实机；Duo 展开横屏姿态。
+
+**§8 补充：窄屏两栏给照片让位（2026-11-03，分支 `feat/apple-detail-photo-space`）**
+
+- Duo 展开态 951pt：侧栏 280 + 选项栏 280 + 边距后照片只剩约 340pt。现在 iOS 上窗口宽度 < 1000pt 时，点选一张照片即把
+  `columnVisibility` 切到 `.detailOnly`，照片一栏拿到约 540pt；导航栏自带的侧栏按钮把列表拉回来。窗口变宽越过阈值
+  （旋转 / iPad 分屏调整）时恢复 `.all`；iPad 全屏与 macOS 不受影响。窗口宽度由根视图 `background` 里的 `GeometryReader` 回报。
+- 两栏模式下预览卡的灰色底板在 HDR / 输出图解码后隐藏：列高远大于照片，底板只会框住一大片空白。
+- 实测（Duo 模拟器）：点行 → 侧栏收起、照片撑满高度；侧栏按钮 → 列表回来。启动时恢复的选中项不触发收起（宽度尚未量到），
+  首屏仍是列表 + 详情。未验证：iPad 实机横竖屏切换。
+
+**§8 补充：复查后的一轮打磨（2026-11-04，分支 `feat/apple-polish-round`）**
+
+- 窄选项栏排版：两栏模式下 `InfoRow` 走环境值 `infoRowsStacked`，标签在上、值在下；文件名一行中间截断；选项栏 280 → 300pt。
+- 转换完成后可"重新转换"（结果区按钮 + 列表右键菜单）：`LibraryModel.reconvert` 删掉旧输出与配对视频、状态回到 ready、重做 HDR 预览，
+  转换选项重新出现，可换模式再转一次，不必移出重导。
+- 启动不再全量重读：`InspectionCache`（Caches/XDRemux/inspections/<id>.json + .jpg）保存 `inspect` 的分类 / 检查 / EXIF /
+  动态照片 / 华为信息和 512px 缩略图；`Classification`、`ConversionReport`、`PhotoDetails` 补了 Codable 与公开构造器。
+  恢复时命中缓存的项直接上屏，只有未命中的再过内核；移出照片时清缓存。Duo 实测 9 张照片相对冷启动从一轮"正在读取…"变为约 2 秒全部就位。
+- 启动时恢复的选中项也会收起侧栏：首次量到窗口宽度后在下一个 run loop 设置 `.detailOnly`（第一轮布局里直接改会被丢弃）。
+- 照片信息"拍摄模式"按内核的 mode key 映射为中文 / 英文名（大师模式、专业模式、人像……），不再显示 `master`。
+- 没做成：侧栏大标题在折叠 / 展开后在"展开态"与"收起态"之间跳动。试过 `toolbarTitleDisplayMode(.inlineLarge)`，侧栏里标题直接消失，
+  已回退为 `.large`。
+- 注意：Duo 模拟器同时被另一个会话使用，验证期间对方覆盖安装过一次旧版本；重新转换只验证了按钮出现，未走完整流程。
+
+**§8 补充：详情分栏阈值 520 → 800pt（2026-11-04，分支 `feat/apple-detail-stack-threshold`）**
+
+- Duo 展开态列表打开时详情区约 670pt，左右分栏后照片只有 340pt，不如纵向堆叠；现在这个宽度堆叠，照片横贯整个详情区。
+  收起列表（约 950pt）、iPad 横屏、macOS 仍走分栏；iPad 竖屏带侧栏（约 550pt）改为堆叠。
+**局域网传输（LocalSend v2）接入（2026-11-01，分支 `feat/apple-transfer`，基于 `rebase/local-transfer-20261028` + main）**
+
+- 传输核心复用 `crates/xdremux-transfer-ffi`（C ABI 1.3，Rust 1.97.1），以**动态**框架打包：`tools/apple/build_transfer_xcframework.sh`
+  产出 `apps/apple/Frameworks/XDRemuxTransferCore.xcframework`（ios-arm64 / ios-arm64-simulator / macos-arm64，每片含
+  Headers + module map，Swift 直接 `import XDRemuxTransferCore`）。不做静态是因为图像内核已是 Rust staticlib，两个 Rust
+  staticlib 链进同一二进制会在分配器 / unwind 符号上冲突；独立镜像没有这个问题。链接期 strip + install_name 沿用
+  `build-transfer.sh` 的做法（rustc 事后 strip 会让 iOS dyld 拒载）。
+- 工程必须显式给 `LD_RUNPATH_SEARCH_PATHS` 加 `@executable_path/../Frameworks`（macOS）/ `@executable_path/Frameworks`（iOS），
+  否则 macOS 版启动即 dyld "Library not loaded"（xcodegen 默认只有 /usr/lib/swift 与 PackageFrameworks）。
+- Swift 包新增 `XDRemuxTransfer`：`TransferBridge`（C 调用）、Codable 模型（对应 model.rs）、`TransferService` actor
+  （create → 轮询循环 → 按 operation_id 把 result 记录配回等待中的命令；事件走 AsyncStream；stop 等到 phase 3 再 release）、
+  `LocalNetwork.ipv4Interfaces`。测试 `XDRemuxTransferTests`：回环双服务 probe → send → offer → decide → committed → 租约读回 →
+  snapshot/receipts/delete 全通过；另有两个按环境变量启用的测试（向外部对端发送、绑定指定 LAN 地址）。
+- App：`TransferModel`（@Observable，服务只在传输页打开期间存活，接收需显式开关；指纹按会话确认）+ `TransferView`
+  （接收开关 / 本机地址与指纹 / 待接收 / 发送到（发现的设备 + 手动 IP:端口）/ 传输记录 / 收件箱→加入照片列表 / 删除）；
+  入口在 ⋯ 菜单"局域网传输"。Info.plist `NSLocalNetworkUsageDescription`；macOS 沙箱加 network.client / network.server。
+- 实测（iPhone Duo 模拟器 + Mac）：开启接收绑定 192.168.31.175:53319，多播发现找到了 Mac 上运行的官方 LocalSend；
+  Mac 侧用 `ExternalPeerTests` 发一张 1.9 MB HEIC → 模拟器弹出待接收 → 接收 → 传输记录"已完成"、收件箱出现文件 →
+  加入照片列表。macOS 版打开传输页正常。
+- 注意：模拟器自动化工具对 UISwitch 的点击不生效（拖动才行），手指没问题；接收开关改成 @State + onChange 的标准写法。
+- 与官方 LocalSend（Mac，1.18.x）双向：模拟器点选发现到的 LocalSend → 指纹确认 → "发送 3 个文件"（原始照片）→ LocalSend 弹出
+  "iPhone Duo (XDRemux) 想要发送给你 3 个文件" → 接受 → 三个文件落在 ~/Downloads，SHA-256 与源文件一致，模拟器侧传输记录"已完成"。
+- 顺带发现 main 上 `ConversionConfigTests.testDefaultsMatchDart` 自 #64 起失败（默认语言改为 `system`），修在 PR #69，并 cherry-pick 到本分支。
+- 未验证：iPhone 真机（无多播授权，自动发现应报 `discovery_unavailable`，手动 IP 可用）；PIN。
+
+**局域网传输对齐 Flutter #79（2026-11-06，分支 `feat/apple-transfer-polish`）**
+
+- 入口修复：⋯ 菜单的"局域网传输"被后来的检查点改动一起圈进了 `#if os(macOS)`，iOS 上一直点不到；移回平台共用段。
+- 设备名：`TransferModel.customAlias` 存 `UserDefaults`（`xdremux.transferAlias`），规则与 Flutter 一致（去控制字符、
+  去首尾空白、64 字上限，空则回设备名），改名时若正在接收则重启监听让对方看到新名字。接收区"设备名"行 → 弹窗改名。
+- 无多播时扫网段：`SubnetScan`（`XDRemuxTransfer` 包）枚举本机每个 IPv4 的 /24 邻居 × 53319/53317，`NWConnection`
+  600ms 超时、128 并发敲端口，响应者再 `probe` 取指纹；结果合并进 `peers` 并跨多播刷新保留。开启接收 3 秒仍无设备自动
+  扫一次，发送区也有"扫描网段"按钮。单元测试覆盖目标枚举（去自身地址、非 IPv4 忽略）与回环监听端口被识别。
+- 传输中保持亮屏（iOS）：接收开启且有未结束的传输时 `isIdleTimerDisabled = true`，停止或完成即恢复。
+- 收件箱存入照片（iOS）：`PhotosLibrary.save` 从 `FileExportButtons` 抽出共用；同名 `.mov` 与静帧配成一个 Live Photo
+  资源写入，单独的视频按视频资源写入；`.mov` 行标"Live Photo 视频，随同名照片一起处理"，不单独给按钮；已存入的行标"已存入照片"。
+  配对规则 `LivePhotoPairing`（stem 不区分大小写），有单元测试。
+- 批量操作：待接收多于一个时"接收全部"；收件箱"全部存入照片 / 全部加入列表 / 清空（确认后删除）"，完成后页脚提示条数。
+- 实测（Duo 模拟器）：改名 → 行显示新名并持久化；开启接收 → 本机地址 / 指纹；手动扫描按钮转圈、页脚"正在逐个尝试…"、
+  几秒后结束；Mac 用 `ExternalPeerTests`（现支持 `:` 分隔多文件）发 IMG_3715.HEIC + .mov → 接收 → 收件箱识别为
+  Live Photo 对 → "全部存入照片" → 照片 App 里出现该资源；单张"存入照片"弹系统授权后写入。macOS 构建通过。
+- 自动扫描实测（设备日志）：开启接收约 4 秒后扫 506 个目标，8 秒结束；网段里 192.168.31.168 两个端口都"接受连接"但对任何
+  路径回 HTTP 403（某个全端口应答的设备），`probe` 拒掉，peers=0——敲端口只做初筛，身份以 probe 为准。
+- 未验证：扫描真正找到对端（模拟器与 Mac 共用 IP，自身地址被排除，局域网里当时没有别的 LocalSend）；真机亮屏。
+
+**收件箱解包 `.pvt.zip` Live Photo（2026-11-06，分支 `feat/apple-transfer-pvt-zip`）**
+
+- Flutter 端把 `.pvt` 包以 store 方式压成 `<stem>.pvt.zip`（条目 `<stem>.pvt/<file>`）发送；Apple 没有公开的解压 API，
+  `XDRemuxTransfer` 包加了 `ZipArchive`（只读：中央目录 + stored / deflate，deflate 走 `Compression` 的 raw zlib；不支持
+  zip64 与加密）和 `LivePhotoZip`（校验规则与 `transfer_live_photo.dart` 一致：条目只能在 `<stem>.pvt/` 下一层、无隐藏文件、
+  恰好一张静帧一个 MOV；`unpack` 到 `<目录>/<stem>.pvt`，`extractStill` 只取静帧）。
+- 收件箱：`.pvt.zip` 行标 "Live Photo"，"存入照片"解包后以静帧 + 配对视频写成一个 Live Photo 资源，"加入列表"导入其中的静帧；
+  批量操作同样覆盖。错误码：`invalidLivePhoto` / `alreadyExists` / zip 结构错误 → 中文提示。
+- 测试：用系统 `zip`（-0 与 deflate 两种）打包后解包、字节一致、重复解包报 already exists、缺 MOV 拒绝且不留目录、包外多余条目拒绝、
+  非 zip 数据报 notZip。
+- 实测（Duo 模拟器）：Mac 把 `XDR_STYLES2_LIVE.pvt.zip`（11.5 MB，store）发到模拟器 → 收件箱显示 Live Photo → 存入照片 →
+  照片 App 中为 Live Photo；加入列表得到 `XDR_STYLES2_LIVE.heic`。macOS 构建通过。
+
+**硬件编码：VideoToolbox 分块路径（2026-11-06，分支 `feat/apple-hardware-encode`）**
+
+- 与 Flutter 同一条路：`xdremux_prepare_tiles`（内核解码增益图、切 512×512 的 8-bit I420 块）→ 平台逐块编成单帧 IDR 的
+  Annex-B HEVC → `xdremux_assemble_tiles` 装 HEIC → `xdremux_verify_output`。底图原样拷贝，硬编只涉及增益图。
+- `XDRemuxKit/HardwareTiles.swift`：`VideoToolboxTileEncoder` 一个会话编所有块（HEVC Main、关键帧间隔 1、不重排、
+  Quality 0.9、NV12 全范围 + 709 附件；macOS 要求硬件编码器）；输出用 `CMVideoFormatDescriptionGetHEVCParameterSetAtIndex`
+  取 VPS/SPS/PPS 前置到每一块（内核取首块参数集建 hvcC，其余剥掉），AVCC 长度前缀改 4 字节起始码——不再像 Flutter 那样
+  按字节扫 hvcC，也没有全局 `isFirstTile`，并发安全。`XDRemuxEngine.convertHardwareTiles` 在内核队列里一次完成
+  prepare → 编码循环（`xdremux_progress_report` 实时进度、取消标志）→ assemble，再 verify；不能分块 / 装配失败 / 校验失败
+  抛 `HardwareTilesError`，`runPipeline` 捕获后回退 x265 管线。门槛与 Flutter 一致并多排除人像：`hardwareEncode` 开、
+  摄影风格 2/3 关、人像关、`VideoToolboxTileEncoder.isAvailable`。
+- 设置页新增"编码"段：硬件编码开关，无编码器时禁用并说明。
+- 测试：合成块编码出 VPS/SPS/PPS + IRAP；门槛判定；`XDREMUX_SAMPLE_DIR` 下真实样本走硬件路径并 verify；
+  `XDREMUX_HW_KEEP_DIR` 可同时留下 x265 输出做对照。
+- 实测（M 系列 Mac）：oppo-camera-heic 首张样本，增益图 2048×1536 → 74 块，硬件路径整轮 0.11 s（x265 管线约 0.37 s）；
+  ffprobe：两份输出各 122 个 HEVC 流，增益图块都是 Main、yuvj420p、全范围（x265 为 Main Still Picture）；ImageIO
+  以 DecodeToHDR 解到线性 sRGB 对比，平均差 5e-7、最大 0.006。
+- 未验证：iOS 真机（模拟器里 VideoToolbox 给的是宿主 Mac 的编码器，路径能跑但不代表真机）；大样本上的整体提速比例；OPPO 兼容模式输出的尾部与 tmap（装配由内核
+  按 `oppo_compat` 处理，逻辑与 Flutter 相同，但本轮只测了 Apple 标准）。
+
+
+**P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
+
+- 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
+  运行器的要点：先请求 `public.heic` 文件表示（"自动"格式下 `public.image` 会被转成 JPEG），再退到 heif / jpeg / image /
+  fileURL；文件名按真实类型修正后缀；不做转换（扩展内存上限远低于 8K ProXDR 解码）。
+- 交接改为 App Group 收件箱 `group.io.github.beetman.xdremux.swiftui/Inbox`，去掉 receive_sharing_intent 的 manifest
+  契约；宿主在启动与回到前台（`scenePhase == .active`）时导入并清空收件箱。`SharedInbox.swift` 由两个 target 共用。
+- xcodegen 注意事项：`info.properties` 会重新生成 Info.plist，手写的 `NSExtension` 字典会被覆盖，必须写在 project.yml；
+  macOS 的 App Group 权限需要开发证书签名，所以 macOS 用单独的 `App/XDRemux-macOS.entitlements`
+  （`CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`）。
+- 验证：iPhone 18 Pro 模拟器从"照片"分享 OPPO HEIC → 分享面板出现 XDRemux → 提示"已加入 XDRemux：1 张" →
+  收件箱出现原名 `.HEIC` 文件（23.4 MB，原始字节）→ 启动 App 后识别为 X7 UHDR 并清空收件箱；macOS 构建不含扩展。
+- 未验证：真机上的 App Group 签名；从"文件"App 分享多个文件。
+
+**§4.2 落地：PS3 编排与输出规划下沉 Rust（2026-11-01，分支 `feat/core-pipeline`）**
+
+- 内核 `pipeline.rs`：`xdremux_convert_pipeline(input, output, config_json, handle)` 在一次调用里完成转换、按选项校验与
+  摄影风格 3 后处理（再校验）；`xdremux_plan_output(input, config_json)` 只读给出分类、可转换性、华为准入、动态照片与
+  输出文件名。配置用 Dart / Swift `ConversionConfig` 的 JSON 键，枚举到字节的映射与两端 `rustValue` 表一致。
+  5 项单测 + 1 项 opt-in 真实样本（Apple + 摄影风格 3 管线产物通过 styles 结构检查）。导出 43 个，头文件重生成。
+- Swift：Kit `convertPipeline` / `planOutput`；Model 新协议 `PipelineBackend`，`ConversionJob` 在后端支持时优先走一次调用
+  （stage → `coreFailed` / `verificationFailed` / `styles3Failed`，`cancelled` → `CancellationError`），不支持时保留原来的
+  convert / verify / inject 三步（假引擎测试仍覆盖）。2 项新测试。CLI 新增 `xdremux plan`。
+- 未做：Dart 与 ArkTS 端尚未切到这两个导出（它们各自的策略代码仍在），Swift 的 `OutputPlanner` 仍按输出模式分目录，
+  未改用 `plan_output` 的 `captureModeFolder`。
+
+
+**P2 遗留：Flutter 检查点互读（2026-11-01，分支 `feat/apple-checkpoint`）**
+
+- Model `FlutterCheckpoint`：按 `checkpoint_model.dart` 的 JSONL 读写（首行 `type: header`，其后 `type: item`），接受 Dart
+  `toIso8601String()` 的无时区本地时间；`journalRecords()` 把 converted / skippedExisting 映射为 succeeded（保留 outputPath）、
+  skippedPolicy 映射为 pending（原生策略重新评估）、failed 保留错误；`from(journal:)` 反向导出，路径经 `~/` 还原为绝对路径。
+  configHash 用同一 payload 的 FNV-1a（Dart `String.hashCode` 不可复现，Flutter 只用它判断配置是否变化）。5 项测试。
+- App："更多"菜单 → 导入 / 导出 Flutter 检查点。导入时输入复制进沙盒、已完成项的输出复制进 outputs 并以"已完成"恢复，
+  沙盒读不到的路径变成可见失败项；导出用 `fileExporter` 写 `xdremux_checkpoint.jsonl`。
+- 未验证：没有用 Flutter 版真实生成的检查点文件做过往返（测试用的是按 Dart 格式手写的样本）；
+  `huaweiPortrait` / `motionPhoto` 两个嵌套对象在再编码时丢弃。
+
+
+**P2 遗留：批量整理页（2026-11-01，分支 `feat/apple-organize`）**
+
+- Model `OrganizePlanner`：与 Flutter `organize_page.dart` / 上游 `categorize` 同一布局
+  `<根>/<静态照片|实况照片>/<拍摄模式文件夹>/<原名>`，实况照片的 MOV 同目录同名；冲突规避"(n)"同时考虑本批已规划的名字
+  （大小写不敏感）与磁盘已有文件，整理进自己所在目录视为重复而不是冲突；`execute` 跳过重复、配对 MOV 只在位置变化时复制、
+  失败逐项记录。5 项测试（含真实临时目录端到端）。
+- App `OrganizeView`（"更多"菜单 → 批量整理）：选文件夹（安全作用域在页面存续期内保持）→ 递归扫描 HEIC/HEIF/JPEG →
+  `xdremux_classify` 取拍摄模式文件夹 → 同名 MOV 经 `xdremux_live_photo_pair_valid` 确认才视为配对 → 按模式分组预览
+  目标目录 → 开始整理。输出目录默认与照片文件夹相同。macOS / iOS 同一视图（iOS 通过"文件"选择文件夹）。
+- 未验证：GUI 走完一遍（只做了编译与 Model 层测试）；iOS 上对"文件"目录的递归枚举是否受安全作用域限制。
+
+
+**P2 遗留：华为照片准入策略（2026-11-01，分支 `feat/apple-huawei-policy`）**
+
+- `HuaweiPhotoPolicy.admission(huaweiHdr:portraitReady:stylesRequested:motionPhoto:)` 与 Flutter
+  `huawei_photo_policy.dart` 同一规则：普通华为 HDR 跳过（"华为 HDR 原生兼容 Apple 照片，无需转换"），开了摄影风格、
+  人像可转换或动态照片时放行。`HuaweiPhotoInfo`（isHdr / hasXtstyle / portraitReady）由 Kit 从
+  `xdremux_huawei_inspect` 解码，只对 HEIC/HEIF 调用。4 项策略单测 + 1 项只读冒烟（垃圾输入不抛错、OPPO 样本不命中、输入字节不变）。
+- App：导入时记录 `huawei` 与 `policyReason`，`isConvertible` 排除被策略跳过的项，状态行显示原因，摘要显示"华为 HDR" /
+  "华为人像 → Apple 人像"；设置变化（摄影风格开关）后对所有空闲项重新评估，与 Flutter `_syncHuaweiHdrPolicy` 一致。
+- 未验证：本地没有华为样本，真实华为 HDR / 人像文件的识别只靠 Rust 侧已有测试；人像转换路径（Flutter 的
+  `huaweiPortrait` 流程）未移植，portraitReady 的文件目前按普通输入进入队列。
+
+
+**基础设施（2026-11-01，分支 `feat/apple-universal`）：x86_64 切片与 CI 模拟器构建**
+
+- `build_apple.sh` 按架构构建：每个切片对 `XDREMUX_APPLE_ARCHS`（默认 `arm64 x86_64`）各构建 x265（8-bit + Main10，
+  x86_64 用 `_x86_64` 后缀目录）与 Rust staticlib，`libtool` 合并后 `lipo -create` 成胖归档；切片目录名沿用 xcodebuild
+  约定（`macos-arm64_x86_64`、`ios-arm64_x86_64-simulator`）。iOS 真机仍只有 arm64。
+- `build.rs` 新增 `XDREMUX_X265_DIR` / `XDREMUX_X265_MAIN10_DIR` 覆盖，并把 `x86_64-apple-ios`（env 为空）识别为模拟器。
+- `project.yml` 去掉 `EXCLUDED_ARCHS[sdk=iphonesimulator*]`，模拟器包与 Share Extension 都是双架构。
+- CI：Rust 目标加 x86_64 与模拟器，x265 缓存键改为 `…-universal-sim`，构建 `macos ios-sim` 两个切片并用 `lipo -info`
+  断言双架构；新增 `generic/platform=iOS Simulator` 的 App + 扩展构建。
+- 验证：本机 `lipo -info` 两个切片均为 `x86_64 arm64`；`generic/platform=iOS Simulator` 构建出的 App 与 appex 均为胖二进制；
+  Rosetta 下 x86_64 CLI 对 X7 样本转换并 verify 通过；`swift test` 通过。
 
 ### P4：跨端回归与发布
 

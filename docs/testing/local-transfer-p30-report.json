@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "date": "2026-10-21",
+  "slice": "P3.0 official Android interoperability",
+  "status": "passed; full P3 matrix remains pending",
+  "baseCommit": "5e2fa11dec005bb07b19269139b0487816271ce9",
+  "productionCodeChanged": false,
+  "officialClient": {
+    "applicationId": "org.localsend.localsend_app",
+    "version": "1.18.2+64",
+    "minSdk": 24,
+    "targetSdk": 37,
+    "platform": "Android 17 API 37 ARM64 PKJ110",
+    "accessLocalNetworkGranted": true,
+    "permissionOrSettingChanged": false,
+    "reinstalled": false
+  },
+  "windows": {
+    "platform": "Windows x64",
+    "flutter": "3.44.5",
+    "dart": "3.12.2",
+    "testTarget": "integration_test/local_transfer_official_test.dart",
+    "mainTargetRestored": "lib/main.dart",
+    "librarySha256": "947f3e3b1302e2ef216fd044b29e4de4995fbbe82121150dc65f532e574cc047"
+  },
+  "transport": {
+    "network": "direct LAN HTTPS",
+    "discovery": "IPv4 multicast UDP 53317",
+    "receivePort": 53319,
+    "adbForwarding": false,
+    "firewallChanged": false
+  },
+  "identityCheck": {
+    "discoveredDeviceSelected": true,
+    "httpsReprobe": true,
+    "fullFingerprintDialogConfirmed": true,
+    "reference": "separate host TLS certificate probe against known test phone",
+    "outOfBandIdentityAuthenticated": false
+  },
+  "applicationResult": {
+    "stage": "done",
+    "filesPerDirection": 5,
+    "multicastVerified": true,
+    "receiveHashesMatch": true,
+    "sourceUnchanged": true,
+    "stopVerified": true
+  },
+  "windowsToOfficial": {
+    "passed": true,
+    "files": [
+      {
+        "name": "p3-official-428a032d-clip.mov",
+        "size": 2194,
+        "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a"
+      },
+      {
+        "name": "p3-official-428a032d-empty.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "p3-official-428a032d-payload.bin",
+        "size": 16777216,
+        "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b"
+      },
+      {
+        "name": "p3-official-428a032d-photo.heic",
+        "size": 1800239,
+        "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+      },
+      {
+        "name": "p3-official-428a032d-photo.jpg",
+        "size": 248,
+        "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954"
+      }
+    ],
+    "method": "Android shell sha256sum and wc -c of official download files"
+  },
+  "officialToWindows": {
+    "passed": true,
+    "files": [
+      {
+        "name": "p3-official-428a032d-empty.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "peerHashPresent": true
+      },
+      {
+        "name": "p3-official-428a032d-clip.mov",
+        "size": 2194,
+        "sha256": "0f92b4f3040fe1a2b9c841c9912cc08e94aef497f4b0dab9ef36380f377a415a",
+        "peerHashPresent": true
+      },
+      {
+        "name": "p3-official-428a032d-photo.heic",
+        "size": 1800239,
+        "sha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f",
+        "peerHashPresent": true
+      },
+      {
+        "name": "p3-official-428a032d-payload.bin",
+        "size": 16777216,
+        "sha256": "9ed783c0174d3fc3c53f3dab8173a4ccbd842fb34cde6c516089baf92c80a08b",
+        "peerHashPresent": true
+      },
+      {
+        "name": "p3-official-428a032d-photo.jpg",
+        "size": 248,
+        "sha256": "a291a5c9f462515de487230e2780a754c38d9f8f18742e4d3d98d6d0e9ac8954",
+        "peerHashPresent": true
+      }
+    ],
+    "method": "official file picker selected only five test download files, nearby-device selection, production receive confirmation, receipt length/hash and independent leased streaming hash"
+  },
+  "bytesPerDirection": 18579897,
+  "officialPicker": {
+    "route": "Files -> Downloads",
+    "observedSelectionCount": 5,
+    "observedSelectionLimit": 100,
+    "recentSearchDidNotShowNewDownloads": true
+  },
+  "afterStop": {
+    "httpsPortRebind": true,
+    "multicastPortRebind": true
+  },
+  "scopeLimits": [
+    "release integration target uses production UI callbacks on Windows; not full desktop manual UX",
+    "official Android UI operated through android-cli and ADB input",
+    "no Live Photo/gallery or decoder validation",
+    "same-process port release is not official Windows client coexistence",
+    "no production Android package reinstall"
+  ],
+  "pending": [
+    "older and Windows official clients",
+    "real multi-NIC/VPN and AP isolation",
+    "permission revoke/deny",
+    "network loss and network switch",
+    "lockscreen/process kill/full window exit",
+    "Android picker and application large batches",
+    "Apple",
+    "HarmonyOS deferred by user"
+  ],
+  "validation": {
+    "releaseIntegrationRun": "passed",
+    "flutterAnalyze": "No issues found",
+    "ordinaryWindowsMainRelease": "built",
+    "packagedDllMatchesTestedDll": true,
+    "productionUnitSuites": "P2.3 results retained; not rerun because production sources unchanged"
+  }
+}

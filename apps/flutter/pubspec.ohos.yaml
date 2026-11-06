@@ -111,6 +111,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # GPL-3.0 / x265 license texts for the in-app license page.
+    - assets/licenses/
 
   # Rust core DLL is bundled at build time for Windows;
   # Android copies the .so into jniLibs via Gradle hooks.

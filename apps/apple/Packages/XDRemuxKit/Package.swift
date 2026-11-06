@@ -12,6 +12,11 @@ import PackageDescription
 //                 no platform frameworks, so it runs under `swift test` on CI.
 //   xdremux       macOS command-line front-end over the same Kit/Model
 //                 (`swift build -c release --product xdremux`).
+//   XDRemuxTransferCore  binaryTarget → ../../Frameworks/XDRemuxTransferCore.xcframework
+//                 (LocalSend v2 core, crates/xdremux-transfer-ffi, dynamic;
+//                 produced by tools/apple/build_transfer_xcframework.sh; not in Git)
+//   XDRemuxTransfer  Swift wrapper over the transfer C ABI 1.3: poll loop,
+//                 command/result correlation, Codable events and models.
 let package = Package(
     name: "XDRemuxKit",
     platforms: [
@@ -21,6 +26,7 @@ let package = Package(
     products: [
         .library(name: "XDRemuxKit", targets: ["XDRemuxKit"]),
         .library(name: "XDRemuxModel", targets: ["XDRemuxModel"]),
+        .library(name: "XDRemuxTransfer", targets: ["XDRemuxTransfer"]),
         .executable(name: "xdremux", targets: ["xdremux"]),
     ],
     dependencies: [
@@ -42,6 +48,14 @@ let package = Package(
         .target(
             name: "XDRemuxModel"
         ),
+        .binaryTarget(
+            name: "XDRemuxTransferCore",
+            path: "../../Frameworks/XDRemuxTransferCore.xcframework"
+        ),
+        .target(
+            name: "XDRemuxTransfer",
+            dependencies: ["XDRemuxTransferCore"]
+        ),
         .executableTarget(
             name: "xdremux",
             dependencies: [
@@ -57,6 +71,10 @@ let package = Package(
         .testTarget(
             name: "XDRemuxModelTests",
             dependencies: ["XDRemuxModel"]
+        ),
+        .testTarget(
+            name: "XDRemuxTransferTests",
+            dependencies: ["XDRemuxTransfer"]
         ),
     ],
     swiftLanguageModes: [.v5]

@@ -1,7 +1,8 @@
 # Apple Live Photo 包（.pvt）
 
 > 对应代码：`xdremux/rust/src/live_photo_bundle.rs`（FFI `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid`）、`apps/flutter/lib/services/motion_photo_service.dart`（`composeLivePhoto(bundle: true)`）、`output_export_service.dart`（分享时打 zip）。
-> 配对本身（MakerNote content identifier + MOV 重写）见 `live_photo.rs`；本页只讲把已配对的 HEIC + MOV 装进 `.pvt`。
+> 配对本身（MakerNote content identifier + MOV 重写；安卓 AAC 改写为 QuickTime 声音描述）见 `live_photo.rs`，静帧带风格时 MOV 的风格伴随轨道见 `modules/styles-pipeline.md` §4.3；本页只讲把已配对的 HEIC + MOV 装进 `.pvt`。
+> 原生 SwiftUI 前端（`apps/apple`）目前不产出 `.pvt`，Live Photo 直接以 `.photo` + `.pairedVideo` 写入照片库或输出分开的 HEIC + MOV。
 
 ## 1. 结构
 

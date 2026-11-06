@@ -19,6 +19,38 @@ extension ConversionBackend {
     }
 }
 
+/// The core's one-call pipeline (`xdremux_convert_pipeline`): convert,
+/// verify with the option-aware checks, and the Styles 3 post-process in
+/// Rust, so every front-end runs the same policy. When a backend conforms,
+/// `ConversionJob` prefers it over the convert / verify / inject trio.
+public protocol PipelineBackend: Sendable {
+    func runPipeline(input: String, output: String, config: ConversionConfig,
+                     progress: @escaping @Sendable (Double) -> Void) async throws -> PipelineOutcome
+}
+
+/// Backend-neutral copy of the pipeline report.
+public struct PipelineOutcome: Equatable, Sendable {
+    public var success: Bool
+    /// "convert" | "verify" | "styles3" | "done" | "config".
+    public var stage: String
+    public var cancelled: Bool
+    public var errorMessage: String?
+    public var outcome: ConversionOutcome
+    public var outputValid: Bool?
+    public var styles3Applied: Bool
+
+    public init(success: Bool, stage: String, cancelled: Bool = false, errorMessage: String? = nil,
+                outcome: ConversionOutcome, outputValid: Bool? = nil, styles3Applied: Bool = false) {
+        self.success = success
+        self.stage = stage
+        self.cancelled = cancelled
+        self.errorMessage = errorMessage
+        self.outcome = outcome
+        self.outputValid = outputValid
+        self.styles3Applied = styles3Applied
+    }
+}
+
 /// Photographic Styles 3 post-processing (`xdremux_inject_texture_styles` +
 /// `xdremux_inject_semantic_mattes`); optional on a backend.
 public protocol Styles3Backend: Sendable {
@@ -190,28 +222,46 @@ public struct ConversionJob: Sendable {
         try fileSystem.createDirectory(scratchDir)
         defer { try? fileSystem.removeItem(scratchDir) }
 
-        let rust = config.rustConfig
-        let outcome = try await backend.convert(input: input.path, output: temp.path,
-                                                config: rust, progress: progress)
-        // A cancelled conversion leaves a partial file in scratch; the defer
-        // above removes it and nothing reaches the output folder.
-        try Task.checkCancellation()
-        guard outcome.success else { throw ConversionJobError.coreFailed(outcome.errorMessage) }
-        guard fileSystem.fileExists(temp) else { throw ConversionJobError.missingOutput }
-        guard try await backend.verifyOutput(path: temp.path, styles: rust.applePhotographicStyles != 0,
-                                             portrait: rust.applePortrait != 0) else {
-            throw ConversionJobError.verificationFailed
-        }
-        // Photographic Styles 3: add the texture/grain item and the 12
-        // semantic part-matte placeholders so Photos offers texture editing.
-        if rust.applePhotographicStyles != 0, config.applePhotographicStyles3,
-           let styles = backend as? Styles3Backend {
-            do {
-                try await styles.injectStyles3(path: temp.path, grainSeed: Self.grainSeed(for: name))
-            } catch {
-                throw ConversionJobError.styles3Failed(String(describing: error))
-            }
+        let outcome: ConversionOutcome
+        if let pipeline = backend as? PipelineBackend {
+            // One core call does convert + verify + Styles 3 (pipeline.rs).
+            let result = try await pipeline.runPipeline(input: input.path, output: temp.path,
+                                                        config: config, progress: progress)
+            // A cancelled conversion leaves a partial file in scratch; the
+            // defer above removes it and nothing reaches the output folder.
+            if result.cancelled { throw CancellationError() }
             try Task.checkCancellation()
+            guard result.success else {
+                switch result.stage {
+                case "verify": throw ConversionJobError.verificationFailed
+                case "styles3": throw ConversionJobError.styles3Failed(result.errorMessage)
+                default: throw ConversionJobError.coreFailed(result.errorMessage)
+                }
+            }
+            guard fileSystem.fileExists(temp) else { throw ConversionJobError.missingOutput }
+            outcome = result.outcome
+        } else {
+            let rust = config.rustConfig
+            outcome = try await backend.convert(input: input.path, output: temp.path,
+                                                config: rust, progress: progress)
+            try Task.checkCancellation()
+            guard outcome.success else { throw ConversionJobError.coreFailed(outcome.errorMessage) }
+            guard fileSystem.fileExists(temp) else { throw ConversionJobError.missingOutput }
+            guard try await backend.verifyOutput(path: temp.path, styles: rust.applePhotographicStyles != 0,
+                                                 portrait: rust.applePortrait != 0) else {
+                throw ConversionJobError.verificationFailed
+            }
+            // Photographic Styles 3: add the texture/grain item and the 12
+            // semantic part-matte placeholders so Photos offers texture editing.
+            if rust.applePhotographicStyles != 0, config.applePhotographicStyles3,
+               let styles = backend as? Styles3Backend {
+                do {
+                    try await styles.injectStyles3(path: temp.path, grainSeed: Self.grainSeed(for: name))
+                } catch {
+                    throw ConversionJobError.styles3Failed(String(describing: error))
+                }
+                try Task.checkCancellation()
+            }
         }
 
         // Motion Photo handling on the verified still, still inside scratch.

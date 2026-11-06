@@ -19,6 +19,12 @@
 | `compare <a.json> <b.json> [--tolerance 1e-6]` | 两份 inspect | Markdown 差异报告（数值带容差） |
 | `dump <output.heic> <out.json>` | 输出文件 -> 规范 JSON | ISOBMFF box 结构（Tier 3） |
 | `compare-dump <a.json> <b.json>` | 两份 dump | 结构差异报告 |
+| `convert <in.heic> <out.heic> [--oppo-compat 0-3]` | 源文件 -> HEIC | 对拍侧的转换镜像（0=off、1=auto、2=on、3=tail） |
+| `graft-styles <standard> <styles-golden> <out>` | 标准 HEIC + 金样 -> HEIC | 风格图移植 |
+| `scaffold <standard> <out>` / `styles <standard> <out>` | 标准 HEIC -> HEIC | 风格脚手架 / 原生风格装配 |
+| `portrait-depth ...` / `sky-matte ...` | - | 人像深度、天空蒙版探针 |
+| `rewrite-meta <in> <out>` | HEIC -> HEIC | 二分排障用：不加任何东西只重建 meta |
+| `portrait` | - | **已停用**：镜像停在深度曲线标定之前，与核心不一致，直接报错；人像用核心或 App |
 
 内部模块：`convert` / `scaffold` / `styles_native` / `styles_graft` / `portrait` / `portrait_depth` / `seg` / `bplist` / `json` --与 Rust 核心同名模块一一对应的对拍逻辑，另有 `*_consts.rs` 共享常量。
 

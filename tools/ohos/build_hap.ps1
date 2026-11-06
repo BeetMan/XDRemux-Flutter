@@ -5,10 +5,15 @@
 # This script swaps that variant in for the duration of the build, then
 # always restores the mainline pubspec.yaml + pubspec.lock.
 #
+# The local-transfer library must already be in entry\libs\arm64-v8a
+# (Git Bash: tools/native/build-transfer.sh ohos); without it the app hides
+# the transfer entry. -NoTransfer allows an image-only build.
+#
 # Usage (PowerShell): tools/ohos/build_hap.ps1 -Profile -FlutterSdk C:\path\to\flutter-ohos
 param(
     [switch]$Profile,
     [switch]$Release,
+    [switch]$NoTransfer,
     [string]$FlutterSdk = $(if ($env:XDREMUX_OHOS_FLUTTER_SDK) {
         $env:XDREMUX_OHOS_FLUTTER_SDK
     } else { 'C:\flutter-ohos' })
@@ -22,6 +27,9 @@ $buildMode = if ($Profile) { 'profile' } elseif ($Release) { 'release' } else { 
 & (Join-Path $PSScriptRoot 'check_sdk.ps1') -SdkPath $FlutterSdk -BuildMode $buildMode
 $app = Join-Path $PSScriptRoot '..\..\apps\flutter'
 Set-Location $app
+if (-not $NoTransfer -and -not (Test-Path 'ohos\entry\libs\arm64-v8a\libxdremux_transfer.so')) {
+    throw 'libxdremux_transfer.so missing: run tools/native/build-transfer.sh ohos (Git Bash), or pass -NoTransfer.'
+}
 
 $env:PATH = (Join-Path $FlutterSdk 'bin') + ';C:\tools\ohos-shim;' +
   'C:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin;' +

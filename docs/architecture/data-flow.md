@@ -1,6 +1,6 @@
 # 数据流：转换与写回
 
-> 本页描述两条主数据流的端到端路径。代码入口：Flutter 侧 `apple_oppo_workflow_service.dart` / `apple_oppo_workflow_page.dart`；Rust 侧 `lib.rs` 的 FFI 导出（`xdremux_convert_with_styles` 系列、`xdremux_writeback_returned_photo`）。
+> 本页描述两条主数据流的端到端路径。代码入口：Flutter 侧 `apple_oppo_workflow_service.dart` / `apple_oppo_workflow_page.dart`；Rust 侧 `lib.rs` 的 FFI 导出（`xdremux_convert` / `xdremux_convert_with_progress`，风格在核心内由 `finalize_native_styles` 处理；写回为 `xdremux_writeback_returned_photo`）。原生 SwiftUI 前端（`apps/apple`）通过 C 头文件调用同一组导出。
 
 ## 1. 总览
 
@@ -55,7 +55,7 @@ apple-edit.heic（ISO 21496-1 增益映射 + 风格编辑图）
 returned.heic + donor(原始 HEIC)
   │ 1. 解码两者，尺寸校验（不一致 -> 失败）
   ▼
-  │ 2. 水印恢复（watermark_codec::restore_visible_watermark）
+  │ 2. 剥离回传文件的 OPPO 尾部；水印恢复（watermark_codec::restore_on_donor_graph → restore_watermark_canvas）
   │   ├─ 首选：PNG 载荷路径（watermark + watermark.config -> 画布矩形）
   │   └─ 回退：边框带检测（detect_frame_bands -> 行区间复制）
   ▼
@@ -63,7 +63,8 @@ returned.heic + donor(原始 HEIC)
   │ 3. 512×512 tile -> x265_encode_tiles_oppo_sdr
   │    （BT.601 limited 数据 + full 标记，复刻 OPPO 渲染观感）
   ▼
-  │ 4. rewrite_primary_grid：新 tile/grid item、pitm 切换、iloc/iref 重建
+  │ 4. rewrite_primary_grid_in_place：原地替换主图 tile，保留主图 ID 与 iref/iinf 图
+  │    （回传文件的 tmap/增益图引用挂在主图 ID 上，不能切 pitm）
   ▼
   │ 5. 剥离旧 footer -> 追加 donor 完整 OPPO 尾部（12 条目）
   ▼
@@ -79,13 +80,13 @@ oppo-final.heic
 
 ## 4. 平台后端选择
 
-| 功能 | Windows | Android | macOS | iOS | 鸿蒙 |
-|---|---|---|---|---|---|
-| 转换 / 写回 | Rust FFI | Rust FFI（.so via jniLibs） | Rust FFI | Rust FFI（静态库） | Rust FFI（.so，`aarch64-unknown-linux-ohos`） |
-| 解码预览 | WIC | ImageDecoder | ImageIO | ImageIO | Image Kit |
-| 文件访问 | 文件系统 | SAF（不索取存储权限） | NSOpenPanel | PHPicker / Files | file_picker / PhotoViewPicker / sendData 分享 |
+| 功能 | Windows | Android | macOS | iOS | 鸿蒙 | 原生 Apple（SwiftUI，未发布） |
+|---|---|---|---|---|---|---|
+| 转换 / 写回 | Rust FFI | Rust FFI（.so via jniLibs） | Rust FFI | Rust FFI（静态库） | Rust FFI（.so，`aarch64-unknown-linux-ohos`） | C ABI（`XDRemuxCore.xcframework`，`build_apple.sh`） |
+| 解码预览 | WIC | ImageDecoder | ImageIO | ImageIO | Image Kit | ImageIO / `UIImageReader`（HDR 预览） |
+| 文件访问 | 文件系统 | SAF（不索取存储权限） | NSOpenPanel | PHPicker / Files | file_picker / PhotoViewPicker / sendData 分享 | 文件导入、拖放、PhotosPicker（iOS） |
 
-Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在五平台都内建 x265（Android/iOS/鸿蒙交叉编译静态库，见 `build.rs` / `build_ios.sh` / `build_ohos.sh`）。Linux 本地开发目标沿用同一路径：Rust FFI（`bundle/lib` 内的 .so）、无平台原生解码通道（缩略图走 Rust 回退）、XDG Desktop Portal 文件选择与 GTK 拖放。
+Swift 后端（`AppleReturnedPhotoWritebackBridge` 等）保留为研究路径，默认不调用。Rust 核心在全部平台都内建 x265（Android/iOS/鸿蒙交叉编译静态库，见 `build.rs` / `build_ios.sh` / `build_ohos.sh`）。Linux 本地开发目标沿用同一路径：Rust FFI（`bundle/lib` 内的 .so）、无平台原生解码通道（缩略图走 Rust 回退）、XDG Desktop Portal 文件选择与 GTK 拖放。
 
 ## 5. Motion Photo 数据流（Phase 3a/3b）
 
@@ -98,8 +99,12 @@ OPPO 动态照片（JPEG + 附加视频，LPEX 单/双码流）
   ├─ 仅静帧：拆静帧（still_range）→ Ultra HDR JPEG 解析（uhdr_jpeg：MPF + hdrgm）
   │   → 合成源容器 → 走转换主路径
   ├─ 静帧+视频：同上 + 视频写到输出目录（<输出名>.motion.mp4；双码流另写 .primary.mp4）
-  └─ Live Photo：静帧转换（强制关闭 styles）+ live_photo.rs 重组配对
-      （MOV 重写 content identifier + still-image-time 轨；静帧 MakerNote 追加 0x0011）
+  └─ Live Photo：静帧转换（保留摄影风格 2/3）+ live_photo.rs 重组配对
+      （MOV 重写 content identifier + still-image-time 轨；静帧 MakerNote 追加 0x0011；
+       安卓 AAC 改写为 QuickTime SoundDescription v1 + wave atom）
+      ├─ 静帧带风格 plist：live_photo_styles::attach_style_tracks 追加 MOV 伴随轨道
+      │   （线性缩略图 auxv、smartstyle-info、live-photo-info、matte），照片 App 才能编辑
+      └─ 默认打包为 `<名称>.pvt`（live_photo_bundle.rs，见 formats/live-photo-pvt.md）；关闭设置则输出分开的 HEIC + MOV
 ```
 
 工作流页（四步流程）里动态照片 donor 自动拆静帧——水印 graph、EXIF、ProXDR 元数据都在静帧字节段。

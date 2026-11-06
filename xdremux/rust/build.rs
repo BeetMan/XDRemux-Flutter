@@ -18,7 +18,11 @@ fn main() {
     // OHOS Rust targets report os=linux + env=ohos (like Android's os=linux
     // + env=... distinction); detect via env so the x265 path picks build_ohos.
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let is_ohos = target_env == "ohos";
+    // `x86_64-apple-ios` is the Intel simulator target and reports env="",
+    // unlike `aarch64-apple-ios-sim`; both need the simulator x265 build.
+    let is_ios_sim = target_os == "ios" && (target_env == "sim" || target_arch == "x86_64");
     build_libheif_decoder(&target_os);
 
     let use_x265 = target_os == "android" || std::env::var_os("XDREMUX_USE_FFMPEG").is_none();
@@ -47,16 +51,19 @@ fn main() {
     }
     build.compile("x265_helper");
 
-    // Static libx265 location per platform.
+    // Static libx265 location per platform. `XDREMUX_X265_DIR` overrides the
+    // 8-bit archive directory (build_apple.sh uses it for per-architecture
+    // builds of the same platform); `XDREMUX_X265_MAIN10_DIR` likewise below.
+    println!("cargo:rerun-if-env-changed=XDREMUX_X265_DIR");
+    println!("cargo:rerun-if-env-changed=XDREMUX_X265_MAIN10_DIR");
+    let x265_dir_override = std::env::var("XDREMUX_X265_DIR").ok().filter(|s| !s.is_empty());
     let (link_search, lib_name) = match target_os.as_str() {
+        _ if x265_dir_override.is_some() => (x265_dir_override.clone().unwrap(), "x265".to_string()),
         "android" => (format!("{x265_root}/build_android"), "x265".to_string()),
-        // The iOS simulator reports os=ios + env=sim and needs a library built
-        // against the iphonesimulator SDK; linking the device archive fails with
-        // "building for 'iOS-simulator', but linking in object file ... built
-        // for 'iOS'".
-        "ios" if target_env == "sim" => {
-            (format!("{x265_root}/build_ios_sim"), "x265".to_string())
-        }
+        // The iOS simulator needs a library built against the iphonesimulator
+        // SDK; linking the device archive fails with "building for
+        // 'iOS-simulator', but linking in object file ... built for 'iOS'".
+        "ios" if is_ios_sim => (format!("{x265_root}/build_ios_sim"), "x265".to_string()),
         "ios" => (format!("{x265_root}/build_ios"), "x265".to_string()),
         "windows" => (
             format!("{x265_root}/build_windows/Release"),
@@ -93,9 +100,11 @@ fn main() {
     // absent the bridge is not compiled and the 8-bit Apple Log path stays in
     // use, so each platform can adopt 10-bit independently.
     let main10_file_and_dir: Option<(String, String)> = {
+        let main10_override = std::env::var("XDREMUX_X265_MAIN10_DIR").ok().filter(|s| !s.is_empty());
         let candidates: Vec<String> = match target_os.as_str() {
+            _ if main10_override.is_some() => vec![main10_override.unwrap()],
             "android" => vec![format!("{x265_root}/build_android_10bit")],
-            "ios" if target_env == "sim" => vec![format!("{x265_root}/build_ios_sim_10bit")],
+            "ios" if is_ios_sim => vec![format!("{x265_root}/build_ios_sim_10bit")],
             "ios" => vec![format!("{x265_root}/build_ios_10bit")],
             "windows" => vec![
                 format!("{x265_root}/build_windows_10bit/Release"),

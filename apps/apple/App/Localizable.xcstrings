@@ -1,12 +1,69 @@
 {
   "sourceLanguage": "zh-Hans",
   "strings": {
+    "%1$lld 个文件 · %2$@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld files · %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld 个文件 · %2$@"
+          }
+        }
+      }
+    },
+    "%lld": {
+      "shouldTranslate": false
+    },
+    "%lld 个文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个文件"
+          }
+        }
+      }
+    },
+    "%lld 个文件 · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld files · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "new",
+            "value": "%1$lld 个文件 · %2$@"
+          }
+        }
+      }
+    },
     "Apple 人像": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Apple Portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 人像"
           }
         }
       }
@@ -16,7 +73,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Apple Portrait data"
+            "value": "Apple Portrait Data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 人像数据"
           }
         }
       }
@@ -28,6 +91,12 @@
             "state": "translated",
             "value": "Apple Photographic Styles"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 摄影风格"
+          }
         }
       }
     },
@@ -37,6 +106,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Apple Standard"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 标准"
+          }
+        }
+      }
+    },
+    "Apple 标准输出不写入 OPPO 私有信息，文件可在 Apple“照片”里继续编辑。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Standard output carries no OPPO private data, so the file stays editable in Apple Photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 标准输出不写入 OPPO 私有信息，文件可在 Apple“照片”里继续编辑。"
           }
         }
       }
@@ -48,6 +139,12 @@
             "state": "translated",
             "value": "Apple Photos"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 照片"
+          }
         }
       }
     },
@@ -58,6 +155,12 @@
             "state": "translated",
             "value": "Apple Photographic Styles failed: %@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 照片摄影风格失败：%@"
+          }
         }
       }
     },
@@ -66,17 +169,35 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Apple edit copy generated: %@"
+            "value": "Apple edit copy created: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple 编辑副本已生成：%@"
           }
         }
       }
+    },
+    "EDR scale": {
+      "shouldTranslate": false
+    },
+    "EXIF": {
+      "shouldTranslate": false
     },
     "Gain map 上限": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gain map max"
+            "value": "Gain map maximum"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain map 上限"
           }
         }
       }
@@ -86,7 +207,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "HDR kind"
+            "value": "HDR type"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR 类型"
           }
         }
       }
@@ -96,10 +223,35 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "HDR output"
+            "value": "HDR Output"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR 输出"
           }
         }
       }
+    },
+    "HDR 预览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR Preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR 预览"
+          }
+        }
+      }
+    },
+    "ISO": {
+      "shouldTranslate": false
     },
     "ISO 图": {
       "localizations": {
@@ -107,6 +259,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "ISO graph"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ISO 图"
           }
         }
       }
@@ -116,7 +274,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "ISO (no local)"
+            "value": "ISO (no local copy)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ISO（无本地）"
           }
         }
       }
@@ -128,6 +292,12 @@
             "state": "translated",
             "value": "Live Photo"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo 合成"
+          }
         }
       }
     },
@@ -136,7 +306,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Live Photo composition failed"
+            "value": "Could not build the Live Photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo 合成失败"
           }
         }
       }
@@ -148,6 +324,12 @@
             "state": "translated",
             "value": "Live Photo video"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo 视频"
+          }
         }
       }
     },
@@ -158,6 +340,12 @@
             "state": "translated",
             "value": "OPPO Compatible"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 兼容"
+          }
         }
       }
     },
@@ -166,7 +354,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "OPPO Compatible restores the OPPO-compatible structure, metadata and tail data; Apple Standard keeps the Apple Photos result without OPPO private data and can restore the visible original watermark via the toggle."
+            "value": "OPPO Compatible restores the OPPO structure, metadata and private tail. Apple Standard keeps the Apple Photos result without OPPO private data; the visible camera watermark can be restored with the switch."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 兼容恢复 OPPO 兼容结构、元数据和尾部数据；Apple 标准保留 Apple 照片结果且不写入 OPPO 私有信息，可按开关恢复可见原机水印。"
           }
         }
       }
@@ -176,7 +370,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "OPPO Compatible output requires keeping the original OPPO photo."
+            "value": "OPPO Compatible output needs the OPPO original to stay selected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 兼容输出必须保留 OPPO 原始照片。"
           }
         }
       }
@@ -188,6 +388,12 @@
             "state": "translated",
             "value": "OPPO original"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 原始照片"
+          }
         }
       }
     },
@@ -196,7 +402,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "OPPO original → Apple edit copy → edit on iPhone → write back watermark and metadata"
+            "value": "OPPO original → Apple edit copy → edit on iPhone → write the watermark and metadata back"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 原始照片 → Apple 编辑副本 → iPhone 编辑 → 写回原机水印与元数据"
           }
         }
       }
@@ -208,6 +420,12 @@
             "state": "translated",
             "value": "OPPO entries"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OPPO 条目"
+          }
         }
       }
     },
@@ -217,6 +435,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rust core"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rust 内核"
           }
         }
       }
@@ -228,15 +452,55 @@
             "state": "translated",
             "value": "Rust core %@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rust 内核 %@"
+          }
         }
       }
+    },
+    "SDR": {
+      "shouldTranslate": false
+    },
+    "SDR 效果": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SDR View"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SDR 效果"
+          }
+        }
+      }
+    },
+    "X6": {
+      "shouldTranslate": false
+    },
+    "X7": {
+      "shouldTranslate": false
+    },
+    "XDRemux": {
+      "shouldTranslate": false
     },
     "一帧影像，动用两台手机": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "One photo, two phones"
+            "value": "One Photo, Two Phones"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一帧影像，动用两台手机"
           }
         }
       }
@@ -246,7 +510,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "One Photographic Styles conversion produces an Apple edit copy; edit it on an iPhone, bring it back, and Rust restores the original watermark and OPPO metadata. The ordinary batch queue is not involved."
+            "value": "One Photographic Styles conversion makes an Apple edit copy. Edit it on an iPhone, bring it back, and the Rust core restores the camera watermark and OPPO metadata. The regular batch queue is not involved."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一次摄影风格转换生成 Apple 编辑副本，在 iPhone 上编辑后回传，由 Rust 恢复原机水印与 OPPO 元数据。普通批量转换队列不参与此流程。"
           }
         }
       }
@@ -256,7 +526,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "None"
+            "value": "Off"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不保留"
           }
         }
       }
@@ -266,7 +542,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Unsupported"
+            "value": "Not supported"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不支持"
+          }
+        }
+      }
+    },
+    "不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This is not a checkpoint file from the Flutter app (xdremux_checkpoint.jsonl)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是 Flutter 版的检查点文件（xdremux_checkpoint.jsonl）。"
           }
         }
       }
@@ -276,7 +574,45 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Adds no OPPO private data; the photo stays editable in Apple Photos."
+            "value": "Adds no OPPO private data, so the photo stays editable in Apple Photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不追加 OPPO 私有信息，照片可在 Apple 照片里继续编辑。"
+          }
+        }
+      }
+    },
+    "与同一局域网内的 XDRemux / LocalSend 设备互传照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send photos to and receive them from XDRemux or LocalSend on the same network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与同一局域网内的 XDRemux / LocalSend 设备互传照片"
+          }
+        }
+      }
+    },
+    "专业模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pro"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专业模式"
           }
         }
       }
@@ -288,6 +624,28 @@
             "state": "translated",
             "value": "Strict ISO 21496-1 tmap"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "严格 ISO 21496-1 tmap"
+          }
+        }
+      }
+    },
+    "人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "人像"
+          }
         }
       }
     },
@@ -297,6 +655,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Tail only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅尾部"
           }
         }
       }
@@ -308,6 +672,12 @@
             "state": "translated",
             "value": "Watermark only"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅水印"
+          }
         }
       }
     },
@@ -316,7 +686,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Still only"
+            "value": "Still Only"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅静帧"
           }
         }
       }
@@ -328,6 +704,28 @@
             "state": "translated",
             "value": "Import from Files"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从文件导入"
+          }
+        }
+      }
+    },
+    "从文件导入 OPPO 原始照片（也可以拖到窗口里）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import OPPO originals from Files, or drop them onto the window"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从文件导入 OPPO 原始照片（也可以拖到窗口里）"
+          }
         }
       }
     },
@@ -337,6 +735,92 @@
           "stringUnit": {
             "state": "translated",
             "value": "Import from Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从照片导入"
+          }
+        }
+      }
+    },
+    "传输中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transferring"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输中"
+          }
+        }
+      }
+    },
+    "传输失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfer failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输失败：%@"
+          }
+        }
+      }
+    },
+    "传输服务已停止。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The transfer service has stopped."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输服务已停止。"
+          }
+        }
+      }
+    },
+    "传输服务异常停止：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The transfer service stopped unexpectedly: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输服务异常停止：%@"
+          }
+        }
+      }
+    },
+    "传输记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transfers"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "传输记录"
           }
         }
       }
@@ -348,6 +832,12 @@
             "state": "translated",
             "value": "Save to Photos"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存到照片"
+          }
         }
       }
     },
@@ -356,7 +846,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Save failed: %@"
+            "value": "Could not save: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存失败：%@"
           }
         }
       }
@@ -366,7 +862,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no portrait, no private HDR)"
+            "value": "Keep, without portrait and private HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（去人像与私有 HDR）"
           }
         }
       }
@@ -376,7 +878,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no portrait)"
+            "value": "Keep, without portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（去人像）"
           }
         }
       }
@@ -386,7 +894,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no private HDR)"
+            "value": "Keep, without private HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（去私有 HDR）"
           }
         }
       }
@@ -396,7 +910,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no private UHDR)"
+            "value": "Keep, without private Ultra HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（去私有 UHDR）"
           }
         }
       }
@@ -406,7 +926,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no HDR)"
+            "value": "Keep (no HDR)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（无 HDR）"
           }
         }
       }
@@ -416,7 +942,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve (no UHDR)"
+            "value": "Keep (no Ultra HDR)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留（无 UHDR）"
           }
         }
       }
@@ -426,7 +958,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stop converting"
+            "value": "Stop Converting"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止转换"
           }
         }
       }
@@ -436,7 +974,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stop the queue and cancel the running conversions; finished photos are kept"
+            "value": "Stops the queue and cancels conversions in progress. Finished photos are kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止队列并取消正在进行的转换；已完成的不受影响"
+          }
+        }
+      }
+    },
+    "全景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panorama"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全景"
           }
         }
       }
@@ -448,6 +1008,44 @@
             "state": "translated",
             "value": "Convert All"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部转换"
+          }
+        }
+      }
+    },
+    "全部转换（%lld）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert All (%lld)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部转换（%lld）"
+          }
+        }
+      }
+    },
+    "共 %lld 张照片，%lld 张可分类，%lld 组实况照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$lld photos, %2$lld with a capture mode, %3$lld Live Photo pairs"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共 %lld 张照片，%lld 张可分类，%lld 组实况照片"
+          }
         }
       }
     },
@@ -457,6 +1055,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "About"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关于"
           }
         }
       }
@@ -468,6 +1072,28 @@
             "state": "translated",
             "value": "Close"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭"
+          }
+        }
+      }
+    },
+    "兼容 OPPO / 一加相册的标准文件格式，恢复原机结构与私有尾部数据，支持后续编辑。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The standard format for the OPPO and OnePlus gallery. Restores the original structure and private tail data; the photo stays editable there."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "兼容 OPPO / 一加相册的标准文件格式，恢复原机结构与私有尾部数据，支持后续编辑。"
+          }
         }
       }
     },
@@ -476,7 +1102,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compatibility policy"
+            "value": "Compatibility"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "兼容策略"
           }
         }
       }
@@ -488,6 +1120,12 @@
             "state": "translated",
             "value": "The core reported success but wrote no file"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内核报告成功但没有写出文件"
+          }
         }
       }
     },
@@ -498,6 +1136,44 @@
             "state": "translated",
             "value": "The core gave no reason"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内核未给出原因"
+          }
+        }
+      }
+    },
+    "写入人像深度与蒙版，Apple“照片”可继续调整景深与焦点。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writes portrait depth and mattes so Apple Photos can keep adjusting depth of field and focus."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入人像深度与蒙版，Apple“照片”可继续调整景深与焦点。"
+          }
+        }
+      }
+    },
+    "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writes Photographic Styles data so tone, color and intensity can be adjusted in Apple Photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。"
+          }
         }
       }
     },
@@ -506,7 +1182,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Writeback failed: %@"
+            "value": "Write-back failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写回失败：%@"
+          }
+        }
+      }
+    },
+    "准备中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备中…"
           }
         }
       }
@@ -516,7 +1214,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Something went wrong"
+            "value": "Something Went Wrong"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出错了"
           }
         }
       }
@@ -528,6 +1232,12 @@
             "state": "translated",
             "value": "Share"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分享"
+          }
         }
       }
     },
@@ -537,6 +1247,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Classification"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "分类状态"
+          }
+        }
+      }
+    },
+    "删除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除"
           }
         }
       }
@@ -548,6 +1280,12 @@
             "state": "translated",
             "value": "Motion Photo"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动态照片"
+          }
         }
       }
     },
@@ -556,7 +1294,61 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Motion Photo handling"
+            "value": "Motion Photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动态照片处理"
+          }
+        }
+      }
+    },
+    "华为 HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "华为 HDR"
+          }
+        }
+      }
+    },
+    "华为 HDR 原生兼容 Apple 照片，无需转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei HDR already works in Apple Photos; no conversion needed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "华为 HDR 原生兼容 Apple 照片，无需转换"
+          }
+        }
+      }
+    },
+    "华为人像 → Apple 人像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Huawei Portrait → Apple Portrait"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "华为人像 → Apple 人像"
           }
         }
       }
@@ -566,7 +1358,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Original preview"
+            "value": "Original"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原图预览"
+          }
+        }
+      }
+    },
+    "原始照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Originals"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原始照片"
           }
         }
       }
@@ -576,7 +1390,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Original watermark"
+            "value": "Camera watermark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原机水印"
           }
         }
       }
@@ -588,6 +1408,76 @@
             "state": "translated",
             "value": "dual stream"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "双流"
+          }
+        }
+      }
+    },
+    "双重曝光": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double exposure"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "双重曝光"
+          }
+        }
+      }
+    },
+    "发送 %lld 个文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send %lld Files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送 %lld 个文件"
+          }
+        }
+      }
+    },
+    "发送内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送内容"
+          }
+        }
+      }
+    },
+    "发送到": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send To"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送到"
+          }
         }
       }
     },
@@ -598,6 +1488,12 @@
             "state": "translated",
             "value": "Cancel"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
         }
       }
     },
@@ -606,7 +1502,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cancel conversion"
+            "value": "Cancel Conversion"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消转换"
+          }
+        }
+      }
+    },
+    "只发送不接收时不会监听端口。开启接收后会自动查找附近设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending alone opens no port. Turning on receiving also looks for nearby devices."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只发送不接收时不会监听端口。开启接收后会自动查找附近设备。"
           }
         }
       }
@@ -616,7 +1534,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Convert the still image only and ignore the attached video."
+            "value": "Converts the still only and ignores the attached video."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只转换静帧，忽略附带的视频。"
           }
         }
       }
@@ -626,7 +1550,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Convertible"
+            "value": "Ready to convert"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可转换"
+          }
+        }
+      }
+    },
+    "合影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Group photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "合影"
           }
         }
       }
@@ -638,6 +1584,12 @@
             "state": "translated",
             "value": "Convert %lld at a time"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同时转换 %lld 张"
+          }
         }
       }
     },
@@ -647,6 +1599,44 @@
           "stringUnit": {
             "state": "translated",
             "value": "Edit on iPhone"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 iPhone 上编辑"
+          }
+        }
+      }
+    },
+    "在局域网接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive on Local Network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在局域网接收"
+          }
+        }
+      }
+    },
+    "在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everything in Photographic Styles 2, plus texture (Soft Skin, Glow, Film and more) and grain adjustable in Apple Photos. Requires iOS 27 or later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。"
           }
         }
       }
@@ -658,6 +1648,12 @@
             "state": "translated",
             "value": "Show in Finder"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在访达中显示"
+          }
         }
       }
     },
@@ -666,7 +1662,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Processing…"
+            "value": "Working…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理中…"
           }
         }
       }
@@ -678,6 +1680,60 @@
             "state": "translated",
             "value": "Handling"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "处理方式"
+          }
+        }
+      }
+    },
+    "复制中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copying…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制中…"
+          }
+        }
+      }
+    },
+    "夜景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Night"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "夜景"
+          }
+        }
+      }
+    },
+    "大师模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Master"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大师模式"
+          }
         }
       }
     },
@@ -687,6 +1743,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失败"
           }
         }
       }
@@ -698,6 +1760,12 @@
             "state": "translated",
             "value": "Failed: %@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "失败：%@"
+          }
         }
       }
     },
@@ -708,6 +1776,12 @@
             "state": "translated",
             "value": "OK"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "好"
+          }
         }
       }
     },
@@ -716,7 +1790,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Save to this folder"
+            "value": "Save to This Folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储到此文件夹"
           }
         }
       }
@@ -728,6 +1808,12 @@
             "state": "translated",
             "value": "Save a Copy…"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储副本…"
+          }
         }
       }
     },
@@ -736,7 +1822,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Save failed: %@"
+            "value": "Could not save: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储失败：%@"
+          }
+        }
+      }
+    },
+    "存储空间不足。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enough storage."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存储空间不足。"
           }
         }
       }
@@ -748,6 +1856,28 @@
             "state": "translated",
             "value": "Done"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成"
+          }
+        }
+      }
+    },
+    "完成：%lld 张已复制，%lld 张跳过，%lld 张失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Done: %1$lld copied, %2$lld skipped, %3$lld failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成：%lld 张已复制，%lld 张跳过，%lld 张失败"
+          }
         }
       }
     },
@@ -756,7 +1886,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preserve"
+            "value": "Keep everything"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完整保留"
+          }
+        }
+      }
+    },
+    "实况照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实况照片"
           }
         }
       }
@@ -766,7 +1918,141 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Run one Photographic Styles conversion on the selected OPPO original to produce the working file for editing on iPhone."
+            "value": "Runs one Photographic Styles conversion on the selected OPPO original to make the working file you will edit on the iPhone."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对所选 OPPO 原始照片做一次摄影风格转换，生成交给 iPhone 编辑的工作文件。"
+          }
+        }
+      }
+    },
+    "对方 IP:端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peer IP:port"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方 IP:端口"
+          }
+        }
+      }
+    },
+    "对方在 XDRemux 或 LocalSend 里输入本机地址即可发送；每次传输都需要你在这里接受。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter this address in XDRemux or LocalSend on the other device to send here. Every transfer waits for you to accept it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方在 XDRemux 或 LocalSend 里输入本机地址即可发送；每次传输都需要你在这里接受。"
+          }
+        }
+      }
+    },
+    "对方拒绝了这次传输。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device declined this transfer."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方拒绝了这次传输。"
+          }
+        }
+      }
+    },
+    "对方要求 PIN 码。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device requires a PIN."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方要求 PIN 码。"
+          }
+        }
+      }
+    },
+    "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate fingerprint of %1$@:\n%2$@\n\nCheck that it matches the fingerprint shown on the other device before sending."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。"
+          }
+        }
+      }
+    },
+    "对方设备 %@ 的证书指纹：\n%@\n\n请与对方屏幕上显示的指纹核对一致后再发送。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certificate fingerprint of %@:\n%@\n\nCheck that it matches the fingerprint shown on the other device before sending."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "new",
+            "value": "对方设备 %1$@ 的证书指纹：\n%2$@\n\n请与对方屏幕上显示的指纹核对一致后再发送。"
+          }
+        }
+      }
+    },
+    "对方设备的证书与之前确认的不一致，请重新连接并核对指纹。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The other device's certificate differs from the one you confirmed. Connect again and check the fingerprint."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对方设备的证书与之前确认的不一致，请重新连接并核对指纹。"
+          }
+        }
+      }
+    },
+    "导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入"
           }
         }
       }
@@ -776,7 +2062,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed to import %1$@: %2$@"
+            "value": "Could not import %1$@: %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入 %@ 失败：%@"
+          }
+        }
+      }
+    },
+    "导入 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import Flutter Checkpoint…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入 Flutter 检查点…"
           }
         }
       }
@@ -786,7 +2094,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Import OPPO original photos and convert them to a universal HDR format that stays editable in Apple Photos."
+            "value": "Import OPPO originals and convert them to standard HDR that stays editable in Apple Photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入 OPPO 原始照片，转换为通用 HDR 格式后可在 Apple 照片中继续编辑。"
           }
         }
       }
@@ -798,6 +2112,28 @@
             "state": "translated",
             "value": "Import failed: %@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入失败：%@"
+          }
+        }
+      }
+    },
+    "导出 Flutter 检查点…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Flutter Checkpoint…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出 Flutter 检查点…"
+          }
         }
       }
     },
@@ -806,7 +2142,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Not selected yet"
+            "value": "Not selected"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未选择"
           }
         }
       }
@@ -818,6 +2160,28 @@
             "state": "translated",
             "value": "Dimensions"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尺寸"
+          }
+        }
+      }
+    },
+    "局域网传输": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Network Transfer"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "局域网传输"
+          }
         }
       }
     },
@@ -826,7 +2190,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "grafted from the original"
+            "value": "copied from the original"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已从原图移植"
           }
         }
       }
@@ -836,7 +2206,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Saved to the photo library as a Live Photo."
+            "value": "Saved to your photo library as a Live Photo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已作为 Live Photo 保存到照片库。"
           }
         }
       }
@@ -846,7 +2222,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Saved to the photo library as a new photo."
+            "value": "Saved to your photo library as a new photo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已作为新照片保存到照片库。"
           }
         }
       }
@@ -858,6 +2240,12 @@
             "state": "translated",
             "value": "Saved to Photos"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存到照片"
+          }
         }
       }
     },
@@ -866,7 +2254,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "present"
+            "value": "Included"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已包含"
+          }
+        }
+      }
+    },
+    "已在目标位置，跳过": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already in place, skipped"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已在目标位置，跳过"
           }
         }
       }
@@ -878,6 +2288,12 @@
             "state": "translated",
             "value": "Saved %1$lld files to %2$@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存储 %lld 个文件到 %@"
+          }
         }
       }
     },
@@ -888,6 +2304,12 @@
             "state": "translated",
             "value": "Saved to %@"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存储到 %@"
+          }
         }
       }
     },
@@ -896,7 +2318,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Done"
+            "value": "Converted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已完成"
+          }
+        }
+      }
+    },
+    "已导入 Flutter 检查点：%lld 张已完成，%lld 张待转换，%lld 张无法读取。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter checkpoint imported: %1$lld converted, %2$lld to convert, %3$lld unreadable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导入 Flutter 检查点：%lld 张已完成，%lld 张待转换，%lld 张无法读取。"
           }
         }
       }
@@ -908,6 +2352,28 @@
             "state": "translated",
             "value": "restored"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已恢复"
+          }
+        }
+      }
+    },
+    "已接受": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepted"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已接受"
+          }
         }
       }
     },
@@ -916,7 +2382,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selected OPPO original: %@"
+            "value": "OPPO original: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已选择 OPPO 原始照片：%@"
           }
         }
       }
@@ -926,7 +2398,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selected iPhone returned photo: %@"
+            "value": "Returned iPhone photo: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已选择 iPhone 回传照片：%@"
+          }
+        }
+      }
+    },
+    "延时摄影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time-lapse"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "延时摄影"
           }
         }
       }
@@ -936,7 +2430,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Prefer an unconverted OPPO original; it is also the source for restoring the watermark and metadata later."
+            "value": "Choose an unconverted OPPO original. It is also where the camera watermark and metadata are restored from later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建议选择未经转换的 OPPO 原始照片；它也是后续恢复原机水印和元数据的来源。"
           }
         }
       }
@@ -948,6 +2448,76 @@
             "state": "translated",
             "value": "On"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启"
+          }
+        }
+      }
+    },
+    "开启后本机会在局域网监听这个端口；离开此页即停止。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When on, this device listens on this port on the local network. Leaving this page stops it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启后本机会在局域网监听这个端口；离开此页即停止。"
+          }
+        }
+      }
+    },
+    "开启接收后，收到的文件会出现在这里。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Files you receive appear here once receiving is on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开启接收后，收到的文件会出现在这里。"
+          }
+        }
+      }
+    },
+    "开始整理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start Organizing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "开始整理"
+          }
+        }
+      }
+    },
+    "待接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Incoming"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待接收"
+          }
         }
       }
     },
@@ -956,7 +2526,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restores the OPPO-compatible structure, metadata and OPPO private tail so the photo behaves like an original in the ColorOS gallery."
+            "value": "Restores the OPPO structure, metadata and private tail so the photo behaves like an original in the ColorOS gallery."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复 OPPO 兼容结构、元数据和 OPPO 私有尾部数据，照片在 ColorOS 图库里像原机照片。"
           }
         }
       }
@@ -966,7 +2542,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore original watermark and generate final output"
+            "value": "Restore the camera watermark and make the final output"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复原机水印并生成最终输出"
           }
         }
       }
@@ -978,6 +2560,12 @@
             "state": "translated",
             "value": "Reset"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认"
+          }
         }
       }
     },
@@ -988,6 +2576,44 @@
             "state": "translated",
             "value": "Restore Defaults"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复默认设置"
+          }
+        }
+      }
+    },
+    "扫描一个文件夹里的 OPPO 原始照片，按拍摄模式复制到分类文件夹；实况照片连同配对视频一起放在“实况照片”下。不做转换，不改动原文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scans a folder of OPPO originals and copies them into one folder per capture mode. Live Photos go under “Live Photos” together with their paired video. Nothing is converted or modified."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描一个文件夹里的 OPPO 原始照片，按拍摄模式复制到分类文件夹；实况照片连同配对视频一起放在“实况照片”下。不做转换，不改动原文件。"
+          }
+        }
+      }
+    },
+    "批量整理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Organize Originals"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "批量整理"
+          }
         }
       }
     },
@@ -996,7 +2622,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Transfer the file from the previous step to an iPhone, adjust it in Apple Photos, export it (keeping HEIC) and select it here. On macOS you can drag it straight from Apple Photos into this window."
+            "value": "Move the file from the previous step to an iPhone, adjust it in Apple Photos, export it as HEIC and pick it here. On a Mac you can drag it straight from Apple Photos into this window."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把上一步的文件传到 iPhone，在 Apple 照片中调整后导出（保留 HEIC）并选回这里。macOS 可直接从 Apple 照片拖到此窗口。"
+          }
+        }
+      }
+    },
+    "把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Writes the current queue as an xdremux_checkpoint.jsonl the Flutter app can read"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl"
           }
         }
       }
@@ -1008,6 +2656,12 @@
             "state": "translated",
             "value": "Captured"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拍摄时间"
+          }
         }
       }
     },
@@ -1017,6 +2671,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Capture mode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拍摄模式"
           }
         }
       }
@@ -1028,6 +2688,28 @@
             "state": "translated",
             "value": "Camera"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拍摄设备"
+          }
+        }
+      }
+    },
+    "拒绝": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decline"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拒绝"
+          }
         }
       }
     },
@@ -1036,7 +2718,61 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore the visible original watermark from the OPPO source"
+            "value": "Restore the visible camera watermark from the OPPO original"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按 OPPO 原始照片恢复可见原机水印"
+          }
+        }
+      }
+    },
+    "按住显示 SDR 效果，松开恢复 HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold to see the SDR version, release to return to HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按住显示 SDR 效果，松开恢复 HDR"
+          }
+        }
+      }
+    },
+    "按住查看没有 HDR 时这张照片的样子": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold to see how this photo looks without HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按住查看没有 HDR 时这张照片的样子"
+          }
+        }
+      }
+    },
+    "按拍摄模式把原始照片复制到分类文件夹，不做转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copies originals into one folder per capture mode without converting them"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按拍摄模式把原始照片复制到分类文件夹，不做转换"
           }
         }
       }
@@ -1046,7 +2782,77 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sort outputs into mode folders"
+            "value": "Sort output into mode folders"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按输出模式分目录"
+          }
+        }
+      }
+    },
+    "接收": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接收"
+          }
+        }
+      }
+    },
+    "提示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notice"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提示"
+          }
+        }
+      }
+    },
+    "摄影风格 2": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 2"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 2"
+          }
+        }
+      }
+    },
+    "摄影风格 3": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 3"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 3"
           }
         }
       }
@@ -1056,7 +2862,45 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Photographic Styles 3 post-process failed: %@"
+            "value": "Photographic Styles 3 post-processing failed: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 3 后处理失败：%@"
+          }
+        }
+      }
+    },
+    "摄影风格 3 已包含摄影风格 2：色调、颜色、强度之外，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 3 includes Styles 2: besides tone, color and intensity, texture (Soft Skin, Glow, Film and more) and grain become adjustable in Apple Photos. Requires iOS 27 or later."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 3 已包含摄影风格 2：色调、颜色、强度之外，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。"
+          }
+        }
+      }
+    },
+    "摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles 3 includes Styles 2. Turn Styles 3 off to change this on its own."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。"
           }
         }
       }
@@ -1068,6 +2912,60 @@
             "state": "translated",
             "value": "Photographic Styles 3 (texture and grain)"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格 3（纹理与颗粒）"
+          }
+        }
+      }
+    },
+    "摄影风格数据让 Apple“照片”能像对 iPhone 照片一样调整色调、颜色和强度。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photographic Styles data lets Apple Photos adjust tone, color and intensity, just like an iPhone photo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "摄影风格数据让 Apple“照片”能像对 iPhone 照片一样调整色调、颜色和强度。"
+          }
+        }
+      }
+    },
+    "收件箱": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inbox"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收件箱"
+          }
+        }
+      }
+    },
+    "收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Received files stay inside the app. Add one to the photos list to convert it; deleting only removes this copy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。"
+          }
         }
       }
     },
@@ -1077,6 +2975,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "File"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件"
           }
         }
       }
@@ -1088,6 +2992,12 @@
             "state": "translated",
             "value": "File name suffix"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文件名后缀"
+          }
         }
       }
     },
@@ -1097,6 +3007,44 @@
           "stringUnit": {
             "state": "translated",
             "value": "Could not save the queue: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存队列状态：%@"
+          }
+        }
+      }
+    },
+    "无法读取 %@，请重新导入": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot read %@. Import it again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取 %@，请重新导入"
+          }
+        }
+      }
+    },
+    "普通拍照": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "普通拍照"
           }
         }
       }
@@ -1108,6 +3056,12 @@
             "state": "translated",
             "value": "Exposure"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "曝光"
+          }
         }
       }
     },
@@ -1116,7 +3070,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Final output generated: %@"
+            "value": "Final output created: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最终输出已生成：%@"
           }
         }
       }
@@ -1128,6 +3088,12 @@
             "state": "translated",
             "value": "with audio"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有声音"
+          }
         }
       }
     },
@@ -1137,6 +3103,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "not restored"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未恢复"
           }
         }
       }
@@ -1148,6 +3120,44 @@
             "state": "translated",
             "value": "unknown reason"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未知原因"
+          }
+        }
+      }
+    },
+    "本机地址": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机地址"
+          }
+        }
+      }
+    },
+    "本机指纹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fingerprint"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本机指纹"
+          }
         }
       }
     },
@@ -1156,7 +3166,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Family"
+            "value": "Device family"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "机型家族"
           }
         }
       }
@@ -1168,6 +3184,12 @@
             "state": "translated",
             "value": "Source"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来源"
+          }
         }
       }
     },
@@ -1178,6 +3200,12 @@
             "state": "translated",
             "value": "Verification"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "校验"
+          }
         }
       }
     },
@@ -1186,7 +3214,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Writing back the returned photo…"
+            "value": "Writing the returned photo back…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在写回回传照片…"
+          }
+        }
+      }
+    },
+    "正在扫描…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scanning…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在扫描…"
           }
         }
       }
@@ -1196,7 +3246,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Generating the Apple Photographic Styles edit copy…"
+            "value": "Making the Apple Photographic Styles edit copy…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在生成 Apple 照片摄影风格编辑副本…"
+          }
+        }
+      }
+    },
+    "正在生成 HDR 预览…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rendering HDR preview…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在生成 HDR 预览…"
           }
         }
       }
@@ -1208,6 +3280,12 @@
             "state": "translated",
             "value": "Reading…"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取…"
+          }
         }
       }
     },
@@ -1216,7 +3294,93 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No permission to add to the photo library; allow it in Settings."
+            "value": "XDRemux is not allowed to add to your photo library. You can allow it in Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有写入照片库的权限，可在“设置”里允许。"
+          }
+        }
+      }
+    },
+    "没有可发送的文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to Send"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可发送的文件"
+          }
+        }
+      }
+    },
+    "没有可发送的文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There is nothing to send."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可发送的文件。"
+          }
+        }
+      }
+    },
+    "没有可用的局域网地址，请先连接 Wi-Fi。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local network address. Connect to Wi-Fi first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的局域网地址，请先连接 Wi-Fi。"
+          }
+        }
+      }
+    },
+    "没有可用的局域网地址，请连接 Wi-Fi 后重试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local network address. Connect to Wi-Fi and try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的局域网地址，请连接 Wi-Fi 后重试。"
+          }
+        }
+      }
+    },
+    "没有待整理的照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing to organize"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有待整理的照片"
           }
         }
       }
@@ -1226,7 +3390,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Photo info"
+            "value": "Photo Info"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片信息"
           }
         }
       }
@@ -1236,7 +3406,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Photo removed"
+            "value": "Photo Removed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片已移出"
           }
         }
       }
@@ -1246,7 +3422,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Generate Apple Photographic Styles edit copy"
+            "value": "Make the Apple Photographic Styles edit copy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成 Apple 照片摄影风格编辑副本"
           }
         }
       }
@@ -1256,7 +3438,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Generate Apple Photos edit copy"
+            "value": "Make Apple Photos Edit Copy"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成 Apple 照片编辑副本"
           }
         }
       }
@@ -1266,7 +3454,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Generating…"
+            "value": "Making…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成中…"
           }
         }
       }
@@ -1276,7 +3470,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Generate final output"
+            "value": "Make Final Output"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成最终输出"
           }
         }
       }
@@ -1288,6 +3488,44 @@
             "state": "translated",
             "value": "Camera tail data"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "相机尾部数据"
+          }
+        }
+      }
+    },
+    "确认并连接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm and Connect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认并连接"
+          }
+        }
+      }
+    },
+    "确认设备指纹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm Device Fingerprint"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "确认设备指纹"
+          }
         }
       }
     },
@@ -1297,6 +3535,60 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remove"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移出"
+          }
+        }
+      }
+    },
+    "端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端口"
+          }
+        }
+      }
+    },
+    "端口已被占用，换一个端口再试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That port is in use. Try another one."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "端口已被占用，换一个端口再试。"
+          }
+        }
+      }
+    },
+    "等待对方确认…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for the other device to accept…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待对方确认…"
           }
         }
       }
@@ -1308,6 +3600,76 @@
             "state": "translated",
             "value": "Compact"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "精简"
+          }
+        }
+      }
+    },
+    "组装输出…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Assembling output…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "组装输出…"
+          }
+        }
+      }
+    },
+    "编码 HEVC %lld%%": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encoding HEVC %lld%%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编码 HEVC %lld%%"
+          }
+        }
+      }
+    },
+    "网络": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络"
+          }
+        }
+      }
+    },
+    "美颜": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beauty"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "美颜"
+          }
         }
       }
     },
@@ -1316,7 +3678,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Auto"
+            "value": "Automatic"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动"
+          }
+        }
+      }
+    },
+    "自动发现不可用，请手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic discovery is unavailable. Enter the other device's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现不可用，请手动输入对方的 IP:端口。"
           }
         }
       }
@@ -1328,6 +3712,12 @@
             "state": "translated",
             "value": "Replace existing output"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "覆盖同名输出"
+          }
         }
       }
     },
@@ -1338,6 +3728,44 @@
             "state": "translated",
             "value": "Videos"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "视频"
+          }
+        }
+      }
+    },
+    "解析元数据…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading metadata…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解析元数据…"
+          }
+        }
+      }
+    },
+    "解码增益图…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decoding gain map…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "解码增益图…"
+          }
         }
       }
     },
@@ -1346,7 +3774,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Make ProXDR HEIC easier to share"
+            "value": "Make ProXDR HEIC Easy to Share"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让 ProXDR HEIC 更容易分享"
           }
         }
       }
@@ -1356,7 +3790,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Incomplete record; convert again"
+            "value": "Record incomplete. Convert again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "记录不完整，请重新转换"
           }
         }
       }
@@ -1368,6 +3808,108 @@
             "state": "translated",
             "value": "Settings"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置"
+          }
+        }
+      }
+    },
+    "证件照": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID photo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "证件照"
+          }
+        }
+      }
+    },
+    "该文件夹下没有找到 HEIC / JPEG 照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No HEIC or JPEG photos in this folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "该文件夹下没有找到 HEIC / JPEG 照片"
+          }
+        }
+      }
+    },
+    "语言": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语言"
+          }
+        }
+      }
+    },
+    "请先连接并确认对方设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to and confirm the other device first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先连接并确认对方设备。"
+          }
+        }
+      }
+    },
+    "请输入对方的 IP:端口，例如 192.168.1.20:53317": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter the other device's IP:port, for example 192.168.1.20:53317"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请输入对方的 IP:端口，例如 192.168.1.20:53317"
+          }
+        }
+      }
+    },
+    "读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads the Flutter app's xdremux_checkpoint.jsonl and continues its queue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转"
+          }
         }
       }
     },
@@ -1376,7 +3918,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Read failed: %@"
+            "value": "Could not read: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取失败：%@"
           }
         }
       }
@@ -1386,7 +3934,77 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Failed to read photo: %@"
+            "value": "Could not read the photo: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取照片失败：%@"
+          }
+        }
+      }
+    },
+    "贴纸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sticker"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "贴纸"
+          }
+        }
+      }
+    },
+    "超清": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ultra HD"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "超清"
+          }
+        }
+      }
+    },
+    "超级文本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enhanced text"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "超级文本"
+          }
+        }
+      }
+    },
+    "跟随系统": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随系统"
           }
         }
       }
@@ -1396,7 +4014,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Skipped a photo that is not HEIC / JPEG."
+            "value": "Skipped a photo that is not HEIC or JPEG."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳过一张不是 HEIC / JPEG 的照片。"
           }
         }
       }
@@ -1408,6 +4032,12 @@
             "state": "translated",
             "value": "Converting %lld%%"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换中 %lld%%"
+          }
         }
       }
     },
@@ -1416,7 +4046,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pairs the converted still with the original video as an Apple Live Photo (import the HEIC and MOV together into Apple Photos)."
+            "value": "Pairs the converted still with the original video as an Apple Live Photo. Import the HEIC and MOV into Apple Photos together."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换后的静帧与原视频配对为 Apple Live Photo（HEIC + MOV 需一起导入 Apple 照片）。"
           }
         }
       }
@@ -1428,6 +4064,12 @@
             "state": "translated",
             "value": "Result"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换结果"
+          }
         }
       }
     },
@@ -1438,6 +4080,12 @@
             "state": "translated",
             "value": "Convert This Photo"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换这张"
+          }
         }
       }
     },
@@ -1446,7 +4094,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Conversion options"
+            "value": "Conversion Options"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换选项"
           }
         }
       }
@@ -1456,7 +4110,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Converts the still and saves the video stream(s) as MP4 next to the output."
+            "value": "Converts the still and saves the video as MP4 next to it."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换静帧，并把视频流另存为 MP4 放在输出旁边。"
           }
         }
       }
@@ -1468,6 +4128,28 @@
             "state": "translated",
             "value": "Output"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出"
+          }
+        }
+      }
+    },
+    "输出到…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output To…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出到…"
+          }
         }
       }
     },
@@ -1476,7 +4158,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Output failed structural verification and was discarded"
+            "value": "The output failed structural verification and was discarded"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出未通过结构校验，已丢弃"
           }
         }
       }
@@ -1488,6 +4176,12 @@
             "state": "translated",
             "value": "Output mode"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出模式"
+          }
         }
       }
     },
@@ -1498,6 +4192,12 @@
             "state": "translated",
             "value": "Output folder"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出目录"
+          }
         }
       }
     },
@@ -1506,7 +4206,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Output path equals the input path"
+            "value": "The output path is the same as the input"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出路径与输入相同"
+          }
+        }
+      }
+    },
+    "还没有收到文件。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No files received yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有收到文件。"
           }
         }
       }
@@ -1516,7 +4238,45 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This photo is not a convertible ProXDR / Ultra HDR file."
+            "value": "This photo is not a ProXDR or Ultra HDR file that XDRemux can convert."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这张照片不是可转换的 ProXDR / Ultra HDR 文件。"
+          }
+        }
+      }
+    },
+    "连不上对方设备，确认两台设备在同一个 Wi-Fi 下，且对方已开启接收。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot reach the other device. Make sure both are on the same Wi-Fi and receiving is on there."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连不上对方设备，确认两台设备在同一个 Wi-Fi 下，且对方已开启接收。"
+          }
+        }
+      }
+    },
+    "连接": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接"
           }
         }
       }
@@ -1526,7 +4286,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select the original OPPO photo"
+            "value": "Choose the OPPO original"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择 OPPO 原始照片"
           }
         }
       }
@@ -1536,7 +4302,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Select iPhone returned photo…"
+            "value": "Choose Returned iPhone Photo…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择 iPhone 回传照片…"
           }
         }
       }
@@ -1548,6 +4320,28 @@
             "state": "translated",
             "value": "Choose…"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择…"
+          }
+        }
+      }
+    },
+    "选择一个包含 HEIC / JPEG 的文件夹。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a folder that contains HEIC or JPEG photos."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择一个包含 HEIC / JPEG 的文件夹。"
+          }
         }
       }
     },
@@ -1556,7 +4350,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose photo…"
+            "value": "Choose Photo…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择照片…"
+          }
+        }
+      }
+    },
+    "选择照片文件夹…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Photo Folder…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择照片文件夹…"
           }
         }
       }
@@ -1568,6 +4384,12 @@
             "state": "translated",
             "value": "Choose output folder"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择输出目录"
+          }
         }
       }
     },
@@ -1578,6 +4400,12 @@
             "state": "translated",
             "value": "Passed"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过"
+          }
         }
       }
     },
@@ -1586,7 +4414,29 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Passed (decodable + structure check)"
+            "value": "Passed (decodes, structure OK)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通过（可解码 + 结构检查）"
+          }
+        }
+      }
+    },
+    "重新转换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert again"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新转换"
           }
         }
       }
@@ -1598,6 +4448,28 @@
             "state": "translated",
             "value": "Retry"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试"
+          }
+        }
+      }
+    },
+    "重试需要先重新连接并确认同一台设备。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To retry, connect to and confirm the same device again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试需要先重新连接并确认同一台设备。"
+          }
         }
       }
     },
@@ -1606,7 +4478,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restoring the original watermark requires keeping the original OPPO photo."
+            "value": "Restoring the camera watermark needs the OPPO original to stay selected."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要恢复原机水印时必须保留 OPPO 原始照片。"
           }
         }
       }
@@ -1616,7 +4494,45 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Still + video"
+            "value": "Still + Video"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "静帧 + 视频"
+          }
+        }
+      }
+    },
+    "静态照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Still Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "静态照片"
+          }
+        }
+      }
+    },
+    "面向 Apple“照片”的兼容文件格式，不写入 OPPO 私有信息，支持继续调节摄影风格。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The format for Apple Photos. Carries no OPPO private data; Photographic Styles stay adjustable."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "面向 Apple“照片”的兼容文件格式，不写入 OPPO 私有信息，支持继续调节摄影风格。"
           }
         }
       }
@@ -1627,6 +4543,492 @@
           "stringUnit": {
             "state": "translated",
             "value": "Advanced"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "高级"
+          }
+        }
+      }
+    },
+    "默认与照片文件夹相同": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Defaults to the photo folder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认与照片文件夹相同"
+          }
+        }
+      }
+    },
+    "（未分类）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uncategorized"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（未分类）"
+          }
+        }
+      }
+    },
+    "设备名": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备名"
+          }
+        }
+      }
+    },
+    "保存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存"
+          }
+        }
+      }
+    },
+    "其他设备看到的名字。留空则使用设备名。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The name other devices see. Leave empty to use the device name."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他设备看到的名字。留空则使用设备名。"
+          }
+        }
+      }
+    },
+    "清空收件箱？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear the inbox?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空收件箱？"
+          }
+        }
+      }
+    },
+    "清空": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空"
+          }
+        }
+      }
+    },
+    "删除收件箱里的 %lld 个文件。已存入照片或加入列表的副本不受影响。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deletes %lld inbox files. Copies already saved to Photos or added to the list stay."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除收件箱里的 %lld 个文件。已存入照片或加入列表的副本不受影响。"
+          }
+        }
+      }
+    },
+    "接收全部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept all"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接收全部"
+          }
+        }
+      }
+    },
+    "扫描网段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan subnet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描网段"
+          }
+        }
+      }
+    },
+    "正在逐个尝试本网段的地址，大约需要十几秒…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trying every address on this subnet, about ten seconds…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在逐个尝试本网段的地址，大约需要十几秒…"
+          }
+        }
+      }
+    },
+    "自动发现在这台设备上不可用（需要 Apple 的多播授权）。可以扫描网段，或手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery is unavailable on this device (it needs Apple's multicast entitlement). Scan the subnet, or enter the peer's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现在这台设备上不可用（需要 Apple 的多播授权）。可以扫描网段，或手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "自动发现失败：%@。可以扫描网段，或手动输入对方的 IP:端口。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discovery failed: %@. Scan the subnet, or enter the peer's IP:port."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动发现失败：%@。可以扫描网段，或手动输入对方的 IP:端口。"
+          }
+        }
+      }
+    },
+    "正在查找同一局域网内开启了接收的设备；几秒后没找到会自动扫描网段。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Looking for devices on this network that are receiving; after a few seconds the subnet is scanned."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在查找同一局域网内开启了接收的设备；几秒后没找到会自动扫描网段。"
+          }
+        }
+      }
+    },
+    "全部存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save all to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部存入照片"
+          }
+        }
+      }
+    },
+    "全部加入列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add all to list"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部加入列表"
+          }
+        }
+      }
+    },
+    "Live Photo · ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo · "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo · "
+          }
+        }
+      }
+    },
+    "Live Photo 视频，随同名照片一起处理 · ": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo video, handled with the photo of the same name · "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Photo 视频，随同名照片一起处理 · "
+          }
+        }
+      }
+    },
+    "· 已存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· Saved to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· 已存入照片"
+          }
+        }
+      }
+    },
+    "存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存入照片"
+          }
+        }
+      }
+    },
+    "加入列表": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to list"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加入列表"
+          }
+        }
+      }
+    },
+    "已加入 %lld 张照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Added %lld photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加入 %lld 张照片"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 项，%lld 项失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %lld to Photos, %lld failed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 项，%lld 项失败"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %lld to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 项"
+          }
+        }
+      }
+    },
+    "这个 .pvt.zip 不是有效的 Live Photo 包。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This .pvt.zip is not a valid Live Photo bundle."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这个 .pvt.zip 不是有效的 Live Photo 包。"
+          }
+        }
+      }
+    },
+    "同名的 Live Photo 包已存在。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A Live Photo bundle with this name already exists."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同名的 Live Photo 包已存在。"
+          }
+        }
+      }
+    },
+    "硬件编码（VideoToolbox）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hardware encoding (VideoToolbox)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "硬件编码（VideoToolbox）"
+          }
+        }
+      }
+    },
+    "编码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encoding"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "编码"
+          }
+        }
+      }
+    },
+    "这台设备没有可用的硬件 HEVC 编码器。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device has no hardware HEVC encoder."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这台设备没有可用的硬件 HEVC 编码器。"
+          }
+        }
+      }
+    },
+    "用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encodes the gain map with the system's hardware encoder, much faster than the built-in x265; Photographic Styles and Portrait still use the built-in encoder. Photos that cannot be tiled fall back automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。"
           }
         }
       }

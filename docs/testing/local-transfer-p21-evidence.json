@@ -1,0 +1,103 @@
+{
+  "date": "2026-10-19",
+  "phase": "P2.1",
+  "branch": "codex/local-transfer",
+  "abiVersion": 65537,
+  "rust": "1.97.1",
+  "dart": "3.12.2",
+  "flutterAnalyze": "passed",
+  "flutterTests": {
+    "passed": 30,
+    "newCopyTests": 6,
+    "newHomeQueueTest": 1,
+    "fixtureProvided": true,
+    "fixtureBytes": 1800239,
+    "fixtureSha256": "eb30a29b36ee11df8beaaadec1a451e3845766756c2d9c755da7b838d4dba46f"
+  },
+  "rustCoreTests": 17,
+  "rustAdapterTests": 2,
+  "worker": {
+    "passed": true,
+    "date": "2026-10-19",
+    "abi": 65537,
+    "checks": [
+      "missing_library_degrades",
+      "old_abi_degrades",
+      "no_space_propagates",
+      "worker_https_transfer",
+      "unicode_private_copy_hash",
+      "same_name_isolated",
+      "ack_loss_retry",
+      "concurrent_click_coalescing",
+      "opaque_mov_not_queued",
+      "inbox_delete_keeps_checkpoint",
+      "stop_waits_for_active_copy",
+      "restart_root_port_and_receipts"
+    ],
+    "transferredFiles": 4,
+    "bytes": 71303181,
+    "originalAndCopiesHashMatch": true,
+    "librarySha256": "ab153937bae42c22611fa6dc5f83c7efc3e39682e687d711fba37f52ecce24ec"
+  },
+  "ctypes": {
+    "passed": true,
+    "abi": 65537,
+    "files": 3,
+    "bytes": 2097178,
+    "independentHashes": true,
+    "checks": [
+      "unicode_and_empty",
+      "prepared_progress_terminal_ids",
+      "snapshot_paging",
+      "operation_recovery",
+      "lease_delete_busy",
+      "managed_delete",
+      "buffer_cap_and_free",
+      "invalid_input_handle",
+      "pending_send_stop",
+      "idempotent_stop",
+      "stale_handle",
+      "port_and_root_reopen"
+    ],
+    "maxCallMilliseconds": {
+      "create": 0.142,
+      "free_string": 0.004,
+      "poll": 0.043,
+      "release": 0.031,
+      "stop": 0.006,
+      "submit": 0.04
+    },
+    "librarySha256": "ab153937bae42c22611fa6dc5f83c7efc3e39682e687d711fba37f52ecce24ec",
+    "libraryBytes": 6833664
+  },
+  "android": {
+    "target": "aarch64-linux-android",
+    "context": "ADB shell / C dlopen, not Flutter APK",
+    "ndk": "28.2.13676358",
+    "api": 24,
+    "device": "PKJ110",
+    "android": 17,
+    "deviceApi": 37,
+    "result": {
+      "passed": true,
+      "abi": 65537,
+      "rounds": 3,
+      "samePortAndRootReopened": true,
+      "stableCertificate": true,
+      "newInstances": true,
+      "snapshot": true,
+      "invalidHandlesAndInputs": true,
+      "pairedBufferFree": true
+    },
+    "libraryBytes": 6646272,
+    "librarySha256": "5fe941c835dd8eebefb581a39adde460f0dd9e5ca45ee7bd77dc43b37c78b94e",
+    "deployedHashMatches": true
+  },
+  "limits": [
+    "Application permission/foreground/background behavior pending",
+    "Android Dart isolate .so loading inside APK pending",
+    "Generic export/SAF and output disk budget pending",
+    "Transfer UI and release packaging pending",
+    "Discovery, Apple and HarmonyOS pending"
+  ]
+}

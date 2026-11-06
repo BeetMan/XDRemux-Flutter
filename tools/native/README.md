@@ -122,7 +122,7 @@ Windows x64 tests verified these inputs and an EXIF-only rotated small-image
 Styles conversion. Real-device screenshots, alpha, HDR color and grid corpus
 coverage remain separate gates.
 
-libheif and libde265 have their own licenses (not the core's MIT license). Keep the
+libheif and libde265 have their own licenses (separate from the core's GPL-3.0-only license). Keep the
 upstream license notices and source provenance, review LGPL distribution/relinking
 requirements for each target, and ship the required notices/source material before
 including the libraries in a release. The script copies available COPYING files
