@@ -8953,7 +8953,7 @@ struct Index {
       this.onMainTabChange(index);
     })
     .barFloatingStyle(this.mainTabIndex >= TRANSFER_TAB_INDEX ? {
-      barWidth: { smallWidth: 340, mediumWidth: 340, largeWidth: 340 },
+      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
       systemMaterialEffect: {
@@ -8961,7 +8961,7 @@ struct Index {
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       }
     } : {
-      barWidth: { smallWidth: 340, mediumWidth: 340, largeWidth: 340 },
+      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
       barBottomMargin: 28,
       adaptToHandedness: true,
       systemMaterialEffect: {
