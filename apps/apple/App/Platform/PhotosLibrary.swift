@@ -1,6 +1,7 @@
 #if os(iOS)
 import Foundation
 import Photos
+import XDRemuxModel
 
 /// Add-only writes to the Photos library, shared by the export buttons and
 /// the transfer inbox.
@@ -36,6 +37,13 @@ enum PhotosLibrary {
             }
         }
         return still != nil && pairedVideo != nil
+    }
+
+    /// A finished conversion: the still with its paired video as one Live
+    /// Photo, every extra clip as its own video.
+    @discardableResult
+    static func save(_ product: ConversionProduct) async throws -> Bool {
+        try await save(still: product.outputURL, pairedVideo: product.pairedVideoURL, clips: product.extraVideoURLs)
     }
 
     static func describe(_ error: Error) -> String {
