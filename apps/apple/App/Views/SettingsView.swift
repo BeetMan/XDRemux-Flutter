@@ -8,6 +8,11 @@ struct SettingsView: View {
     private let hardwareEncodeAvailable = VideoToolboxTileEncoder.isAvailable
     @Bindable var model: LibraryModel
     @Environment(\.dismiss) private var dismiss
+    #if os(macOS)
+    @State private var importingCheckpoint = false
+    @State private var exportingCheckpoint = false
+    @State private var checkpointDocument = TextFileDocument(text: "")
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -107,6 +112,25 @@ struct SettingsView: View {
                     }
                 }
 
+                // Checkpoint interop only makes sense where both apps see the
+                // same paths; on iOS the two sandboxes cannot, so the entries
+                // would import as unreadable.
+                #if os(macOS)
+                Section {
+                    Button("导入 Flutter 检查点…") { importingCheckpoint = true }
+                        .help("读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转")
+                    Button("导出 Flutter 检查点…") {
+                        checkpointDocument = TextFileDocument(text: model.exportCheckpointJSONL())
+                        exportingCheckpoint = true
+                    }
+                    .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
+                } header: {
+                    Text("Flutter 版")
+                } footer: {
+                    Text("与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。")
+                }
+                #endif
+
                 Section("关于") {
                     LabeledContent("Rust 内核", value: model.coreVersion)
                     LabeledContent("输出目录", value: model.outputRoot.path)
@@ -118,6 +142,15 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
+            #if os(macOS)
+            .fileImporter(isPresented: $importingCheckpoint, allowedContentTypes: [.json, .plainText, .data]) { result in
+                if case .success(let url) = result { Task { await model.importCheckpoint(url) } }
+            }
+            .fileExporter(isPresented: $exportingCheckpoint, document: checkpointDocument, contentType: .plainText,
+                          defaultFilename: FlutterCheckpoint.fileName) { result in
+                if case .failure(let error) = result { model.lastError = error.localizedDescription }
+            }
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
