@@ -205,6 +205,9 @@ class OriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
   assetCompatibleCapability: QueueHeicCompatibleCapability = new QueueHeicCompatibleCapability();
 }
 
+const TRANSFER_TAB_INDEX: number = 2;
+const SETTINGS_TAB_INDEX: number = 3;
+
 @Entry
 @Component
 struct Index {
@@ -258,11 +261,15 @@ struct Index {
   @State private livePhotoPairExportEntries: Array<LivePhotoExportEntry> = [];
   @State private livePhotoBundleBusy: boolean = false;
   @State private livePhotoBundleStatus: string = '';
-  // LocalSend device transfer sheet (TransferPanel owns the runtime).
-  @State private transferVisible: boolean = false;
+  // LocalSend device transfer tab (TransferPanel owns the runtime).
   @State private licensesVisible: boolean = false;
+  @State private transferSendRequestId: number = 0;
   @State private transferSendSources: Array<TransferSendSource> = [];
   @State private transferSendLabel: string = '';
+  @State private transferPendingOffers: number = 0;
+  @State private transferTab: number = 1;
+  @State private transferAppVisible: boolean = true;
+  private readonly transferScrollController: Scroller = new Scroller();
   @State private mainTabIndex: number = 1;
   @State private galleryDetailVisible: boolean = false;
   @State private galleryDetailMounted: boolean = false;
@@ -440,6 +447,7 @@ struct Index {
     // requires an explicit Start/Resume click so no later native work starts
     // silently after a foreground transition.
     this.pageVisible = true;
+    this.transferAppVisible = true;
     this.ensureGalleryStatusBarVisible();
     this.attachShareInbox();
     this.attachQueueSession();
@@ -449,6 +457,7 @@ struct Index {
 
   onPageHide(): void {
     this.pageVisible = false;
+    this.transferAppVisible = false;
     // A system picker temporarily hides the page. Its onPageHide callback is
     // not a user stop. Once the picker has returned, leaving the page stops
     // only later batch exports; the current FD copy is allowed to settle.
@@ -589,7 +598,7 @@ struct Index {
       this.setImportMiniBarExpanded(false);
     }
     this.mainTabIndex = index;
-    if (index === 2 && this.settingsLoaded && !this.settingsSaving) {
+    if (index === SETTINGS_TAB_INDEX && this.settingsLoaded && !this.settingsSaving) {
       this.settingsError = '';
     }
   }
@@ -2521,7 +2530,8 @@ struct Index {
   private openTransfer(sources: Array<TransferSendSource>, label: string): void {
     this.transferSendSources = sources;
     this.transferSendLabel = label;
-    this.transferVisible = true;
+    this.transferSendRequestId += 1;
+    this.onMainTabChange(TRANSFER_TAB_INDEX);
   }
 
   private openTransferForSelected(): void {
@@ -2595,10 +2605,21 @@ struct Index {
   }
 
   @Builder
-  private transferSheet() {
+  private transferPage() {
     TransferPanel({
+      tab: $transferTab,
+      chipsInTitleBar: this.shouldUseImmersiveMainChrome(),
+      sendRequestId: this.transferSendRequestId,
       initialSources: this.transferSendSources,
       initialLabel: this.transferSendLabel,
+      appVisible: this.transferAppVisible,
+      // Same offsets as the queue page with its filter chips in the title bar.
+      topInset: this.shouldUseImmersiveMainChrome() ? 136 : 28,
+      bottomInset: 108,
+      scroller: this.transferScrollController,
+      onPendingOffers: (count: number): void => {
+        this.transferPendingOffers = count;
+      },
       importToGallery: async (path: string, name: string): Promise<void> => {
         await this.importTransferPhoto(path, name);
       },
@@ -2606,6 +2627,10 @@ struct Index {
         await this.addTransferPhotoToQueue(path, name);
       }
     });
+  }
+
+  private transferTabLabel(): string {
+    return this.transferPendingOffers > 0 ? '互传 ' + String(this.transferPendingOffers) : '互传';
   }
 
   private async startBatchExport(): Promise<void> {
@@ -6628,8 +6653,52 @@ struct Index {
     return this.queueItems;
   }
 
+  /** Send / Receive chips in the title bar, styled exactly like the queue filter. */
+  @Builder
+  private transferTitleBarChips(): void {
+    Row() {
+      ChipGroup({
+          items: [
+            { label: { text: '发送' } },
+            { label: { text: this.transferPendingOffers > 0 ? '接收 ' + String(this.transferPendingOffers) : '接收' } }
+          ],
+          itemStyle: {
+            size: ChipSize.SMALL,
+            backgroundColor: Color.Transparent,
+            selectedBackgroundColor: Color.Transparent,
+            fontColor: $r('sys.color.font_secondary'),
+            selectedFontColor: $r('sys.color.font_primary')
+          },
+          selectedIndexes: [this.transferTab],
+          multiple: false,
+          chipGroupSpace: { itemSpace: 4, startSpace: 0, endSpace: 0 },
+          chipGroupPadding: { top: 0, bottom: 0 },
+          backgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+            colorInvert: true,
+            interactive: true
+          }),
+          selectedBackgroundSystemMaterial: new uiMaterial.ImmersiveMaterial({
+            style: uiMaterial.ImmersiveStyle.ULTRA_THIN,
+            materialColor: this.queueFilterMaterialColor(),
+            colorInvert: true,
+            interactive: true
+          }),
+          onChange: (activeIndexes: Array<number>): void => {
+            if (activeIndexes.length > 0) this.transferTab = activeIndexes[0];
+          }
+      })
+      .margin({ top: -14 });
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 20, right: 20 })
+    .alignItems(VerticalAlign.Top);
+  }
+
   private queueFilterTitleBarEnabled(): boolean {
-    return this.shouldUseImmersiveMainChrome() && this.mainTabIndex === 1 && this.queueItems.length > 0;
+    return this.shouldUseImmersiveMainChrome() && ((this.mainTabIndex === 1 && this.queueItems.length > 0) ||
+      this.mainTabIndex === TRANSFER_TAB_INDEX);
   }
 
   private queueFilterIndex(): number {
@@ -7854,33 +7923,6 @@ struct Index {
 
           Row() {
             Column() {
-              Text('设备互传（LocalSend）')
-                .fontSize(15)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('sys.color.font_primary'))
-                .width('100%');
-              Text('与局域网内的 LocalSend 设备收发照片（实验）')
-                .fontSize(12)
-                .fontColor($r('sys.color.font_secondary'))
-                .width('100%')
-                .margin({ top: 2 });
-            }
-            .layoutWeight(1);
-            SymbolGlyph($r('sys.symbol.chevron_right'))
-              .fontSize(18)
-              .fontColor([$r('sys.color.font_secondary')]);
-          }
-          .width('100%')
-          .padding(14)
-          .backgroundColor($r('sys.color.background_secondary'))
-          .borderRadius(14)
-          .margin({ bottom: 10 })
-          .onClick((): void => {
-            this.openTransfer([], '');
-          });
-
-          Row() {
-            Column() {
               Text('开源许可')
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
@@ -8584,6 +8626,9 @@ struct Index {
     if (this.mainTabIndex === 1) {
       return '转换队列';
     }
+    if (this.mainTabIndex === TRANSFER_TAB_INDEX) {
+      return '互传';
+    }
     return '设置';
   }
 
@@ -8597,6 +8642,9 @@ struct Index {
     }
     if (this.mainTabIndex === 1) {
       return this.queueScrollController;
+    }
+    if (this.mainTabIndex === TRANSFER_TAB_INDEX) {
+      return this.transferScrollController;
     }
     return this.settingsScrollController;
   }
@@ -8860,6 +8908,24 @@ struct Index {
         }))
 
       TabContent() {
+        this.transferPage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.arrow_left_arrow_right'))
+          .fontColor([$r('sys.color.font_primary')]),
+        selected: new SymbolGlyphModifier($r('sys.symbol.arrow_left_arrow_right'))
+          .fontColor([$r('sys.color.ohos_id_color_activated')])
+      }, this.transferTabLabel())
+        .labelStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        })
+        .iconStyle({
+          selectedColor: $r('sys.color.ohos_id_color_activated'),
+          unselectedColor: $r('sys.color.font_primary')
+        }))
+
+      TabContent() {
         this.settingsPage();
       }
       .tabBar(new BottomTabBarStyle({
@@ -8886,8 +8952,8 @@ struct Index {
     .onChange((index: number) => {
       this.onMainTabChange(index);
     })
-    .barFloatingStyle(this.mainTabIndex === 2 ? {
-      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
+    .barFloatingStyle(this.mainTabIndex >= TRANSFER_TAB_INDEX ? {
+      barWidth: { smallWidth: 340, mediumWidth: 340, largeWidth: 340 },
       barBottomMargin: 28,
       adaptToHandedness: true,
       systemMaterialEffect: {
@@ -8895,7 +8961,7 @@ struct Index {
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       }
     } : {
-      barWidth: { smallWidth: 280, mediumWidth: 280, largeWidth: 280 },
+      barWidth: { smallWidth: 340, mediumWidth: 340, largeWidth: 340 },
       barBottomMargin: 28,
       adaptToHandedness: true,
       systemMaterialEffect: {
@@ -8936,7 +9002,8 @@ struct Index {
           mainTitle: this.mainTabTitle()
         },
         bottomBuilder: {
-          builder: (): void => this.queueFilterTitleBarChips(),
+          builder: (): void => this.mainTabIndex === TRANSFER_TAB_INDEX
+            ? this.transferTitleBarChips() : this.queueFilterTitleBarChips(),
           height: 56
         }
       } : {
@@ -9007,6 +9074,14 @@ struct Index {
       }, '队列'))
 
       TabContent() {
+        this.transferPage();
+      }
+      .tabBar(new BottomTabBarStyle({
+        normal: new SymbolGlyphModifier($r('sys.symbol.arrow_left_arrow_right')),
+        selected: new SymbolGlyphModifier($r('sys.symbol.arrow_left_arrow_right'))
+      }, this.transferTabLabel()))
+
+      TabContent() {
         this.settingsPage();
       }
       .tabBar(new BottomTabBarStyle({
@@ -9041,16 +9116,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_primary'))
-    .bindSheet(this.transferVisible, this.transferSheet(), {
-      height: SheetSize.LARGE,
-      title: { title: '设备互传' },
-      onDisappear: (): void => {
-        this.transferVisible = false;
-        this.transferSendSources = [];
-        this.transferSendLabel = '';
-      }
-    });
+    .backgroundColor($r('sys.color.background_primary'));
   }
 
 }

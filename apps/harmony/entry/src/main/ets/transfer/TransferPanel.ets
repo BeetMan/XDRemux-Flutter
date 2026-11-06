@@ -43,6 +43,32 @@ interface TransferView {
   inbox: Array<TransferInboxEntry>;
 }
 
+/** @Builder parameters go by reference only as one object literal, so they re-render. */
+interface SummaryCardParams {
+  title: string;
+  note: string;
+  action: string;
+}
+
+interface CardTextParams {
+  title: string;
+  accent: string;
+  note: string;
+  error: boolean;
+}
+
+interface TileParams {
+  symbol: Resource;
+  preview: string;
+}
+
+interface RoundActionParams {
+  symbol: Resource;
+  label: string;
+  enabled: boolean;
+  action: () => void;
+}
+
 interface NamedFile {
   path: string;
   name: string;
@@ -58,9 +84,21 @@ const SCAN_BATCH: number = 64;
 
 @Component
 export struct TransferPanel {
-  /** Files handed in by the opener (a converted queue item); may be empty. */
+  /**
+   * A send request from elsewhere (a converted queue item): bumping the id
+   * replaces the files to send, switches to the Send tab and starts the service.
+   */
+  @Prop @Watch('onSendRequest') sendRequestId: number = 0;
   @Prop initialSources: Array<TransferSendSource> = [];
   @Prop initialLabel: string = '';
+  /** Page visibility from the host; going to the background stops the service. */
+  @Prop @Watch('onVisibilityChange') appVisible: boolean = true;
+  /** Space above and below the content for the host's title bar and tab bar. */
+  @Prop topInset: number = 0;
+  @Prop bottomInset: number = 0;
+  scroller: Scroller = new Scroller();
+  /** Reports offers waiting for a decision, for the tab label. */
+  onPendingOffers: (count: number) => void = (count: number): void => {};
   /** Copies a received photo into the app's local gallery. */
   importToGallery: (path: string, name: string) => Promise<void> =
     async (path: string, name: string): Promise<void> => {};
@@ -68,7 +106,10 @@ export struct TransferPanel {
   addToQueue: (path: string, name: string) => Promise<void> =
     async (path: string, name: string): Promise<void> => {};
 
-  @State private tab: number = 1;
+  /** 0 = Send, 1 = Receive; owned by the host so its title-bar chips can switch it. */
+  @Link tab: number;
+  /** The host draws the Send/Receive chips in its title bar (immersive chrome). */
+  @Prop chipsInTitleBar: boolean = false;
   @State private view: TransferView = EMPTY_VIEW;
   @State private busy: boolean = false;
   @State private status: string = '';
@@ -90,18 +131,41 @@ export struct TransferPanel {
   private keepingAwake: boolean = false;
   private previewing: Set<string> = new Set<string>();
   private alive: boolean = true;
+  /** System UI this panel opened (picker, share, save dialog) hides the page too. */
+  private systemUiOpen: number = 0;
+  private lastOfferCount: number = 0;
 
   aboutToAppear(): void {
-    this.sendFiles = this.initialSources.slice();
-    this.sendLabel = this.initialLabel;
-    this.tab = this.sendFiles.length > 0 ? 0 : 1;
     this.controller = new TransferController(this.bridge(), (): void => {
       this.publish();
     });
     void this.loadDeviceName().then((): void => {
-      // Choosing files to send is the explicit action; the Receive tab waits for the toggle.
-      if (this.sendFiles.length > 0) void this.start();
+      this.onSendRequest();
     });
+  }
+
+  /** Choosing files to send is the explicit action; the Receive toggle waits for the user. */
+  onSendRequest(): void {
+    if (this.initialSources.length === 0) return;
+    this.sendFiles = this.initialSources.slice();
+    this.sendLabel = this.initialLabel;
+    this.tab = 0;
+    this.status = '';
+    if (!this.view.running) void this.start();
+  }
+
+  onVisibilityChange(): void {
+    // Leaving the app stops listening; returning never re-enables it silently.
+    if (!this.appVisible && this.systemUiOpen === 0 && this.view.running) void this.stop();
+  }
+
+  private async withSystemUi<T>(action: () => Promise<T>): Promise<T> {
+    this.systemUiOpen += 1;
+    try {
+      return await action();
+    } finally {
+      this.systemUiOpen -= 1;
+    }
   }
 
   aboutToDisappear(): void {
@@ -156,6 +220,10 @@ export struct TransferPanel {
     };
     this.setKeepAwake(this.view.activities.some((activity: TransferActivity): boolean =>
       activity.status === 'active' || activity.status === 'pending'));
+    if (this.view.offers.length !== this.lastOfferCount) {
+      this.lastOfferCount = this.view.offers.length;
+      this.onPendingOffers(this.lastOfferCount);
+    }
     void this.loadPreviews();
   }
 
@@ -356,10 +424,12 @@ export struct TransferPanel {
       const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
       options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE;
       options.maxSelectNumber = 50;
-      const result: photoAccessHelper.PhotoSelectResult = await new photoAccessHelper.PhotoViewPicker().select(options);
+      const result: photoAccessHelper.PhotoSelectResult = await this.withSystemUi(
+        async (): Promise<photoAccessHelper.PhotoSelectResult> =>
+          await new photoAccessHelper.PhotoViewPicker().select(options));
       if (result.photoUris.length === 0) return;
       const directory: string = this.context().cacheDir + '/transfer-picked/' + String(Date.now());
-      await fileIo.mkdir(directory, true);
+      await this.ensureDirectory(directory);
       const added: Array<TransferSendSource> = [];
       for (const uri of result.photoUris) {
         const leaf: string = decodeURIComponent(uri.substring(uri.lastIndexOf('/') + 1));
@@ -398,7 +468,7 @@ export struct TransferPanel {
   /** Copy sources whose basename differs from the name the peer should see. */
   private async stageSendFiles(): Promise<Array<string>> {
     const directory: string = this.context().cacheDir + '/transfer-send/' + String(Date.now());
-    await fileIo.mkdir(directory, true);
+    await this.ensureDirectory(directory);
     const paths: Array<string> = [];
     for (const file of this.sendFiles) {
       const stat: fileIo.Stat = await fileIo.lstat(file.source);
@@ -444,7 +514,7 @@ export struct TransferPanel {
   private async copyReceipt(receipt: TransferReceipt, directory: string): Promise<string> {
     const controller: TransferController | undefined = this.controller;
     if (controller === undefined) throw new Error('传输服务未运行');
-    await fileIo.mkdir(directory, true);
+    await this.ensureDirectory(directory);
     const target: string = directory + '/' + receipt.name;
     const lease: TransferLease = await controller.acquireReceipt(receipt.id);
     try {
@@ -456,6 +526,11 @@ export struct TransferPanel {
     return target;
   }
 
+  private async ensureDirectory(directory: string): Promise<void> {
+    // mkdir fails on an existing directory, e.g. a preview folder from an earlier run.
+    if (!await fileIo.access(directory)) await fileIo.mkdir(directory, true);
+  }
+
   private workDirectory(kind: string): string {
     return this.context().cacheDir + '/transfer-' + kind + '/' + String(Date.now()) + '-' +
       String(Math.floor(Math.random() * 100000));
@@ -465,7 +540,7 @@ export struct TransferPanel {
     const directory: string = this.workDirectory('unpack');
     const zipPath: string = await this.copyReceipt(receipt, directory);
     const out: string = directory + '/out';
-    await fileIo.mkdir(out, true);
+    await this.ensureDirectory(out);
     await zlib.decompressFile(zipPath, out, {});
     const entries: Array<string> = fileIo.listFileSync(out, { recursion: true })
       .map((entry: string): string => entry.replace(/^\/+/, ''));
@@ -534,8 +609,9 @@ export struct TransferPanel {
           ? photoAccessHelper.PhotoType.VIDEO : photoAccessHelper.PhotoType.IMAGE
       };
     });
-    const targets: Array<string> = await helper.showAssetsCreationDialog(
-      files.map((file: NamedFile): string => fileUri.getUriFromPath(file.path)), configs);
+    const targets: Array<string> = await this.withSystemUi(async (): Promise<Array<string>> =>
+      await helper.showAssetsCreationDialog(
+        files.map((file: NamedFile): string => fileUri.getUriFromPath(file.path)), configs));
     if (targets.length !== files.length) throw new Error('已取消保存');
     for (let i = 0; i < files.length; i += 1) {
       const target: fileIo.File = await fileIo.open(targets[i], fileIo.OpenMode.WRITE_ONLY);
@@ -560,9 +636,11 @@ export struct TransferPanel {
     for (const file of files.slice(1)) {
       data.addRecord({ utd: utd.UniformDataType.FILE_URI, uri: fileUri.getUriFromPath(file.path), title: file.name });
     }
-    await new systemShare.ShareController(data).show(this.context(), {
-      selectionMode: systemShare.SelectionMode.BATCH,
-      previewMode: systemShare.SharePreviewMode.DEFAULT
+    await this.withSystemUi(async (): Promise<void> => {
+      await new systemShare.ShareController(data).show(this.context(), {
+        selectionMode: systemShare.SelectionMode.BATCH,
+        previewMode: systemShare.SharePreviewMode.DEFAULT
+      });
     });
   }
 
@@ -614,9 +692,12 @@ export struct TransferPanel {
       if (entry.kind === 'file' || this.previews[id] !== undefined || this.previewing.has(id)) continue;
       this.previewing.add(id);
       try {
+        const cached: string = this.context().cacheDir + '/transfer-preview/' + id + '/' + entry.receipt.name;
+        // Receipts are immutable, so a preview copied in an earlier run is still valid.
         const path: string = entry.kind === 'live-zip'
           ? (await this.unpackLiveZip(entry.receipt))[0].path
-          : await this.copyReceipt(entry.receipt, this.context().cacheDir + '/transfer-preview/' + id);
+          : (await fileIo.access(cached) ? cached
+            : await this.copyReceipt(entry.receipt, this.context().cacheDir + '/transfer-preview/' + id));
         if (!this.alive) return;
         const next: Record<string, string> = {};
         Object.keys(this.previews).forEach((key: string): void => {
@@ -630,183 +711,269 @@ export struct TransferPanel {
     }
   }
 
-  // ---------- UI ----------
+  // ---------- UI (styled after the queue page) ----------
 
   private activityText(activity: TransferActivity): string {
-    const direction: string = activity.direction === 'send' ? '发送' : '接收';
-    const state: string = activity.status === 'pending' ? '等待对方确认'
+    const state: string = activity.status === 'pending'
+      ? (activity.direction === 'send' ? '等待对方确认' : '等待你确认')
       : activity.status === 'active' ? '传输中'
       : activity.status === 'done' ? '已完成' : '失败';
     const size: string = activity.total > 0
       ? formatTransferBytes(activity.bytes) + ' / ' + formatTransferBytes(activity.total) : '';
-    return direction + ' · ' + (activity.label.length > 0 ? activity.label : String(activity.fileCount) + ' 个文件') +
-      ' · ' + state + (size.length > 0 ? ' · ' + size : '') + (activity.error.length > 0 ? ' · ' + activity.error : '');
+    return state + (size.length > 0 ? ' · ' + size : '') + (activity.error.length > 0 ? ' · ' + activity.error : '');
+  }
+
+  /** The queue's summary card: title + note on the left, one action on the right. */
+  @Builder
+  summaryCard(params: SummaryCardParams) {
+    Row() {
+      Column() {
+        Text(params.title)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'));
+        if (params.note.length > 0) {
+          Text(params.note)
+            .fontSize(11)
+            .fontColor($r('sys.color.font_secondary'))
+            .margin({ top: 3 });
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1);
+      if (params.action === 'pick') {
+        this.pickPhotosButton();
+      } else if (params.action === 'search') {
+        this.searchButton();
+      } else if (params.action === 'toggle') {
+        this.receiveToggle();
+      } else if (params.action === 'queue-all') {
+        this.queueAllButton();
+      }
+    }
+    .width('100%')
+    .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+    .backgroundColor($r('sys.color.background_secondary'))
+    .borderRadius(14)
+    .margin({ bottom: 12 });
+  }
+
+  /** The queue item's 64 px rounded tile. */
+  @Builder
+  tile(params: TileParams) {
+    if (params.preview.length > 0) {
+      Image('file://' + params.preview)
+        .width(64)
+        .height(64)
+        .objectFit(ImageFit.Cover)
+        .borderRadius(11);
+    } else {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph(params.symbol)
+          .fontSize(22)
+          .fontColor([$r('sys.color.font_secondary')]);
+      }
+      .width(64)
+      .height(64)
+      .borderRadius(11)
+      .backgroundColor($r('sys.color.background_tertiary'));
+    }
+  }
+
+  /** The queue item's circular accent action. */
+  @Builder
+  roundAction(params: RoundActionParams) {
+    Button({ type: ButtonType.Circle }) {
+      SymbolGlyph(params.symbol)
+        .fontSize(19)
+        .fontColor([$r('sys.color.ohos_id_color_primary_contrary')]);
+    }
+    .width(44)
+    .height(44)
+    .backgroundColor($r('sys.color.ohos_id_color_activated'))
+    .enabled(params.enabled)
+    .accessibilityText(params.label)
+    .onClick((): void => {
+      params.action();
+    });
   }
 
   @Builder
-  sectionTitle(title: string) {
+  cardText(params: CardTextParams) {
+    Column() {
+      Text(params.title)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.font_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%');
+      if (params.accent.length > 0) {
+        Text(params.accent)
+          .fontSize(11)
+          .fontColor($r('sys.color.ohos_id_color_activated'))
+          .margin({ top: 4 });
+      }
+      if (params.note.length > 0) {
+        Text(params.note)
+          .fontSize(12)
+          .fontColor(params.error ? $r('sys.color.ohos_id_color_alert') : $r('sys.color.font_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .margin({ top: 4 });
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .layoutWeight(1)
+    .margin({ left: 12, right: 8 });
+  }
+
+  @Builder
+  sectionLabel(title: string) {
     Text(title)
-      .fontSize(15)
-      .fontWeight(FontWeight.Medium)
-      .fontColor($r('sys.color.font_primary'))
+      .fontSize(13)
+      .fontColor($r('sys.color.font_secondary'))
       .width('100%')
-      .margin({ top: 18, bottom: 6 });
+      .margin({ top: 6, bottom: 8 });
   }
 
   @Builder
-  activitySection() {
+  activityCards() {
     if (this.view.activities.length > 0) {
-      this.sectionTitle('传输记录');
-      ForEach(this.view.activities, (activity: TransferActivity) => {
+      this.sectionLabel('传输记录');
+      ForEach(this.view.activities.slice(0, 6), (activity: TransferActivity) => {
         Column() {
-          Text(this.activityText(activity))
-            .fontSize(12)
-            .fontColor(activity.status === 'failed' ? '#B3261E' : $r('sys.color.font_primary'))
-            .width('100%');
+          Row() {
+            this.tile({
+              symbol: activity.direction === 'send' ? $r('sys.symbol.paperplane') : $r('sys.symbol.arrow_down'),
+              preview: ''
+            });
+            this.cardText({
+              title: (activity.direction === 'send' ? '发送 · ' : '接收 · ') +
+                (activity.label.length > 0 ? activity.label : String(activity.fileCount) + ' 个文件'),
+              accent: '', note: this.activityText(activity), error: activity.status === 'failed'
+            });
+          }
+          .width('100%');
           if (activity.status === 'active' && activity.total > 0) {
             Progress({ value: activity.bytes, total: activity.total, type: ProgressType.Linear })
               .width('100%')
-              .margin({ top: 4 });
+              .margin({ top: 10 });
           }
         }
         .width('100%')
-        .margin({ bottom: 8 });
+        .padding(14)
+        .backgroundColor($r('sys.color.background_tertiary'))
+        .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+        .borderRadius(20)
+        .margin({ bottom: 12 });
       }, (activity: TransferActivity): string => activity.id + activity.status + String(activity.bytes) + activity.error);
     }
   }
 
   @Builder
+  pickPhotosButton() {
+    Button('选择照片')
+      .fontSize(13)
+      .height(40)
+      .enabled(!this.busy)
+      .onClick((): void => {
+        void this.pickPhotos();
+      });
+  }
+
+  @Builder
   sendTab() {
     Column() {
-      Row() {
-        Text(this.sendFiles.length > 0 ? '要发送的文件（' + String(this.sendFiles.length) + '）' : '要发送的文件')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .layoutWeight(1);
-        if (this.sendFiles.length > 0) {
-          Button('清空')
-            .fontSize(13)
-            .height(32)
-            .backgroundColor($r('sys.color.background_secondary'))
-            .fontColor($r('sys.color.font_primary'))
+      this.summaryCard({
+        title: this.sendFiles.length > 0 ? '要发送 ' + String(this.sendFiles.length) + ' 个文件' : '先添加要发送的文件',
+        note: this.sendFiles.length > 0
+          ? this.sendFiles.slice(0, 3).map((file: TransferSendSource): string => file.name).join('、') +
+            (this.sendFiles.length > 3 ? ' 等' : '')
+          : '从相册选择，或在队列详情里选「发送到其他设备」',
+        action: 'pick'
+      });
+      if (this.sendFiles.length > 0) {
+        Row() {
+          Text('清空要发送的文件')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
             .onClick((): void => {
               this.sendFiles = [];
               this.sendLabel = '';
             });
         }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
+        .margin({ top: -4, bottom: 8 });
       }
-      .width('100%')
-      .margin({ bottom: 6 });
-      if (this.sendFiles.length === 0) {
-        Text('先添加要发送的文件')
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%');
-      }
-      ForEach(this.sendFiles, (file: TransferSendSource) => {
+
+      if (!this.view.running) {
+        this.summaryCard({
+          title: this.busy ? '正在开启…' : '附近设备',
+          note: '开始搜索后，本机也会出现在对方的设备列表里',
+          action: 'search'
+        });
+      } else {
         Row() {
-          Text(file.name)
-            .fontSize(13)
-            .fontColor($r('sys.color.font_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1);
-          Text('移除')
+          Text(this.scanning ? '附近设备 · 正在扫描局域网…' : '附近设备')
             .fontSize(13)
             .fontColor($r('sys.color.font_secondary'))
-            .padding(6)
-            .onClick((): void => {
-              this.sendFiles = this.sendFiles.filter((item: TransferSendSource): boolean => item !== file);
-            });
-        }
-        .width('100%');
-      }, (file: TransferSendSource): string => file.source + '|' + file.name);
-      Button('选择照片')
-        .width('100%')
-        .height(40)
-        .margin({ top: 8 })
-        .backgroundColor($r('sys.color.background_secondary'))
-        .fontColor($r('sys.color.font_primary'))
-        .enabled(!this.busy)
-        .onClick((): void => {
-          void this.pickPhotos();
-        });
-
-      Row() {
-        Text(this.scanning ? '附近设备 · 正在搜索…' : '附近设备')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .layoutWeight(1);
-        Button('刷新')
-          .fontSize(13)
-          .height(32)
-          .enabled(this.view.running && !this.scanning)
-          .onClick((): void => {
-            void this.refreshPeers();
-          });
-      }
-      .width('100%')
-      .margin({ top: 18, bottom: 6 });
-      if (!this.view.running) {
-        Text(this.busy ? '正在开启…' : '尚未搜索附近设备')
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%');
-        if (!this.busy) {
-          Button('搜索附近设备')
-            .width('100%')
-            .height(40)
-            .margin({ top: 8 })
-            .onClick((): void => {
-              void this.start();
-            });
-        }
-      } else if (this.view.peers.length === 0) {
-        Text(this.scanning ? '正在扫描局域网…' : '正在自动发现附近设备。请确认对方打开了 LocalSend，并与本机在同一 Wi-Fi。')
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%');
-      }
-      ForEach(this.view.peers, (peer: TransferPeer) => {
-        Row() {
-          SymbolGlyph($r('sys.symbol.pc_and_phone_fill'))
-            .fontSize(20)
-            .fontColor([$r('sys.color.font_secondary')])
-            .margin({ right: 10 });
-          Column() {
-            Text(peer.alias.length > 0 ? peer.alias : peer.address)
-              .fontSize(14)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%');
-            Text(peer.address.split(':')[0])
-              .fontSize(12)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%');
-          }
-          .layoutWeight(1);
-          Button(this.sendFiles.length > 0 ? '发送' : '先添加文件')
+            .layoutWeight(1);
+          Text('刷新')
             .fontSize(13)
-            .height(34)
-            .enabled(!this.busy && this.sendFiles.length > 0)
+            .fontColor(this.scanning ? $r('sys.color.font_tertiary') : $r('sys.color.font_emphasize'))
             .onClick((): void => {
-              void this.sendTo(peer);
+              if (!this.scanning) void this.refreshPeers();
             });
         }
         .width('100%')
-        .padding({ top: 8, bottom: 8 });
-      }, (peer: TransferPeer): string => peer.fingerprint + '@' + peer.address);
-      if (this.view.running) {
+        .margin({ top: 6, bottom: 8 });
+        if (this.view.peers.length === 0) {
+          Text(this.scanning ? '正在查找同一 Wi-Fi 下的设备…'
+            : '还没有发现设备。请确认对方打开了 LocalSend，并与本机连接同一 Wi-Fi；也可以在下面输入对方地址。')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding(11)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(12)
+            .margin({ bottom: 12 });
+        }
+        ForEach(this.view.peers, (peer: TransferPeer) => {
+          Row() {
+            this.tile({ symbol: $r('sys.symbol.pc_and_phone_fill'), preview: '' });
+            this.cardText({
+              title: peer.alias.length > 0 ? peer.alias : peer.address.split(':')[0],
+              accent: '', note: peer.address.split(':')[0], error: false
+            });
+            this.roundAction({
+              symbol: $r('sys.symbol.paperplane'),
+              label: '发送到 ' + peer.alias,
+              enabled: !this.busy && this.sendFiles.length > 0,
+              action: (): void => {
+                void this.sendTo(peer);
+              }
+            });
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor($r('sys.color.background_tertiary'))
+          .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+          .borderRadius(20)
+          .margin({ bottom: 12 });
+        }, (peer: TransferPeer): string => peer.fingerprint + '@' + peer.address);
         Row({ space: 8 }) {
-          TextInput({ placeholder: '输入 IP 地址（如 192.168.1.20）', text: this.manualAddress })
+          TextInput({ placeholder: '输入对方 IP，如 192.168.1.20', text: this.manualAddress })
             .layoutWeight(1)
             .height(40)
-            .type(InputType.Normal)
+            .fontSize(14)
             .onChange((value: string): void => {
               this.manualAddress = value;
             });
           Button('连接')
+            .fontSize(13)
             .height(40)
             .enabled(!this.busy && this.manualAddress.trim().length > 0)
             .onClick((): void => {
@@ -814,166 +981,215 @@ export struct TransferPanel {
             });
         }
         .width('100%')
-        .margin({ top: 6 });
+        .padding({ left: 14, right: 8, top: 8, bottom: 8 })
+        .backgroundColor($r('sys.color.background_secondary'))
+        .borderRadius(14)
+        .margin({ bottom: 12 });
       }
-      this.activitySection();
+      this.activityCards();
     }
     .width('100%');
   }
 
   @Builder
-  inboxRow(entry: TransferInboxEntry) {
-    Column() {
-      Row() {
-        if (this.previews[entry.receipt.id] !== undefined) {
-          Image('file://' + this.previews[entry.receipt.id])
-            .width(52)
-            .height(52)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(8)
-            .margin({ right: 10 });
-        } else {
-          SymbolGlyph(entry.kind === 'file' ? $r('sys.symbol.doc_plaintext') : (entry.kind === 'photo' ? $r('sys.symbol.picture') : $r('sys.symbol.livephoto')))
-            .fontSize(28)
-            .fontColor([$r('sys.color.font_secondary')])
-            .width(52)
-            .margin({ right: 10 });
-        }
-        Column() {
-          Text(entry.receipt.name)
-            .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%');
-          Text((entry.kind === 'live' || entry.kind === 'live-zip' ? '实况照片 · ' : '') +
-            formatTransferBytes(entry.receipt.size + (entry.movie?.size ?? 0)))
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%');
-        }
-        .layoutWeight(1);
-      }
-      .width('100%');
-      Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(14), cross: LengthMetrics.vp(8) } }) {
-        if (entry.kind !== 'file') {
-          Text('加入转换队列')
-            .fontSize(13)
-            .fontColor($r('sys.color.font_emphasize'))
-            .onClick((): void => {
-              void this.runAction(async (): Promise<string> => {
-                await this.queueEntry(entry);
-                return '已加入转换队列：' + entry.receipt.name;
-              });
-            });
-          Text('存入图库')
-            .fontSize(13)
-            .fontColor($r('sys.color.font_emphasize'))
-            .onClick((): void => {
-              void this.runAction(async (): Promise<string> => {
-                await this.saveToGallery(entry);
-                return '已存入图库：' + entry.receipt.name;
-              });
-            });
-          Text('存入相册')
-            .fontSize(13)
-            .fontColor($r('sys.color.font_emphasize'))
-            .onClick((): void => {
-              void this.runAction(async (): Promise<string> => {
-                await this.saveToPhotos([entry]);
-                return entry.kind === 'photo' ? '已存入相册' : '已存入相册（照片 + 视频）';
-              });
-            });
-        }
-        Text('分享')
-          .fontSize(13)
-          .fontColor($r('sys.color.font_emphasize'))
-          .onClick((): void => {
-            void this.runAction(async (): Promise<string> => {
-              await this.share(entry);
-              return '';
-            });
+  searchButton() {
+    Button('搜索')
+      .fontSize(13)
+      .height(40)
+      .enabled(!this.busy)
+      .onClick((): void => {
+        void this.start();
+      });
+  }
+
+  private inboxMenu(entry: TransferInboxEntry): Array<MenuElement> {
+    const items: Array<MenuElement> = [];
+    if (entry.kind !== 'file') {
+      items.push({
+        value: '存入图库',
+        action: (): void => {
+          void this.runAction(async (): Promise<string> => {
+            await this.saveToGallery(entry);
+            return '已存入图库：' + entry.receipt.name;
           });
-        Text('删除')
-          .fontSize(13)
-          .fontColor('#B3261E')
-          .onClick((): void => {
-            void this.runAction(async (): Promise<string> => {
-              await this.deleteEntry(entry);
-              return '';
-            });
+        }
+      });
+      items.push({
+        value: entry.kind === 'photo' ? '存入相册' : '存入相册（照片 + 视频）',
+        action: (): void => {
+          void this.runAction(async (): Promise<string> => {
+            await this.saveToPhotos([entry]);
+            return entry.kind === 'photo' ? '已存入相册' : '已存入相册（照片 + 视频）';
           });
+        }
+      });
+    }
+    items.push({
+      value: '分享',
+      action: (): void => {
+        void this.runAction(async (): Promise<string> => {
+          await this.share(entry);
+          return '';
+        });
       }
-      .width('100%')
-      .padding({ left: 62 })
-      .margin({ top: 8 });
+    });
+    items.push({
+      value: '删除',
+      action: (): void => {
+        void this.runAction(async (): Promise<string> => {
+          await this.deleteEntry(entry);
+          return '';
+        });
+      }
+    });
+    return items;
+  }
+
+  private inboxBulkMenu(): Array<MenuElement> {
+    return [
+      {
+        value: '全部存入相册',
+        action: (): void => {
+          void this.runAction(async (): Promise<string> =>
+            '已存入相册 ' + String(await this.saveToPhotos(this.view.inbox)) + ' 个文件');
+        }
+      },
+      {
+        value: '清空收件箱',
+        action: (): void => {
+          this.confirmClearInbox();
+        }
+      }
+    ];
+  }
+
+  @Builder
+  inboxCard(entry: TransferInboxEntry) {
+    Row() {
+      this.tile({
+        symbol: entry.kind === 'file' ? $r('sys.symbol.doc_plaintext')
+          : (entry.kind === 'photo' ? $r('sys.symbol.picture') : $r('sys.symbol.livephoto')),
+        preview: this.previews[entry.receipt.id] ?? ''
+      });
+      this.cardText({
+        title: entry.receipt.name,
+        accent: entry.kind === 'live' || entry.kind === 'live-zip' ? 'Live Photo' : '',
+        note: formatTransferBytes(entry.receipt.size + (entry.movie?.size ?? 0)) + ' · 点按查看更多操作',
+        error: false
+      });
+      if (entry.kind !== 'file') {
+        this.roundAction({
+          symbol: $r('sys.symbol.plus'),
+          label: '加入转换队列',
+          enabled: !this.busy,
+          action: (): void => {
+            void this.runAction(async (): Promise<string> => {
+              await this.queueEntry(entry);
+              return '已加入转换队列：' + entry.receipt.name;
+            });
+          }
+        });
+      }
     }
     .width('100%')
-    .padding({ top: 10, bottom: 10 });
+    .padding(14)
+    .backgroundColor($r('sys.color.background_tertiary'))
+    .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+    .borderRadius(20)
+    .margin({ bottom: 12 })
+    .bindMenu(this.inboxMenu(entry));
+  }
+
+  @Builder
+  receiveToggle() {
+    Toggle({ type: ToggleType.Switch, isOn: this.view.running })
+      .enabled(!this.busy)
+      .margin({ right: 6 })
+      .onChange((isOn: boolean): void => {
+        if (isOn && !this.view.running) void this.start();
+        if (!isOn && this.view.running) void this.stop();
+      });
+  }
+
+  @Builder
+  queueAllButton() {
+    Row({ space: 4 }) {
+      Button('全部加入队列')
+        .fontSize(13)
+        .height(40)
+        .enabled(!this.busy && this.view.inbox.some((entry: TransferInboxEntry): boolean => entry.kind !== 'file'))
+        .onClick((): void => {
+          void this.runAction(async (): Promise<string> => await this.queueAll());
+        });
+      Button({ type: ButtonType.Circle }) {
+        SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.font_primary')]);
+      }
+      .width(40)
+      .height(40)
+      .backgroundColor(Color.Transparent)
+      .accessibilityText('更多收件箱操作')
+      .bindMenu(this.inboxBulkMenu());
+    }
   }
 
   @Builder
   receiveTab() {
     Column() {
+      this.summaryCard({
+        title: this.view.running ? (this.view.ready ? '可被发现' : '正在开启…') : '接收已关闭',
+        note: this.view.running ? '收到的文件需要你点接收后才会保存' : '开启后才能被发现和收文件；切到后台会停止',
+        action: 'toggle'
+      });
+
       Column() {
-        Row() {
-          Text(this.view.running ? (this.view.ready ? '可被发现' : '正在开启…') : '接收已关闭')
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1);
-          Toggle({ type: ToggleType.Switch, isOn: this.view.running })
-            .enabled(!this.busy)
-            .onChange((isOn: boolean): void => {
-              if (isOn && !this.view.running) void this.start();
-              if (!isOn && this.view.running) void this.stop();
-            });
-        }
-        .width('100%');
-        Text(this.view.running
-          ? '附近设备可以找到本机；收到的文件需要你点接收后才会保存'
-          : '开启后才能被发现和收文件。离开此页会停止。')
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .margin({ top: 4 });
         if (this.editingName) {
           Row({ space: 8 }) {
             TextInput({ placeholder: this.modelName(), text: this.nameDraft })
               .layoutWeight(1)
-              .height(38)
+              .height(40)
+              .fontSize(14)
               .maxLength(64)
               .onChange((value: string): void => {
                 this.nameDraft = value;
               });
             Button('保存')
-              .height(38)
+              .fontSize(13)
+              .height(40)
               .onClick((): void => {
                 void this.saveDeviceName();
               });
           }
-          .width('100%')
-          .margin({ top: 10 });
+          .width('100%');
         } else {
           Row() {
-            Text('其他设备看到的本机名称：' + this.visibleName())
-              .fontSize(13)
-              .fontColor($r('sys.color.font_primary'))
-              .layoutWeight(1);
+            Column() {
+              Text(this.visibleName())
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'));
+              Text('其他设备看到的本机名称')
+                .fontSize(11)
+                .fontColor($r('sys.color.font_secondary'))
+                .margin({ top: 3 });
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1);
             Text('修改')
               .fontSize(13)
               .fontColor($r('sys.color.font_emphasize'))
+              .padding(6)
               .onClick((): void => {
                 this.nameDraft = this.deviceName;
                 this.editingName = true;
               });
           }
-          .width('100%')
-          .margin({ top: 10 });
+          .width('100%');
         }
         if (this.view.ready) {
-          Text(this.showAddresses ? '对方找不到本机？在对方的「发送」页手动输入以下任一地址：' : '对方找不到本机？')
-            .fontSize(13)
+          Text(this.showAddresses ? '对方找不到本机？在对方的「发送」页输入以下任一地址：' : '对方找不到本机？')
+            .fontSize(12)
             .fontColor($r('sys.color.font_emphasize'))
             .width('100%')
             .margin({ top: 10 })
@@ -994,89 +1210,68 @@ export struct TransferPanel {
         }
       }
       .width('100%')
-      .padding(14)
+      .padding({ left: 14, right: 8, top: 10, bottom: 10 })
       .backgroundColor($r('sys.color.background_secondary'))
-      .borderRadius(14);
+      .borderRadius(14)
+      .margin({ bottom: 12 });
 
       if (this.view.offers.length > 0) {
-        this.sectionTitle('等待你确认');
+        this.sectionLabel('等待你确认');
         ForEach(this.view.offers, (offer: TransferOffer) => {
           Column() {
-            Text((offer.alias.length > 0 ? offer.alias : '对方设备') + ' 想发送 ' + String(offer.files.length) + ' 个文件（' +
-              formatTransferBytes(offer.files.reduce((sum: number, file: TransferOfferFile): number => sum + file.size, 0)) + '）')
-              .fontSize(14)
-              .fontColor($r('sys.color.font_primary'))
-              .width('100%');
-            Text(offer.files.slice(0, 6).map((file: TransferOfferFile): string => file.name).join('、') +
-              (offer.files.length > 6 ? ' 等' : ''))
-              .fontSize(12)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .margin({ top: 2 });
+            Row() {
+              this.tile({ symbol: $r('sys.symbol.arrow_down'), preview: '' });
+              this.cardText({
+                title: (offer.alias.length > 0 ? offer.alias : '对方设备') + ' 想发送 ' +
+                  String(offer.files.length) + ' 个文件',
+                accent: formatTransferBytes(offer.files.reduce((sum: number, file: TransferOfferFile): number =>
+                  sum + file.size, 0)),
+                note: offer.files.slice(0, 4).map((file: TransferOfferFile): string => file.name).join('、') +
+                  (offer.files.length > 4 ? ' 等' : ''),
+                error: false
+              });
+            }
+            .width('100%');
             Row({ space: 8 }) {
               Button('拒绝')
                 .layoutWeight(1)
-                .height(38)
-                .backgroundColor($r('sys.color.background_primary'))
+                .height(40)
+                .fontSize(13)
+                .backgroundColor($r('sys.color.background_secondary'))
                 .fontColor($r('sys.color.font_primary'))
                 .onClick((): void => {
                   void this.decide(offer, false);
                 });
               Button('接收全部')
                 .layoutWeight(1)
-                .height(38)
+                .height(40)
+                .fontSize(13)
                 .onClick((): void => {
                   void this.decide(offer, true);
                 });
             }
             .width('100%')
-            .margin({ top: 8 });
+            .margin({ top: 12 });
           }
           .width('100%')
-          .padding(12)
-          .backgroundColor($r('sys.color.background_secondary'))
-          .borderRadius(12)
-          .margin({ bottom: 8 });
+          .padding(14)
+          .backgroundColor($r('sys.color.background_tertiary'))
+          .border({ width: 1, color: $r('sys.color.ohos_id_color_list_separator') })
+          .borderRadius(20)
+          .margin({ bottom: 12 });
         }, (offer: TransferOffer): string => offer.sessionId);
       }
 
-      this.activitySection();
+      this.activityCards();
 
       if (this.view.running && this.view.inbox.length > 0) {
-        Row() {
-          Text('收件箱（' + String(this.view.inbox.length) + '）')
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1);
-          if (this.view.inbox.some((entry: TransferInboxEntry): boolean => entry.kind !== 'file')) {
-            Text('全部加入队列')
-              .fontSize(13)
-              .fontColor($r('sys.color.font_emphasize'))
-              .margin({ right: 14 })
-              .onClick((): void => {
-                void this.runAction(async (): Promise<string> => await this.queueAll());
-              });
-            Text('全部存入相册')
-              .fontSize(13)
-              .fontColor($r('sys.color.font_emphasize'))
-              .margin({ right: 14 })
-              .onClick((): void => {
-                void this.runAction(async (): Promise<string> =>
-                  '已存入相册 ' + String(await this.saveToPhotos(this.view.inbox)) + ' 个文件');
-              });
-          }
-          Text('清空')
-            .fontSize(13)
-            .fontColor('#B3261E')
-            .onClick((): void => {
-              this.confirmClearInbox();
-            });
-        }
-        .width('100%')
-        .margin({ top: 18, bottom: 2 });
+        this.summaryCard({
+          title: '收件箱 ' + String(this.view.inbox.length) + ' 项',
+          note: '点按收到的文件查看更多操作',
+          action: 'queue-all'
+        });
         ForEach(this.view.inbox, (entry: TransferInboxEntry) => {
-          this.inboxRow(entry);
+          this.inboxCard(entry);
         }, (entry: TransferInboxEntry): string =>
           entry.receipt.id + entry.kind + (entry.movie?.id ?? '') + (this.previews[entry.receipt.id] ?? ''));
       }
@@ -1085,52 +1280,55 @@ export struct TransferPanel {
   }
 
   build() {
-    Column() {
-      Row({ space: 8 }) {
-        Button('发送')
-          .layoutWeight(1)
-          .height(36)
-          .backgroundColor(this.tab === 0 ? $r('sys.color.comp_background_emphasize') : $r('sys.color.background_secondary'))
-          .fontColor(this.tab === 0 ? $r('sys.color.font_on_primary') : $r('sys.color.font_primary'))
-          .onClick((): void => {
-            this.tab = 0;
-            if (!this.view.running) void this.start();
-          });
-        Button('接收' + (this.view.offers.length > 0 ? '（' + String(this.view.offers.length) + '）' : ''))
-          .layoutWeight(1)
-          .height(36)
-          .backgroundColor(this.tab === 1 ? $r('sys.color.comp_background_emphasize') : $r('sys.color.background_secondary'))
-          .fontColor(this.tab === 1 ? $r('sys.color.font_on_primary') : $r('sys.color.font_primary'))
-          .onClick((): void => {
-            this.tab = 1;
-          });
-      }
-      .width('100%')
-      .padding({ left: 18, right: 18, bottom: 8 });
-      if (this.status.length > 0) {
-        Text(this.status)
-          .fontSize(13)
-          .fontColor(this.status.includes('失败') ? '#B3261E' : $r('sys.color.font_secondary'))
-          .width('100%')
-          .padding({ left: 18, right: 18, bottom: 6 });
-      }
-      Scroll() {
-        Column() {
-          if (this.tab === 0) {
-            this.sendTab();
-          } else {
-            this.receiveTab();
+    Scroll(this.scroller) {
+      Column() {
+        if (!this.chipsInTitleBar) {
+          // Without the immersive title bar, the page draws its own title and chips.
+          Text('互传')
+            .fontSize(30)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .margin({ bottom: 6 });
+          Row({ space: 8 }) {
+            ForEach(['发送', '接收'], (label: string, index: number) => {
+              Text(index === 1 && this.view.offers.length > 0 ? label + ' ' + String(this.view.offers.length) : label)
+                .fontSize(14)
+                .fontColor(this.tab === index ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+                .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+                .backgroundColor(this.tab === index ? $r('sys.color.background_secondary') : Color.Transparent)
+                .borderRadius(16)
+                .onClick((): void => {
+                  this.tab = index;
+                });
+            }, (label: string): string => label);
           }
+          .width('100%')
+          .margin({ bottom: 12 });
         }
-        .width('100%')
-        .padding({ left: 18, right: 18, bottom: 32 });
+        if (this.status.length > 0) {
+          Text(this.status)
+            .fontSize(12)
+            .fontColor(this.status.includes('失败') ? $r('sys.color.ohos_id_color_alert') : $r('sys.color.font_secondary'))
+            .width('100%')
+            .padding(11)
+            .backgroundColor($r('sys.color.background_secondary'))
+            .borderRadius(12)
+            .margin({ bottom: 12 });
+        }
+        if (this.tab === 0) {
+          this.sendTab();
+        } else {
+          this.receiveTab();
+        }
       }
       .width('100%')
-      .layoutWeight(1)
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off);
+      .padding({ left: 20, right: 20, top: this.topInset, bottom: this.bottomInset });
     }
     .width('100%')
-    .height('100%');
+    .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP]);
   }
 }
