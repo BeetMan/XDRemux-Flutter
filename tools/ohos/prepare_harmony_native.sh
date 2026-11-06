@@ -7,13 +7,13 @@
 # tools/native/build-transfer.sh ohos.
 #
 # Usage: tools/ohos/prepare_harmony_native.sh [--core-path P] [--transfer-path P] [--sdk-root P]
-# Env:   OHOS_SDK_ROOT (default: DevEco.app .../sdk/default/openharmony)
+# Env:   OHOS_SDK_ROOT, else DEVECO_SDK_HOME/default/openharmony (tools/env.sh sets it)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CORE_PATH="$REPO_ROOT/target/aarch64-unknown-linux-ohos/release/libxdremux_core.so"
 TRANSFER_PATH="$REPO_ROOT/crates/xdremux-transfer-ffi/target/aarch64-unknown-linux-ohos/release/libxdremux_transfer.so"
-SDK_ROOT="${OHOS_SDK_ROOT:-/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony}"
+SDK_ROOT="${OHOS_SDK_ROOT:-${DEVECO_SDK_HOME:-/Applications/DevEco-Studio.app/Contents/sdk}/default/openharmony}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
