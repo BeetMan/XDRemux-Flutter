@@ -1,5 +1,9 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import XDRemuxTransfer
+#if os(iOS)
+import PhotosUI
+#endif
 
 /// 局域网传输: send photos to another XDRemux / LocalSend device and
 /// receive from one. The service lives only while this sheet is open.
@@ -13,6 +17,11 @@ struct TransferView: View {
     @State private var renaming = false
     @State private var aliasDraft = ""
     @State private var confirmClear = false
+    @State private var pickingFiles = false
+    #if os(iOS)
+    @State private var pickingPhotos = false
+    @State private var photoSelection: [PhotosPickerItem] = []
+    #endif
     @Environment(\.dismiss) private var dismiss
 
     init(library: LibraryModel) {
@@ -44,8 +53,22 @@ struct TransferView: View {
             model.refreshInterfaces()
         }
         .onDisappear {
+            model.clearPicks()
             Task { await model.stop() }
         }
+        .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { model.addPicks(urls, securityScoped: true) }
+        }
+        #if os(iOS)
+        .photosPicker(isPresented: $pickingPhotos, selection: $photoSelection,
+                      matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
+        .onChange(of: photoSelection) { _, items in
+            guard !items.isEmpty else { return }
+            let picked = items
+            photoSelection = []
+            Task { await importPickedMedia(picked) }
+        }
+        #endif
         .alert("确认设备指纹", isPresented: Binding(get: { model.pendingConfirmation != nil },
                                               set: { if !$0 { model.pendingConfirmation = nil } })) {
             Button("确认并连接") { if let p = model.pendingConfirmation { model.confirm(p) } }
@@ -224,6 +247,36 @@ struct TransferView: View {
                     Text("原始照片").tag(true)
                 }
                 .pickerStyle(.segmented)
+                HStack {
+                    #if os(iOS)
+                    Button {
+                        pickingPhotos = true
+                    } label: {
+                        Label("选择照片", systemImage: "photo.on.rectangle")
+                    }
+                    #endif
+                    Button {
+                        pickingFiles = true
+                    } label: {
+                        Label("选择文件", systemImage: "paperclip")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(model.isBusy)
+                ForEach(model.picks, id: \.self) { url in
+                    HStack {
+                        Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            model.removePick(url)
+                        } label: {
+                            Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.isBusy)
+                    }
+                }
                 let urls = filesToSend
                 Button {
                     Task { await model.send(urls) }
@@ -364,12 +417,54 @@ struct TransferView: View {
 
     /// Converted outputs (plus their Live Photo videos) by default; the
     /// imported originals when asked.
+    /// The conversion list (originals or results) plus every picked file.
     private var filesToSend: [URL] {
+        let queue: [URL]
         if sendOriginals {
-            return library.items.map(\.inputURL)
+            queue = library.items.map(\.inputURL)
+        } else {
+            queue = library.items.compactMap(\.product).flatMap { product in
+                [product.outputURL] + (product.pairedVideoURL.map { [$0] } ?? []) + product.extraVideoURLs
+            }
         }
-        return library.items.compactMap(\.product).flatMap { product in
-            [product.outputURL] + (product.pairedVideoURL.map { [$0] } ?? []) + product.extraVideoURLs
+        return queue + model.picks
+    }
+
+    #if os(iOS)
+    /// Each pick comes over as a file copy (a Live Photo as a `.pvt` folder)
+    /// that the model copies into its own folder; the picker's copy goes.
+    private func importPickedMedia(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            do {
+                guard let media = try await item.loadTransferable(type: PickedMedia.self) else { continue }
+                model.addPicks([media.url])
+                try? FileManager.default.removeItem(at: media.url.deletingLastPathComponent())
+            } catch {
+                model.error = L("无法读取所选文件：\(error.localizedDescription)")
+            }
+        }
+    }
+    #endif
+}
+
+#if os(iOS)
+/// What the Photos picker hands over for 选择照片: the original file under
+/// its own name, or for a Live Photo the `.pvt` folder with the still and
+/// its MOV. The file only exists inside the import closure, so it is copied
+/// out right there.
+private struct PickedMedia: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .item) { received in
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("XDRemuxTransferPicks", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let copy = directory.appendingPathComponent(received.file.lastPathComponent)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return PickedMedia(url: copy)
         }
     }
 }
+#endif

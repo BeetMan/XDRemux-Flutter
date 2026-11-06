@@ -62,6 +62,65 @@ final class TransferModel {
         self.root = root
         self.defaults = defaults
         customAlias = TransferAlias.clean(defaults.string(forKey: Self.aliasKey))
+        try? FileManager.default.removeItem(at: picksRoot)
+    }
+
+    // MARK: Picked files
+
+    /// Files chosen with 选择照片 / 选择文件, copied under `root/picks` so
+    /// they outlive the picker's temporary copy. Sent along with the
+    /// conversion list.
+    private(set) var picks: [URL] = []
+    private var picksRoot: URL { root.appendingPathComponent("picks", isDirectory: true) }
+
+    /// Copies each pick in under its own name. A Live Photo from the Photos
+    /// picker arrives as a `.pvt` folder (still + MOV); it is sent as the two
+    /// files sharing the bundle's stem, the way our own Live Photo outputs
+    /// travel, so the receiver pairs them by name. A name already picked is
+    /// skipped. `securityScoped` is for file-importer URLs.
+    func addPicks(_ urls: [URL], securityScoped: Bool = false) {
+        var names = Set(picks.map(\.lastPathComponent))
+        for url in urls {
+            let scoped = securityScoped && url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+                var sources: [(URL, String)] = []
+                if isDirectory.boolValue {
+                    guard url.pathExtension.lowercased() == "pvt" else { continue }
+                    let stem = url.deletingPathExtension().lastPathComponent
+                    // Only the still and the movie travel; the bundle's
+                    // metadata.plist stays behind.
+                    let parts = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+                        .filter { LivePhotoPairing.isStill($0.lastPathComponent) || LivePhotoPairing.isVideo($0.lastPathComponent) }
+                        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                    sources = parts.map { ($0, "\(stem).\($0.pathExtension)") }
+                } else {
+                    sources = [(url, url.lastPathComponent)]
+                }
+                let directory = picksRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                for (source, name) in sources where !names.contains(name) {
+                    let destination = directory.appendingPathComponent(name)
+                    try FileManager.default.copyItem(at: source, to: destination)
+                    picks.append(destination)
+                    names.insert(name)
+                }
+            } catch {
+                self.error = L("无法读取所选文件：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    func removePick(_ url: URL) {
+        picks.removeAll { $0 == url }
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+
+    func clearPicks() {
+        picks = []
+        try? FileManager.default.removeItem(at: picksRoot)
     }
 
     /// The user's own name for this device, or `nil` for the system name.

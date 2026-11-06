@@ -5096,6 +5096,86 @@
           }
         }
       }
+    },
+    "选择照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择照片"
+          }
+        }
+      }
+    },
+    "选择文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件"
+          }
+        }
+      }
+    },
+    "无法读取所选文件：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not read the chosen file: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取所选文件：%@"
+          }
+        }
+      }
+    },
+    "Flutter 版": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter app"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter 版"
+          }
+        }
+      }
+    },
+    "与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads and writes the Flutter app's xdremux_checkpoint.jsonl, so either app can continue the other's queue on the same Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

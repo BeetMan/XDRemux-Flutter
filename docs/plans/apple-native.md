@@ -466,6 +466,26 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 未验证：真机（授权弹窗出现在首次自动存入时，模拟器里早已授权）；Live Photo / 动态照片输出走自动存入；存入失败时的
   `notice` 文案（模拟器没有制造失败场景）。
 
+**发送页"选择照片 / 选择文件"（2026-11-06，分支 `feat/apple-transfer-pick-media`）**
+
+- 对齐 Flutter `549e778`（#79 之后合入 main 的最后一条传输改动）：原生发送页此前只能发转换列表；现在
+  "发送内容"分段下面多了"选择照片"（iOS，`PhotosPicker` 匹配图片 + 视频，`preferredItemEncoding: .current`）和
+  "选择文件"（两端，`fileImporter` 任意类型、多选）。选中的文件列在按钮下面，可逐个移除，离开页面时清掉。
+- 选照片用 `Transferable` 的 `FileRepresentation(importedContentType: .item)` 取原文件：普通照片 / 视频保留原文件名；
+  Live Photo 交出的是 `.pvt` 文件夹（静帧 + MOV + metadata.plist），模型只取静帧和视频，按包名重命名为
+  `<stem>.HEIC` / `<stem>.MOV`——和原生自己的 Live Photo 输出一样成对发送，收方（原生 / Flutter）按同名配对。
+  Flutter 发的是 `.pvt.zip`，这里不打包；两边收件箱都认两种形式。
+- `TransferModel.picks` 放在 `transfer/picks/<uuid>/` 下（选择器给的是临时副本），`addPicks` 同名去重，
+  `removePick` / `clearPicks` 连目录一起删；`filesToSend` = 转换列表选择 + picks。
+- 顺手：Flutter 检查点导入 / 导出从 ⋯ 菜单挪到设置页末尾的"Flutter 版"段（仍只 macOS）。
+- 新增 `ExternalReceiverTests`：`XDREMUX_TRANSFER_RECEIVE=ip:port swift test --filter ExternalReceiver` 让 Mac 当接收方，
+  全部接受并把文件拷到 `XDREMUX_TRANSFER_OUT`，是 `ExternalPeerTests` 的反向，用来给模拟器当对端。
+- 实测（Duo 模拟器折叠态 → Mac 接收测试）：手动输入 `192.168.31.175:53317` 连接确认后，"选择照片"选两张实况
+  （`XDR_STYLES2_LIVE`、`IMG_3715`），列表显示各自的 HEIC + MOV，连同 7 个转换结果共 13 个文件发送，Mac 端收到
+  13 个且字节数与原件一致；第一版把 metadata.plist 也带上了，过滤后再发 9 个文件确认 plist 不再出现。
+- 未验证：真机上的 `PhotosPicker` 与选择器文件名（模拟器的实况包名就是原文件名，真机预期相同）；macOS 端的
+  "选择文件"只编译未点；收方 Flutter 对这对同名文件的配对显示（原生收件箱的配对已有）。
+
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
