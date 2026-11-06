@@ -42,7 +42,17 @@ struct SettingsView: View {
                     }
                     #endif
                     Stepper("同时转换 \(model.config.maxConcurrentJobs) 张", value: $model.config.maxConcurrentJobs, in: 1...8)
-                    TextField("文件名后缀", text: $model.config.fileNameSuffix)
+                    LabeledContent("文件名后缀") {
+                        // Empty title: a bare TextField in a Form shows only
+                        // the value, so "_iso" sat there without its label.
+                        TextField("", text: $model.config.fileNameSuffix)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 160)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                    }
                     Toggle("覆盖同名输出", isOn: $model.config.skipExisting)
                     Toggle("按输出模式分目录", isOn: $model.config.categorizeOutputByMode)
                 }
