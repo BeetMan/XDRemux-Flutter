@@ -134,5 +134,5 @@ loopback round trip, and `XDREMUX_TRANSFER_PEER=ip:port XDREMUX_TRANSFER_FILE=/p
 sends one file (or several, `:`-separated) to a device that is receiving. Multicast discovery needs Apple's multicast
 entitlement on a real iPhone; without it the page scans the /24 subnet on the LocalSend ports (automatically after a few
 quiet seconds, or from the "扫描网段" button) and still takes a typed `IP:port`. The device name other peers see is
-editable on the receive section; received photos can be saved to Photos (a still with a same-named `.mov` becomes one
-Live Photo) or queued, singly or all at once.
+editable on the receive section; received photos can be saved to Photos (a still with a same-named `.mov`, or a `.pvt.zip` bundle as the Flutter app
+sends it, becomes one Live Photo) or queued, singly or all at once.

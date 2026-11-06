@@ -317,7 +317,7 @@ struct TransferView: View {
                 .disabled(!model.inbox.contains { model.savesToPhotos($0) && !model.savedToPhotos.contains($0.id) })
             #endif
             Button("全部加入列表") { Task { await model.importAll(into: library) } }
-                .disabled(!model.inbox.contains { LivePhotoPairing.isStill($0.name) })
+                .disabled(!model.inbox.contains { model.queues($0) })
             Spacer()
             Button("清空", role: .destructive) { confirmClear = true }
         }
@@ -333,7 +333,7 @@ struct TransferView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(receipt.name).lineLimit(1).truncationMode(.middle)
                 HStack(spacing: 4) {
-                    if pairedMovie != nil {
+                    if pairedMovie != nil || model.isLivePhotoZip(receipt) {
                         Text("Live Photo · ")
                     } else if isPairedMovie {
                         Text("Live Photo 视频，随同名照片一起处理 · ")
@@ -352,7 +352,7 @@ struct TransferView: View {
                     .buttonStyle(.bordered).controlSize(.small)
             }
             #endif
-            if LivePhotoPairing.isStill(receipt.name) {
+            if model.queues(receipt) {
                 Button("加入列表") { Task { await model.importReceipt(receipt, into: library) } }
                     .buttonStyle(.bordered).controlSize(.small)
             }
