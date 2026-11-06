@@ -118,3 +118,59 @@ final class BindTests: XCTestCase {
         await service.stop()
     }
 }
+
+/// Opt-in counterpart of `ExternalPeerTests`: `XDREMUX_TRANSFER_RECEIVE=192.168.1.20:53317 swift test --filter ExternalReceiver`
+/// receives on that address (a Mac standing in for a second device),
+/// accepts every offer, and copies each received file into
+/// `XDREMUX_TRANSFER_OUT` (default: a temporary folder, printed). It stops
+/// after `XDREMUX_TRANSFER_WAIT` seconds (default 180). Connect to it from
+/// the app by its IP:port; it prints its fingerprint for the confirmation.
+final class ExternalReceiverTests: XCTestCase {
+    func testReceiveFromExternalPeer() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let bind = env["XDREMUX_TRANSFER_RECEIVE"] else {
+            throw XCTSkip("set XDREMUX_TRANSFER_RECEIVE=ip:port to run")
+        }
+        let wait = Double(env["XDREMUX_TRANSFER_WAIT"] ?? "") ?? 180
+        let out = URL(fileURLWithPath: env["XDREMUX_TRANSFER_OUT"]
+                      ?? FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-received-\(UUID().uuidString)").path)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-receiver-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let receiver = TransferService()
+        let ready = try await receiver.start(.init(root: root, bind: bind, alias: "swift test receiver"))
+        print("receiving at \(ready.address) fingerprint \(ready.fingerprint); files go to \(out.path)")
+
+        let deadline = Date().addingTimeInterval(wait)
+        let pump = Task {
+            for await event in await receiver.events {
+                switch event.kind {
+                case "offer":
+                    if let offer = event.offer {
+                        print("offer from \(offer.alias): \(offer.files.map(\.name))")
+                        try await receiver.decide(transferId: offer.sessionId, accept: true)
+                    }
+                case "committed":
+                    if let receipt = event.receipt {
+                        let lease = try await receiver.acquireReceipt(id: receipt.id)
+                        let destination = out.appendingPathComponent(receipt.name)
+                        try? FileManager.default.removeItem(at: destination)
+                        try FileManager.default.copyItem(at: URL(fileURLWithPath: lease.path), to: destination)
+                        try await receiver.releaseReceipt(leaseId: lease.leaseId)
+                        print("received \(receipt.name) (\(receipt.size) bytes)")
+                    }
+                case "failed":
+                    print("receive failed: \(event.code ?? "?")")
+                default:
+                    break
+                }
+            }
+        }
+        while Date() < deadline { try await Task.sleep(for: .seconds(1)) }
+        pump.cancel()
+        await receiver.stop()
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? []
+        print("done; received \(names.sorted())")
+    }
+}

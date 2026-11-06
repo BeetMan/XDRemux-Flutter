@@ -8,6 +8,11 @@ struct SettingsView: View {
     private let hardwareEncodeAvailable = VideoToolboxTileEncoder.isAvailable
     @Bindable var model: LibraryModel
     @Environment(\.dismiss) private var dismiss
+    #if os(macOS)
+    @State private var importingCheckpoint = false
+    @State private var exportingCheckpoint = false
+    @State private var checkpointDocument = TextFileDocument(text: "")
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -37,7 +42,17 @@ struct SettingsView: View {
                     }
                     #endif
                     Stepper("同时转换 \(model.config.maxConcurrentJobs) 张", value: $model.config.maxConcurrentJobs, in: 1...8)
-                    TextField("文件名后缀", text: $model.config.fileNameSuffix)
+                    LabeledContent("文件名后缀") {
+                        // Empty title: a bare TextField in a Form shows only
+                        // the value, so "_iso" sat there without its label.
+                        TextField("", text: $model.config.fileNameSuffix)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 160)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                    }
                     Toggle("覆盖同名输出", isOn: $model.config.skipExisting)
                     Toggle("按输出模式分目录", isOn: $model.config.categorizeOutputByMode)
                 }
@@ -100,12 +115,26 @@ struct SettingsView: View {
 
                 Section("高级") {
                     Toggle("严格 ISO 21496-1 tmap", isOn: $model.config.strictTmap)
-                    Picker("机型家族", selection: $model.config.family) {
-                        Text("自动").tag(Family.auto)
-                        Text("X6").tag(Family.x6)
-                        Text("X7").tag(Family.x7)
-                    }
                 }
+
+                // Checkpoint interop only makes sense where both apps see the
+                // same paths; on iOS the two sandboxes cannot, so the entries
+                // would import as unreadable.
+                #if os(macOS)
+                Section {
+                    Button("导入 Flutter 检查点…") { importingCheckpoint = true }
+                        .help("读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转")
+                    Button("导出 Flutter 检查点…") {
+                        checkpointDocument = TextFileDocument(text: model.exportCheckpointJSONL())
+                        exportingCheckpoint = true
+                    }
+                    .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
+                } header: {
+                    Text("Flutter 版")
+                } footer: {
+                    Text("与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。")
+                }
+                #endif
 
                 Section("关于") {
                     LabeledContent("Rust 内核", value: model.coreVersion)
@@ -118,6 +147,15 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle("设置")
+            #if os(macOS)
+            .fileImporter(isPresented: $importingCheckpoint, allowedContentTypes: [.json, .plainText, .data]) { result in
+                if case .success(let url) = result { Task { await model.importCheckpoint(url) } }
+            }
+            .fileExporter(isPresented: $exportingCheckpoint, document: checkpointDocument, contentType: .plainText,
+                          defaultFilename: FlutterCheckpoint.fileName) { result in
+                if case .failure(let error) = result { model.lastError = error.localizedDescription }
+            }
+            #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }

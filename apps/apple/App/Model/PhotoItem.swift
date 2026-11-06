@@ -42,6 +42,13 @@ struct PhotoItem: Identifiable {
     /// Set when `HuaweiPhotoPolicy` keeps the photo out of the queue
     /// (recomputed whenever the config changes).
     var policyReason: String?
+    /// Not a ProXDR source. With Apple 标准 + 摄影风格 the core decodes it
+    /// and rebuilds a standard container (`sdr_source`), so it converts;
+    /// otherwise there is nothing to convert.
+    var plainSource = false
+    /// `plainSource` and the config allows the Styles path (set by the model
+    /// whenever the config changes).
+    var stylesRescue = false
     var state: State = .inspecting
     var savedToPhotos = false
 
@@ -61,7 +68,7 @@ struct PhotoItem: Identifiable {
     /// True when the core recognised a source it can convert and no policy
     /// keeps it out of the queue.
     var isConvertible: Bool {
-        inspection?.success == true && policyReason == nil
+        (inspection?.success == true || stylesRescue) && policyReason == nil
     }
 
     var statusText: String {
@@ -69,7 +76,9 @@ struct PhotoItem: Identifiable {
         case .inspecting: return L("正在读取…")
         case .ready:
             if let policyReason { return L(String.LocalizationValue(policyReason)) }
-            return isConvertible ? L("可转换") : (inspection?.errorMessage ?? L("不支持"))
+            if isConvertible { return stylesRescue ? L("可转换（摄影风格）") : L("可转换") }
+            let message = inspection?.errorMessage ?? L("不支持")
+            return plainSource ? L("\(message)选 Apple 标准并开启摄影风格后可以转换。") : message
         case .converting(let p):
             // The fraction is banded by stage in the kit, so the label can
             // name the stage the way the Flutter app does.

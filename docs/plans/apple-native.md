@@ -466,6 +466,45 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 未验证：真机（授权弹窗出现在首次自动存入时，模拟器里早已授权）；Live Photo / 动态照片输出走自动存入；存入失败时的
   `notice` 文案（模拟器没有制造失败场景）。
 
+**发送页"选择照片 / 选择文件"（2026-11-06，分支 `feat/apple-transfer-pick-media`）**
+
+- 对齐 Flutter `549e778`（#79 之后合入 main 的最后一条传输改动）：原生发送页此前只能发转换列表；现在
+  "发送内容"分段下面多了"选择照片"（iOS，`PhotosPicker` 匹配图片 + 视频，`preferredItemEncoding: .current`）和
+  "选择文件"（两端，`fileImporter` 任意类型、多选）。选中的文件列在按钮下面，可逐个移除，离开页面时清掉。
+- 选照片用 `Transferable` 的 `FileRepresentation(importedContentType: .item)` 取原文件：普通照片 / 视频保留原文件名；
+  Live Photo 交出的是 `.pvt` 文件夹（静帧 + MOV + metadata.plist），模型只取静帧和视频，按包名重命名为
+  `<stem>.HEIC` / `<stem>.MOV`——和原生自己的 Live Photo 输出一样成对发送，收方（原生 / Flutter）按同名配对。
+  Flutter 发的是 `.pvt.zip`，这里不打包；两边收件箱都认两种形式。
+- `TransferModel.picks` 放在 `transfer/picks/<uuid>/` 下（选择器给的是临时副本），`addPicks` 同名去重，
+  `removePick` / `clearPicks` 连目录一起删；`filesToSend` = 转换列表选择 + picks。
+- 顺手：Flutter 检查点导入 / 导出从 ⋯ 菜单挪到设置页末尾的"Flutter 版"段（仍只 macOS）。
+- 同轮按反馈再改三处：① 设备名默认值改为机型名（`DeviceModel.marketingName`，与 Flutter `modelName()` 同一张
+  `iPhone17,5 → iPhone 16e` 表；模拟器读 `SIMULATOR_MODEL_IDENTIFIER`；未知型号回退 `UIDevice.model`，macOS 仍是电脑名）——
+  之前用 `UIDevice.name`，iOS 16 起没有权限只会得到"iPhone"；② 本机指纹改成折叠的 DisclosureGroup，默认不展开；
+  ③ 详情页去掉"机型家族"行和"来源"里的 X6 / X7 标签，设置页"高级"里的机型家族选项也去掉（Flutter 版都不显示了，与 HDR 类型重复）；`ConversionConfig.family` 留在模型里给内核，默认 auto。
+- 真机反馈："从照片导入"几张照片后全部提示 "Failed to locate LHDR metadata block"。从 iPhone 16e 拷出
+  `Caches/XDRemux/inputs` 看：两张是华为 Pura X View 的普通 HEIC，一张是本 App 之前转换好的 `_iso.heic`——都不是
+  ProXDR 原片，内核对它们一律给这条英文错误，原生版原样显示。现在 `LibraryModel.explainInspection` 在检查失败时
+  再问一次 `verifyOutput`：已是 ISO 输出 → "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。"（Flutter 导入时
+  的同一判断）；没有 ProXDR 标记 → "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。"；其余 → "没有找到 ProXDR 的 HDR 数据，
+  可能是编辑或再保存过的副本。"。`InspectionSnapshot.version` 升到 2，让旧缓存里的英文消息重新检查。
+  实测：装回 iPhone 16e 后拷出 inspections 缓存，三张 `_iso` 副本显示"已是转换后"，两张华为显示"不是 ProXDR"。
+- 再纠正：这类"普通照片"并不是不能转——内核 `sdr_fallback` 在请求摄影风格时把任何可解码的输入重建成标准容器
+  （`sdr_source`），所以 Apple 标准 + 摄影风格下华为照片、iPhone 照片、甚至 `_iso` 副本都能转（CLI 验证：两张都输出并
+  `verify` OK），Flutter 从不拦这些照片。原生版原先 `isConvertible` 只认检查通过，把它们一律挡住。现在
+  `InspectionSnapshot.plainSource` 记下这种来源，`PhotoItem.stylesRescue` 在 `outputMode == .apple` 且摄影风格 2/3 开时
+  为真（随配置变化重算），`isConvertible` 放行；状态文案为"可转换（摄影风格）"，没开时在说明后追加"选 Apple 标准并
+  开启摄影风格后可以转换。"；HDR 预览对 plainSource 跳过（没有风格时内核会失败）。
+  实测（Duo 模拟器）：开摄影风格后"全部转换"从灰变为 (3)，华为照片、`_iso` 副本、iPhone 实况三张都转换成功并 verify OK。
+- 详情页按住对比的按钮文字由 "SDR" 改为 "HDR"（按反馈）。
+- 新增 `ExternalReceiverTests`：`XDREMUX_TRANSFER_RECEIVE=ip:port swift test --filter ExternalReceiver` 让 Mac 当接收方，
+  全部接受并把文件拷到 `XDREMUX_TRANSFER_OUT`，是 `ExternalPeerTests` 的反向，用来给模拟器当对端。
+- 实测（Duo 模拟器折叠态 → Mac 接收测试）：手动输入 `192.168.31.175:53317` 连接确认后，"选择照片"选两张实况
+  （`XDR_STYLES2_LIVE`、`IMG_3715`），列表显示各自的 HEIC + MOV，连同 7 个转换结果共 13 个文件发送，Mac 端收到
+  13 个且字节数与原件一致；第一版把 metadata.plist 也带上了，过滤后再发 9 个文件确认 plist 不再出现。
+- 未验证：真机上的 `PhotosPicker` 与选择器文件名（模拟器的实况包名就是原文件名，真机预期相同）；macOS 端的
+  "选择文件"只编译未点；收方 Flutter 对这对同名文件的配对显示（原生收件箱的配对已有）。
+
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
