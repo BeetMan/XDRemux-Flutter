@@ -117,7 +117,8 @@ if [ "$status" -ne 0 ] && [ "$hap" -nt "$stamp" ] && grep -q 'Signing Configs' "
 fi
 rm -f "$log" "$stamp"
 [ "$status" -eq 0 ] || exit "$status"
-if [ "$TRANSFER" = 1 ] && ! unzip -l "$hap" | grep -q 'libs/arm64-v8a/libxdremux_transfer.so'; then
+# Capture the listing first: grep -q exiting early would SIGPIPE unzip under pipefail.
+if [ "$TRANSFER" = 1 ] && ! grep -q 'libs/arm64-v8a/libxdremux_transfer.so' <<<"$(unzip -l "$hap")"; then
   echo "libxdremux_transfer.so is missing from the hap; the transfer entry would be hidden" >&2
   exit 1
 fi
