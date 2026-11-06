@@ -35,26 +35,57 @@ final class TransferModel {
     var pendingConfirmation: TransferPeer?
     private var confirmed: Set<String> = []
 
+    /// Peers found by `scanSubnet`; kept across multicast updates.
+    private var scanned: [String: DiscoveredPeer] = [:]
+    private(set) var scanning = false
+    private var scanTask: Task<Void, Never>?
+    private var receivingSince: Date = .distantPast
+    private var autoScanned = false
+
     private(set) var offers: [TransferOffer] = []
     private(set) var transfers: [TransferSummary] = []
     private(set) var progress: [String: [String: Progress]] = [:]
     private(set) var inbox: [TransferReceipt] = []
+    /// Receipts saved to Photos this session (iOS), by receipt id.
+    private(set) var savedToPhotos: Set<String> = []
+    /// Transient confirmation after a batch action.
+    var notice: String?
 
     private let root: URL
+    private let defaults: UserDefaults
+    static let aliasKey = "xdremux.transferAlias"
     private let log = Logger(subsystem: "io.github.beetman.xdremux.swiftui", category: "transfer")
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
 
-    init(root: URL) {
+    init(root: URL, defaults: UserDefaults = .standard) {
         self.root = root
+        self.defaults = defaults
+        customAlias = TransferAlias.clean(defaults.string(forKey: Self.aliasKey))
     }
 
-    var alias: String {
+    /// The user's own name for this device, or `nil` for the system name.
+    private(set) var customAlias: String?
+
+    /// Name other devices see: the custom name if set, else the device's.
+    var alias: String { customAlias ?? Self.deviceName }
+
+    static var deviceName: String {
         #if os(iOS)
-        UIDevice.current.name
+        TransferAlias.clean(UIDevice.current.name) ?? UIDevice.current.model
         #else
-        Host.current().localizedName ?? "Mac"
+        TransferAlias.clean(Host.current().localizedName) ?? "Mac"
         #endif
+    }
+
+    /// Saves a new name (blank restores the device name). A running
+    /// listener announces the old name, so it restarts to pick up the new one.
+    func setAlias(_ name: String?) async {
+        let clean = TransferAlias.clean(name)
+        guard clean != customAlias else { return }
+        customAlias = clean
+        if let clean { defaults.set(clean, forKey: Self.aliasKey) } else { defaults.removeObject(forKey: Self.aliasKey) }
+        if isReceiving { await startReceiving() }
     }
 
     var isRunning: Bool { service != nil }
@@ -84,6 +115,8 @@ final class TransferModel {
         await stop()
         do {
             try await start(bind: "\(address):\(port)", receiving: true)
+            receivingSince = .now
+            autoScanned = false
             await refreshDiscovery()
         } catch {
             log.error("startReceiving failed: \(Self.code(error), privacy: .public)")
@@ -136,6 +169,27 @@ final class TransferModel {
         selectedPeer = nil
         selectedAlias = nil
         confirmed = []
+        scanTask?.cancel(); scanTask = nil
+        scanned = [:]
+        scanning = false
+        syncKeepAwake()
+    }
+
+    // MARK: Keep awake
+
+    #if os(iOS)
+    private var awake = false
+    #endif
+
+    /// Phones stop reception when they sleep, so the idle timer is off while
+    /// a transfer is moving and this sheet is receiving.
+    private func syncKeepAwake() {
+        #if os(iOS)
+        let active = isReceiving && transfers.contains { !$0.phase.isTerminal }
+        guard active != awake else { return }
+        awake = active
+        UIApplication.shared.isIdleTimerDisabled = active
+        #endif
     }
 
     // MARK: Discovery and peers
@@ -154,6 +208,51 @@ final class TransferModel {
         discovering = snapshot.enabled
         discoveryError = snapshot.error
         peers = snapshot.enabled ? snapshot.peers : []
+        mergeScanned()
+        // Multicast is often blocked (and iOS needs Apple's multicast
+        // entitlement), so after a few quiet seconds scan the subnet once.
+        if peers.isEmpty, !autoScanned, Date.now.timeIntervalSince(receivingSince) >= 3 {
+            autoScanned = true
+            scanSubnet()
+        }
+    }
+
+    private func mergeScanned() {
+        for peer in scanned.values where !peers.contains(where: { $0.fingerprint.uppercased() == peer.fingerprint.uppercased() }) {
+            peers.append(peer)
+        }
+    }
+
+    /// Knocks on every /24 neighbour on the LocalSend ports, probes the
+    /// responders and keeps the ones that answer as peers. One scan at a
+    /// time; a second request while one runs is ignored.
+    func scanSubnet() {
+        guard isReceiving, scanTask == nil else { return }
+        let own = interfaces.map(\.address)
+        let targets = SubnetScan.targets(own: own)
+        guard !targets.isEmpty else { return }
+        scanning = true
+        log.info("subnet scan: \(targets.count) targets from \(own.joined(separator: ","), privacy: .public)")
+        scanTask = Task { [weak self] in
+            let open = await SubnetScan.openPorts(targets)
+            guard let self else { return }
+            if !Task.isCancelled { await self.identify(open) }
+            self.log.info("subnet scan done: open=\(open.map(\.address).joined(separator: ","), privacy: .public) peers=\(self.peers.count)")
+            self.scanning = false
+            self.scanTask = nil
+        }
+    }
+
+    private func identify(_ open: [SubnetScan.Target]) async {
+        guard let service, let selfFingerprint = ready?.fingerprint.uppercased() else { return }
+        for target in open {
+            if Task.isCancelled || !isReceiving { return }
+            guard let peer = try? await service.probe(address: target.address) else { continue }
+            let fingerprint = peer.fingerprint.uppercased()
+            if fingerprint == selfFingerprint { continue }
+            scanned[fingerprint] = DiscoveredPeer(alias: target.host, address: target.address, fingerprint: peer.fingerprint)
+        }
+        mergeScanned()
     }
 
     /// Probes `address` (`IP:port`), then asks for confirmation unless the
@@ -245,19 +344,107 @@ final class TransferModel {
         }
     }
 
+    func acceptAll() async {
+        for offer in offers { await decide(offer, accept: true) }
+    }
+
     /// Copies a received file into the library under its original name
     /// while holding the receipt lease, then releases it.
     func importReceipt(_ receipt: TransferReceipt, into library: LibraryModel) async {
-        guard let service else { return }
         isBusy = true
         defer { isBusy = false }
         do {
-            let lease = try await service.acquireReceipt(id: receipt.id)
-            defer { Task { try? await service.releaseReceipt(leaseId: lease.leaseId) } }
-            await library.importFile(at: URL(fileURLWithPath: lease.path), named: receipt.name)
+            try await withLease(receipt) { path in
+                await library.importFile(at: path, named: receipt.name)
+            }
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    /// Queues every received still; paired videos ride along with the
+    /// library's own Live Photo handling, so they are skipped here.
+    func importAll(into library: LibraryModel) async {
+        var count = 0
+        for receipt in inbox where LivePhotoPairing.isStill(receipt.name) {
+            await importReceipt(receipt, into: library)
+            count += 1
+        }
+        notice = L("已加入 \(count) 张照片")
+    }
+
+    /// The `.mov` received alongside this still, if any (a Live Photo).
+    func pairedMovie(for receipt: TransferReceipt) -> TransferReceipt? {
+        guard let name = LivePhotoPairing.pairedMovie(for: receipt.name, in: inbox.map(\.name)) else { return nil }
+        return inbox.first { $0.name == name }
+    }
+
+    func isPairedMovie(_ receipt: TransferReceipt) -> Bool {
+        LivePhotoPairing.isPairedMovie(receipt.name, in: inbox.map(\.name))
+    }
+
+    /// Whether this receipt gets a "save to Photos" action: stills and
+    /// videos, except a video that is saved together with its still.
+    func savesToPhotos(_ receipt: TransferReceipt) -> Bool {
+        #if os(iOS)
+        (LivePhotoPairing.isStill(receipt.name) || LivePhotoPairing.isVideo(receipt.name)) && !isPairedMovie(receipt)
+        #else
+        false
+        #endif
+    }
+
+    #if os(iOS)
+    /// Saves one receipt to Photos; a still with its paired `.mov` becomes
+    /// one Live Photo. Returns true when a Live Photo was written.
+    @discardableResult
+    func saveToPhotos(_ receipt: TransferReceipt) async -> Bool? {
+        isBusy = true
+        defer { isBusy = false }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("transfer-save-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        do {
+            try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+            // The photo library wants real file names; copy out of the private inbox.
+            var still: URL?, video: URL?
+            if LivePhotoPairing.isStill(receipt.name) {
+                still = try await copyOut(receipt, to: temp)
+                if let movie = pairedMovie(for: receipt) { video = try await copyOut(movie, to: temp) }
+            } else {
+                video = try await copyOut(receipt, to: temp)
+            }
+            let live = try await PhotosLibrary.save(still: still, pairedVideo: still == nil ? nil : video,
+                                                    clips: still == nil ? [video].compactMap { $0 } : [])
+            savedToPhotos.insert(receipt.id)
+            if let movie = pairedMovie(for: receipt) { savedToPhotos.insert(movie.id) }
+            return live
+        } catch {
+            self.error = PhotosLibrary.describe(error)
+            return nil
+        }
+    }
+
+    func saveAllToPhotos() async {
+        var saved = 0, failed = 0
+        for receipt in inbox where savesToPhotos(receipt) && !savedToPhotos.contains(receipt.id) {
+            if await saveToPhotos(receipt) != nil { saved += 1 } else { failed += 1; error = nil }
+        }
+        notice = failed > 0 ? L("已存入照片 \(saved) 项，\(failed) 项失败") : L("已存入照片 \(saved) 项")
+    }
+
+    private func copyOut(_ receipt: TransferReceipt, to directory: URL) async throws -> URL {
+        let destination = directory.appendingPathComponent(receipt.name)
+        try await withLease(receipt) { path in
+            try FileManager.default.copyItem(at: path, to: destination)
+        }
+        return destination
+    }
+    #endif
+
+    private func withLease(_ receipt: TransferReceipt, _ body: (URL) async throws -> Void) async throws {
+        guard let service else { throw TransferError.closed }
+        let lease = try await service.acquireReceipt(id: receipt.id)
+        defer { Task { try? await service.releaseReceipt(leaseId: lease.leaseId) } }
+        try await body(URL(fileURLWithPath: lease.path))
     }
 
     func deleteReceipt(_ receipt: TransferReceipt) async {
@@ -268,6 +455,10 @@ final class TransferModel {
         } catch {
             self.error = Self.describe(error)
         }
+    }
+
+    func clearInbox() async {
+        for receipt in inbox { await deleteReceipt(receipt) }
     }
 
     // MARK: State
@@ -301,6 +492,7 @@ final class TransferModel {
         guard let service else { return }
         do {
             transfers = try await service.snapshot().transfers.sorted { $0.id > $1.id }
+            syncKeepAwake()
             let receipts = try await service.receipts()
             inbox = receipts.sorted { $0.id > $1.id }
             if discovery, isReceiving { apply(try await service.discoveryStatus()) }

@@ -395,6 +395,28 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 顺带发现 main 上 `ConversionConfigTests.testDefaultsMatchDart` 自 #64 起失败（默认语言改为 `system`），修在 PR #69，并 cherry-pick 到本分支。
 - 未验证：iPhone 真机（无多播授权，自动发现应报 `discovery_unavailable`，手动 IP 可用）；PIN。
 
+**局域网传输对齐 Flutter #79（2026-11-06，分支 `feat/apple-transfer-polish`）**
+
+- 入口修复：⋯ 菜单的"局域网传输"被后来的检查点改动一起圈进了 `#if os(macOS)`，iOS 上一直点不到；移回平台共用段。
+- 设备名：`TransferModel.customAlias` 存 `UserDefaults`（`xdremux.transferAlias`），规则与 Flutter 一致（去控制字符、
+  去首尾空白、64 字上限，空则回设备名），改名时若正在接收则重启监听让对方看到新名字。接收区"设备名"行 → 弹窗改名。
+- 无多播时扫网段：`SubnetScan`（`XDRemuxTransfer` 包）枚举本机每个 IPv4 的 /24 邻居 × 53319/53317，`NWConnection`
+  600ms 超时、128 并发敲端口，响应者再 `probe` 取指纹；结果合并进 `peers` 并跨多播刷新保留。开启接收 3 秒仍无设备自动
+  扫一次，发送区也有"扫描网段"按钮。单元测试覆盖目标枚举（去自身地址、非 IPv4 忽略）与回环监听端口被识别。
+- 传输中保持亮屏（iOS）：接收开启且有未结束的传输时 `isIdleTimerDisabled = true`，停止或完成即恢复。
+- 收件箱存入照片（iOS）：`PhotosLibrary.save` 从 `FileExportButtons` 抽出共用；同名 `.mov` 与静帧配成一个 Live Photo
+  资源写入，单独的视频按视频资源写入；`.mov` 行标"Live Photo 视频，随同名照片一起处理"，不单独给按钮；已存入的行标"已存入照片"。
+  配对规则 `LivePhotoPairing`（stem 不区分大小写），有单元测试。
+- 批量操作：待接收多于一个时"接收全部"；收件箱"全部存入照片 / 全部加入列表 / 清空（确认后删除）"，完成后页脚提示条数。
+- 实测（Duo 模拟器）：改名 → 行显示新名并持久化；开启接收 → 本机地址 / 指纹；手动扫描按钮转圈、页脚"正在逐个尝试…"、
+  几秒后结束；Mac 用 `ExternalPeerTests`（现支持 `:` 分隔多文件）发 IMG_3715.HEIC + .mov → 接收 → 收件箱识别为
+  Live Photo 对 → "全部存入照片" → 照片 App 里出现该资源；单张"存入照片"弹系统授权后写入。macOS 构建通过。
+- 自动扫描实测（设备日志）：开启接收约 4 秒后扫 506 个目标，8 秒结束；网段里 192.168.31.168 两个端口都"接受连接"但对任何
+  路径回 HTTP 403（某个全端口应答的设备），`probe` 拒掉，peers=0——敲端口只做初筛，身份以 probe 为准。
+- 未验证：扫描真正找到对端（模拟器与 Mac 共用 IP，自身地址被排除，局域网里当时没有别的 LocalSend）；真机亮屏；`.pvt.zip`
+  打包的 Live Photo（Flutter 发送格式）尚未解包，收件箱只按普通文件显示。
+
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

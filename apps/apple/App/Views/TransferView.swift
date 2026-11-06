@@ -10,6 +10,9 @@ struct TransferView: View {
     /// The receive switch's own state; `onChange` drives the model so the
     /// switch animates immediately and snaps back if starting fails.
     @State private var receiveSwitch = false
+    @State private var renaming = false
+    @State private var aliasDraft = ""
+    @State private var confirmClear = false
     @Environment(\.dismiss) private var dismiss
 
     init(library: LibraryModel) {
@@ -57,6 +60,18 @@ struct TransferView: View {
         } message: {
             Text(model.error ?? "")
         }
+        .alert("设备名", isPresented: $renaming) {
+            TextField(TransferModel.deviceName, text: $aliasDraft)
+            Button("保存") { Task { await model.setAlias(aliasDraft) } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("其他设备看到的名字。留空则使用设备名。")
+        }
+        .confirmationDialog("清空收件箱？", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清空", role: .destructive) { Task { await model.clearInbox() } }
+        } message: {
+            Text("删除收件箱里的 \(model.inbox.count) 个文件。已存入照片或加入列表的副本不受影响。")
+        }
         #if os(macOS)
         .frame(minWidth: 520, minHeight: 560)
         #endif
@@ -75,6 +90,20 @@ struct TransferView: View {
                     }
                 }
                 .onChange(of: model.isReceiving) { _, on in receiveSwitch = on }
+            LabeledContent("设备名") {
+                Button {
+                    aliasDraft = model.customAlias ?? ""
+                    renaming = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.alias).lineLimit(1).truncationMode(.middle)
+                        Image(systemName: "pencil").font(.caption)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(model.isBusy)
+            }
             if model.interfaces.count > 1 {
                 Picker("网络", selection: $model.selectedInterface) {
                     ForEach(model.interfaces) { i in
@@ -118,6 +147,9 @@ struct TransferView: View {
 
     private var offersSection: some View {
         Section("待接收") {
+            if model.offers.count > 1 {
+                Button("接收全部") { Task { await model.acceptAll() } }
+            }
             ForEach(model.offers) { offer in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(offer.alias).font(.headline)
@@ -166,6 +198,20 @@ struct TransferView: View {
                 Button("连接") { Task { await model.connect(address: model.manualAddress) } }
                     .disabled(model.isBusy || model.manualAddress.isEmpty)
             }
+            if model.isReceiving {
+                Button {
+                    model.scanSubnet()
+                } label: {
+                    HStack {
+                        Label("扫描网段", systemImage: "dot.radiowaves.left.and.right")
+                        if model.scanning {
+                            Spacer()
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+                .disabled(model.scanning)
+            }
             if let peer = model.selectedPeer {
                 LabeledContent(model.selectedAlias ?? peer.address) {
                     HStack(spacing: 6) {
@@ -191,12 +237,14 @@ struct TransferView: View {
         } header: {
             Text("发送到")
         } footer: {
-            if model.isReceiving, let error = model.discoveryError {
+            if model.scanning {
+                Text("正在逐个尝试本网段的地址，大约需要十几秒…")
+            } else if model.isReceiving, let error = model.discoveryError {
                 Text(error == "discovery_unavailable"
-                     ? "自动发现在这台设备上不可用（需要 Apple 的多播授权），请手动输入对方的 IP:端口。"
-                     : "自动发现失败：\(error)。可以手动输入对方的 IP:端口。")
+                     ? "自动发现在这台设备上不可用（需要 Apple 的多播授权）。可以扫描网段，或手动输入对方的 IP:端口。"
+                     : "自动发现失败：\(error)。可以扫描网段，或手动输入对方的 IP:端口。")
             } else if model.isReceiving, model.discovering, model.peers.isEmpty {
-                Text("正在查找同一局域网内开启了接收的设备…")
+                Text("正在查找同一局域网内开启了接收的设备；几秒后没找到会自动扫描网段。")
             } else if !model.isReceiving {
                 Text("只发送不接收时不会监听端口。开启接收后会自动查找附近设备。")
             }
@@ -237,34 +285,79 @@ struct TransferView: View {
             if model.inbox.isEmpty {
                 Text(model.isRunning ? "还没有收到文件。" : "开启接收后，收到的文件会出现在这里。")
                     .foregroundStyle(.secondary)
+            } else {
+                inboxActions
             }
             ForEach(model.inbox) { receipt in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(receipt.name).lineLimit(1).truncationMode(.middle)
-                        Text(receipt.size.formatted(.byteCount(style: .file)))
-                            .font(.caption).foregroundStyle(.secondary)
+                inboxRow(receipt)
+                    .swipeActions {
+                        Button(role: .destructive) { Task { await model.deleteReceipt(receipt) } } label: {
+                            Label("删除", systemImage: "trash")
+                        }
                     }
-                    Spacer()
-                    if Self.isImage(receipt.name) {
-                        Button("加入照片列表") { Task { await model.importReceipt(receipt, into: library) } }
-                            .buttonStyle(.bordered).controlSize(.small)
+                    .contextMenu {
+                        Button("删除", role: .destructive) { Task { await model.deleteReceipt(receipt) } }
                     }
-                }
-                .swipeActions {
-                    Button(role: .destructive) { Task { await model.deleteReceipt(receipt) } } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                }
-                .contextMenu {
-                    Button("删除", role: .destructive) { Task { await model.deleteReceipt(receipt) } }
-                }
             }
         } header: {
             Text("收件箱")
         } footer: {
-            Text("收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。")
+            if let notice = model.notice {
+                Text(notice)
+            } else {
+                Text("收到的文件保存在 App 内部，加入照片列表后可以转换；删除只影响这里的副本。")
+            }
         }
+    }
+
+    private var inboxActions: some View {
+        HStack {
+            #if os(iOS)
+            Button("全部存入照片") { Task { await model.saveAllToPhotos() } }
+                .disabled(!model.inbox.contains { model.savesToPhotos($0) && !model.savedToPhotos.contains($0.id) })
+            #endif
+            Button("全部加入列表") { Task { await model.importAll(into: library) } }
+                .disabled(!model.inbox.contains { LivePhotoPairing.isStill($0.name) })
+            Spacer()
+            Button("清空", role: .destructive) { confirmClear = true }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(model.isBusy)
+    }
+
+    private func inboxRow(_ receipt: TransferReceipt) -> some View {
+        let pairedMovie = model.pairedMovie(for: receipt)
+        let isPairedMovie = model.isPairedMovie(receipt)
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(receipt.name).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 4) {
+                    if pairedMovie != nil {
+                        Text("Live Photo · ")
+                    } else if isPairedMovie {
+                        Text("Live Photo 视频，随同名照片一起处理 · ")
+                    }
+                    Text(receipt.size.formatted(.byteCount(style: .file)))
+                    if model.savedToPhotos.contains(receipt.id) {
+                        Text("· 已存入照片")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            #if os(iOS)
+            if model.savesToPhotos(receipt), !model.savedToPhotos.contains(receipt.id) {
+                Button("存入照片") { Task { await model.saveToPhotos(receipt) } }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+            #endif
+            if LivePhotoPairing.isStill(receipt.name) {
+                Button("加入列表") { Task { await model.importReceipt(receipt, into: library) } }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+        .disabled(model.isBusy)
     }
 
     // MARK: Helpers
@@ -278,9 +371,5 @@ struct TransferView: View {
         return library.items.compactMap(\.product).flatMap { product in
             [product.outputURL] + (product.pairedVideoURL.map { [$0] } ?? []) + product.extraVideoURLs
         }
-    }
-
-    private static func isImage(_ name: String) -> Bool {
-        ["heic", "heif", "jpg", "jpeg"].contains((name as NSString).pathExtension.lowercased())
     }
 }

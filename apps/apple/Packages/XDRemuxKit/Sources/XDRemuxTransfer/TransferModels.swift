@@ -36,6 +36,9 @@ public struct DiscoveredPeer: Codable, Hashable, Sendable, Identifiable {
     public var fingerprint: String
     public var id: String { fingerprint }
     public var peer: TransferPeer { TransferPeer(address: address, fingerprint: fingerprint) }
+    public init(alias: String, address: String, fingerprint: String) {
+        self.alias = alias; self.address = address; self.fingerprint = fingerprint
+    }
 }
 
 public struct DiscoverySnapshot: Codable, Sendable {

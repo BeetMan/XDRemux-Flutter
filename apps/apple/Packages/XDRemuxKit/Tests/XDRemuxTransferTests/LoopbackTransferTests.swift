@@ -70,9 +70,10 @@ final class LoopbackTransferTests: XCTestCase {
 }
 
 /// Opt-in: `XDREMUX_TRANSFER_PEER=192.168.1.20:53319 XDREMUX_TRANSFER_FILE=/path/x.heic swift test --filter ExternalPeer`
-/// sends one real file to a device that is receiving (the app on a phone or
-/// simulator, or LocalSend). Accept the offer on that device; the test waits
-/// up to two minutes for the ACK.
+/// sends one real file (or several, `:`-separated, e.g. a Live Photo pair)
+/// to a device that is receiving (the app on a phone or simulator, or
+/// LocalSend). Accept the offer on that device; the test waits up to two
+/// minutes for the ACK.
 final class ExternalPeerTests: XCTestCase {
     func testSendToExternalPeer() async throws {
         let env = ProcessInfo.processInfo.environment
@@ -86,7 +87,7 @@ final class ExternalPeerTests: XCTestCase {
         _ = try await sender.start(.init(root: root.appendingPathComponent("tx"), alias: "swift-test"))
         let peer = try await sender.probe(address: address)
         print("peer fingerprint:", peer.groupedFingerprint)
-        let id = try await sender.send(peer: peer, paths: [file])
+        let id = try await sender.send(peer: peer, paths: file.split(separator: ":").map(String.init))
         var final: TransferSummary?
         for _ in 0..<1200 where final == nil {
             let page = try await sender.snapshot()

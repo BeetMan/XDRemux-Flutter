@@ -1,8 +1,6 @@
 import SwiftUI
 import XDRemuxModel
-#if os(iOS)
-import Photos
-#else
+#if os(macOS)
 import AppKit
 #endif
 
@@ -74,35 +72,15 @@ struct FileExportButtons: View {
 
     #if os(iOS)
     private func saveToPhotos() async {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            message = L("没有写入照片库的权限，可在“设置”里允许。")
-            return
-        }
         let still = primary
         let pairedVideo = livePhoto ? files.dropFirst().first { $0.pathExtension.lowercased() == "mov" } : nil
         let clips = files.dropFirst().filter { $0 != pairedVideo && ["mp4", "mov"].contains($0.pathExtension.lowercased()) }
         do {
-            try await PHPhotoLibrary.shared().performChanges {
-                let request = PHAssetCreationRequest.forAsset()
-                let options = PHAssetResourceCreationOptions()
-                options.originalFilename = still.lastPathComponent
-                request.addResource(with: .photo, fileURL: still, options: options)
-                if let mov = pairedVideo {
-                    let movOptions = PHAssetResourceCreationOptions()
-                    movOptions.originalFilename = mov.lastPathComponent
-                    request.addResource(with: .pairedVideo, fileURL: mov, options: movOptions)
-                }
-            }
-            for clip in clips {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: clip, options: nil)
-                }
-            }
+            let live = try await PhotosLibrary.save(still: still, pairedVideo: pairedVideo, clips: clips)
             onSavedToPhotos?()
-            message = pairedVideo != nil ? L("已作为 Live Photo 保存到照片库。") : L("已作为新照片保存到照片库。")
+            message = live ? L("已作为 Live Photo 保存到照片库。") : L("已作为新照片保存到照片库。")
         } catch {
-            message = L("保存失败：\(error.localizedDescription)")
+            message = PhotosLibrary.describe(error)
         }
     }
     #else
