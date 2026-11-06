@@ -2,7 +2,7 @@
 # macOS counterpart of build_hap.ps1: build the OHOS hap with the OHOS-specific
 # pubspec variant, then always restore the mainline files the build rewrites.
 #
-# Usage: tools/ohos/build_hap.sh [--profile|--release] [--flutter-sdk DIR]
+# Usage: tools/ohos/build_hap.sh [--profile|--release] [--flutter-sdk DIR] [--no-transfer]
 #   SDK default: $XDREMUX_OHOS_FLUTTER_SDK, else ~/.sdks/flutter-ohos-3.41.9-1.0.2
 #   DevEco default: $DEVECO_HOME, else /Applications/DevEco-Studio.app/Contents
 #
@@ -10,15 +10,21 @@
 # apps/flutter/ohos/entry/libs/arm64-v8a/ (with libc++_shared.so), plugins
 # vendored by tools/ohos/fetch_plugins.sh, and Rosetta (the OHOS fork only
 # ships an x86_64 gen_snapshot for macOS hosts).
+#
+# The local-transfer library is built here (tools/native/build-transfer.sh
+# ohos) and the hap is checked for it; without it the app hides the transfer
+# entry. --no-transfer skips both for image-only builds.
 set -euo pipefail
 
 MODE=debug
+TRANSFER=1
 SDK="${XDREMUX_OHOS_FLUTTER_SDK:-$HOME/.sdks/flutter-ohos-3.41.9-1.0.2}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) MODE=profile ;;
     --release) MODE=release ;;
     --flutter-sdk) SDK="$2"; shift ;;
+    --no-transfer) TRANSFER=0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -49,6 +55,10 @@ if [ "$revision" = 62357a93d653bf844f730bb1f4b7cc9e2139d14e ]; then
   echo "OHOS $MODE platform kernel verified: $actual"
 else
   echo "warning: no pinned kernel checksum for SDK $revision; runtime compatibility is not verified." >&2
+fi
+if [ "$TRANSFER" = 1 ]; then
+  OHOS_NATIVE="${OHOS_NATIVE:-$DEVECO/sdk/default/openharmony/native}" \
+    bash "$ROOT/tools/native/build-transfer.sh" ohos
 fi
 if [ "$MODE" != debug ] && ! arch -x86_64 /usr/bin/true 2>/dev/null; then
   echo "Rosetta is required for the x86_64 OHOS gen_snapshot: softwareupdate --install-rosetta --agree-to-license" >&2
@@ -107,4 +117,9 @@ if [ "$status" -ne 0 ] && [ "$hap" -nt "$stamp" ] && grep -q 'Signing Configs' "
 fi
 rm -f "$log" "$stamp"
 [ "$status" -eq 0 ] || exit "$status"
+# Capture the listing first: grep -q exiting early would SIGPIPE unzip under pipefail.
+if [ "$TRANSFER" = 1 ] && ! grep -q 'libs/arm64-v8a/libxdremux_transfer.so' <<<"$(unzip -l "$hap")"; then
+  echo "libxdremux_transfer.so is missing from the hap; the transfer entry would be hidden" >&2
+  exit 1
+fi
 echo "unsigned hap: $hap"

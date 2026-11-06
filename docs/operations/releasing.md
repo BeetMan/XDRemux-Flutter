@@ -63,7 +63,7 @@ Linux 使用 `workflow_call` 复用构建；tag 后缀用于资产命名，并�
 鸿蒙不进 CI（见 `operations/ci.md` §2.5）。本地发布：
 
 1. `bash xdremux/rust/build_ohos.sh` 构建 Rust 核心，产物拷到 `apps/flutter/ohos/entry/libs/arm64-v8a/`
-2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）；macOS 用 `tools/ohos/build_hap.sh --profile`（需 Rosetta，见 `building.md`）
+2. `tools/ohos/build_hap.ps1 -Profile`（**PowerShell**，必须显式使用 profile；无参数是 debug/JIT）；macOS 用 `tools/ohos/build_hap.sh --profile`（需 Rosetta，见 `building.md`）。局域网传输库：macOS 脚本会自动跑 `tools/native/build-transfer.sh ohos` 并检查 hap 里有 `libxdremux_transfer.so`；Windows 需先在 Git Bash 里跑这条命令，否则 `build_hap.ps1` 直接报错。缺这个库时应用会隐藏传输入口，只有纯图片测试包才用 `--no-transfer` / `-NoTransfer` 跳过
 3. 取签名构建的 `entry-default-unsigned.hap` 中间产物作为公开包（hap 签名是 zip 块，unsigned 中间产物可直接被侧载工具签名）
 4. 手动挂到 Release 资产
 
