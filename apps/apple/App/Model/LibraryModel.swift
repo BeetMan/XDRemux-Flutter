@@ -379,7 +379,8 @@ final class LibraryModel {
             ImageLoading.thumbnail(at: url, maxPixelSize: 512)
         }.value
         do {
-            let (c, i, d) = try await (classification, inspection, details)
+            let (c, rawInspection, d) = try await (classification, inspection, details)
+            let i = await explainInspection(rawInspection, classification: c, path: path)
             let m = try? await motion
             let h = await huawei
             let snapshot = InspectionSnapshot(classification: c, inspection: i, details: d, motionPhoto: m, huawei: h)
@@ -392,6 +393,25 @@ final class LibraryModel {
                 if !keepState || item.state == .inspecting { item.state = .failed(L("读取失败：\(String(describing: error))")) }
             }
         }
+    }
+
+    /// The core answers "Failed to locate LHDR metadata block" for anything
+    /// that is not a ProXDR original: a photo from another phone, a file it
+    /// already converted, an edited copy. Say which, as the Flutter app does
+    /// at import, instead of showing the English core message.
+    private func explainInspection(_ report: ConversionReport, classification: Classification,
+                                   path: String) async -> ConversionReport {
+        guard !report.success, let raw = report.errorMessage, raw.contains("Failed to locate LHDR") else { return report }
+        let message: String
+        if (try? await engine.verifyOutput(path: path)) == true {
+            message = L("已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。")
+        } else if classification.hdrKind == nil {
+            message = L("不是 OPPO ProXDR / Ultra HDR 照片，无法转换。")
+        } else {
+            message = L("没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。")
+        }
+        return ConversionReport(success: false, mode: report.mode, family: report.family,
+                                edrScale: report.edrScale, gainMapMax: report.gainMapMax, errorMessage: message)
     }
 
     // MARK: - Convert

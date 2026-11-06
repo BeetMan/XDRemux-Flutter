@@ -10,7 +10,8 @@ import XDRemuxModel
 /// core and re-decoding every thumbnail. Lives under Caches: a purge just
 /// means the next launch inspects again.
 struct InspectionSnapshot: Codable, Equatable {
-    static let version = 1
+    // 2: inspection failures carry the explained message, not the core's.
+    static let version = 2
     var version = InspectionSnapshot.version
     var classification: Classification?
     var inspection: ConversionReport?

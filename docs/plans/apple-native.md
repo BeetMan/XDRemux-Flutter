@@ -482,6 +482,13 @@ Flutter 版生成的检查点文件可被原生版读取。
   `iPhone17,5 → iPhone 16e` 表；模拟器读 `SIMULATOR_MODEL_IDENTIFIER`；未知型号回退 `UIDevice.model`，macOS 仍是电脑名）——
   之前用 `UIDevice.name`，iOS 16 起没有权限只会得到"iPhone"；② 本机指纹改成折叠的 DisclosureGroup，默认不展开；
   ③ 详情页去掉"机型家族"行和"来源"里的 X6 / X7 标签，设置页"高级"里的机型家族选项也去掉（Flutter 版都不显示了，与 HDR 类型重复）；`ConversionConfig.family` 留在模型里给内核，默认 auto。
+- 真机反馈："从照片导入"几张照片后全部提示 "Failed to locate LHDR metadata block"。从 iPhone 16e 拷出
+  `Caches/XDRemux/inputs` 看：两张是华为 Pura X View 的普通 HEIC，一张是本 App 之前转换好的 `_iso.heic`——都不是
+  ProXDR 原片，内核对它们一律给这条英文错误，原生版原样显示。现在 `LibraryModel.explainInspection` 在检查失败时
+  再问一次 `verifyOutput`：已是 ISO 输出 → "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。"（Flutter 导入时
+  的同一判断）；没有 ProXDR 标记 → "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。"；其余 → "没有找到 ProXDR 的 HDR 数据，
+  可能是编辑或再保存过的副本。"。`InspectionSnapshot.version` 升到 2，让旧缓存里的英文消息重新检查。
+  实测：装回 iPhone 16e 后拷出 inspections 缓存，三张 `_iso` 副本显示"已是转换后"，两张华为显示"不是 ProXDR"。
 - 新增 `ExternalReceiverTests`：`XDREMUX_TRANSFER_RECEIVE=ip:port swift test --filter ExternalReceiver` 让 Mac 当接收方，
   全部接受并把文件拷到 `XDREMUX_TRANSFER_OUT`，是 `ExternalPeerTests` 的反向，用来给模拟器当对端。
 - 实测（Duo 模拟器折叠态 → Mac 接收测试）：手动输入 `192.168.31.175:53317` 连接确认后，"选择照片"选两张实况

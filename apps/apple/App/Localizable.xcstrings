@@ -5154,6 +5154,54 @@
           }
         }
       }
+    },
+    "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already a converted HDR photo. To apply new settings, pick the original capture."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。"
+          }
+        }
+      }
+    },
+    "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not an OPPO ProXDR / Ultra HDR photo; it cannot be converted."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。"
+          }
+        }
+      }
+    },
+    "没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No ProXDR HDR data found; this may be an edited or re-saved copy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
