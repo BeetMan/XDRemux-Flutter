@@ -36,7 +36,9 @@ xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Docume
 
 `build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
 skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
-HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
+HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge). Settings → 照片 →
+转换完成后自动存入照片 saves every finished photo to the library when a batch (or a single conversion) ends; photos
+already saved are skipped.
 
 ## Share Extension (iOS)
 

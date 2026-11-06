@@ -1362,6 +1362,63 @@ pub fn write_live_photo_movie(
 // Pair orchestration
 // ---------------------------------------------------------------------------
 
+/// Swaps the Exif MakerNote [note] in [tiff] for the enlarged [patched] note
+/// and updates the ExifIFD entry. A note that ends the TIFF is replaced in
+/// place. Otherwise growing it in place would shift whatever follows (the
+/// Photographic Styles converter writes the note before the ExifIFD) without
+/// fixing the offsets that point there, so the patched note is appended at
+/// the end and the entry repointed; Apple notes use note-relative offsets, so
+/// moving one is safe. All other TIFF bytes stay identical either way.
+fn replace_makernote(tiff: &[u8], note: &[u8], patched: &[u8]) -> Result<Vec<u8>, String> {
+    let le = tiff.len() >= 2 && &tiff[0..2] == b"II";
+    let u16v = |t: &[u8], o: usize| -> Option<u16> {
+        let b: [u8; 2] = t.get(o..o + 2)?.try_into().ok()?;
+        Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+    };
+    let u32v = |t: &[u8], o: usize| -> Option<u32> {
+        let b: [u8; 4] = t.get(o..o + 4)?.try_into().ok()?;
+        Some(if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+    };
+    let put32 = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+    let bad = || "malformed TIFF while patching the MakerNote".to_string();
+    let ifd0 = u32v(tiff, 4).ok_or_else(bad)? as usize;
+    let n0 = u16v(tiff, ifd0).ok_or_else(bad)? as usize;
+    let mut exif_off = None;
+    for k in 0..n0 {
+        let e = ifd0 + 2 + k * 12;
+        if u16v(tiff, e).ok_or_else(bad)? == 0x8769 {
+            exif_off = Some(u32v(tiff, e + 8).ok_or_else(bad)? as usize);
+        }
+    }
+    let exif_off = exif_off.ok_or("TIFF has no ExifIFD")?;
+    let en = u16v(tiff, exif_off).ok_or_else(bad)? as usize;
+    let entry = (0..en)
+        .map(|k| exif_off + 2 + k * 12)
+        .find(|&e| u16v(tiff, e) == Some(0x927C))
+        .ok_or("ExifIFD has no MakerNote entry")?;
+    let note_start = u32v(tiff, entry + 8).ok_or_else(bad)? as usize;
+    if tiff.get(note_start..note_start + note.len()) != Some(note) {
+        return Err("MakerNote is not where its entry points".into());
+    }
+    let mut out;
+    if note_start + note.len() == tiff.len() {
+        out = tiff[..note_start].to_vec();
+        out.extend_from_slice(patched);
+    } else {
+        out = tiff.to_vec();
+        // TIFF offsets must be word-aligned.
+        if out.len() % 2 == 1 {
+            out.push(0);
+        }
+        let moved = u32::try_from(out.len()).map_err(|_| bad())?;
+        out.extend_from_slice(patched);
+        out[entry + 8..entry + 12].copy_from_slice(&put32(moved));
+    }
+    let count = u32::try_from(patched.len()).map_err(|_| bad())?;
+    out[entry + 4..entry + 8].copy_from_slice(&put32(count));
+    Ok(out)
+}
+
 /// Compose an Apple Live Photo pair from a converted HEIC still and the
 /// Motion Photo video bytes. Returns (still_heic, video_mov, content_id).
 /// The still gains the Apple MakerNote; the video is rewritten as a MOV with
@@ -1406,51 +1463,7 @@ pub fn make_live_photo(
         .filter(|note| note.starts_with(b"Apple iOS\0\0\x01"));
     if let Some(note) = apple_note {
         let patched = append_live_photo_entry(&note, &content_id)?;
-        // Splice the enlarged note back into the TIFF at the same position:
-        // everything before and after the note bytes is preserved verbatim.
-        let note_start = tiff
-            .windows(note.len())
-            .position(|w| w == note)
-            .ok_or("appended note not found in TIFF")?;
-        let mut spliced = Vec::with_capacity(tiff.len() - note.len() + patched.len());
-        spliced.extend_from_slice(&tiff[..note_start]);
-        spliced.extend_from_slice(&patched);
-        spliced.extend_from_slice(&tiff[note_start + note.len()..]);
-        // The ExifIFD entry's count field still says the OLD note length;
-        // patch it to the new length so readers see the appended entry.
-        let le = &tiff[0..2] == b"II";
-        let u16v = |t: &[u8], o: usize| -> u16 {
-            let b: [u8; 2] = t[o..o + 2].try_into().unwrap();
-            if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) }
-        };
-        let u32v = |t: &[u8], o: usize| -> u32 {
-            let b: [u8; 4] = t[o..o + 4].try_into().unwrap();
-            if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
-        };
-        let ifd0 = u32v(tiff, 4) as usize;
-        let n0 = u16v(tiff, ifd0) as usize;
-        let mut exif_off = None;
-        for k in 0..n0 {
-            let e = ifd0 + 2 + k * 12;
-            if u16v(tiff, e) == 0x8769 {
-                exif_off = Some(u32v(tiff, e + 8) as usize);
-            }
-        }
-        if let Some(exif_off) = exif_off {
-            let en = u16v(tiff, exif_off) as usize;
-            for k in 0..en {
-                let e = exif_off + 2 + k * 12;
-                if u16v(tiff, e) == 0x927C {
-                    let bytes = if le {
-                        (patched.len() as u32).to_le_bytes().to_vec()
-                    } else {
-                        (patched.len() as u32).to_be_bytes().to_vec()
-                    };
-                    spliced[e + 4..e + 8].copy_from_slice(&bytes);
-                    break;
-                }
-            }
-        }
+        let spliced = replace_makernote(tiff, &note, &patched)?;
         tiff_mut = Some(spliced);
         paired = true;
     }
@@ -1506,6 +1519,61 @@ fn uuid_v4() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Big-endian TIFF: IFD0 -> ExifIFD with one MakerNote entry. With
+    /// [note_first] the note sits before the ExifIFD, as the Photographic
+    /// Styles converter writes it; otherwise it ends the TIFF.
+    fn tiff_with_note(note: &[u8], note_first: bool) -> Vec<u8> {
+        let mut t = b"MM\0\x2a\0\0\0\x08".to_vec();
+        let ifd0 = 8usize;
+        let ifd0_len = 2 + 12 + 4;
+        let exif_len = 2 + 12 + 4;
+        let (note_off, exif_off) = if note_first {
+            (ifd0 + ifd0_len, ifd0 + ifd0_len + note.len())
+        } else {
+            (ifd0 + ifd0_len + exif_len, ifd0 + ifd0_len)
+        };
+        let entry = |tag: u16, typ: u16, count: u32, value: u32| {
+            let mut e = tag.to_be_bytes().to_vec();
+            e.extend_from_slice(&typ.to_be_bytes());
+            e.extend_from_slice(&count.to_be_bytes());
+            e.extend_from_slice(&value.to_be_bytes());
+            e
+        };
+        t.extend_from_slice(&1u16.to_be_bytes());
+        t.extend(entry(0x8769, 4, 1, exif_off as u32));
+        t.extend_from_slice(&[0; 4]);
+        let mut exif = 1u16.to_be_bytes().to_vec();
+        exif.extend(entry(0x927C, 7, note.len() as u32, note_off as u32));
+        exif.extend_from_slice(&[0; 4]);
+        if note_first {
+            t.extend_from_slice(note);
+            t.extend(exif);
+        } else {
+            t.extend(exif);
+            t.extend_from_slice(note);
+        }
+        t
+    }
+
+    #[test]
+    fn replacing_a_note_before_the_exif_ifd_keeps_it_readable() {
+        let note = b"Apple iOS\0\0\x01MM\0\0".to_vec();
+        let patched = b"Apple iOS\0\0\x01MM\0\0-longer-note-with-cid".to_vec();
+        for note_first in [true, false] {
+            let tiff = tiff_with_note(&note, note_first);
+            let out = replace_makernote(&tiff, &note, &patched).unwrap();
+            assert_eq!(read_makernote_bytes(&out).unwrap(), Some(patched.clone()));
+            // Apart from the MakerNote entry's count/offset, nothing that was
+            // there before the note grew moves.
+            let entry = if note_first { 26 + note.len() + 2 } else { 26 + 2 };
+            let keep = if note_first { tiff.len() } else { tiff.len() - note.len() };
+            let (mut a, mut b) = (out[..keep].to_vec(), tiff[..keep].to_vec());
+            a[entry + 4..entry + 12].fill(0);
+            b[entry + 4..entry + 12].fill(0);
+            assert_eq!(a, b, "note_first={note_first}");
+        }
+    }
 
     fn minimal_tiff() -> Vec<u8> {
         // II, magic 42, IFD0 at 8 with two entries: Make (ASCII, inline) and

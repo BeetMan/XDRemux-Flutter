@@ -448,6 +448,24 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 未验证：iOS 真机（模拟器里 VideoToolbox 给的是宿主 Mac 的编码器，路径能跑但不代表真机）；大样本上的整体提速比例；OPPO 兼容模式输出的尾部与 tmap（装配由内核
   按 `oppo_compat` 处理，逻辑与 Flutter 相同，但本轮只测了 Apple 标准）。
 
+**转换后自动存入照片（2026-11-06，分支 `feat/apple-auto-save-photos`）**
+
+- `ConversionConfig.autoSaveToGallery` 一直在配置里（与 Flutter 同键），这次接上：iOS 设置页新增"照片"段的开关
+  "转换完成后自动存入照片"。macOS 没有这一段（输出目录即成品）。
+- `LibraryModel.saveAllToPhotos()`：按队列顺序把每个 `.done` 且 `savedToPhotos == false` 的照片交给
+  `PhotosLibrary.save(_ product:)`（输出 + 配对 `.mov` 作为一个 Live Photo，额外片段各自成视频资产），成功即
+  `markSavedToPhotos`（写进队列日志，重启后不重复存）。第一个失败就停下，用 `notice` 弹一次
+  "已存入照片 N 张；X 未存入：原因"（最常见是没授权），已存入的保留标记。
+- 触发时机：`convertAll` 的任务组结束后存一次（与 Flutter 批量结束后 `_saveAllToGallery` 一致）；单张"转换这张"
+  （没有批量在跑时）完成后立即存。`reconvert` 清掉 `savedToPhotos`，重转的结果会再存一次。
+- 与 Flutter 的差别：Flutter 每次批量结束都把全部 converted 条目重新保存（不去重，靠相册覆盖）；原生版按
+  `savedToPhotos` 去重，手动点过"保存到照片"的也不再自动存。Flutter 的 `_galleryAlbum` 分相册没有对应——原生版一直
+  不建相册。
+- 实测（Duo 模拟器）：开关打开后，对一张已完成的照片"重新转换"→"全部转换"，结束后详情按钮直接变成"已保存到照片"，
+  没有手动点击；再"重新转换"→"转换这张"同样自动存入；照片 App 胶片条末尾多出两份该照片。
+- 未验证：真机（授权弹窗出现在首次自动存入时，模拟器里早已授权）；Live Photo / 动态照片输出走自动存入；存入失败时的
+  `notice` 文案（模拟器没有制造失败场景）。
+
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
