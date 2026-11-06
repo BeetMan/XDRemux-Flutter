@@ -190,6 +190,8 @@ export class TransferSession {
   public discoveryEnabled: boolean = false;
   public discoveryError: string = '';
   public peers: Array<TransferPeer> = [];
+  /** Peers found by the subnet scan; kept across multicast updates. */
+  private readonly scanned: Map<string, TransferPeer> = new Map<string, TransferPeer>();
   public offers: Array<TransferOffer> = [];
   public receipts: Array<TransferReceipt> = [];
   public activities: Array<TransferActivity> = [];
@@ -247,6 +249,21 @@ export class TransferSession {
     this.discoveryEnabled = snapshot !== undefined && snapshot['enabled'] === true;
     this.discoveryError = snapshot === undefined ? '' : str(snapshot['error']);
     this.peers = parseTransferPeers(data);
+    this.mergeScanned();
+  }
+
+  public addScannedPeer(peer: TransferPeer): void {
+    if (peer.fingerprint.toUpperCase() === this.fingerprint.toUpperCase()) return;
+    this.scanned.set(peer.fingerprint.toUpperCase(), peer);
+    this.mergeScanned();
+  }
+
+  private mergeScanned(): void {
+    for (const [fingerprint, peer] of this.scanned) {
+      if (!this.peers.some((known: TransferPeer): boolean => known.fingerprint.toUpperCase() === fingerprint)) {
+        this.peers = [...this.peers, peer];
+      }
+    }
   }
 
   public setReceipts(data: Object | null): void {

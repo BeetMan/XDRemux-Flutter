@@ -147,6 +147,20 @@ export class TransferController {
     this.onChange();
   }
 
+  /** Identify a LocalSend endpoint by address ("IP:port"); discovery only, no trust. */
+  public async probe(address: string, timeoutMs: number = 5000): Promise<TransferPeer> {
+    const data: Record<string, Object> | null =
+      await this.command({ command: 'probe', address: address }, timeoutMs) as Record<string, Object> | null;
+    const fingerprint: Object | undefined = data?.['fingerprint'];
+    const reported: Object | undefined = data?.['address'];
+    if (typeof fingerprint !== 'string' || fingerprint.length === 0) throw new Error('对方不是 LocalSend 设备');
+    return {
+      alias: typeof data?.['alias'] === 'string' ? data['alias'] as string : address.split(':')[0],
+      address: typeof reported === 'string' && reported.length > 0 ? reported : address,
+      fingerprint: fingerprint
+    };
+  }
+
   public async refreshReceipts(): Promise<void> {
     this.session.setReceipts(await this.command({ command: 'receipts', after: null, limit: 64 }));
     this.session.resyncNeeded = false;
