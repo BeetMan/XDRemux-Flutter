@@ -18,6 +18,9 @@ struct InspectionSnapshot: Codable, Equatable {
     var details: PhotoDetails?
     var motionPhoto: MotionPhotoInfo?
     var huawei: HuaweiPhotoInfo?
+    /// Not a ProXDR source (another phone's photo, a plain HEIC, a file the
+    /// app already converted): converts only through the Styles SDR path.
+    var plainSource: Bool?
 }
 
 struct InspectionCache: Sendable {

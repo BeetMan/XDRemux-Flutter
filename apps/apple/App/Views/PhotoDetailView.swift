@@ -343,9 +343,10 @@ struct PreviewCard: View {
 
     /// Hold to see the SDR base image, release to return to HDR. A button
     /// (not a toggle) so the comparison reads as a glance, like the
-    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down.
+    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down. Labelled
+    /// "HDR" for what the photo is; the badge says "SDR 效果" while held.
     private var sdrCompareButton: some View {
-        Label("SDR", systemImage: "circle.lefthalf.filled")
+        Label("HDR", systemImage: "circle.lefthalf.filled")
             .font(.caption.weight(.semibold))
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 10).padding(.vertical, 6)

@@ -489,6 +489,14 @@ Flutter 版生成的检查点文件可被原生版读取。
   的同一判断）；没有 ProXDR 标记 → "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。"；其余 → "没有找到 ProXDR 的 HDR 数据，
   可能是编辑或再保存过的副本。"。`InspectionSnapshot.version` 升到 2，让旧缓存里的英文消息重新检查。
   实测：装回 iPhone 16e 后拷出 inspections 缓存，三张 `_iso` 副本显示"已是转换后"，两张华为显示"不是 ProXDR"。
+- 再纠正：这类"普通照片"并不是不能转——内核 `sdr_fallback` 在请求摄影风格时把任何可解码的输入重建成标准容器
+  （`sdr_source`），所以 Apple 标准 + 摄影风格下华为照片、iPhone 照片、甚至 `_iso` 副本都能转（CLI 验证：两张都输出并
+  `verify` OK），Flutter 从不拦这些照片。原生版原先 `isConvertible` 只认检查通过，把它们一律挡住。现在
+  `InspectionSnapshot.plainSource` 记下这种来源，`PhotoItem.stylesRescue` 在 `outputMode == .apple` 且摄影风格 2/3 开时
+  为真（随配置变化重算），`isConvertible` 放行；状态文案为"可转换（摄影风格）"，没开时在说明后追加"选 Apple 标准并
+  开启摄影风格后可以转换。"；HDR 预览对 plainSource 跳过（没有风格时内核会失败）。
+  实测（Duo 模拟器）：开摄影风格后"全部转换"从灰变为 (3)，华为照片、`_iso` 副本、iPhone 实况三张都转换成功并 verify OK。
+- 详情页按住对比的按钮文字由 "SDR" 改为 "HDR"（按反馈）。
 - 新增 `ExternalReceiverTests`：`XDREMUX_TRANSFER_RECEIVE=ip:port swift test --filter ExternalReceiver` 让 Mac 当接收方，
   全部接受并把文件拷到 `XDREMUX_TRANSFER_OUT`，是 `ExternalPeerTests` 的反向，用来给模拟器当对端。
 - 实测（Duo 模拟器折叠态 → Mac 接收测试）：手动输入 `192.168.31.175:53317` 连接确认后，"选择照片"选两张实况

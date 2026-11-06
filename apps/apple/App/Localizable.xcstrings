@@ -461,9 +461,6 @@
         }
       }
     },
-    "SDR": {
-      "shouldTranslate": false
-    },
     "SDR 效果": {
       "localizations": {
         "en": {
@@ -5199,6 +5196,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。"
+          }
+        }
+      }
+    },
+    "可转换（摄影风格）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertible (Styles)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可转换（摄影风格）"
+          }
+        }
+      }
+    },
+    "%@选 Apple 标准并开启摄影风格后可以转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ It converts with Apple 标准 output and Photographic Styles on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@选 Apple 标准并开启摄影风格后可以转换。"
+          }
+        }
+      }
+    },
+    "HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR"
           }
         }
       }
