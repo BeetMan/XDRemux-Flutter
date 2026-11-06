@@ -724,8 +724,9 @@ extension _ReceiveTab on _TransferPageState {
             ],
           ),
         ),
+      // A loose Live Photo's MOV belongs to its still's card.
       for (final receipt in transfer.inbox.values)
-        _receiptCard(receipt, disabled),
+        if (!_isPairedMovie(receipt)) _receiptCard(receipt, disabled),
       if (transfer.moreInbox)
         TextButton(
           onPressed: disabled ? null : () => _run(() => transfer.loadInbox()),
@@ -847,15 +848,22 @@ extension _ReceiveTab on _TransferPageState {
                 onPressed: disabled
                     ? null
                     : () => _run(() async {
-                        if (await TransferExport.save(transfer, id, name) &&
-                            !TransferExport.viaShareSheet) {
+                        var saved = await TransferExport.save(transfer, id, name);
+                        if (saved && movie != null) {
+                          saved = await TransferExport.save(
+                            transfer,
+                            movie['id'] as String,
+                            movie['name'] as String,
+                          );
+                        }
+                        if (saved && !TransferExport.viaShareSheet) {
                           _notify(t('已导出', 'Exported'));
                         }
                       }),
                 label: Text(
                   TransferExport.viaShareSheet
                       ? t('分享或存储', 'Share or save')
-                      : live && PlatformX.isDesktop
+                      : isLivePhotoZip(name) && PlatformX.isDesktop
                       ? t('导出为 .pvt', 'Export as .pvt')
                       : t('导出文件', 'Export file'),
                 ),
@@ -868,6 +876,9 @@ extension _ReceiveTab on _TransferPageState {
                     : () => _run(() async {
                         if (await _confirmDelete(name)) {
                           await transfer.deleteReceipt(id);
+                          if (movie != null) {
+                            await transfer.deleteReceipt(movie['id'] as String);
+                          }
                         }
                       }),
                 label: Text(t('删除', 'Delete')),
