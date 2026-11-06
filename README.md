@@ -10,25 +10,25 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 
 [官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native)
 
-> 当前已发布跨平台版本：**v0.4.6（0.4.6+40）**。鸿蒙原生版：**0.5.3**，使用独立发布标签与安装包。
-> 本轮包含 Live Photo `.pvt` 包（默认开启）、摄影风格与实况同时使用的编辑修复、摄影风格 HDR 缩略图与 iPhone Duo 安全区修复，见 [0.4.6 更新说明](tools/installer/RELEASE_NOTES_v0.4.6.md)。
+> 当前已发布跨平台版本：**v0.4.7（0.4.7+41）**。鸿蒙原生版：**0.5.3**，使用独立发布标签与安装包。
+> 本轮新增局域网互传（兼容 LocalSend），并修复开启摄影风格时部分实况照片转换失败的问题，见 [0.4.7 更新说明](tools/installer/RELEASE_NOTES_v0.4.7.md)。
 > Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果取决于原始照片结构、系统版本和目标设备。请保留原图，先用少量照片验证自己的工作流。
 
 ## 下载与安装
 
-Flutter 跨平台版见 [v0.4.6 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.6)，鸿蒙原生 0.5.3 见其[独立发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3)。请选择对应平台的文件，侧载和 macOS 授权步骤见[安装说明](docs/operations/installing.md)：
+Flutter 跨平台版见 [v0.4.7 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.7)，鸿蒙原生 0.5.3 见其[独立发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3)。请选择对应平台的文件，侧载和 macOS 授权步骤见[安装说明](docs/operations/installing.md)：
 
 | 平台 / 版本 | 安装包 | 安装方式 |
 |---|---|---|
-| Windows x64 · Flutter | [0.4.6 Setup.exe](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-Windows-0.4.6-Setup.exe) | 运行安装器，无需另装 ffmpeg |
-| macOS · Apple Silicon · Flutter | [0.4.6 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-macOS-0.4.6.dmg) | 将应用拖入 Applications；当前包不支持 Intel Mac 转换 |
-| Linux x64 · Flutter（预览） | [0.4.6 AppImage](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-Linux-0.4.6-x64.AppImage) · [tar.gz](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-Linux-0.4.6-x64.tar.gz) | AppImage 赋予执行权限后运行；tar.gz 解压后运行 `./run.sh` 或 `./install.sh`（用户级安装）。需 GTK3 与 glibc ≥ 2.35（Ubuntu 22.04+） |
-| Android ARM64 · Flutter | [0.4.6 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-Android-0.4.6.apk) | Android API 24+，相同签名可覆盖升级；不支持 32 位或 x86_64 设备 |
-| iOS · Flutter | [0.4.6 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-iOS-0.4.6-unsigned.ipa) | iOS 15+，需自行签名侧载；Duo 功能要求相应新系统 |
-| HarmonyOS · Flutter | [0.4.6 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.6/XDRemux-HarmonyOS-0.4.6-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
+| Windows x64 · Flutter | [0.4.7 Setup.exe](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-Windows-0.4.7-Setup.exe) | 运行安装器，无需另装 ffmpeg |
+| macOS · Apple Silicon · Flutter | [0.4.7 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-macOS-0.4.7.dmg) | 将应用拖入 Applications；当前包不支持 Intel Mac 转换 |
+| Linux x64 · Flutter（预览） | [0.4.7 AppImage](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-Linux-0.4.7-x64.AppImage) · [tar.gz](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-Linux-0.4.7-x64.tar.gz) | AppImage 赋予执行权限后运行；tar.gz 解压后运行 `./run.sh` 或 `./install.sh`（用户级安装）。需 GTK3 与 glibc ≥ 2.35（Ubuntu 22.04+） |
+| Android ARM64 · Flutter | [0.4.7 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-Android-0.4.7.apk) | Android API 24+，相同签名可覆盖升级；不支持 32 位或 x86_64 设备 |
+| iOS · Flutter | [0.4.7 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-iOS-0.4.7-unsigned.ipa) | iOS 15+，需自行签名侧载；Duo 功能要求相应新系统 |
+| HarmonyOS · Flutter | [0.4.7 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-HarmonyOS-0.4.7-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
 | HarmonyOS · ArkUI 原生版 | [0.5.3 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.3/XDRemux-HarmonyOS-Native-0.5.3-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
 
-当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.6 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。请从上述官方发布页下载安装包。
+当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.7 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。请从上述官方发布页下载安装包。
 
 iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 两个当前附件都供开发自签使用，证书与 Profile 需匹配包名和目标设备，且受设备范围与有效期约束；它们不是免签包或应用市场上架包。Flutter 与原生版包名不同，签名配置不能直接混用。iOS 请使用适合自己设备的签名与侧载方式。
 
@@ -40,15 +40,14 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
 
 此命令仅清除该 App 的下载隔离标记；照片、文件访问权限仍需按系统提示单独授权。也可在「系统设置 → 隐私与安全性」中选择「仍要打开」。完整步骤见[安装与侧载说明](docs/operations/installing.md)。
 
-## 0.4.6 / 原生 0.5.3 本轮更新
+## 0.4.7 本轮更新
 
-- **Live Photo `.pvt` 包**：实况照片默认输出为一个 `.pvt` 包，Mac「照片」可直接导入为一张实况照片；iOS / macOS 直接分享该包，其他平台分享为 `.pvt.zip`。可在设置中关闭，恢复分开的 HEIC + MOV。
-- **摄影风格与实况**：「摄影风格 2」「摄影风格 3」都可以和实况一起使用，在苹果「照片」里能正常编辑，保存后实况保留；同时修复安卓实况编辑保存后实况部分丢失的问题。
-- **摄影风格缩略图**：改为 HDR 并与原图方向一致，Android、iOS 与鸿蒙使用 10-bit 编码；设置开关按 Apple 官方名称改为「摄影风格 2 / 3」。
-- **JPEG 与 Duo**：修复 OPPO Find N5 大师模式等 JPEG 无法转换；iPhone Duo 横屏竖栏在左侧、Home 指示条附近的布局修复。
-- **鸿蒙原生 0.5.3**：同步 0.4.6 内核，新增 `.pvt` 导出与分享，转换单张时保留实况；Flutter 鸿蒙继续提供独立 profile AOT 包。
+- **局域网互传**：同一 Wi-Fi 下手机和电脑直接收发照片和视频，兼容 LocalSend；设备按机型命名，找不到时自动扫描网段，也可手动输入 IP。实况照片收发后仍是一张实况，收件箱可预览、存入相册（iOS / Android）、加入转换队列。
+- **Live Photo**：修复开启摄影风格时，部分实况照片（如 OPPO Find X8 Ultra 普通拍照的 UHDR 实况）转换失败的问题。
+- **开源许可**：自 v0.4.6 起按 GPL-3.0-only 授权；设置中新增「开源许可」，安装包随附 `LICENSE` 与 `LICENSING.md`。
+- **鸿蒙**：Flutter 鸿蒙包同样带局域网互传；鸿蒙原生版仍为 0.5.3。
 
-完整变化见 [Flutter 0.4.6 更新记录](tools/installer/RELEASE_NOTES_v0.4.6.md)和[鸿蒙原生 0.5.3 发布说明](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3)。
+完整变化见 [Flutter 0.4.7 更新记录](tools/installer/RELEASE_NOTES_v0.4.7.md)，上一版见 [0.4.6 更新记录](tools/installer/RELEASE_NOTES_v0.4.6.md)。
 
 ## 选择照片的输出方式
 
@@ -210,6 +209,7 @@ Linux 桌面本地开发使用同一 Flutter 3.47.9。系统依赖为 clang、cm
 - [发版指南](docs/operations/releasing.md)：打包、签名边界与发布检查。
 - [一致性测试](docs/testing/conformance-suite.md)：结构验证、样片回归与测试流程。
 - [设备兼容矩阵](docs/validation/device-compat-matrix.md)：已验证样片、平台证据和已知问题。
+- [v0.4.7 更新记录](tools/installer/RELEASE_NOTES_v0.4.7.md)：局域网互传（LocalSend）、摄影风格下实况配对修复、GPL 许可声明。
 - [v0.4.6 更新记录](tools/installer/RELEASE_NOTES_v0.4.6.md)：Live Photo `.pvt`、摄影风格与实况编辑、Styles HDR 缩略图、Duo 安全区修复。
 - [v0.4.5 更新记录](tools/installer/RELEASE_NOTES_v0.4.5.md)：JPEG HDR/ICC、Duo、Apple 缩略图、Linux 及 Android ABI 修复。
 - [v0.4.4 更新记录](tools/installer/RELEASE_NOTES_v0.4.4.md)：Live Photo 导出、前摄人像、诊断、工具链与打包修复。
