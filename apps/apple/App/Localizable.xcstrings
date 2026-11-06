@@ -480,12 +480,6 @@
         }
       }
     },
-    "X6": {
-      "shouldTranslate": false
-    },
-    "X7": {
-      "shouldTranslate": false
-    },
     "XDRemux": {
       "shouldTranslate": false
     },
@@ -3157,22 +3151,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "本机指纹"
-          }
-        }
-      }
-    },
-    "机型家族": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Device family"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "机型家族"
           }
         }
       }

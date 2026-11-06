@@ -105,11 +105,6 @@ struct SettingsView: View {
 
                 Section("高级") {
                     Toggle("严格 ISO 21496-1 tmap", isOn: $model.config.strictTmap)
-                    Picker("机型家族", selection: $model.config.family) {
-                        Text("自动").tag(Family.auto)
-                        Text("X6").tag(Family.x6)
-                        Text("X7").tag(Family.x7)
-                    }
                 }
 
                 // Checkpoint interop only makes sense where both apps see the
