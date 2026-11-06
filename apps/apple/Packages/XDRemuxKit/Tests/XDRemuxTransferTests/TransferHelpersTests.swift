@@ -44,3 +44,12 @@ final class TransferHelpersTests: XCTestCase {
         await receiver.stop()
     }
 }
+
+final class DeviceModelTests: XCTestCase {
+    func testKnownAndUnknownModels() {
+        XCTAssertEqual(DeviceModel.marketingName("iPhone17,5"), "iPhone 16e")
+        XCTAssertEqual(DeviceModel.marketingName("iPhone18,4"), "iPhone Air")
+        XCTAssertNil(DeviceModel.marketingName("iPhone99,9"))
+        XCTAssertFalse(DeviceModel.identifier.isEmpty)
+    }
+}

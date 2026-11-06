@@ -148,10 +148,10 @@ struct TransferView: View {
             }
             if model.isReceiving, let ready = model.ready {
                 LabeledContent("本机地址", value: ready.address)
-                LabeledContent("本机指纹") {
+                // Only for a sender who wants to check it; folded by default.
+                DisclosureGroup("本机指纹") {
                     Text(TransferPeer(address: ready.address, fingerprint: ready.fingerprint).groupedFingerprint)
                         .font(.caption.monospaced())
-                        .multilineTextAlignment(.trailing)
                         .textSelection(.enabled)
                 }
             }

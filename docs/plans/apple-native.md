@@ -478,6 +478,10 @@ Flutter 版生成的检查点文件可被原生版读取。
 - `TransferModel.picks` 放在 `transfer/picks/<uuid>/` 下（选择器给的是临时副本），`addPicks` 同名去重，
   `removePick` / `clearPicks` 连目录一起删；`filesToSend` = 转换列表选择 + picks。
 - 顺手：Flutter 检查点导入 / 导出从 ⋯ 菜单挪到设置页末尾的"Flutter 版"段（仍只 macOS）。
+- 同轮按反馈再改三处：① 设备名默认值改为机型名（`DeviceModel.marketingName`，与 Flutter `modelName()` 同一张
+  `iPhone17,5 → iPhone 16e` 表；模拟器读 `SIMULATOR_MODEL_IDENTIFIER`；未知型号回退 `UIDevice.model`，macOS 仍是电脑名）——
+  之前用 `UIDevice.name`，iOS 16 起没有权限只会得到"iPhone"；② 本机指纹改成折叠的 DisclosureGroup，默认不展开；
+  ③ 详情页去掉"机型家族"行和"来源"里的 X6 / X7 标签（Flutter 版已不显示，与 HDR 类型重复），设置页的机型家族选项保留。
 - 新增 `ExternalReceiverTests`：`XDREMUX_TRANSFER_RECEIVE=ip:port swift test --filter ExternalReceiver` 让 Mac 当接收方，
   全部接受并把文件拷到 `XDREMUX_TRANSFER_OUT`，是 `ExternalPeerTests` 的反向，用来给模拟器当对端。
 - 实测（Duo 模拟器折叠态 → Mac 接收测试）：手动输入 `192.168.31.175:53317` 连接确认后，"选择照片"选两张实况

@@ -131,7 +131,9 @@ final class TransferModel {
 
     static var deviceName: String {
         #if os(iOS)
-        TransferAlias.clean(UIDevice.current.name) ?? UIDevice.current.model
+        // The model ("iPhone 16e"), as the Flutter app names phones;
+        // UIDevice.name is only "iPhone" without an entitlement.
+        DeviceModel.marketingName(DeviceModel.identifier) ?? UIDevice.current.model
         #else
         TransferAlias.clean(Host.current().localizedName) ?? "Mac"
         #endif

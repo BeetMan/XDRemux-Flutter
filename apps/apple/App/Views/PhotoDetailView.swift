@@ -127,7 +127,6 @@ struct PhotoDetailView: View {
                 InfoRow("拍摄时间", item.details?.dateTime)
                 InfoRow("曝光", item.details?.exposureSummary)
                 InfoRow("HDR 类型", item.classification?.hdrKind?.uppercased())
-                InfoRow("机型家族", item.classification?.family?.uppercased())
                 InfoRow("拍摄模式", captureModeName(item.classification?.modeKey))
                 InfoRow("分类状态", item.classification?.status)
                 if let i = item.inspection, i.success {
@@ -408,7 +407,9 @@ struct ResultSection: View {
                     if !product.extraVideoURLs.isEmpty {
                         InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "), singleLine: true)
                     }
-                    InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
+                    // The X6 / X7 family stays in the model for the core; like
+                    // the Flutter app, it is not shown (it duplicates the HDR kind).
+                    InfoRow("来源", product.outcome.mode?.uppercased())
                     InfoRow("校验", L("通过（可解码 + 结构检查）"))
                 }
                 ExportButtons(model: model, item: item, product: product)
