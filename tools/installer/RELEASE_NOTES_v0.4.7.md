@@ -15,6 +15,10 @@
 - iOS 和 Android 上传输过程中屏幕保持常亮，避免息屏后中断接收。
 - 支持 Windows、macOS、Linux、Android、iOS 和鸿蒙 Flutter 版。
 
+## Live Photo
+
+- 修复开启「摄影风格」时，部分实况照片（如 OPPO Find X8 Ultra 普通拍照的 UHDR 实况）转换失败、提示「Live Photo pair is missing or invalid」的问题（0.4.6 中存在）。
+
 ## 开源许可
 
 - 本项目自 v0.4.6 起按 GPL-3.0-only 授权，历史版本另行补充授权，详见仓库中的 `LICENSING.md`。
