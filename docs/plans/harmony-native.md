@@ -1,5 +1,13 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-11-07：发布原生 0.5.4（内核 0.4.7）
+
+- 用户要求发版并同步 0.4.7 内核。合并主线 `ce35efd`（含 v0.4.7 与 Live Photo MakerNote 修复 `ee6f97b`）；原生元数据升为 `0.5.4` / code `50400`，`.arkui`、API26 目标 / API18 最低兼容及持久化 schema 不变。
+- 本轮原生功能：「互传」Tab（LocalSend，发送/接收、网段扫描、手动 IP、实况照片分组与 `.pvt.zip` 解包、加入转换队列、存入图库/相册、屏幕常亮）、设置「开源许可」（GPL-3.0-only 与 XDRemux / x265 / LocalSend 许可全文）、`INTERNET` 与 `GET_NETWORK_INFO` 权限。
+- 在 macOS 从提交树导出干净的 `apps/harmony`，清空 `signingConfigs` 后 `devecocli build --product default --build-mode debug`（跳过签名）。unsigned HAP 15,700,662 字节，SHA256 `8D31F78E7AA042DFB5A078240E82FDC41C6FD4030E2C57AA5277858AEFFAC11A`；暂存核心 6,723,024 字节 / `3D04D1ADE1072635AFDE0D4237950B45626A9F2F68AA9ED1585AB7E56B5ACBC4`，互传库 6,738,248 字节 / `6D552CDBE1557BAD58EA157358E1FEB8933F4117DF2E880F763B4CE26D8A6A34`，包内剥离核心 5,281,232 字节 / `CA892331AD5379D70A7545B957954709B67B82701BEAE8181268BA4189EDCEF6`。
+- 校验：Rust 核心 305 passed / 3 ignored；19 份 Node、5 项 verifier、PS3 C++ 通过；HAP 身份/版本/API、`app.debug:true` / `buildMode:debug`、ZIP CRC、两项网络权限与三份许可文件、核心 `0.4.7`、桥接 32 个外部符号可解析，`hap-sign-tool verify-app` 报 No Hap Signing Block。
+- 真机 Pura X View 开发自签覆盖安装 0.5.4（50400）；此前同源构建已与 macOS LocalSend 1.18.2 验证发现、接收、实况分组、加入队列、从队列发送与手动 IP。未在真机验证「存入相册」、分享、选择照片发送、网段扫描发现及与 iPhone / Android LocalSend 的直接互传。
+
 ## 2026-10-31：发布原生 0.5.3（内核 0.4.6）
 
 - 用户在主线同步完成后要求发布下一版。合并 `release/0.4.6-prep`（`c649570`，含主线 `60b2b48`），共享 Rust 内核为 `0.4.6`；原生元数据升为 `0.5.3` / code `50300`，`.arkui`、API26 目标 / API18 最低兼容及持久化 schema 不变。
