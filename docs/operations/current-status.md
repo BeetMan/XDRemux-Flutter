@@ -10,7 +10,7 @@
 | 项 | 状态 | 依据 |
 |---|---|---|
 | Flutter 跨平台版 | **0.4.6（0.4.6+40）已发布**（2026-10-31，GitHub Latest） | `apps/flutter/pubspec.yaml:5`、标签 `v0.4.6`、`tools/installer/RELEASE_NOTES_v0.4.6.md` |
-| 鸿蒙原生版（ArkUI） | **0.5.3 已发布**（2026-10-31，独立标签 `harmony-v0.5.3`、独立 HAP） | `README.md:13`；过程记录在 `feat/harmony-native` 分支的 `docs/plans/harmony-native.md` |
+| 鸿蒙原生版（ArkUI） | **0.5.4 已发布**（2026-11-07，独立标签 `harmony-v0.5.4`、独立 HAP，内核 0.4.7） | `README.md:13`；过程记录在 `feat/harmony-native` 分支的 `docs/plans/harmony-native.md` |
 | 原生 Apple 版（SwiftUI） | **未发布**，在 `main` 的 `apps/apple/` 开发，P0–P2 与 P3 三批已完成 | `apps/apple/README.md`、`docs/plans/apple-native.md` |
 | 0.4.6 内容 | Live Photo `.pvt` 包（默认开启）、摄影风格 2/3 与实况同时使用的编辑修复（MOV 风格伴随轨道）、安卓 AAC 实况音频修复、风格 HDR 缩略图（Log + 增益图，Android/iOS/鸿蒙 10-bit）、每图 GTC 拟合 + Standard key 1 identity、MPF 无增益图 JPEG 按 SDR、iPhone Duo 安全区 | `tools/installer/RELEASE_NOTES_v0.4.6.md` |
 | 平台范围 | Windows x64、macOS Apple Silicon、Android arm64、iOS（未签名）、Linux x64（预览）、HarmonyOS Flutter（未签名） | `README.md` 下载表 |
@@ -32,7 +32,7 @@
 | 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
 |---|---|---|---|---|
 | `codex/local-transfer`（PR #29 open） | +40 / −54 | 10-30 | 0 | 设备间互传（vendor LocalSend），独立 crate `crates/xdremux-transfer*` + Flutter UI + Windows CI 门禁，不改 `xdremux/rust` 核心与 FFI。GitHub 显示 MERGEABLE；落后 main 54 个提交（含 0.4.6 全部改动），合并前应再 merge main 并重跑 CI。剩 Android 导出与 macOS/iOS 设备互通真机实测（**未验证**） |
-| `feat/harmony-native` | +112 / −8 | 10-31 | 1 文件（`README.md`） | 鸿蒙 ArkUI 原生工程，0.5.3 已发。长期分支，定期 merge main，不并回 main；与 Flutter 共用 Rust 核心，同步后需重建 `.so` 并复测 |
+| `feat/harmony-native` | +112 / −8 | 10-31 | 1 文件（`README.md`） | 鸿蒙 ArkUI 原生工程，0.5.4 已发（内核 0.4.7）。长期分支，定期 merge main，不并回 main；与 Flutter 共用 Rust 核心，同步后需重建 `.so` 并复测 |
 
 ### 2.3 研究分支（不直接合并）
 

@@ -10,13 +10,13 @@ Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖
 
 [官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native)
 
-> 当前已发布跨平台版本：**v0.4.7（0.4.7+41）**。鸿蒙原生版：**0.5.3**，使用独立发布标签与安装包。
+> 当前已发布跨平台版本：**v0.4.7（0.4.7+41）**。鸿蒙原生版：**0.5.4**，使用独立发布标签与安装包。
 > 本轮新增局域网互传（兼容 LocalSend），并修复开启摄影风格时部分实况照片转换失败的问题，见 [0.4.7 更新说明](tools/installer/RELEASE_NOTES_v0.4.7.md)。
 > Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果取决于原始照片结构、系统版本和目标设备。请保留原图，先用少量照片验证自己的工作流。
 
 ## 下载与安装
 
-Flutter 跨平台版见 [v0.4.7 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.7)，鸿蒙原生 0.5.3 见其[独立发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3)。请选择对应平台的文件，侧载和 macOS 授权步骤见[安装说明](docs/operations/installing.md)：
+Flutter 跨平台版见 [v0.4.7 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/v0.4.7)，鸿蒙原生 0.5.4 见其[独立发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4)。请选择对应平台的文件，侧载和 macOS 授权步骤见[安装说明](docs/operations/installing.md)：
 
 | 平台 / 版本 | 安装包 | 安装方式 |
 |---|---|---|
@@ -26,7 +26,7 @@ Flutter 跨平台版见 [v0.4.7 发布页](https://github.com/BeetMan/XDRemux-Fl
 | Android ARM64 · Flutter | [0.4.7 APK](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-Android-0.4.7.apk) | Android API 24+，相同签名可覆盖升级；不支持 32 位或 x86_64 设备 |
 | iOS · Flutter | [0.4.7 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-iOS-0.4.7-unsigned.ipa) | iOS 15+，需自行签名侧载；Duo 功能要求相应新系统 |
 | HarmonyOS · Flutter | [0.4.7 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-HarmonyOS-0.4.7-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
-| HarmonyOS · ArkUI 原生版 | [0.5.3 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.3/XDRemux-HarmonyOS-Native-0.5.3-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
+| HarmonyOS · ArkUI 原生版 | [0.5.4 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.4/XDRemux-HarmonyOS-Native-0.5.4-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
 
 当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.7 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。请从上述官方发布页下载安装包。
 
@@ -45,7 +45,7 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
 - **局域网互传**：同一 Wi-Fi 下手机和电脑直接收发照片和视频，兼容 LocalSend；设备按机型命名，找不到时自动扫描网段，也可手动输入 IP。实况照片收发后仍是一张实况，收件箱可预览、存入相册（iOS / Android）、加入转换队列。
 - **Live Photo**：修复开启摄影风格时，部分实况照片（如 OPPO Find X8 Ultra 普通拍照的 UHDR 实况）转换失败的问题。
 - **开源许可**：自 v0.4.6 起按 GPL-3.0-only 授权；设置中新增「开源许可」，安装包随附 `LICENSE` 与 `LICENSING.md`。
-- **鸿蒙**：Flutter 鸿蒙包同样带局域网互传；鸿蒙原生版仍为 0.5.3。
+- **鸿蒙**：Flutter 鸿蒙包同样带局域网互传；鸿蒙原生版同步发布 0.5.4，同样使用 0.4.7 内核，新增「互传」页并包含摄影风格修复，见 [原生版 0.5.4 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4)。
 
 完整变化见 [Flutter 0.4.7 更新记录](tools/installer/RELEASE_NOTES_v0.4.7.md)，上一版见 [0.4.6 更新记录](tools/installer/RELEASE_NOTES_v0.4.6.md)。
 
@@ -184,7 +184,7 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 **鸿蒙原生预览版**在 [`feat/harmony-native`](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native) 分支开发，采用 ArkTS / ArkUI，围绕「图库、队列、设置」组织界面。它共用 Rust 引擎，提供 HDR、摄影风格、人像与动态照片等核心能力；图库浏览、任务管理和导出交互则采用原生实现。
 
-原生版使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版 `io.github.beetman.xdremux` 共存。当前版本为 **0.5.3**，独立标签 `harmony-v0.5.3` 不代表跨平台主线已经升级到 0.5.3。两端共享转换核心，但界面、预览、相册和文件导出分别集成，不能把一端的验收视为另一端已经通过。原生界面、构建方式与兼容边界请以[原生版 README](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md)为准。
+原生版使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版 `io.github.beetman.xdremux` 共存。当前版本为 **0.5.4**，独立标签 `harmony-v0.5.4` 不代表跨平台主线已经升级到 0.5.4。两端共享转换核心，但界面、预览、相册和文件导出分别集成，不能把一端的验收视为另一端已经通过。原生界面、构建方式与兼容边界请以[原生版 README](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md)为准。
 
 ## 使用前需要了解
 
