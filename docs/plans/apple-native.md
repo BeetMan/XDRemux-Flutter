@@ -531,6 +531,10 @@ Flutter 版生成的检查点文件可被原生版读取。
   证书才能启动。用户亲自过了一遍：横竖屏两栏布局、相册导入与转换、自动存入照片、传输页（设备名回退 "iPad"，机型表只收
   iPhone，与 Flutter 一致）、分享面板入口，反馈都正常；从容器拉出的队列记录有一张 `IMG_1.heic` Apple 模式 uhdr 转换成功。
 - 未验证：macOS GUI 的"选择文件"仍只编译未点；真机自动发现（无多播授权）。
+- 已发布：#90 合入后在 main `555b882` 上用 `XDREMUX_SKIP_CORE=1 XDREMUX_SKIP_TRANSFER=1` 重新打包（内核仍是从 `ce35efd` 建的，
+  源码未变，脚本的落后检查通过），标签 `apple-v0.1.0`，`gh release create --prerelease --latest=false`，附 DMG
+  （sha256 `bbabdf72…`）、IPA（`58c19be3…`）、SHA256SUMS.txt、BUILD_RECORD.txt；Latest 仍为 v0.4.7，release.yml 未被
+  `apple-*` 标签触发。截图汇总在 `docs/screenshots/apple-native-0.1.0/`（macOS 窗口 + Duo 模拟器 Release 构建）。
 
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
