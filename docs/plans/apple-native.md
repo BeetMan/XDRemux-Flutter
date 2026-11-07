@@ -512,6 +512,25 @@ Flutter 版生成的检查点文件可被原生版读取。
   传输库 `XDRemuxTransfer.xcframework` 同理（`tools/apple/build_transfer_xcframework.sh`）。
 
 
+**发布准备：apple-v0.1.0（2026-11-06，分支 `release/apple-0.1.0-prep`）**
+
+- 用户决定原生版先发一版。定法照鸿蒙原生版：独立标签 `apple-v0.1.0`、标预发布、不接管 Flutter 的 Latest；版本沿用
+  `project.yml` 里的 0.1.0 / build 1（内核 0.4.7 写进说明），本地打包、手工上传，暂不做 CI 发布工作流。
+- 新增 `tools/apple/package_release.sh`：重建两个 xcframework（macos / ios / ios-sim，arm64；模拟器切片不发布但保住开发
+  流程），用 BUILD_RECORD 里的提交和 HEAD 比对 `xdremux/rust` 与传输 crate（锁文件除外）有无改动，落后即拒绝；xcodegen 后
+  macOS Release（ad-hoc 签名，`CODE_SIGN_IDENTITY=-`）、iOS `archive`（`CODE_SIGNING_ALLOWED=NO`）；核对两个包的版本 / bundle id、
+  内核字符串（归档后符号已剥离，不能用 `nm`，改查 "Failed to locate LHDR metadata block" 和 x265 字符串）、传输框架、iOS 的
+  `XDRemuxShare.appex`、macOS 不含 appex、`codesign -v --deep --strict` 与沙盒授权；再打 DMG（app + /Applications 链接 +
+  LICENSE / LICENSING.md）、IPA（Payload/）、BUILD_RECORD.txt、SHA256SUMS.txt 到 `apps/apple/build/release/0.1.0/`。
+- 发布说明 `tools/installer/RELEASE_NOTES_apple-v0.1.0.md`：功能、安装（macOS 去隔离命令同 Flutter 版；iOS 自签侧载、
+  Share Extension 依赖 App Group 签名）、验证范围、已知限制。README 加 Release 一节。
+- 实测：脚本从 main `ce35efd` 跑通，DMG 8.7 MB、IPA 5.9 MB；`spctl` 对 ad-hoc 包为 rejected（预期，说明里有去隔离步骤）；
+  从 DMG 拷出的 Release 包用 `--import <容器内样本> --convert-all` 启动，沙盒下转换出 `IMG20260802135928_iso.heic`，CLI
+  `verify` OK。
+- 未验证：iPad 真机（用户有设备，等接上后装开发签名包过一遍）；macOS GUI 的"选择文件"仍只编译未点；
+  iOS 真机上的 Share Extension（开发签名包一直用空 entitlements，没有 App Group）。
+
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
