@@ -1,4 +1,4 @@
-# XDRemux 原生 Apple 版 0.1.0（预发布）
+# XDRemux SwiftUI 0.1.0（预发布）
 
 iOS / macOS 的原生 SwiftUI 版，和 Flutter 版共用同一个 Rust 内核（`0.4.7`）。这是原生版的第一个安装包：
 Bundle ID `io.github.beetman.xdremux.swiftui`，与 Flutter 版（`io.github.beetman.xdremux`）是两个独立的应用，
