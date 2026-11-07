@@ -53,11 +53,12 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
 
 - 内核与传输库都按本次提交重新构建（见发布页附带的 BUILD_RECORD）；Swift 包测试通过。
 - iPhone 16e 真机：相册导入、普通照片 / 实况经摄影风格转换、自动存入照片。
+- iPad mini（A17 Pro）真机：横竖屏两栏布局、相册导入与转换、自动存入照片、局域网传输页、分享面板入口（开发签名包）。
 - iPhone Duo 模拟器：折叠 / 展开布局、局域网互传（与 Mac 互发 13 个文件字节一致）、收件箱实况还原。
 - macOS：转换、导出、Flutter 检查点互读。
 
 ## 已知限制 / 未验证
 
 - 未签名、未公证；没有 TestFlight 或 App Store 分发。
-- iPad 真机、iOS 真机上的 Share Extension（App Group 签名）、真机自动发现（无多播授权，走网段扫描）尚未在本版安装包上验证。
+- 真机自动发现（无多播授权，走网段扫描）尚未在本版安装包上验证；侧载工具重签后的 Share Extension 取决于它是否签上 App Group。
 - 没有应用内更新检查；新版本请看本项目 Releases。

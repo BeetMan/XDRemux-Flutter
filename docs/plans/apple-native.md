@@ -527,8 +527,10 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测：脚本从 main `ce35efd` 跑通，DMG 8.7 MB、IPA 5.9 MB；`spctl` 对 ad-hoc 包为 rejected（预期，说明里有去隔离步骤）；
   从 DMG 拷出的 Release 包用 `--import <容器内样本> --convert-all` 启动，沙盒下转换出 `IMG20260802135928_iso.heic`，CLI
   `verify` OK。
-- 未验证：iPad 真机（用户有设备，等接上后装开发签名包过一遍）；macOS GUI 的"选择文件"仍只编译未点；
-  iOS 真机上的 Share Extension（开发签名包一直用空 entitlements，没有 App Group）。
+- iPad mini（A17 Pro，`iPad16,1`）真机：同一提交的 Release 包用开发证书签名（空 entitlements）装上，首次要在 iPad 上信任
+  证书才能启动。用户亲自过了一遍：横竖屏两栏布局、相册导入与转换、自动存入照片、传输页（设备名回退 "iPad"，机型表只收
+  iPhone，与 Flutter 一致）、分享面板入口，反馈都正常；从容器拉出的队列记录有一张 `IMG_1.heic` Apple 模式 uhdr 转换成功。
+- 未验证：macOS GUI 的"选择文件"仍只编译未点；真机自动发现（无多播授权）。
 
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
