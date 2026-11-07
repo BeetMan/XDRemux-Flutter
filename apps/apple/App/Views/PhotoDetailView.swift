@@ -127,7 +127,6 @@ struct PhotoDetailView: View {
                 InfoRow("拍摄时间", item.details?.dateTime)
                 InfoRow("曝光", item.details?.exposureSummary)
                 InfoRow("HDR 类型", item.classification?.hdrKind?.uppercased())
-                InfoRow("机型家族", item.classification?.family?.uppercased())
                 InfoRow("拍摄模式", captureModeName(item.classification?.modeKey))
                 InfoRow("分类状态", item.classification?.status)
                 if let i = item.inspection, i.success {
@@ -344,9 +343,10 @@ struct PreviewCard: View {
 
     /// Hold to see the SDR base image, release to return to HDR. A button
     /// (not a toggle) so the comparison reads as a glance, like the
-    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down.
+    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down. Labelled
+    /// "HDR" for what the photo is; the badge says "SDR 效果" while held.
     private var sdrCompareButton: some View {
-        Label("SDR", systemImage: "circle.lefthalf.filled")
+        Label("HDR", systemImage: "circle.lefthalf.filled")
             .font(.caption.weight(.semibold))
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -408,7 +408,9 @@ struct ResultSection: View {
                     if !product.extraVideoURLs.isEmpty {
                         InfoRow("视频", product.extraVideoURLs.map(\.lastPathComponent).joined(separator: ", "), singleLine: true)
                     }
-                    InfoRow("来源", [product.outcome.family?.uppercased(), product.outcome.mode?.uppercased()].compactMap { $0 }.joined(separator: " · "))
+                    // The X6 / X7 family stays in the model for the core; like
+                    // the Flutter app, it is not shown (it duplicates the HDR kind).
+                    InfoRow("来源", product.outcome.mode?.uppercased())
                     InfoRow("校验", L("通过（可解码 + 结构检查）"))
                 }
                 ExportButtons(model: model, item: item, product: product)

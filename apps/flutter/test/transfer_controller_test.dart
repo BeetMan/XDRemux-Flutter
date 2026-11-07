@@ -844,6 +844,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('实况照片'), findsOneWidget);
+    // The MOV rides on its still's card instead of getting its own.
+    expect(find.text('IMG_7.MOV'), findsNothing);
+    expect(find.text('notes.txt'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('clear-inbox')));
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byKey(const ValueKey('confirm-clear-inbox')));

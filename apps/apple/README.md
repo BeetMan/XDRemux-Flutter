@@ -36,7 +36,9 @@ xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Docume
 
 `build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
 skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
-HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge).
+HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge). Settings → 照片 →
+转换完成后自动存入照片 saves every finished photo to the library when a batch (or a single conversion) ends; photos
+already saved are skipped.
 
 ## Share Extension (iOS)
 
@@ -131,8 +133,12 @@ The core is `crates/xdremux-transfer-ffi`, packaged as a dynamic framework by
 `tools/apple/build_transfer_xcframework.sh` (Rust 1.97.1; `XDREMUX_TRANSFER_SLICES="macos ios-sim"` for a dev box without
 device signing). The Swift side is the `XDRemuxTransfer` package target; `swift test --filter XDRemuxTransferTests` runs a
 loopback round trip, and `XDREMUX_TRANSFER_PEER=ip:port XDREMUX_TRANSFER_FILE=/path swift test --filter ExternalPeer`
-sends one file (or several, `:`-separated) to a device that is receiving. Multicast discovery needs Apple's multicast
+sends one file (or several, `:`-separated) to a device that is receiving; `XDREMUX_TRANSFER_RECEIVE=ip:port swift test
+--filter ExternalReceiver` is the other direction, a Mac that accepts every offer and copies the files into
+`XDREMUX_TRANSFER_OUT`. Multicast discovery needs Apple's multicast
 entitlement on a real iPhone; without it the page scans the /24 subnet on the LocalSend ports (automatically after a few
 quiet seconds, or from the "扫描网段" button) and still takes a typed `IP:port`. The device name other peers see is
 editable on the receive section; received photos can be saved to Photos (a still with a same-named `.mov`, or a `.pvt.zip` bundle as the Flutter app
-sends it, becomes one Live Photo) or queued, singly or all at once.
+sends it, becomes one Live Photo) or queued, singly or all at once. Besides the conversion list, the send section takes
+files picked with "选择照片" (the system photo picker, photos and videos; a Live Photo is sent as its still + `.mov` under
+the original name) or "选择文件".

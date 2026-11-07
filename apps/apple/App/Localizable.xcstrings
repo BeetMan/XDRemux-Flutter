@@ -461,9 +461,6 @@
         }
       }
     },
-    "SDR": {
-      "shouldTranslate": false
-    },
     "SDR 效果": {
       "localizations": {
         "en": {
@@ -479,12 +476,6 @@
           }
         }
       }
-    },
-    "X6": {
-      "shouldTranslate": false
-    },
-    "X7": {
-      "shouldTranslate": false
     },
     "XDRemux": {
       "shouldTranslate": false
@@ -3161,22 +3152,6 @@
         }
       }
     },
-    "机型家族": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Device family"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "机型家族"
-          }
-        }
-      }
-    },
     "来源": {
       "localizations": {
         "en": {
@@ -5029,6 +5004,246 @@
           "stringUnit": {
             "state": "translated",
             "value": "用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。"
+          }
+        }
+      }
+    },
+    "照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片"
+          }
+        }
+      }
+    },
+    "转换完成后自动存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Photos after conversion"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "转换完成后自动存入照片"
+          }
+        }
+      }
+    },
+    "批量转换结束后把成功的照片存入照片库，Live Photo 成对保存；已存入的不会重复保存。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When a batch finishes, successful photos are added to your photo library; Live Photos are saved as pairs. Photos already saved are not saved again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "批量转换结束后把成功的照片存入照片库，Live Photo 成对保存；已存入的不会重复保存。"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 张；%@ 未存入：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %1$lld to Photos; %2$@ was not saved: %3$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 张；%@ 未存入：%@"
+          }
+        }
+      }
+    },
+    "选择照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择照片"
+          }
+        }
+      }
+    },
+    "选择文件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择文件"
+          }
+        }
+      }
+    },
+    "无法读取所选文件：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not read the chosen file: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取所选文件：%@"
+          }
+        }
+      }
+    },
+    "Flutter 版": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter app"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flutter 版"
+          }
+        }
+      }
+    },
+    "与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads and writes the Flutter app's xdremux_checkpoint.jsonl, so either app can continue the other's queue on the same Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "与 Flutter 版互读 xdremux_checkpoint.jsonl，在同一台 Mac 上接着转对方的队列。"
+          }
+        }
+      }
+    },
+    "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Already a converted HDR photo. To apply new settings, pick the original capture."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。"
+          }
+        }
+      }
+    },
+    "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not an OPPO ProXDR / Ultra HDR photo; it cannot be converted."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不是 OPPO ProXDR / Ultra HDR 照片，无法转换。"
+          }
+        }
+      }
+    },
+    "没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No ProXDR HDR data found; this may be an edited or re-saved copy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。"
+          }
+        }
+      }
+    },
+    "可转换（摄影风格）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertible (Styles)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可转换（摄影风格）"
+          }
+        }
+      }
+    },
+    "%@选 Apple 标准并开启摄影风格后可以转换。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ It converts with Apple 标准 output and Photographic Styles on."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@选 Apple 标准并开启摄影风格后可以转换。"
+          }
+        }
+      }
+    },
+    "HDR": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HDR"
           }
         }
       }

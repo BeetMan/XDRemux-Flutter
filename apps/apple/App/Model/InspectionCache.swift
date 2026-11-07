@@ -10,13 +10,17 @@ import XDRemuxModel
 /// core and re-decoding every thumbnail. Lives under Caches: a purge just
 /// means the next launch inspects again.
 struct InspectionSnapshot: Codable, Equatable {
-    static let version = 1
+    // 2: inspection failures carry the explained message, not the core's.
+    static let version = 2
     var version = InspectionSnapshot.version
     var classification: Classification?
     var inspection: ConversionReport?
     var details: PhotoDetails?
     var motionPhoto: MotionPhotoInfo?
     var huawei: HuaweiPhotoInfo?
+    /// Not a ProXDR source (another phone's photo, a plain HEIC, a file the
+    /// app already converted): converts only through the Styles SDR path.
+    var plainSource: Bool?
 }
 
 struct InspectionCache: Sendable {

@@ -13,9 +13,6 @@ struct ContentView: View {
     @State private var showRoundTrip = false
     @State private var showOrganize = false
     @State private var showTransfer = false
-    @State private var importingCheckpoint = false
-    @State private var exportingCheckpoint = false
-    @State private var checkpointDocument = TextFileDocument(text: "")
     /// Regular width (iPad, unfolded phones): both columns up from the
     /// start. Left to its default the split view opens with the sidebar
     /// hidden on an unfolded phone, leaving a lone toolbar capsule.
@@ -181,13 +178,6 @@ struct ContentView: View {
         } message: {
             Text(model.notice ?? "")
         }
-        .fileImporter(isPresented: $importingCheckpoint, allowedContentTypes: [.json, .plainText, .data]) { result in
-            if case .success(let url) = result { Task { await model.importCheckpoint(url) } }
-        }
-        .fileExporter(isPresented: $exportingCheckpoint, document: checkpointDocument, contentType: .plainText,
-                      defaultFilename: FlutterCheckpoint.fileName) { result in
-            if case .failure(let error) = result { model.lastError = error.localizedDescription }
-        }
         // In-app language: Text keys resolve against this locale; model
         // strings go through L() (see L10n.swift). Last in the chain so the
         // sheets and alerts above inherit it too.
@@ -249,24 +239,6 @@ struct ContentView: View {
                 Label("局域网传输", systemImage: "wifi")
             }
             .help("与同一局域网内的 XDRemux / LocalSend 设备互传照片")
-            // Checkpoint interop only makes sense where both apps see the
-            // same paths; on iOS the two sandboxes cannot, so the entries
-            // would import as unreadable.
-            #if os(macOS)
-            Button {
-                importingCheckpoint = true
-            } label: {
-                Label("导入 Flutter 检查点…", systemImage: "square.and.arrow.down.on.square")
-            }
-            .help("读取 Flutter 版的 xdremux_checkpoint.jsonl，把它的队列接着转")
-            Button {
-                checkpointDocument = TextFileDocument(text: model.exportCheckpointJSONL())
-                exportingCheckpoint = true
-            } label: {
-                Label("导出 Flutter 检查点…", systemImage: "square.and.arrow.up.on.square")
-            }
-            .help("把当前队列写成 Flutter 版能读取的 xdremux_checkpoint.jsonl")
-            #endif
             Button {
                 showSettings = true
             } label: {

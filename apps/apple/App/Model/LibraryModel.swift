@@ -26,7 +26,13 @@ final class LibraryModel {
     private func applyPolicies() {
         for index in items.indices where items[index].state == .ready {
             items[index].policyReason = Self.policyReason(for: items[index], config: config)
+            items[index].stylesRescue = items[index].plainSource && Self.stylesPathAvailable(config)
         }
+    }
+
+    /// The core's SDR synthesis runs only for Apple output with Styles on.
+    private static func stylesPathAvailable(_ config: ConversionConfig) -> Bool {
+        config.outputMode == .apple && (config.applePhotographicStyles || config.applePhotographicStyles3)
     }
 
     private static func policyReason(for item: PhotoItem, config: ConversionConfig) -> String? {
@@ -153,6 +159,8 @@ final class LibraryModel {
             item.details = snapshot.details
             item.motionPhoto = snapshot.motionPhoto
             item.huawei = snapshot.huawei
+            item.plainSource = snapshot.plainSource ?? false
+            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(config)
             item.thumbnail = thumbnail
             if !keepState || item.state == .inspecting { item.state = .ready }
             item.policyReason = Self.policyReason(for: item, config: config)
@@ -379,10 +387,12 @@ final class LibraryModel {
             ImageLoading.thumbnail(at: url, maxPixelSize: 512)
         }.value
         do {
-            let (c, i, d) = try await (classification, inspection, details)
+            let (c, rawInspection, d) = try await (classification, inspection, details)
+            let (i, plain) = await explainInspection(rawInspection, classification: c, path: path)
             let m = try? await motion
             let h = await huawei
-            let snapshot = InspectionSnapshot(classification: c, inspection: i, details: d, motionPhoto: m, huawei: h)
+            let snapshot = InspectionSnapshot(classification: c, inspection: i, details: d, motionPhoto: m, huawei: h,
+                                              plainSource: plain)
             apply(snapshot, thumbnail: thumbnail, to: id, keepState: keepState)
             let cache = inspectionCache
             Task.detached(priority: .utility) { cache.store(id, snapshot: snapshot, thumbnail: thumbnail) }
@@ -392,6 +402,26 @@ final class LibraryModel {
                 if !keepState || item.state == .inspecting { item.state = .failed(L("读取失败：\(String(describing: error))")) }
             }
         }
+    }
+
+    /// The core answers "Failed to locate LHDR metadata block" for anything
+    /// that is not a ProXDR original: a photo from another phone, a file it
+    /// already converted, an edited copy. Say which, as the Flutter app does
+    /// at import, instead of showing the English core message. Such a photo
+    /// is a "plain source": it still converts through the Styles path.
+    private func explainInspection(_ report: ConversionReport, classification: Classification,
+                                   path: String) async -> (ConversionReport, plain: Bool) {
+        guard !report.success, let raw = report.errorMessage, raw.contains("Failed to locate LHDR") else { return (report, false) }
+        let message: String
+        if (try? await engine.verifyOutput(path: path)) == true {
+            message = L("已是转换后的 HDR 照片；如需应用新设置，请选择原始拍摄照片。")
+        } else if classification.hdrKind == nil {
+            message = L("不是 OPPO ProXDR / Ultra HDR 照片，无法转换。")
+        } else {
+            message = L("没有找到 ProXDR 的 HDR 数据，可能是编辑或再保存过的副本。")
+        }
+        return (ConversionReport(success: false, mode: report.mode, family: report.family,
+                                 edrScale: report.edrScale, gainMapMax: report.gainMapMax, errorMessage: message), true)
     }
 
     // MARK: - Convert
@@ -418,6 +448,7 @@ final class LibraryModel {
                 }
                 self?.update(id) { $0.state = .done(product) }
                 self?.discardPreview(id)
+                self?.autoSaveAfterConvert(id)
             } catch is CancellationError {
                 // The core stopped at its next tile; scratch is gone, nothing published.
                 self?.update(id) { $0.state = .ready }
@@ -458,6 +489,7 @@ final class LibraryModel {
                 }
             }
             convertAllTask = nil
+            if config.autoSaveToGallery { await saveAllToPhotos() }
         }
     }
 
@@ -502,7 +534,7 @@ final class LibraryModel {
     /// converts. Idempotent; the detail page calls it on appear.
     func preparePreview(_ id: PhotoItem.ID) async {
         guard let item = items.first(where: { $0.id == id }),
-              item.isConvertible, item.product == nil,
+              item.isConvertible, !item.plainSource, item.product == nil,
               item.previewState == .none, previewTasks[id] == nil else { return }
         let dir = directories.scratch.appendingPathComponent("previews", isDirectory: true)
         let output = dir.appendingPathComponent("\(id.uuidString).heic")
@@ -559,6 +591,47 @@ final class LibraryModel {
 
     func markSavedToPhotos(_ id: PhotoItem.ID) {
         update(id) { $0.savedToPhotos = true }
+    }
+
+    // MARK: - Photos auto-save (iOS)
+
+    /// Finished photos not yet in the library, in queue order.
+    var unsavedProducts: [PhotoItem] {
+        items.filter { $0.product != nil && !$0.savedToPhotos }
+    }
+
+    private var savingToPhotos = false
+
+    /// Settings → 转换完成后自动存入照片. A batch saves once at the end
+    /// (like Flutter); a photo converted on its own is saved right away.
+    private func autoSaveAfterConvert(_ id: PhotoItem.ID) {
+        #if os(iOS)
+        guard config.autoSaveToGallery, convertAllTask == nil else { return }
+        Task { await saveAllToPhotos() }
+        #endif
+    }
+
+    /// Saves every finished photo that is not in the library yet (Live
+    /// Photo pairs as one asset). The first failure stops the pass and is
+    /// reported once; the photos already saved keep their mark.
+    func saveAllToPhotos() async {
+        #if os(iOS)
+        guard !savingToPhotos else { return }
+        savingToPhotos = true
+        defer { savingToPhotos = false }
+        var saved = 0
+        for item in unsavedProducts {
+            guard let product = item.product else { continue }
+            do {
+                try await PhotosLibrary.save(product)
+                markSavedToPhotos(item.id)
+                saved += 1
+            } catch {
+                notice = L("已存入照片 \(saved) 张；\(item.sourceName) 未存入：\(PhotosLibrary.describe(error))")
+                return
+            }
+        }
+        #endif
     }
 
     // MARK: - Helpers
