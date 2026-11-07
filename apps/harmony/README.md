@@ -2,7 +2,11 @@
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
-## LocalSend device transfer (experimental, unreleased)
+## Native 0.5.4 release (2026-11-07)
+
+The native branch merges main `ce35efd`, so the shared Rust core is `0.4.7` (same as Flutter v0.4.7, including the Live Photo MakerNote fix for styled stills). Native app metadata is `0.5.4` / code `50400`; the `.arkui` identity and queue/settings schemas are unchanged. New: the 互传 tab (LocalSend device transfer, described below), Settings → 开源许可 with the GPL-3.0-only notice and the XDRemux, x265 and LocalSend license texts, and the `INTERNET` / `GET_NETWORK_INFO` permissions. See [0.5.4 release notes](RELEASE_NOTES_v0.5.4.md).
+
+## LocalSend device transfer (experimental)
 
 互传 is the third main tab (图库 / 队列 / 互传 / 设置), styled like the queue page: Send/Receive chips in the title bar, summary cards and queue-style item cards. It runs on the shared LocalSend adapter (`crates/xdremux-transfer*`, vendored LocalSend protocol, Apache-2.0; see `crates/xdremux-transfer/UPSTREAM.md`). `transfer_bridge.cpp` exposes the poll-only C ABI 1.3; `ets/transfer/TransferModel.ts` applies poll records, `TransferController.ts` correlates results, `TransferInbox.ts` holds inbox grouping, `.pvt.zip` validation, naming and subnet-scan rules (host tests: `tests/transfer_*_test.mjs`), and `TransferPanel.ets` is the tab.
 
@@ -49,7 +53,7 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.3` and version code `50300`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.4` and version code `50400`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
 
 The local gallery index is `filesDir/xdremux-gallery/library.json`; imported originals live under `filesDir/xdremux-gallery/items/`. Queue-owned inputs remain separate under the queue sandbox. Import copies are committed to the index only after the copied file is verified, and the index is replaced atomically.
 

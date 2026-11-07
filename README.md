@@ -1,8 +1,8 @@
 # XDRemux 鸿蒙原生版
 
-**当前版本：0.5.3** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
+**当前版本：0.5.4** · 原生开发分支：`feat/harmony-native` · HarmonyOS 7 / API 26 开发基准
 
-[下载鸿蒙原生版 0.5.3](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
+[下载鸿蒙原生版 0.5.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](apps/harmony/README.md) · [开发计划](docs/plans/harmony-native.md)
 
@@ -14,7 +14,7 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 <img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/12e107f2-1c13-4bd3-a8dc-77277cb77919" />
 
-应用围绕 **图库、队列、设置** 三个 Tab 展开：在图库中浏览和处理单张照片，在队列中管理批量任务，在设置中调整默认转换选项。界面采用鸿蒙原生组件，并在支持的系统上呈现沉浸式导航与材质效果。
+应用围绕 **图库、队列、互传、设置** 四个 Tab 展开：在图库中浏览和处理单张照片，在队列中管理批量任务，在互传中与同一 Wi-Fi 下的设备收发照片，在设置中调整默认转换选项。界面采用鸿蒙原生组件，并在支持的系统上呈现沉浸式导航与材质效果。
 
 > 原生版的功能和设备兼容性仍在持续完善。Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果以照片结构、系统版本和目标设备为准。
 
@@ -22,9 +22,9 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本见[最新发布](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
 
-原生 0.5.3 使用与 Flutter 0.4.6 相同的 Rust 0.4.6 转换核心。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮纳入 Live Photo 摄影风格配套轨与 AAC 音频修复、线性 HDR 风格缩略图，以及 MPF / ISO 21496 修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
+原生 0.5.4 使用与 Flutter 0.4.7 相同的 Rust 0.4.7 转换核心。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮新增与 Flutter 版共用的局域网互传（LocalSend），并纳入开启摄影风格时 Live Photo 配对失败的修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
 
-在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.3 更新说明](apps/harmony/RELEASE_NOTES_v0.5.3.md)列出了本轮变化和使用范围。
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.4 更新说明](apps/harmony/RELEASE_NOTES_v0.5.4.md)列出了本轮变化和使用范围。
 
 ## 图库：从浏览照片开始
 
@@ -67,6 +67,14 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 - 对符合条件的照片生成 Live Photo 配对文件，成对导出 HEIC 与 MOV，或导出 / 分享为 `.pvt` 包（`<名称>.pvt.zip`，在 Mac 上解压后「照片」可导入为一张 Live Photo）。在图库对动态照片点「转换单张」会在队列中单独转换并直接进入这些操作。
 
 Live Photo 的实际导入、播放和声音表现仍需在目标设备上验证。
+
+## 互传：在局域网内收发照片
+
+「互传」与 LocalSend 协议兼容，可以和同一 Wi-Fi 下运行 LocalSend 或 XDRemux 的手机、电脑直接互传，不经过云端。
+
+- **发送**：点选附近设备即可发送；可以从相册选择照片，也可以在队列详情里把转换结果「发送到其他设备」。找不到设备时会自动扫描网段，也可以手动输入对方 IP。
+- **接收**：手动打开「可被发现」后才会接收，每次有人发来文件都需要你确认。收件箱显示预览，iPhone 发来的实况照片（同名照片 + MOV）和 `.pvt.zip` 显示为一张实况照片，可以直接加入转换队列，或存入图库、存入相册、分享。
+- 接收开启后可以切到其他页面继续接收；应用切到后台时停止。传输过程中屏幕保持常亮。
 
 ## 设置：选择照片的输出方式
 
