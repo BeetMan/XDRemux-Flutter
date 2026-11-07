@@ -115,8 +115,28 @@ The core staticlib does not carry link flags: anything linking `XDRemuxCore` mus
 ## Identity
 
 Bundle ID `io.github.beetman.xdremux.swiftui`, distinct from the Flutter app
-(`io.github.beetman.xdremux`) so both install side by side. Release artefacts and signing are
-not set up yet (plan §5).
+(`io.github.beetman.xdremux`) so both install side by side. Signing and notarization are not set
+up (plan §5): releases are ad-hoc signed (macOS) and unsigned (iOS).
+
+## Release
+
+Like the HarmonyOS native app, releases are built on a developer Mac and uploaded by hand under
+their own tag (`apple-v<version>`, never `v*`, so the Flutter release workflow and the Latest
+release are untouched):
+
+```bash
+tools/apple/package_release.sh      # XDREMUX_SKIP_CORE=1 / XDREMUX_SKIP_TRANSFER=1 to reuse the built cores
+```
+
+It rebuilds both xcframeworks from the checked-out sources (and refuses a core whose
+`BUILD_RECORD.txt` predates a change to `xdremux/rust` or the transfer crates), builds the macOS
+Release app (ad-hoc) and an unsigned iOS archive, checks version / bundle id / embedded core /
+transfer framework / Share Extension, then writes `apps/apple/build/release/<version>/`:
+`XDRemux-Apple-macOS-<version>.dmg`, `XDRemux-Apple-iOS-<version>-unsigned.ipa`, `BUILD_RECORD.txt`
+and `SHA256SUMS.txt`. The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
+(and `CFBundleVersion`, in both targets) before packaging. Release notes live in
+`tools/installer/RELEASE_NOTES_apple-v<version>.md`; publish with
+`gh release create apple-v<version> --prerelease --latest=false -F <notes> <dmg> <ipa> SHA256SUMS.txt`.
 
 ## Language
 
