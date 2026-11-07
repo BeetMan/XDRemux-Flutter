@@ -504,6 +504,12 @@ Flutter 版生成的检查点文件可被原生版读取。
   13 个且字节数与原件一致；第一版把 metadata.plist 也带上了，过滤后再发 9 个文件确认 plist 不再出现。
 - 未验证：真机上的 `PhotosPicker` 与选择器文件名（模拟器的实况包名就是原文件名，真机预期相同）；macOS 端的
   "选择文件"只编译未点；收方 Flutter 对这对同名文件的配对显示（原生收件箱的配对已有）。
+- 真机追加（#87 合并前）：开摄影风格转实况报 "Live Photo pair is missing or invalid"，是内核侧问题，已由 #86 修在
+  `xdremux/rust`；但原生包里的 `XDRemuxCore.xcframework` 不在 git 里，不会随 main 自动更新，仍是 10 月底的旧内核。
+  用 `XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 xdremux/rust/build_apple.sh` 从 main
+  `a82731e` 重建（`Frameworks/XDRemuxCore.xcframework/BUILD_RECORD.txt` 记 rust_commit）后装回 iPhone 16e，转换成功。
+  规矩：内核（`xdremux/rust`）合入修复后，原生侧验证前先看 BUILD_RECORD 的 rust_commit 是否落后，落后就重建；
+  传输库 `XDRemuxTransfer.xcframework` 同理（`tools/apple/build_transfer_xcframework.sh`）。
 
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
