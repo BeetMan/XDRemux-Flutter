@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var showRoundTrip = false
     @State private var showOrganize = false
     @State private var showTransfer = false
+    @State private var confirmClearFinished = false
     /// Regular width (iPad, unfolded phones): both columns up from the
     /// start. Left to its default the split view opens with the sidebar
     /// hidden on an unfolded phone, leaving a lone toolbar capsule.
@@ -178,10 +179,30 @@ struct ContentView: View {
         } message: {
             Text(model.notice ?? "")
         }
+        // Cancel is the default button: macOS paints a destructive default
+        // red on red, and Return should not clear the list by accident.
+        .alert("清除已完成？", isPresented: $confirmClearFinished) {
+            Button("清除", role: .destructive) { model.clearFinished() }
+            Button("取消", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+        } message: {
+            Text(clearFinishedMessage)
+        }
         // In-app language: Text keys resolve against this locale; model
         // strings go through L() (see L10n.swift). Last in the chain so the
         // sheets and alerts above inherit it too.
         .environment(\.locale, model.config.language.localeIdentifier.map(Locale.init(identifier:)) ?? .autoupdatingCurrent)
+    }
+
+    /// Like Flutter's "清除已完成": the finished photos leave the list and
+    /// their imported copies go; the outputs stay where they were written.
+    private var clearFinishedMessage: String {
+        var text = L("从列表移出 \(model.finishedCount) 张已转换的照片并删除导入的副本；输出文件保留。")
+        #if os(iOS)
+        let unsaved = model.unsavedProducts.count
+        if unsaved > 0 { text += " " + L("其中 \(unsaved) 张尚未存入照片。") }
+        #endif
+        return text
     }
 
     /// HIG: a toolbar carries the few most-used actions and lets the system
@@ -221,6 +242,24 @@ struct ContentView: View {
             batchActionButton
         }
         ToolbarItemGroup(placement: .secondaryAction) {
+            #if os(iOS)
+            Button {
+                Task {
+                    let saved = await model.saveAllToPhotos()
+                    if saved > 0, model.notice == nil { model.notice = L("已存入照片 \(saved) 张") }
+                }
+            } label: {
+                Label("全部存入照片", systemImage: "photo.badge.arrow.down")
+            }
+            .disabled(model.unsavedProducts.isEmpty)
+            #endif
+            Button(role: .destructive) {
+                confirmClearFinished = true
+            } label: {
+                Label("清除已完成", systemImage: "checklist")
+            }
+            .disabled(model.finishedCount == 0)
+            .help("把已转换的照片移出列表；输出文件保留")
             Button {
                 showRoundTrip = true
             } label: {

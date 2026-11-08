@@ -537,6 +537,20 @@ Flutter 版生成的检查点文件可被原生版读取。
   `apple-*` 标签触发。截图汇总在 `docs/screenshots/apple-native-0.1.0/`（macOS 窗口 + Duo 模拟器 Release 构建）。
 
 
+**列表动作：全部存入照片 / 清除已完成（2026-11-08，分支 `feat/apple-list-actions`）**
+
+- 用户在 iPhone Air 上对照 Flutter 版提出三项缺失：一键保存已转换、清除已转换、队列里逐张设置。核对后前两项模型层已有
+  （`saveAllToPhotos()` 只被"自动存入"调用，`clearFinished()` 没接任何界面），本批只接界面；逐张设置两端都没有
+  （详情页的转换选项绑定的是全局 `config`，只有动态照片方式是逐张的），另开一批。
+- `ContentView` 工具栏 `.secondaryAction` 组前面加两项：iOS 的"全部存入照片"（`unsavedProducts` 为空时禁用，成功后提示
+  "已存入照片 N 张"，`saveAllToPhotos()` 改为返回本次存入数）；两端的"清除已完成"（`finishedCount == 0` 禁用，alert 确认，
+  正文给出张数，iOS 再提示其中几张尚未存入照片）。语义同 Flutter 的"清除已完成"：移出列表、删导入副本、输出文件保留。
+- 确认框用 `.alert` 而非 `.confirmationDialog`，并把"取消"设为默认按钮：macOS 27 下 confirmationDialog 把第一个按钮当默认，
+  破坏性按钮红底红字；alert 里"清除"是亮红字配暗红玻璃底（系统样式），回车不会误清。
+- 实测（macOS Debug，System Events 点击）：4 张已完成时图标可用，确认框文案 "从列表移出 4 张…"，清除后列表只剩 6 张可转换，
+  `Application Support/XDRemux/outputs/` 里 5 个输出文件仍在，图标随即变灰；再转 6 张后确认框计数更新为 6。
+- 未验证：iOS 真机（iPhone Air 当时 devicectl 显示 unavailable，装不上）；iOS 的"全部存入照片"按钮只过了通用 iOS 目标编译。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
