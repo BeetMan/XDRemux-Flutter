@@ -205,6 +205,11 @@ final class LibraryModel {
         items.contains { if case .converting = $0.state { return true } else { return false } }
     }
 
+    /// Photos with a finished output, whatever happened to it since.
+    var finishedCount: Int {
+        items.filter { $0.product != nil }.count
+    }
+
     // MARK: - Launch arguments
 
     /// `XDRemux --import a.heic b.heic [--convert-all]` imports files at
@@ -613,13 +618,15 @@ final class LibraryModel {
 
     /// Saves every finished photo that is not in the library yet (Live
     /// Photo pairs as one asset). The first failure stops the pass and is
-    /// reported once; the photos already saved keep their mark.
-    func saveAllToPhotos() async {
+    /// reported once; the photos already saved keep their mark. Returns
+    /// how many were saved this pass (always 0 on macOS).
+    @discardableResult
+    func saveAllToPhotos() async -> Int {
+        var saved = 0
         #if os(iOS)
-        guard !savingToPhotos else { return }
+        guard !savingToPhotos else { return 0 }
         savingToPhotos = true
         defer { savingToPhotos = false }
-        var saved = 0
         for item in unsavedProducts {
             guard let product = item.product else { continue }
             do {
@@ -628,10 +635,11 @@ final class LibraryModel {
                 saved += 1
             } catch {
                 notice = L("已存入照片 \(saved) 张；\(item.sourceName) 未存入：\(PhotosLibrary.describe(error))")
-                return
+                return saved
             }
         }
         #endif
+        return saved
     }
 
     // MARK: - Helpers

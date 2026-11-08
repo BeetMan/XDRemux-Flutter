@@ -5247,6 +5247,118 @@
           }
         }
       }
+    },
+    "清除已完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear completed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除已完成"
+          }
+        }
+      }
+    },
+    "清除已完成？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear completed?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除已完成？"
+          }
+        }
+      }
+    },
+    "清除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除"
+          }
+        }
+      }
+    },
+    "把已转换的照片移出列表；输出文件保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removes the converted photos from the list; the output files stay"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把已转换的照片移出列表；输出文件保留"
+          }
+        }
+      }
+    },
+    "已存入照片 %lld 张": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %lld to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已存入照片 %lld 张"
+          }
+        }
+      }
+    },
+    "从列表移出 %lld 张已转换的照片并删除导入的副本；输出文件保留。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removes %lld converted photos from the list and deletes their imported copies; the output files stay."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从列表移出 %lld 张已转换的照片并删除导入的副本；输出文件保留。"
+          }
+        }
+      }
+    },
+    "其中 %lld 张尚未存入照片。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld of them are not in Photos yet."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其中 %lld 张尚未存入照片。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
