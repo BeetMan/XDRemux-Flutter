@@ -41,8 +41,8 @@ targets:
         CFBundleDisplayName: XDRemux
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.1.1"
+        CFBundleVersion: "2"
         LSApplicationCategoryType: public.app-category.photography
         # Viewer-rank document types: Finder "Open With", Dock drop, iOS "Open in".
         CFBundleDocumentTypes:
@@ -116,8 +116,8 @@ targets:
         CFBundleDisplayName: XDRemux
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.1.1"
+        CFBundleVersion: "2"
         # xcodegen regenerates Info.plist from here, so the extension point
         # lives in this file rather than in a hand-written plist.
         NSExtension:
