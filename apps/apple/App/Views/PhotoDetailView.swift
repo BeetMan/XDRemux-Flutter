@@ -66,7 +66,7 @@ struct PhotoDetailView: View {
     @ViewBuilder
     private func sections(_ item: PhotoItem) -> some View {
         statusSection(item)
-        if item.isConvertible, item.product == nil {
+        if item.canConfigureOptions, item.product == nil {
             if item.isMotionPhoto { motionSection(item) }
             optionsSection(item)
         }
@@ -99,8 +99,7 @@ struct PhotoDetailView: View {
             }
         case .ready where !item.isConvertible:
             GroupBox {
-                Label(item.inspection?.errorMessage ?? "这张照片不是可转换的 ProXDR / Ultra HDR 文件。",
-                      systemImage: "info.circle")
+                Label(item.statusText, systemImage: "info.circle")
                     .foregroundStyle(.secondary)
             }
         default:
@@ -205,36 +204,44 @@ struct PhotoDetailView: View {
     }
 
     /// Same wording as the Flutter app's settings page.
-    private var stylesHint: LocalizedStringKey {
-        if model.config.applePhotographicStyles3 {
+    private func stylesHint(_ options: PhotoOptions) -> LocalizedStringKey {
+        if options.applePhotographicStyles3 {
             return "摄影风格 3 已包含摄影风格 2：色调、颜色、强度之外，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本。"
         }
-        if model.config.applePhotographicStyles {
+        if options.applePhotographicStyles {
             return "写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度。"
         }
         return "摄影风格数据让 Apple“照片”能像对 iPhone 照片一样调整色调、颜色和强度。"
     }
 
+    private func optionBinding<Value>(_ item: PhotoItem, _ keyPath: WritableKeyPath<PhotoOptions, Value>) -> Binding<Value> {
+        Binding(
+            get: { model.effectiveOptions(for: item)[keyPath: keyPath] },
+            set: { newValue in model.updateOptions(for: item.id) { $0[keyPath: keyPath] = newValue } }
+        )
+    }
+
     private func optionsSection(_ item: PhotoItem) -> some View {
-        GroupBox("转换选项") {
+        let options = model.effectiveOptions(for: item)
+        return GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("输出", selection: $model.config.outputMode) {
+                Picker("输出", selection: optionBinding(item, \.outputMode)) {
                     Text("OPPO 兼容").tag(OutputMode.oppo)
                     Text("Apple 标准").tag(OutputMode.apple)
                 }
                 .pickerStyle(.segmented)
 
-                Text(model.config.outputMode == .oppo
+                Text(options.outputMode == .oppo
                      ? "兼容 OPPO / 一加相册的标准文件格式，恢复原机结构与私有尾部数据，支持后续编辑。"
                      : "面向 Apple“照片”的兼容文件格式，不写入 OPPO 私有信息，支持继续调节摄影风格。")
                     .font(.caption).foregroundStyle(.secondary)
 
-                if model.config.outputMode == .apple {
-                    Toggle("摄影风格 2", isOn: $model.config.applePhotographicStyles)
-                        .disabled(model.config.applePhotographicStyles3)
-                    Toggle("摄影风格 3", isOn: $model.config.applePhotographicStyles3)
-                    Toggle("Apple 人像数据", isOn: $model.config.applePortrait)
-                    Text(stylesHint)
+                if options.outputMode == .apple {
+                    Toggle("摄影风格 2", isOn: optionBinding(item, \.applePhotographicStyles))
+                        .disabled(options.applePhotographicStyles3)
+                    Toggle("摄影风格 3", isOn: optionBinding(item, \.applePhotographicStyles3))
+                    Toggle("Apple 人像数据", isOn: optionBinding(item, \.applePortrait))
+                    Text(stylesHint(options))
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -246,9 +253,22 @@ struct PhotoDetailView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(item.state.isBusy)
+                .disabled(item.state.isBusy || !item.isConvertible)
             }
             .padding(.top, 4)
+        } label: {
+            HStack {
+                Text("转换选项")
+                Spacer()
+                if item.options != nil {
+                    Button("恢复默认") {
+                        model.setOptions(nil, for: item.id)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                    .disabled(item.state.isBusy)
+                }
+            }
         }
     }
 }

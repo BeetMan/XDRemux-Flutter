@@ -551,6 +551,15 @@ Flutter 版生成的检查点文件可被原生版读取。
   `Application Support/XDRemux/outputs/` 里 5 个输出文件仍在，图标随即变灰；再转 6 张后确认框计数更新为 6。
 - 未验证：iOS 真机（iPhone Air 当时 devicectl 显示 unavailable，装不上）；iOS 的"全部存入照片"按钮只过了通用 iOS 目标编译。
 
+**队列内逐张独立转换设置（2026-11-10，分支 `feat/apple-per-photo-options`）**
+
+- 解决上一批留下的第三项反馈：详情页的"转换选项"此前直接绑定全局 `model.config`，改一张照片会把整个队列和全局设置一起改掉；普通照片（`plainSource`）或被跳过策略拦截的华为 HDR 照片在全局为 OPPO 兼容时还会把"转换选项"整卡隐藏，必须去全局设置才能打开摄影风格。
+- `XDRemuxModel` 新增 `PhotoOptions`（`outputMode`、`applePhotographicStyles`、`applePhotographicStyles3`、`applePortrait`）与 `ConversionConfig.applying(_:)`；`QueueJournal.Record` 新增可选字段 `options: PhotoOptions?`（旧 `queue.json` 缺省解码为 `nil`，不升 schema）。
+- `PhotoItem.options` 为 `nil` 时跟随全局 `model.config`；在详情页拨动"输出 / 摄影风格 2 / 摄影风格 3 / Apple 人像数据"只写入当前照片的 `options`，并在卡片标题右侧提供"恢复默认"按钮回到跟随全局设置，列表行摘要同步追加该张的独立模式标记。
+- 华为准入（`HuaweiPhotoPolicy`）与普通照片风格重建（`stylesRescue`）改为按每张照片的 `effectiveConfig` 独立计算；`PhotoItem.canConfigureOptions` 让普通照片与华为 HDR 在未开启摄影风格时也保留"转换选项"卡片（仅禁用"转换这张"按钮），直接在单张详情里切到 Apple 标准 + 摄影风格即可放行转换。
+- 顺手完善"全部存入照片"按钮状态文案（主列表工具栏与局域网传输收件箱）：当已有转换完成 / 可存入项且全部已存入系统照片库时（例如开启了"转换完成后自动存入照片"），置灰按钮文案由"全部存入照片"切换为"已全部存入照片"（`checkmark` 图标）。
+- 验证：`swift test --filter XDRemuxModelTests` 58 项通过（含 `ConversionConfig.applying` 与 `QueueJournal` 读写往返）；macOS arm64 与 iOS Simulator 构建通过。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

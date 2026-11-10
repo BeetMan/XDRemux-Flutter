@@ -78,6 +78,34 @@ public enum MotionPhotoMode: String, Codable, CaseIterable, Sendable {
     case livePhotoPair, still, stillAndVideo
 }
 
+/// Per-photo override of the conversion options shown on the detail page.
+/// When `nil` on a queue item, the item follows the global `ConversionConfig`;
+/// once set on an item, changes to the global config or to other items leave
+/// this item's choice intact until reset.
+public struct PhotoOptions: Codable, Equatable, Sendable {
+    public var outputMode: OutputMode
+    public var applePhotographicStyles: Bool
+    public var applePhotographicStyles3: Bool
+    public var applePortrait: Bool
+
+    public init(outputMode: OutputMode = .oppo,
+                applePhotographicStyles: Bool = false,
+                applePhotographicStyles3: Bool = false,
+                applePortrait: Bool = false) {
+        self.outputMode = outputMode
+        self.applePhotographicStyles = applePhotographicStyles
+        self.applePhotographicStyles3 = applePhotographicStyles3
+        self.applePortrait = applePortrait
+    }
+
+    public init(from config: ConversionConfig) {
+        self.outputMode = config.outputMode
+        self.applePhotographicStyles = config.applePhotographicStyles
+        self.applePhotographicStyles3 = config.applePhotographicStyles3
+        self.applePortrait = config.applePortrait
+    }
+}
+
 /// The five bytes Rust reads. Everything else in `ConversionConfig` is
 /// front-end policy (output location, concurrency, naming, …).
 public struct RustConvertConfig: Equatable, Sendable {
@@ -169,5 +197,16 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
                 applePhotographicStyles: (applePhotographicStyles || applePhotographicStyles3) ? 1 : 0,
                 applePortrait: applePortrait ? 1 : 0)
         }
+    }
+
+    /// A copy with a photo's per-item option overrides applied (`self` unchanged when `options` is `nil`).
+    public func applying(_ options: PhotoOptions?) -> ConversionConfig {
+        guard let options else { return self }
+        var copy = self
+        copy.outputMode = options.outputMode
+        copy.applePhotographicStyles = options.applePhotographicStyles
+        copy.applePhotographicStyles3 = options.applePhotographicStyles3
+        copy.applePortrait = options.applePortrait
+        return copy
     }
 }

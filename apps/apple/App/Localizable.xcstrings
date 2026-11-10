@@ -4768,6 +4768,22 @@
         }
       }
     },
+    "已全部存入照片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All saved to Photos"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已全部存入照片"
+          }
+        }
+      }
+    },
     "全部加入列表": {
       "localizations": {
         "en": {

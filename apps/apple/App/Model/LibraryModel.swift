@@ -21,13 +21,25 @@ final class LibraryModel {
         }
     }
 
-    /// Re-evaluates the Huawei admission policy for every idle photo, e.g.
-    /// after Photographic Styles is switched on (which admits Huawei HDR).
+    /// Re-evaluates the Huawei admission policy and plain-source Styles
+    /// rescue for every idle photo against its effective config (global
+    /// defaults overlaid with any per-photo option overrides).
     private func applyPolicies() {
         for index in items.indices where items[index].state == .ready {
-            items[index].policyReason = Self.policyReason(for: items[index], config: config)
-            items[index].stylesRescue = items[index].plainSource && Self.stylesPathAvailable(config)
+            let effective = effectiveConfig(for: items[index])
+            items[index].policyReason = Self.policyReason(for: items[index], config: effective)
+            items[index].stylesRescue = items[index].plainSource && Self.stylesPathAvailable(effective)
         }
+    }
+
+    /// Global `config` overlaid with `item.options` (if set on the detail card).
+    func effectiveConfig(for item: PhotoItem) -> ConversionConfig {
+        config.applying(item.options)
+    }
+
+    /// The options shown on `item`'s detail card: its override, or the global defaults.
+    func effectiveOptions(for item: PhotoItem) -> PhotoOptions {
+        item.options ?? PhotoOptions(from: config)
     }
 
     /// The core's SDR synthesis runs only for Apple output with Styles on.
@@ -112,6 +124,7 @@ final class LibraryModel {
                                  inputURL: URL(fileURLWithPath: record.inputPath))
             item.savedToPhotos = record.savedToPhotos
             item.motionMode = record.motionMode
+            item.options = record.options
             switch record.status {
             case .pending, .running:
                 item.state = .inspecting
@@ -152,18 +165,19 @@ final class LibraryModel {
     private var inspectionCache: InspectionCache { InspectionCache(root: directories.inspections) }
 
     private func apply(_ snapshot: InspectionSnapshot, thumbnail: CGImage?, to id: PhotoItem.ID, keepState: Bool) {
-        let config = self.config
+        let baseConfig = self.config
         update(id) { item in
+            let effective = baseConfig.applying(item.options)
             item.classification = snapshot.classification
             item.inspection = snapshot.inspection
             item.details = snapshot.details
             item.motionPhoto = snapshot.motionPhoto
             item.huawei = snapshot.huawei
             item.plainSource = snapshot.plainSource ?? false
-            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(config)
+            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(effective)
             item.thumbnail = thumbnail
             if !keepState || item.state == .inspecting { item.state = .ready }
-            item.policyReason = Self.policyReason(for: item, config: config)
+            item.policyReason = Self.policyReason(for: item, config: effective)
         }
     }
 
@@ -188,6 +202,7 @@ final class LibraryModel {
             return QueueJournal.Record(id: item.id, sourceName: item.sourceName, inputPath: item.inputURL.path,
                                        status: status, outputPath: output, outcome: outcome, config: config,
                                        pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
+                                       options: item.options,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
         do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = L("无法保存队列状态：\(error.localizedDescription)") }
@@ -434,7 +449,7 @@ final class LibraryModel {
     func convert(_ id: PhotoItem.ID) async {
         guard let item = items.first(where: { $0.id == id }), !item.state.isBusy,
               conversionTasks[id] == nil else { return }
-        let config = self.config
+        let config = effectiveConfig(for: item)
         let job = ConversionJob(backend: engine, scratchRoot: directories.scratch, outputRoot: outputRoot)
         update(id) { $0.state = .converting(0); $0.savedToPhotos = false }
         let task = Task { [weak self] in
@@ -592,6 +607,23 @@ final class LibraryModel {
 
     func setMotionMode(_ mode: MotionPhotoMode, for id: PhotoItem.ID) {
         update(id) { $0.motionMode = mode }
+    }
+
+    func setOptions(_ options: PhotoOptions?, for id: PhotoItem.ID) {
+        let baseConfig = self.config
+        update(id) { item in
+            item.options = options
+            let effective = baseConfig.applying(options)
+            item.policyReason = Self.policyReason(for: item, config: effective)
+            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(effective)
+        }
+    }
+
+    func updateOptions(for id: PhotoItem.ID, _ mutate: (inout PhotoOptions) -> Void) {
+        guard let item = items.first(where: { $0.id == id }) else { return }
+        var opts = effectiveOptions(for: item)
+        mutate(&opts)
+        setOptions(opts, for: id)
     }
 
     func markSavedToPhotos(_ id: PhotoItem.ID) {

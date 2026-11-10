@@ -86,4 +86,22 @@ final class ConversionConfigTests: XCTestCase {
         XCTAssertEqual(r, RustConvertConfig(oppoCompat: 2, oppoCameraTail: 255, strictTmap: 0,
                                             applePhotographicStyles: 0, applePortrait: 0))
     }
+
+    func testApplyingPhotoOptionsOverridesOnlyPerItemFields() {
+        var base = ConversionConfig()
+        base.fileNameSuffix = "_custom"
+        base.maxConcurrentJobs = 2
+        XCTAssertEqual(base.applying(nil), base)
+
+        let opts = PhotoOptions(outputMode: .apple, applePhotographicStyles: false,
+                                applePhotographicStyles3: true, applePortrait: true)
+        let effective = base.applying(opts)
+        XCTAssertEqual(effective.outputMode, .apple)
+        XCTAssertFalse(effective.applePhotographicStyles)
+        XCTAssertTrue(effective.applePhotographicStyles3)
+        XCTAssertTrue(effective.applePortrait)
+        XCTAssertEqual(effective.fileNameSuffix, "_custom")
+        XCTAssertEqual(effective.maxConcurrentJobs, 2)
+        XCTAssertEqual(PhotoOptions(from: effective), opts)
+    }
 }
