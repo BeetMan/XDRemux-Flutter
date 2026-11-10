@@ -37,6 +37,9 @@ struct PhotoItem: Identifiable {
     var motionPhoto: MotionPhotoInfo?
     /// Per-photo override of `ConversionConfig.motionPhotoDefaultMode`.
     var motionMode: MotionPhotoMode?
+    /// Per-photo override of the conversion options on the detail card
+    /// (`nil` follows the global `LibraryModel.config`).
+    var options: PhotoOptions?
     /// Huawei HDR / portrait inspection; `nil` for everything else.
     var huawei: HuaweiPhotoInfo?
     /// Set when `HuaweiPhotoPolicy` keeps the photo out of the queue
@@ -69,6 +72,13 @@ struct PhotoItem: Identifiable {
     /// keeps it out of the queue.
     var isConvertible: Bool {
         (inspection?.success == true || stylesRescue) && policyReason == nil
+    }
+
+    /// True when the detail page should show the conversion options card:
+    /// a ProXDR source, or a plain / Huawei photo that becomes convertible
+    /// once Apple 标准 + 摄影风格 is switched on for it.
+    var canConfigureOptions: Bool {
+        inspection?.success == true || plainSource || huawei != nil
     }
 
     var statusText: String {
@@ -104,6 +114,20 @@ struct PhotoItem: Identifiable {
         if isMotionPhoto { parts.append(L("动态照片")) }
         if let huawei {
             parts.append(huawei.portraitReady ? L("华为人像 → Apple 人像") : L("华为 HDR"))
+        }
+        if let options {
+            switch options.outputMode {
+            case .oppo:
+                parts.append(L("OPPO 兼容"))
+            case .apple:
+                if options.applePhotographicStyles3 {
+                    parts.append(L("摄影风格 3"))
+                } else if options.applePhotographicStyles {
+                    parts.append(L("摄影风格 2"))
+                } else {
+                    parts.append(L("Apple 标准"))
+                }
+            }
         }
         return parts.joined(separator: " · ")
     }

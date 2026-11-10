@@ -366,8 +366,12 @@ struct TransferView: View {
     private var inboxActions: some View {
         HStack {
             #if os(iOS)
-            Button("全部存入照片") { Task { await model.saveAllToPhotos() } }
-                .disabled(!model.inbox.contains { model.savesToPhotos($0) && !model.savedToPhotos.contains($0.id) })
+            let hasSavable = model.inbox.contains { model.savesToPhotos($0) }
+            let hasUnsaved = model.inbox.contains { model.savesToPhotos($0) && !model.savedToPhotos.contains($0.id) }
+            Button(hasSavable && !hasUnsaved ? "已全部存入照片" : "全部存入照片") {
+                Task { await model.saveAllToPhotos() }
+            }
+            .disabled(!hasUnsaved)
             #endif
             Button("全部加入列表") { Task { await model.importAll(into: library) } }
                 .disabled(!model.inbox.contains { model.queues($0) })

@@ -243,13 +243,15 @@ struct ContentView: View {
         }
         ToolbarItemGroup(placement: .secondaryAction) {
             #if os(iOS)
+            let allSaved = model.finishedCount > 0 && model.unsavedProducts.isEmpty
             Button {
                 Task {
                     let saved = await model.saveAllToPhotos()
                     if saved > 0, model.notice == nil { model.notice = L("已存入照片 \(saved) 张") }
                 }
             } label: {
-                Label("全部存入照片", systemImage: "photo.badge.arrow.down")
+                Label(allSaved ? "已全部存入照片" : "全部存入照片",
+                      systemImage: allSaved ? "checkmark" : "photo.badge.arrow.down")
             }
             .disabled(model.unsavedProducts.isEmpty)
             #endif
