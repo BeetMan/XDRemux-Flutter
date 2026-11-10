@@ -560,6 +560,11 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 顺手完善"全部存入照片"按钮状态文案（主列表工具栏与局域网传输收件箱）：当已有转换完成 / 可存入项且全部已存入系统照片库时（例如开启了"转换完成后自动存入照片"），置灰按钮文案由"全部存入照片"切换为"已全部存入照片"（`checkmark` 图标）。
 - 验证：`swift test --filter XDRemuxModelTests` 58 项通过（含 `ConversionConfig.applying` 与 `QueueJournal` 读写往返）；macOS arm64 与 iOS Simulator 构建通过。
 
+**发布：apple-v0.1.1（2026-11-11，分支 `release/apple-0.1.1-prep`）**
+
+- 汇总 `apple-v0.1.0` 之后的两批改进（#95 列表工具栏「全部存入照片 / 清除已完成」、#96 队列内逐张独立转换设置与「已全部存入照片」状态文案），版本号升至 `0.1.1`（build `2`），内核与传输库仍为 `0.4.7`（`ce35efd`）。
+- 新增发布说明 `tools/installer/RELEASE_NOTES_apple-v0.1.1.md`，同步更新根 `README.md` 下载链接与版本说明。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
