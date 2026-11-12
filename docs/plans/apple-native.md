@@ -574,7 +574,8 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 构建号改为工程级 `CURRENT_PROJECT_VERSION`（主应用与扩展共用，`Info.plist` 引用它），`package_release.sh` 改读这个值。
 - iOS 权限文件 `App/XDRemux.entitlements` 只保留 App Group：原先的 `com.apple.security.app-sandbox` 等是 macOS 专用键，不在 iOS 描述文件里；macOS 仍用 `XDRemux-macOS.entitlements`，不变。
 - 实测：macOS Debug 构建通过，沙盒与网络权限仍在、构建号解析为 `2`、隐私清单进包；iOS 未签名 Release 构建通过，主应用与扩展都带隐私清单；`upload_testflight.sh`（仅导出）归档与导出成功，导出包两个 bundle 均为团队 `W94G5B6VGC` 的 Store 描述文件、带 App Group、`get-task-allow=false`。
-- 未验证：没有执行上传，App Store Connect 的上传校验（隐私清单是否够、内嵌动态库 `XDRemuxTransferCore.framework`、Rust 静态库符号）与 TestFlight 安装后的分享面板入口都要等第一次上传；`package_release.sh` 全流程未重跑，只做了语法检查。macOS 版 TestFlight 未做。x265 为 GPL，正式上架 App Store 前需评估许可证冲突。
+- 首次上传（2026-11-12）：`0.1.1 (2)` 已上传成功，上传时的包校验通过；唯一警告是 `XDRemuxTransferCore.framework` 没有 dSYM（预编译 Rust 动态库，不影响分发，只影响该库的崩溃符号化）。前两次上传挂在 `northamerica-1.object-storage.apple.com`：本机代理（7890）到这个域名的线路不通而直连正常，需给 `object-storage.apple.com` 配直连。
+- 未验证：App Store Connect 处理完成后的邮件反馈（隐私清单是否够等）与 TestFlight 安装后的分享面板入口；`package_release.sh` 全流程未重跑，只做了语法检查。macOS 版 TestFlight 未做。x265 为 GPL，正式上架 App Store 前需评估许可证冲突。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
