@@ -565,6 +565,19 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 汇总 `apple-v0.1.0` 之后的两批改进（#95 列表工具栏「全部存入照片 / 清除已完成」、#96 队列内逐张独立转换设置与「已全部存入照片」状态文案），版本号升至 `0.1.1`（build `2`），内核与传输库仍为 `0.4.7`（`ce35efd`）。
 - 新增发布说明 `tools/installer/RELEASE_NOTES_apple-v0.1.1.md`，同步更新根 `README.md` 下载链接与版本说明。
 
+**TestFlight 准备（2026-11-12，分支 `feat/apple-testflight`）**
+
+- 背景：已加入 Apple Developer Program（团队 `W94G5B6VGC`），iOS 版准备走 TestFlight；GitHub 发布的 ad-hoc DMG / 未签名 IPA 流程不变。
+- 新增 `tools/apple/upload_testflight.sh`：工程默认仍是 ad-hoc 签名（本地与 CI 不受影响），脚本只对这一次 iOS 归档用命令行覆盖成团队自动签名，检查主应用与 Share Extension 的团队、App Group、隐私清单、版本与构建号后按 `app-store-connect` 导出；默认只导出 IPA，`XDREMUX_UPLOAD=1` 才上传。支持 `XDREMUX_BUILD_NO` 覆盖构建号、`ASC_*` 传 App Store Connect API key。
+- 新增 `App/PrivacyInfo.xcprivacy` 与 `ShareExtension/PrivacyInfo.xcprivacy`：不追踪、不收集数据；声明 UserDefaults（CA92.1）、文件时间戳（C617.1、3B52.1）、系统启动时间（35F9.1，Rust 内核的计时）；扩展只声明文件时间戳。
+- `Info.plist` 加 `ITSAppUsesNonExemptEncryption = false`（只用系统 TLS），上传后不再逐次回答出口合规。
+- 构建号改为工程级 `CURRENT_PROJECT_VERSION`（主应用与扩展共用，`Info.plist` 引用它），`package_release.sh` 改读这个值。
+- iOS 权限文件 `App/XDRemux.entitlements` 只保留 App Group：原先的 `com.apple.security.app-sandbox` 等是 macOS 专用键，不在 iOS 描述文件里；macOS 仍用 `XDRemux-macOS.entitlements`，不变。
+- 实测：macOS Debug 构建通过，沙盒与网络权限仍在、构建号解析为 `2`、隐私清单进包；iOS 未签名 Release 构建通过，主应用与扩展都带隐私清单；`upload_testflight.sh`（仅导出）归档与导出成功，导出包两个 bundle 均为团队 `W94G5B6VGC` 的 Store 描述文件、带 App Group、`get-task-allow=false`。
+- 首次上传（2026-11-12）：`0.1.1 (2)` 已上传成功，上传时的包校验通过；唯一警告是 `XDRemuxTransferCore.framework` 没有 dSYM（预编译 Rust 动态库，不影响分发，只影响该库的崩溃符号化）。前两次上传挂在 `northamerica-1.object-storage.apple.com`：本机代理（7890）到这个域名的线路不通而直连正常，需给 `object-storage.apple.com` 配直连。
+- 处理反馈：苹果处理完成，仅一条提醒 ITMS-90737（声明了 `CFBundleDocumentTypes` 但没写是否原地打开）；隐私清单、动态库均未被提及。已在 `Info.plist` 加 `LSSupportsOpeningDocumentsInPlace = YES`：`importFiles` 本来就对传入 URL 做安全域访问并自行复制，原地打开可免去系统先拷到 `Documents/Inbox` 的残留副本。下次上传生效。
+- 未验证：TestFlight 安装后的运行、分享面板入口，以及 iOS 上从“文件”用“打开方式”原地打开（只做了构建与 `Info.plist` 检查）；`package_release.sh` 全流程未重跑，只做了语法检查。macOS 版 TestFlight 未做。x265 为 GPL，正式上架 App Store 前需评估许可证冲突。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

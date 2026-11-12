@@ -33,7 +33,8 @@ APP_DIR="$ROOT/apps/apple"
 cd "$APP_DIR"
 
 VERSION="$(sed -nE 's/^[[:space:]]*CFBundleShortVersionString:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
-BUILD_NO="$(sed -nE 's/^[[:space:]]*CFBundleVersion:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
+BUILD_NO="$(sed -nE 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
+[[ "$BUILD_NO" =~ ^[0-9]+$ ]] || { echo "bad CURRENT_PROJECT_VERSION in project.yml: '$BUILD_NO'" >&2; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad CFBundleShortVersionString in project.yml: '$VERSION'" >&2; exit 1; }
 OUT="${XDREMUX_RELEASE_OUT:-$APP_DIR/build/release/$VERSION}"
 DD="$APP_DIR/build/release/DerivedData"
