@@ -57,6 +57,8 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.photography</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>在同一局域网内与其他设备互传照片需要此权限。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

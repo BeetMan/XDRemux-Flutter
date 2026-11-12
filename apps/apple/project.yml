@@ -63,6 +63,11 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
             LSItemContentTypes: [public.jpeg]
+        # Required next to CFBundleDocumentTypes (ITMS-90737). In place: the
+        # system hands over the original file instead of first copying it to
+        # Documents/Inbox; importFiles security-scopes the URL and makes its
+        # own copy, so nothing is left behind.
+        LSSupportsOpeningDocumentsInPlace: true
         NSPhotoLibraryAddUsageDescription: 转换结果写入照片库需要此权限。
         NSLocalNetworkUsageDescription: 在同一局域网内与其他设备互传照片需要此权限。
         UILaunchScreen: {}
