@@ -134,9 +134,28 @@ Release app (ad-hoc) and an unsigned iOS archive, checks version / bundle id / e
 transfer framework / Share Extension, then writes `apps/apple/build/release/<version>/`:
 `XDRemux-Apple-macOS-<version>.dmg`, `XDRemux-Apple-iOS-<version>-unsigned.ipa`, `BUILD_RECORD.txt`
 and `SHA256SUMS.txt`. The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
-(and `CFBundleVersion`, in both targets) before packaging. Release notes live in
+(in both targets) and `CURRENT_PROJECT_VERSION`, the build number shared by the app and the Share
+Extension, before packaging. Release notes live in
 `tools/installer/RELEASE_NOTES_apple-v<version>.md`; publish with
 `gh release create apple-v<version> --prerelease --latest=false -F <notes> <dmg> <ipa> SHA256SUMS.txt`.
+
+### TestFlight
+
+```bash
+tools/apple/upload_testflight.sh                      # signed archive + App Store Connect IPA, no upload
+XDREMUX_UPLOAD=1 XDREMUX_BUILD_NO=3 tools/apple/upload_testflight.sh
+```
+
+The project itself stays ad-hoc signed; the script overrides one iOS archive to the developer
+team's automatic signing (`XDREMUX_TEAM_ID`, default `W94G5B6VGC`), checks that the app and the
+Share Extension are signed for the team with the App Group and carry `PrivacyInfo.xcprivacy`, then
+exports for App Store Connect into `apps/apple/build/testflight/<version>-<build>/`. Nothing leaves
+the Mac without `XDREMUX_UPLOAD=1`. App Store Connect refuses a build number it has already seen
+for the same version, so pass a higher `XDREMUX_BUILD_NO` (or bump `CURRENT_PROJECT_VERSION`) for
+every upload. Signing uses the Xcode account session, or an App Store Connect API key through
+`ASC_KEY_PATH` / `ASC_KEY_ID` / `ASC_ISSUER_ID`. One-time setup: both App IDs
+(`io.github.beetman.xdremux.swiftui`, `….swiftui.share`) with App Groups bound to
+`group.io.github.beetman.xdremux.swiftui`, and an app record in App Store Connect.
 
 ## Language
 

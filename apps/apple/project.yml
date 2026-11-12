@@ -14,6 +14,12 @@ options:
     macOS: "14.0"
   xcodeVersion: "16.0"
   createIntermediateGroups: true
+settings:
+  base:
+    # Build number for both the app and the Share Extension. App Store Connect
+    # wants it to grow with every upload; tools/apple/upload_testflight.sh can
+    # override it per upload (XDREMUX_BUILD_NO).
+    CURRENT_PROJECT_VERSION: "2"
 packages:
   XDRemuxKit:
     path: Packages/XDRemuxKit
@@ -42,8 +48,11 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
         CFBundleShortVersionString: "0.1.1"
-        CFBundleVersion: "2"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
+        # Only the system TLS stack (LocalSend HTTPS); exempt from export
+        # compliance paperwork, so App Store Connect does not ask per upload.
+        ITSAppUsesNonExemptEncryption: false
         # Viewer-rank document types: Finder "Open With", Dock drop, iOS "Open in".
         CFBundleDocumentTypes:
           - CFBundleTypeName: HEIF image
@@ -61,13 +70,12 @@ targets:
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     entitlements:
       path: App/XDRemux.entitlements
+      # iOS entitlements. The macOS build signs with XDRemux-macOS.entitlements
+      # (sandbox, user-selected files, network) through the sdk override below;
+      # those com.apple.security.* keys are macOS-only and are not part of an
+      # iOS provisioning profile, so they stay out of this file.
       properties:
-        com.apple.security.app-sandbox: true
-        com.apple.security.files.user-selected.read-write: true
-        # Local-network transfer (LocalSend v2): HTTPS listener + client.
-        com.apple.security.network.server: true
-        com.apple.security.network.client: true
-        # Inbox shared with the Share Extension (iOS); harmless on macOS.
+        # Inbox shared with the Share Extension.
         com.apple.security.application-groups: [group.io.github.beetman.xdremux.swiftui]
     settings:
       base:
@@ -117,7 +125,7 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
         CFBundleShortVersionString: "0.1.1"
-        CFBundleVersion: "2"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # xcodegen regenerates Info.plist from here, so the extension point
         # lives in this file rather than in a hand-written plist.
         NSExtension:
