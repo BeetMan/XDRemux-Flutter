@@ -6,6 +6,7 @@ import {
   galleryExtensionFromName,
   galleryItemPath,
   galleryMimeTypeForExtension,
+  recoverGalleryItems,
   removeGalleryLibraryItem
 } from '../entry/src/main/ets/gallery/GalleryLibraryModel.ts';
 
@@ -44,3 +45,30 @@ assert.throws(() => encodeGalleryLibrary([{ ...photo, extension: '/../outside' }
 assert.throws(() => encodeGalleryLibrary([{ ...photo, size: 0 }]), /文件大小/);
 
 console.log('gallery local-library model: all assertions passed');
+
+// Recovery after a damaged index: keep known entries whose file still exists
+// (with the file's real size), add unknown <uuid><ext> files, drop the rest.
+{
+  const known = [
+    { id: 'd3f2b843-aeb0-46aa-919a-a8b3d168be59', displayName: 'IMG_1001.HEIC', extension: '.heic',
+      mimeType: 'image/heic', size: 10, importedAt: 2000 },
+    { id: '0b6f3c1e-5a2d-4e8f-9c7b-1a2b3c4d5e6f', displayName: 'gone.jpg', extension: '.jpg',
+      mimeType: 'image/jpeg', size: 5, importedAt: 3000 }
+  ];
+  const recovered = recoverGalleryItems(known, [
+    { name: 'd3f2b843-aeb0-46aa-919a-a8b3d168be59.heic', size: 4096, modifiedAt: 1500 },
+    { name: '7c9e6679-7425-40de-944b-e07fc1f90ae7.jpg', size: 2048, modifiedAt: 2500 },
+    { name: 'not-a-uuid.jpg', size: 10, modifiedAt: 1 },
+    { name: '7c9e6679-7425-40de-944b-e07fc1f90ae8.jpg', size: 0, modifiedAt: 1 },
+    { name: 'notes.txt', size: 10, modifiedAt: 1 }
+  ]);
+  assert.deepEqual(recovered.map((item) => [item.id.substring(0, 8), item.displayName, item.size, item.importedAt]), [
+    ['7c9e6679', '恢复的照片-7c9e6679.jpg', 2048, 2500],
+    ['d3f2b843', 'IMG_1001.HEIC', 4096, 2000]
+  ]);
+  assert.equal(recovered[0].mimeType, 'image/jpeg');
+  // The recovered list must itself be a valid index.
+  assert.equal(decodeGalleryLibrary(encodeGalleryLibrary(recovered)).items.length, 2);
+  assert.deepEqual(recoverGalleryItems([], []), []);
+  console.log('gallery recovery passed');
+}

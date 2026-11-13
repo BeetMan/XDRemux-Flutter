@@ -116,7 +116,7 @@ import {
 import type { LivePhotoBundleFile, LivePhotoBundleReport } from '../queue/LivePhotoBundleZip';
 import { TransferPanel } from '../transfer/TransferPanel';
 import { LicensePanel } from '../settings/LicensePanel';
-import type { TransferSendSource } from '../transfer/TransferPanel';
+import type { TransferSendRequest, TransferSendSource } from '../transfer/TransferPanel';
 import { ps3OptionsFor, stableGrainSeed } from '../queue/Ps3Model';
 import { convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompatible,
   mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
@@ -263,9 +263,7 @@ struct Index {
   @State private livePhotoBundleStatus: string = '';
   // LocalSend device transfer tab (TransferPanel owns the runtime).
   @State private licensesVisible: boolean = false;
-  @State private transferSendRequestId: number = 0;
-  @State private transferSendSources: Array<TransferSendSource> = [];
-  @State private transferSendLabel: string = '';
+  @State private transferSendRequest: TransferSendRequest = { id: 0, sources: [], label: '' };
   @State private transferPendingOffers: number = 0;
   @State private transferTab: number = 1;
   @State private transferAppVisible: boolean = true;
@@ -349,6 +347,10 @@ struct Index {
     new Map<string, GalleryPhotoInspection>();
   private readonly gallerySystemHdrCache: Map<string, boolean> = new Map<string, boolean>();
   private readonly galleryDecodedDimensionsCache: Map<string, Array<number>> = new Map<string, Array<number>>();
+  // Bumped when a photo's size becomes known. The cache is a plain Map, and
+  // with a lazy grid most sizes arrive while detail pages are already shown,
+  // so the frame-size builders read this to re-layout.
+  @State private galleryDimensionsVersion: number = 0;
   private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
   private readonly galleryHeroPreviewDecodeFailedIds: Set<string> = new Set<string>();
   private readonly galleryDetailDecodedImageIds: Set<string> = new Set<string>();
@@ -382,8 +384,8 @@ struct Index {
   private gallerySelectionSerial: number = 0;
   private galleryDetailSelectionUsesDelayedReveal: boolean = false;
   private galleryDetailSelectionIsSwipe: boolean = false;
-  private gallerySdrDecodeSerial: number = 0;
   private gallerySdrPreviewItemId: string = '';
+  private gallerySdrPreviewOwned: boolean = false;
   private galleryChromeToggleBlockedUntil: number = 0;
   private galleryStatusBarResetTimer: number = -1;
   private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
@@ -475,7 +477,7 @@ struct Index {
     this.pageVisible = false;
     this.clearGalleryPhotoHeaderRefreshTimer();
     this.ensureGalleryStatusBarVisible();
-    this.endGallerySdrCompare();
+    this.releaseGallerySdrPreview();
     // Page teardown is a real departure, unlike the temporary hide caused by
     // the system picker. Finish the current copy and stop later batch items.
     if (this.batchExportRunning) {
@@ -2528,9 +2530,9 @@ struct Index {
   // ---------- LocalSend device transfer ----------
 
   private openTransfer(sources: Array<TransferSendSource>, label: string): void {
-    this.transferSendSources = sources;
-    this.transferSendLabel = label;
-    this.transferSendRequestId += 1;
+    // One object, so the panel sees id, files and label together.
+    this.transferSendRequest = { id: this.transferSendRequest.id + 1, sources: sources, label: label };
+    if (sources.length > 0) this.transferTab = 0;
     this.onMainTabChange(TRANSFER_TAB_INDEX);
   }
 
@@ -2609,9 +2611,7 @@ struct Index {
     TransferPanel({
       tab: $transferTab,
       chipsInTitleBar: this.shouldUseImmersiveMainChrome(),
-      sendRequestId: this.transferSendRequestId,
-      initialSources: this.transferSendSources,
-      initialLabel: this.transferSendLabel,
+      sendRequest: this.transferSendRequest,
       appVisible: this.transferAppVisible,
       // Same offsets as the queue page with its filter chips in the title bar.
       topInset: this.shouldUseImmersiveMainChrome() ? 136 : 28,
@@ -3064,35 +3064,51 @@ struct Index {
       this.gallerySandboxPath.length > 0 && this.gallerySystemImageIsHdr;
   }
 
+  /**
+   * Show the SDR rendition while the button is held. It reuses the open-time
+   * 1920 px SDR preview when that belongs to this photo, else decodes once at
+   * the same bounded size and keeps it until the photo changes. The old code
+   * decoded the full-resolution image on every press (192 MB for 8192×6144),
+   * and quick taps stacked several such decodes.
+   */
   private async beginGallerySdrCompare(): Promise<void> {
-    if (!this.canCompareGallerySdr() || this.gallerySdrCompareLoading || this.gallerySdrCompareActive) return;
-    this.gallerySdrCompareHolding = true;
-    this.gallerySdrCompareLoading = true;
-    const serial: number = this.gallerySdrDecodeSerial + 1;
-    this.gallerySdrDecodeSerial = serial;
+    if (!this.canCompareGallerySdr() || this.gallerySdrCompareActive) return;
     const itemId: string = this.galleryCurrentItem?.id ?? '';
+    this.gallerySdrCompareHolding = true;
+    if (this.gallerySdrPreviewItemId === itemId && this.gallerySdrPreviewPixelMap !== undefined) {
+      this.gallerySdrCompareActive = true;
+      return;
+    }
+    if (this.galleryHeroPreviewItemId === itemId && this.galleryHeroPreviewPixelMap !== undefined) {
+      this.setGallerySdrPreview(itemId, this.galleryHeroPreviewPixelMap, false);
+      this.gallerySdrCompareActive = true;
+      return;
+    }
+    // One decode at a time; a press during it is served when it finishes.
+    if (this.gallerySdrCompareLoading) return;
+    this.gallerySdrCompareLoading = true;
     let imageSource: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
       imageSource = image.createImageSource('file://' + this.gallerySandboxPath);
+      const info: image.ImageInfo = await imageSource.getImageInfo();
+      const longEdge: number = Math.max(info.size.width, info.size.height);
+      if (longEdge <= 0) throw new Error('无法读取照片尺寸');
+      const scale: number = Math.min(1, GALLERY_HERO_PREVIEW_MAX_EDGE / longEdge);
       pixelMap = await imageSource.createPixelMap({
+        desiredSize: {
+          width: Math.max(1, Math.round(info.size.width * scale)),
+          height: Math.max(1, Math.round(info.size.height * scale))
+        },
         desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
         desiredDynamicRange: image.DecodingDynamicRange.SDR
       });
-      if (!this.gallerySdrCompareHolding || serial !== this.gallerySdrDecodeSerial ||
-        itemId !== this.galleryCurrentItem?.id) return;
-      const previousPixelMap: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
-      this.gallerySdrPreviewPixelMap = pixelMap;
+      if (itemId !== this.galleryCurrentItem?.id) return;
+      this.setGallerySdrPreview(itemId, pixelMap, true);
       pixelMap = undefined;
-      this.gallerySdrPreviewItemId = itemId;
-      this.gallerySdrCompareActive = true;
-      if (previousPixelMap !== undefined) {
-        setTimeout((): void => {
-          void previousPixelMap.release();
-        }, 180);
-      }
+      if (this.gallerySdrCompareHolding) this.gallerySdrCompareActive = true;
     } catch (error) {
-      if (serial === this.gallerySdrDecodeSerial && this.gallerySdrCompareHolding) {
+      if (itemId === this.galleryCurrentItem?.id && this.gallerySdrCompareHolding) {
         this.galleryStatus = 'SDR 对比加载失败：' + this.errorMessage(error);
       }
     } finally {
@@ -3107,27 +3123,37 @@ struct Index {
         try {
           await pixelMap.release();
         } catch (releaseError) {
-          // A stale decode can finish after the user has released the button.
+          // A decode for a photo that is no longer shown.
         }
       }
-      if (serial === this.gallerySdrDecodeSerial) this.gallerySdrCompareLoading = false;
+      this.gallerySdrCompareLoading = false;
     }
   }
 
+  /** Releasing the button only hides the SDR layer; the decode stays cached for this photo. */
   private endGallerySdrCompare(): void {
-    if (!this.gallerySdrCompareHolding && !this.gallerySdrCompareActive && !this.gallerySdrCompareLoading) return;
     this.gallerySdrCompareHolding = false;
-    this.gallerySdrDecodeSerial += 1;
-    this.gallerySdrCompareLoading = false;
     this.gallerySdrCompareActive = false;
-    const pixelMap: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
-    this.gallerySdrPreviewPixelMap = undefined;
-    this.gallerySdrPreviewItemId = '';
-    if (pixelMap !== undefined) {
+  }
+
+  private setGallerySdrPreview(itemId: string, pixelMap: image.PixelMap | undefined, owned: boolean): void {
+    const previous: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
+    const previousOwned: boolean = this.gallerySdrPreviewOwned;
+    this.gallerySdrPreviewPixelMap = pixelMap;
+    this.gallerySdrPreviewItemId = pixelMap === undefined ? '' : itemId;
+    this.gallerySdrPreviewOwned = owned;
+    // Only release decodes made here; the shared open-time preview has its own owner.
+    if (previous !== undefined && previous !== pixelMap && previousOwned) {
       setTimeout((): void => {
-        void pixelMap.release();
+        void previous.release();
       }, 180);
     }
+  }
+
+  /** Drop the cached SDR decode when the photo changes or the detail closes. */
+  private releaseGallerySdrPreview(): void {
+    this.endGallerySdrCompare();
+    this.setGallerySdrPreview('', undefined, false);
   }
 
   private canConvertGalleryPhotoDirectly(): boolean {
@@ -3426,9 +3452,14 @@ struct Index {
       this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
       this.galleryMediaCount = items.length;
       this.galleryLibraryReady = true;
-      this.galleryStatus = items.length > 0
-        ? '本地图库已加载 ' + String(items.length) + ' 张照片'
-        : '导入照片后会保存在 XDRemux 本地图库中';
+      this.galleryStatus = this.galleryLibrary.recoveredOnLoad
+        ? '本地图库索引已损坏，已按备份和现有照片文件恢复 ' + String(items.length) + ' 张'
+        : items.length > 0
+          ? '本地图库已加载 ' + String(items.length) + ' 张照片'
+          : '导入照片后会保存在 XDRemux 本地图库中';
+      if (this.galleryLibrary.recoveredOnLoad) {
+        this.getUIContext().getPromptAction().showToast({ message: this.galleryStatus });
+      }
     } catch (error) {
       this.galleryLibraryReady = false;
       this.galleryLoadError = '读取本地图库失败：' + this.errorMessage(error);
@@ -3603,7 +3634,11 @@ struct Index {
     delayHdrReveal: boolean = false
   ): Promise<void> {
     if (tile.path.length === 0) return;
-    this.endGallerySdrCompare();
+    if (this.gallerySdrPreviewItemId !== tile.item.id) {
+      this.releaseGallerySdrPreview();
+    } else {
+      this.endGallerySdrCompare();
+    }
     const selectionSerial: number = this.gallerySelectionSerial + 1;
     this.gallerySelectionSerial = selectionSerial;
     this.clearGalleryDetailImageRevealTimer();
@@ -3814,7 +3849,7 @@ struct Index {
     this.clearGalleryDetailImageRevealTimer();
     this.clearGalleryPhotoHeaderRefreshTimer();
     if (!this.galleryDetailVisible) return;
-    this.endGallerySdrCompare();
+    this.releaseGallerySdrPreview();
     this.cancelGalleryInspection();
     if (this.galleryStatusBarResetTimer >= 0) clearTimeout(this.galleryStatusBarResetTimer);
     if (this.galleryHeroBackdropResetTimer >= 0) {
@@ -3853,7 +3888,11 @@ struct Index {
 
   private cacheGalleryDecodedDimensions(itemId: string, width: number, height: number): void {
     if (width <= 0 || height <= 0) return;
+    const previous: Array<number> | undefined = this.galleryDecodedDimensionsCache.get(itemId);
     this.galleryDecodedDimensionsCache.set(itemId, [width, height]);
+    if (previous === undefined || previous[0] !== width || previous[1] !== height) {
+      this.galleryDimensionsVersion += 1;
+    }
     const inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(itemId);
     if (inspection !== undefined) {
       inspection.displayImageWidth = width;
@@ -4047,17 +4086,8 @@ struct Index {
 
   private centerGalleryThumbnail(index: number, animated: boolean = true): void {
     if (index < 0 || index >= this.galleryPhotos.length) return;
-    const itemStride: number = 58 + 8;
-    const contentWidth: number = 36 + this.galleryPhotos.length * itemStride - 8;
-    const maximumOffset: number = Math.max(0, contentWidth - this.galleryViewportWidth);
-    const selectedCenter: number = 18 + index * itemStride + 29;
-    const offset: number = Math.max(0, Math.min(maximumOffset, selectedCenter - this.galleryViewportWidth / 2));
     try {
-      this.galleryThumbnailScroller.scrollTo({
-        xOffset: offset,
-        yOffset: 0,
-        animation: animated ? { duration: 240, curve: Curve.EaseOut } : false
-      });
+      this.galleryThumbnailScroller.scrollToIndex(index, animated, ScrollAlign.CENTER);
     } catch (error) {
       // The strip may not be attached yet during the opening transition.
     }
@@ -4125,6 +4155,8 @@ struct Index {
   }
 
   private galleryImageDimensions(itemId: string): Array<number> {
+    // Reading the version ties callers in builders to size updates.
+    if (this.galleryDimensionsVersion < 0) return [0, 0];
     const decoded: Array<number> | undefined = this.galleryDecodedDimensionsCache.get(itemId);
     if (decoded !== undefined && decoded[0] > 0 && decoded[1] > 0) return decoded;
     const inspection: GalleryPhotoInspection | undefined = this.galleryInspectionCache.get(itemId);
@@ -5184,6 +5216,10 @@ struct Index {
         this.galleryCurrentItem = nextTile.item;
         void this.inspectGallerySelection(nextTile, false, true);
       } else {
+        // The detail goes away without closeGalleryDetail(): release its SDR
+        // decode and clear the open-time black backdrop here too.
+        this.releaseGallerySdrPreview();
+        this.galleryHeroBackdropOpacity = 0;
         this.cancelGalleryInspection();
         this.galleryCurrentItem = undefined;
         this.galleryDetails = undefined;
@@ -5325,72 +5361,73 @@ struct Index {
         .alignItems(HorizontalAlign.Center)
         .padding({ left: 32, right: 32, bottom: 40 });
       } else {
-        Scroll(this.galleryScrollController) {
-          Column() {
-            if (this.shouldUseImmersiveMainChrome()) {
+        // The Grid is the scroller itself: inside a Scroll it took its full
+        // content height, so LazyForEach built every tile and decoded every
+        // original at once. The count line is a full-row irregular item.
+        Grid(this.galleryScrollController, {
+          regularSize: [1, 1],
+          irregularIndexes: this.shouldUseImmersiveMainChrome() ? [0] : []
+        }) {
+          if (this.shouldUseImmersiveMainChrome()) {
+            GridItem() {
               Text(String(this.galleryMediaCount) + ' 张 · 仅保存在本机')
                 .fontSize(13)
                 .fontColor($r('sys.color.font_secondary'))
                 .width('100%')
-                .padding({ left: 20, right: 20, top: 98, bottom: 12 });
+                .padding({ left: 16, right: 16, top: 98, bottom: 8 });
             }
-
-            Grid() {
-              LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
-                GridItem() {
-                  Stack() {
-                    if (!this.galleryPreviewIsLoaded(tile.item.id)) {
-                      Stack({ alignContent: Alignment.Center }) {
-                        SymbolGlyph($r('sys.symbol.picture'))
-                          .fontSize(20)
-                          .fontColor(['#55FFFFFF']);
-                      }
-                      .width('100%')
-                      .height('100%')
-                      .backgroundColor('#181B20');
-                    }
-                    Image('file://' + tile.path)
-                      .width('100%')
-                      .height('100%')
-                      .orientation(ImageRotateOrientation.AUTO)
-                      .objectFit(ImageFit.Cover)
-                      .autoResize(true)
-                      // Keep grid cells SDR so their shared-element source
-                      // matches the SDR frame used while opening the detail.
-                      .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                      .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
-                      .onComplete((event): void => {
-                        this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
-                          Number(event?.height ?? 0));
-                      });
-                  }
-                  .width('100%')
-                  .aspectRatio(1)
-                  .clip(true)
-                  .borderRadius(10)
-                  .backgroundColor($r('sys.color.background_tertiary'))
-                  .geometryTransition(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive
-                    ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
-                  .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
-                  .transition(TransitionEffect.IDENTITY)
-                  .onClick((): void => {
-                    this.openGalleryTile(tile);
-                  });
-                }
-                .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
-              }, (tile: GalleryPhotoTile) => tile.item.id);
-            }
-            .columnsTemplate('1fr 1fr 1fr')
-            .columnsGap(4)
-            .rowsGap(4)
-            .width('100%')
-            .padding({ left: 4, right: 4, bottom: 96 });
           }
-          .width('100%');
+            LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+              GridItem() {
+                Stack() {
+                  if (!this.galleryPreviewIsLoaded(tile.item.id)) {
+                    Stack({ alignContent: Alignment.Center }) {
+                      SymbolGlyph($r('sys.symbol.picture'))
+                        .fontSize(20)
+                        .fontColor(['#55FFFFFF']);
+                    }
+                    .width('100%')
+                    .height('100%')
+                    .backgroundColor('#181B20');
+                  }
+                  Image('file://' + tile.path)
+                    .width('100%')
+                    .height('100%')
+                    .orientation(ImageRotateOrientation.AUTO)
+                    .objectFit(ImageFit.Cover)
+                    .autoResize(true)
+                    // Keep grid cells SDR so their shared-element source
+                    // matches the SDR frame used while opening the detail.
+                    .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                    .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
+                    .onComplete((event): void => {
+                      this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
+                        Number(event?.height ?? 0));
+                    });
+                }
+                .width('100%')
+                .aspectRatio(1)
+                .clip(true)
+                .borderRadius(10)
+                .backgroundColor($r('sys.color.background_tertiary'))
+                .geometryTransition(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive
+                  ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
+                .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
+                .transition(TransitionEffect.IDENTITY)
+                .onClick((): void => {
+                  this.openGalleryTile(tile);
+                });
+              }
+              .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
+            }, (tile: GalleryPhotoTile) => tile.item.id);
         }
+        .columnsTemplate('1fr 1fr 1fr')
+        .columnsGap(4)
+        .rowsGap(4)
+        .cachedCount(3)
+        .padding({ left: 4, right: 4, bottom: 96 })
         .layoutWeight(1)
         .width('100%')
-        .align(Alignment.Top)
         .clipContent(ContentClipMode.BOUNDARY)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
         .onScrollStart((): void => {
@@ -5567,9 +5604,11 @@ struct Index {
 
   @Builder
   private galleryThumbnailStrip() {
-    Scroll(this.galleryThumbnailScroller) {
-      Row({ space: 8 }) {
-        LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+    // A horizontal List: LazyForEach inside a Row built every cell, and each
+    // cell's onAppear started a thumbnail decode for every photo at once.
+    List({ space: 8, scroller: this.galleryThumbnailScroller }) {
+      LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
+        ListItem() {
           Stack() {
             if (this.galleryCachedThumbnailIds.includes(tile.item.id) &&
               this.galleryThumbnailPixelMapCache.get(tile.item.id) !== undefined) {
@@ -5629,13 +5668,15 @@ struct Index {
                 }
               }
           });
-        }, (tile: GalleryPhotoTile): string => tile.item.id);
-      }
-      .padding({ left: 18, right: 18 });
+        }
+      }, (tile: GalleryPhotoTile): string => tile.item.id);
     }
+    .listDirection(Axis.Horizontal)
+    .cachedCount(4)
+    .contentStartOffset(18)
+    .contentEndOffset(18)
     .width('100%')
     .height(74)
-    .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
     .onAppear((): void => {
       this.centerGalleryThumbnail(this.galleryCurrentPhotoIndex(), false);

@@ -64,6 +64,61 @@ export function removeGalleryLibraryItem(items: Array<GalleryLibraryItem>, itemI
   return remaining;
 }
 
+export interface GalleryStoredFile {
+  name: string;
+  size: number;
+  modifiedAt: number;
+}
+
+/**
+ * Rebuild the index after the manifest could not be read: keep entries from
+ * the last good copy whose file is still present (refreshing the size), and
+ * add every other `<uuid><ext>` file in items/ under a generated name.
+ * Newest first, like a normal load.
+ */
+export function recoverGalleryItems(
+  known: Array<GalleryLibraryItem>,
+  files: Array<GalleryStoredFile>
+): Array<GalleryLibraryItem> {
+  const byName: Map<string, GalleryStoredFile> = new Map<string, GalleryStoredFile>();
+  for (const file of files) {
+    if (Number.isSafeInteger(file.size) && file.size > 0) byName.set(file.name, file);
+  }
+  const recovered: Array<GalleryLibraryItem> = [];
+  const used: Set<string> = new Set<string>();
+  for (const item of known) {
+    const file: GalleryStoredFile | undefined = byName.get(item.id + item.extension);
+    if (file === undefined || used.has(item.id)) continue;
+    used.add(item.id);
+    recovered.push({
+      id: item.id,
+      displayName: item.displayName,
+      extension: item.extension,
+      mimeType: item.mimeType,
+      size: file.size,
+      importedAt: item.importedAt
+    });
+  }
+  for (const file of byName.values()) {
+    const dot: number = file.name.indexOf('.');
+    if (dot <= 0) continue;
+    const id: string = file.name.substring(0, dot);
+    const extension: string = file.name.substring(dot);
+    if (!UUID_PATTERN.test(id) || !EXTENSION_PATTERN.test(extension) || used.has(id)) continue;
+    used.add(id);
+    recovered.push({
+      id: id,
+      displayName: '恢复的照片-' + id.substring(0, 8) + extension,
+      extension: extension,
+      mimeType: galleryMimeTypeForExtension(extension),
+      size: file.size,
+      importedAt: Number.isSafeInteger(file.modifiedAt) && file.modifiedAt >= 0 ? file.modifiedAt : 0
+    });
+  }
+  recovered.sort((left: GalleryLibraryItem, right: GalleryLibraryItem): number => right.importedAt - left.importedAt);
+  return validateGalleryItems(recovered);
+}
+
 export function decodeGalleryLibrary(raw: string): GalleryLibraryRecord {
   const parsed: Object = JSON.parse(raw) as Object;
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

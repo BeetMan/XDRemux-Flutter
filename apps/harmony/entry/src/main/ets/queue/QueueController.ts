@@ -86,6 +86,12 @@ export type QueueModeCapture = () => QueueModeSnapshot;
 export type QueueChanged = () => void;
 export type QueuePersist = (snapshot: QueuePersistenceSnapshot) => Promise<void>;
 
+interface JournalWaiter {
+  ticket: number;
+  resolve: () => void;
+  reject: (error: Object) => void;
+}
+
 export interface QueueControllerOptions {
   captureMode: QueueModeCapture;
   execute: QueueExecute;
@@ -109,9 +115,17 @@ export class QueueController {
   private readonly cleanup?: QueueCleanup;
   private readonly formatError: (error: Object) => string;
   private readonly persistence: QueuePersist | undefined;
-  private persistChain: Promise<void> = Promise.resolve();
-  private persistencePending: number = 0;
   private persistenceError: Object | undefined;
+  // Journal writes are coalesced: every durable change or persist() takes a
+  // ticket, and a single writer loop saves the latest snapshot, covering all
+  // tickets handed out before that write started. Each checkpoint used to
+  // write its own full snapshot (with fsync), so a 200-photo import or run
+  // wrote the whole queue thousands of times.
+  private journalRequested: number = 0;
+  private journalCovered: number = 0;
+  private journalWriting: boolean = false;
+  private journalWriter: Promise<void> = Promise.resolve();
+  private journalWaiters: Array<JournalWaiter> = [];
   private listener: QueueChanged | undefined;
   private attached: boolean = false;
   private nextId: number = 1;
@@ -179,40 +193,30 @@ export class QueueController {
   }
 
   public get isPersistenceBusy(): boolean {
-    return this.persistencePending > 0;
+    return this.journalWriting || this.journalCovered < this.journalRequested;
   }
 
-  /** Wait for the latest journal write and checkpoint the current immutable
-   * snapshot. A previous write failure intentionally blocks this checkpoint;
-   * the UI must call retryPersistence explicitly before scheduling work. */
+  /** Resolve once a journal write that started after this call has saved the
+   * current state. A previous write failure intentionally blocks this
+   * checkpoint; the UI must call retryPersistence explicitly before
+   * scheduling work. */
   public async persist(): Promise<void> {
     if (this.persistence === undefined) {
       return;
     }
-    await this.persistChain;
     if (this.persistenceError !== undefined) {
       throw this.persistenceFailure(this.persistenceError);
     }
-    const task: Promise<void> = this.enqueuePersistence(this.snapshot());
-    try {
-      await task;
-    } catch (error) {
-      throw this.persistenceFailure(error as Object);
-    }
+    await this.requestJournal();
   }
 
   public async retryPersistence(): Promise<void> {
     if (this.persistence === undefined) {
       return;
     }
-    await this.persistChain;
+    await this.journalIdle();
     this.persistenceError = undefined;
-    const task: Promise<void> = this.enqueuePersistence(this.snapshot());
-    try {
-      await task;
-    } catch (error) {
-      throw this.persistenceFailure(error as Object);
-    }
+    await this.requestJournal();
   }
 
   /** Replace the in-memory session after startup validation. Restoring never
@@ -224,7 +228,7 @@ export class QueueController {
     }
     // Startup restores are called before attach, but waiting here also makes
     // the method safe if a caller reuses a controller after a journal write.
-    await this.persistChain;
+    await this.journalIdle();
     if (this.persistenceError !== undefined) {
       throw this.persistenceFailure(this.persistenceError);
     }
@@ -826,51 +830,76 @@ export class QueueController {
     if (this.persistence === undefined || this.persistenceError !== undefined) {
       return;
     }
-    let snapshot: QueuePersistenceSnapshot;
-    try {
-      snapshot = this.snapshot();
-    } catch (error) {
-      this.recordPersistenceFailure(error as Object);
-      return;
-    }
-    // State transitions may enqueue a checkpoint without an awaiter. Attach a
-    // sink so a rejected journal write is still latched by the chain without
-    // becoming an unhandled Promise rejection in the UI event loop.
-    const task: Promise<void> = this.enqueuePersistence(snapshot);
-    task.catch((): void => {
-      // persistenceFailure is recorded by the serial chain above.
+    // State transitions may checkpoint without an awaiter. Sink the rejection:
+    // a failed write is latched by the writer, not an unhandled rejection.
+    this.requestJournal().catch((): void => {
+      // persistenceFailure is recorded by the writer loop.
     });
   }
 
-  private enqueuePersistence(snapshot: QueuePersistenceSnapshot): Promise<void> {
-    if (this.persistence === undefined) {
-      return Promise.resolve();
+  /** Take a ticket; it settles when a write covering it finishes or fails. */
+  private requestJournal(): Promise<void> {
+    this.journalRequested += 1;
+    const ticket: number = this.journalRequested;
+    const done: Promise<void> = new Promise<void>((resolve: () => void, reject: (error: Object) => void): void => {
+      this.journalWaiters.push({ ticket: ticket, resolve: resolve, reject: reject });
+    });
+    if (!this.journalWriting && this.persistence !== undefined) {
+      const writer: QueuePersist = this.persistence;
+      this.journalWriting = true;
+      // Start on the next microtask, so the common "change state, then
+      // await persist()" pair in the same turn becomes one write.
+      this.journalWriter = Promise.resolve().then((): Promise<void> => this.runJournalWriter(writer));
     }
-    const writer: QueuePersist = this.persistence;
-    this.persistencePending += 1;
-    // The chain itself always settles, but a latched failure prevents later
-    // queued snapshots from invoking the writer and masking the first error.
-    const task: Promise<void> = this.persistChain.then((): Promise<void> => {
-      if (this.persistenceError !== undefined) {
-        return Promise.reject(this.persistenceFailure(this.persistenceError));
+    return done;
+  }
+
+  private async runJournalWriter(writer: QueuePersist): Promise<void> {
+    try {
+      while (this.journalCovered < this.journalRequested) {
+        if (this.persistenceError !== undefined) {
+          // A latched failure must not let later checkpoints mask it.
+          this.failJournalWaiters(this.persistenceError);
+          return;
+        }
+        // Snapshot when the write starts, so it includes every change made
+        // while the previous write was in flight.
+        const covers: number = this.journalRequested;
+        try {
+          await writer(this.snapshot());
+        } catch (error) {
+          this.recordPersistenceFailure(error as Object);
+          this.failJournalWaiters(error as Object);
+          return;
+        }
+        this.journalCovered = covers;
+        const settled: Array<JournalWaiter> = this.journalWaiters.filter(
+          (waiter: JournalWaiter): boolean => waiter.ticket <= covers);
+        this.journalWaiters = this.journalWaiters.filter((waiter: JournalWaiter): boolean => waiter.ticket > covers);
+        for (const waiter of settled) waiter.resolve();
+        // Queue UI controls also depend on the busy state. This notification
+        // is deliberately non-durable so it cannot request another write.
+        this.notify();
       }
-      return writer(snapshot);
-    });
-    this.persistChain = task.then(
-      (): void => {
-        // A successful write clears no error: only retryPersistence may clear
-        // the failure latch after the user explicitly requests a retry.
-      },
-      (error: Object): void => {
-        this.recordPersistenceFailure(error);
-      }
-    ).then((): void => {
-      this.persistencePending -= 1;
-      // Queue UI controls also depend on the busy count. This notification is
-      // deliberately non-durable so it cannot enqueue another journal write.
-      this.notify();
-    });
-    return task;
+    } finally {
+      // Cleared synchronously at loop exit: a request made after this point
+      // starts a new writer instead of waiting on a finished one.
+      this.journalWriting = false;
+    }
+  }
+
+  private failJournalWaiters(error: Object): void {
+    const failure: QueuePersistenceError = this.persistenceFailure(error);
+    const waiters: Array<JournalWaiter> = this.journalWaiters;
+    this.journalWaiters = [];
+    this.journalCovered = this.journalRequested;
+    for (const waiter of waiters) waiter.reject(failure);
+  }
+
+  private async journalIdle(): Promise<void> {
+    while (this.journalWriting) {
+      await this.journalWriter;
+    }
   }
 
   private recordPersistenceFailure(error: Object): void {

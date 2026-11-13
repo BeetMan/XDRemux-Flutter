@@ -6,9 +6,10 @@ import {
   galleryExtensionFromName,
   galleryItemPath,
   galleryMimeTypeForExtension,
+  recoverGalleryItems,
   removeGalleryLibraryItem
 } from './GalleryLibraryModel';
-import type { GalleryLibraryItem, GalleryLibraryRecord } from './GalleryLibraryModel';
+import type { GalleryLibraryItem, GalleryLibraryRecord, GalleryStoredFile } from './GalleryLibraryModel';
 
 interface GalleryFileError {
   code?: number;
@@ -24,31 +25,110 @@ export class HarmonyGalleryLibrary {
   private readonly root: string;
   private readonly itemsDirectory: string;
   private readonly manifestPath: string;
+  private readonly backupPath: string;
   private items: Array<GalleryLibraryItem> = [];
   private loaded: boolean = false;
+  /** Index changes run one at a time; see exclusive(). */
+  private mutationChain: Promise<void> = Promise.resolve();
+  /** The last load had to rebuild a damaged index. */
+  public recoveredOnLoad: boolean = false;
 
   constructor(filesDir: string) {
     this.root = filesDir + '/xdremux-gallery';
     this.itemsDirectory = this.root + '/items';
     this.manifestPath = this.root + '/library.json';
+    this.backupPath = this.root + '/library.json.bak';
   }
 
+  /**
+   * Load the index. A damaged or unreadable index no longer locks the user out
+   * of the gallery: it is rebuilt from the last good copy (saved on each
+   * successful load) plus the photo files actually present in items/.
+   */
   public async load(): Promise<Array<GalleryLibraryItem>> {
     await this.ensureDirectories();
+    await this.removeTemporaryManifests();
+    let items: Array<GalleryLibraryItem> = [];
+    let damaged: boolean = false;
     try {
-      const stat: fileIo.Stat = await fileIo.lstat(this.manifestPath);
-      this.requireRegularFile(this.manifestPath, stat);
-      const raw: string = await fileIo.readText(this.manifestPath);
-      const record: GalleryLibraryRecord = decodeGalleryLibrary(raw);
-      this.items = record.items.sort((left: GalleryLibraryItem, right: GalleryLibraryItem) =>
-        right.importedAt - left.importedAt);
+      items = await this.readIndex(this.manifestPath);
     } catch (error) {
-      const fileError: GalleryFileError = error as GalleryFileError;
-      if (fileError.code !== 13900002) throw this.asError(error);
-      this.items = [];
+      damaged = true;
+      try {
+        items = await this.readIndex(this.backupPath);
+      } catch (backupError) {
+        items = [];
+      }
     }
+    if (damaged) {
+      items = recoverGalleryItems(items, await this.listStoredFiles());
+      await this.writeAtomic(encodeGalleryLibrary(items));
+    } else {
+      await this.saveBackup();
+    }
+    this.items = items.sort((left: GalleryLibraryItem, right: GalleryLibraryItem) =>
+      right.importedAt - left.importedAt);
+    this.recoveredOnLoad = damaged;
     this.loaded = true;
     return this.snapshot();
+  }
+
+  /** Items of one index file; a missing file is an empty library. */
+  private async readIndex(path: string): Promise<Array<GalleryLibraryItem>> {
+    try {
+      const stat: fileIo.Stat = await fileIo.lstat(path);
+      this.requireRegularFile(path, stat);
+    } catch (error) {
+      const fileError: GalleryFileError = error as GalleryFileError;
+      if (fileError.code === 13900002) return [];
+      throw this.asError(error);
+    }
+    const record: GalleryLibraryRecord = decodeGalleryLibrary(await fileIo.readText(path));
+    return record.items;
+  }
+
+  private async saveBackup(): Promise<void> {
+    try {
+      if (await fileIo.access(this.manifestPath)) await fileIo.copyFile(this.manifestPath, this.backupPath);
+    } catch (error) {
+      // Best effort: the backup only helps a later recovery.
+    }
+  }
+
+  private async listStoredFiles(): Promise<Array<GalleryStoredFile>> {
+    const files: Array<GalleryStoredFile> = [];
+    for (const name of await fileIo.listFile(this.itemsDirectory)) {
+      try {
+        const stat: fileIo.Stat = await fileIo.lstat(this.itemsDirectory + '/' + name);
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        files.push({ name: name, size: stat.size, modifiedAt: Math.floor(stat.mtime * 1000) });
+      } catch (error) {
+        // Skip entries that vanish or cannot be read.
+      }
+    }
+    return files;
+  }
+
+  private async removeTemporaryManifests(): Promise<void> {
+    try {
+      for (const name of await fileIo.listFile(this.root)) {
+        if (name.startsWith('library.json.tmp')) await fileIo.unlink(this.root + '/' + name);
+      }
+    } catch (error) {
+      // Leftover temp files are harmless.
+    }
+  }
+
+  /**
+   * Run index changes one at a time, each building its list from the latest
+   * committed items. Overlapping changes (a picker import while a received
+   * LocalSend photo is saved, a delete during a convert) used to save lists
+   * that each missed the other's entry.
+   */
+  private exclusive<T>(task: () => Promise<T>): Promise<T> {
+    const run: Promise<T> = this.mutationChain.then((): Promise<T> => task());
+    this.mutationChain = run.then((): void => {}, (): void => {});
+    return run;
   }
 
   public snapshot(): Array<GalleryLibraryItem> {
@@ -90,10 +170,13 @@ export class HarmonyGalleryLibrary {
       if (stat.size <= 0) throw new Error('复制到本地图库的照片为空');
       item.size = stat.size;
 
-      const nextItems: Array<GalleryLibraryItem> = this.items.slice();
-      nextItems.unshift(item);
-      await this.writeAtomic(encodeGalleryLibrary(nextItems));
-      this.items = nextItems;
+      // The copy above may overlap other imports; the index update may not.
+      await this.exclusive(async (): Promise<void> => {
+        const nextItems: Array<GalleryLibraryItem> = this.items.slice();
+        nextItems.unshift(item);
+        await this.writeAtomic(encodeGalleryLibrary(nextItems));
+        this.items = nextItems;
+      });
       return this.cloneItem(item);
     } catch (error) {
       if (sourceFd >= 0) {
@@ -115,8 +198,12 @@ export class HarmonyGalleryLibrary {
     }
   }
 
-  public async removePhoto(itemId: string): Promise<GalleryLibraryItem> {
-    if (!this.loaded) throw new Error('本地图库尚未加载');
+  public removePhoto(itemId: string): Promise<GalleryLibraryItem> {
+    if (!this.loaded) return Promise.reject(new Error('本地图库尚未加载'));
+    return this.exclusive((): Promise<GalleryLibraryItem> => this.removePhotoNow(itemId));
+  }
+
+  private async removePhotoNow(itemId: string): Promise<GalleryLibraryItem> {
     const itemIndex: number = this.items.findIndex((item: GalleryLibraryItem): boolean => item.id === itemId);
     if (itemIndex < 0) throw new Error('要删除的照片已不在本地图库中');
 
@@ -189,7 +276,9 @@ export class HarmonyGalleryLibrary {
   }
 
   private async writeAtomic(content: string): Promise<void> {
-    const temporaryPath: string = this.manifestPath + '.tmp';
+    // A unique temp name: even if two writers ever overlapped, neither could
+    // publish the other's half-written bytes.
+    const temporaryPath: string = this.manifestPath + '.tmp-' + util.generateRandomUUID();
     let file: fileIo.File | undefined;
     try {
       await this.requireRegularOrMissing(this.manifestPath);

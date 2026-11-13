@@ -33,6 +33,13 @@ export interface TransferSendSource {
   name: string;
 }
 
+/** Files the host asks the Send tab to send; a new id replaces the current files. */
+export interface TransferSendRequest {
+  id: number;
+  sources: Array<TransferSendSource>;
+  label: string;
+}
+
 interface TransferView {
   running: boolean;
   ready: boolean;
@@ -85,12 +92,12 @@ const SCAN_BATCH: number = 64;
 @Component
 export struct TransferPanel {
   /**
-   * A send request from elsewhere (a converted queue item): bumping the id
-   * replaces the files to send, switches to the Send tab and starts the service.
+   * A send request from elsewhere (a converted queue item). It is one object
+   * so @Watch sees the files, label and id together: separate @Props are reset
+   * one at a time, and a watch on the id used to run before the files changed,
+   * staging the previous request's files.
    */
-  @Prop @Watch('onSendRequest') sendRequestId: number = 0;
-  @Prop initialSources: Array<TransferSendSource> = [];
-  @Prop initialLabel: string = '';
+  @Prop @Watch('onSendRequest') sendRequest: TransferSendRequest = { id: 0, sources: [], label: '' };
   /** Page visibility from the host; going to the background stops the service. */
   @Prop @Watch('onVisibilityChange') appVisible: boolean = true;
   /** Space above and below the content for the host's title bar and tab bar. */
@@ -134,6 +141,7 @@ export struct TransferPanel {
   /** System UI this panel opened (picker, share, save dialog) hides the page too. */
   private systemUiOpen: number = 0;
   private lastOfferCount: number = 0;
+  private handledRequestId: number = 0;
 
   aboutToAppear(): void {
     this.controller = new TransferController(this.bridge(), (): void => {
@@ -144,12 +152,17 @@ export struct TransferPanel {
     });
   }
 
-  /** Choosing files to send is the explicit action; the Receive toggle waits for the user. */
+  /**
+   * Choosing files to send is the explicit action; the Receive toggle waits for
+   * the user. The host switches to the Send tab itself (it owns `tab`), so this
+   * never writes the parent's state while the parent is rendering.
+   */
   onSendRequest(): void {
-    if (this.initialSources.length === 0) return;
-    this.sendFiles = this.initialSources.slice();
-    this.sendLabel = this.initialLabel;
-    this.tab = 0;
+    const request: TransferSendRequest = this.sendRequest;
+    if (request.id === 0 || request.id === this.handledRequestId || request.sources.length === 0) return;
+    this.handledRequestId = request.id;
+    this.sendFiles = request.sources.slice();
+    this.sendLabel = request.label;
     this.status = '';
     if (!this.view.running) void this.start();
   }
@@ -445,9 +458,8 @@ export struct TransferPanel {
         added.push({ source: target, name: name });
       }
       this.sendFiles = [...this.sendFiles, ...added];
-      if (this.sendLabel.length === 0 || this.initialSources.length === 0) {
-        this.sendLabel = String(this.sendFiles.length) + ' 个文件';
-      }
+      // A mixed set no longer matches a single queue item's label.
+      this.sendLabel = String(this.sendFiles.length) + ' 个文件';
       if (!this.view.running) void this.start();
     } catch (error) {
       this.status = '选择照片失败：' + this.errorText(error);
