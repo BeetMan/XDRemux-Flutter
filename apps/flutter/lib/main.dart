@@ -35,6 +35,8 @@ import 'services/output_export_service.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
 import 'services/huawei_photo_policy.dart';
+import 'services/import_probe.dart';
+import 'services/background_ffi.dart';
 import 'services/photo_details_service.dart';
 import 'services/conversion_backend.dart';
 import 'platform_x.dart';
@@ -110,6 +112,64 @@ typedef PickedItem =
       Uri? uri,
       Future<Uint8List> Function()? readBytes,
     });
+
+/// An intake input persisted to a local path and probed ahead of being
+/// queued. Errors are held and rethrown where the in-order loop used to hit
+/// them, so a failed lookahead never surfaces as an unhandled async error.
+class _PreparedInput {
+  const _PreparedInput(this.path, {this.probe})
+    : _probeError = null,
+      _probeStack = null,
+      _error = null,
+      _stack = null;
+
+  const _PreparedInput.failed(Object error, StackTrace stack)
+    : path = null,
+      probe = null,
+      _probeError = null,
+      _probeStack = null,
+      _error = error,
+      _stack = stack;
+
+  const _PreparedInput._probeFailed(this.path, Object error, StackTrace stack)
+    : probe = null,
+      _probeError = error,
+      _probeStack = stack,
+      _error = null,
+      _stack = null;
+
+  /// Probe [path] off the UI isolate unless it is already queued ([skip]).
+  static Future<_PreparedInput> prepare(String path, {required bool skip}) async {
+    if (skip) return _PreparedInput(path);
+    try {
+      return _PreparedInput(path, probe: await ImportProbe.run(path));
+    } catch (error, stack) {
+      return _PreparedInput._probeFailed(path, error, stack);
+    }
+  }
+
+  /// Local input path; null when the picked file could not be read.
+  final String? path;
+  final ImportProbeResult? probe;
+  final Object? _probeError;
+  final StackTrace? _probeStack;
+  final Object? _error;
+  final StackTrace? _stack;
+
+  /// [path], or the error raised while resolving or persisting the input.
+  String? pathOrThrow() {
+    final error = _error;
+    if (error != null) Error.throwWithStackTrace(error, _stack!);
+    return path;
+  }
+
+  /// The probe for [path], run now if it was skipped as already queued.
+  Future<ImportProbeResult> probeResult() async {
+    final error = _probeError;
+    if (error != null) Error.throwWithStackTrace(error, _probeStack!);
+    return probe ?? await ImportProbe.run(path!);
+  }
+}
 
 /// Layout traits reported by the host platform.
 ///
@@ -737,7 +797,34 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // Queue management
   // ---------------------------------------------------------------------------
 
-  bool get _canEditQueue => !_isProcessing && !TransferQueue.importing;
+  bool get _canEditQueue =>
+      !_isProcessing && !TransferQueue.importing && _queueIntakes == 0;
+
+  /// Picker, share and drop intakes that are queued or still adding files.
+  /// Probing runs off the UI isolate, so the queue stays interactive while an
+  /// intake runs; editing and starting a conversion wait until it finishes.
+  int _queueIntakes = 0;
+  Future<void> _queueIntakeTail = Future<void>.value();
+
+  /// Runs queue intakes one at a time, so each one sees the files the
+  /// previous one added when it filters duplicates.
+  Future<T> _runQueueIntake<T>(Future<T> Function() intake) {
+    // Count it at once; rebuild asynchronously (callers may run during
+    // initState or a build).
+    _queueIntakes++;
+    final result = _queueIntakeTail.then((_) {
+      if (mounted) setState(() {});
+      return intake();
+    }).whenComplete(() {
+      _queueIntakes--;
+      if (mounted) setState(() {});
+    });
+    _queueIntakeTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
 
   // Queue actions are gated on TransferQueue.importing, which changes outside
   // this widget's state; rebuild so they re-enable when an import ends.
@@ -750,6 +837,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // mysteriously disabled button.
   bool get _canStart =>
       !TransferQueue.importing &&
+      _queueIntakes == 0 &&
       !_isProcessing &&
       _queue.any((item) => item.status == QueueItemStatus.pending);
 
@@ -1153,35 +1241,87 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _ingestPickedFiles(files, source: 'file_picker');
   }
 
-  /// Number of Motion Photo inspections currently in flight. Conversion
-  /// waits for these so per-card policies apply to freshly added items.
-  int _motionInspectsInFlight = 0;
+  /// Picked files resolved and probed ahead of the one being queued. Small:
+  /// each probe holds a whole photo in memory while it parses it.
+  static const _importLookahead = 3;
 
-  /// Async Motion Photo detection for a freshly queued item. Best-effort:
-  /// failures leave [QueueItem.motionPhoto] null (treated as static photo).
-  Future<void> _inspectMotionPhoto(QueueItem item) async {
-    _motionInspectsInFlight++;
-    try {
-      final summary = await MotionPhotoService.inspect(item.inputPath);
-      if (summary == null) return;
-      item.motionPhoto = summary;
+  /// Minimum interval between progress rebuilds while an intake runs.
+  static const _intakeRefreshMs = 150;
+
+  /// Builds the queue item for [effectivePath] from its import probe,
+  /// including the Motion Photo policy that used to be applied after the
+  /// item was queued.
+  QueueItem _queueItemFromProbe(
+    String effectivePath,
+    ImportProbeResult probe, {
+    required String? fallbackDir,
+  }) {
+    final classification = probe.classification;
+    final folderName = classification['folderName'] as String?;
+    final outputPath = _config.outputPathFor(
+      effectivePath,
+      fallbackDir: fallbackDir,
+      captureModeFolderName: folderName,
+    );
+    final huaweiReport = probe.huaweiReport;
+    final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
+    final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
+        ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
+        : null;
+    final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
+    final admission = _huaweiHdrAdmission(
+      reportedHuaweiHdr: reportedHuaweiHdr,
+      portraitReady:
+          huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
+    );
+    final item = QueueItem(
+      id: _makeId(),
+      inputPath: effectivePath,
+      outputPath: outputPath,
+      outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
+      captureModeKey: classification['modeKey'] as String?,
+      captureModeFolderName: folderName,
+      classificationStatus: classification['status'] as String?,
+      hdrKind: classification['hdrKind'] as String?,
+      family: classification['family'] as String?,
+      huaweiHdr: reportedHuaweiHdr,
+      huaweiHasXtstyle: huaweiHasXtstyle,
+      huaweiPortrait: huaweiPortrait,
+      status: admission.$1,
+      policyReason: admission.$2,
+    );
+    // Motion Photo detection is best-effort: a failed inspection leaves the
+    // item a static photo.
+    final motion = probe.motionPhoto;
+    if (motion != null) {
+      item.motionPhoto = motion;
       item.motionPhotoMode = _config.motionPhotoDefaultMode;
       if (item.huaweiHdr) {
         item.status = QueueItemStatus.pending;
         item.policyReason = null;
       }
-      if (mounted) setState(() {});
-    } finally {
-      _motionInspectsInFlight--;
     }
+    return item;
   }
 
-  /// Wait until all in-flight Motion Photo inspections finish (bounded, so a
-  /// wedged read can never block a batch).
-  Future<void> _waitForMotionInspections() async {
-    final deadline = DateTime.now().add(const Duration(seconds: 10));
-    while (_motionInspectsInFlight > 0 && DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 50));
+  /// Resolves, persists and probes one picked file. Never throws: failures
+  /// are carried to the in-order loop and surface there as before.
+  Future<_PreparedInput> _preparePickedInput(
+    PickedItem file,
+    int index, {
+    required Set<String> queuedBefore,
+  }) async {
+    try {
+      final resolvedPath = await _resolvePickedFile(file, index);
+      if (resolvedPath == null) return const _PreparedInput(null);
+      // file_picker and PHPicker both hand us an OS-cache path. Persist that
+      // input before it enters the queue so it survives app restarts.
+      final path = await CheckpointService.materializeTemporaryInput(
+        resolvedPath,
+      );
+      return await _PreparedInput.prepare(path, skip: queuedBefore.contains(path));
+    } catch (error, stack) {
+      return _PreparedInput.failed(error, stack);
     }
   }
 
@@ -1194,7 +1334,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return Future<void>.value();
     }
     return TransferQueue.withAdmission(
-      () => _ingestPickedFilesNow(files, source: source),
+      () => _runQueueIntake(
+        () => _ingestPickedFilesNow(files, source: source),
+      ),
     );
   }
 
@@ -1212,25 +1354,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
 
     final existing = _queue.map((item) => item.inputPath).toSet();
+    final queuedBefore = Set<String>.of(existing);
     int added = 0;
     int skipped = 0;
     int skippedExisting = 0;
     int skippedUnsupportedPortrait = 0;
     final unsupportedPortraitFiles = <String>[];
     String? firstError;
+    final stopwatch = Stopwatch()..start();
+    var lastRefreshMs = 0;
+
+    // Copy and probe a few files ahead on background isolates, but apply the
+    // results strictly in picker order with the same decisions as before, so
+    // queue order and duplicate/donor handling are unchanged.
+    final prepared = List<Future<_PreparedInput>?>.filled(files.length, null);
+    Future<_PreparedInput> prepareAt(int i) => prepared[i] ??=
+        _preparePickedInput(files[i], i, queuedBefore: queuedBefore);
 
     for (var index = 0; index < files.length; index++) {
+      for (var ahead = index;
+          ahead < files.length && ahead < index + _importLookahead;
+          ahead++) {
+        prepareAt(ahead);
+      }
       final file = files[index];
-      final resolvedPath = await _resolvePickedFile(file, index);
-      if (resolvedPath == null) {
+      final input = await prepareAt(index);
+      prepared[index] = null;
+      final path = input.pathOrThrow();
+      if (path == null) {
         skipped++;
         continue;
       }
-      // file_picker and PHPicker both hand us an OS-cache path. Persist that
-      // input before it enters the queue so it survives app restarts.
-      final path = await CheckpointService.materializeTemporaryInput(
-        resolvedPath,
-      );
       if (existing.contains(path)) continue;
 
       if (_config.applePortrait) {
@@ -1247,61 +1401,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
       try {
         String effectivePath = path;
-        final inputIsConverted = await XdRemuxService.verifyOutput(path);
-        if (inputIsConverted) {
+        var probe = await input.probeResult();
+        if (probe.isConvertedOutput) {
           final donor = _findOriginalDonorForConvertedFile(path);
           if (donor != null && !existing.contains(donor)) {
             debugPrint(
               '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
             );
             effectivePath = donor;
+            probe = await ImportProbe.run(donor, checkConverted: false);
           } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
-        final classification = await XdRemuxService.classify(effectivePath);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          effectivePath,
-          fallbackDir: _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
-            effectivePath.toLowerCase().endsWith('.heif');
-        final huaweiReport = isHeic
-            ? await XdRemuxService.inspectHuawei(effectivePath)
-            : const <String, dynamic>{};
-        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
-        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
-            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
-            : null;
-        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
-        final admission = _huaweiHdrAdmission(
-          reportedHuaweiHdr: reportedHuaweiHdr,
-          portraitReady:
-              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
-        );
-
         _queue.add(
-          QueueItem(
-            id: _makeId(),
-            inputPath: effectivePath,
-            outputPath: outputPath,
-            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
-            captureModeKey: classification['modeKey'] as String?,
-            captureModeFolderName: folderName,
-            classificationStatus: classification['status'] as String?,
-            hdrKind: classification['hdrKind'] as String?,
-            family: classification['family'] as String?,
-            huaweiHdr: reportedHuaweiHdr,
-            huaweiHasXtstyle: huaweiHasXtstyle,
-            huaweiPortrait: huaweiPortrait,
-            status: admission.$1,
-            policyReason: admission.$2,
+          _queueItemFromProbe(
+            effectivePath,
+            probe,
+            fallbackDir: _androidOutputDir,
           ),
         );
-        _inspectMotionPhoto(_queue.last);
         existing.add(effectivePath);
         added++;
       } catch (e) {
@@ -1310,8 +1430,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (mounted) {
           setState(() => _currentFileName = t('添加失败: $e', 'Add failed: $e'));
         }
+      } finally {
+        // Show cards as they are probed, without a rebuild per file.
+        if (mounted &&
+            stopwatch.elapsedMilliseconds - lastRefreshMs >= _intakeRefreshMs) {
+          lastRefreshMs = stopwatch.elapsedMilliseconds;
+          setState(
+            () => _currentFileName = t(
+              '正在添加 ${index + 1}/${files.length}…',
+              'Adding ${index + 1}/${files.length}…',
+            ),
+          );
+        }
       }
     }
+    debugPrint(
+      '[XDRemux][$source] intake: $added of ${files.length} added in '
+      '${stopwatch.elapsedMilliseconds} ms'
+      '${BackgroundFfi.rootIsolateOnly ? ' (root isolate)' : ''}',
+    );
 
     _preflightIssues.clear();
     _validateOutputPlans();
@@ -1684,10 +1821,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _refreshOutputPaths();
 
     if (!await _runPreflight()) return;
-    if (!mounted) return;
-
-    // Let in-flight Motion Photo inspections land so per-card policies apply.
-    await _waitForMotionInspections();
     if (!mounted) return;
 
     // Android: check battery optimization before starting a batch.
@@ -2606,7 +2739,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
     }
     return TransferQueue.withAdmission(
-      () => _enqueuePathsNow(paths, verb: verb, ignored: ignored, transferInput: transferInput),
+      () => _runQueueIntake(
+        () => _enqueuePathsNow(
+          paths,
+          verb: verb,
+          ignored: ignored,
+          transferInput: transferInput,
+        ),
+      ),
     );
   }
 
@@ -2617,21 +2757,52 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     TransferInput? transferInput,
   }) async {
     final existing = _queue.map((item) => item.inputPath).toSet();
+    final queuedBefore = Set<String>.of(existing);
     int added = 0;
     int skippedExisting = 0;
     int skippedUnsupportedPortrait = 0;
     final unsupportedPortraitFiles = <String>[];
-    for (final resolvedPath in paths) {
+    final stopwatch = Stopwatch()..start();
+    var lastRefreshMs = 0;
+
+    // Same in-order lookahead as the picker intake: persist and probe a few
+    // supported files ahead on background isolates.
+    final prepared = List<Future<_PreparedInput>?>.filled(paths.length, null);
+    Future<_PreparedInput> prepareAt(int i) => prepared[i] ??= () async {
+      try {
+        final resolvedPath = paths[i];
+        if (!isSupportedInputPath(resolvedPath)) {
+          return _PreparedInput(resolvedPath);
+        }
+        // Shared-media intake and some picker implementations hand us a cache
+        // path. Use the same persistent materialization path as file picking
+        // so share/drop and picker have identical resume semantics.
+        final path = transferInput != null
+            ? resolvedPath
+            : await CheckpointService.materializeTemporaryInput(resolvedPath);
+        return await _PreparedInput.prepare(
+          path,
+          skip: queuedBefore.contains(path),
+        );
+      } catch (error, stack) {
+        return _PreparedInput.failed(error, stack);
+      }
+    }();
+
+    for (var index = 0; index < paths.length; index++) {
+      final resolvedPath = paths[index];
       if (!isSupportedInputPath(resolvedPath)) {
         ignored++;
         continue;
       }
-      // Shared-media intake and some picker implementations hand us a cache
-      // path. Use the same persistent materialization path as file picking so
-      // share/drop and picker have identical resume semantics.
-      final path = transferInput != null
-          ? resolvedPath
-          : await CheckpointService.materializeTemporaryInput(resolvedPath);
+      for (var ahead = index;
+          ahead < paths.length && ahead < index + _importLookahead;
+          ahead++) {
+        prepareAt(ahead);
+      }
+      final input = await prepareAt(index);
+      prepared[index] = null;
+      final path = input.pathOrThrow()!;
       if (existing.contains(path)) continue;
       if (_config.applePortrait) {
         final portraitReason = await _portraitImportRejection(path);
@@ -2648,8 +2819,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
       try {
         String effectivePath = path;
-        final inputIsConverted = await XdRemuxService.verifyOutput(path);
-        if (inputIsConverted) {
+        var probe = await input.probeResult();
+        if (probe.isConvertedOutput) {
           final donor = transferInput == null
               ? _findOriginalDonorForConvertedFile(path)
               : null;
@@ -2658,59 +2829,35 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               '[XDRemux][reconvert] Auto-resolved converted file $path to donor $donor',
             );
             effectivePath = donor;
+            probe = await ImportProbe.run(donor, checkConverted: false);
           } else if (_config.skipExisting) {
             skippedExisting++;
             continue;
           }
         }
-        final classification = await XdRemuxService.classify(effectivePath);
-        final folderName = classification['folderName'] as String?;
-        final outputPath = _config.outputPathFor(
-          effectivePath,
-          fallbackDir: transferInput?.outputDirectory ?? _androidOutputDir,
-          captureModeFolderName: folderName,
-        );
-        final isHeic = effectivePath.toLowerCase().endsWith('.heic') ||
-            effectivePath.toLowerCase().endsWith('.heif');
-        final huaweiReport = isHeic
-            ? await XdRemuxService.inspectHuawei(effectivePath)
-            : const <String, dynamic>{};
-        final reportedHuaweiHdr = huaweiReport['isHuaweiHdr'] == true;
-        final huaweiPortrait = huaweiReport['huaweiPortrait'] is Map
-            ? Map<String, dynamic>.from(huaweiReport['huaweiPortrait'] as Map)
-            : null;
-        final huaweiHasXtstyle = huaweiReport['hasXtstyle'] == true;
-        final admission = _huaweiHdrAdmission(
-          reportedHuaweiHdr: reportedHuaweiHdr,
-          portraitReady:
-              huaweiPortrait != null && huaweiPortrait['safeToTransform'] == true,
-        );
-
         _queue.add(
-          QueueItem(
-            id: _makeId(),
-            inputPath: effectivePath,
-            outputPath: outputPath,
-            outputPlanStatus: _computeOutputPlan(effectivePath, outputPath),
-            captureModeKey: classification['modeKey'] as String?,
-            captureModeFolderName: folderName,
-            classificationStatus: classification['status'] as String?,
-            hdrKind: classification['hdrKind'] as String?,
-            family: classification['family'] as String?,
-            huaweiHdr: reportedHuaweiHdr,
-            huaweiHasXtstyle: huaweiHasXtstyle,
-            huaweiPortrait: huaweiPortrait,
-            status: admission.$1,
-            policyReason: admission.$2,
+          _queueItemFromProbe(
+            effectivePath,
+            probe,
+            fallbackDir: transferInput?.outputDirectory ?? _androidOutputDir,
           ),
         );
-        _inspectMotionPhoto(_queue.last);
         existing.add(effectivePath);
         added++;
       } catch (_) {
         // Keep the intake responsive even if metadata classification fails.
+      } finally {
+        if (mounted &&
+            stopwatch.elapsedMilliseconds - lastRefreshMs >= _intakeRefreshMs) {
+          lastRefreshMs = stopwatch.elapsedMilliseconds;
+          setState(() {});
+        }
       }
     }
+    debugPrint(
+      '[XDRemux][intake] $added of ${paths.length} added in '
+      '${stopwatch.elapsedMilliseconds} ms',
+    );
     if (added > 0) {
       _preflightIssues.clear();
       _validateOutputPlans();
