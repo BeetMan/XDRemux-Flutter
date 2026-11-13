@@ -3,9 +3,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../services/xdremux_service.dart';
-import '../ffi/xdremux_ffi.dart';
 import 'l10n/l10n.dart';
+import 'services/organize_scan.dart';
 
 /// Standalone "organize photos by capture mode" page.
 ///
@@ -14,6 +13,11 @@ import 'l10n/l10n.dart';
 /// plan, then copy into per-mode Chinese folders.
 class OrganizePage extends StatefulWidget {
   const OrganizePage({super.key});
+
+  /// Widget tests choose the directory to scan without a platform picker.
+  /// Production leaves this null and uses [FilePicker.getDirectoryPath].
+  @visibleForTesting
+  static Future<String?> Function()? inputDirectoryPickerForTesting;
 
   @override
   State<OrganizePage> createState() => _OrganizePageState();
@@ -84,11 +88,21 @@ class _OrganizePageState extends State<OrganizePage> {
   static String get _assetLayoutPrefix => t('静态照片', 'Still Photos');
   static String get _liveLayoutPrefix => t('实况照片', 'Live Photos');
 
+  /// Photos classified ahead of the one being added. Small: each probe holds
+  /// a whole photo in memory while it parses it.
+  static const _scanLookahead = 3;
+
+  /// Minimum interval between progress rebuilds while a scan runs.
+  static const _scanRefreshMs = 150;
+
   Future<void> _pickInputDir() async {
-    final dir = await FilePicker.getDirectoryPath(
-      dialogTitle: t('选择要整理的照片目录', 'Choose the photo directory to organize'),
-    );
-    if (dir == null) return;
+    final pickForTesting = OrganizePage.inputDirectoryPickerForTesting;
+    final dir = pickForTesting != null
+        ? await pickForTesting()
+        : await FilePicker.getDirectoryPath(
+            dialogTitle: t('选择要整理的照片目录', 'Choose the photo directory to organize'),
+          );
+    if (dir == null || !mounted) return;
     setState(() {
       _items.clear();
       _statusText = t('扫描中…', 'Scanning…');
@@ -123,6 +137,7 @@ class _OrganizePageState extends State<OrganizePage> {
         movs[stem] = entity;
       }
     }
+    if (!mounted) return;
 
     if (files.isEmpty) {
       setState(() {
@@ -135,29 +150,59 @@ class _OrganizePageState extends State<OrganizePage> {
     // Default output dir = input dir.
     _outputDir ??= dir.path;
 
-    for (final file in files) {
-      final item = _OrganizeItem(
-        sourcePath: file.path,
-        fileName: file.uri.pathSegments.last,
-      );
-      try {
-        final result = await XdRemuxService.classify(file.path);
-        item.modeKey = result['modeKey'] as String?;
-        item.folderName = result['folderName'] as String?;
-        item.status = result['status'] as String?;
-      } catch (_) {
-        item.status = 'unreadable-image';
-      }
+    // Classify a few photos ahead on background isolates, but add them
+    // strictly in listing order, so the plan (and its collision suffixes) is
+    // the same as when every photo was classified on the UI isolate.
+    final probes = List<Future<OrganizeScanResult>?>.filled(files.length, null);
+    Future<OrganizeScanResult> probeAt(int i) {
+      final file = files[i];
       // Asset-aware grouping: a same-basename MOV is only claimed as the
       // paired video when the content identifiers match on both sides
       // (upstream v1.4 semantics — never on filename alone).
       final stem = file.uri.pathSegments.last.replaceAll(RegExp(r'\.[^.]+$'), '');
-      final companion = movs[stem];
-      if (companion != null &&
-          XdRemuxFFI.livePhotoPairValid(file.path, companion.path)) {
-        item.pairedVideoPath = companion.path;
+      return probes[i] ??= OrganizeScanProbe.run(
+        file.path,
+        companionMovPath: movs[stem]?.path,
+      );
+    }
+
+    final stopwatch = Stopwatch()..start();
+    var lastRefreshMs = 0;
+    for (var index = 0; index < files.length; index++) {
+      for (var ahead = index;
+          ahead < files.length && ahead < index + _scanLookahead;
+          ahead++) {
+        probeAt(ahead);
       }
+      final probe = await probeAt(index);
+      probes[index] = null;
+      // Closed mid-scan: stop; probes already in flight finish on their own.
+      if (!mounted) return;
+      final file = files[index];
+      final item = _OrganizeItem(
+        sourcePath: file.path,
+        fileName: file.uri.pathSegments.last,
+      );
+      final result = probe.classification;
+      if (result != null) {
+        item.modeKey = result['modeKey'] as String?;
+        item.folderName = result['folderName'] as String?;
+        item.status = result['status'] as String?;
+      } else {
+        item.status = 'unreadable-image';
+      }
+      item.pairedVideoPath = probe.livePhotoMovPath;
       _items.add(item);
+      // Show photos as they are classified, without a rebuild per photo.
+      if (stopwatch.elapsedMilliseconds - lastRefreshMs >= _scanRefreshMs) {
+        lastRefreshMs = stopwatch.elapsedMilliseconds;
+        setState(
+          () => _statusText = t(
+            '扫描中… ${index + 1}/${files.length}',
+            'Scanning… ${index + 1}/${files.length}',
+          ),
+        );
+      }
     }
 
     _recomputeDestinations();
