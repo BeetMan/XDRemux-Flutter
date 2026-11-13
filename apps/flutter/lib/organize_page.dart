@@ -220,7 +220,10 @@ class _OrganizePageState extends State<OrganizePage> {
   void _recomputeDestinations() {
     final root = _outputDir;
     if (root == null) return;
-    final reserved = <String, int>{};
+    // Lower-cased destinations already planned, shared rather than copied per
+    // photo: a fresh copy each time made planning quadratic (~0.2 s for 5000
+    // photos on an M-series Mac, on the UI isolate).
+    final reserved = <String>{};
     final videoReserved = <String>{};
     for (final item in _items) {
       // Asset-type level: 静态照片 / 实况照片 (upstream v1.4 layout).
@@ -235,10 +238,10 @@ class _OrganizePageState extends State<OrganizePage> {
         subdir,
         stem,
         ext,
-        reserved.keys.toSet(),
+        reserved,
         keepPath: item.sourcePath,
       );
-      reserved[candidate.toLowerCase()] = 1;
+      reserved.add(candidate.toLowerCase());
       item.destinationPath = candidate;
       // Paired MOV gets its own collision-avoided destination (same stem,
       // .mov extension). Without this an existing MOV at the destination
