@@ -98,6 +98,10 @@ export CXXFLAGS_${TARGET_UNDERSCORE}="-target $LLVM_TARGET --sysroot=$SYSROOT -D
 export CARGO_TARGET_${TARGET_UPPER}_LINKER="$CLANGXX"
 export CARGO_TARGET_${TARGET_UPPER}_RUSTFLAGS="-C link-args=--target=$LLVM_TARGET -C link-args=--sysroot=$SYSROOT"
 
+# Unwind, not the workspace's release `panic = "abort"`: the exports catch
+# panics in src/ffi_guard.rs and return a failure value, but catch_unwind only
+# works when panics unwind. Other platforms keep the workspace default.
+export CARGO_PROFILE_RELEASE_PANIC=unwind
 cargo build --target "$TARGET" --release
 
 echo "==> done: target/$TARGET/release/libxdremux_core.so"
