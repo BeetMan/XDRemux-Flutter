@@ -53,7 +53,9 @@ try {
     Push-Location apps/flutter
     try {
         if (-not $NoPub) { Invoke-TransferStage 'flutter-pub' flutter @('pub', 'get', '--enforce-lockfile') }
-        Invoke-TransferStage 'flutter-analyze' flutter @('analyze', '--no-pub')
+        # Same policy as ci.yml: Flutter 3.50 reports the package:flutter/material.dart
+        # deprecation as infos, which a bare `flutter analyze` treats as fatal.
+        Invoke-TransferStage 'flutter-analyze' flutter @('analyze', '--no-pub', '--no-fatal-infos')
         $transferTests = @(Get-ChildItem test -Filter 'transfer_*_test.dart' | Sort-Object Name | ForEach-Object { "test/$($_.Name)" })
         if ($transferTests.Count -eq 0) { throw 'No transfer tests found.' }
         Invoke-TransferStage 'flutter-tests' flutter (@('test', '--no-pub', '--reporter=expanded') + $transferTests)
