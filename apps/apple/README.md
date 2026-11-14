@@ -107,8 +107,8 @@ XCFramework's `BUILD_RECORD.txt`):
 
 | Value | Core contains | Used by |
 |---|---|---|
-| `vt` (default) | VideoToolbox only. No x265 code, no `vendor/x265` checkout needed | development, CI, TestFlight / App Store (`tools/apple/upload_testflight.sh`) |
-| `vt+x265` | VideoToolbox and x265, chosen at run time, VideoToolbox by default | GitHub release packages (`tools/apple/package_release.sh`) |
+| `vt` (default) | VideoToolbox only. No x265 code, no `vendor/x265` checkout needed | development, CI, App Store (`XDREMUX_APPLE_HEVC=vt tools/apple/upload_testflight.sh`) |
+| `vt+x265` | VideoToolbox and x265, chosen at run time, VideoToolbox by default | GitHub release packages (`tools/apple/package_release.sh`), TestFlight for now (`tools/apple/upload_testflight.sh`) |
 | `x265` | x265 only | comparisons |
 
 The two x265 variants need the vendored x265 checkout in `xdremux/rust/vendor/x265` (same layout as the
@@ -187,6 +187,12 @@ every upload. Signing uses the Xcode account session, or an App Store Connect AP
 `ASC_KEY_PATH` / `ASC_KEY_ID` / `ASC_ISSUER_ID`. One-time setup: both App IDs
 (`io.github.beetman.xdremux.swiftui`, `….swiftui.share`) with App Groups bound to
 `group.io.github.beetman.xdremux.swiftui`, and an app record in App Store Connect.
+
+TestFlight builds carry both encoders for now (`XDREMUX_APPLE_HEVC=vt+x265`, the script's default),
+so testers get the 编码器 choice in Settings; this needs the vendored x265 checkout. Pass
+`XDREMUX_APPLE_HEVC=vt` for the VideoToolbox-only variant. Either way the script refuses a core whose
+`BUILD_RECORD.txt` names a different `hevc_backend`, and checks the archived binary for x265 (present
+for `vt+x265`, absent for `vt`).
 
 ## Language
 
