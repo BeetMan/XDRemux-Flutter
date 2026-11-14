@@ -34,8 +34,8 @@ C=$(xcrun simctl get_app_container booted io.github.beetman.xdremux.swiftui data
 xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Documents/samples/a.heic" --convert-all
 ```
 
-`build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
-skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
+`build_apple.sh` builds arm64 only (Intel Macs are not supported; `XDREMUX_APPLE_ARCHS="arm64 x86_64"`
+still produces fat macOS and simulator slices, untested). The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
 HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge). Settings → 照片 →
 转换完成后自动存入照片 saves every finished photo to the library when a batch (or a single conversion) ends; photos
 already saved are skipped.
@@ -66,7 +66,9 @@ Ctrl-C cancels the running conversion in the core (`xdremux_progress_cancel`), d
 file and exits 130. `convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
 (`--suffix`, `--no-overwrite` appends ` (2)`, `--categorize` adds a mode folder). Exit status 1 if any
 input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
-results are identical for the same options. x265's own log lines are silenced unless `-v`.
+results are identical for the same options. The encoder's own log lines are silenced unless `-v`.
+When the core carries two HEVC encoders (see Build), `--encoder <name>` picks one; `xdremux capabilities`
+lists them under `hevcEncoders`.
 
 The app also accepts `XDRemux --import <files…> [--convert-all] [--round-trip]` at launch for scripting;
 the files must be readable from inside the app sandbox (e.g. its container's `Documents`). Finder
@@ -82,7 +84,7 @@ setting applies to them too. Test with `-AppleLanguages "(en)"` or the Settings 
 ## Build
 
 ```bash
-# 1. Rust core + x265 → XCFramework (macOS arm64, iOS arm64, iOS simulator arm64)
+# 1. Rust core → XCFramework (macOS arm64, iOS arm64, iOS simulator arm64), HEVC through VideoToolbox
 xdremux/rust/build_apple.sh            # XDREMUX_APPLE_SLICES="macos" for a quick macOS-only build
 
 # 2. Packages
@@ -95,8 +97,29 @@ xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'generic/plat
 ```
 
 Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim`,
-`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). builds on Apple Silicon; the macOS and simulator slices are arm64 + x86_64 (Intel Macs run the same app)
-(no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
+`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). Builds on Apple Silicon,
+for Apple Silicon. The iOS simulator build needs an iOS runtime installed in Xcode.
+
+### HEVC encoder
+
+`XDREMUX_APPLE_HEVC` selects what the core is built with (recorded as `hevc_backend=` in the
+XCFramework's `BUILD_RECORD.txt`):
+
+| Value | Core contains | Used by |
+|---|---|---|
+| `vt` (default) | VideoToolbox only. No x265 code, no `vendor/x265` checkout needed | development, CI, TestFlight / App Store (`tools/apple/upload_testflight.sh`) |
+| `vt+x265` | VideoToolbox and x265, chosen at run time, VideoToolbox by default | GitHub release packages (`tools/apple/package_release.sh`) |
+| `x265` | x265 only | comparisons |
+
+The two x265 variants need the vendored x265 checkout in `xdremux/rust/vendor/x265` (same layout as the
+other platforms, see `docs/operations/building.md`).
+
+The app asks the core which encoders it has (`hevcEncoders` in `xdremux_codec_capabilities`). With one
+encoder there is nothing to choose and Settings shows no encoder option; with two, Settings → 编码 →
+编码器 offers VideoToolbox or x265. The setting is stored in the existing `hardwareEncode` key
+(true = VideoToolbox), sent to the core as `hevcEncoder` per conversion and applied process-wide with
+`xdremux_set_hevc_encoder` for Live Photo and writeback. Settings saved before this choice existed are
+migrated once to VideoToolbox. With VideoToolbox, three-channel gain maps are 4:2:0 (x265 keeps 4:4:4).
 
 `tools/apple/verify_local.sh` runs the same steps as the `Apple native` CI job (header check, both
 XCFrameworks, `swift test`, CLI smoke, macOS and iOS simulator builds) and prints a summary to paste
@@ -115,8 +138,10 @@ Swift imports it as `XDRemuxCoreC` through `include/module.modulemap`, packaged 
 Ownership and error rules are in `docs/architecture/ffi-contract.md`; `XDRemuxKit` enforces them
 (`RustString`, `Classification(consuming:)`, `ConversionReport(consuming:)`).
 
-The core staticlib does not carry link flags: anything linking `XDRemuxCore` must also link `libc++`
-(`XDRemuxKit`'s `linkerSettings` and the app's `OTHER_LDFLAGS` do).
+The core staticlib does not carry link flags. `XDRemuxKit`'s `linkerSettings` link the system frameworks
+its VideoToolbox backend needs (VideoToolbox, CoreMedia, CoreVideo, CoreFoundation). A core that also
+contains x265 needs `libc++`; `build_apple.sh` then adds `link "c++"` to the packaged module map, so
+importing `XDRemuxCoreC` links it and neither the package nor the app declares it.
 
 ## Identity
 

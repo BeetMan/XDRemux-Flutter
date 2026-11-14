@@ -5,7 +5,8 @@ import XDRemuxModel
 /// Global defaults. Changes apply to conversions started afterwards; a running
 /// conversion keeps the snapshot it started with (ConversionJob copies config).
 struct SettingsView: View {
-    private let hardwareEncodeAvailable = VideoToolboxTileEncoder.isAvailable
+    /// Only builds whose core carries a second HEVC encoder offer a choice.
+    private let encoders = XDRemuxEngine.hevcEncoders
     @Bindable var model: LibraryModel
     @Environment(\.dismiss) private var dismiss
     #if os(macOS)
@@ -90,16 +91,16 @@ struct SettingsView: View {
                     }
                 }
 
-                Section {
-                    Toggle("硬件编码（VideoToolbox）", isOn: $model.config.hardwareEncode)
-                        .disabled(!hardwareEncodeAvailable)
-                } header: {
-                    Text("编码")
-                } footer: {
-                    if !hardwareEncodeAvailable {
-                        Text("这台设备没有可用的硬件 HEVC 编码器。")
-                    } else {
-                        Text("用系统硬件编码增益图，比内置的 x265 快得多；摄影风格、人像仍走内置编码。不能分块的照片自动回退。")
+                if encoders.offersChoice, let alternative = encoders.alternativeName {
+                    Section {
+                        Picker("编码器", selection: $model.config.hardwareEncode) {
+                            Text("VideoToolbox（系统编码器）").tag(true)
+                            Text(verbatim: alternative).tag(false)
+                        }
+                    } header: {
+                        Text("编码")
+                    } footer: {
+                        Text("VideoToolbox 使用系统的硬件编码器，速度更快。\(alternative) 是内置的软件编码器，三通道增益图保留 4:4:4 色度。")
                     }
                 }
 

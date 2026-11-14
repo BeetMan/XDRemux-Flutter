@@ -16,6 +16,7 @@ final class LibraryModel {
         didSet {
             try? settingsStore.save(config)
             engine.setMaxConcurrency(config.maxConcurrentJobs)
+            XDRemuxEngine.applyEncoderChoice(config)
             L10n.apply(config.language)
             applyPolicies()
         }
@@ -90,6 +91,9 @@ final class LibraryModel {
         try? directories.ensureExists()
         L10n.apply(config.language)
         engine.setMaxConcurrency(config.maxConcurrentJobs)
+        // Live Photo and writeback calls take no config; the encoder they use
+        // is process-wide state in the core.
+        XDRemuxEngine.applyEncoderChoice(config)
         outputRoot = outputLocation.resolve(fallback: directories.outputs)
         restoreJournal()
     }

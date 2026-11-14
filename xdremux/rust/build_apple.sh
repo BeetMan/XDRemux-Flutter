@@ -1,52 +1,61 @@
 #!/bin/bash
-# Build the Rust core + x265 as ONE static library per Apple slice and wrap the
+# Build the Rust core as ONE static library per Apple slice and wrap the
 # slices into an XCFramework for the native SwiftUI app (apps/apple).
 #
 #   apps/apple/Frameworks/XDRemuxCore.xcframework
-#     ├── macos-arm64_x86_64/          libXDRemuxCore.a (fat) + Headers/
-#     ├── ios-arm64/                   libXDRemuxCore.a + Headers/
-#     └── ios-arm64_x86_64-simulator/  libXDRemuxCore.a (fat) + Headers/
+#     ├── macos-arm64/            libXDRemuxCore.a + Headers/
+#     ├── ios-arm64/              libXDRemuxCore.a + Headers/
+#     └── ios-arm64-simulator/    libXDRemuxCore.a + Headers/
 #
-# Each libXDRemuxCore.a = libxdremux_core.a (Rust staticlib, already bundling
-# x265_helper and the optional Main10 archive) + libx265.a (8-bit encoder),
-# merged with libtool so the SPM binaryTarget links a single archive. Consumers
-# still link libc++ (XDRemuxKit declares it).
+# By default the core encodes HEVC with VideoToolbox only: libXDRemuxCore.a is
+# the Rust staticlib as built, nothing from x265 is compiled or merged and
+# vendor/x265 is not needed. That is the build the App Store / TestFlight
+# packages use.
+#
+# With XDREMUX_APPLE_HEVC=vt+x265 (GitHub release packages) or =x265 each
+# libXDRemuxCore.a = libxdremux_core.a (which then also bundles x265_helper
+# and the optional Main10 archive) + libx265.a (8-bit encoder), merged with
+# libtool so the SPM binaryTarget links a single archive. x265 is C++, so
+# those builds add `link "c++"` to the module map in Headers/: importing the
+# module links libc++ automatically and consumers declare nothing.
 #
 # This script never writes into apps/flutter/*; it is independent of
 # build_ios.sh / build_ios_sim.sh, which stage archives for the Flutter app.
 #
 # Env:
 #   XDREMUX_APPLE_SLICES   space-separated subset of: macos ios ios-sim (default: all)
-#   XDREMUX_APPLE_ARCHS    architectures for macos / ios-sim: "arm64 x86_64" (default)
-#                          or "arm64" (device iOS is always arm64 only)
-#   XDREMUX_MAIN10         0 to skip the Main10 (10-bit) x265 build (default 1)
-#   XDREMUX_APPLE_HEVC     HEVC encoder(s) in the core: x265 (default), vt
-#                          (VideoToolbox only: x265 is neither built nor
-#                          merged, vendor/x265 is not touched), or vt+x265
-#                          (both, chosen at run time, VideoToolbox by default)
+#   XDREMUX_APPLE_ARCHS    architectures for macos / ios-sim: "arm64" (default;
+#                          Intel Macs are not supported) or "arm64 x86_64"
+#                          (device iOS is always arm64 only)
+#   XDREMUX_APPLE_HEVC     HEVC encoder(s) in the core: vt (default,
+#                          VideoToolbox only), vt+x265 (both, chosen at run
+#                          time, VideoToolbox by default), or x265 (x265 only)
+#   XDREMUX_MAIN10         0 to skip the Main10 (10-bit) x265 build (default 1;
+#                          only meaningful when x265 is included)
 #   XDREMUX_APPLE_OUT      output dir (default: ../../apps/apple/Frameworks)
 #   IPHONEOS_DEPLOYMENT_TARGET / MACOSX_DEPLOYMENT_TARGET (defaults 17.0 / 14.0)
 #
-# Prereqs: rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim \
-#            x86_64-apple-darwin x86_64-apple-ios
+# Prereqs: rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
+#          (plus x86_64-apple-darwin x86_64-apple-ios for XDREMUX_APPLE_ARCHS="arm64 x86_64");
+#          a vendored x265 checkout in vendor/x265 only when x265 is included.
 set -euo pipefail
 cd "$(dirname "$0")"   # -> xdremux/rust
 
 SLICES="${XDREMUX_APPLE_SLICES:-macos ios ios-sim}"
-ARCHS="${XDREMUX_APPLE_ARCHS:-arm64 x86_64}"
+ARCHS="${XDREMUX_APPLE_ARCHS:-arm64}"
 OUT="${XDREMUX_APPLE_OUT:-../../apps/apple/Frameworks}"
 export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-17.0}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 JOBS="$(sysctl -n hw.ncpu)"
-HEVC="${XDREMUX_APPLE_HEVC:-x265}"
+HEVC="${XDREMUX_APPLE_HEVC:-vt}"
 case "$HEVC" in
-  x265) HEVC_BACKEND="" ;;   # the core's default; leave the environment alone
+  x265) HEVC_BACKEND="x265" ;;
   vt) HEVC_BACKEND="videotoolbox" ;;
   vt+x265) HEVC_BACKEND="videotoolbox+x265" ;;
   *) echo "unknown XDREMUX_APPLE_HEVC: $HEVC (x265, vt or vt+x265)" >&2; exit 2 ;;
 esac
 # build.rs reads this; every cargo build below inherits it.
-if [ -n "$HEVC_BACKEND" ]; then export XDREMUX_HEVC_BACKEND="$HEVC_BACKEND"; fi
+export XDREMUX_HEVC_BACKEND="$HEVC_BACKEND"
 
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')"
@@ -116,6 +125,12 @@ slice() {
   local dest="$STAGE/${name/ARCH/$archtag}"; mkdir -p "$dest"
   lipo -create "${libs[@]}" -output "$dest/libXDRemuxCore.a"
   cp -R include "$dest/Headers"
+  if [ "$HEVC" != "vt" ]; then
+    # The archive now contains C++ (x265): let the module pull in libc++.
+    sed -i '' 's|^}$|    link "c++"\
+}|' "$dest/Headers/module.modulemap"
+    grep -q 'link "c++"' "$dest/Headers/module.modulemap"
+  fi
   rm -f "${libs[@]}"
 }
 

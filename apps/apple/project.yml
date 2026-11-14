@@ -98,8 +98,6 @@ targets:
         LOCALIZATION_PREFERS_STRING_CATALOGS: true
         ENABLE_USER_SCRIPT_SANDBOXING: true
         GENERATE_INFOPLIST_FILE: false
-        # x265 is C++; the Rust staticlib carries no link flags of its own.
-        OTHER_LDFLAGS: ["$(inherited)", "-lc++"]
         # The transfer core is a dynamic framework embedded in the bundle;
         # without these dyld only searches /usr/lib/swift and PackageFrameworks
         # and the macOS app dies at launch with "Library not loaded".

@@ -40,6 +40,60 @@ final class ConversionConfigTests: XCTestCase {
         XCTAssertEqual(c.maxConcurrentJobs, 2)
         XCTAssertEqual(c.fileNameSuffix, "_hdr")
         XCTAssertEqual(c.motionPhotoDefaultMode, .stillAndVideo)
+        // The Dart record predates the encoder choice: its `false` is the old
+        // hardware-path default and must not select the alternative encoder.
+        XCTAssertTrue(c.hardwareEncode)
+    }
+
+    // MARK: - encoder choice migration
+
+    func testEncoderChoiceDefaultsToSystemEncoder() {
+        let c = ConversionConfig()
+        XCTAssertTrue(c.hardwareEncode)
+        XCTAssertEqual(c.encoderChoiceVersion, ConversionConfig.currentEncoderChoiceVersion)
+    }
+
+    /// Records saved before the switch became an encoder choice carry no
+    /// version. Whatever they stored, they start on the system encoder.
+    func testLegacyRecordIsMigratedToSystemEncoder() throws {
+        for stored in ["false", "true"] {
+            let json = #"{"outputMode":"apple","hardwareEncode":\#(stored),"maxConcurrentJobs":3}"#
+            let c = try JSONDecoder().decode(ConversionConfig.self, from: Data(json.utf8))
+            XCTAssertTrue(c.hardwareEncode, "legacy \(stored)")
+            XCTAssertEqual(c.encoderChoiceVersion, ConversionConfig.currentEncoderChoiceVersion)
+            XCTAssertEqual(c.outputMode, .apple, "other settings survive the migration")
+            XCTAssertEqual(c.maxConcurrentJobs, 3)
+        }
+    }
+
+    /// Once a record carries the version, the stored choice is respected.
+    func testVersionedRecordKeepsTheChoice() throws {
+        for stored in [false, true] {
+            let json = #"{"hardwareEncode":\#(stored),"encoderChoiceVersion":1}"#
+            let c = try JSONDecoder().decode(ConversionConfig.self, from: Data(json.utf8))
+            XCTAssertEqual(c.hardwareEncode, stored)
+        }
+    }
+
+    /// The migration happens once: load a legacy record, save it, then a
+    /// later choice of the alternative encoder survives the next load.
+    func testMigrationThroughTheSettingsStoreHappensOnce() throws {
+        final class Box: @unchecked Sendable { var data: Data? }
+        let box = Box()
+        box.data = Data(#"{"hardwareEncode":false,"fileNameSuffix":"_x"}"#.utf8)
+        let store = SettingsStore(read: { box.data }, write: { box.data = $0 })
+
+        var config = store.load()
+        XCTAssertTrue(config.hardwareEncode)
+        XCTAssertEqual(config.fileNameSuffix, "_x")
+        try store.save(config)
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(box.data)) as? [String: Any])
+        XCTAssertEqual(saved["encoderChoiceVersion"] as? Int, ConversionConfig.currentEncoderChoiceVersion)
+        XCTAssertEqual(saved["hardwareEncode"] as? Bool, true)
+
+        config.hardwareEncode = false
+        try store.save(config)
+        XCTAssertFalse(store.load().hardwareEncode, "a choice made after the migration is kept")
     }
 
     func testMissingKeysFallBackToDefaults() throws {

@@ -28,7 +28,15 @@
 #   ASC_KEY_PATH / ASC_KEY_ID / ASC_ISSUER_ID
 #                             App Store Connect API key (.p8) for signing and
 #                             upload without an Xcode account session
-#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework
+#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. NOT
+#                             CHECKED YET: the reused core must be the
+#                             VideoToolbox-only one (XDREMUX_APPLE_HEVC=vt, the
+#                             only kind allowed on the App Store). Nothing here
+#                             compares BUILD_RECORD.txt's hevc_backend= line or
+#                             scans the binary for x265 yet, so a core left
+#                             over from package_release.sh (vt+x265) would be
+#                             archived unnoticed. Do not combine this variable
+#                             with XDREMUX_UPLOAD=1 until that check exists.
 #   XDREMUX_SKIP_TRANSFER=1   reuse the existing XDRemuxTransferCore.xcframework
 set -euo pipefail
 
@@ -63,8 +71,9 @@ mkdir -p "$OUT"
 
 # ---------------------------------------------------------------- 1. cores
 if [ "${XDREMUX_SKIP_CORE:-0}" != 1 ]; then
-  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64)"
-  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 "$ROOT/xdremux/rust/build_apple.sh"
+  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64, VideoToolbox only)"
+  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 XDREMUX_APPLE_HEVC=vt \
+    "$ROOT/xdremux/rust/build_apple.sh"
 fi
 if [ "${XDREMUX_SKIP_TRANSFER:-0}" != 1 ]; then
   echo "==> XDRemuxTransferCore.xcframework (ios ios-sim macos)"

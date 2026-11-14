@@ -52,6 +52,30 @@ struct InputFiles: ParsableArguments {
     }
 }
 
+/// `--encoder`: which of the core's HEVC encoders to use. The names and the
+/// help text come from the linked core, and the option is hidden when the
+/// build has a single encoder (nothing to choose).
+struct EncoderOption: ParsableArguments {
+    @Option(name: .long, help: ArgumentHelp(EncoderOption.helpText,
+                                            visibility: XDRemuxEngine.hevcEncoders.offersChoice ? .default : .hidden))
+    var encoder: String?
+
+    static var helpText: String {
+        let encoders = XDRemuxEngine.hevcEncoders
+        return "HEVC encoder: \(encoders.available.joined(separator: " or ")) (default: \(encoders.defaultName ?? "-"))."
+    }
+
+    /// Selects the encoder process-wide, which covers every core call this
+    /// command makes.
+    func apply() throws {
+        guard let encoder else { return }
+        let encoders = XDRemuxEngine.hevcEncoders
+        guard encoders.contains(encoder), XDRemuxEngine.selectHEVCEncoder(named: encoder) else {
+            throw ValidationError("this build has no HEVC encoder named '\(encoder)' (available: \(encoders.available.joined(separator: ", ")))")
+        }
+    }
+}
+
 struct OutputFormat: ParsableArguments {
     @Flag(name: .long, help: "Machine-readable JSON (one object per input, newline-delimited).")
     var json = false
@@ -131,14 +155,18 @@ struct Convert: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "No progress on stderr.")
     var quiet = false
 
-    @Flag(name: .shortAndLong, help: "Keep the x265 encoder's own log lines on stderr (silenced by default).")
+    @Flag(name: .shortAndLong, help: "Keep the encoder's own log lines on stderr (silenced by default).")
     var verbose = false
+
+    @OptionGroup var encoder: EncoderOption
 
     mutating func run() async throws {
         let inputs = try files.resolved()
         let config = options.config
-        // x265 writes its [info]/[warning] lines straight to fd 2 and would
-        // tear the progress bar; keep our own stderr on a duplicate fd.
+        try encoder.apply()
+        // The core's encoder can write its own [info]/[warning] lines straight
+        // to fd 2, which would tear the progress bar; keep our own stderr on a
+        // duplicate fd.
         let console = StderrConsole(silenceOriginal: !verbose)
         defer { console.restore() }
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-cli-\(ProcessInfo.processInfo.processIdentifier)")
@@ -236,7 +264,7 @@ final class InterruptWatcher: @unchecked Sendable {
 }
 
 /// Our stderr, kept on a private duplicate of fd 2 so the original fd can be
-/// pointed at /dev/null while the Rust core (x265) runs.
+/// pointed at /dev/null while the Rust core (and its encoder) runs.
 final class StderrConsole: @unchecked Sendable {
     private let handle: FileHandle
     private let savedFD: Int32
@@ -310,10 +338,12 @@ struct EditCopy: AsyncParsableCommand {
     @OptionGroup var format: OutputFormat
     @Option(name: [.short, .customLong("output-dir")], help: "Directory for outputs (default: next to each input).", completion: .directory)
     var outputDir: String?
-    @Flag(name: .shortAndLong, help: "Keep x265 log lines on stderr.")
+    @Flag(name: .shortAndLong, help: "Keep the encoder's own log lines on stderr.")
     var verbose = false
+    @OptionGroup var encoder: EncoderOption
 
     mutating func run() async throws {
+        try encoder.apply()
         let console = StderrConsole(silenceOriginal: !verbose)
         defer { console.restore() }
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-cli-\(ProcessInfo.processInfo.processIdentifier)")
@@ -352,10 +382,12 @@ struct Writeback: AsyncParsableCommand {
     @Option(name: [.short, .customLong("output-dir")], help: "Directory for the output (default: next to the returned photo).", completion: .directory)
     var outputDir: String?
     @OptionGroup var format: OutputFormat
-    @Flag(name: .shortAndLong, help: "Keep x265 log lines on stderr.")
+    @Flag(name: .shortAndLong, help: "Keep the encoder's own log lines on stderr.")
     var verbose = false
+    @OptionGroup var encoder: EncoderOption
 
     mutating func run() async throws {
+        try encoder.apply()
         let console = StderrConsole(silenceOriginal: !verbose)
         defer { console.restore() }
         let returnedURL = URL(fileURLWithPath: returned)

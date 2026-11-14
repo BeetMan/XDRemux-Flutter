@@ -30,9 +30,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  X265_TAG: 4.2
-
 jobs:
   macos:
     name: Swift packages, CLI and macOS app
@@ -42,40 +39,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # Same vendored layout as the release job, plus the Main10 archive that
-      # build_apple.sh bundles for the Styles linear thumbnail.
-      - name: Restore x265 build
-        id: x265-cache
-        uses: actions/cache@v6
-        with:
-          path: xdremux/rust/vendor/x265
-          # Bumped whenever build_apple.sh needs more archives: this key
-          # covers desktop + simulator, arm64 + x86_64, 8-bit + Main10
-          # (build_apple.sh builds the missing ones on a cache miss).
-          key: x265-macos-apple-${{ env.X265_TAG }}-10bit-universal-sim
-
-      - name: Build x265
-        if: steps.x265-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euxo pipefail
-          git clone --depth 1 --branch "$X265_TAG" \
-            https://bitbucket.org/multicoreware/x265_git.git \
-            xdremux/rust/vendor/x265
-          mkdir -p xdremux/rust/vendor/x265/include
-          cp xdremux/rust/vendor/x265/source/x265.h xdremux/rust/vendor/x265/include/x265.h
-          cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop \
-            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build xdremux/rust/vendor/x265/build_desktop --target x265-static -j4
-          cp xdremux/rust/vendor/x265/build_desktop/x265_config.h xdremux/rust/vendor/x265/include/x265_config.h
-          cmake -S xdremux/rust/vendor/x265/source -B xdremux/rust/vendor/x265/build_desktop_10bit \
-            -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
-            -DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build xdremux/rust/vendor/x265/build_desktop_10bit --target x265-static -j4
-
+      # The default core encodes HEVC with VideoToolbox only, so there is no
+      # x265 to fetch, build or cache here. (The vt+x265 core of the GitHub
+      # release packages is built by tools/apple/package_release.sh on a
+      # developer Mac.)
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-ios-sim, x86_64-apple-ios
+          targets: aarch64-apple-darwin, aarch64-apple-ios-sim
 
       - name: Cache cargo
         uses: actions/cache@v6
@@ -95,7 +66,7 @@ jobs:
       - name: Check the committed C header is current
         run: tools/apple/check_header.sh
 
-      - name: Build XDRemuxCore.xcframework (macOS + simulator, arm64 + x86_64)
+      - name: Build XDRemuxCore.xcframework (macOS + simulator, arm64, VideoToolbox)
         run: XDREMUX_APPLE_SLICES="macos ios-sim" xdremux/rust/build_apple.sh
 
       # The local-transfer core (LocalSend v2) is its own workspace pinned
@@ -121,8 +92,11 @@ jobs:
           cat apps/apple/Frameworks/XDRemuxTransferCore.xcframework/BUILD_RECORD.txt
           fw=apps/apple/Frameworks/XDRemuxCore.xcframework
           cat "$fw/BUILD_RECORD.txt"
+          grep -q '^hevc_backend=vt$' "$fw/BUILD_RECORD.txt"
           for lib in "$fw"/macos-*/libXDRemuxCore.a "$fw"/ios-*-simulator/libXDRemuxCore.a; do
-            lipo -info "$lib" | tee /dev/stderr | grep -q "x86_64" && lipo -info "$lib" | grep -q "arm64"
+            lipo -info "$lib" | tee /dev/stderr | grep -q "arm64"
+            # A VideoToolbox-only core must not contain the static encoder.
+            test "$(strings -a "$lib" | grep -ci x265 || true)" -eq 0
           done
 
       - name: Swift package tests
