@@ -1,11 +1,12 @@
-use xdremux_core::hevc::{drop_parameter_nals, x265_encode_tiles};
+use xdremux_core::hevc::{drop_parameter_nals, x265_encode_tiles, HevcContent};
 
 fn main() {
     let w = 64u32;
     let h = 64u32;
     let rgb = vec![128u8; (w * h * 3) as usize];
     let refs: Vec<&[u8]> = vec![&rgb];
-    let streams = x265_encode_tiles(&refs, w, h, 3, true).unwrap();
+    // Synthetic RGB test tiles; treated as primary-image content.
+    let streams = x265_encode_tiles(&refs, w, h, 3, true, HevcContent::Primary).unwrap().streams;
     let stream = &streams[0];
     println!("stream len {}", stream.len());
     let idr = drop_parameter_nals(stream);

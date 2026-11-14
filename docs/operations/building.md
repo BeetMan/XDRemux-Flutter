@@ -199,7 +199,8 @@ iPhone Duo（`iPhone19,4`，iOS 27.1 模拟器实测）几何，供布局验证�
 
 ## 3. 构建变体
 
-- `XDREMUX_USE_FFMPEG=1`：桌面 ffmpeg fallback 冒烟构建（无 x265，**色彩行为不可信**，见 hevc-x265.md）
+- `XDREMUX_HEVC_BACKEND`：HEVC 编码后端。不设或 `x265` 为默认的静态 x265；`ffmpeg` 为桌面 ffmpeg fallback 冒烟构建；其他取值构建报错。安卓恒为 x265
+- `XDREMUX_USE_FFMPEG=1`：`XDREMUX_HEVC_BACKEND=ffmpeg` 的旧写法，继续有效。桌面 ffmpeg fallback 冒烟构建（无 x265，**色彩行为不可信**，见 hevc-x265.md）
 - `XDREMUX_GM_420=1`：单 tile 增益映射强制 4:2:0（批量路径本就由调用方参数决定）
 
 ## 4. 测试构建

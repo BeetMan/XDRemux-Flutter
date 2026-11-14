@@ -608,7 +608,9 @@ pub fn assemble_prepared_tiles(
         if gain_hvcc.is_empty() {
             // The hardware path always encodes 4:2:0 (MediaCodec has no 4:4:4),
             // so the hvcC must claim chroma_format_idc=1 regardless of the
-            // x265 fallback's cfg/env-driven default.
+            // x265 fallback's cfg/env-driven default. These streams come from
+            // the host's encoder, not from a `crate::hevc` backend, so there
+            // is no backend-reported layout to use here.
             gain_hvcc =
                 crate::hevc::extract_hvcc_config_with_chroma(stream, 1).unwrap_or_default();
         }
@@ -987,12 +989,13 @@ fn tile_and_encode(
     // best chroma precision — this is also what Windows/Android originally
     // produced.
     let use_420 = oppo_compat.wants_oppo_compat();
-    let batch_streams = crate::hevc::x265_encode_tiles(
+    let batch = crate::hevc::x265_encode_tiles(
         &tile_refs,
         tile_size,
         tile_size,
         pixel_bytes,
         use_420,
+        crate::hevc::HevcContent::GainMap,
     )
     .map_err(|e| {
         if e.to_string().contains(crate::progress::CANCELLED_MESSAGE) {
@@ -1001,6 +1004,11 @@ fn tile_and_encode(
             format!("HEVC batch encode: {e}")
         }
     })?;
+    // Monochrome (gray) gain maps encode as chroma_format_idc=0, 4:2:0 (OPPO
+    // output) as 1, 4:4:4 RGB as 3. The encoder reports what it actually
+    // produced, which is what hvcC has to say.
+    let hvc_chroma = batch.chroma_format_idc();
+    let batch_streams = batch.streams;
     debug_assert_eq!(batch_streams.len(), total_tiles as usize);
 
     for (i, hevc_bs) in batch_streams.iter().enumerate() {
@@ -1008,15 +1016,6 @@ fn tile_and_encode(
         // length-prefix conversion). extract_hvcc_config searches for
         // 00 00 00 01 start codes, which only exist in byte-stream format.
         if gain_hvcc.is_empty() {
-            // Monochrome (gray) gain maps encode as chroma_format_idc=0.
-            // 4:2:0 (OPPO output) is chroma 1; 4:4:4 RGB is chroma 3.
-            let hvc_chroma = if pixel_bytes == 1 {
-                0u8
-            } else if use_420 {
-                1u8
-            } else {
-                3u8
-            };
             gain_hvcc = crate::hevc::extract_hvcc_config_with_chroma(hevc_bs, hvc_chroma)
                 .unwrap_or_default();
         }

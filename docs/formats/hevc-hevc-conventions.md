@@ -1,6 +1,6 @@
 # HEIF/HEVC 色彩约定实测手册
 
-> 对应代码：`xdremux/rust/src/hevc.rs`。本页记录各厂商 HEIC 文件在 YUV 范围、矩阵、传输函数上的**实测**约定，以及本项目编码时必须遵守的规则。所有结论来自真实样张逆向（OPPO Find X8 Ultra / Find X7 Ultra、Apple iPhone 导出文件），无公开规范可依。
+> 对应代码：`xdremux/rust/src/hevc/`（`mod.rs` 入口与色彩转换，`x265.rs`、`ffmpeg.rs` 两个后端）。本页记录各厂商 HEIC 文件在 YUV 范围、矩阵、传输函数上的**实测**约定，以及本项目编码时必须遵守的规则。所有结论来自真实样张逆向（OPPO Find X8 Ultra / Find X7 Ultra、Apple iPhone 导出文件），无公开规范可依。
 
 ## 1. 核心事实：范围标记与实际数据可以不一致
 
@@ -32,7 +32,7 @@ limited 数据 + full 标记的约定恰好让两种解码器都复现原图：
 
 ## 3. 本项目编码矩阵
 
-`hevc.rs` 提供两条 RGB 编码路径：
+`hevc/mod.rs` 提供两条 RGB 编码路径：
 
 ### 3.1 标准路径（`x265_encode_tiles`，BT.709 full）
 
@@ -50,7 +50,7 @@ limited 数据 + full 标记的约定恰好让两种解码器都复现原图：
 - x265：`range=full`（**标记保持 full，数据是 limited**）、`colormatrix=smpte170m`、`colorprim=bt470bg`、`transfer=iec61966-2-1`
 - 用于：水印写回路径（见 `docs/formats/oppo-watermark.md` §5）
 
-ffmpeg fallback 构建（`XDREMUX_USE_FFMPEG=1`，仅桌面冒烟）下 oppo 路径退化为普通批量编码，无范围控制。
+ffmpeg fallback 构建（`XDREMUX_HEVC_BACKEND=ffmpeg` 或旧写法 `XDREMUX_USE_FFMPEG=1`，仅桌面冒烟）下 oppo 路径退化为普通批量编码，无范围控制。
 
 ## 4. 已知陷阱清单
 

@@ -388,26 +388,23 @@ fn encode_linear_thumbnail_codes(
     // maxCUSize); tiny thumbnails fall back to the 8-bit path which has its own
     // small-picture handling.
     if crate::hevc::main10_available() && width >= 64 && height >= 64 {
-        #[cfg(xdremux_main10)]
-        {
-            let stream = crate::hevc::encode_thumbnail_10bit(codes16, width, height)
-                .map_err(|e| format!("linear thumb 10-bit encode: {e}"))?;
-            let hvcc =
-                crate::hevc::extract_hvcc_config_with_chroma_and_depth(&stream, 1, 10)
-                    .ok_or("linear thumb hvcC extraction failed (10-bit)")?;
-            return Ok((stream, hvcc, 10));
-        }
+        let (stream, chroma) = crate::hevc::encode_thumbnail_10bit(codes16, width, height)
+            .map_err(|e| format!("linear thumb 10-bit encode: {e}"))?
+            .into_single()
+            .ok_or("linear thumb 10-bit encode produced no stream")?;
+        let hvcc = crate::hevc::extract_hvcc_config_with_chroma_and_depth(&stream, chroma, 10)
+            .ok_or("linear thumb hvcC extraction failed (10-bit)")?;
+        return Ok((stream, hvcc, 10));
     }
     let codes8: Vec<u8> = codes16
         .iter()
         .map(|&code| ((u32::from(code) + 128) / 257) as u8)
         .collect();
-    let stream = crate::hevc::x265_encode_tiles(&[codes8.as_slice()], width, height, 3, true)
+    let (stream, chroma) = crate::hevc::x265_encode_tiles(&[codes8.as_slice()], width, height, 3, true, crate::hevc::HevcContent::LinearThumbnail)
         .map_err(|e| format!("linear thumb encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("linear thumb encode produced no stream")?;
-    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
+    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
         .ok_or("linear thumb hvcC extraction failed")?;
     Ok((stream, hvcc, 8))
 }
