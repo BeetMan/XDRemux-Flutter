@@ -1,0 +1,72 @@
+name: Apple VideoToolbox core
+
+# The Rust core's test suite on its VideoToolbox HEVC backend
+# (XDREMUX_HEVC_BACKEND=videotoolbox), which only exists on Apple targets.
+#
+# macOS runners are scarce (see apple-ci.yml), so this follows the same rule:
+#   - Rust-core changes run it once, after the merge to main;
+#   - pull requests run it only when they touch the backend itself;
+#   - workflow_dispatch runs it on any branch on demand.
+# It needs no x265 build, no cbindgen and no Xcode project, so it is short.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'xdremux/rust/**'
+  pull_request:
+    paths:
+      - 'xdremux/rust/src/hevc/vt.rs'
+      - 'xdremux/rust/src/vt_hevc.c'
+      - '.github/workflows/apple-vt-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  videotoolbox:
+    name: Rust core tests (VideoToolbox backend)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      XDREMUX_HEVC_BACKEND: videotoolbox
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-apple-vt-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      # Hosted runners are virtual machines: when the hardware encoder is not
+      # available the backend falls back to the software encoder, and the
+      # tests check structure and decode error only, so either one passes.
+      - name: Core tests on the VideoToolbox backend
+        run: cargo test -p xdremux-core
+
+      # Store builds must not contain the static encoder at all; the release
+      # scripts grep the shipped binaries for its name.
+      - name: VideoToolbox-only library has no trace of the static encoder
+        run: |
+          set -euo pipefail
+          cargo build -p xdremux-core --release --lib
+          lib=target/release/libxdremux_core.a
+          count="$(strings -a "$lib" | grep -ci x265 || true)"
+          echo "x265 strings: $count"
+          test "$count" -eq 0
+          if nm "$lib" 2>/dev/null | grep -q 'x265_'; then
+            echo "x265_ symbols present" >&2
+            exit 1
+          fi

@@ -181,7 +181,7 @@ fn assemble_styles(
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
-        let (stream, chroma) = crate::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
+        let (stream, chroma) = crate::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single()
             .ok_or("sky matte encode produced no stream")?;
@@ -192,7 +192,7 @@ fn assemble_styles(
     } else if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
-        let (stream, chroma) = crate::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
+        let (stream, chroma) = crate::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single()
             .ok_or("sky matte encode produced no stream")?;
@@ -207,7 +207,7 @@ fn assemble_styles(
     } else {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
-        let (stream, chroma) = crate::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
+        let (stream, chroma) = crate::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, crate::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single()
             .ok_or("sky matte encode produced no stream")?;
@@ -282,7 +282,7 @@ fn assemble_styles(
                     .unwrap_or((LEGACY_LT_W, LEGACY_LT_H));
                 let black = vec![0u8; (fw * fh * 3) as usize];
                 let black_refs: Vec<&[u8]> = vec![&black];
-                let (stream, chroma) = crate::hevc::x265_encode_tiles(
+                let (stream, chroma) = crate::hevc::encode_tiles(
                     &black_refs,
                     fw,
                     fh,

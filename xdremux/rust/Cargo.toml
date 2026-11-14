@@ -11,9 +11,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 # Custom cfgs emitted by build.rs for the HEVC backend it compiled in
 # (XDREMUX_HEVC_BACKEND): `xdremux_hevc_x265` for the default static-linked
-# x265 encoder, `xdremux_ffmpeg_fallback` for the ffmpeg subprocess fallback.
+# x265 encoder, `xdremux_ffmpeg_fallback` for the ffmpeg subprocess fallback,
+# `xdremux_hevc_vt` for VideoToolbox (Apple targets; may be combined with
+# `xdremux_hevc_x265`).
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_hevc_x265)", "cfg(xdremux_ffmpeg_fallback)", "cfg(xdremux_gm_420)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(xdremux_hevc_x265)", "cfg(xdremux_hevc_vt)", "cfg(xdremux_ffmpeg_fallback)", "cfg(xdremux_gm_420)"] }
 
 [dependencies]
 heif-oxide = "0.1.0"

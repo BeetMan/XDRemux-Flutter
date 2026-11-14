@@ -20,6 +20,10 @@
 #   XDREMUX_APPLE_ARCHS    architectures for macos / ios-sim: "arm64 x86_64" (default)
 #                          or "arm64" (device iOS is always arm64 only)
 #   XDREMUX_MAIN10         0 to skip the Main10 (10-bit) x265 build (default 1)
+#   XDREMUX_APPLE_HEVC     HEVC encoder(s) in the core: x265 (default), vt
+#                          (VideoToolbox only: x265 is neither built nor
+#                          merged, vendor/x265 is not touched), or vt+x265
+#                          (both, chosen at run time, VideoToolbox by default)
 #   XDREMUX_APPLE_OUT      output dir (default: ../../apps/apple/Frameworks)
 #   IPHONEOS_DEPLOYMENT_TARGET / MACOSX_DEPLOYMENT_TARGET (defaults 17.0 / 14.0)
 #
@@ -34,6 +38,15 @@ OUT="${XDREMUX_APPLE_OUT:-../../apps/apple/Frameworks}"
 export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-17.0}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 JOBS="$(sysctl -n hw.ncpu)"
+HEVC="${XDREMUX_APPLE_HEVC:-x265}"
+case "$HEVC" in
+  x265) HEVC_BACKEND="" ;;   # the core's default; leave the environment alone
+  vt) HEVC_BACKEND="videotoolbox" ;;
+  vt+x265) HEVC_BACKEND="videotoolbox+x265" ;;
+  *) echo "unknown XDREMUX_APPLE_HEVC: $HEVC (x265, vt or vt+x265)" >&2; exit 2 ;;
+esac
+# build.rs reads this; every cargo build below inherits it.
+if [ -n "$HEVC_BACKEND" ]; then export XDREMUX_HEVC_BACKEND="$HEVC_BACKEND"; fi
 
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')"
@@ -57,6 +70,14 @@ build_x265() {
 # suffix so both can live in vendor/x265 side by side.
 arch_lib() {
   local arch="$1" rust_target="$2" x265_dir="$3" x265_10bit_dir="$4"; shift 4
+  local out="$STAGE/arch-$rust_target.a"
+  if [ "$HEVC" = "vt" ]; then
+    echo "==> Rust staticlib ($rust_target, VideoToolbox only)" >&2
+    cargo build --target "$rust_target" --release --lib >&2
+    cp "$TARGET_DIR/$rust_target/release/libxdremux_core.a" "$out"
+    echo "$out"
+    return
+  fi
   if [ "$arch" = "x86_64" ]; then
     x265_dir="${x265_dir}_x86_64"; x265_10bit_dir="${x265_10bit_dir}_x86_64"
   fi
@@ -72,7 +93,6 @@ arch_lib() {
   echo "==> Rust staticlib ($rust_target)" >&2
   XDREMUX_X265_DIR="$(cd "$x265_dir" && pwd)" XDREMUX_X265_MAIN10_DIR="$main10_dir" \
     cargo build --target "$rust_target" --release --lib >&2
-  local out="$STAGE/arch-$rust_target.a"
   libtool -static -o "$out" \
     "$TARGET_DIR/$rust_target/release/libxdremux_core.a" \
     "$x265_dir/libx265.a" >&2
@@ -138,6 +158,7 @@ echo "==> Build record"
   echo "rustc=$(rustc --version)"
   echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
   echo "core_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+  echo "hevc_backend=$HEVC"
   echo "slices=$SLICES"
   echo "archs=$ARCHS"
   for d in "$STAGE"/*/; do

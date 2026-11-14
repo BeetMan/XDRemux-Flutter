@@ -519,7 +519,7 @@ fn encode_mono(
     content: xdremux_core::hevc::HevcContent,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
-    let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, false, content)
+    let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, w, h, 1, false, content)
         .map_err(|e| format!("mono encode: {e}"))?
         .into_single()
         .ok_or("mono encode produced no stream")?;

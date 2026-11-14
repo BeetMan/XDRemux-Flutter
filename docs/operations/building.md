@@ -199,7 +199,9 @@ iPhone Duo（`iPhone19,4`，iOS 27.1 模拟器实测）几何，供布局验证�
 
 ## 3. 构建变体
 
-- `XDREMUX_HEVC_BACKEND`：HEVC 编码后端。不设或 `x265` 为默认的静态 x265；`ffmpeg` 为桌面 ffmpeg fallback 冒烟构建；其他取值构建报错。安卓恒为 x265
+- `XDREMUX_HEVC_BACKEND`：HEVC 编码后端。不设或 `x265` 为默认的静态 x265；`ffmpeg` 为桌面 ffmpeg fallback 冒烟构建；`videotoolbox`（仅苹果目标）只编入 VideoToolbox 后端，不编译、不查找、不链接任何 x265；`videotoolbox+x265`（仅苹果目标）两个后端都编入，运行期选择，默认 VideoToolbox；其他取值构建报错。安卓恒为 x265
+- `XDREMUX_APPLE_HEVC`（`build_apple.sh`）：`x265`（默认）、`vt`、`vt+x265`，对应上面三种内核构建，写进 `BUILD_RECORD.txt` 的 `hevc_backend=`
+- 运行期诊断（VideoToolbox 后端）：`XDREMUX_VT_SOFTWARE=1` 强制软件编码器；`XDREMUX_HEVC_DEBUG=1` 每批编码打印一行（编码器、内容类别、尺寸、字节数）；`XDREMUX_VT_QUALITY_<PRIMARY|GAINMAP|MATTE|DISPARITY|LINEAR>` 覆盖某一类的 `Quality`；两个后端都编入时 `XDREMUX_HEVC_ENCODER=<名字>` 可在没有配置的入口上指定编码器
 - `XDREMUX_USE_FFMPEG=1`：`XDREMUX_HEVC_BACKEND=ffmpeg` 的旧写法，继续有效。桌面 ffmpeg fallback 冒烟构建（无 x265，**色彩行为不可信**，见 hevc-x265.md）
 - `XDREMUX_GM_420=1`：单 tile 增益映射强制 4:2:0（批量路径本就由调用方参数决定）
 

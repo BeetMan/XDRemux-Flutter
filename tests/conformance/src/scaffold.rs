@@ -105,7 +105,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         |w: u32, h: u32, use_420: bool| -> Result<(Vec<u8>, Vec<u8>), String> {
             let pixels = vec![0u8; (w * h) as usize];
             let refs: Vec<&[u8]> = vec![&pixels];
-            let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, use_420, xdremux_core::hevc::HevcContent::Matte)
+            let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, w, h, 1, use_420, xdremux_core::hevc::HevcContent::Matte)
                 .map_err(|e| format!("matte HEVC encode: {e}"))?
                 .into_single()
                 .ok_or("matte encode produced no stream")?;
@@ -130,7 +130,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
-        let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
             .map_err(|e| format!("matte HEVC encode: {e}"))?
             .into_single()
             .ok_or("matte encode produced no stream")?;

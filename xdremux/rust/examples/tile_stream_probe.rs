@@ -3,7 +3,7 @@ fn main() {
     // final decode. Encode via the same path the watermark restore uses.
     let rgb = vec![16u8; 512 * 512 * 3];
     let planes: Vec<&[u8]> = vec![&rgb];
-    let streams = xdremux_core::hevc::x265_encode_tiles(
+    let streams = xdremux_core::hevc::encode_tiles(
         &planes,
         512,
         512,

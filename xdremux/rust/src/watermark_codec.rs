@@ -980,9 +980,9 @@ fn encode_tiles(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<Vec<u8>>, Ve
     }
     let refs: Vec<&[u8]> = padded.iter().map(Vec::as_slice).collect();
     let t = std::time::Instant::now();
-    let encoded = hevc::x265_encode_tiles_oppo_sdr(&refs, TILE_SIZE, TILE_SIZE, 3, true)
+    let encoded = hevc::encode_tiles_oppo_sdr(&refs, TILE_SIZE, TILE_SIZE, 3, true)
         .map_err(|error| format!("encode watermark HEVC tiles: {error}"))?;
-    record_phase("x265_encode", t);
+    record_phase(hevc::HevcBackend::active().encode_phase_name(), t);
     let chroma = encoded.chroma_format_idc();
     let streams = encoded.streams;
     let hvcc = streams
@@ -992,10 +992,7 @@ fn encode_tiles(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<Vec<u8>>, Ve
     let payloads = streams
         .iter()
         .map(|stream| {
-            #[cfg(not(xdremux_ffmpeg_fallback))]
-            let stream = hevc::drop_parameter_nals(stream);
-            #[cfg(xdremux_ffmpeg_fallback)]
-            let stream = stream.to_vec();
+            let stream = hevc::tile_stream_for_container(stream);
             hevc::hevc_byte_stream_to_length_prefixed(&stream)
         })
         .collect();
