@@ -5,10 +5,10 @@
 //! styles payload, all in one call.
 //!
 //! Payload layout mirrors the golden Swift identity output:
-//!   - delta map: 6×5 grid of 512×512 neutral tiles (embedded golden IDR
+//!   - delta map: grid of 512×512 neutral tiles (embedded golden IDR
 //!     slice + hvcC — content-neutral, photo-independent), auxC
-//!     `tag:apple.com,2023:photo:aux:styledeltamap`, output dims ≈ 0.703×
-//!     primary (formula verified only at 4096×3512).
+//!     `tag:apple.com,2023:photo:aux:styledeltamap`, output dims ≈ 5/7 ×
+//!     primary (see `delta_map_layout`).
 //!   - linear thumbnail: quarter-res item, auxC `…:linearthumbnail`.
 //!     PLACEHOLDER: black frame (Rust has no HEVC decoder for the primary);
 //!     only affects the style-picker preview, not the gate (unverified).
@@ -46,6 +46,39 @@ fn fitted_size(source_w: u32, source_h: u32, max_w: u32, max_h: u32) -> (u32, u3
     (w.min(max_w), h.min(max_h))
 }
 
+/// Smallest delta-map scale the legacy 2880x2560 cap may produce before the
+/// iPhone scale takes over. 2880 / 4096 (the 12 MP case the cap was fitted to)
+/// is 0.703, so 4:3 primaries up to 4096 on the long side keep their old size.
+const DELTA_LEGACY_MIN_SCALE: f64 = 0.7;
+
+/// Style delta map size and tile grid (`rows`, `cols`) for a primary image.
+///
+/// iPhone files declare the delta map at about 5/7 of the primary with no upper
+/// bound (4032x3024 -> 2880x2160, 8064x6048 -> 5760x4320). Capping it at
+/// 2880x2560 made large primaries land on ratios Photos renders badly: a
+/// 4416x6624 primary with a 1920x2880 delta map shows a green grid after the
+/// style is changed and saved. Primaries the cap shrinks further than
+/// `DELTA_LEGACY_MIN_SCALE` therefore use 5/7 and as many 512 px tiles as the
+/// size needs; smaller primaries keep the legacy size and 30-tile grid.
+fn delta_map_layout(pw: u32, ph: u32) -> (u32, u32, u32, u32) {
+    let landscape = pw >= ph;
+    let (max_w, max_h, min_rows, min_cols) = if landscape {
+        (2880u32, 2560u32, 5u32, 6u32)
+    } else {
+        (2560, 2880, 6, 5)
+    };
+    let legacy_scale = (max_w as f64 / pw as f64).min(max_h as f64 / ph as f64);
+    let (w, h) = if legacy_scale >= DELTA_LEGACY_MIN_SCALE {
+        fitted_size(pw, ph, max_w, max_h)
+    } else {
+        let even = |v: u32| (((v as f64 * 5.0 / 7.0 / 2.0).round() * 2.0) as u32).max(2);
+        (even(pw), even(ph))
+    };
+    let rows = h.div_ceil(DELTA_TILE_SIZE).max(min_rows);
+    let cols = w.div_ceil(DELTA_TILE_SIZE).max(min_cols);
+    (w, h, rows, cols)
+}
+
 pub fn styles_native(standard: &[u8]) -> Result<Vec<u8>, String> {
     styles_native_with_gain_map(standard, None)
 }
@@ -81,15 +114,8 @@ fn assemble_styles(
         .ok_or("no tmap item")?;
     let (pw, ph) = primary_dims(&meta, primary)?;
 
-    // Apple Photographic Styles: 5x6 grid for landscape, 6x5 for portrait.
-    // Each tile is 512x512. Total 30 tiles fully covering fitted dims.
-    let landscape = pw >= ph;
-    let (delta_rows, delta_cols) = if landscape { (5u32, 6u32) } else { (6u32, 5u32) };
-    let (delta_w, delta_h) = if landscape {
-        fitted_size(pw, ph, 2880, 2560)
-    } else {
-        fitted_size(pw, ph, 2560, 2880)
-    };
+    // Style delta map: 512x512 constant tiles covering the declared size.
+    let (delta_w, delta_h, delta_rows, delta_cols) = delta_map_layout(pw, ph);
 
     // ---- existing sky matte detection (dedup) --------------------------
     // The scaffold stage already emits a zero sky matte + XMP sidecar;
@@ -341,7 +367,7 @@ fn assemble_styles(
     })
     .unwrap_or_else(|| add_prop(isobmff::make_ispe_box(512, 512)));
 
-    // Delta grid dims: fitted to 2880×2560 landscape or 2560×2880 portrait.
+    // Delta grid dims: see `delta_map_layout`.
     let ispe_delta_idx = add_prop(isobmff::make_ispe_box(delta_w, delta_h));
     let auxc_delta_idx = add_prop(make_auxc_box(b"tag:apple.com,2023:photo:aux:styledeltamap"));
     let ispe_lt_idx = add_prop(isobmff::make_ispe_box(lt_w, lt_h));
@@ -1040,6 +1066,25 @@ pub fn debug_build(state: &StyleStateOverride) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delta_map_layout_keeps_legacy_size_near_iphone_scale() {
+        assert_eq!(delta_map_layout(4096, 3072), (2880, 2160, 5, 6));
+        assert_eq!(delta_map_layout(4096, 3512), (2880, 2470, 5, 6));
+        assert_eq!(delta_map_layout(3072, 4096), (2160, 2880, 6, 5));
+        assert_eq!(delta_map_layout(1000, 800), (1000, 800, 5, 6));
+    }
+
+    #[test]
+    fn delta_map_layout_follows_iphone_scale_for_large_primaries() {
+        // 4416x6624 used to get 1920x2880, which Photos renders with a green grid.
+        assert_eq!(delta_map_layout(4416, 6624), (3154, 4732, 10, 7));
+        // iPhone 48 MP: 8064x6048 -> 5760x4320.
+        assert_eq!(delta_map_layout(8064, 6048), (5760, 4320, 9, 12));
+        assert_eq!(delta_map_layout(6484, 10888), (4632, 7778, 16, 10));
+        // 2:3 at 14 MP: the cap would shrink it to 0.625.
+        assert_eq!(delta_map_layout(3072, 4608), (2194, 3292, 7, 5));
+    }
 
     #[test]
     fn fitted_size_landscape_matches_golden() {
