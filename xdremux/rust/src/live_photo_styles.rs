@@ -727,12 +727,11 @@ fn texture_preset_code(preset: &str) -> u64 {
 /// One empty 8-bit 4:0:0 matte picture: (length-prefixed IDR, hvcC).
 fn empty_matte(width: u32, height: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
     let pixels = vec![0u8; (width * height) as usize];
-    let stream = crate::hevc::x265_encode_tiles(&[pixels.as_slice()], width, height, 1, false)
+    let (stream, chroma) = crate::hevc::x265_encode_tiles(&[pixels.as_slice()], width, height, 1, false, crate::hevc::HevcContent::Matte)
         .map_err(|e| format!("Live Photo matte encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("Live Photo matte encode produced no stream")?;
-    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
         .ok_or("Live Photo matte hvcC extraction failed")?;
     let idr = crate::hevc::drop_parameter_nals(&stream);
     Ok((crate::hevc::hevc_byte_stream_to_length_prefixed(&idr), hvcc))

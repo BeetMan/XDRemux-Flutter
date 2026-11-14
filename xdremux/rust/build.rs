@@ -1,9 +1,14 @@
 //! Build script: compiles x265_helper.c and links a static libx265.
 //!
-//! Encoder selection:
+//! Encoder selection (`XDREMUX_HEVC_BACKEND`):
+//! - unset or `x265`: static x265, the default on every platform. Sets
+//!   `cfg(xdremux_hevc_x265)`.
+//! - `ffmpeg`: skip linking x265 and use the ffmpeg subprocess fallback
+//!   instead (Windows/macOS/Linux smoke builds). Sets
+//!   `cfg(xdremux_ffmpeg_fallback)`. The older `XDREMUX_USE_FFMPEG=1` still
+//!   selects this.
+//! - anything else is rejected.
 //! - Android: always x265 static (SELinux blocks subprocess execution).
-//! - Windows/macOS/Linux: x265 static by default; set `XDREMUX_USE_FFMPEG=1`
-//!   to skip linking and use the ffmpeg subprocess fallback instead.
 //!
 //! Expected layout:
 //! - Headers: vendor/x265/include/{x265.h,x265_config.h} (x265_config.h copied
@@ -25,15 +30,34 @@ fn main() {
     let is_ios_sim = target_os == "ios" && (target_env == "sim" || target_arch == "x86_64");
     build_libheif_decoder(&target_os);
 
-    let use_x265 = target_os == "android" || std::env::var_os("XDREMUX_USE_FFMPEG").is_none();
+    println!("cargo:rerun-if-env-changed=XDREMUX_HEVC_BACKEND");
+    println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
+    let legacy_ffmpeg = std::env::var_os("XDREMUX_USE_FFMPEG").is_some();
+    let backend = std::env::var("XDREMUX_HEVC_BACKEND").ok().filter(|s| !s.is_empty());
+    let want_ffmpeg = match backend.as_deref() {
+        None => legacy_ffmpeg,
+        Some("x265") => {
+            if legacy_ffmpeg {
+                panic!(
+                    "XDREMUX_HEVC_BACKEND=x265 contradicts XDREMUX_USE_FFMPEG; unset one of them"
+                );
+            }
+            false
+        }
+        Some("ffmpeg") => true,
+        Some(other) => panic!(
+            "unsupported XDREMUX_HEVC_BACKEND={other:?}; expected \"x265\" (default) or \"ffmpeg\""
+        ),
+    };
+    let use_x265 = target_os == "android" || !want_ffmpeg;
     // Declared unconditionally so cfg-off builds do not warn (the cfg is only
     // set below when a 10-bit archive is present).
     println!("cargo:rustc-check-cfg=cfg(xdremux_main10)");
     if !use_x265 {
         println!("cargo:rustc-cfg=xdremux_ffmpeg_fallback");
-        println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
         return;
     }
+    println!("cargo:rustc-cfg=xdremux_hevc_x265");
 
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let x265_root = format!("{manifest}/vendor/x265");
@@ -89,7 +113,7 @@ fn main() {
              - macOS/Linux: cmake -S vendor/x265/source -B vendor/x265/build_desktop \\\n\
                  -DENABLE_SHARED=OFF -DENABLE_CLI=OFF && \\\n\
                cmake --build vendor/x265/build_desktop --target x265-static -j\n\
-             Or set XDREMUX_USE_FFMPEG=1 to use the ffmpeg subprocess fallback."
+             Or set XDREMUX_HEVC_BACKEND=ffmpeg to use the ffmpeg subprocess fallback."
         );
     }
 
@@ -224,7 +248,6 @@ fn main() {
         }
     }
 
-    println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
     println!("cargo:rerun-if-changed=src/x265_helper.c");
     println!("cargo:rerun-if-changed={lib_file}");
 }

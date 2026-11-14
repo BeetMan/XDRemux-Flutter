@@ -549,7 +549,7 @@ pub(crate) fn synthesize_source_container_from_rgb_with_icc(
         }
     }
     let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
-    let streams = if icc.is_some() {
+    let encoded = if icc.is_some() {
         crate::hevc::x265_encode_icc_primary_tiles(&tile_refs, TILE_SIZE, TILE_SIZE, use_420)
     } else { crate::hevc::x265_encode_tiles(
         &tile_refs,
@@ -557,12 +557,15 @@ pub(crate) fn synthesize_source_container_from_rgb_with_icc(
         TILE_SIZE,
         3,
         use_420,
+        crate::hevc::HevcContent::Primary,
     ) }
     .map_err(|e| format!("Ultra HDR primary HEVC encode: {e}"))?;
+    // hvcC states the layout the encoder produced, not the one requested.
+    let chroma = encoded.chroma_format_idc();
+    let streams = encoded.streams;
     if streams.len() != total_tiles {
         return Err("primary HEVC encode produced an unexpected tile count".into());
     }
-    let chroma = if use_420 { 1u8 } else { 3u8 };
     let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&streams[0], chroma)
         .ok_or("primary hvcC extraction failed")?;
     let tile_payloads: Vec<Vec<u8>> = streams

@@ -51,12 +51,11 @@ fn make_box(btype: &[u8; 4], payload: &[u8]) -> Vec<u8> {
 /// Encode one 8-bit matte and return (length-prefixed HEVC, hvcC).
 fn encode_gray(pixels: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
-    let stream = x265_encode_tiles(&refs, w, h, 1, false)
+    let (stream, chroma) = x265_encode_tiles(&refs, w, h, 1, false, crate::hevc::HevcContent::Matte)
         .map_err(|e| format!("matte HEVC encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("matte encode produced no stream")?;
-    let hvcc = extract_hvcc_config_with_chroma(&stream, 0).ok_or("matte hvcC extraction failed")?;
+    let hvcc = extract_hvcc_config_with_chroma(&stream, chroma).ok_or("matte hvcC extraction failed")?;
     let idr = drop_parameter_nals(&stream);
     Ok((hevc_byte_stream_to_length_prefixed(&idr), hvcc))
 }
