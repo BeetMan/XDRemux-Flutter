@@ -77,6 +77,20 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
+      # The committed C header is what the Swift app compiles against. It is
+      # checked here, on Linux, so a Rust PR that changes the FFI surface
+      # without regenerating it fails before merge without a macOS runner.
+      - name: Cache cbindgen
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cbindgen
+          key: cbindgen-${{ runner.os }}-v1
+
+      - name: Check the committed C header is current
+        run: |
+          command -v cbindgen >/dev/null || cargo install cbindgen --locked
+          tools/apple/check_header.sh
+
   flutter:
     name: Flutter analyze and test
     runs-on: ubuntu-latest
