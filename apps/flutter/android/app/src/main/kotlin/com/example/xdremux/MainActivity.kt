@@ -40,10 +40,19 @@ class MainActivity : FlutterActivity() {
     }
     private val thumbnailCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray?>()
 
+    // Picked-file copies get their own worker so a batch import does not wait
+    // behind the thumbnail decodes of the cards it is filling in (and vice
+    // versa). Copies are plain I/O, not HEIC decodes, so they need not share
+    // the decoder's single thread.
+    private val fileImportExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "xdremux-file-import").apply { priority = Thread.NORM_PRIORITY }
+    }
+
     override fun onDestroy() {
         transferMulticast.release()
         transferDocuments.close()
         thumbnailExecutor.shutdownNow()
+        fileImportExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -191,7 +200,7 @@ class MainActivity : FlutterActivity() {
                             result.error("bad_args", "uri and destPath are required", null)
                             return@setMethodCallHandler
                         }
-                        thumbnailExecutor.execute {
+                        fileImportExecutor.execute {
                             val ok = importRawBytes(uriString, destPath)
                             runOnUiThread { result.success(ok) }
                         }
@@ -203,7 +212,7 @@ class MainActivity : FlutterActivity() {
                             result.error("bad_args", "path is required", null)
                             return@setMethodCallHandler
                         }
-                        thumbnailExecutor.execute {
+                        fileImportExecutor.execute {
                             val info = probePathInfo(path)
                             runOnUiThread { result.success(info) }
                         }
