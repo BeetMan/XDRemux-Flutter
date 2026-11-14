@@ -901,7 +901,7 @@ fn encode_mono(
     content: crate::hevc::HevcContent,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
-    let (stream, chroma) = crate::hevc::x265_encode_tiles(&refs, w, h, 1, false, content)
+    let (stream, chroma) = crate::hevc::encode_tiles(&refs, w, h, 1, false, content)
         .map_err(|e| format!("mono encode: {e}"))?
         .into_single()
         .ok_or("mono encode produced no stream")?;

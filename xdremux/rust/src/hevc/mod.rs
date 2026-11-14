@@ -9,23 +9,35 @@
 //! - [`ffmpeg`] (`cfg(xdremux_ffmpeg_fallback)`): `ffmpeg` subprocess, a
 //!   desktop smoke build selected with `XDREMUX_HEVC_BACKEND=ffmpeg` (or the
 //!   older `XDREMUX_USE_FFMPEG=1`).
+//! - [`vt`] (`cfg(xdremux_hevc_vt)`): VideoToolbox, Apple targets only,
+//!   `XDREMUX_HEVC_BACKEND=videotoolbox`. `videotoolbox+x265` compiles it
+//!   next to the static encoder.
 //!
-//! `build.rs` currently compiles exactly one backend, but nothing here
-//! assumes that: every backend implements the same `encode(&EncodeRequest,
-//! SourcePictures)` function, [`HevcBackend::COMPILED`] lists the ones in this
-//! binary and [`encode`] dispatches on [`HevcBackend::active`] at run time.
-//! A build that links two backends only has to make `active()` consult the
-//! conversion's configuration.
+//! Every backend implements the same `encode(&EncodeRequest,
+//! SourcePictures)` function. [`HevcBackend::COMPILED`] lists the ones in
+//! this binary and [`encode`] dispatches on [`HevcBackend::active`] at run
+//! time: a per-conversion choice ([`HevcBackend::scoped`]), else a
+//! process-wide one ([`HevcBackend::set_process_choice`]), else the build's
+//! preferred backend.
 //!
-//! The entry points keep their historical `x265_*` names; they translate
-//! their arguments into an [`EncodeRequest`] and return the streams together
-//! with the chroma format the backend actually produced, which callers must
-//! use for `hvcC` instead of assuming the one they asked for.
+//! The entry points translate their arguments into an [`EncodeRequest`] and
+//! return the streams together with the chroma format the backend actually
+//! produced, which callers must use for `hvcC` instead of assuming the one
+//! they asked for.
+//!
+//! A VideoToolbox-only build must not contain the name of the static encoder
+//! anywhere in the binary (release checks grep for it), which is why nothing
+//! outside its `cfg` spells that name in an identifier or string literal.
 
 #[cfg(xdremux_ffmpeg_fallback)]
 mod ffmpeg;
+#[cfg(xdremux_hevc_vt)]
+mod vt;
 #[cfg(xdremux_hevc_x265)]
 mod x265;
+
+use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 // ===========================================================================
 // Backend request / response
@@ -34,6 +46,9 @@ mod x265;
 /// An HEVC encoder implementation compiled into this binary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HevcBackend {
+    /// VideoToolbox (Apple platforms).
+    #[cfg(xdremux_hevc_vt)]
+    VideoToolbox,
     /// Static-linked x265.
     #[cfg(xdremux_hevc_x265)]
     X265,
@@ -42,22 +57,162 @@ pub enum HevcBackend {
     Ffmpeg,
 }
 
+thread_local! {
+    /// Per-conversion choice, set by [`HevcBackend::scoped`].
+    static SCOPED_CHOICE: Cell<Option<HevcBackend>> = const { Cell::new(None) };
+}
+/// Process-wide choice: 0 = none, otherwise index into `COMPILED` plus one.
+static PROCESS_CHOICE: AtomicU8 = AtomicU8::new(0);
+
 impl HevcBackend {
     /// Every backend compiled into this binary, most preferred first.
     pub const COMPILED: &'static [HevcBackend] = &[
+        #[cfg(xdremux_hevc_vt)]
+        HevcBackend::VideoToolbox,
         #[cfg(xdremux_hevc_x265)]
         HevcBackend::X265,
         #[cfg(xdremux_ffmpeg_fallback)]
         HevcBackend::Ffmpeg,
     ];
 
-    /// The backend the current encode should use.
-    ///
-    /// Today this is the single compiled backend. Once a build can carry two
-    /// (x265 next to a platform encoder), this is where the per-conversion
-    /// choice is resolved; callers and backends do not change.
-    pub fn active() -> HevcBackend {
+    /// Name used in configuration, the capability report and the C ABI.
+    pub fn name(self) -> &'static str {
+        match self {
+            #[cfg(xdremux_hevc_vt)]
+            HevcBackend::VideoToolbox => "videotoolbox",
+            #[cfg(xdremux_hevc_x265)]
+            HevcBackend::X265 => "x265",
+            #[cfg(xdremux_ffmpeg_fallback)]
+            HevcBackend::Ffmpeg => "ffmpeg",
+        }
+    }
+
+    /// The compiled backend called `name`, if this binary has it.
+    pub fn from_name(name: &str) -> Option<HevcBackend> {
+        Self::COMPILED.iter().copied().find(|b| b.name() == name)
+    }
+
+    /// The backend this build prefers when nothing chose one.
+    pub fn build_default() -> HevcBackend {
         Self::COMPILED[0]
+    }
+
+    /// The backend the current encode uses: the choice scoped to this
+    /// thread's conversion, else the process-wide choice, else the
+    /// `XDREMUX_HEVC_ENCODER` environment variable (diagnostics and tests),
+    /// else [`HevcBackend::build_default`].
+    pub fn active() -> HevcBackend {
+        if let Some(choice) = SCOPED_CHOICE.with(Cell::get) {
+            return choice;
+        }
+        let index = PROCESS_CHOICE.load(Ordering::Relaxed) as usize;
+        if index != 0 {
+            if let Some(choice) = Self::COMPILED.get(index - 1) {
+                return *choice;
+            }
+        }
+        if Self::COMPILED.len() > 1 {
+            if let Some(choice) = std::env::var("XDREMUX_HEVC_ENCODER")
+                .ok()
+                .and_then(|name| Self::from_name(&name))
+            {
+                return choice;
+            }
+        }
+        Self::build_default()
+    }
+
+    /// Run `f` with `choice` as this thread's backend (`None` leaves the
+    /// selection alone). Encodes are dispatched on the calling thread, so
+    /// this covers everything a conversion does.
+    pub fn scoped<R>(choice: Option<HevcBackend>, f: impl FnOnce() -> R) -> R {
+        struct Restore(Option<HevcBackend>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                SCOPED_CHOICE.with(|cell| cell.set(self.0));
+            }
+        }
+        let Some(choice) = choice else { return f() };
+        let _restore = Restore(SCOPED_CHOICE.with(|cell| cell.replace(Some(choice))));
+        f()
+    }
+
+    /// Set (or with `None` clear) the process-wide choice used by entry
+    /// points that take no per-conversion configuration.
+    pub fn set_process_choice(choice: Option<HevcBackend>) {
+        let index = choice
+            .and_then(|c| Self::COMPILED.iter().position(|b| *b == c))
+            .map_or(0, |i| i as u8 + 1);
+        PROCESS_CHOICE.store(index, Ordering::Relaxed);
+    }
+
+    /// Whether Main10 pictures of this size can be encoded.
+    #[cfg_attr(not(any(xdremux_hevc_vt, xdremux_hevc_x265)), allow(unused_variables))]
+    fn supports_10bit(self, width: u32, height: u32) -> bool {
+        match self {
+            #[cfg(xdremux_hevc_vt)]
+            HevcBackend::VideoToolbox => width > 0 && height > 0,
+            // Needs the optional 10-bit archive, and refuses pictures smaller
+            // than one CTU (64x64 with the default maxCUSize).
+            #[cfg(xdremux_hevc_x265)]
+            HevcBackend::X265 => cfg!(xdremux_main10) && width >= 64 && height >= 64,
+            #[cfg(xdremux_ffmpeg_fallback)]
+            HevcBackend::Ffmpeg => false,
+        }
+    }
+
+    /// The ffmpeg smoke backend's container tiles have always kept their
+    /// in-stream parameter sets; every other backend's are stripped.
+    fn keeps_parameter_sets_in_tiles(self) -> bool {
+        #[cfg(xdremux_ffmpeg_fallback)]
+        if self == HevcBackend::Ffmpeg {
+            return true;
+        }
+        false
+    }
+
+    /// Timing label for the encode phase of the watermark writeback.
+    pub(crate) fn encode_phase_name(self) -> &'static str {
+        #[cfg(xdremux_hevc_vt)]
+        if self == HevcBackend::VideoToolbox {
+            return "videotoolbox_encode";
+        }
+        legacy_encode_phase_name()
+    }
+}
+
+#[cfg(any(xdremux_hevc_x265, xdremux_ffmpeg_fallback))]
+fn legacy_encode_phase_name() -> &'static str {
+    "x265_encode"
+}
+
+#[cfg(not(any(xdremux_hevc_x265, xdremux_ffmpeg_fallback)))]
+fn legacy_encode_phase_name() -> &'static str {
+    unreachable!("VideoToolbox is the only backend in this build")
+}
+
+/// Diagnostic switch of the scaffold stages: encode the zero matte as 4:2:0
+/// gray. Its historical variable name contains the static encoder's name, so
+/// VideoToolbox-only builds do not have it.
+#[cfg(any(xdremux_hevc_x265, xdremux_ffmpeg_fallback))]
+pub(crate) fn scaffold_matte_420_requested() -> bool {
+    std::env::var("XSCAFFOLD_X265_MATTE_420").is_ok()
+}
+
+#[cfg(not(any(xdremux_hevc_x265, xdremux_ffmpeg_fallback)))]
+pub(crate) fn scaffold_matte_420_requested() -> bool {
+    false
+}
+
+/// A tile stream in the form the container stores: parameter sets (and SEI)
+/// removed, so the tile is a pure IDR slice and the decoder configuration
+/// lives only in `hvcC`. See [`HevcBackend::keeps_parameter_sets_in_tiles`]
+/// for the one exception.
+pub fn tile_stream_for_container(stream: &[u8]) -> Vec<u8> {
+    if HevcBackend::active().keeps_parameter_sets_in_tiles() {
+        stream.to_vec()
+    } else {
+        drop_parameter_nals(stream)
     }
 }
 
@@ -134,9 +289,8 @@ pub(crate) struct EncodeRequest {
     pub layout: HevcLayout,
     pub bit_depth: HevcBitDepth,
     pub color: HevcColor,
-    /// Not read by the x265 and ffmpeg backends (see [`HevcContent`]), which
-    /// are the only ones so far.
-    #[allow(dead_code)]
+    /// Only the VideoToolbox backend's parameters depend on it (see
+    /// [`HevcContent`]).
     pub content: HevcContent,
 }
 
@@ -151,7 +305,9 @@ pub(crate) enum SourcePictures<'a> {
     Rgb8(&'a [&'a [u8]]),
     /// One picture of packed 16-bit R-G-B Apple Log codes. Only a backend
     /// with a 10-bit encoder reads it; the ffmpeg smoke build has none.
-    Rgb16(#[cfg_attr(not(xdremux_hevc_x265), allow(dead_code))] &'a [u16]),
+    Rgb16(
+        #[cfg_attr(not(any(xdremux_hevc_x265, xdremux_hevc_vt)), allow(dead_code))] &'a [u16],
+    ),
 }
 
 /// Result of an encode: one Annex-B stream per source picture plus the
@@ -162,7 +318,8 @@ pub struct EncodedTiles {
     /// parameter sets `hvcC` is built from.
     pub streams: Vec<Vec<u8>>,
     /// Layout of the coded pictures. Equal to the requested layout for the
-    /// x265 backend. The ffmpeg smoke backend reports the requested layout
+    /// x265 backend; VideoToolbox codes 4:4:4 requests as 4:2:0 and reports
+    /// that. The ffmpeg smoke backend reports the requested layout
     /// even though it codes gray and non-ICC RGB as 4:4:4: its `hvcC` has
     /// always claimed the requested value and that is kept byte-for-byte.
     pub layout: HevcLayout,
@@ -184,7 +341,35 @@ impl EncodedTiles {
 
 /// Run `request` on the active backend.
 fn encode(request: &EncodeRequest, pictures: SourcePictures<'_>) -> std::io::Result<EncodedTiles> {
-    match HevcBackend::active() {
+    let backend = HevcBackend::active();
+    let result = encode_with(backend, request, pictures);
+    // One line per batch for calibration and bug reports.
+    if std::env::var_os("XDREMUX_HEVC_DEBUG").is_some() {
+        if let Ok(encoded) = &result {
+            eprintln!(
+                "[xdremux_hevc] encoder={} content={:?} {}x{} requested={:?} coded={:?} pictures={} bytes={}",
+                backend.name(),
+                request.content,
+                request.width,
+                request.height,
+                request.layout,
+                encoded.layout,
+                encoded.streams.len(),
+                encoded.streams.iter().map(Vec::len).sum::<usize>(),
+            );
+        }
+    }
+    result
+}
+
+fn encode_with(
+    backend: HevcBackend,
+    request: &EncodeRequest,
+    pictures: SourcePictures<'_>,
+) -> std::io::Result<EncodedTiles> {
+    match backend {
+        #[cfg(xdremux_hevc_vt)]
+        HevcBackend::VideoToolbox => vt::encode(request, pictures),
         #[cfg(xdremux_hevc_x265)]
         HevcBackend::X265 => x265::encode(request, pictures),
         #[cfg(xdremux_ffmpeg_fallback)]
@@ -241,7 +426,7 @@ fn encode_8bit_tiles(
 /// The first returned stream carries VPS/SPS/PPS (the `hvcC` source); with
 /// the x265 backend the others are pure IDR slices. `content` says what the
 /// pictures are; see [`HevcContent`].
-pub fn x265_encode_tiles(
+pub fn encode_tiles(
     tiles: &[&[u8]],
     width: u32,
     height: u32,
@@ -259,8 +444,8 @@ pub fn x265_encode_tiles(
 /// compression instead of a visibly darker, harsher frame).
 ///
 /// The ffmpeg smoke backend has no range control and encodes these like
-/// [`x265_encode_tiles`].
-pub fn x265_encode_tiles_oppo_sdr(
+/// [`encode_tiles`].
+pub fn encode_tiles_oppo_sdr(
     tiles: &[&[u8]],
     width: u32,
     height: u32,
@@ -281,7 +466,7 @@ pub fn x265_encode_tiles_oppo_sdr(
 
 /// ICC-aware JPEG primaries retain device RGB values. Only the YCbCr matrix
 /// is declared here; primaries / transfer are supplied by the HEIF ICC profile.
-pub(crate) fn x265_encode_icc_primary_tiles(
+pub(crate) fn encode_icc_primary_tiles(
     tiles: &[&[u8]], width: u32, height: u32, use_420: bool,
 ) -> std::io::Result<EncodedTiles> {
     encode_8bit_tiles(
@@ -297,7 +482,7 @@ pub(crate) fn x265_encode_icc_primary_tiles(
 
 /// Feature flag: encode single-tile gain maps as 4:2:0 instead of 4:4:4.
 ///
-/// The batch/production path (`x265_encode_tiles`) decides 4:2:0 vs 4:4:4 from
+/// The batch/production path (`encode_tiles`) decides 4:2:0 vs 4:4:4 from
 /// the OPPO compat mode (OPPO output requires 4:2:0 for Gallery recognition).
 /// This flag only drives the standalone single-tile helpers used in tests /
 /// fallbacks, defaulting to 4:4:4 for best chroma precision. Set
@@ -425,6 +610,15 @@ pub fn rgb_to_yuv444(pixels: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8
 pub fn encode_hevc_tile_gray(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     assert_eq!(pixels.len() as u32, width * height);
     match HevcBackend::active() {
+        // No single-tile configuration of its own: one-picture batch, 4:2:0
+        // gray under `XDREMUX_GM_420`, monochrome otherwise.
+        #[cfg(xdremux_hevc_vt)]
+        HevcBackend::VideoToolbox => {
+            encode_tiles(&[pixels], width, height, 1, gain_map_420_enabled(), HevcContent::GainMap)?
+                .into_single()
+                .map(|(stream, _)| stream)
+                .ok_or_else(|| invalid_input("no stream".into()))
+        }
         #[cfg(xdremux_hevc_x265)]
         HevcBackend::X265 => x265::encode_single_gray(pixels, width, height),
         #[cfg(xdremux_ffmpeg_fallback)]
@@ -438,6 +632,13 @@ pub fn encode_hevc_tile_gray(pixels: &[u8], width: u32, height: u32) -> std::io:
 pub fn encode_hevc_tile_rgb(pixels: &[u8], width: u32, height: u32) -> std::io::Result<Vec<u8>> {
     assert_eq!(pixels.len() as u32, width * height * 3);
     match HevcBackend::active() {
+        #[cfg(xdremux_hevc_vt)]
+        HevcBackend::VideoToolbox => {
+            encode_tiles(&[pixels], width, height, 3, true, HevcContent::GainMap)?
+                .into_single()
+                .map(|(stream, _)| stream)
+                .ok_or_else(|| invalid_input("no stream".into()))
+        }
         #[cfg(xdremux_hevc_x265)]
         HevcBackend::X265 => x265::encode_single_rgb(pixels, width, height),
         #[cfg(xdremux_ffmpeg_fallback)]
@@ -742,14 +943,20 @@ pub fn extract_hvcc_config_with_chroma_and_depth(
     Some(hvcc)
 }
 
-/// True when [`encode_thumbnail_10bit`] works in this build, i.e. the
-/// optional 10-bit (Main10) x265 archive was linked.
+/// True when the active backend can encode Main10 at all: VideoToolbox
+/// always, the static encoder when its optional 10-bit archive was linked.
 ///
 /// When false the caller must fall back to the 8-bit Apple Log thumbnail; the
 /// 10-bit archive is built per platform and is not required everywhere yet
 /// (see `docs/research/x265-main10-feasibility-20261025.md`).
 pub fn main10_available() -> bool {
-    cfg!(xdremux_main10)
+    HevcBackend::active().supports_10bit(64, 64)
+}
+
+/// True when [`encode_thumbnail_10bit`] can encode a `width` x `height`
+/// picture with the active backend (some have a minimum size).
+pub fn main10_supported(width: u32, height: u32) -> bool {
+    HevcBackend::active().supports_10bit(width, height)
 }
 
 /// Convert one 16-bit Apple Log code (`0..=65535`) to a 10-bit sample.
@@ -996,7 +1203,7 @@ mod tests {
         let tiles: Vec<Vec<u8>> = (0..4).map(|s| make(s)).collect();
         let refs: Vec<&[u8]> = tiles.iter().map(|t| t.as_slice()).collect();
 
-        let batch = x265_encode_tiles(&refs, w, h, 1, false, HevcContent::GainMap)
+        let batch = encode_tiles(&refs, w, h, 1, false, HevcContent::GainMap)
             .expect("batch encode failed");
         assert_eq!(batch.chroma_format_idc(), 0, "gray without 4:2:0 is monochrome");
         let streams = batch.streams;

@@ -43,6 +43,12 @@ let package = Package(
             linkerSettings: [
                 // x265 is C++; the Rust staticlib does not carry its own link flags.
                 .linkedLibrary("c++"),
+                // The core's VideoToolbox HEVC backend (XCFrameworks built
+                // with XDREMUX_APPLE_HEVC=vt or vt+x265) calls these C APIs.
+                .linkedFramework("VideoToolbox"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("CoreFoundation"),
             ]
         ),
         .target(

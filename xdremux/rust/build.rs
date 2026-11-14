@@ -7,6 +7,13 @@
 //!   instead (Windows/macOS/Linux smoke builds). Sets
 //!   `cfg(xdremux_ffmpeg_fallback)`. The older `XDREMUX_USE_FFMPEG=1` still
 //!   selects this.
+//! - `videotoolbox` (Apple targets only): the VideoToolbox backend alone.
+//!   Sets `cfg(xdremux_hevc_vt)`, compiles `src/vt_hevc.c` and links the
+//!   system frameworks. Nothing from x265 is compiled, searched for or linked,
+//!   and `xdremux_main10` is never set (VideoToolbox does Main10 itself).
+//! - `videotoolbox+x265` (Apple targets only): both backends in one binary,
+//!   chosen per conversion at run time; VideoToolbox is the default. Sets
+//!   both `cfg(xdremux_hevc_vt)` and `cfg(xdremux_hevc_x265)`.
 //! - anything else is rejected.
 //! - Android: always x265 static (SELinux blocks subprocess execution).
 //!
@@ -34,27 +41,44 @@ fn main() {
     println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
     let legacy_ffmpeg = std::env::var_os("XDREMUX_USE_FFMPEG").is_some();
     let backend = std::env::var("XDREMUX_HEVC_BACKEND").ok().filter(|s| !s.is_empty());
+    let mut want_vt = false;
+    let mut vt_with_x265 = false;
     let want_ffmpeg = match backend.as_deref() {
         None => legacy_ffmpeg,
-        Some("x265") => {
+        Some(name @ ("x265" | "videotoolbox" | "videotoolbox+x265")) => {
             if legacy_ffmpeg {
                 panic!(
-                    "XDREMUX_HEVC_BACKEND=x265 contradicts XDREMUX_USE_FFMPEG; unset one of them"
+                    "XDREMUX_HEVC_BACKEND={name} contradicts XDREMUX_USE_FFMPEG; unset one of them"
                 );
+            }
+            if name != "x265" {
+                if !matches!(target_os.as_str(), "macos" | "ios") {
+                    panic!(
+                        "XDREMUX_HEVC_BACKEND={name} needs an Apple target (macOS or iOS), not {target_os}"
+                    );
+                }
+                want_vt = true;
+                vt_with_x265 = name == "videotoolbox+x265";
             }
             false
         }
         Some("ffmpeg") => true,
         Some(other) => panic!(
-            "unsupported XDREMUX_HEVC_BACKEND={other:?}; expected \"x265\" (default) or \"ffmpeg\""
+            "unsupported XDREMUX_HEVC_BACKEND={other:?}; expected \"x265\" (default), \"ffmpeg\", \
+             \"videotoolbox\" or \"videotoolbox+x265\""
         ),
     };
-    let use_x265 = target_os == "android" || !want_ffmpeg;
+    let use_x265 = target_os == "android" || !(want_ffmpeg || (want_vt && !vt_with_x265));
+    if want_vt {
+        build_videotoolbox_backend();
+    }
     // Declared unconditionally so cfg-off builds do not warn (the cfg is only
     // set below when a 10-bit archive is present).
     println!("cargo:rustc-check-cfg=cfg(xdremux_main10)");
     if !use_x265 {
-        println!("cargo:rustc-cfg=xdremux_ffmpeg_fallback");
+        if !want_vt {
+            println!("cargo:rustc-cfg=xdremux_ffmpeg_fallback");
+        }
         return;
     }
     println!("cargo:rustc-cfg=xdremux_hevc_x265");
@@ -250,6 +274,24 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/x265_helper.c");
     println!("cargo:rerun-if-changed={lib_file}");
+}
+
+/// VideoToolbox backend: one C file against the public C API of
+/// VideoToolbox / CoreMedia / CoreVideo. The framework link lines reach
+/// `cargo test` and the cdylib; consumers of the staticlib (the Swift
+/// package) link the same frameworks themselves.
+fn build_videotoolbox_backend() {
+    println!("cargo:rustc-cfg=xdremux_hevc_vt");
+    println!("cargo:rerun-if-changed=src/vt_hevc.c");
+    cc::Build::new()
+        .file("src/vt_hevc.c")
+        .opt_level(2)
+        .flag("-fvisibility=default")
+        .warnings(true)
+        .compile("xdremux_vt_hevc");
+    for framework in ["VideoToolbox", "CoreMedia", "CoreVideo", "CoreFoundation"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
 }
 
 fn build_libheif_decoder(target_os: &str) {

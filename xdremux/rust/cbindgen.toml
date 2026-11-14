@@ -47,6 +47,9 @@ exclude = [
   "x265_encoder_encode", "x265_encoder_close", "x265_cleanup",
   "xdremux_param_set_basic", "xdremux_pic_set_planes", "xdremux_pic_set_pts",
   "xdremux_10bit_available", "xdremux_encode_10bit_planes", "xdremux_free_stream",
+  "xdremux_encode_10bit_planes_checked",
+  # hevc/vt.rs imports from vt_hevc.c, internal as well.
+  "xdremux_vt_open", "xdremux_vt_encode", "xdremux_vt_close", "xdremux_vt_free", "VtConfig",
   "StyleLayers",
 ]
 

@@ -550,8 +550,8 @@ pub(crate) fn synthesize_source_container_from_rgb_with_icc(
     }
     let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
     let encoded = if icc.is_some() {
-        crate::hevc::x265_encode_icc_primary_tiles(&tile_refs, TILE_SIZE, TILE_SIZE, use_420)
-    } else { crate::hevc::x265_encode_tiles(
+        crate::hevc::encode_icc_primary_tiles(&tile_refs, TILE_SIZE, TILE_SIZE, use_420)
+    } else { crate::hevc::encode_tiles(
         &tile_refs,
         TILE_SIZE,
         TILE_SIZE,

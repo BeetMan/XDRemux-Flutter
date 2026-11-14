@@ -616,10 +616,7 @@ pub fn assemble_prepared_tiles(
         }
         // Strip VPS/SPS/PPS (and SEI) so each tile is a pure IDR slice, matching
         // the software path and libheif — the decoder config lives only in hvcC.
-        #[cfg(not(xdremux_ffmpeg_fallback))]
-        let idr_bs = crate::hevc::drop_parameter_nals(stream);
-        #[cfg(xdremux_ffmpeg_fallback)]
-        let idr_bs = stream.to_vec();
+        let idr_bs = crate::hevc::tile_stream_for_container(stream);
         tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(&idr_bs));
         crate::progress::set_progress(4, (i + 1) as u32, tile_streams.len() as u32);
     }
@@ -989,7 +986,7 @@ fn tile_and_encode(
     // best chroma precision — this is also what Windows/Android originally
     // produced.
     let use_420 = oppo_compat.wants_oppo_compat();
-    let batch = crate::hevc::x265_encode_tiles(
+    let batch = crate::hevc::encode_tiles(
         &tile_refs,
         tile_size,
         tile_size,
@@ -1029,10 +1026,7 @@ fn tile_and_encode(
         // Python reference) writes. The decoder config lives only in hvcC;
         // Android's gain-map path (Google Photos, OPPO gallery) fails to apply
         // a tile that carries its own parameter sets.
-        #[cfg(not(xdremux_ffmpeg_fallback))]
-        let idr_bs = crate::hevc::drop_parameter_nals(hevc_bs);
-        #[cfg(xdremux_ffmpeg_fallback)]
-        let idr_bs = hevc_bs.to_vec();
+        let idr_bs = crate::hevc::tile_stream_for_container(hevc_bs);
         tile_payloads.push(crate::hevc::hevc_byte_stream_to_length_prefixed(&idr_bs));
 
         crate::progress::set_progress(3, (i + 1) as u32, total_tiles);

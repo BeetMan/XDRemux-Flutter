@@ -59,6 +59,10 @@
 `errorMessage`、`mode`、`family`、`edrScale`、`gainMapMax`、`outputValid`、`verified`、`styles3Applied`、`grainSeed`。
 失败时残留输出由调用方删除；`handle` 与 §2.5 相同，取消时 `cancelled = true`。
 
+配置里的 `hevcEncoder`（可选）指定这一次转换用哪个 HEVC 编码器，取值来自
+`xdremux_codec_capabilities` 的 `hevcEncoders`；不写、或写了本二进制没有的名字，都用 `defaultHevcEncoder`。
+没有配置参数的入口（实况、写回、旧的 `xdremux_convert*`）用进程级的 `xdremux_set_hevc_encoder(name)`。
+
 `xdremux_plan_output(input, config_json) -> char*` 只读：`classification`（modeKey / folderName / status / hdrKind /
 family）、`convertible` 与 `convertError`、`huawei`（isHdr / hasXtstyle / portraitReady，非华为为 null）、`isMotionPhoto`、
 `policy`（华为准入：普通华为 HDR 跳过，摄影风格 / 人像可转换 / 动态照片放行）、`output`（fileName、
@@ -77,7 +81,8 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 | `xdremux_version` | 版本串（与 Cargo 一致） |
 | `xdremux_classify` / `xdremux_inspect` | 输入分类 / 结构检查 |
 | `xdremux_inspect_photo_details` | 照片详情 JSON（机型、光圈、快门、ISO 等拍摄参数与 HDR headroom） |
-| `xdremux_codec_capabilities` | 编码路径能力报告（是否链接 10-bit x265 等） |
+| `xdremux_codec_capabilities` | 编码路径能力报告（是否链接 10-bit x265 等；`hevcEncoders` / `defaultHevcEncoder` 列出本二进制编入的 HEVC 编码器） |
+| `xdremux_set_hevc_encoder` | 进程级选择 HEVC 编码器（NULL 或空串恢复默认；本二进制没有该编码器时返回 false） |
 | `xdremux_huawei_inspect` | Huawei HDR / 人像 HEIC 只读识别与“无需转换”诊断（含 `xtstyle` 及 `huaweiPortrait` 的 `edof`、`auxC`、`auxl`、`RfDataB` 尺寸/字节形态；不做语义转换） |
 | `xdremux_convert` / `xdremux_convert_with_progress` | ProXDR -> ISO 转换（含 Ultra HDR JPEG 输入） |
 | `xdremux_writeback_returned_photo` | 回传照片写回（全平台统一） |

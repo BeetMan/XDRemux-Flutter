@@ -128,7 +128,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
-        let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
@@ -138,7 +138,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     } else if env_sky_stream.is_some() || env_sky_hvcc.is_some() {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
-        let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
@@ -149,7 +149,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     } else {
         let pixels = vec![0u8; (matte_w * matte_h) as usize];
         let refs: Vec<&[u8]> = vec![&pixels];
-        let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
             .map_err(|e| format!("sky matte encode: {e}"))?
             .into_single().ok_or("sky matte encode produced no stream")?;
         let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
@@ -173,7 +173,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
     let (linear_stream, linear_hvcc) = if env_lt_stream.is_some() || env_lt_hvcc.is_some() {
         let black = vec![0u8; (LT_W * LT_H * 3) as usize];
         let black_refs: Vec<&[u8]> = vec![&black];
-        let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true, xdremux_core::hevc::HevcContent::LinearThumbnail)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&black_refs, LT_W, LT_H, 3, true, xdremux_core::hevc::HevcContent::LinearThumbnail)
             .map_err(|e| format!("linear thumb encode: {e}"))?
             .into_single()
             .ok_or("linear thumb encode produced no stream")?;
@@ -206,7 +206,7 @@ fn assemble_styles(base: &[u8]) -> Result<Vec<u8>, String> {
                 // Legacy black placeholder fallback.
                 let black = vec![0u8; (LT_W * LT_H * 3) as usize];
                 let black_refs: Vec<&[u8]> = vec![&black];
-                let (stream, chroma) = xdremux_core::hevc::x265_encode_tiles(&black_refs, LT_W, LT_H, 3, true, xdremux_core::hevc::HevcContent::LinearThumbnail)
+                let (stream, chroma) = xdremux_core::hevc::encode_tiles(&black_refs, LT_W, LT_H, 3, true, xdremux_core::hevc::HevcContent::LinearThumbnail)
                     .map_err(|e2| format!("linear thumb encode: {e}; fallback: {e2}"))?
                     .into_single()
                     .ok_or_else(|| format!("linear thumb encode: {e}; no stream"))?;

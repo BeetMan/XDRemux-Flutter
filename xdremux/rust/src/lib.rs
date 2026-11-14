@@ -60,7 +60,7 @@ mod portrait_graft;
 mod portrait_scaffold;
 pub mod watermark_codec;
 
-#[cfg(not(xdremux_ffmpeg_fallback))]
+#[cfg(xdremux_hevc_x265)]
 pub mod x265_ffi;
 
 use std::ffi::{c_char, CStr, CString};
@@ -147,6 +147,35 @@ pub extern "C" fn xdremux_version() -> *mut c_char {
 pub extern "C" fn xdremux_codec_capabilities() -> *mut c_char {
     std::panic::catch_unwind(|| CString::new(codec_capabilities::report().to_string()).ok().map(CString::into_raw))
         .ok().flatten().unwrap_or(ptr::null_mut())
+}
+
+/// Choose the HEVC encoder for calls that carry no per-conversion config
+/// (Live Photo, writeback, the legacy convert entry points). `name` is one of
+/// `hevcEncoders` from `xdremux_codec_capabilities`; NULL or "" restores the
+/// build's default. Returns false, changing nothing, when this binary does
+/// not have that encoder. `hevcEncoder` in the `xdremux_convert_pipeline`
+/// config takes precedence for that conversion.
+#[no_mangle]
+pub extern "C" fn xdremux_set_hevc_encoder(name: *const c_char) -> bool {
+    std::panic::catch_unwind(|| {
+        if name.is_null() {
+            hevc::HevcBackend::set_process_choice(None);
+            return true;
+        }
+        let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else { return false };
+        if name.is_empty() {
+            hevc::HevcBackend::set_process_choice(None);
+            return true;
+        }
+        match hevc::HevcBackend::from_name(name) {
+            Some(backend) => {
+                hevc::HevcBackend::set_process_choice(Some(backend));
+                true
+            }
+            None => false,
+        }
+    })
+    .unwrap_or(false)
 }
 
 /// Inspect a photo for Motion Photo structure. Returns a JSON report with

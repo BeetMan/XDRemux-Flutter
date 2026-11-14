@@ -34,6 +34,10 @@ pub struct PipelineConfig {
     pub portrait: bool,
     pub file_name_suffix: String,
     pub categorize_output_by_mode: bool,
+    /// `hevcEncoder`: which compiled HEVC encoder this conversion uses (a
+    /// name from `xdremux_codec_capabilities().hevcEncoders`). `None`, or a
+    /// name this build does not have, means the build's default.
+    pub hevc_encoder: Option<String>,
 }
 
 impl Default for PipelineConfig {
@@ -48,6 +52,7 @@ impl Default for PipelineConfig {
             portrait: false,
             file_name_suffix: "_iso".to_string(),
             categorize_output_by_mode: false,
+            hevc_encoder: None,
         }
     }
 }
@@ -114,6 +119,7 @@ pub fn parse_config(config_json: &str) -> Result<PipelineConfig, String> {
         cfg.file_name_suffix = suffix.to_string();
     }
     cfg.categorize_output_by_mode = b("categorizeOutputByMode", false);
+    cfg.hevc_encoder = s("hevcEncoder").map(str::to_string);
     Ok(cfg)
 }
 
@@ -186,6 +192,16 @@ pub fn run_pipeline(input: &str, output: &str, config_json: &str, handle: u32) -
         Ok(c) => c,
         Err(e) => return json!({ "success": false, "stage": "config", "errorMessage": e }),
     };
+    // Every encode of this conversion (including the Styles 3 post-process)
+    // runs on this thread, inside the scope.
+    let encoder = cfg
+        .hevc_encoder
+        .as_deref()
+        .and_then(crate::hevc::HevcBackend::from_name);
+    crate::hevc::HevcBackend::scoped(encoder, || run_with_config(input, output, &cfg, handle))
+}
+
+fn run_with_config(input: &str, output: &str, cfg: &PipelineConfig, handle: u32) -> Value {
     let (c_in, c_out) = match (CString::new(input), CString::new(output)) {
         (Ok(a), Ok(b)) => (a, b),
         _ => {
