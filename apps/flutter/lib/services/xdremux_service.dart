@@ -314,8 +314,9 @@ class XdRemuxService {
     // Keep this FFI call on the root isolate. Android release builds can fail
     // when the dynamically loaded Rust library is opened from a spawned
     // isolate, which makes the file picker appear to add nothing. Queue
-    // imports use [classifySync] through ImportProbe, which falls back to the
-    // root isolate when a spawned one cannot load the library.
+    // imports and the organize scan use [classifySync] through ImportProbe
+    // and OrganizeScanProbe, which fall back to the root isolate when a
+    // spawned one cannot load the library.
     return classifySync(inputPath);
   }
 
