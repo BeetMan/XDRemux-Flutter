@@ -578,6 +578,16 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 处理反馈：苹果处理完成，仅一条提醒 ITMS-90737（声明了 `CFBundleDocumentTypes` 但没写是否原地打开）；隐私清单、动态库均未被提及。已在 `Info.plist` 加 `LSSupportsOpeningDocumentsInPlace = YES`：`importFiles` 本来就对传入 URL 做安全域访问并自行复制，原地打开可免去系统先拷到 `Documents/Inbox` 的残留副本。下次上传生效。
 - 未验证：TestFlight 安装后的运行、分享面板入口，以及 iOS 上从“文件”用“打开方式”原地打开（只做了构建与 `Info.plist` 检查）；`package_release.sh` 全流程未重跑，只做了语法检查。macOS 版 TestFlight 未做。x265 为 GPL，正式上架 App Store 前需评估许可证冲突。
 
+**详情页预览区：整图按压对比与按比例尺寸（2026-11-14，分支 `feat/apple-preview-press-compare`）**
+
+- HDR 标记从图片右上角移到右下角，不再是按钮：平时显示 HDR，按住图片时变成高亮的 SDR。触摸穿过标记落到图片上。左上角徽标固定显示“HDR 预览 / HDR 输出”，按住时不再改字。
+- 按住图片任意位置显示 SDR，松手恢复。堆叠布局（手机，图片在滚动页面里）有 150 ms 延迟，手指移动 10pt 或滚动接管触摸即取消；双栏布局（iPad 横屏、Mac）立即切换。切换时有一次 selection 触感反馈。
+- 实现用一个不会完成的 `onLongPressGesture` 的 `onPressingChanged` 加定时任务。第一版用 `LongPressGesture.sequenced(before: DragGesture)`，即使挂成 `simultaneousGesture`，从图片上起手的滑动也无法滚动页面（模拟器实测），已弃用。
+- 堆叠布局的卡片尺寸改为按照片比例计算（`PreviewCard.stackedLayout`）：照片占满内容宽度，高度上限为可视高度的 70%（不低于 320pt）；卡片贴合照片，只有高度不足 120pt 的全景或宽度不足 160pt 的长条才露出灰底。加载中按缩略图比例预留，未知时按 4:3。原来是固定 220–420pt。双栏布局的尺寸不变。
+- 没有新增文案。“SDR 效果”在界面上不再使用，词条留在 `Localizable.xcstrings` 里未清理。
+- 实测（iPhone Duo 模拟器，iOS 27.2）：0.6 的竖图贴合卡片且受高度上限约束，4:3 横图占满宽度无灰底；按住图片后标记变为蓝色 SDR；从图片上起手上滑，页面正常滚动且标记保持 HDR；从缩略图换成 HDR 预览时卡片高度不变。iOS 模拟器与 macOS 均构建通过。
+- 未验证：真机上的按压手感、150 ms 是否合适、触感反馈、真实 HDR 与 SDR 的切换观感（模拟器没有 EDR 余量，两者看起来一样）；全景和长条两种极端比例没有样张，只按公式核对过（内容宽 358、可视高 700 时，4:1 得到 358×120 的卡片，1:5 得到 160×490）；macOS 和 iPad 双栏布局下的按压没有实际操作；VoiceOver。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

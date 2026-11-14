@@ -38,7 +38,9 @@ struct PhotoDetailView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
-                            PreviewCard(item: item)
+                            // 16pt page padding on both sides, 720pt column cap below.
+                            PreviewCard(item: item, stackedSpace: CGSize(
+                                width: min(geo.size.width - 32, 720), height: geo.size.height))
                             sections(item)
                         }
                         .padding()
@@ -274,14 +276,17 @@ struct PhotoDetailView: View {
 }
 
 /// Shows the HDR output when available, otherwise the SDR input thumbnail.
-/// With an HDR output on screen, a press-and-hold button shows the SDR base
-/// image instead (what a viewer without HDR support would display), as the
-/// HarmonyOS app does; releasing restores HDR.
+/// With an HDR output on screen, pressing and holding anywhere on the photo
+/// shows the SDR base image instead (what a viewer without HDR support would
+/// display), as the HarmonyOS app does; releasing restores HDR.
 struct PreviewCard: View {
     let item: PhotoItem
-    /// Two-column layout: the card fills the column instead of capping at
-    /// a fixed height.
+    /// Two-column layout: the card fills the column instead of following
+    /// the photo's shape.
     var fillsHeight = false
+    /// Stacked layout: the content width and the visible page height, from
+    /// which the card takes the photo's shape (`stackedLayout`).
+    var stackedSpace: CGSize?
     /// The converted output, or the pre-conversion HDR preview the model
     /// rendered through the same core (`LibraryModel.preparePreview`).
     private var hdrURL: URL? { item.product?.outputURL ?? item.previewURL }
@@ -297,8 +302,63 @@ struct PreviewCard: View {
     @State private var hdrImage: PreviewImage?
     @State private var sdrImage: PreviewImage?
     @State private var comparingSDR = false
+    @State private var holdTimer: Task<Void, Never>?
+
+    /// Stacked layout sizes. The photo keeps its aspect ratio at the full
+    /// content width, up to 70% of the visible height (never under 320pt, so
+    /// a short landscape phone still shows a usable photo). The card hugs the
+    /// photo; the grey plate only shows around a panorama shorter than 120pt
+    /// or a strip narrower than 160pt.
+    static func stackedLayout(aspect: CGFloat, space: CGSize) -> (card: CGSize, photo: CGSize) {
+        let width = max(space.width, 1)
+        let maxHeight = max(320, space.height * 0.7)
+        let aspect = aspect.isFinite && aspect > 0 ? aspect : 4.0 / 3.0
+        let photoHeight = min(width / aspect, maxHeight)
+        let photo = CGSize(width: min(photoHeight * aspect, width), height: photoHeight)
+        let card = CGSize(width: max(photo.width, min(160, width)), height: max(photo.height, 120))
+        return (card, photo)
+    }
+
+    /// Width over height of what is (or will be) on screen: the decoded
+    /// preview, else the thumbnail, else 4:3 so the page does not jump far.
+    private var aspect: CGFloat {
+        #if os(iOS)
+        if let size = hdrImage?.size, size.height > 0 { return size.width / size.height }
+        #else
+        if let image = hdrImage, image.height > 0 { return CGFloat(image.width) / CGFloat(image.height) }
+        #endif
+        if let thumb = item.thumbnail, thumb.height > 0 { return CGFloat(thumb.width) / CGFloat(thumb.height) }
+        return 4.0 / 3.0
+    }
+
+    /// In a scrolling page a touch has to rest briefly before it counts as a
+    /// hold, or every scroll that starts on the photo would flash SDR; where
+    /// the photo does not scroll (two columns) the switch is immediate.
+    private var holdDelay: Duration { fillsHeight ? .zero : .milliseconds(150) }
+
+    /// `pressing` comes from a long press that never completes, so it stays
+    /// true until the finger lifts, moves 10pt, or the scroll view takes the
+    /// touch. A drag gesture here (even a simultaneous one) stops the page
+    /// from scrolling when the swipe starts on the photo.
+    private func pressingChanged(_ pressing: Bool) {
+        holdTimer?.cancel()
+        holdTimer = nil
+        guard pressing, sdrImage != nil else {
+            comparingSDR = false
+            return
+        }
+        if holdDelay == .zero {
+            comparingSDR = true
+        } else {
+            holdTimer = Task {
+                try? await Task.sleep(for: holdDelay)
+                if !Task.isCancelled { comparingSDR = true }
+            }
+        }
+    }
 
     var body: some View {
+        let layout = stackedSpace.map { Self.stackedLayout(aspect: aspect, space: $0) }
         ZStack {
             // In the two-column layout the column is far taller than the
             // photo, so the grey plate would frame mostly empty space.
@@ -312,12 +372,20 @@ struct PreviewCard: View {
                     .scaledToFit()
                     .allowedDynamicRange(showSDR ? .standard : .high)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(alignment: .topLeading) {
-                        badge(showSDR ? "SDR 效果" : (isPreview ? "HDR 预览" : "HDR 输出"))
-                    }
-                    // Top corner, opposite the badge: the bottom edge is
-                    // where OPPO's watermark strip sits.
-                    .overlay(alignment: .topTrailing) { sdrCompareButton }
+                    .overlay(alignment: .topLeading) { badge(isPreview ? "HDR 预览" : "HDR 输出") }
+                    // Bottom corner, where Photos puts its own state marks.
+                    // It covers the right end of an OPPO watermark strip;
+                    // small and translucent, and it is not a touch target.
+                    .overlay(alignment: .bottomTrailing) { rangeMarker(showSDR: showSDR) }
+                    .contentShape(Rectangle())
+                    .onLongPressGesture(minimumDuration: 3600, maximumDistance: 10) {
+                    } onPressingChanged: { pressingChanged($0) }
+                    .sensoryFeedback(.selection, trigger: showSDR)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(isPreview ? "HDR 预览" : "HDR 输出")
+                    .accessibilityHint("按住显示 SDR 效果，松开恢复 HDR")
+                    .accessibilityAddTraits(.isImage)
+                    .help("按住查看没有 HDR 时这张照片的样子")
             } else if let thumb = item.thumbnail {
                 Image(decorative: thumb, scale: 1)
                     .resizable()
@@ -340,12 +408,13 @@ struct PreviewCard: View {
                 ProgressView()
             }
         }
+        .frame(width: layout?.card.width, height: layout?.card.height)
         .frame(maxWidth: .infinity)
-        .frame(minHeight: 220, maxHeight: fillsHeight ? .infinity : 420)
+        .frame(minHeight: layout == nil ? 220 : nil, maxHeight: layout == nil ? .infinity : nil)
         .task(id: hdrURL) {
             hdrImage = nil
             sdrImage = nil
-            comparingSDR = false
+            pressingChanged(false)
             guard let url = hdrURL else { return }
             hdrImage = await Self.decode(url, hdr: true)
             // Decoded up front so the hold shows SDR without a visible delay.
@@ -361,29 +430,23 @@ struct PreviewCard: View {
         #endif
     }
 
-    /// Hold to see the SDR base image, release to return to HDR. A button
-    /// (not a toggle) so the comparison reads as a glance, like the
-    /// HarmonyOS app; `minimumDuration: 0` fires on touch-down. Labelled
-    /// "HDR" for what the photo is; the badge says "SDR 效果" while held.
-    private var sdrCompareButton: some View {
-        Label("HDR", systemImage: "circle.lefthalf.filled")
-            .font(.caption.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(comparingSDR ? AnyShapeStyle(.tint) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-            .foregroundStyle(comparingSDR ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-            .padding(10)
-            .contentShape(Capsule())
-            .onLongPressGesture(minimumDuration: 0, maximumDistance: 40) {
-                // Fires on release when the hold ended inside the button.
-            } onPressingChanged: { pressing in
-                comparingSDR = pressing
-            }
-            .disabled(sdrImage == nil)
-            .opacity(sdrImage == nil ? 0.5 : 1)
-            .accessibilityLabel("按住显示 SDR 效果，松开恢复 HDR")
-            .accessibilityAddTraits(.isButton)
-            .help("按住查看没有 HDR 时这张照片的样子")
+    /// What the photo is showing right now: "HDR", or "SDR" (tinted) while
+    /// the photo is held. A state mark, not a button: touches pass through
+    /// to the photo, which is the whole press area.
+    private func rangeMarker(showSDR: Bool) -> some View {
+        Label {
+            Text(verbatim: showSDR ? "SDR" : "HDR")
+        } icon: {
+            Image(systemName: "circle.lefthalf.filled")
+        }
+        .font(.caption.weight(.semibold))
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(showSDR ? AnyShapeStyle(.tint) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+        .foregroundStyle(showSDR ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .opacity(sdrImage == nil ? 0.5 : 1)
+        .padding(10)
+        .allowsHitTesting(false)
     }
 
     private static func decode(_ url: URL, hdr: Bool) async -> PreviewImage? {
