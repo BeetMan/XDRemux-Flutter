@@ -271,7 +271,11 @@ class XdRemuxService {
     }
   }
 
-  static Future<Map<String, dynamic>> inspectHuawei(String inputPath) async {
+  static Future<Map<String, dynamic>> inspectHuawei(String inputPath) async =>
+      inspectHuaweiSync(inputPath);
+
+  /// Synchronous body of [inspectHuawei], safe to call from any isolate.
+  static Map<String, dynamic> inspectHuaweiSync(String inputPath) {
     try {
       return XdRemuxFFI.inspectHuawei(inputPath);
     } catch (error) {
@@ -309,7 +313,14 @@ class XdRemuxService {
   static Future<Map<String, dynamic>> classify(String inputPath) async {
     // Keep this FFI call on the root isolate. Android release builds can fail
     // when the dynamically loaded Rust library is opened from a spawned
-    // isolate, which makes the file picker appear to add nothing.
+    // isolate, which makes the file picker appear to add nothing. Queue
+    // imports use [classifySync] through ImportProbe, which falls back to the
+    // root isolate when a spawned one cannot load the library.
+    return classifySync(inputPath);
+  }
+
+  /// Synchronous body of [classify], safe to call from any isolate.
+  static Map<String, dynamic> classifySync(String inputPath) {
     final result = XdRemuxFFI.classify(inputPath);
     try {
       return {
