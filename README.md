@@ -204,9 +204,9 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 
 ## 开发与技术文档
 
-当前主线常规 Flutter 构建固定 **Flutter 3.47.9 / Dart 3.13.7**，与 CI 一致；版本记录在 `apps/flutter/.fvmrc`。鸿蒙 Flutter 仍使用独立适配 SDK，不直接替换为官方 SDK。国内开发沿用 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`。
+当前主线常规 Flutter 构建固定 **Flutter 3.50.0 / Dart 3.14.0**，与 CI 一致；版本记录在 `apps/flutter/.fvmrc`。鸿蒙 Flutter 仍使用独立适配 SDK，不直接替换为官方 SDK。国内开发沿用 `PUB_HOSTED_URL=https://pub.flutter-io.cn`、`FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`。
 
-Linux 桌面本地开发使用同一 Flutter 3.47.9。系统依赖为 clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator 与 libnotify；Rust 核心按 CI 方式静态链接 x265 4.2，再由 `apps/flutter/linux/CMakeLists.txt` 打包进 `bundle/lib`。构建与运行步骤见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)；发布用 AppImage / tar.gz 由 `tools/linux/package_linux.sh` 生成（详见 [tools/linux/README.md](tools/linux/README.md)），产物保持 glibc 2.35（Ubuntu 22.04+）基线。
+Linux 桌面本地开发使用同一 Flutter 3.50.0。系统依赖为 clang、cmake、ninja、pkg-config、GTK3、libayatana-appindicator 与 libnotify；Rust 核心按 CI 方式静态链接 x265 4.2，再由 `apps/flutter/linux/CMakeLists.txt` 打包进 `bundle/lib`。构建与运行步骤见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)；发布用 AppImage / tar.gz 由 `tools/linux/package_linux.sh` 生成（详见 [tools/linux/README.md](tools/linux/README.md)），产物保持 glibc 2.35（Ubuntu 22.04+）基线。
 
 产品说明与工程细节分开维护，构建和研究资料请从以下入口查阅：
 
