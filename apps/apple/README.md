@@ -98,6 +98,12 @@ Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-
 `brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). builds on Apple Silicon; the macOS and simulator slices are arm64 + x86_64 (Intel Macs run the same app)
 (no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
 
+`tools/apple/verify_local.sh` runs the same steps as the `Apple native` CI job (header check, both
+XCFrameworks, `swift test`, CLI smoke, macOS and iOS simulator builds) and prints a summary to paste
+into a PR. CI only runs that job for PRs touching `apps/apple`, `tools/apple`, `build_apple.sh` or the
+committed header, and on `main` after a Rust-core merge; run the script before merging a Rust PR that
+changes what the Swift side depends on.
+
 `XDREMUX_SAMPLE_DIR=/path/to/proxdr-heics swift test` additionally converts one real sample
 through the Swift wrapper and verifies the output; it is skipped otherwise.
 
