@@ -16,8 +16,9 @@
 #                                     when no Rust source changed since)
 #
 # Prereqs: Xcode, rustup with the Apple targets build_apple.sh lists, Rust
-# 1.97.1 for the transfer crate, cbindgen, xcodegen, and a vendored x265
-# checkout in xdremux/rust/vendor/x265 (see apps/apple/README.md).
+# 1.97.1 for the transfer crate, cbindgen and xcodegen (see
+# apps/apple/README.md). The default core is VideoToolbox-only, so no x265
+# checkout is needed.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -60,7 +61,7 @@ step() {
 check_slices() {
   local fw=apps/apple/Frameworks/XDRemuxCore.xcframework lib
   for lib in "$fw"/macos-*/libXDRemuxCore.a "$fw"/ios-*-simulator/libXDRemuxCore.a; do
-    lipo -info "$lib" | grep -q x86_64 && lipo -info "$lib" | grep -q arm64 || return 1
+    lipo -info "$lib" | grep -q arm64 || return 1
   done
 }
 
@@ -85,7 +86,7 @@ step "C header is current (check_header.sh)" tools/apple/check_header.sh
 if [ "${XDREMUX_VERIFY_SKIP_FRAMEWORKS:-0}" = 1 ]; then
   SUMMARY+=("- skipped (XDREMUX_VERIFY_SKIP_FRAMEWORKS=1): xcframework rebuild")
 else
-  step "XDRemuxCore.xcframework (macOS + simulator, arm64 + x86_64)" \
+  step "XDRemuxCore.xcframework (macOS + simulator, arm64, VideoToolbox)" \
     env XDREMUX_APPLE_SLICES="macos ios-sim" xdremux/rust/build_apple.sh
   step "XDRemuxTransferCore.xcframework (macOS + simulator)" \
     env XDREMUX_TRANSFER_SLICES="macos ios-sim" tools/apple/build_transfer_xcframework.sh

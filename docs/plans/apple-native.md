@@ -588,6 +588,26 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测（iPhone Duo 模拟器，iOS 27.2）：0.6 的竖图贴合卡片且受高度上限约束，4:3 横图占满宽度无灰底；按住图片后标记变为蓝色 SDR；从图片上起手上滑，页面正常滚动且标记保持 HDR；从缩略图换成 HDR 预览时卡片高度不变。iOS 模拟器与 macOS 均构建通过。
 - 未验证：真机上的按压手感、150 ms 是否合适、触感反馈、真实 HDR 与 SDR 的切换观感（模拟器没有 EDR 余量，两者看起来一样）；全景和长条两种极端比例没有样张，只按公式核对过（内容宽 358、可视高 700 时，4:1 得到 358×120 的卡片，1:5 得到 160×490）；macOS 和 iPad 双栏布局下的按压没有实际操作；VoiceOver。
 
+**内核改用 VideoToolbox 编码，x265 变成可选（2026-11-14，分支 `feat/apple-videotoolbox-default`）**
+
+- `build_apple.sh` 默认只编入 VideoToolbox 后端（`XDREMUX_APPLE_HEVC=vt`）：不编译、不合并 x265，干净检出上没有 `vendor/x265` 也能构建；macOS 与模拟器切片默认只出 arm64（不再支持 Intel Mac）。`vt+x265`（两个编码器都带，运行期选择）和 `x265` 保留为显式取值。`BUILD_RECORD.txt` 的 `hevc_backend=` 记录用的是哪一种。
+- 带 x265 的构建在 XCFramework 的 `module.modulemap` 里加 `link "c++"`，导入模块即自动链接 libc++；`Package.swift` 和 `project.yml` 不再写 `c++`，两种构建都能链接。
+- `package_release.sh` 显式用 `vt+x265`（GitHub 发布包让用户选编码器），`upload_testflight.sh` 显式用 `vt`（商店构建不含 x265）。两个脚本配 `XDREMUX_SKIP_CORE=1` 复用内核时还**没有**核对 `hevc_backend=`：发布脚本靠现有的“必须含 x265”断言能拦下纯 VideoToolbox 的内核，上传脚本拦不住带 x265 的内核，脚本注释里写明了，留待下一步补。
+- 删除 Swift 侧的硬件图块路径（`HardwareTiles.swift`、`Pipeline.swift` 里的分支、`HardwareTilesTests.swift`）。所有编码都在内核里完成，内核的 `xdremux_prepare_tiles` 留给 Flutter 版。
+- 设置里的“硬件编码”开关改为“编码器”选择（VideoToolbox / 内核报告的另一个编码器），只有 `xdremux_codec_capabilities` 的 `hevcEncoders` 多于一个时才显示，所以商店构建里没有这一项。`ConversionConfig.hardwareEncode` 的键不变：真 = VideoToolbox（新默认值），假 = 另一个编码器。转换时映射成配置里的 `hevcEncoder`，启动和设置变化时另调 `xdremux_set_hevc_encoder`（实况和写回的接口没有配置参数）。编码器名字一律运行期取自内核，Swift 源码和文案里不出现 “x265”。
+- 旧设置迁移：新增 `encoderChoiceVersion`（当前为 1）。没有这个键的记录（旧版本写的，`hardwareEncode` 指原来默认关闭的硬件快速路径）在解码时一律落到 VideoToolbox，下次保存时写入版本号；之后用户的选择照常保留。单张照片的独立选项（`PhotoOptions`）不含这个字段，不用处理。
+- 命令行工具：`convert`、`edit-copy`、`writeback` 增加 `--encoder <名字>`，可选值和帮助文字取自内核，只有一个编码器时这个选项不在帮助里显示；`-v` 的说明不再写死 “x265”。
+- CI：`apple-ci.yml` 去掉 x265 的缓存与构建步骤，改查默认内核的 `hevc_backend=vt` 和 x265 字符串计数为 0，Rust 目标只装 arm64。
+- 实测（Apple M6，macOS 27.2.1）：
+  - 默认构建在 `vendor/x265` 被挪走的情况下通过；三个切片的 `libXDRemuxCore.a`、macOS App（Debug）、命令行工具、TestFlight 归档里的 iOS App 与分享扩展，`strings -a` 的 x265 计数都是 0，库里 `nm` 无 `x265_` 符号。
+  - `swift test`：99 个测试 0 失败（不给样张时 9 个跳过；给了 `XDREMUX_SAMPLE_DIR` 和 `XDREMUX_MOTION_SAMPLE_DIR` 后只剩 3 个需要外部对端的传输测试跳过）。新增 10 个：设置迁移 4 个，编码器能力解析、配置映射、内核实报、整条流水线两种设置各转一张共 6 个。
+  - macOS App 与 iOS 模拟器构建通过（默认构建和 `vt+x265` 构建各一遍）；命令行工具 `--version`、`capabilities`、转换、`verify` 正常。
+  - `vt+x265` 构建：设置里出现“编码 / 编码器”，默认 VideoToolbox；纯 `vt` 构建里没有这一节。同一张三通道样张两种选择各转一张（App 的代码路径和命令行各一遍），选 x265 的输出与改动前 main 的 x265 版逐字节相同。
+  - 十张样张（Apple 标准加摄影风格，人像两张另加人像）用默认构建的命令行工具逐张转换：全部成功，内核三个自检全过。整批耗时 18.3 秒，单进程内存峰值 1.73 GB；同一批在 `vt+x265` 构建里选 x265 是 24.4 秒、1.93 GB，选 VideoToolbox 是 18.2 秒、1.63 GB。
+  - 旧设置迁移：把本机 App 实际存着的那条记录（`hardwareEncode:false`，没有版本号）拷到一个临时偏好域，经真实的 `UserDefaults` 读入再保存，结果是 `hardwareEncode:true`、`encoderChoiceVersion:1`，其余字段不变。App 自己的偏好域没有动。
+  - `package_release.sh` 完整跑通（重建两个 XCFramework、macOS Release、iOS 归档、DMG、未签名 IPA，它现有的检查全部通过，包里的内核是 `vt+x265`）。`upload_testflight.sh` 不带 `XDREMUX_UPLOAD` 跑到导出：归档与导出成功，没有上传。
+- 未验证：iPhone、iPad 真机都没有连接（`devicectl` 显示三台设备均不可用），真机编码器、iOS 相册识别、OPPO 相册、“两台 iPhone 加一台 iPad” 的验收都没做；macOS 照片 App 里的人工核对没做；App 里用界面切换编码器后的实际转换没有操作（只截了设置界面，转换走的是同一套代码的测试和命令行）；旧设置迁移没有在 App 进程里看，只经 `SettingsStore` 验证；iOS 模拟器只构建未运行；x86_64 切片不再构建。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

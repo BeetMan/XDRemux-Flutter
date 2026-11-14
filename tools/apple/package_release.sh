@@ -14,7 +14,9 @@
 #
 # Steps:
 #   1. rebuild XDRemuxCore.xcframework and XDRemuxTransferCore.xcframework
-#      (macos + ios + ios-sim, arm64) from the checked-out sources, so the
+#      (macos + ios + ios-sim, arm64) from the checked-out sources, the core
+#      with both HEVC encoders (XDREMUX_APPLE_HEVC=vt+x265: GitHub packages
+#      let the user choose; needs the vendored x265 checkout), so the
 #      bundled cores match HEAD (both are gitignored and go stale otherwise);
 #      the simulator slice is not shipped but keeps the dev workflow working
 #   2. xcodegen, Release builds for macOS (ad-hoc signed) and iOS (unsigned archive)
@@ -23,7 +25,13 @@
 #   4. DMG (app + /Applications link + licence files), IPA, SHA256SUMS
 #
 # Env:
-#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework
+#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. NOT
+#                             CHECKED YET: the reused core must have been built
+#                             with XDREMUX_APPLE_HEVC=vt+x265 (build_apple.sh
+#                             now defaults to vt). A VideoToolbox-only core is
+#                             caught below by the "does not contain x265"
+#                             check; BUILD_RECORD.txt's hevc_backend= line is
+#                             not compared yet.
 #   XDREMUX_SKIP_TRANSFER=1   reuse the existing XDRemuxTransferCore.xcframework
 #   XDREMUX_RELEASE_OUT       output dir (default apps/apple/build/release/<version>)
 set -euo pipefail
@@ -49,8 +57,9 @@ mkdir -p "$OUT"
 
 # ---------------------------------------------------------------- 1. cores
 if [ "${XDREMUX_SKIP_CORE:-0}" != 1 ]; then
-  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64)"
-  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 "$ROOT/xdremux/rust/build_apple.sh"
+  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64, VideoToolbox + x265)"
+  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 XDREMUX_APPLE_HEVC=vt+x265 \
+    "$ROOT/xdremux/rust/build_apple.sh"
 fi
 if [ "${XDREMUX_SKIP_TRANSFER:-0}" != 1 ]; then
   echo "==> XDRemuxTransferCore.xcframework (ios ios-sim macos)"
