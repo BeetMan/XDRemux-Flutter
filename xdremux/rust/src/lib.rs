@@ -2575,13 +2575,27 @@ fn verify_portrait_graph(data: &[u8]) -> bool {
         Ok(meta) => meta,
         Err(_) => return false,
     };
-    let has_matte_items = meta.items.iter().any(|item| item.itype == "mime")
-        && meta.items.iter().any(|item| item.itype == "mimehdrgm-xmp");
-    has_matte_items
+    portrait_mime_items_present(&meta.items)
         && contains_ascii(data, b"portraiteffectsmatte")
         && contains_ascii(data, b"semanticskinmatte")
         && contains_ascii(data, b"semantichairmatte")
         && contains_ascii(data, b"portraitLightingEffect")
+}
+
+/// The portrait graph needs the primary `hdrgm-xmp` XMP item plus at least
+/// one unnamed `mime` item (the matte XMP).
+///
+/// `parse_iinf` reports the four-byte item type only, so the item name has to
+/// be read from the raw `infe`. The check used to compare the type with
+/// `"mimehdrgm-xmp"`, the type and name folded together by the old
+/// null-terminated parser, which never matches any more.
+fn portrait_mime_items_present(items: &[isobmff::ItemInfo]) -> bool {
+    const NAMED: &[u8] = b"mimehdrgm-xmp\0";
+    let is_primary_xmp = |item: &isobmff::ItemInfo| {
+        item.raw_infe.windows(NAMED.len()).any(|window| window == NAMED)
+    };
+    let mime = || items.iter().filter(|item| item.itype == "mime");
+    mime().any(is_primary_xmp) && mime().any(|item| !is_primary_xmp(item))
 }
 
 fn contains_ascii(data: &[u8], needle: &[u8]) -> bool {
@@ -2995,6 +3009,24 @@ pub extern "C" fn xdremux_free_result(result: ConversionResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portrait_mime_items_follow_four_byte_item_types() {
+        let parse = |infes: &[Vec<u8>]| {
+            let iinf = isobmff::make_iinf_box(0, infes);
+            let header = isobmff::find_box(&iinf, b"iinf", 0, iinf.len()).expect("iinf box");
+            isobmff::parse_iinf(&iinf, &header).expect("parse iinf")
+        };
+        let primary_xmp = isobmff::make_mime_infe_box(1, 1);
+        let matte_xmp = isobmff::make_infe_box(2, "mime", 1);
+
+        let items = parse(&[primary_xmp.clone(), matte_xmp.clone()]);
+        assert!(items.iter().all(|item| item.itype == "mime"), "{items:?}");
+        assert!(portrait_mime_items_present(&items));
+
+        assert!(!portrait_mime_items_present(&parse(&[primary_xmp])));
+        assert!(!portrait_mime_items_present(&parse(&[matte_xmp])));
+    }
 
     #[test]
     fn gain_plane_orientation_follows_exif_transform() {
