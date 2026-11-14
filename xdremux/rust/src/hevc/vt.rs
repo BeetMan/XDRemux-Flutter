@@ -277,62 +277,84 @@ pub(super) fn encode(
         }
     }
 
-    let (mut session, hardware) = Session::open(&config)?;
-    debug_log(&format!(
-        "{width}x{height} {coded:?} {}-bit {content:?} q={} n={count} encoder={}",
-        config.bit_depth,
-        config.quality,
-        match hardware {
-            1 => "hardware",
-            0 => "software",
-            // The macOS software encoder does not publish the property, and
-            // iOS before 17.4 cannot read it.
-            _ => "unreported",
-        }
-    ));
-
     let chroma_len = ((width as usize + 1) / 2) * ((height as usize + 1) / 2);
     let neutral = vec![128u8; chroma_len];
-    let mut streams: Vec<Vec<u8>> = Vec::with_capacity(count);
-    let mut first_parameters: Vec<u8> = Vec::new();
-    for index in 0..count {
-        if crate::progress::is_cancelled() {
-            return Err(io_err(crate::progress::CANCELLED_MESSAGE.into()));
+    // One whole batch on one session, so every picture shares its parameter
+    // sets.
+    let run = |config: &VtConfig| -> std::io::Result<Vec<Vec<u8>>> {
+        let (mut session, hardware) = Session::open(config)?;
+        debug_log(&format!(
+            "{width}x{height} {coded:?} {}-bit {content:?} q={} n={count} encoder={}",
+            config.bit_depth,
+            config.quality,
+            match hardware {
+                1 => "hardware",
+                0 => "software",
+                // The macOS software encoder does not publish the property, and
+                // iOS before 17.4 cannot read it.
+                _ => "unreported",
+            }
+        ));
+
+        let mut streams: Vec<Vec<u8>> = Vec::with_capacity(count);
+        let mut first_parameters: Vec<u8> = Vec::new();
+        for index in 0..count {
+            if crate::progress::is_cancelled() {
+                return Err(io_err(crate::progress::CANCELLED_MESSAGE.into()));
+            }
+            let (stream, params) = match &source {
+                Source::Gray(tiles) => {
+                    session.encode(tiles[index].as_ptr().cast(), std::ptr::null(), std::ptr::null())?
+                }
+                Source::GrayAs420(tiles) => session.encode(
+                    tiles[index].as_ptr().cast(),
+                    neutral.as_ptr().cast(),
+                    neutral.as_ptr().cast(),
+                )?,
+                Source::Rgb { tiles, limited601 } => {
+                    let (y, u, v) = if *limited601 {
+                        rgb_to_yuv420_limited601(tiles[index], width, height)
+                    } else {
+                        rgb_to_yuv420(tiles[index], width, height)
+                    };
+                    session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
+                }
+                Source::Codes16(codes16) => {
+                    let (y, u, v) = codes16_to_yuv420_10bit(codes16, width, height);
+                    session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
+                }
+            };
+            if index == 0 {
+                first_parameters = stream[..params].to_vec();
+                streams.push(stream);
+            } else {
+                if stream[..params] != first_parameters[..] {
+                    return Err(io_err(format!(
+                        "VideoToolbox changed parameter sets at picture {index} of {count}"
+                    )));
+                }
+                streams.push(stream[params..].to_vec());
+            }
         }
-        let (stream, params) = match &source {
-            Source::Gray(tiles) => {
-                session.encode(tiles[index].as_ptr().cast(), std::ptr::null(), std::ptr::null())?
-            }
-            Source::GrayAs420(tiles) => session.encode(
-                tiles[index].as_ptr().cast(),
-                neutral.as_ptr().cast(),
-                neutral.as_ptr().cast(),
-            )?,
-            Source::Rgb { tiles, limited601 } => {
-                let (y, u, v) = if *limited601 {
-                    rgb_to_yuv420_limited601(tiles[index], width, height)
-                } else {
-                    rgb_to_yuv420(tiles[index], width, height)
-                };
-                session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
-            }
-            Source::Codes16(codes16) => {
-                let (y, u, v) = codes16_to_yuv420_10bit(codes16, width, height);
-                session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
-            }
-        };
-        if index == 0 {
-            first_parameters = stream[..params].to_vec();
-            streams.push(stream);
-        } else {
-            if stream[..params] != first_parameters[..] {
-                return Err(io_err(format!(
-                    "VideoToolbox changed parameter sets at picture {index} of {count}"
-                )));
-            }
-            streams.push(stream[params..].to_vec());
+        Ok(streams)
+    };
+    let streams = match run(&config) {
+        Ok(streams) => streams,
+        // A hardware encoder can accept the session and still refuse a
+        // picture (seen on virtualised Macs for large monochrome frames).
+        // Redo the whole batch on the software encoder rather than fail.
+        Err(error)
+            if config.force_software == 0
+                && !error.to_string().contains(crate::progress::CANCELLED_MESSAGE) =>
+        {
+            debug_log(&format!("retrying {width}x{height} on the software encoder after: {error}"));
+            config.force_software = 1;
+            run(&config).map_err(|second| {
+                io_err(format!("{second}; the hardware encoder had failed with: {error}"))
+            })?
         }
-    }
+        Err(error) => return Err(error),
+    };
     Ok(EncodedTiles { streams, layout: coded })
 }
 
