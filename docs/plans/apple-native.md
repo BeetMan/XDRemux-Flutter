@@ -651,6 +651,15 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 出包时本机代理是关闭的，github.com 连不上：`git fetch` 拉不到刚合并的 main，于是用 GitHub 接口核对了 main 的树对象与本地已合并分支一致（`41092f7`）后从本地代码出包；第一次归档因为拉不到 `swift-argument-parser` 失败，第二次用 `GIT_CONFIG_*` 的 `insteadOf` 把这个地址指到本机 SwiftPM 缓存里的同一仓库（含锁定的 1.8.2 提交）后通过。脚本本身没有改。苹果的上传服务器在不走代理时可达。
 - 未验证：App Store Connect 的处理结果；TestFlight 安装后的表现；所有新界面在真机上的表现。
 
+**存入照片时显示进度（2026-11-15，分支 `feat/apple-save-progress`）**
+
+- 一次存入较多照片时，从点下按钮到弹出“已存入照片 N 张”之间没有任何反馈。现在保存期间主界面底部栏原来按钮的位置显示进度条和“正在存入照片 已完成/总数”；手动点“全部存入照片”和批量转换结束后的自动存入都会显示。保存期间侧边栏 / 更多菜单里的存入按钮禁用。
+- 局域网传输收件箱的“全部存入照片”同样在按钮位置显示进度。
+- `LibraryModel.saveProgress`、`TransferModel.saveProgress`；保存逻辑本身没有变（仍是逐张保存，首个失败即停并提示）。
+- 实测（iPhone Duo 模拟器，Debug）：模拟器里 7 张一两秒就存完，看不到进度；临时在每张之间加了 4 秒延时后确认底部显示“正在存入照片 2/2”和进度条，随后弹出原有的完成提示。延时已移除。iOS 模拟器与 macOS 构建通过。
+- 未验证：真机上的实际节奏；收件箱里的进度显示（只编译通过，没有足够多的收件箱文件去看）；窄屏手机上进度文字与“全部转换”并排时的宽度。
+- 同时确认了一个尚未修改的问题：不是 ProXDR 源的照片（例如已经是 ISO HDR 的 HEIC）在详情页只显示 512 像素的缩略图并标“原图预览”，没有 HDR、也不能按住对比。原因是 `preparePreview` 只为 ProXDR 源经内核渲染预览，其余一律回落到列表缩略图。处理方式待与用户确定。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

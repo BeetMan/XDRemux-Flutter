@@ -273,10 +273,13 @@ struct ContentView: View {
         ToolbarItemGroup(placement: batchPlacement) {
             // With nothing left to convert the bar belongs to saving; with
             // both pending they sit side by side.
-            if model.isConverting || model.convertibleCount > 0 || model.unsavedProducts.isEmpty {
+            if model.isConverting || model.convertibleCount > 0
+                || (model.unsavedProducts.isEmpty && model.saveProgress == nil) {
                 batchActionButton
             }
-            if !model.isConverting, !model.unsavedProducts.isEmpty {
+            if let progress = model.saveProgress {
+                saveProgressView(progress)
+            } else if !model.isConverting, !model.unsavedProducts.isEmpty {
                 saveAllButton(prominent: model.convertibleCount == 0)
             }
         }
@@ -346,7 +349,7 @@ struct ContentView: View {
             Label(allSaved ? "已全部存入照片" : "全部存入照片",
                   systemImage: allSaved ? "checkmark" : "photo.badge.arrow.down")
         }
-        .disabled(model.unsavedProducts.isEmpty)
+        .disabled(model.unsavedProducts.isEmpty || model.saveProgress != nil)
         #endif
     }
 
@@ -430,6 +433,21 @@ struct ContentView: View {
         } else {
             button
         }
+    }
+    #endif
+
+    #if os(iOS)
+    /// Takes the save button's place while a save runs (the manual button
+    /// or the automatic save after a batch): a bar and "done/total".
+    private func saveProgressView(_ progress: LibraryModel.SaveProgress) -> some View {
+        HStack(spacing: 8) {
+            ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                .frame(width: 64)
+            Text("正在存入照片 \(progress.done)/\(progress.total)")
+                .font(.subheadline.weight(.semibold)).monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .accessibilityElement(children: .combine)
     }
     #endif
 
