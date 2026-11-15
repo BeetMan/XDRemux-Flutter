@@ -5408,6 +5408,70 @@
         }
       }
     },
+    "轻点全屏查看，按住显示 SDR 效果": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to view full screen, press and hold to show SDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轻点全屏查看，按住显示 SDR 效果"
+          }
+        }
+      }
+    },
+    "轻点全屏查看": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap to view full screen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轻点全屏查看"
+          }
+        }
+      }
+    },
+    "点击全屏查看；按住查看没有 HDR 时这张照片的样子": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to view full screen; press and hold to see this photo without HDR"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击全屏查看；按住查看没有 HDR 时这张照片的样子"
+          }
+        }
+      }
+    },
+    "点击全屏查看": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to view full screen"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击全屏查看"
+          }
+        }
+      }
+    },
     "清除已完成？": {
       "localizations": {
         "en": {
