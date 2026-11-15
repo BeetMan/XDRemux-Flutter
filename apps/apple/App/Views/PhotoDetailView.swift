@@ -329,6 +329,11 @@ struct PreviewCard: View {
     @State private var holdTimer: Task<Void, Never>?
     /// The imported file carries a gain map (only read for `.source`).
     @State private var sourceHasHDR = false
+    @State private var showViewer = false
+    /// When the current (or last) touch on the photo went down: a touch
+    /// that stayed longer than `tapLimit` was a hold, not a tap.
+    @State private var pressStart: Date?
+    private static let tapLimit: TimeInterval = 0.3
     /// Which photo the decoded images belong to; a card reused for another
     /// photo must not show the previous one while the new one decodes.
     @State private var loadedItem: PhotoItem.ID?
@@ -372,6 +377,7 @@ struct PreviewCard: View {
     private func pressingChanged(_ pressing: Bool) {
         holdTimer?.cancel()
         holdTimer = nil
+        if pressing { pressStart = .now }
         guard pressing, hasHDR, sdrImage != nil else {
             comparingSDR = false
             return
@@ -383,6 +389,24 @@ struct PreviewCard: View {
                 try? await Task.sleep(for: holdDelay)
                 if !Task.isCancelled { comparingSDR = true }
             }
+        }
+    }
+
+    /// A tap opens the full-screen viewer; lifting the finger after a hold
+    /// (the SDR comparison) must not. The two are told apart by how long
+    /// the touch lasted, which also covers the two-column layout, where
+    /// the comparison starts the moment the finger lands.
+    private func tapped() {
+        if let pressStart, Date.now.timeIntervalSince(pressStart) > Self.tapLimit { return }
+        guard hdrImage != nil else { return }
+        pressingChanged(false)
+        showViewer = true
+    }
+
+    @ViewBuilder
+    private var viewer: some View {
+        if let hdrImage {
+            PhotoViewer(image: hdrImage, sdrImage: hasHDR ? sdrImage : nil, isHDR: hasHDR)
         }
     }
 
@@ -409,14 +433,16 @@ struct PreviewCard: View {
                         if hasHDR { rangeMarker(showSDR: showSDR) } else { renderingNote }
                     }
                     .contentShape(Rectangle())
+                    .onTapGesture { tapped() }
                     .onLongPressGesture(minimumDuration: 3600, maximumDistance: 10) {
                     } onPressingChanged: { pressingChanged($0) }
                     .sensoryFeedback(.selection, trigger: showSDR)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(badgeText)
-                    .accessibilityHint(hasHDR ? "按住显示 SDR 效果，松开恢复 HDR" : "")
-                    .accessibilityAddTraits(.isImage)
-                    .help(hasHDR ? "按住查看没有 HDR 时这张照片的样子" : "")
+                    .accessibilityHint(hasHDR ? "轻点全屏查看，按住显示 SDR 效果" : "轻点全屏查看")
+                    .accessibilityAddTraits([.isImage, .isButton])
+                    .accessibilityAction { showViewer = true }
+                    .help(hasHDR ? "点击全屏查看；按住查看没有 HDR 时这张照片的样子" : "点击全屏查看")
             } else if let thumb = item.thumbnail {
                 // Only until the first decode lands.
                 Image(decorative: thumb, scale: 1)
@@ -429,6 +455,11 @@ struct PreviewCard: View {
                 ProgressView()
             }
         }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showViewer) { viewer }
+        #else
+        .sheet(isPresented: $showViewer) { viewer }
+        #endif
         .frame(width: layout?.card.width, height: layout?.card.height)
         .frame(maxWidth: .infinity)
         .frame(minHeight: layout == nil ? 220 : nil, maxHeight: layout == nil ? .infinity : nil)
