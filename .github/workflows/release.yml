@@ -342,11 +342,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # JDK 21, not 17: the lint bundled with AGP 9.3.1 (32.3.1) calls the
+      # JDK 21 List.removeLast(), so lintVitalAnalyzeRelease crashed with
+      # NoSuchMethodError on Temurin 17 (preflight run 43480790620). Google
+      # lists the crash as fixed in AGP 9.3.2.
       - name: Set up Java
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # The runner image already ships the Android SDK; the setup-android
       # action now fails resolving the retired "tools" package before our own
