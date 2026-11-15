@@ -90,6 +90,7 @@
 | [oppo-proxdr-families.md](research/oppo-proxdr-families.md) | Find N3 / Find X8 Ultra ProXDR 采样分析（2026-09） |
 | [iphone-18-pro-notes.md](research/iphone-18-pro-notes.md) | iPhone 18 Pro（iOS 27）新拍摄模式：样张 EXIF / MakerNote / 容器结构 |
 | [upstream-20261030.md](research/upstream-20261030.md) | 上游 PR #83–#90 进展与差距矩阵（2026-10-30，11-04 追加复查）：Standard key1 identity 定案、GPLv3 改授权、研究仓迁移、显式 BT.2020 PQ/HLG 导出；含 P0/P1/P2 规划 |
+| [upstream-20261115.md](research/upstream-20261115.md) | 上游未合并 PR #91–#97 与周边仓（2026-11-15）：Apple → 安卓动态照片导出、双层 HDR JPEG、MakerNote 风格标志、LibLivePhoto、libheif ISO tmap 与 GB/T 48347；含 P1/P2 规划与待决策项 |
 
 ## 路线图
 

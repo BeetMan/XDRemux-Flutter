@@ -124,7 +124,7 @@ cargo run -p xdremux-conformance -- --help   # 见 docs/testing/conformance-suit
 - 发版流程：`docs/operations/releasing.md`；CI：`docs/operations/ci.md`
 - Styles 管线：`docs/modules/styles-pipeline.md`；Live Photo 包：`docs/formats/live-photo-pvt.md`
 - 原生 Apple 前端：`docs/plans/apple-native.md`、`apps/apple/README.md`
-- 上游动向：`docs/research/upstream-20261030.md`
+- 上游动向：`docs/research/upstream-20261115.md`（上一版 `docs/research/upstream-20261030.md`）
 
 ## 8. 不适用条件
 
