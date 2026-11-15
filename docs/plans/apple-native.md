@@ -616,6 +616,7 @@ Flutter 版生成的检查点文件可被原生版读取。
 - `apps/apple/README.md` 的变体表和 TestFlight 一节同步。
 - 实测：不带 `XDREMUX_UPLOAD` 完整跑一遍（`XDREMUX_BUILD_NO=3`，`XDREMUX_SKIP_TRANSFER=1`）：重建 `vt+x265` 内核，自动签名归档，检查全部通过，导出 7.4 MB 的 IPA，没有上传。复用这份内核并要求 `vt` 时脚本拒绝并退出 1；传 `bogus` 时报错。
 - 未验证：`vt` 变体在新检查下的完整一遍（阶段 3 跑通过旧脚本的 `vt` 归档，新加的“不得含 x265”扫描没有在真实归档上跑过）；没有上传，App Store Connect 对这个构建的处理结果未知；TestFlight 安装后的设置界面和两种编码器在真机上的表现。
+- 上传（2026-11-14）：构建号改为 3（版本仍是 0.1.1），归档带 `vt+x265`，检查全部通过。第一次上传停在 0%：`northamerica-1.object-storage.apple.com` 经本机代理（TUN / fake-ip）连不上，中止；用户调整代理后直接对现成归档执行 `xcodebuild -exportArchive`，几秒内 “Upload succeeded”。有一条警告：`XDRemuxTransferCore.framework` 没有 dSYM，符号上传失败，不影响构建本身，只影响这个框架的崩溃堆栈符号化。App Store Connect 的处理结果和 TestFlight 安装后的表现未验证。
 - 许可层面：带 x265 的构建按 GPL 分发，App Store / TestFlight 的分发条款与 GPL 是否相容仍是 `apple-drop-x265.md` §7 问题 7 的未决事项，公开测试链接开放前需要定下来。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
