@@ -76,6 +76,7 @@
 | [local-transfer-poc.md](research/local-transfer-poc.md) | 内置传输 P0：固定 LocalSend Rust 核心、Windows/Android 双向保真及平台边界 |
 | [harmonyos-support.md](research/harmonyos-support.md) | 鸿蒙支持研究全记录（已落地为正式平台） |
 | [motion-photo-parser-differential.md](research/motion-photo-parser-differential.md) | Motion Photo 解析器 Swift/Python/Rust 三方差分（12/12） |
+| [motion-photo-liblivephoto-diff-20261115.md](research/motion-photo-liblivephoto-diff-20261115.md) | Motion Photo 解析器对拍 xdremux-core vs LibLivePhoto（真机 21/21 一致；三星只写 SEF 的动态照片未识别；导出视频带厂商尾字节），工具 `tests/motion-diff` |
 | [styles-upstream-logic-comparison.md](research/styles-upstream-logic-comparison.md) | key1 布局 + constrained solver 研究（研究闭环定案） |
 | [styles-upstream-20261024-gap.md](research/styles-upstream-20261024-gap.md) | 上游 Styles 分支 vs 我方差距（2026-10-25，含差距矩阵与 P0 建议） |
 | [x265-main10-feasibility-20261025.md](research/x265-main10-feasibility-20261025.md) | x265 Main10（10-bit）可行性：multilib 构建/链接配方、单帧 Rext 坑、接入风险 |
