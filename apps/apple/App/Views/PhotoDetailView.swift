@@ -275,10 +275,15 @@ struct PhotoDetailView: View {
     }
 }
 
-/// Shows the HDR output when available, otherwise the SDR input thumbnail.
-/// With an HDR output on screen, pressing and holding anywhere on the photo
-/// shows the SDR base image instead (what a viewer without HDR support would
-/// display), as the HarmonyOS app does; releasing restores HDR.
+/// Shows, in order of preference: the converted output, the HDR preview the
+/// core rendered for a ProXDR source, or the imported file itself. A source
+/// that is not ProXDR never gets a core preview, so its own file is the
+/// picture: decoded in full, in HDR when it carries a gain map (a photo that
+/// is already ISO HDR). A ProXDR source shows a reduced SDR decode of its
+/// file while the preview renders. With HDR on screen, pressing and holding
+/// anywhere on the photo shows the SDR base image instead (what a viewer
+/// without HDR support would display), as the HarmonyOS app does; releasing
+/// restores HDR.
 struct PreviewCard: View {
     let item: PhotoItem
     /// Two-column layout: the card fills the column instead of following
@@ -289,8 +294,27 @@ struct PreviewCard: View {
     var stackedSpace: CGSize?
     /// The converted output, or the pre-conversion HDR preview the model
     /// rendered through the same core (`LibraryModel.preparePreview`).
-    private var hdrURL: URL? { item.product?.outputURL ?? item.previewURL }
-    private var isPreview: Bool { item.product == nil && item.previewURL != nil }
+    private var displayURL: URL { item.product?.outputURL ?? item.previewURL ?? item.inputURL }
+    private enum Showing { case output, preview, source }
+    private var showing: Showing {
+        item.product != nil ? .output : item.previewURL != nil ? .preview : .source
+    }
+    /// The source is only a stand-in until the core's preview arrives (or
+    /// until inspection says what it is): a reduced SDR decode is enough,
+    /// and a full decode next to the preview render would cost memory.
+    private var sourceIsPlaceholder: Bool {
+        showing == .source && ((item.isConvertible && !item.plainSource) || item.state == .inspecting)
+    }
+    /// Whether what is on screen has HDR to show and to compare against.
+    private var hasHDR: Bool { showing != .source || sourceHasHDR }
+    private var badgeText: LocalizedStringKey {
+        switch showing {
+        case .output: return "HDR 输出"
+        case .preview: return "HDR 预览"
+        case .source: return sourceHasHDR ? "原图（HDR）" : sourceIsPlaceholder ? "原图预览" : "原图"
+        }
+    }
+    private struct LoadKey: Equatable { var url: URL; var placeholder: Bool }
     #if os(iOS)
     // `UIImageReader` with `prefersHighDynamicRange` is the supported HDR
     // path on iOS; a CGImage decoded with `kCGImageSourceDecodeToHDR`
@@ -303,6 +327,11 @@ struct PreviewCard: View {
     @State private var sdrImage: PreviewImage?
     @State private var comparingSDR = false
     @State private var holdTimer: Task<Void, Never>?
+    /// The imported file carries a gain map (only read for `.source`).
+    @State private var sourceHasHDR = false
+    /// Which photo the decoded images belong to; a card reused for another
+    /// photo must not show the previous one while the new one decodes.
+    @State private var loadedItem: PhotoItem.ID?
 
     /// Stacked layout sizes. The photo keeps its aspect ratio at the full
     /// content width, up to 70% of the visible height (never under 320pt, so
@@ -343,7 +372,7 @@ struct PreviewCard: View {
     private func pressingChanged(_ pressing: Bool) {
         holdTimer?.cancel()
         holdTimer = nil
-        guard pressing, sdrImage != nil else {
+        guard pressing, hasHDR, sdrImage != nil else {
             comparingSDR = false
             return
         }
@@ -365,45 +394,37 @@ struct PreviewCard: View {
             RoundedRectangle(cornerRadius: 16)
                 .fill(.quaternary)
                 .opacity(fillsHeight && hdrImage != nil ? 0 : 1)
-            if let hdrImage {
-                let showSDR = comparingSDR && sdrImage != nil
+            if let hdrImage, loadedItem == item.id {
+                let showSDR = hasHDR && comparingSDR && sdrImage != nil
                 previewImage(showSDR ? sdrImage! : hdrImage)
                     .resizable()
                     .scaledToFit()
-                    .allowedDynamicRange(showSDR ? .standard : .high)
+                    .allowedDynamicRange(hasHDR && !showSDR ? .high : .standard)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(alignment: .topLeading) { badge(isPreview ? "HDR 预览" : "HDR 输出") }
+                    .overlay(alignment: .topLeading) { badge(badgeText) }
                     // Bottom corner, where Photos puts its own state marks.
                     // It covers the right end of an OPPO watermark strip;
                     // small and translucent, and it is not a touch target.
-                    .overlay(alignment: .bottomTrailing) { rangeMarker(showSDR: showSDR) }
+                    .overlay(alignment: .bottomTrailing) {
+                        if hasHDR { rangeMarker(showSDR: showSDR) } else { renderingNote }
+                    }
                     .contentShape(Rectangle())
                     .onLongPressGesture(minimumDuration: 3600, maximumDistance: 10) {
                     } onPressingChanged: { pressingChanged($0) }
                     .sensoryFeedback(.selection, trigger: showSDR)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(isPreview ? "HDR 预览" : "HDR 输出")
-                    .accessibilityHint("按住显示 SDR 效果，松开恢复 HDR")
+                    .accessibilityLabel(badgeText)
+                    .accessibilityHint(hasHDR ? "按住显示 SDR 效果，松开恢复 HDR" : "")
                     .accessibilityAddTraits(.isImage)
-                    .help("按住查看没有 HDR 时这张照片的样子")
+                    .help(hasHDR ? "按住查看没有 HDR 时这张照片的样子" : "")
             } else if let thumb = item.thumbnail {
+                // Only until the first decode lands.
                 Image(decorative: thumb, scale: 1)
                     .resizable()
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay(alignment: .topLeading) { badge("原图预览") }
-                    .overlay(alignment: .bottomTrailing) {
-                        if item.previewState == .rendering {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.mini)
-                                Text("正在生成 HDR 预览…")
-                            }
-                            .font(.caption2)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(10)
-                        }
-                    }
+                    .overlay(alignment: .bottomTrailing) { renderingNote }
             } else {
                 ProgressView()
             }
@@ -411,15 +432,58 @@ struct PreviewCard: View {
         .frame(width: layout?.card.width, height: layout?.card.height)
         .frame(maxWidth: .infinity)
         .frame(minHeight: layout == nil ? 220 : nil, maxHeight: layout == nil ? .infinity : nil)
-        .task(id: hdrURL) {
-            hdrImage = nil
+        .task(id: LoadKey(url: displayURL, placeholder: sourceIsPlaceholder)) {
+            // The same photo moving on (source → preview → output) keeps
+            // what is on screen until the next image is decoded; another
+            // photo starts clean.
+            if loadedItem != item.id {
+                hdrImage = nil
+                loadedItem = item.id
+            }
             sdrImage = nil
             pressingChanged(false)
-            guard let url = hdrURL else { return }
-            hdrImage = await Self.decode(url, hdr: true)
+            let url = displayURL
+            if showing == .source {
+                if sourceIsPlaceholder {
+                    sourceHasHDR = false
+                    hdrImage = await Self.reduced(url) ?? hdrImage
+                    return
+                }
+                sourceHasHDR = await Task.detached(priority: .userInitiated) { ImageLoading.hasGainMap(at: url) }.value
+            }
+            let wantsHDR = hasHDR
+            hdrImage = await Self.decode(url, hdr: wantsHDR) ?? hdrImage
             // Decoded up front so the hold shows SDR without a visible delay.
-            sdrImage = await Self.decode(url, hdr: false)
+            if wantsHDR { sdrImage = await Self.decode(url, hdr: false) }
         }
+    }
+
+    /// "Rendering the HDR preview…" while the core works on a ProXDR source.
+    @ViewBuilder
+    private var renderingNote: some View {
+        if item.previewState == .rendering {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("正在生成 HDR 预览…")
+            }
+            .font(.caption2)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(10)
+        }
+    }
+
+    /// SDR, long edge at most 2048 px: sharp on any screen the card fits,
+    /// a fraction of a full decode of a 50–200 MP source.
+    private static func reduced(_ url: URL) async -> PreviewImage? {
+        let image = await Task.detached(priority: .userInitiated) {
+            ImageLoading.thumbnail(at: url, maxPixelSize: 2048)
+        }.value
+        #if os(iOS)
+        return image.map { UIImage(cgImage: $0) }
+        #else
+        return image
+        #endif
     }
 
     private func previewImage(_ image: PreviewImage) -> Image {

@@ -47,6 +47,18 @@ public enum ImageLoading {
             ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
+    /// Whether the file carries a gain map the system can apply (an ISO
+    /// 21496-1 gain map, or Apple's own), i.e. whether `hdrImage` shows
+    /// more than `sdrImage`. Reads the container only, no decode.
+    public static func hasGainMap(at url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return false
+        }
+        var types: [CFString] = [kCGImageAuxiliaryDataTypeHDRGainMap]
+        if #available(iOS 18.0, macOS 15.0, *) { types.append(kCGImageAuxiliaryDataTypeISOGainMap) }
+        return types.contains { CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, $0) != nil }
+    }
+
     /// Pixel size from the container header without decoding.
     public static func pixelSize(at url: URL) -> CGSize? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
