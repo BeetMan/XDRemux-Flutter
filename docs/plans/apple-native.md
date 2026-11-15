@@ -608,6 +608,17 @@ Flutter 版生成的检查点文件可被原生版读取。
   - `package_release.sh` 完整跑通（重建两个 XCFramework、macOS Release、iOS 归档、DMG、未签名 IPA，它现有的检查全部通过，包里的内核是 `vt+x265`）。`upload_testflight.sh` 不带 `XDREMUX_UPLOAD` 跑到导出：归档与导出成功，没有上传。
 - 未验证：iPhone、iPad 真机都没有连接（`devicectl` 显示三台设备均不可用），真机编码器、iOS 相册识别、OPPO 相册、“两台 iPhone 加一台 iPad” 的验收都没做；macOS 照片 App 里的人工核对没做；App 里用界面切换编码器后的实际转换没有操作（只截了设置界面，转换走的是同一套代码的测试和命令行）；旧设置迁移没有在 App 进程里看，只经 `SettingsStore` 验证；iOS 模拟器只构建未运行；x86_64 切片不再构建。
 
+**TestFlight 版暂时带编码器切换（2026-11-14，分支 `feat/testflight-encoder-choice`）**
+
+- 用户决定：TestFlight 版目前先带编码器切换，也就是和 GitHub 发布包一样同时带 VideoToolbox 和 x265。这覆盖了此前“TestFlight / App Store 构建不链接 x265”的安排中 TestFlight 的部分；纯 VideoToolbox 的变体保留给 App Store。
+- `tools/apple/upload_testflight.sh` 新增 `XDREMUX_APPLE_HEVC`，默认 `vt+x265`，可传 `vt`；其他取值报错。
+- 补上了阶段 3 留下的缺口：脚本核对 `BUILD_RECORD.txt` 的 `hevc_backend=` 与本次要求一致（`XDREMUX_SKIP_CORE=1` 复用内核时尤其需要），并扫描归档里的二进制：`vt+x265` 必须含 x265，`vt` 时 App、分享扩展、传输框架都不得含（不区分大小写）。
+- `apps/apple/README.md` 的变体表和 TestFlight 一节同步。
+- 实测：不带 `XDREMUX_UPLOAD` 完整跑一遍（`XDREMUX_BUILD_NO=3`，`XDREMUX_SKIP_TRANSFER=1`）：重建 `vt+x265` 内核，自动签名归档，检查全部通过，导出 7.4 MB 的 IPA，没有上传。复用这份内核并要求 `vt` 时脚本拒绝并退出 1；传 `bogus` 时报错。
+- 未验证：`vt` 变体在新检查下的完整一遍（阶段 3 跑通过旧脚本的 `vt` 归档，新加的“不得含 x265”扫描没有在真实归档上跑过）；没有上传，App Store Connect 对这个构建的处理结果未知；TestFlight 安装后的设置界面和两种编码器在真机上的表现。
+- 上传（2026-11-14）：构建号改为 3（版本仍是 0.1.1），归档带 `vt+x265`，检查全部通过。第一次上传停在 0%：`northamerica-1.object-storage.apple.com` 经本机代理（TUN / fake-ip）连不上，中止；用户调整代理后直接对现成归档执行 `xcodebuild -exportArchive`，几秒内 “Upload succeeded”。有一条警告：`XDRemuxTransferCore.framework` 没有 dSYM，符号上传失败，不影响构建本身，只影响这个框架的崩溃堆栈符号化。App Store Connect 的处理结果和 TestFlight 安装后的表现未验证。
+- 许可层面：带 x265 的构建按 GPL 分发，App Store / TestFlight 的分发条款与 GPL 是否相容仍是 `apple-drop-x265.md` §7 问题 7 的未决事项，公开测试链接开放前需要定下来。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

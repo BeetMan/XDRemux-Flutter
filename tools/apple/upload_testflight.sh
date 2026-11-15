@@ -28,15 +28,20 @@
 #   ASC_KEY_PATH / ASC_KEY_ID / ASC_ISSUER_ID
 #                             App Store Connect API key (.p8) for signing and
 #                             upload without an Xcode account session
-#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. NOT
-#                             CHECKED YET: the reused core must be the
-#                             VideoToolbox-only one (XDREMUX_APPLE_HEVC=vt, the
-#                             only kind allowed on the App Store). Nothing here
-#                             compares BUILD_RECORD.txt's hevc_backend= line or
-#                             scans the binary for x265 yet, so a core left
-#                             over from package_release.sh (vt+x265) would be
-#                             archived unnoticed. Do not combine this variable
-#                             with XDREMUX_UPLOAD=1 until that check exists.
+#   XDREMUX_APPLE_HEVC        which HEVC encoders the core carries:
+#                               vt+x265 (default)  VideoToolbox and x265; the
+#                                                  app shows the encoder choice
+#                                                  in Settings. TestFlight
+#                                                  builds use this for now.
+#                               vt                 VideoToolbox only, no x265
+#                                                  code and no encoder choice
+#                                                  (the App Store variant).
+#                             vt+x265 needs the vendored x265 checkout in
+#                             xdremux/rust/vendor/x265.
+#   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. Its
+#                             BUILD_RECORD.txt must say hevc_backend=<the
+#                             variant above>, and the archived binary is
+#                             scanned for x265 either way.
 #   XDREMUX_SKIP_TRANSFER=1   reuse the existing XDRemuxTransferCore.xcframework
 set -euo pipefail
 
@@ -45,6 +50,8 @@ APP_DIR="$ROOT/apps/apple"
 cd "$APP_DIR"
 
 TEAM="${XDREMUX_TEAM_ID:-W94G5B6VGC}"
+HEVC="${XDREMUX_APPLE_HEVC:-vt+x265}"
+case "$HEVC" in vt|vt+x265) ;; *) echo "XDREMUX_APPLE_HEVC must be vt or vt+x265, not '$HEVC'" >&2; exit 1 ;; esac
 BUNDLE_ID=io.github.beetman.xdremux.swiftui
 APP_GROUP=group.io.github.beetman.xdremux.swiftui
 VERSION="$(sed -nE 's/^[[:space:]]*CFBundleShortVersionString:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
@@ -54,7 +61,7 @@ BUILD_NO="${XDREMUX_BUILD_NO:-$(sed -nE 's/^[[:space:]]*CURRENT_PROJECT_VERSION:
 OUT="$APP_DIR/build/testflight/$VERSION-$BUILD_NO"
 DD="$APP_DIR/build/testflight/DerivedData"
 HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-echo "==> XDRemux Apple native $VERSION ($BUILD_NO) for TestFlight, team $TEAM, from $HEAD_SHA"
+echo "==> XDRemux Apple native $VERSION ($BUILD_NO) for TestFlight, team $TEAM, encoders $HEVC, from $HEAD_SHA"
 if [ -n "$(git -C "$ROOT" status --porcelain -- apps/apple xdremux/rust crates tools/apple)" ]; then
   echo "warning: working tree has uncommitted changes under apps/apple, xdremux/rust, crates or tools/apple" >&2
 fi
@@ -71,8 +78,8 @@ mkdir -p "$OUT"
 
 # ---------------------------------------------------------------- 1. cores
 if [ "${XDREMUX_SKIP_CORE:-0}" != 1 ]; then
-  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64, VideoToolbox only)"
-  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 XDREMUX_APPLE_HEVC=vt \
+  echo "==> XDRemuxCore.xcframework (macos ios ios-sim, arm64, $HEVC)"
+  XDREMUX_APPLE_SLICES="macos ios ios-sim" XDREMUX_APPLE_ARCHS=arm64 XDREMUX_APPLE_HEVC="$HEVC" \
     "$ROOT/xdremux/rust/build_apple.sh"
 fi
 if [ "${XDREMUX_SKIP_TRANSFER:-0}" != 1 ]; then
@@ -84,6 +91,8 @@ XFER_REC="$APP_DIR/Frameworks/XDRemuxTransferCore.xcframework/BUILD_RECORD.txt"
 [ -f "$CORE_REC" ] || { echo "missing $CORE_REC" >&2; exit 1; }
 [ -f "$XFER_REC" ] || { echo "missing $XFER_REC" >&2; exit 1; }
 core_commit="$(sed -n 's/^rust_commit=//p' "$CORE_REC")"
+core_hevc="$(sed -n 's/^hevc_backend=//p' "$CORE_REC")"
+[ "$core_hevc" = "$HEVC" ] || { echo "XDRemuxCore.xcframework was built with hevc_backend='$core_hevc' but this run wants '$HEVC'; rebuild it" >&2; exit 1; }
 xfer_commit="$(sed -n 's/^transfer_ffi_commit=//p' "$XFER_REC")"
 # Same staleness guard as package_release.sh: the gitignored xcframeworks must
 # have been built from the sources at HEAD.
@@ -138,8 +147,17 @@ done
 test -f "$IOS_APP/Frameworks/XDRemuxTransferCore.framework/XDRemuxTransferCore" || { echo "iOS bundle lacks the transfer framework" >&2; exit 1; }
 strs="$(strings -a "$IOS_APP/XDRemux")"
 /usr/bin/grep -q "Failed to locate LHDR metadata block" <<<"$strs" || { echo "binary does not contain the Rust core" >&2; exit 1; }
+# The archived binary must match the requested variant, whatever the build
+# record says: x265 present for vt+x265, absent (any case) for vt.
+if [ "$HEVC" = vt ]; then
+  for b in "$IOS_APP/XDRemux" "$APPEX/XDRemuxShare" "$IOS_APP/Frameworks/XDRemuxTransferCore.framework/XDRemuxTransferCore"; do
+    ! strings -a "$b" | /usr/bin/grep -qi x265 || { echo "$b contains x265 but this is a VideoToolbox-only build" >&2; exit 1; }
+  done
+else
+  /usr/bin/grep -q x265 <<<"$strs" || { echo "binary does not contain x265 but this is a vt+x265 build" >&2; exit 1; }
+fi
 codesign -v --deep --strict "$IOS_APP"
-echo "archive OK: $VERSION ($BUILD_NO), team $TEAM, app group signed, privacy manifests present"
+echo "archive OK: $VERSION ($BUILD_NO), team $TEAM, encoders $HEVC, app group signed, privacy manifests present"
 
 # ---------------------------------------------------------------- 4. export / upload
 DEST=export
