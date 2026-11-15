@@ -1,5 +1,4 @@
 import Foundation
-import OSLog
 import XDRemuxCoreC
 import XDRemuxModel
 
@@ -59,10 +58,18 @@ public struct OutputPlan: Decodable, Equatable, Sendable {
 extension XDRemuxEngine {
     /// The front-end config as the JSON the core's pipeline reads (the
     /// Dart / Swift `ConversionConfig` keys).
-    static func configJSON(_ config: ConversionConfig) throws -> String {
+    static func configJSON(_ config: ConversionConfig, encoders: HEVCEncoders = XDRemuxEngine.hevcEncoders) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: try encoder.encode(config), as: UTF8.self)
+        let data = try encoder.encode(config)
+        // The core takes the encoder by name (`hevcEncoder`); the setting is
+        // a Bool, so translate it here. No key means the core's default.
+        guard let name = encoders.name(systemEncoder: config.hardwareEncode),
+              var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return String(decoding: data, as: UTF8.self)
+        }
+        object["hevcEncoder"] = name
+        return String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
     }
 
     /// `xdremux_convert_pipeline`: convert + verify (+ Styles 3) in one core
@@ -116,29 +123,11 @@ extension XDRemuxEngine {
     }
 }
 
-extension XDRemuxEngine {
-    static let hardwareLog = Logger(subsystem: "io.github.beetman.xdremux", category: "hardware-encode")
-}
-
 extension XDRemuxEngine: PipelineBackend {
     public func runPipeline(input: String, output: String, config: ConversionConfig,
                             progress: @escaping @Sendable (Double) -> Void) async throws -> PipelineOutcome {
-        var hardware: PipelineReport?
-        if Self.hardwareTilesApplicable(config) {
-            // Hardware tiles first; an input the core cannot tile, or an
-            // output that does not verify, falls back to the x265 pipeline.
-            do {
-                hardware = try await convertHardwareTiles(input: input, output: output, config: config) { progress($0.fraction) }
-            } catch let failure as HardwareTilesError {
-                Self.hardwareLog.notice("hardware path skipped for \((input as NSString).lastPathComponent, privacy: .public): \(String(describing: failure), privacy: .public)")
-            }
-        }
-        let r: PipelineReport
-        if let hardware {
-            r = hardware
-        } else {
-            r = try await convertPipeline(input: input, output: output, config: config) { progress($0.fraction) }
-        }
+        // The core picks the HEVC encoder itself (`hevcEncoder` in the config).
+        let r = try await convertPipeline(input: input, output: output, config: config) { progress($0.fraction) }
         return PipelineOutcome(success: r.success, stage: r.stage ?? "", cancelled: r.cancelled ?? false,
                                errorMessage: r.errorMessage,
                                outcome: ConversionOutcome(success: r.success, mode: r.mode, family: r.family,

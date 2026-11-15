@@ -78,6 +78,34 @@ public enum MotionPhotoMode: String, Codable, CaseIterable, Sendable {
     case livePhotoPair, still, stillAndVideo
 }
 
+/// Per-photo override of the conversion options shown on the detail page.
+/// When `nil` on a queue item, the item follows the global `ConversionConfig`;
+/// once set on an item, changes to the global config or to other items leave
+/// this item's choice intact until reset.
+public struct PhotoOptions: Codable, Equatable, Sendable {
+    public var outputMode: OutputMode
+    public var applePhotographicStyles: Bool
+    public var applePhotographicStyles3: Bool
+    public var applePortrait: Bool
+
+    public init(outputMode: OutputMode = .oppo,
+                applePhotographicStyles: Bool = false,
+                applePhotographicStyles3: Bool = false,
+                applePortrait: Bool = false) {
+        self.outputMode = outputMode
+        self.applePhotographicStyles = applePhotographicStyles
+        self.applePhotographicStyles3 = applePhotographicStyles3
+        self.applePortrait = applePortrait
+    }
+
+    public init(from config: ConversionConfig) {
+        self.outputMode = config.outputMode
+        self.applePhotographicStyles = config.applePhotographicStyles
+        self.applePhotographicStyles3 = config.applePhotographicStyles3
+        self.applePortrait = config.applePortrait
+    }
+}
+
 /// The five bytes Rust reads. Everything else in `ConversionConfig` is
 /// front-end policy (output location, concurrency, naming, …).
 public struct RustConvertConfig: Equatable, Sendable {
@@ -114,7 +142,17 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
     public var fileNameSuffix: String = "_iso"
     public var categorizeOutputByMode: Bool = false
     public var autoSaveToGallery: Bool = false
-    public var hardwareEncode: Bool = false
+    /// Which HEVC encoder to use when the core offers a choice: true is the
+    /// system encoder (VideoToolbox, the core's default), false the other
+    /// compiled-in encoder. Ignored by builds with a single encoder. The key
+    /// keeps its historical name so stored settings and the other front ends
+    /// still decode.
+    public var hardwareEncode: Bool = true
+    /// Version of the meaning of `hardwareEncode`. Records written before
+    /// version 1 used it for an optional hardware fast path that defaulted to
+    /// off; see `init(from:)`.
+    public var encoderChoiceVersion: Int = ConversionConfig.currentEncoderChoiceVersion
+    public static let currentEncoderChoiceVersion = 1
     public var motionPhotoDefaultMode: MotionPhotoMode = .livePhotoPair
 
     public init() {}
@@ -125,7 +163,7 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
         case language, family, outputMode, outputDirectory, oppoCompatibility, oppoCameraTail
         case strictTmap, applePhotographicStyles, applePortrait, applePhotographicStyles3
         case skipExisting, maxConcurrentJobs, fileNameSuffix, categorizeOutputByMode
-        case autoSaveToGallery, hardwareEncode, motionPhotoDefaultMode
+        case autoSaveToGallery, hardwareEncode, encoderChoiceVersion, motionPhotoDefaultMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -146,7 +184,17 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
         fileNameSuffix = try c.decodeIfPresent(String.self, forKey: .fileNameSuffix) ?? d.fileNameSuffix
         categorizeOutputByMode = try c.decodeIfPresent(Bool.self, forKey: .categorizeOutputByMode) ?? d.categorizeOutputByMode
         autoSaveToGallery = try c.decodeIfPresent(Bool.self, forKey: .autoSaveToGallery) ?? d.autoSaveToGallery
-        hardwareEncode = try c.decodeIfPresent(Bool.self, forKey: .hardwareEncode) ?? d.hardwareEncode
+        // One-time migration: before version 1 the stored value was the old
+        // "hardware encoding" switch (default off). Carrying an old `false`
+        // over would silently park existing users on the non-default encoder,
+        // so such records start from the new default instead.
+        let storedVersion = try c.decodeIfPresent(Int.self, forKey: .encoderChoiceVersion) ?? 0
+        if storedVersion < ConversionConfig.currentEncoderChoiceVersion {
+            hardwareEncode = d.hardwareEncode
+        } else {
+            hardwareEncode = try c.decodeIfPresent(Bool.self, forKey: .hardwareEncode) ?? d.hardwareEncode
+        }
+        encoderChoiceVersion = ConversionConfig.currentEncoderChoiceVersion
         motionPhotoDefaultMode = try c.decodeIfPresent(MotionPhotoMode.self, forKey: .motionPhotoDefaultMode) ?? d.motionPhotoDefaultMode
     }
 
@@ -169,5 +217,16 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
                 applePhotographicStyles: (applePhotographicStyles || applePhotographicStyles3) ? 1 : 0,
                 applePortrait: applePortrait ? 1 : 0)
         }
+    }
+
+    /// A copy with a photo's per-item option overrides applied (`self` unchanged when `options` is `nil`).
+    public func applying(_ options: PhotoOptions?) -> ConversionConfig {
+        guard let options else { return self }
+        var copy = self
+        copy.outputMode = options.outputMode
+        copy.applePhotographicStyles = options.applePhotographicStyles
+        copy.applePhotographicStyles3 = options.applePhotographicStyles3
+        copy.applePortrait = options.applePortrait
+        return copy
     }
 }

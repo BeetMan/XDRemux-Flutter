@@ -18,7 +18,8 @@ final class QueueJournalTests: XCTestCase {
         let store = QueueJournalStore(fileURL: dir.appendingPathComponent("queue.json"))
         XCTAssertNil(try store.load())
         var journal = QueueJournal()
-        journal.records.append(.init(sourceName: "a.heic", inputPath: "/in/a.heic"))
+        let opts = PhotoOptions(outputMode: .apple, applePhotographicStyles3: true)
+        journal.records.append(.init(sourceName: "a.heic", inputPath: "/in/a.heic", options: opts))
         journal.records.append(.init(sourceName: "b.heic", inputPath: "/in/b.heic", status: .succeeded,
                                      outputPath: "/out/b_iso.heic",
                                      outcome: ConversionOutcome(success: true, mode: "lhdr", family: "x6", edrScale: 1.2, gainMapMax: 0.3),
@@ -26,6 +27,8 @@ final class QueueJournalTests: XCTestCase {
         try store.save(journal)
         let loaded = try XCTUnwrap(try store.load())
         XCTAssertEqual(loaded.records.count, 2)
+        XCTAssertEqual(loaded.records[0].options, opts)
+        XCTAssertNil(loaded.records[1].options)
         XCTAssertEqual(loaded.records[1].outcome?.family, "x6")
         XCTAssertTrue(loaded.records[1].savedToPhotos)
         XCTAssertEqual(loaded.records[1].config, ConversionConfig())

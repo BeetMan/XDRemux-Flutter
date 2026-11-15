@@ -34,8 +34,8 @@ C=$(xcrun simctl get_app_container booted io.github.beetman.xdremux.swiftui data
 xcrun simctl launch booted io.github.beetman.xdremux.swiftui --import "$C/Documents/samples/a.heic" --convert-all
 ```
 
-`build_apple.sh` builds arm64 + x86_64 for the macOS and simulator slices (`XDREMUX_APPLE_ARCHS=arm64` to
-skip Intel); device iOS stays arm64. The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
+`build_apple.sh` builds arm64 only (Intel Macs are not supported; `XDREMUX_APPLE_ARCHS="arm64 x86_64"`
+still produces fat macOS and simulator slices, untested). The simulator has no EDR headroom, so previews are shown SDR there; a device with an HDR panel gets the
 HDR decode. Live Photo saving was verified on the simulator (Photos shows the LIVE badge). Settings → 照片 →
 转换完成后自动存入照片 saves every finished photo to the library when a batch (or a single conversion) ends; photos
 already saved are skipped.
@@ -66,7 +66,9 @@ Ctrl-C cancels the running conversion in the core (`xdremux_progress_cancel`), d
 file and exits 130. `convert` writes each output to a temporary path, verifies it, then publishes `<stem><suffix>.heic`
 (`--suffix`, `--no-overwrite` appends ` (2)`, `--categorize` adds a mode folder). Exit status 1 if any
 input failed; `--json` prints one object per input. The CLI and the app share `ConversionJob`, so
-results are identical for the same options. x265's own log lines are silenced unless `-v`.
+results are identical for the same options. The encoder's own log lines are silenced unless `-v`.
+When the core carries two HEVC encoders (see Build), `--encoder <name>` picks one; `xdremux capabilities`
+lists them under `hevcEncoders`.
 
 The app also accepts `XDRemux --import <files…> [--convert-all] [--round-trip]` at launch for scripting;
 the files must be readable from inside the app sandbox (e.g. its container's `Documents`). Finder
@@ -82,7 +84,7 @@ setting applies to them too. Test with `-AppleLanguages "(en)"` or the Settings 
 ## Build
 
 ```bash
-# 1. Rust core + x265 → XCFramework (macOS arm64, iOS arm64, iOS simulator arm64)
+# 1. Rust core → XCFramework (macOS arm64, iOS arm64, iOS simulator arm64), HEVC through VideoToolbox
 xdremux/rust/build_apple.sh            # XDREMUX_APPLE_SLICES="macos" for a quick macOS-only build
 
 # 2. Packages
@@ -95,8 +97,35 @@ xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -destination 'generic/plat
 ```
 
 Prerequisites: Xcode 16+, `rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim`,
-`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). builds on Apple Silicon; the macOS and simulator slices are arm64 + x86_64 (Intel Macs run the same app)
-(no x86_64 Rust / x265 builds). The iOS simulator build needs an iOS runtime installed in Xcode.
+`brew install xcodegen`, `cargo install cbindgen` (only to regenerate the header). Builds on Apple Silicon,
+for Apple Silicon. The iOS simulator build needs an iOS runtime installed in Xcode.
+
+### HEVC encoder
+
+`XDREMUX_APPLE_HEVC` selects what the core is built with (recorded as `hevc_backend=` in the
+XCFramework's `BUILD_RECORD.txt`):
+
+| Value | Core contains | Used by |
+|---|---|---|
+| `vt` (default) | VideoToolbox only. No x265 code, no `vendor/x265` checkout needed | development, CI, App Store (`XDREMUX_APPLE_HEVC=vt tools/apple/upload_testflight.sh`) |
+| `vt+x265` | VideoToolbox and x265, chosen at run time, VideoToolbox by default | GitHub release packages (`tools/apple/package_release.sh`), TestFlight for now (`tools/apple/upload_testflight.sh`) |
+| `x265` | x265 only | comparisons |
+
+The two x265 variants need the vendored x265 checkout in `xdremux/rust/vendor/x265` (same layout as the
+other platforms, see `docs/operations/building.md`).
+
+The app asks the core which encoders it has (`hevcEncoders` in `xdremux_codec_capabilities`). With one
+encoder there is nothing to choose and Settings shows no encoder option; with two, Settings → 编码 →
+编码器 offers VideoToolbox or x265. The setting is stored in the existing `hardwareEncode` key
+(true = VideoToolbox), sent to the core as `hevcEncoder` per conversion and applied process-wide with
+`xdremux_set_hevc_encoder` for Live Photo and writeback. Settings saved before this choice existed are
+migrated once to VideoToolbox. With VideoToolbox, three-channel gain maps are 4:2:0 (x265 keeps 4:4:4).
+
+`tools/apple/verify_local.sh` runs the same steps as the `Apple native` CI job (header check, both
+XCFrameworks, `swift test`, CLI smoke, macOS and iOS simulator builds) and prints a summary to paste
+into a PR. CI only runs that job for PRs touching `apps/apple`, `tools/apple`, `build_apple.sh` or the
+committed header, and on `main` after a Rust-core merge; run the script before merging a Rust PR that
+changes what the Swift side depends on.
 
 `XDREMUX_SAMPLE_DIR=/path/to/proxdr-heics swift test` additionally converts one real sample
 through the Swift wrapper and verifies the output; it is skipped otherwise.
@@ -109,14 +138,61 @@ Swift imports it as `XDRemuxCoreC` through `include/module.modulemap`, packaged 
 Ownership and error rules are in `docs/architecture/ffi-contract.md`; `XDRemuxKit` enforces them
 (`RustString`, `Classification(consuming:)`, `ConversionReport(consuming:)`).
 
-The core staticlib does not carry link flags: anything linking `XDRemuxCore` must also link `libc++`
-(`XDRemuxKit`'s `linkerSettings` and the app's `OTHER_LDFLAGS` do).
+The core staticlib does not carry link flags. `XDRemuxKit`'s `linkerSettings` link the system frameworks
+its VideoToolbox backend needs (VideoToolbox, CoreMedia, CoreVideo, CoreFoundation). A core that also
+contains x265 needs `libc++`; `build_apple.sh` then adds `link "c++"` to the packaged module map, so
+importing `XDRemuxCoreC` links it and neither the package nor the app declares it.
 
 ## Identity
 
 Bundle ID `io.github.beetman.xdremux.swiftui`, distinct from the Flutter app
-(`io.github.beetman.xdremux`) so both install side by side. Release artefacts and signing are
-not set up yet (plan §5).
+(`io.github.beetman.xdremux`) so both install side by side. Signing and notarization are not set
+up (plan §5): releases are ad-hoc signed (macOS) and unsigned (iOS).
+
+## Release
+
+Like the HarmonyOS native app, releases are built on a developer Mac and uploaded by hand under
+their own tag (`apple-v<version>`, never `v*`, so the Flutter release workflow and the Latest
+release are untouched):
+
+```bash
+tools/apple/package_release.sh      # XDREMUX_SKIP_CORE=1 / XDREMUX_SKIP_TRANSFER=1 to reuse the built cores
+```
+
+It rebuilds both xcframeworks from the checked-out sources (and refuses a core whose
+`BUILD_RECORD.txt` predates a change to `xdremux/rust` or the transfer crates), builds the macOS
+Release app (ad-hoc) and an unsigned iOS archive, checks version / bundle id / embedded core /
+transfer framework / Share Extension, then writes `apps/apple/build/release/<version>/`:
+`XDRemux-Apple-macOS-<version>.dmg`, `XDRemux-Apple-iOS-<version>-unsigned.ipa`, `BUILD_RECORD.txt`
+and `SHA256SUMS.txt`. The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
+(in both targets) and `CURRENT_PROJECT_VERSION`, the build number shared by the app and the Share
+Extension, before packaging. Release notes live in
+`tools/installer/RELEASE_NOTES_apple-v<version>.md`; publish with
+`gh release create apple-v<version> --prerelease --latest=false -F <notes> <dmg> <ipa> SHA256SUMS.txt`.
+
+### TestFlight
+
+```bash
+tools/apple/upload_testflight.sh                      # signed archive + App Store Connect IPA, no upload
+XDREMUX_UPLOAD=1 XDREMUX_BUILD_NO=3 tools/apple/upload_testflight.sh
+```
+
+The project itself stays ad-hoc signed; the script overrides one iOS archive to the developer
+team's automatic signing (`XDREMUX_TEAM_ID`, default `W94G5B6VGC`), checks that the app and the
+Share Extension are signed for the team with the App Group and carry `PrivacyInfo.xcprivacy`, then
+exports for App Store Connect into `apps/apple/build/testflight/<version>-<build>/`. Nothing leaves
+the Mac without `XDREMUX_UPLOAD=1`. App Store Connect refuses a build number it has already seen
+for the same version, so pass a higher `XDREMUX_BUILD_NO` (or bump `CURRENT_PROJECT_VERSION`) for
+every upload. Signing uses the Xcode account session, or an App Store Connect API key through
+`ASC_KEY_PATH` / `ASC_KEY_ID` / `ASC_ISSUER_ID`. One-time setup: both App IDs
+(`io.github.beetman.xdremux.swiftui`, `….swiftui.share`) with App Groups bound to
+`group.io.github.beetman.xdremux.swiftui`, and an app record in App Store Connect.
+
+TestFlight builds carry both encoders for now (`XDREMUX_APPLE_HEVC=vt+x265`, the script's default),
+so testers get the 编码器 choice in Settings; this needs the vendored x265 checkout. Pass
+`XDREMUX_APPLE_HEVC=vt` for the VideoToolbox-only variant. Either way the script refuses a core whose
+`BUILD_RECORD.txt` names a different `hevc_backend`, and checks the archived binary for x265 (present
+for `vt+x265`, absent for `vt`).
 
 ## Language
 

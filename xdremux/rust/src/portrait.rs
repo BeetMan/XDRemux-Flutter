@@ -894,14 +894,18 @@ fn base_primary_dims(meta: &ParsedMeta) -> Result<(u32, u32), String> {
 }
 
 /// Encode a mono plane as an in-container HEVC item payload + hvcC.
-fn encode_mono(pixels: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
+fn encode_mono(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    content: crate::hevc::HevcContent,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
-    let stream = crate::hevc::x265_encode_tiles(&refs, w, h, 1, false)
+    let (stream, chroma) = crate::hevc::encode_tiles(&refs, w, h, 1, false, content)
         .map_err(|e| format!("mono encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("mono encode produced no stream")?;
-    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
         .ok_or("mono hvcC extraction failed")?;
     let idr = crate::hevc::drop_parameter_nals(&stream);
     Ok((
@@ -1143,10 +1147,12 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
     let (disp_final, disp_fw, disp_fh) = place(&disparity_u8, depth.width, depth.height);
     let (matte_final, matte_fw, matte_fh) = place(&person_up, mu_w as usize, mu_h as usize);
     let hair_final = hair_up.as_ref().map(|h| place(h, mu_w as usize, mu_h as usize).0);
-    let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
-    let (person_stream, person_hvcc) = encode_mono(&matte_final, matte_fw, matte_fh)?;
+    let (disparity_stream, disparity_hvcc) =
+        encode_mono(&disp_final, disp_fw, disp_fh, crate::hevc::HevcContent::Disparity)?;
+    let (person_stream, person_hvcc) =
+        encode_mono(&matte_final, matte_fw, matte_fh, crate::hevc::HevcContent::Matte)?;
     let (hair_stream, hair_hvcc) = match &hair_final {
-        Some(h) => encode_mono(h, matte_fw, matte_fh)?,
+        Some(h) => encode_mono(h, matte_fw, matte_fh, crate::hevc::HevcContent::Matte)?,
         None => (person_stream.clone(), person_hvcc.clone()),
     };
 
@@ -2170,7 +2176,8 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
     let (disp_final, disp_fw, disp_fh) = upscale2x(&disp_oriented, ow as usize, oh as usize);
 
     // Encode disparity mono8 stream
-    let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
+    let (disparity_stream, disparity_hvcc) =
+        encode_mono(&disp_final, disp_fw, disp_fh, crate::hevc::HevcContent::Disparity)?;
 
     let exif_item = meta
         .items
@@ -2230,7 +2237,8 @@ pub fn run_huawei_portrait(source: &[u8]) -> Result<Vec<u8>, String> {
         focus_rank,
     );
     let (person_matte, _, _) = upscale2x(&matte_oriented, ow as usize, oh as usize);
-    let (person_stream, person_hvcc) = encode_mono(&person_matte, disp_fw, disp_fh)?;
+    let (person_stream, person_hvcc) =
+        encode_mono(&person_matte, disp_fw, disp_fh, crate::hevc::HevcContent::Matte)?;
     let hair_stream = person_stream.clone();
     let hair_hvcc = person_hvcc.clone();
 

@@ -512,14 +512,18 @@ fn base_primary_dims(meta: &ParsedMeta) -> Result<(u32, u32), String> {
 }
 
 /// Encode a mono plane as an in-container HEVC item payload + hvcC.
-fn encode_mono(pixels: &[u8], w: u32, h: u32) -> Result<(Vec<u8>, Vec<u8>), String> {
+fn encode_mono(
+    pixels: &[u8],
+    w: u32,
+    h: u32,
+    content: xdremux_core::hevc::HevcContent,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     let refs: Vec<&[u8]> = vec![pixels];
-    let stream = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, false)
+    let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, w, h, 1, false, content)
         .map_err(|e| format!("mono encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("mono encode produced no stream")?;
-    let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+    let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
         .ok_or("mono hvcC extraction failed")?;
     let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
     Ok((
@@ -767,10 +771,12 @@ pub(crate) fn run_portrait(input: &[u8], base: &[u8]) -> Result<Vec<u8>, String>
         (Some(h), false) => Some(h.clone()),
         (None, _) => None,
     };
-    let (disparity_stream, disparity_hvcc) = encode_mono(&disp_final, disp_fw, disp_fh)?;
-    let (person_stream, person_hvcc) = encode_mono(&matte_final, matte_fw, matte_fh)?;
+    let (disparity_stream, disparity_hvcc) =
+        encode_mono(&disp_final, disp_fw, disp_fh, xdremux_core::hevc::HevcContent::Disparity)?;
+    let (person_stream, person_hvcc) =
+        encode_mono(&matte_final, matte_fw, matte_fh, xdremux_core::hevc::HevcContent::Matte)?;
     let (hair_stream, hair_hvcc) = match &hair_final {
-        Some(h) => encode_mono(h, matte_fw, matte_fh)?,
+        Some(h) => encode_mono(h, matte_fw, matte_fh, xdremux_core::hevc::HevcContent::Matte)?,
         None => (person_stream.clone(), person_hvcc.clone()),
     };
 

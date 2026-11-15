@@ -22,6 +22,7 @@ public struct QueueJournal: Codable, Equatable, Sendable {
         public var pairedVideoPath: String?
         public var extraVideoPaths: [String]?
         public var motionMode: MotionPhotoMode?
+        public var options: PhotoOptions?
         public var errorMessage: String?
         public var savedToPhotos: Bool
         public var addedAt: Date
@@ -29,6 +30,7 @@ public struct QueueJournal: Codable, Equatable, Sendable {
         public init(id: UUID = UUID(), sourceName: String, inputPath: String, status: Status = .pending,
                     outputPath: String? = nil, outcome: ConversionOutcome? = nil, config: ConversionConfig? = nil,
                     pairedVideoPath: String? = nil, extraVideoPaths: [String]? = nil, motionMode: MotionPhotoMode? = nil,
+                    options: PhotoOptions? = nil,
                     errorMessage: String? = nil, savedToPhotos: Bool = false, addedAt: Date = Date()) {
             self.id = id
             self.sourceName = sourceName
@@ -40,6 +42,7 @@ public struct QueueJournal: Codable, Equatable, Sendable {
             self.pairedVideoPath = pairedVideoPath
             self.extraVideoPaths = extraVideoPaths
             self.motionMode = motionMode
+            self.options = options
             self.errorMessage = errorMessage
             self.savedToPhotos = savedToPhotos
             self.addedAt = addedAt

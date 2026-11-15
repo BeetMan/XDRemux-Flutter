@@ -12,7 +12,7 @@ XDRemux-Flutter/
 │   │   ├── isobmff.rs          # ISO BMFF box 解析
 │   │   ├── isobmff_write.rs    # box 构造（iloc/iref/ipma/iinf/meta 重建）
 │   │   ├── iso_validate.rs     # HEIF/ISO-BMFF 边界校验（gain map 结构）
-│   │   ├── hevc.rs             # x265 编码（tile 策略、色彩路径）
+│   │   ├── hevc/               # HEVC 编码：mod.rs（入口、色彩转换、hvcC）、x265.rs、ffmpeg.rs
 │   │   ├── gainmap.rs          # 增益映射转换（UHDR -> ISO 21496-1）
 │   │   ├── iso21496.rs         # ISO 21496-1 元数据
 │   │   ├── edr.rs              # EDR/亮度处理

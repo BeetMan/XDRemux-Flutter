@@ -3,7 +3,17 @@ fn main() {
     // final decode. Encode via the same path the watermark restore uses.
     let rgb = vec![16u8; 512 * 512 * 3];
     let planes: Vec<&[u8]> = vec![&rgb];
-    let streams = xdremux_core::hevc::x265_encode_tiles(&planes, 512, 512, 3, true).unwrap();
+    let streams = xdremux_core::hevc::encode_tiles(
+        &planes,
+        512,
+        512,
+        3,
+        true,
+        // Synthetic RGB probe tiles; treated as primary-image content.
+        xdremux_core::hevc::HevcContent::Primary,
+    )
+    .unwrap()
+    .streams;
     std::fs::write(
         "C:/Users/Beet/AppData/Local/Temp/android-issue/tile16.h265",
         &streams[0],

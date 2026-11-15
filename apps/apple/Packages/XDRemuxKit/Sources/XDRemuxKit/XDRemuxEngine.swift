@@ -4,7 +4,7 @@ import XDRemuxModel
 
 /// Swift façade over the Rust C ABI.
 ///
-/// All Rust calls are synchronous and CPU-bound (x265 spins its own thread
+/// All Rust calls are synchronous and CPU-bound (the software encoder spins its own thread
 /// pool), so they run on a private concurrent queue, never on the main actor.
 /// `maxConcurrency` bounds how many Rust calls run at once (the Flutter app's
 /// `maxConcurrentJobs`); 1 reproduces the HarmonyOS bridge's single mutex.

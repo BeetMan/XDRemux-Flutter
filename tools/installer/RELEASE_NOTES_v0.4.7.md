@@ -48,6 +48,6 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
 ### HarmonyOS（需开发签名侧载）
 
 - **Flutter 版 0.4.7**：`XDRemux-HarmonyOS-0.4.7-unsigned.hap`，包名 `io.github.beetman.xdremux`；profile AOT 包，保留开发签名所需的 `debug:true`。
-- **原生版**：仍为 0.5.3，安装包与说明见 [鸿蒙原生版 0.5.3 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.3)，包名 `io.github.beetman.xdremux.arkui`。
+- **原生版 0.5.4**：同步发布，使用相同的 0.4.7 内核，新增「互传」页，包含本页的摄影风格修复。安装包与说明见 [鸿蒙原生版 0.5.4 发布页](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4)，包名 `io.github.beetman.xdremux.arkui`。
 
 两版可共存，应用身份和签名配置不同，不能直接互换。Flutter 版 HAP 是 **unsigned HAP**，不是免签安装包，也不是应用市场分发包。请用 DevEco Studio 或兼容的开发签名侧载工具，准备与包名、开发证书和目标设备范围匹配的 Development Profile，完成签名后再安装。覆盖升级时应沿用原有签名；遇到签名冲突先核对证书与包名，不要直接卸载导致数据丢失。

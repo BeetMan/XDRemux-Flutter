@@ -512,6 +512,175 @@ Flutter 版生成的检查点文件可被原生版读取。
   传输库 `XDRemuxTransfer.xcframework` 同理（`tools/apple/build_transfer_xcframework.sh`）。
 
 
+**发布准备：apple-v0.1.0（2026-11-06，分支 `release/apple-0.1.0-prep`）**
+
+- 用户决定原生版先发一版。定法照鸿蒙原生版：独立标签 `apple-v0.1.0`、标预发布、不接管 Flutter 的 Latest；版本沿用
+  `project.yml` 里的 0.1.0 / build 1（内核 0.4.7 写进说明），本地打包、手工上传，暂不做 CI 发布工作流。
+- 新增 `tools/apple/package_release.sh`：重建两个 xcframework（macos / ios / ios-sim，arm64；模拟器切片不发布但保住开发
+  流程），用 BUILD_RECORD 里的提交和 HEAD 比对 `xdremux/rust` 与传输 crate（锁文件除外）有无改动，落后即拒绝；xcodegen 后
+  macOS Release（ad-hoc 签名，`CODE_SIGN_IDENTITY=-`）、iOS `archive`（`CODE_SIGNING_ALLOWED=NO`）；核对两个包的版本 / bundle id、
+  内核字符串（归档后符号已剥离，不能用 `nm`，改查 "Failed to locate LHDR metadata block" 和 x265 字符串）、传输框架、iOS 的
+  `XDRemuxShare.appex`、macOS 不含 appex、`codesign -v --deep --strict` 与沙盒授权；再打 DMG（app + /Applications 链接 +
+  LICENSE / LICENSING.md）、IPA（Payload/）、BUILD_RECORD.txt、SHA256SUMS.txt 到 `apps/apple/build/release/0.1.0/`。
+- 发布说明 `tools/installer/RELEASE_NOTES_apple-v0.1.0.md`：功能、安装（macOS 去隔离命令同 Flutter 版；iOS 自签侧载、
+  Share Extension 依赖 App Group 签名）、验证范围、已知限制。README 加 Release 一节。
+- 实测：脚本从 main `ce35efd` 跑通，DMG 8.7 MB、IPA 5.9 MB；`spctl` 对 ad-hoc 包为 rejected（预期，说明里有去隔离步骤）；
+  从 DMG 拷出的 Release 包用 `--import <容器内样本> --convert-all` 启动，沙盒下转换出 `IMG20260802135928_iso.heic`，CLI
+  `verify` OK。
+- iPad mini（A17 Pro，`iPad16,1`）真机：同一提交的 Release 包用开发证书签名（空 entitlements）装上，首次要在 iPad 上信任
+  证书才能启动。用户亲自过了一遍：横竖屏两栏布局、相册导入与转换、自动存入照片、传输页（设备名回退 "iPad"，机型表只收
+  iPhone，与 Flutter 一致）、分享面板入口，反馈都正常；从容器拉出的队列记录有一张 `IMG_1.heic` Apple 模式 uhdr 转换成功。
+- 未验证：macOS GUI 的"选择文件"仍只编译未点；真机自动发现（无多播授权）。
+- 已发布：#90 合入后在 main `555b882` 上用 `XDREMUX_SKIP_CORE=1 XDREMUX_SKIP_TRANSFER=1` 重新打包（内核仍是从 `ce35efd` 建的，
+  源码未变，脚本的落后检查通过），标签 `apple-v0.1.0`，`gh release create --prerelease --latest=false`，附 DMG
+  （sha256 `bbabdf72…`）、IPA（`58c19be3…`）、SHA256SUMS.txt、BUILD_RECORD.txt；Latest 仍为 v0.4.7，release.yml 未被
+  `apple-*` 标签触发。截图汇总在 `docs/screenshots/apple-native-0.1.0/`（macOS 窗口 + Duo 模拟器 Release 构建）。
+
+
+**列表动作：全部存入照片 / 清除已完成（2026-11-08，分支 `feat/apple-list-actions`）**
+
+- 用户在 iPhone Air 上对照 Flutter 版提出三项缺失：一键保存已转换、清除已转换、队列里逐张设置。核对后前两项模型层已有
+  （`saveAllToPhotos()` 只被"自动存入"调用，`clearFinished()` 没接任何界面），本批只接界面；逐张设置两端都没有
+  （详情页的转换选项绑定的是全局 `config`，只有动态照片方式是逐张的），另开一批。
+- `ContentView` 工具栏 `.secondaryAction` 组前面加两项：iOS 的"全部存入照片"（`unsavedProducts` 为空时禁用，成功后提示
+  "已存入照片 N 张"，`saveAllToPhotos()` 改为返回本次存入数）；两端的"清除已完成"（`finishedCount == 0` 禁用，alert 确认，
+  正文给出张数，iOS 再提示其中几张尚未存入照片）。语义同 Flutter 的"清除已完成"：移出列表、删导入副本、输出文件保留。
+- 确认框用 `.alert` 而非 `.confirmationDialog`，并把"取消"设为默认按钮：macOS 27 下 confirmationDialog 把第一个按钮当默认，
+  破坏性按钮红底红字；alert 里"清除"是亮红字配暗红玻璃底（系统样式），回车不会误清。
+- 实测（macOS Debug，System Events 点击）：4 张已完成时图标可用，确认框文案 "从列表移出 4 张…"，清除后列表只剩 6 张可转换，
+  `Application Support/XDRemux/outputs/` 里 5 个输出文件仍在，图标随即变灰；再转 6 张后确认框计数更新为 6。
+- 未验证：iOS 真机（iPhone Air 当时 devicectl 显示 unavailable，装不上）；iOS 的"全部存入照片"按钮只过了通用 iOS 目标编译。
+
+**队列内逐张独立转换设置（2026-11-10，分支 `feat/apple-per-photo-options`）**
+
+- 解决上一批留下的第三项反馈：详情页的"转换选项"此前直接绑定全局 `model.config`，改一张照片会把整个队列和全局设置一起改掉；普通照片（`plainSource`）或被跳过策略拦截的华为 HDR 照片在全局为 OPPO 兼容时还会把"转换选项"整卡隐藏，必须去全局设置才能打开摄影风格。
+- `XDRemuxModel` 新增 `PhotoOptions`（`outputMode`、`applePhotographicStyles`、`applePhotographicStyles3`、`applePortrait`）与 `ConversionConfig.applying(_:)`；`QueueJournal.Record` 新增可选字段 `options: PhotoOptions?`（旧 `queue.json` 缺省解码为 `nil`，不升 schema）。
+- `PhotoItem.options` 为 `nil` 时跟随全局 `model.config`；在详情页拨动"输出 / 摄影风格 2 / 摄影风格 3 / Apple 人像数据"只写入当前照片的 `options`，并在卡片标题右侧提供"恢复默认"按钮回到跟随全局设置，列表行摘要同步追加该张的独立模式标记。
+- 华为准入（`HuaweiPhotoPolicy`）与普通照片风格重建（`stylesRescue`）改为按每张照片的 `effectiveConfig` 独立计算；`PhotoItem.canConfigureOptions` 让普通照片与华为 HDR 在未开启摄影风格时也保留"转换选项"卡片（仅禁用"转换这张"按钮），直接在单张详情里切到 Apple 标准 + 摄影风格即可放行转换。
+- 顺手完善"全部存入照片"按钮状态文案（主列表工具栏与局域网传输收件箱）：当已有转换完成 / 可存入项且全部已存入系统照片库时（例如开启了"转换完成后自动存入照片"），置灰按钮文案由"全部存入照片"切换为"已全部存入照片"（`checkmark` 图标）。
+- 验证：`swift test --filter XDRemuxModelTests` 58 项通过（含 `ConversionConfig.applying` 与 `QueueJournal` 读写往返）；macOS arm64 与 iOS Simulator 构建通过。
+
+**发布：apple-v0.1.1（2026-11-11，分支 `release/apple-0.1.1-prep`）**
+
+- 汇总 `apple-v0.1.0` 之后的两批改进（#95 列表工具栏「全部存入照片 / 清除已完成」、#96 队列内逐张独立转换设置与「已全部存入照片」状态文案），版本号升至 `0.1.1`（build `2`），内核与传输库仍为 `0.4.7`（`ce35efd`）。
+- 新增发布说明 `tools/installer/RELEASE_NOTES_apple-v0.1.1.md`，同步更新根 `README.md` 下载链接与版本说明。
+
+**TestFlight 准备（2026-11-12，分支 `feat/apple-testflight`）**
+
+- 背景：已加入 Apple Developer Program（团队 `W94G5B6VGC`），iOS 版准备走 TestFlight；GitHub 发布的 ad-hoc DMG / 未签名 IPA 流程不变。
+- 新增 `tools/apple/upload_testflight.sh`：工程默认仍是 ad-hoc 签名（本地与 CI 不受影响），脚本只对这一次 iOS 归档用命令行覆盖成团队自动签名，检查主应用与 Share Extension 的团队、App Group、隐私清单、版本与构建号后按 `app-store-connect` 导出；默认只导出 IPA，`XDREMUX_UPLOAD=1` 才上传。支持 `XDREMUX_BUILD_NO` 覆盖构建号、`ASC_*` 传 App Store Connect API key。
+- 新增 `App/PrivacyInfo.xcprivacy` 与 `ShareExtension/PrivacyInfo.xcprivacy`：不追踪、不收集数据；声明 UserDefaults（CA92.1）、文件时间戳（C617.1、3B52.1）、系统启动时间（35F9.1，Rust 内核的计时）；扩展只声明文件时间戳。
+- `Info.plist` 加 `ITSAppUsesNonExemptEncryption = false`（只用系统 TLS），上传后不再逐次回答出口合规。
+- 构建号改为工程级 `CURRENT_PROJECT_VERSION`（主应用与扩展共用，`Info.plist` 引用它），`package_release.sh` 改读这个值。
+- iOS 权限文件 `App/XDRemux.entitlements` 只保留 App Group：原先的 `com.apple.security.app-sandbox` 等是 macOS 专用键，不在 iOS 描述文件里；macOS 仍用 `XDRemux-macOS.entitlements`，不变。
+- 实测：macOS Debug 构建通过，沙盒与网络权限仍在、构建号解析为 `2`、隐私清单进包；iOS 未签名 Release 构建通过，主应用与扩展都带隐私清单；`upload_testflight.sh`（仅导出）归档与导出成功，导出包两个 bundle 均为团队 `W94G5B6VGC` 的 Store 描述文件、带 App Group、`get-task-allow=false`。
+- 首次上传（2026-11-12）：`0.1.1 (2)` 已上传成功，上传时的包校验通过；唯一警告是 `XDRemuxTransferCore.framework` 没有 dSYM（预编译 Rust 动态库，不影响分发，只影响该库的崩溃符号化）。前两次上传挂在 `northamerica-1.object-storage.apple.com`：本机代理（7890）到这个域名的线路不通而直连正常，需给 `object-storage.apple.com` 配直连。
+- 处理反馈：苹果处理完成，仅一条提醒 ITMS-90737（声明了 `CFBundleDocumentTypes` 但没写是否原地打开）；隐私清单、动态库均未被提及。已在 `Info.plist` 加 `LSSupportsOpeningDocumentsInPlace = YES`：`importFiles` 本来就对传入 URL 做安全域访问并自行复制，原地打开可免去系统先拷到 `Documents/Inbox` 的残留副本。下次上传生效。
+- 未验证：TestFlight 安装后的运行、分享面板入口，以及 iOS 上从“文件”用“打开方式”原地打开（只做了构建与 `Info.plist` 检查）；`package_release.sh` 全流程未重跑，只做了语法检查。macOS 版 TestFlight 未做。x265 为 GPL，正式上架 App Store 前需评估许可证冲突。
+
+**详情页预览区：整图按压对比与按比例尺寸（2026-11-14，分支 `feat/apple-preview-press-compare`）**
+
+- HDR 标记从图片右上角移到右下角，不再是按钮：平时显示 HDR，按住图片时变成高亮的 SDR。触摸穿过标记落到图片上。左上角徽标固定显示“HDR 预览 / HDR 输出”，按住时不再改字。
+- 按住图片任意位置显示 SDR，松手恢复。堆叠布局（手机，图片在滚动页面里）有 150 ms 延迟，手指移动 10pt 或滚动接管触摸即取消；双栏布局（iPad 横屏、Mac）立即切换。切换时有一次 selection 触感反馈。
+- 实现用一个不会完成的 `onLongPressGesture` 的 `onPressingChanged` 加定时任务。第一版用 `LongPressGesture.sequenced(before: DragGesture)`，即使挂成 `simultaneousGesture`，从图片上起手的滑动也无法滚动页面（模拟器实测），已弃用。
+- 堆叠布局的卡片尺寸改为按照片比例计算（`PreviewCard.stackedLayout`）：照片占满内容宽度，高度上限为可视高度的 70%（不低于 320pt）；卡片贴合照片，只有高度不足 120pt 的全景或宽度不足 160pt 的长条才露出灰底。加载中按缩略图比例预留，未知时按 4:3。原来是固定 220–420pt。双栏布局的尺寸不变。
+- 没有新增文案。“SDR 效果”在界面上不再使用，词条留在 `Localizable.xcstrings` 里未清理。
+- 实测（iPhone Duo 模拟器，iOS 27.2）：0.6 的竖图贴合卡片且受高度上限约束，4:3 横图占满宽度无灰底；按住图片后标记变为蓝色 SDR；从图片上起手上滑，页面正常滚动且标记保持 HDR；从缩略图换成 HDR 预览时卡片高度不变。iOS 模拟器与 macOS 均构建通过。
+- 未验证：真机上的按压手感、150 ms 是否合适、触感反馈、真实 HDR 与 SDR 的切换观感（模拟器没有 EDR 余量，两者看起来一样）；全景和长条两种极端比例没有样张，只按公式核对过（内容宽 358、可视高 700 时，4:1 得到 358×120 的卡片，1:5 得到 160×490）；macOS 和 iPad 双栏布局下的按压没有实际操作；VoiceOver。
+
+**内核改用 VideoToolbox 编码，x265 变成可选（2026-11-14，分支 `feat/apple-videotoolbox-default`）**
+
+- `build_apple.sh` 默认只编入 VideoToolbox 后端（`XDREMUX_APPLE_HEVC=vt`）：不编译、不合并 x265，干净检出上没有 `vendor/x265` 也能构建；macOS 与模拟器切片默认只出 arm64（不再支持 Intel Mac）。`vt+x265`（两个编码器都带，运行期选择）和 `x265` 保留为显式取值。`BUILD_RECORD.txt` 的 `hevc_backend=` 记录用的是哪一种。
+- 带 x265 的构建在 XCFramework 的 `module.modulemap` 里加 `link "c++"`，导入模块即自动链接 libc++；`Package.swift` 和 `project.yml` 不再写 `c++`，两种构建都能链接。
+- `package_release.sh` 显式用 `vt+x265`（GitHub 发布包让用户选编码器），`upload_testflight.sh` 显式用 `vt`（商店构建不含 x265）。两个脚本配 `XDREMUX_SKIP_CORE=1` 复用内核时还**没有**核对 `hevc_backend=`：发布脚本靠现有的“必须含 x265”断言能拦下纯 VideoToolbox 的内核，上传脚本拦不住带 x265 的内核，脚本注释里写明了，留待下一步补。
+- 删除 Swift 侧的硬件图块路径（`HardwareTiles.swift`、`Pipeline.swift` 里的分支、`HardwareTilesTests.swift`）。所有编码都在内核里完成，内核的 `xdremux_prepare_tiles` 留给 Flutter 版。
+- 设置里的“硬件编码”开关改为“编码器”选择（VideoToolbox / 内核报告的另一个编码器），只有 `xdremux_codec_capabilities` 的 `hevcEncoders` 多于一个时才显示，所以商店构建里没有这一项。`ConversionConfig.hardwareEncode` 的键不变：真 = VideoToolbox（新默认值），假 = 另一个编码器。转换时映射成配置里的 `hevcEncoder`，启动和设置变化时另调 `xdremux_set_hevc_encoder`（实况和写回的接口没有配置参数）。编码器名字一律运行期取自内核，Swift 源码和文案里不出现 “x265”。
+- 旧设置迁移：新增 `encoderChoiceVersion`（当前为 1）。没有这个键的记录（旧版本写的，`hardwareEncode` 指原来默认关闭的硬件快速路径）在解码时一律落到 VideoToolbox，下次保存时写入版本号；之后用户的选择照常保留。单张照片的独立选项（`PhotoOptions`）不含这个字段，不用处理。
+- 命令行工具：`convert`、`edit-copy`、`writeback` 增加 `--encoder <名字>`，可选值和帮助文字取自内核，只有一个编码器时这个选项不在帮助里显示；`-v` 的说明不再写死 “x265”。
+- CI：`apple-ci.yml` 去掉 x265 的缓存与构建步骤，改查默认内核的 `hevc_backend=vt` 和 x265 字符串计数为 0，Rust 目标只装 arm64。
+- 实测（Apple M6，macOS 27.2.1）：
+  - 默认构建在 `vendor/x265` 被挪走的情况下通过；三个切片的 `libXDRemuxCore.a`、macOS App（Debug）、命令行工具、TestFlight 归档里的 iOS App 与分享扩展，`strings -a` 的 x265 计数都是 0，库里 `nm` 无 `x265_` 符号。
+  - `swift test`：99 个测试 0 失败（不给样张时 9 个跳过；给了 `XDREMUX_SAMPLE_DIR` 和 `XDREMUX_MOTION_SAMPLE_DIR` 后只剩 3 个需要外部对端的传输测试跳过）。新增 10 个：设置迁移 4 个，编码器能力解析、配置映射、内核实报、整条流水线两种设置各转一张共 6 个。
+  - macOS App 与 iOS 模拟器构建通过（默认构建和 `vt+x265` 构建各一遍）；命令行工具 `--version`、`capabilities`、转换、`verify` 正常。
+  - `vt+x265` 构建：设置里出现“编码 / 编码器”，默认 VideoToolbox；纯 `vt` 构建里没有这一节。同一张三通道样张两种选择各转一张（App 的代码路径和命令行各一遍），选 x265 的输出与改动前 main 的 x265 版逐字节相同。
+  - 十张样张（Apple 标准加摄影风格，人像两张另加人像）用默认构建的命令行工具逐张转换：全部成功，内核三个自检全过。整批耗时 18.3 秒，单进程内存峰值 1.73 GB；同一批在 `vt+x265` 构建里选 x265 是 24.4 秒、1.93 GB，选 VideoToolbox 是 18.2 秒、1.63 GB。
+  - 旧设置迁移：把本机 App 实际存着的那条记录（`hardwareEncode:false`，没有版本号）拷到一个临时偏好域，经真实的 `UserDefaults` 读入再保存，结果是 `hardwareEncode:true`、`encoderChoiceVersion:1`，其余字段不变。App 自己的偏好域没有动。
+  - `package_release.sh` 完整跑通（重建两个 XCFramework、macOS Release、iOS 归档、DMG、未签名 IPA，它现有的检查全部通过，包里的内核是 `vt+x265`）。`upload_testflight.sh` 不带 `XDREMUX_UPLOAD` 跑到导出：归档与导出成功，没有上传。
+- 未验证：iPhone、iPad 真机都没有连接（`devicectl` 显示三台设备均不可用），真机编码器、iOS 相册识别、OPPO 相册、“两台 iPhone 加一台 iPad” 的验收都没做；macOS 照片 App 里的人工核对没做；App 里用界面切换编码器后的实际转换没有操作（只截了设置界面，转换走的是同一套代码的测试和命令行）；旧设置迁移没有在 App 进程里看，只经 `SettingsStore` 验证；iOS 模拟器只构建未运行；x86_64 切片不再构建。
+
+**TestFlight 版暂时带编码器切换（2026-11-14，分支 `feat/testflight-encoder-choice`）**
+
+- 用户决定：TestFlight 版目前先带编码器切换，也就是和 GitHub 发布包一样同时带 VideoToolbox 和 x265。这覆盖了此前“TestFlight / App Store 构建不链接 x265”的安排中 TestFlight 的部分；纯 VideoToolbox 的变体保留给 App Store。
+- `tools/apple/upload_testflight.sh` 新增 `XDREMUX_APPLE_HEVC`，默认 `vt+x265`，可传 `vt`；其他取值报错。
+- 补上了阶段 3 留下的缺口：脚本核对 `BUILD_RECORD.txt` 的 `hevc_backend=` 与本次要求一致（`XDREMUX_SKIP_CORE=1` 复用内核时尤其需要），并扫描归档里的二进制：`vt+x265` 必须含 x265，`vt` 时 App、分享扩展、传输框架都不得含（不区分大小写）。
+- `apps/apple/README.md` 的变体表和 TestFlight 一节同步。
+- 实测：不带 `XDREMUX_UPLOAD` 完整跑一遍（`XDREMUX_BUILD_NO=3`，`XDREMUX_SKIP_TRANSFER=1`）：重建 `vt+x265` 内核，自动签名归档，检查全部通过，导出 7.4 MB 的 IPA，没有上传。复用这份内核并要求 `vt` 时脚本拒绝并退出 1；传 `bogus` 时报错。
+- 未验证：`vt` 变体在新检查下的完整一遍（阶段 3 跑通过旧脚本的 `vt` 归档，新加的“不得含 x265”扫描没有在真实归档上跑过）；没有上传，App Store Connect 对这个构建的处理结果未知；TestFlight 安装后的设置界面和两种编码器在真机上的表现。
+- 上传（2026-11-14）：构建号改为 3（版本仍是 0.1.1），归档带 `vt+x265`，检查全部通过。第一次上传停在 0%：`northamerica-1.object-storage.apple.com` 经本机代理（TUN / fake-ip）连不上，中止；用户调整代理后直接对现成归档执行 `xcodebuild -exportArchive`，几秒内 “Upload succeeded”。有一条警告：`XDRemuxTransferCore.framework` 没有 dSYM，符号上传失败，不影响构建本身，只影响这个框架的崩溃堆栈符号化。App Store Connect 的处理结果和 TestFlight 安装后的表现未验证。
+- 许可层面：带 x265 的构建按 GPL 分发，App Store / TestFlight 的分发条款与 GPL 是否相容仍是 `apple-drop-x265.md` §7 问题 7 的未决事项，公开测试链接开放前需要定下来。
+
+**收件箱直接显示、底部存入照片、清除全部（2026-11-15，分支 `feat/apple-inbox-and-list-actions`）**
+
+- 局域网传输：打开页面就在回环地址（`127.0.0.1:0`，局域网不可达）上启动传输服务，收件箱里已有的文件立刻列出并可操作，不再需要先打开“在局域网接收”。关闭接收开关、或开启接收失败后，服务回到回环地址，收件箱继续可用（此前关掉接收后列表还在，但“存入照片 / 加入列表 / 删除”都会失败）。接收仍然只在开关打开时监听局域网端口。
+- `TransferModel` 新增 `open()` / `close()`；`close()` 之后仍在途中的启动会被立即停掉，避免页面关闭后留下服务。收件箱为空时的提示改按是否在接收来区分。
+- 主界面（iOS）：有已转换但未存入照片的照片时，底部栏出现“全部存入照片（N）”。没有待转换的照片时它是唯一的主按钮；两者都有时与“全部转换”并排。更多菜单里原来的条目保留。macOS 没有存入照片，不受影响。
+- 更多菜单新增“清除全部”：移出列表里所有不在转换中的照片，删除导入的副本和预览缓存，输出文件保留；先弹确认，iOS 上会提示其中多少张尚未存入照片。
+- 实测（iPhone Duo 模拟器，Debug）：未开接收时收件箱列出已有的 1 个文件；开接收再关，日志显示服务回到回环地址，随后“加入列表”成功。关掉自动存入后转换 2 张，底部出现“全部存入照片（2）”；再导入 1 张后两个按钮并排。清除全部后列表为空，`outputs` 里的 14 个文件仍在。iOS 模拟器与 macOS 构建通过。
+- 未验证：真机；较窄的手机（390 pt）上两个底部按钮并排且数字为两位数时是否放得下；底部“全部存入照片”实际写入照片库（模拟器里只看了按钮状态）；macOS 上的界面；英文界面。收件箱一次仍只取前 64 条，未改。
+
+**局域网传输移到导入旁、Duo 侧边栏放更多按钮（2026-11-15，分支 `feat/apple-inbox-and-list-actions`）**
+
+- 局域网传输从更多菜单移出，紧跟在导入（加号）后面，所有设备一致（iPhone 右上角、iPad、Mac 工具栏）。
+- 折叠态 iPhone Duo（工具栏被系统排成右侧竖栏）：侧边栏依次是导入、局域网传输、全部存入照片、清除已完成、清除全部、设置、更多；更多菜单只剩“一帧影像”和“批量整理”（用户决定批量整理不放出来）。底部栏不动，仍是带文字和数量的全部转换 / 全部存入照片。
+- 识别方式 `hasSideRail`：紧凑宽度、竖持、右侧安全区不小于 60 pt。实测 Duo 的内容区是 382×644 pt，右侧安全区 84 pt；普通 iPhone 竖持时右侧安全区为 0。最初按宽高比判断不成立（内容区宽高比 0.59，与普通手机拉不开）。
+- 其他设备上存入照片、清除、设置仍在更多菜单里。
+- 实测（iPhone Duo 模拟器，Debug）：侧边栏七个图标都放得下；更多菜单只剩两项；没有可存、可清除的内容时对应图标变灰。iOS 模拟器与 macOS 构建通过。
+- 未验证：真机；普通 iPhone 右上角“导入 + 传输 + 更多”三个图标的实际排布（这台 Mac 只有 Duo 模拟器）；iPad 与展开态 Duo 的侧栏列工具栏；macOS 界面；横屏。侧边栏里“清除”类图标不显示红色（系统在竖栏里不给破坏性按钮着色），确认弹窗仍在。
+
+**Duo 侧边栏的两个清除按钮合成一个菜单（2026-11-15，分支 `feat/apple-rail-clear-menu`）**
+
+- 侧边栏上“清除已完成”和“清除全部”只有图标，分不清。改成一个垃圾桶按钮，点开是带文字的两项菜单（和导入的加号同一种用法）；侧边栏从七个图标变成六个。列表为空时按钮变灰，没有已完成的照片时菜单里的“清除已完成”变灰。确认弹窗不变。
+- 其他设备的更多菜单里两项本来就带文字，不变。
+- 实测（iPhone Duo 模拟器，Debug）：点垃圾桶弹出两项菜单，“清除全部”为红色，没有已完成照片时“清除已完成”为灰色。
+- 未验证：真机；macOS 构建没有重跑（改动只在 iOS 侧边栏分支里生效，但文件是共用的）。
+
+**TestFlight 0.1.1 (4)（2026-11-15，分支 `chore/testflight-build-4`）**
+
+- 构建号改为 4（版本仍是 0.1.1），在 PR #111、#112 合并后的代码上出包，编码器 `vt+x265`；内核和传输框架复用现成的（`XDREMUX_SKIP_CORE=1`、`XDREMUX_SKIP_TRANSFER=1`，Rust 源码自上次构建后没有变化）。脚本检查全部通过，“Upload succeeded”。
+- 相比构建 3 的变化：收件箱打开即显示、底部“全部存入照片”、清除全部、局域网传输移到导入旁、Duo 侧边栏放出更多按钮且两个清除合成一个菜单。
+- 出包时本机代理是关闭的，github.com 连不上：`git fetch` 拉不到刚合并的 main，于是用 GitHub 接口核对了 main 的树对象与本地已合并分支一致（`41092f7`）后从本地代码出包；第一次归档因为拉不到 `swift-argument-parser` 失败，第二次用 `GIT_CONFIG_*` 的 `insteadOf` 把这个地址指到本机 SwiftPM 缓存里的同一仓库（含锁定的 1.8.2 提交）后通过。脚本本身没有改。苹果的上传服务器在不走代理时可达。
+- 未验证：App Store Connect 的处理结果；TestFlight 安装后的表现；所有新界面在真机上的表现。
+
+**详情页直接显示非 ProXDR 源的原文件（2026-11-15，分支 `feat/apple-source-preview`）**
+
+- 问题：详情页只为 ProXDR 源经内核渲染 HDR 预览（`preparePreview`），其他照片一律回落到列表用的 512 像素 SDR 缩略图并标“原图预览”。一张已经是 ISO HDR 的照片（4916×4304）导入后看到的是模糊小图，没有 HDR，也不能按住对比。
+- 现在 `PreviewCard` 的显示顺序是：转换输出 → 内核预览 → 导入的原文件。不是 ProXDR 源的照片直接解码原文件：带增益图（ISO 21496-1 或 Apple 自有）就按 HDR 显示，角标“原图（HDR）”，右下角有 HDR/SDR 标记，可按住对比；不带增益图就是全分辨率的普通照片，角标“原图”，没有标记、按住无效。
+- ProXDR 源在等内核预览的几秒里，改为显示原文件的缩小解码（长边 2048，SDR）而不是 512 缩略图，角标仍是“原图预览”并带“正在生成 HDR 预览…”。这里不做全尺寸解码，避免和预览渲染同时占内存。
+- 同一张照片从原图切到预览、再切到输出时，旧图保留到新图解码完成，不再闪回缩略图；换到另一张照片时清空。
+- 新增 `ImageLoading.hasGainMap(at:)`，只读容器不解码。
+- 用户确认：这类照片转换前显示的是原文件本身，不是经内核渲染的转换预览。
+- 实测（iPhone Duo 模拟器，Debug）：导入一张 ISO HDR 输出作为源，详情页显示清晰的全图，角标“原图（HDR）”，右下角有 HDR 标记；已转换的照片仍显示“HDR 输出”。iOS 模拟器与 macOS 构建通过，包测试通过。
+- 未验证：真机上的实际 HDR 亮度和按住对比（模拟器屏幕没有 HDR 余量，解码走的是 SDR）；不带增益图的普通照片和华为照片的显示；只有 PQ / HLG 传递函数、没有增益图的 HDR 图会被当成普通照片；macOS 界面；200 MP 级别的非 ProXDR 源全尺寸解码的内存占用（与显示同尺寸输出时相同）。
+**存入照片时显示进度（2026-11-15，分支 `feat/apple-save-progress`）**
+
+- 一次存入较多照片时，从点下按钮到弹出“已存入照片 N 张”之间没有任何反馈。现在保存期间主界面底部栏原来按钮的位置显示进度条和“正在存入照片 已完成/总数”；手动点“全部存入照片”和批量转换结束后的自动存入都会显示。保存期间侧边栏 / 更多菜单里的存入按钮禁用。
+- 局域网传输收件箱的“全部存入照片”同样在按钮位置显示进度。
+- `LibraryModel.saveProgress`、`TransferModel.saveProgress`；保存逻辑本身没有变（仍是逐张保存，首个失败即停并提示）。
+- 实测（iPhone Duo 模拟器，Debug）：模拟器里 7 张一两秒就存完，看不到进度；临时在每张之间加了 4 秒延时后确认底部显示“正在存入照片 2/2”和进度条，随后弹出原有的完成提示。延时已移除。iOS 模拟器与 macOS 构建通过。
+- 未验证：真机上的实际节奏；收件箱里的进度显示（只编译通过，没有足够多的收件箱文件去看）；窄屏手机上进度文字与“全部转换”并排时的宽度。
+- 同时确认了一个尚未修改的问题：不是 ProXDR 源的照片（例如已经是 ISO HDR 的 HEIC）在详情页只显示 512 像素的缩略图并标“原图预览”，没有 HDR、也不能按住对比。原因是 `preparePreview` 只为 ProXDR 源经内核渲染预览，其余一律回落到列表缩略图。处理方式待与用户确定。
+
+**新图标、全屏查看、TestFlight 0.1.1 (5)(6)(7)（2026-11-15，分支 `feat/apple-photo-viewer-icon-build7`）**
+
+- 图标：原生版一直用的是旧图标，PR 102 只换了 Flutter 的图标集。`AppIcon.appiconset` 的 25 个 PNG 从 Flutter 的 iOS / macOS 图标集按同名文件复制（尺寸逐一核对一致），设计是“9a2”（照片框被色调曲线分成彩色底图和灰度增益图）。
+- 全屏查看（`PhotoViewer.swift`）：轻点详情页的照片进入。双指或双击缩放、拖动平移、轻点隐藏/显示控件、下拉或左上角按钮关闭、左右滑动切换列表里的照片（macOS 用箭头按钮和方向键）。顶部居中显示文件名和“第几张 / 共几张”，HDR/SDR 标记在底部居中、随照片一起翻页。
+- 与按住对比的区分：卡片上，按下超过 0.3 秒算按住（SDR 对比），松手不会进入全屏；更短的算轻点。全屏里由手势识别器区分：双击缩放，单击等双击失败后才触发，按住 0.25 秒且不移动才是 SDR 对比，按住不会缩放、翻页或关闭。
+- 内存：只有当前页持有全尺寸图像（50 MP 解码后约 200 MB，带 SDR 版本翻倍），相邻页先显示列表缩略图，翻到才解码；打开时复用卡片已解码的图像。
+- iOS 分页用水平分页滚动视图而不是分页样式的 TabView：后者把页面限制在安全区内，在 Duo 上下一张会从右侧露出来。
+- TestFlight：三次上传都成功，编码器 `vt+x265`，复用现成内核。构建 5 = PR 114 / 115 合并后的 main（旧图标）；构建 6 = 加新图标，从归档里取出图标确认是新设计；构建 7 = 再加全屏查看。依赖仍通过 `insteadOf` 指向本机 SwiftPM 缓存。
+- 实测（iPhone Duo 模拟器，Debug）：轻点进入全屏并停在所点的照片；双击放大、拖动平移；左右滑动翻页，标题和计数跟着变；在卡片上按住 1.2 秒后松手不进入全屏；从照片上起手的上下滑动仍能滚动页面。iOS 模拟器构建通过；macOS 在加入翻页的第一版时构建通过，之后只改了 iOS 分支里的代码。
+- 未验证：真机上的手感（缩放、翻页与下拉关闭之间的冲突、按住对比的实际 HDR 变化）；放大状态下左右拖到边缘是否顺畅地接到翻页；模拟器里有一次滑动后控件被隐藏，没能复现，原因未明；列表很长时的翻页表现；macOS 的全屏查看界面；iPad。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

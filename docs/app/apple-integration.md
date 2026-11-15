@@ -48,6 +48,7 @@
 - **核心链接**：`xdremux/rust/build_apple.sh` 产出静态 `XDRemuxCore.xcframework`（`XDREMUX_APPLE_SLICES` 选 `macos` / `ios` / `ios-sim`），放在 `apps/apple/Frameworks/`（不入库）；Swift 通过 `XDRemuxCoreC` 模块引用 `include/xdremux_core.h`。改了 FFI 导出须重新生成头文件，`tools/apple/check_header.sh` 校验。
 - **工程**：`project.yml` 用 xcodegen 生成 `XDRemux.xcodeproj`（不入库）；`Packages/XDRemuxKit` 含 C ABI 封装（`XDRemuxKit`）、纯 Swift 模型（`XDRemuxModel`）和 macOS CLI `xdremux`（convert / inspect / details / verify / capabilities / edit-copy / writeback）。
 - **已完成（2026-10-31）**：P0–P2 与 P3 三批——导入（文件、拖放、iOS PhotosPicker）、详情优先转换、队列 journal 与重启恢复、Motion Photo → Live Photo 并写入照片库、OPPO ↔ Apple 往返、真正取消（`xdremux_progress_cancel`）、摄影风格 3 后处理、英文本地化。
-- **验证范围**：`swift test`、CLI 冒烟、macOS App 构建在 `apple-ci.yml` 中运行（只 macOS 切片）；iOS 只在 iOS 27.2 模拟器实跑。**未验证**：iOS 真机签名安装、Live Photo 声音、真机 HDR 亮度。
+- **验证范围**：`swift test`、CLI 冒烟、macOS App 构建、iOS 模拟器构建在 `apple-ci.yml` 中运行；iOS 只在 iOS 27.2 模拟器实跑。**未验证**：iOS 真机签名安装、Live Photo 声音、真机 HDR 亮度。
+- **CI 触发与本机验证（2026-11-13 起）**：macOS runner 紧张（任务排队 15 分钟拿不到 runner 即被取消），`apple-ci.yml` 不再对只改 Rust 内核的 PR 触发。PR 上只有改到 `apps/apple/**`、`tools/apple/**`、`xdremux/rust/build_apple.sh`、`xdremux/rust/include/**`（即 FFI 头文件有变）或 workflow 自身才跑；`xdremux/rust/**` 的改动在合并到 main 后跑一次；任何分支都可用 `workflow_dispatch` 手动跑。头文件是否过期（`tools/apple/check_header.sh`）改在 Linux 的 `ci.yml` 里检查，每个 PR 都跑。**改动 FFI 导出或 Swift 侧依赖的 Rust 行为时，合并前在本机跑 `tools/apple/verify_local.sh`（步骤与 CI 任务一致），把它打印的摘要贴进 PR 描述。**
 - **待做**：Share Extension、批量导出、P4 跨端回归；签名 / TestFlight / 公证与 Flutter 版同样未配置。
 

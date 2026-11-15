@@ -31,7 +31,12 @@ pub fn report() -> serde_json::Value {
         "libheif": native, "primaryPreview": true,
         "previewMaxSide": 2048, "previewMaxInputMiB": 256, "previewMaxPixels": 67108864,
         "fallbackScope": "SDR unsupported-chroma only; not PQ/HLG tone mapping",
-        "hdrJpegMetadata": ["Apple gain map v1/v2", "ISO 21496-1", "Adobe XMP"]
+        "hdrJpegMetadata": ["Apple gain map v1/v2", "ISO 21496-1", "Adobe XMP"],
+        // HEVC encoders compiled into this binary, preferred first. More than
+        // one means the front end may offer a choice (`hevcEncoder` in the
+        // pipeline config, `xdremux_set_hevc_encoder` for everything else).
+        "hevcEncoders": crate::hevc::HevcBackend::COMPILED.iter().map(|b| b.name()).collect::<Vec<_>>(),
+        "defaultHevcEncoder": crate::hevc::HevcBackend::build_default().name()
     })
 }
 #[cfg(test)]
@@ -46,5 +51,8 @@ mod tests {
         assert_eq!(report["schemaVersion"], 1);
         assert_eq!(report["primaryPreview"], true);
         assert!(report.get("paths").is_none());
+        let encoders = report["hevcEncoders"].as_array().expect("encoder list");
+        assert!(!encoders.is_empty());
+        assert_eq!(report["defaultHevcEncoder"], encoders[0]);
     }
 }

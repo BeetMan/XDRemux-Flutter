@@ -6,7 +6,7 @@
 
 use crate::hevc::{
     drop_parameter_nals, extract_hvcc_config_with_chroma, hevc_byte_stream_to_length_prefixed,
-    x265_encode_tiles,
+    encode_tiles,
 };
 use crate::isobmff;
 
@@ -57,13 +57,14 @@ pub fn build_heic_grid(rgb: &[u8], width: u32, height: u32) -> Result<GridContai
                 tile_rgb.extend_from_slice(&padded[base..base + TILE as usize * 3]);
             }
             let refs: Vec<&[u8]> = vec![&tile_rgb];
-            let stream = x265_encode_tiles(&refs, TILE, TILE, 3, true)
-                .map_err(|e| format!("tile encode: {e}"))?
-                .into_iter()
-                .next()
-                .ok_or("tile encode produced no stream")?;
+            // The frame is the primary image of the test container.
+            let (stream, chroma) =
+                encode_tiles(&refs, TILE, TILE, 3, true, crate::hevc::HevcContent::Primary)
+                    .map_err(|e| format!("tile encode: {e}"))?
+                    .into_single()
+                    .ok_or("tile encode produced no stream")?;
             if hvcc.is_empty() {
-                hvcc = extract_hvcc_config_with_chroma(&stream, 1)
+                hvcc = extract_hvcc_config_with_chroma(&stream, chroma)
                     .ok_or("tile hvcC extraction failed")?;
             }
             let idr = drop_parameter_nals(&stream);

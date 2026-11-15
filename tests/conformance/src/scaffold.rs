@@ -102,13 +102,12 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     // XSCAFFOLD_VT_MATTE=1 embedded VT constant; XSCAFFOLD_X265_MATTE_420=1
     // (with XDREMUX_GM_420=1) 4:2:0 gray variant.
     let x265_matte =
-        |w: u32, h: u32, use_420: bool, chroma: u8| -> Result<(Vec<u8>, Vec<u8>), String> {
+        |w: u32, h: u32, use_420: bool| -> Result<(Vec<u8>, Vec<u8>), String> {
             let pixels = vec![0u8; (w * h) as usize];
             let refs: Vec<&[u8]> = vec![&pixels];
-            let stream = xdremux_core::hevc::x265_encode_tiles(&refs, w, h, 1, use_420)
+            let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, w, h, 1, use_420, xdremux_core::hevc::HevcContent::Matte)
                 .map_err(|e| format!("matte HEVC encode: {e}"))?
-                .into_iter()
-                .next()
+                .into_single()
                 .ok_or("matte encode produced no stream")?;
             let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
                 .ok_or("matte hvcC extraction failed")?;
@@ -131,12 +130,11 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
             ));
         }
         let refs: Vec<&[u8]> = vec![&raw];
-        let stream = xdremux_core::hevc::x265_encode_tiles(&refs, matte_w, matte_h, 1, false)
+        let (stream, chroma) = xdremux_core::hevc::encode_tiles(&refs, matte_w, matte_h, 1, false, xdremux_core::hevc::HevcContent::Matte)
             .map_err(|e| format!("matte HEVC encode: {e}"))?
-            .into_iter()
-            .next()
+            .into_single()
             .ok_or("matte encode produced no stream")?;
-        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, 0)
+        let hvcc = xdremux_core::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
             .ok_or("matte hvcC extraction failed")?;
         let idr = xdremux_core::hevc::drop_parameter_nals(&stream);
         (
@@ -144,14 +142,14 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
             hvcc,
         )
     } else if std::env::var("XSCAFFOLD_X265_MATTE_420").is_ok() {
-        x265_matte(matte_w, matte_h, true, 1)?
+        x265_matte(matte_w, matte_h, true)?
     } else if std::env::var("XSCAFFOLD_VT_MATTE").is_ok() {
         (
             crate::styles_consts::ZERO_MATTE_STREAM.to_vec(),
             crate::styles_consts::ZERO_MATTE_HVCC.to_vec(),
         )
     } else {
-        x265_matte(matte_w, matte_h, false, 0)?
+        x265_matte(matte_w, matte_h, false)?
     };
 
     // ---- 3. XMP payloads -----------------------------------------------

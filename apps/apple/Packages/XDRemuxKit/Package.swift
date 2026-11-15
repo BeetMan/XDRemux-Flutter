@@ -5,7 +5,7 @@ import PackageDescription
 // Native Apple front-end packages for XDRemux (see docs/plans/apple-native.md §2).
 //
 //   XDRemuxCore   binaryTarget → ../../Frameworks/XDRemuxCore.xcframework
-//                 (Rust core + x265, produced by xdremux/rust/build_apple.sh; not in Git)
+//                 (Rust core, produced by xdremux/rust/build_apple.sh; not in Git)
 //   XDRemuxKit    Swift wrapper over the C ABI: background execution, Codable
 //                 reports, RAII release of Rust-owned memory, progress stream.
 //   XDRemuxModel  Pure Swift business model (config, queue, checkpoint). No UI,
@@ -41,8 +41,14 @@ let package = Package(
             name: "XDRemuxKit",
             dependencies: ["XDRemuxCore", "XDRemuxModel"],
             linkerSettings: [
-                // x265 is C++; the Rust staticlib does not carry its own link flags.
-                .linkedLibrary("c++"),
+                // The Rust staticlib does not carry its own link flags. Its
+                // VideoToolbox HEVC backend calls these C APIs. (Builds that
+                // also include x265 need libc++; their XCFramework's module
+                // map says so, see xdremux/rust/build_apple.sh.)
+                .linkedFramework("VideoToolbox"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("CoreFoundation"),
             ]
         ),
         .target(

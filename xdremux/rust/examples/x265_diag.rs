@@ -7,10 +7,12 @@
 //! [preset] applies to the RGB (OPPO-compat/UHDR) path only; the gray path
 //! stays at its production ultrafast preset.
 
+#![cfg_attr(not(xdremux_hevc_x265), allow(unused))]
+
 use std::ffi::CString;
 use std::time::Instant;
 
-#[cfg(not(xdremux_ffmpeg_fallback))]
+#[cfg(xdremux_hevc_x265)]
 mod imp {
     use super::*;
     use xdremux_core::x265_ffi::*;
@@ -191,13 +193,13 @@ fn main() {
     let input = args.get(1).map(|s| s.as_str());
     let preset = args.get(2).map(|s| s.as_str()).unwrap_or("slower");
 
-    #[cfg(xdremux_ffmpeg_fallback)]
+    #[cfg(not(xdremux_hevc_x265))]
     {
         eprintln!("built with XDREMUX_USE_FFMPEG=1 — x265 static path not linked");
         std::process::exit(2);
     }
 
-    #[cfg(not(xdremux_ffmpeg_fallback))]
+    #[cfg(xdremux_hevc_x265)]
     {
         if input.is_none() || input == Some("list") {
             imp::time_tiles(preset);

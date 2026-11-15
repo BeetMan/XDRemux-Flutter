@@ -16,18 +16,31 @@ final class LibraryModel {
         didSet {
             try? settingsStore.save(config)
             engine.setMaxConcurrency(config.maxConcurrentJobs)
+            XDRemuxEngine.applyEncoderChoice(config)
             L10n.apply(config.language)
             applyPolicies()
         }
     }
 
-    /// Re-evaluates the Huawei admission policy for every idle photo, e.g.
-    /// after Photographic Styles is switched on (which admits Huawei HDR).
+    /// Re-evaluates the Huawei admission policy and plain-source Styles
+    /// rescue for every idle photo against its effective config (global
+    /// defaults overlaid with any per-photo option overrides).
     private func applyPolicies() {
         for index in items.indices where items[index].state == .ready {
-            items[index].policyReason = Self.policyReason(for: items[index], config: config)
-            items[index].stylesRescue = items[index].plainSource && Self.stylesPathAvailable(config)
+            let effective = effectiveConfig(for: items[index])
+            items[index].policyReason = Self.policyReason(for: items[index], config: effective)
+            items[index].stylesRescue = items[index].plainSource && Self.stylesPathAvailable(effective)
         }
+    }
+
+    /// Global `config` overlaid with `item.options` (if set on the detail card).
+    func effectiveConfig(for item: PhotoItem) -> ConversionConfig {
+        config.applying(item.options)
+    }
+
+    /// The options shown on `item`'s detail card: its override, or the global defaults.
+    func effectiveOptions(for item: PhotoItem) -> PhotoOptions {
+        item.options ?? PhotoOptions(from: config)
     }
 
     /// The core's SDR synthesis runs only for Apple output with Styles on.
@@ -78,6 +91,9 @@ final class LibraryModel {
         try? directories.ensureExists()
         L10n.apply(config.language)
         engine.setMaxConcurrency(config.maxConcurrentJobs)
+        // Live Photo and writeback calls take no config; the encoder they use
+        // is process-wide state in the core.
+        XDRemuxEngine.applyEncoderChoice(config)
         outputRoot = outputLocation.resolve(fallback: directories.outputs)
         restoreJournal()
     }
@@ -112,6 +128,7 @@ final class LibraryModel {
                                  inputURL: URL(fileURLWithPath: record.inputPath))
             item.savedToPhotos = record.savedToPhotos
             item.motionMode = record.motionMode
+            item.options = record.options
             switch record.status {
             case .pending, .running:
                 item.state = .inspecting
@@ -152,18 +169,19 @@ final class LibraryModel {
     private var inspectionCache: InspectionCache { InspectionCache(root: directories.inspections) }
 
     private func apply(_ snapshot: InspectionSnapshot, thumbnail: CGImage?, to id: PhotoItem.ID, keepState: Bool) {
-        let config = self.config
+        let baseConfig = self.config
         update(id) { item in
+            let effective = baseConfig.applying(item.options)
             item.classification = snapshot.classification
             item.inspection = snapshot.inspection
             item.details = snapshot.details
             item.motionPhoto = snapshot.motionPhoto
             item.huawei = snapshot.huawei
             item.plainSource = snapshot.plainSource ?? false
-            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(config)
+            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(effective)
             item.thumbnail = thumbnail
             if !keepState || item.state == .inspecting { item.state = .ready }
-            item.policyReason = Self.policyReason(for: item, config: config)
+            item.policyReason = Self.policyReason(for: item, config: effective)
         }
     }
 
@@ -188,6 +206,7 @@ final class LibraryModel {
             return QueueJournal.Record(id: item.id, sourceName: item.sourceName, inputPath: item.inputURL.path,
                                        status: status, outputPath: output, outcome: outcome, config: config,
                                        pairedVideoPath: paired, extraVideoPaths: extras, motionMode: item.motionMode,
+                                       options: item.options,
                                        errorMessage: error, savedToPhotos: item.savedToPhotos)
         })
         do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = L("无法保存队列状态：\(error.localizedDescription)") }
@@ -203,6 +222,11 @@ final class LibraryModel {
 
     var isConverting: Bool {
         items.contains { if case .converting = $0.state { return true } else { return false } }
+    }
+
+    /// Photos with a finished output, whatever happened to it since.
+    var finishedCount: Int {
+        items.filter { $0.product != nil }.count
     }
 
     // MARK: - Launch arguments
@@ -429,7 +453,7 @@ final class LibraryModel {
     func convert(_ id: PhotoItem.ID) async {
         guard let item = items.first(where: { $0.id == id }), !item.state.isBusy,
               conversionTasks[id] == nil else { return }
-        let config = self.config
+        let config = effectiveConfig(for: item)
         let job = ConversionJob(backend: engine, scratchRoot: directories.scratch, outputRoot: outputRoot)
         update(id) { $0.state = .converting(0); $0.savedToPhotos = false }
         let task = Task { [weak self] in
@@ -585,8 +609,36 @@ final class LibraryModel {
         }
     }
 
+    /// Photos `clearAll` would take out: everything not being converted.
+    var clearableCount: Int {
+        items.filter { !$0.state.isBusy }.count
+    }
+
+    /// Empties the list (a photo being converted stays): imported copies
+    /// and cached previews go, outputs stay where they were written.
+    func clearAll() {
+        for id in items.filter({ !$0.state.isBusy }).map(\.id) { remove(id) }
+    }
+
     func setMotionMode(_ mode: MotionPhotoMode, for id: PhotoItem.ID) {
         update(id) { $0.motionMode = mode }
+    }
+
+    func setOptions(_ options: PhotoOptions?, for id: PhotoItem.ID) {
+        let baseConfig = self.config
+        update(id) { item in
+            item.options = options
+            let effective = baseConfig.applying(options)
+            item.policyReason = Self.policyReason(for: item, config: effective)
+            item.stylesRescue = item.plainSource && Self.stylesPathAvailable(effective)
+        }
+    }
+
+    func updateOptions(for id: PhotoItem.ID, _ mutate: (inout PhotoOptions) -> Void) {
+        guard let item = items.first(where: { $0.id == id }) else { return }
+        var opts = effectiveOptions(for: item)
+        mutate(&opts)
+        setOptions(opts, for: id)
     }
 
     func markSavedToPhotos(_ id: PhotoItem.ID) {
@@ -602,6 +654,11 @@ final class LibraryModel {
 
     private var savingToPhotos = false
 
+    struct SaveProgress: Equatable { var done: Int; var total: Int }
+    /// Set while `saveAllToPhotos` runs, so the toolbar can show how far a
+    /// long save has got instead of sitting silent until the summary.
+    private(set) var saveProgress: SaveProgress?
+
     /// Settings → 转换完成后自动存入照片. A batch saves once at the end
     /// (like Flutter); a photo converted on its own is saved right away.
     private func autoSaveAfterConvert(_ id: PhotoItem.ID) {
@@ -613,25 +670,31 @@ final class LibraryModel {
 
     /// Saves every finished photo that is not in the library yet (Live
     /// Photo pairs as one asset). The first failure stops the pass and is
-    /// reported once; the photos already saved keep their mark.
-    func saveAllToPhotos() async {
-        #if os(iOS)
-        guard !savingToPhotos else { return }
-        savingToPhotos = true
-        defer { savingToPhotos = false }
+    /// reported once; the photos already saved keep their mark. Returns
+    /// how many were saved this pass (always 0 on macOS).
+    @discardableResult
+    func saveAllToPhotos() async -> Int {
         var saved = 0
-        for item in unsavedProducts {
+        #if os(iOS)
+        guard !savingToPhotos else { return 0 }
+        savingToPhotos = true
+        let pending = unsavedProducts
+        saveProgress = SaveProgress(done: 0, total: pending.count)
+        defer { savingToPhotos = false; saveProgress = nil }
+        for item in pending {
             guard let product = item.product else { continue }
             do {
                 try await PhotosLibrary.save(product)
                 markSavedToPhotos(item.id)
                 saved += 1
+                saveProgress?.done = saved
             } catch {
                 notice = L("已存入照片 \(saved) 张；\(item.sourceName) 未存入：\(PhotosLibrary.describe(error))")
-                return
+                return saved
             }
         }
         #endif
+        return saved
     }
 
     // MARK: - Helpers

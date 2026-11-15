@@ -47,7 +47,7 @@ jobs:
           components: rustfmt, clippy
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.47.9
+          flutter-version: 3.50.0
           channel: stable
           cache: true
       - uses: actions/cache@v6
@@ -104,7 +104,7 @@ jobs:
           targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-ios,aarch64-apple-ios-sim' || '' }}
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.47.9
+          flutter-version: 3.50.0
           channel: stable
           cache: true
       - uses: actions/cache@v6

@@ -272,7 +272,7 @@ pub fn generate_movie_linear_thumbnail(
 }
 
 /// Decode the primary of a converted HEIC to display-oriented 8-bit RGB.
-fn decode_primary_rgb8(source_heic: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+pub(crate) fn decode_primary_rgb8(source_heic: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     // Converted OPPO files keep the donor's trailing extension region after
     // mdat; a claimed box size past EOF makes heif-oxide bail with
     // Truncated("top-level"). Decode from the valid ISOBMFF prefix only.
@@ -384,30 +384,26 @@ fn encode_linear_thumbnail_codes(
     width: u32,
     height: u32,
 ) -> Result<(Vec<u8>, Vec<u8>, u8), String> {
-    // x265 refuses pictures smaller than one CTU (64x64 with the default
-    // maxCUSize); tiny thumbnails fall back to the 8-bit path which has its own
-    // small-picture handling.
-    if crate::hevc::main10_available() && width >= 64 && height >= 64 {
-        #[cfg(xdremux_main10)]
-        {
-            let stream = crate::hevc::encode_thumbnail_10bit(codes16, width, height)
-                .map_err(|e| format!("linear thumb 10-bit encode: {e}"))?;
-            let hvcc =
-                crate::hevc::extract_hvcc_config_with_chroma_and_depth(&stream, 1, 10)
-                    .ok_or("linear thumb hvcC extraction failed (10-bit)")?;
-            return Ok((stream, hvcc, 10));
-        }
+    // Some backends have a minimum Main10 picture size; tiny thumbnails then
+    // fall back to the 8-bit path which has its own small-picture handling.
+    if crate::hevc::main10_supported(width, height) {
+        let (stream, chroma) = crate::hevc::encode_thumbnail_10bit(codes16, width, height)
+            .map_err(|e| format!("linear thumb 10-bit encode: {e}"))?
+            .into_single()
+            .ok_or("linear thumb 10-bit encode produced no stream")?;
+        let hvcc = crate::hevc::extract_hvcc_config_with_chroma_and_depth(&stream, chroma, 10)
+            .ok_or("linear thumb hvcC extraction failed (10-bit)")?;
+        return Ok((stream, hvcc, 10));
     }
     let codes8: Vec<u8> = codes16
         .iter()
         .map(|&code| ((u32::from(code) + 128) / 257) as u8)
         .collect();
-    let stream = crate::hevc::x265_encode_tiles(&[codes8.as_slice()], width, height, 3, true)
+    let (stream, chroma) = crate::hevc::encode_tiles(&[codes8.as_slice()], width, height, 3, true, crate::hevc::HevcContent::LinearThumbnail)
         .map_err(|e| format!("linear thumb encode: {e}"))?
-        .into_iter()
-        .next()
+        .into_single()
         .ok_or("linear thumb encode produced no stream")?;
-    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, 1)
+    let hvcc = crate::hevc::extract_hvcc_config_with_chroma(&stream, chroma)
         .ok_or("linear thumb hvcC extraction failed")?;
     Ok((stream, hvcc, 8))
 }

@@ -1,0 +1,20 @@
+# Motion Photo parser differential: xdremux-core `motion_photo` vs LibLivePhoto.
+#
+# Kept out of the root workspace (own `[workspace]` below) so normal builds
+# and CI never fetch LibLivePhoto. Run with:
+#   cargo run --release --manifest-path tests/motion-diff/Cargo.toml -- <file-or-dir>...
+# Results and corpus: docs/research/motion-photo-parser-differential.md.
+
+[package]
+name = "xdremux-motion-diff"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+xdremux-core = { path = "../../xdremux/rust" }
+# LibLivePhoto main after v0.1.0 (adds .pvt and the Photos HEIC scanner fixes).
+liblivephoto = { git = "https://github.com/21Z121Z1/LibLivePhoto", rev = "9328a0502bb2318b05d255ed83652c7d7c7d3b4c" }
+serde_json = "1.0"

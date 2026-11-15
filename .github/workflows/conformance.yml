@@ -1,14 +1,38 @@
 name: Conformance
 
+# Pure Rust: the workspace build with the ffmpeg-subprocess encoder fallback
+# plus the conformance crate. Nothing here needs an Apple framework, so it runs
+# on Linux and leaves the scarce macOS runners to apple-ci.yml.
 on:
   push:
     branches: [main]
+    paths:
+      - 'xdremux/rust/**'
+      - 'tests/conformance/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/conformance.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'xdremux/rust/**'
+      - 'tests/conformance/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/conformance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   rust-build-and-test:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       # Vendored x265 is gitignored; use the ffmpeg-subprocess fallback for
       # CI builds (same as the CI workflow's smoke job).
@@ -25,7 +49,9 @@ jobs:
           build-warnings: ""
 
       - name: Install ffmpeg (encoder fallback)
-        run: brew install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Build workspace
         run: cargo build --workspace
@@ -36,31 +62,7 @@ jobs:
       - name: Run conformance tests
         run: cargo test -p xdremux-conformance
 
-  conformance-inspect:
-    runs-on: macos-latest
-    needs: rust-build-and-test
-    env:
-      XDREMUX_USE_FFMPEG: '1'
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
-        with:
-          toolchain: stable
-          rustflags: ""
-          # v2 denies warnings via CARGO_BUILD_WARNINGS by default; keep
-          # warnings non-fatal as before (rustflags "" did this under v1).
-          build-warnings: ""
-
-      - name: Build workspace
-        run: cargo build --workspace
-
-      - name: Run driver (inspect only, no ffmpeg)
-        run: |
-          echo '{"test": true}' > /dev/null  # placeholder
-        # Full driver needs external sample files and ffmpeg.
-        # Once sample fixtures are hosted, uncomment:
-        # python3 tests/conformance/driver.py \
-        #   --sample-dir <sample-dir> \
-        #   --skip-convert \
-        #   --out-report conformance_report.md
+      # The sample-driven driver (tests/conformance/driver.py) needs external
+      # sample files and ffmpeg; it is not run in CI until fixtures are hosted:
+      #   python3 tests/conformance/driver.py --sample-dir <sample-dir> \
+      #     --skip-convert --out-report conformance_report.md
