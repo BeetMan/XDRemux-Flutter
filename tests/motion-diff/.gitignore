@@ -1,0 +1,2 @@
+# Dev-only tool; xdremux-core follows the root lock, LibLivePhoto is pinned by rev.
+Cargo.lock
