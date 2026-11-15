@@ -2,6 +2,7 @@
 
 > 问题：鸿蒙原生版转换慢。主线已把 HEVC 编码拆成可替换的后端（#107），并为 Apple 加了 VideoToolbox 硬件编码（#108）。鸿蒙能否用系统的 AVCodec 硬件编码器做同样的事，值不值得做。
 > 结论状态：**部分实测**。x265 NEON 的速度和输出一致性在 Apple M6 上实测，OHOS 交叉编译已实测；AVCodec 部分只核对了 SDK 头文件（DevEco SDK，API 26），**没有在真机上跑过**。
+> 已采纳：§2.2 的 NEON 配置已于同日写入 `xdremux/rust/build_ohos.sh`；手机上的计时（§5 第 1 项）尚未完成。
 
 ## 0. 结论
 

@@ -92,6 +92,9 @@ fn main() {
              Or set XDREMUX_USE_FFMPEG=1 to use the ffmpeg subprocess fallback."
         );
     }
+    // Relink when the archive is rebuilt (for example with different x265
+    // build options); cargo does not track static libraries on its own.
+    println!("cargo:rerun-if-changed={lib_file}");
 
     // Optional 10-bit (Main10) encoder for the Styles Linear Thumbnail.
     // Built with HIGH_BIT_DEPTH=ON + EXPORT_C_API=OFF so its objects live in
