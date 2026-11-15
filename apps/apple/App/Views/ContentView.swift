@@ -19,8 +19,12 @@ struct ContentView: View {
     /// start. Left to its default the split view opens with the sidebar
     /// hidden on an unfolded phone, leaving a lone toolbar capsule.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    /// Window width, for the narrow-regular rule below.
-    @State private var windowWidth: CGFloat = 0
+    /// Window size: the width for the narrow-regular rule below, the
+    /// shape for `hasSideRail`.
+    @State private var windowSize: CGSize = .zero
+    private var windowWidth: CGFloat { windowSize.width }
+    /// Trailing safe-area inset, for `hasSideRail`.
+    @State private var trailingInset: CGFloat = 0
     /// Below this width (an unfolded phone, a narrow iPad split) the sidebar
     /// and the two-column detail cannot both fit while leaving the photo a
     /// useful size, so opening a photo hides the sidebar; the toolbar's
@@ -126,8 +130,9 @@ struct ContentView: View {
         .background {
             GeometryReader { geo in
                 Color.clear
-                    .onAppear { windowWidth = geo.size.width }
-                    .onChange(of: geo.size.width) { _, w in windowWidth = w }
+                    .onAppear { windowSize = geo.size; trailingInset = geo.safeAreaInsets.trailing }
+                    .onChange(of: geo.size) { _, size in windowSize = size }
+                    .onChange(of: geo.safeAreaInsets.trailing) { _, inset in trailingInset = inset }
             }
         }
         #if os(macOS)
@@ -225,13 +230,14 @@ struct ContentView: View {
 
     /// HIG: a toolbar carries the few most-used actions and lets the system
     /// lay them out per device (a side rail on devices whose status area is
-    /// on the right). Import is one item (a menu on iOS), the batch action is
-    /// the one prominent item, and the rest go to `.secondaryAction`, which
-    /// iOS folds into an overflow menu. On compact phones the batch action
+    /// on the right). Import (a menu on iOS) and LAN transfer are always
+    /// out, the batch action is the one prominent item, and the rest go to
+    /// `.secondaryAction`, which iOS folds into an overflow menu; where the
+    /// toolbar is a side rail (`hasSideRail`) most of them come out too. On compact phones the batch action
     /// sits in the bottom bar where the thumb is.
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
             #if os(iOS)
             Menu {
                 Button {
@@ -255,6 +261,14 @@ struct ContentView: View {
             }
             .help("从文件导入 OPPO 原始照片（也可以拖到窗口里）")
             #endif
+            // Next to import on every device: photos coming in, going out.
+            transferButton
+            if hasSideRail {
+                saveAllMenuButton
+                clearFinishedButton
+                clearAllButton
+                settingsButton
+            }
         }
         #if os(iOS)
         ToolbarItemGroup(placement: batchPlacement) {
@@ -273,33 +287,11 @@ struct ContentView: View {
         }
         #endif
         ToolbarItemGroup(placement: .secondaryAction) {
-            #if os(iOS)
-            let allSaved = model.finishedCount > 0 && model.unsavedProducts.isEmpty
-            Button {
-                Task {
-                    let saved = await model.saveAllToPhotos()
-                    if saved > 0, model.notice == nil { model.notice = L("已存入照片 \(saved) 张") }
-                }
-            } label: {
-                Label(allSaved ? "已全部存入照片" : "全部存入照片",
-                      systemImage: allSaved ? "checkmark" : "photo.badge.arrow.down")
+            if !hasSideRail {
+                saveAllMenuButton
+                clearFinishedButton
+                clearAllButton
             }
-            .disabled(model.unsavedProducts.isEmpty)
-            #endif
-            Button(role: .destructive) {
-                confirmClearFinished = true
-            } label: {
-                Label("清除已完成", systemImage: "checklist")
-            }
-            .disabled(model.finishedCount == 0)
-            .help("把已转换的照片移出列表；输出文件保留")
-            Button(role: .destructive) {
-                confirmClearAll = true
-            } label: {
-                Label("清除全部", systemImage: "trash")
-            }
-            .disabled(model.clearableCount == 0)
-            .help("把列表里的照片全部移出；输出文件保留")
             Button {
                 showRoundTrip = true
             } label: {
@@ -312,17 +304,78 @@ struct ContentView: View {
                 Label("批量整理", systemImage: "folder.badge.gearshape")
             }
             .help("按拍摄模式把原始照片复制到分类文件夹，不做转换")
-            Button {
-                showTransfer = true
-            } label: {
-                Label("局域网传输", systemImage: "wifi")
+            if !hasSideRail {
+                settingsButton
             }
-            .help("与同一局域网内的 XDRemux / LocalSend 设备互传照片")
-            Button {
-                showSettings = true
-            } label: {
-                Label("设置", systemImage: "slider.horizontal.3")
+        }
+    }
+
+    /// A phone held upright whose status area is on the trailing side (a
+    /// folded iPhone Duo: 84 pt of trailing safe area, none on an ordinary
+    /// phone in portrait). The system lays the toolbar out as a rail there,
+    /// with room for more than two icons, so saving, clearing and settings
+    /// come out of the overflow menu. An ordinary phone's top bar has no
+    /// such room.
+    private var hasSideRail: Bool {
+        #if os(iOS)
+        isCompact && trailingInset >= 60 && windowSize.height > windowSize.width
+        #else
+        false
+        #endif
+    }
+
+    private var transferButton: some View {
+        Button {
+            showTransfer = true
+        } label: {
+            Label("局域网传输", systemImage: "wifi")
+        }
+        .help("与同一局域网内的 XDRemux / LocalSend 设备互传照片")
+    }
+
+    /// iOS only; macOS writes outputs to a folder and has nothing to save.
+    @ViewBuilder
+    private var saveAllMenuButton: some View {
+        #if os(iOS)
+        let allSaved = model.finishedCount > 0 && model.unsavedProducts.isEmpty
+        Button {
+            Task {
+                let saved = await model.saveAllToPhotos()
+                if saved > 0, model.notice == nil { model.notice = L("已存入照片 \(saved) 张") }
             }
+        } label: {
+            Label(allSaved ? "已全部存入照片" : "全部存入照片",
+                  systemImage: allSaved ? "checkmark" : "photo.badge.arrow.down")
+        }
+        .disabled(model.unsavedProducts.isEmpty)
+        #endif
+    }
+
+    private var clearFinishedButton: some View {
+        Button(role: .destructive) {
+            confirmClearFinished = true
+        } label: {
+            Label("清除已完成", systemImage: "checklist")
+        }
+        .disabled(model.finishedCount == 0)
+        .help("把已转换的照片移出列表；输出文件保留")
+    }
+
+    private var clearAllButton: some View {
+        Button(role: .destructive) {
+            confirmClearAll = true
+        } label: {
+            Label("清除全部", systemImage: "trash")
+        }
+        .disabled(model.clearableCount == 0)
+        .help("把列表里的照片全部移出；输出文件保留")
+    }
+
+    private var settingsButton: some View {
+        Button {
+            showSettings = true
+        } label: {
+            Label("设置", systemImage: "slider.horizontal.3")
         }
     }
 
