@@ -212,6 +212,19 @@ final class LibraryModel {
         do { try journalStore.save(journal.portable(home: NSHomeDirectory())) } catch { lastError = L("无法保存队列状态：\(error.localizedDescription)") }
     }
 
+    /// The pushed detail page on a compact phone (`NavigationStack` path).
+    var detailPath: [PhotoItem.ID] = []
+    /// Set to present the full-screen photo viewer.
+    var photoViewer: PhotoViewerRequest?
+
+    /// Puts the detail page on `id`, in whichever layout is up: the
+    /// selection of the split view, the pushed page of the stack.
+    func showDetail(_ id: PhotoItem.ID) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        if selectedID != id { selectedID = id }
+        if !detailPath.isEmpty, detailPath.last != id { detailPath = [id] }
+    }
+
     var selectedItem: PhotoItem? {
         items.first { $0.id == selectedID }
     }

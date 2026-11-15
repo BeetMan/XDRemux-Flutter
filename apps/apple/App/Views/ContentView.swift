@@ -57,7 +57,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if isCompact {
-                NavigationStack {
+                NavigationStack(path: $model.detailPath) {
                     Group {
                         if model.items.isEmpty {
                             EmptyLibraryView(onImport: { showFileImporter = true },
@@ -194,6 +194,11 @@ struct ContentView: View {
         } message: {
             Text(clearFinishedMessage)
         }
+        #if os(iOS)
+        .fullScreenCover(item: $model.photoViewer) { photoViewer($0) }
+        #else
+        .sheet(item: $model.photoViewer) { photoViewer($0) }
+        #endif
         .alert("清除全部？", isPresented: $confirmClearAll) {
             Button("清除", role: .destructive) { model.clearAll() }
             Button("取消", role: .cancel) {}
@@ -216,6 +221,18 @@ struct ContentView: View {
         if unsaved > 0 { text += " " + L("其中 \(unsaved) 张尚未存入照片。") }
         #endif
         return text
+    }
+
+    /// Leaving the viewer lands on the photo it was showing, not the one it
+    /// was opened from: the page underneath is switched, without animation,
+    /// while the viewer still covers it.
+    private func photoViewer(_ request: PhotoViewerRequest) -> some View {
+        PhotoViewer(model: model, request: request) { shown in
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { model.showDetail(shown) }
+            model.photoViewer = nil
+        }
     }
 
     /// Everything leaves the list, converted or not; same rule for files.
