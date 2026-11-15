@@ -651,6 +651,17 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 出包时本机代理是关闭的，github.com 连不上：`git fetch` 拉不到刚合并的 main，于是用 GitHub 接口核对了 main 的树对象与本地已合并分支一致（`41092f7`）后从本地代码出包；第一次归档因为拉不到 `swift-argument-parser` 失败，第二次用 `GIT_CONFIG_*` 的 `insteadOf` 把这个地址指到本机 SwiftPM 缓存里的同一仓库（含锁定的 1.8.2 提交）后通过。脚本本身没有改。苹果的上传服务器在不走代理时可达。
 - 未验证：App Store Connect 的处理结果；TestFlight 安装后的表现；所有新界面在真机上的表现。
 
+**详情页直接显示非 ProXDR 源的原文件（2026-11-15，分支 `feat/apple-source-preview`）**
+
+- 问题：详情页只为 ProXDR 源经内核渲染 HDR 预览（`preparePreview`），其他照片一律回落到列表用的 512 像素 SDR 缩略图并标“原图预览”。一张已经是 ISO HDR 的照片（4916×4304）导入后看到的是模糊小图，没有 HDR，也不能按住对比。
+- 现在 `PreviewCard` 的显示顺序是：转换输出 → 内核预览 → 导入的原文件。不是 ProXDR 源的照片直接解码原文件：带增益图（ISO 21496-1 或 Apple 自有）就按 HDR 显示，角标“原图（HDR）”，右下角有 HDR/SDR 标记，可按住对比；不带增益图就是全分辨率的普通照片，角标“原图”，没有标记、按住无效。
+- ProXDR 源在等内核预览的几秒里，改为显示原文件的缩小解码（长边 2048，SDR）而不是 512 缩略图，角标仍是“原图预览”并带“正在生成 HDR 预览…”。这里不做全尺寸解码，避免和预览渲染同时占内存。
+- 同一张照片从原图切到预览、再切到输出时，旧图保留到新图解码完成，不再闪回缩略图；换到另一张照片时清空。
+- 新增 `ImageLoading.hasGainMap(at:)`，只读容器不解码。
+- 用户确认：这类照片转换前显示的是原文件本身，不是经内核渲染的转换预览。
+- 实测（iPhone Duo 模拟器，Debug）：导入一张 ISO HDR 输出作为源，详情页显示清晰的全图，角标“原图（HDR）”，右下角有 HDR 标记；已转换的照片仍显示“HDR 输出”。iOS 模拟器与 macOS 构建通过，包测试通过。
+- 未验证：真机上的实际 HDR 亮度和按住对比（模拟器屏幕没有 HDR 余量，解码走的是 SDR）；不带增益图的普通照片和华为照片的显示；只有 PQ / HLG 传递函数、没有增益图的 HDR 图会被当成普通照片；macOS 界面；200 MP 级别的非 ProXDR 源全尺寸解码的内存占用（与显示同尺寸输出时相同）。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
