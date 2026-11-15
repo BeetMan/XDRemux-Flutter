@@ -265,8 +265,7 @@ struct ContentView: View {
             transferButton
             if hasSideRail {
                 saveAllMenuButton
-                clearFinishedButton
-                clearAllButton
+                clearMenu
                 settingsButton
             }
         }
@@ -349,6 +348,18 @@ struct ContentView: View {
         }
         .disabled(model.unsavedProducts.isEmpty)
         #endif
+    }
+
+    /// One bin on the side rail: two bare icons for "clear finished" and
+    /// "clear all" cannot be told apart, the menu names them.
+    private var clearMenu: some View {
+        Menu {
+            clearFinishedButton
+            clearAllButton
+        } label: {
+            Label("清除", systemImage: "trash")
+        }
+        .disabled(model.clearableCount == 0)
     }
 
     private var clearFinishedButton: some View {
