@@ -57,8 +57,9 @@ class MotionPhotoService {
       }
       if (bundle) {
         final bundlePath = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.pvt');
-        // Rust re-verifies the pair and swaps the bundle in atomically; a
-        // retry replaces the previous bundle of the same name.
+        // Rust re-verifies the pair, swaps the bundle in and reads it back;
+        // if that check fails it restores the previous bundle. A retry
+        // replaces the previous bundle of the same name.
         final report = await Isolate.run(
           () => XdRemuxFFI.makeLivePhotoBundle(still, movie, bundlePath),
         );
@@ -76,12 +77,23 @@ class MotionPhotoService {
         if (File(outputPath).existsSync()) await File(outputPath).delete();
         return bundledStill;
       }
-      // A retry replaces the sibling MOV, rather than creating a numbered
-      // file that checkpoint restoration would not be able to locate.
-      await File(movie).copy(movTarget);
-      await File(still).copy(outputPath);
-      if (!XdRemuxFFI.livePhotoPairValid(outputPath, movTarget)) {
-        throw StateError('Exported Live Photo pair failed verification');
+      // Rust copies the pair over the converted still and its sibling MOV,
+      // reads both back and checks them before reporting success; on failure
+      // it removes what it wrote and puts the converted still back. A retry
+      // replaces the sibling MOV, rather than creating a numbered file that
+      // checkpoint restoration would not be able to locate.
+      final published = await Isolate.run(
+        () => XdRemuxFFI.publishLivePhotoPair(
+          still,
+          movie,
+          outputPath,
+          movTarget,
+        ),
+      );
+      if (published['success'] != true) {
+        throw StateError(
+          '${published['errorMessage'] ?? 'Live Photo publication failed'}',
+        );
       }
       return outputPath;
     } finally {

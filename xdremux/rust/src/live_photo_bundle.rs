@@ -20,6 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::live_photo;
+use crate::live_photo_publish::{write_new_synced, Publication};
 
 pub const BUNDLE_EXTENSION: &str = "pvt";
 pub const METADATA_FILE: &str = "metadata.plist";
@@ -126,8 +127,18 @@ pub fn bundle_is_valid(bundle: &Path) -> bool {
 /// Package a composed pair into `bundle` (`<dir>/<stem>.pvt`). The pair is
 /// verified first; the bundle is assembled in a hidden sibling directory and
 /// only then moved into place, replacing an earlier bundle of the same name.
+/// The bundle in place is then read back: it must be structurally complete,
+/// its still and MOV must pair and equal the sources byte for byte. If that
+/// fails, the new bundle is removed and the earlier one restored. The source
+/// files are never written.
 pub fn write_bundle(still: &Path, movie: &Path, bundle: &Path) -> Result<BundlePaths, String> {
-    write_bundle_with(still, movie, bundle, live_photo::existing_pair_is_valid)
+    write_bundle_with(
+        still,
+        movie,
+        bundle,
+        live_photo::existing_pair_is_valid,
+        |_| {},
+    )
 }
 
 fn write_bundle_with(
@@ -135,6 +146,7 @@ fn write_bundle_with(
     movie: &Path,
     bundle: &Path,
     pair_is_valid: impl Fn(&[u8], &[u8]) -> bool,
+    before_verify: impl FnOnce(&Path),
 ) -> Result<BundlePaths, String> {
     let stem = bundle_stem(bundle)?;
     if !has_extension(still, STILL_EXTENSIONS) {
@@ -157,51 +169,57 @@ fn write_bundle_with(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent).map_err(|e| format!("create bundle parent: {e}"))?;
-    let pid = std::process::id();
-    let staging = parent.join(format!(".{stem}.{BUNDLE_EXTENSION}.partial-{pid}"));
-    let retired = parent.join(format!(".{stem}.{BUNDLE_EXTENSION}.old-{pid}"));
-    let _ = fs::remove_dir_all(&staging);
+    // Staged as `.<stem>.pvt.partial-<run>`; an earlier bundle is moved to
+    // `.<stem>.pvt.old-<run>` until the new one has been verified.
+    let mut publication = Publication::new();
+    let staging = publication.sibling(bundle, "partial");
     fs::create_dir(&staging).map_err(|e| format!("create bundle staging: {e}"))?;
+    publication.adopt(staging.clone(), bundle);
 
     let still_ext = still
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("heic")
         .to_ascii_lowercase();
-    let staged = (|| -> Result<(), String> {
-        fs::write(staging.join(format!("{stem}.{still_ext}")), &still_bytes)
-            .map_err(|e| format!("write bundle still: {e}"))?;
-        fs::write(staging.join(format!("{stem}.mov")), &movie_bytes)
-            .map_err(|e| format!("write bundle movie: {e}"))?;
-        fs::write(staging.join(METADATA_FILE), METADATA_PLIST)
-            .map_err(|e| format!("write {METADATA_FILE}: {e}"))?;
-        read_bundle(&staging).map(|_| ())
-    })();
-    if let Err(e) = staged {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(e);
+    let placed = write_new_synced(&staging.join(format!("{stem}.{still_ext}")), &still_bytes)
+        .and_then(|()| write_new_synced(&staging.join(format!("{stem}.mov")), &movie_bytes))
+        .and_then(|()| write_new_synced(&staging.join(METADATA_FILE), METADATA_PLIST.as_bytes()))
+        .and_then(|()| publication.place());
+    if let Err(e) = placed {
+        return Err(format!(
+            "Live Photo bundle could not be written: {e}; {}",
+            publication.rollback()
+        ));
     }
+    before_verify(bundle);
+    match verify_written_bundle(bundle, &still_bytes, &movie_bytes, &pair_is_valid) {
+        Ok(paths) => {
+            publication.commit();
+            Ok(paths)
+        }
+        Err(e) => Err(format!(
+            "Live Photo bundle failed verification: {e}; {}",
+            publication.rollback()
+        )),
+    }
+}
 
-    // Swap into place. A failed rename restores the previous bundle.
-    let had_previous = bundle.exists();
-    if had_previous {
-        let _ = fs::remove_dir_all(&retired);
-        if let Err(e) = fs::rename(bundle, &retired) {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(format!("cannot replace existing bundle: {e}"));
-        }
+/// Read a just-written bundle back: complete layout, a pair under
+/// `pair_is_valid`, media equal to the sources, the expected metadata.plist.
+fn verify_written_bundle(
+    bundle: &Path,
+    still: &[u8],
+    movie: &[u8],
+    pair_is_valid: &dyn Fn(&[u8], &[u8]) -> bool,
+) -> Result<BundlePaths, String> {
+    let paths = read_bundle(bundle)?;
+    live_photo::verify_written_pair(still, movie, &paths.still, &paths.movie, pair_is_valid)?;
+    let plist = fs::read(bundle.join(METADATA_FILE))
+        .map_err(|e| format!("cannot read back {METADATA_FILE}: {e}"))?;
+    if plist != METADATA_PLIST.as_bytes() {
+        return Err(format!("{METADATA_FILE} differs from what was written"));
     }
-    if let Err(e) = fs::rename(&staging, bundle) {
-        if had_previous {
-            let _ = fs::rename(&retired, bundle);
-        }
-        let _ = fs::remove_dir_all(&staging);
-        return Err(format!("cannot move bundle into place: {e}"));
-    }
-    if had_previous {
-        let _ = fs::remove_dir_all(&retired);
-    }
-    read_bundle(bundle)
+    Ok(paths)
 }
 
 #[cfg(test)]
@@ -232,7 +250,7 @@ mod tests {
         let dir = scratch("layout");
         let (still, movie) = pair(&dir);
         let bundle = dir.join("out").join("IMG_1_iso.pvt");
-        let paths = write_bundle_with(&still, &movie, &bundle, |_, _| true).unwrap();
+        let paths = write_bundle_with(&still, &movie, &bundle, |_, _| true, |_| {}).unwrap();
         assert_eq!(paths.still, bundle.join("IMG_1_iso.heic"));
         assert_eq!(paths.movie, bundle.join("IMG_1_iso.mov"));
         assert_eq!(fs::read(&paths.still).unwrap(), b"still-bytes");
@@ -256,8 +274,8 @@ mod tests {
         let dir = scratch("mismatch");
         let (still, movie) = pair(&dir);
         let bundle = dir.join("IMG_1_iso.pvt");
-        write_bundle_with(&still, &movie, &bundle, |_, _| true).unwrap();
-        let err = write_bundle_with(&still, &movie, &bundle, |_, _| false).unwrap_err();
+        write_bundle_with(&still, &movie, &bundle, |_, _| true, |_| {}).unwrap();
+        let err = write_bundle_with(&still, &movie, &bundle, |_, _| false, |_| {}).unwrap_err();
         assert!(err.contains("content identifiers"), "{err}");
         assert!(read_bundle(&bundle).is_ok());
         // The real validator rejects bytes without content identifiers.
@@ -273,7 +291,7 @@ mod tests {
         let bundle = dir.join("IMG_1_iso.pvt");
         fs::create_dir_all(&bundle).unwrap();
         fs::write(bundle.join("stale.mov"), b"old").unwrap();
-        write_bundle_with(&still, &movie, &bundle, |_, _| true).unwrap();
+        write_bundle_with(&still, &movie, &bundle, |_, _| true, |_| {}).unwrap();
         assert!(!bundle.join("stale.mov").exists());
         assert!(read_bundle(&bundle).is_ok());
         let leftovers: Vec<_> = fs::read_dir(&dir)
@@ -289,21 +307,140 @@ mod tests {
     fn rejects_bad_targets_and_sources() {
         let dir = scratch("targets");
         let (still, movie) = pair(&dir);
-        assert!(write_bundle_with(&still, &movie, &dir.join("x.zip"), |_, _| true).is_err());
-        assert!(write_bundle_with(&still, &movie, &dir.join(".pvt"), |_, _| true).is_err());
-        assert!(write_bundle_with(&movie, &movie, &dir.join("x.pvt"), |_, _| true).is_err());
+        assert!(
+            write_bundle_with(&still, &movie, &dir.join("x.zip"), |_, _| true, |_| {}).is_err()
+        );
+        assert!(write_bundle_with(&still, &movie, &dir.join(".pvt"), |_, _| true, |_| {}).is_err());
+        assert!(
+            write_bundle_with(&movie, &movie, &dir.join("x.pvt"), |_, _| true, |_| {}).is_err()
+        );
         let bundle = dir.join("IMG_1_iso.pvt");
-        let paths = write_bundle_with(&still, &movie, &bundle, |_, _| true).unwrap();
-        let err = write_bundle_with(&paths.still, &paths.movie, &bundle, |_, _| true).unwrap_err();
+        let paths = write_bundle_with(&still, &movie, &bundle, |_, _| true, |_| {}).unwrap();
+        let err = write_bundle_with(&paths.still, &paths.movie, &bundle, |_, _| true, |_| {})
+            .unwrap_err();
         assert!(err.contains("inside"), "{err}");
         fs::write(dir.join("empty.mov"), b"").unwrap();
         assert!(write_bundle_with(
             &still,
             &dir.join("empty.mov"),
             &dir.join("e.pvt"),
-            |_, _| true
+            |_, _| true,
+            |_| {}
         )
         .is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A real pair (see `live_photo::pair_fixture`) written as source files.
+    fn real_pair(dir: &Path, content_id: &str) -> (PathBuf, PathBuf, Vec<u8>, Vec<u8>) {
+        let (still_bytes, movie_bytes) = crate::live_photo::pair_fixture::pair(content_id);
+        let still = dir.join("IMG_1_iso.heic");
+        let movie = dir.join("IMG_1_iso.mov");
+        fs::write(&still, &still_bytes).unwrap();
+        fs::write(&movie, &movie_bytes).unwrap();
+        (still, movie, still_bytes, movie_bytes)
+    }
+
+    fn hidden_entries(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with('.'))
+            .collect()
+    }
+
+    #[test]
+    fn real_pair_is_bundled_and_verified() {
+        let dir = scratch("verified");
+        let content_id = crate::live_photo::pair_fixture::CONTENT_ID;
+        let (still, movie, still_bytes, movie_bytes) = real_pair(&dir, content_id);
+        let bundle = dir.join("out").join("IMG_1_iso.pvt");
+        let paths = write_bundle(&still, &movie, &bundle).unwrap();
+        assert!(bundle_is_valid(&bundle));
+        assert_eq!(fs::read(&paths.still).unwrap(), still_bytes);
+        assert_eq!(fs::read(&paths.movie).unwrap(), movie_bytes);
+        assert_eq!(fs::read_dir(dir.join("out")).unwrap().count(), 1);
+        // Sources untouched.
+        assert_eq!(fs::read(&still).unwrap(), still_bytes);
+        assert_eq!(fs::read(&movie).unwrap(), movie_bytes);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn damaged_bundle_is_removed_and_the_previous_one_restored() {
+        let dir = scratch("damaged");
+        let (still, movie, still_bytes, movie_bytes) =
+            real_pair(&dir, "0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9");
+        let bundle = dir.join("IMG_1_iso.pvt");
+        write_bundle(&still, &movie, &bundle).unwrap();
+        let previous = fs::read(bundle.join("IMG_1_iso.mov")).unwrap();
+
+        let (still, movie, still_bytes2, movie_bytes2) =
+            real_pair(&dir, crate::live_photo::pair_fixture::CONTENT_ID);
+        assert_ne!(
+            (still_bytes, movie_bytes),
+            (still_bytes2.clone(), movie_bytes2.clone())
+        );
+        // The MOV in the new bundle is damaged after it was moved into place.
+        let err = write_bundle_with(
+            &still,
+            &movie,
+            &bundle,
+            live_photo::existing_pair_is_valid,
+            |b| {
+                let mov = b.join("IMG_1_iso.mov");
+                let bytes = fs::read(&mov).unwrap();
+                fs::write(&mov, &bytes[..bytes.len() / 2]).unwrap();
+            },
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("Live Photo bundle failed verification"),
+            "{err}"
+        );
+        assert!(
+            err.ends_with(
+                "rolled back: removed IMG_1_iso.pvt; restored the previous IMG_1_iso.pvt"
+            ),
+            "{err}"
+        );
+        assert!(bundle_is_valid(&bundle), "earlier bundle is back");
+        assert_eq!(fs::read(bundle.join("IMG_1_iso.mov")).unwrap(), previous);
+        assert!(
+            hidden_entries(&dir).is_empty(),
+            "{:?}",
+            hidden_entries(&dir)
+        );
+        // Sources untouched.
+        assert_eq!(fs::read(&still).unwrap(), still_bytes2);
+        assert_eq!(fs::read(&movie).unwrap(), movie_bytes2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn failed_verification_without_an_earlier_bundle_leaves_nothing() {
+        let dir = scratch("nothing_left");
+        let (still, movie, _, _) = real_pair(&dir, crate::live_photo::pair_fixture::CONTENT_ID);
+        let bundle = dir.join("out").join("IMG_1_iso.pvt");
+        // A stray file shows up in the new bundle, so it no longer holds
+        // exactly one still and one MOV.
+        let err = write_bundle_with(
+            &still,
+            &movie,
+            &bundle,
+            live_photo::existing_pair_is_valid,
+            |b| {
+                fs::write(b.join("IMG_2.heic"), b"stray").unwrap();
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("one still and one MOV"), "{err}");
+        assert!(err.ends_with("rolled back: removed IMG_1_iso.pvt"), "{err}");
+        assert_eq!(
+            fs::read_dir(dir.join("out")).unwrap().count(),
+            0,
+            "no bundle, no staging"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

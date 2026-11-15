@@ -66,6 +66,11 @@ public protocol MotionPhotoBackend: Sendable {
     /// original Motion Photo (`source`) and the converted still (`still`).
     func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles
     func livePhotoPairIsValid(still: String, video: String) async throws -> Bool
+    /// Copies a composed pair to `toStill` + `toVideo`, replacing files there.
+    /// Returns only after the copies were read back and checked as a pair;
+    /// on failure it has removed what it wrote, restored what it replaced,
+    /// and throws.
+    func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String) async throws
     /// Splits the Motion Photo's embedded video(s) into `outputDirectory`.
     func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String]
 }
@@ -295,17 +300,23 @@ public struct ConversionJob: Sendable {
         try fileSystem.createDirectory(published.deletingLastPathComponent())
         if !config.skipExisting {
             published = OutputPlanner.uniqueURL(published, exists: fileSystem.fileExists)
-        } else if fileSystem.fileExists(published) {
-            try fileSystem.removeItem(published)
         }
-        try fileSystem.moveItem(from: still, to: published)
 
         var publishedVideo: URL?
-        if let pairedVideo {
+        if let pairedVideo, let motion = backend as? MotionPhotoBackend {
+            // The core copies the pair into place and reads it back before
+            // returning; a failed check leaves the output folder as it was.
             let target = published.deletingPathExtension().appendingPathExtension("mov")
-            if fileSystem.fileExists(target) { try fileSystem.removeItem(target) }
-            try fileSystem.moveItem(from: pairedVideo, to: target)
+            do {
+                try await motion.publishLivePhotoPair(still: still.path, video: pairedVideo.path,
+                                                      toStill: published.path, toVideo: target.path)
+            } catch {
+                throw ConversionJobError.livePhotoFailed(String(describing: error))
+            }
             publishedVideo = target
+        } else {
+            if fileSystem.fileExists(published) { try fileSystem.removeItem(published) }
+            try fileSystem.moveItem(from: still, to: published)
         }
         var publishedExtras: [URL] = []
         for clip in extraVideos {

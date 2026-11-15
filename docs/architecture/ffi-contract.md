@@ -91,8 +91,12 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 | `xdremux_attach_styles` / `xdremux_attach_style_layers` | 给非 OPPO 照片补风格项；`flags` 位 0 = 2023 styles、位 1 = 纹理/颗粒、位 2 = 12 个语义 matte（华为人像 remux 后调用，免二次编码） |
 | `xdremux_style_experiment` | 研究用：替换 styleMetadata 载荷（打过补丁的 bplist） |
 | `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
+| `xdremux_make_live_photo` | 由动态照片源 + 已转换静帧合成 Live Photo，写出 `<out_dir>/<源 stem>.heic` + `.mov` |
+| `xdremux_publish_live_photo_pair` | 把已合成的 HEIC+MOV 复制到指定的最终路径（覆盖已有文件），Flutter 平铺输出与原生 Apple 前端发布时调用 |
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid` | 把已配对的 HEIC+MOV 打成 `.pvt` 包 / 校验 `.pvt` 包（见 `docs/formats/live-photo-pvt.md`） |
+
+上面三个写出 Live Photo 的函数（`make_live_photo`、`publish_live_photo_pair`、`make_live_photo_bundle`）都先写到隐藏的新文件或目录，再 rename 到最终位置，然后从最终位置回读：配对谓词 `existing_pair_is_valid` 必须成立，内容必须与写入的逐字节相同（`.pvt` 另查结构和 `metadata.plist`）。通过后才返回 `success: true`；任一步失败就删掉本次写出的文件、把被替换的文件改回原名，`errorMessage` 写明失败原因和回滚结果（`rolled back: …` 或 `rollback incomplete: …`）。输入文件始终只读。实现见 `xdremux/rust/src/live_photo_publish.rs`。
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 | `xdremux_inject_texture_styles` / `xdremux_inject_semantic_mattes` | 摄影风格 3 后处理：在已转换 HEIC 上追加 texture_styles 项与 12 个语义 matte 占位（Dart / Swift 前端在校验通过后按顺序调用） |

@@ -13,6 +13,7 @@ pub mod exif;
 pub mod live_photo;
 pub mod live_photo_styles;
 pub mod live_photo_bundle;
+mod live_photo_publish;
 pub mod motion_photo;
 pub mod photo_details;
 pub mod uhdr_jpeg;
@@ -286,6 +287,9 @@ pub extern "C" fn xdremux_motion_photo_split(
 /// read from the source; the high-quality primary stream is used for
 /// dual-stream files). Writes `<stem>.heic` and `<stem>.mov` into out_dir.
 /// Returns a JSON report with the paths and the shared content identifier.
+/// Success is reported only after both files were read back and verified as
+/// a pair; on failure the files this call wrote are removed (replaced ones
+/// restored) and `errorMessage` says so. The source and still are not written.
 #[no_mangle]
 pub extern "C" fn xdremux_make_live_photo(
     source_path: *const c_char,
@@ -340,9 +344,12 @@ pub extern "C" fn xdremux_make_live_photo(
         {
             return Err("Live Photo output must not overwrite the source".into());
         }
-        std::fs::write(&still_out_path, &still_out)
-            .map_err(|e| format!("write still: {e}"))?;
-        std::fs::write(&mov_path, &mov).map_err(|e| format!("write movie: {e}"))?;
+        live_photo::publish_pair(
+            &still_out,
+            &mov,
+            std::path::Path::new(&still_out_path),
+            std::path::Path::new(&mov_path),
+        )?;
         Ok(serde_json::json!({
             "success": true,
             "stillPath": still_out_path,
@@ -473,10 +480,77 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
     }
 }
 
+/// Copy a composed Live Photo pair (`still_path` + `mov_path`, e.g. from
+/// `xdremux_make_live_photo` in a staging directory) to its final paths
+/// `out_still_path` + `out_mov_path`, replacing files already there. Success
+/// is reported only after both outputs were read back and verified as a pair
+/// identical to the inputs; on failure the outputs this call wrote are removed,
+/// replaced files are restored, and `errorMessage` says so. The inputs are not
+/// written. Returns a JSON report with the paths and the content identifier.
+#[no_mangle]
+pub extern "C" fn xdremux_publish_live_photo_pair(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+    out_still_path: *const c_char,
+    out_mov_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if still_path.is_null()
+            || mov_path.is_null()
+            || out_still_path.is_null()
+            || out_mov_path.is_null()
+        {
+            return Err("still/mov/output path is missing".into());
+        }
+        let read = |p: *const c_char, what: &str| -> Result<String, String> {
+            unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .map(str::to_string)
+                .map_err(|_| format!("{what} path is not valid UTF-8"))
+        };
+        let still_path = read(still_path, "still")?;
+        let mov_path = read(mov_path, "mov")?;
+        let out_still = read(out_still_path, "output still")?;
+        let out_mov = read(out_mov_path, "output mov")?;
+        for output in [&out_still, &out_mov] {
+            if paths_refer_to_same_file(&still_path, output)
+                || paths_refer_to_same_file(&mov_path, output)
+            {
+                return Err("Live Photo output must not overwrite its input".into());
+            }
+        }
+        let still = std::fs::read(&still_path).map_err(|e| format!("cannot read still: {e}"))?;
+        let mov = std::fs::read(&mov_path).map_err(|e| format!("cannot read movie: {e}"))?;
+        live_photo::publish_pair(
+            &still,
+            &mov,
+            std::path::Path::new(&out_still),
+            std::path::Path::new(&out_mov),
+        )?;
+        Ok(serde_json::json!({
+            "success": true,
+            "stillPath": out_still,
+            "videoPath": out_mov,
+            "contentIdentifier": live_photo::read_still_content_identifier(&still),
+        }))
+    })();
+    let payload = match result {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
+    };
+    match CString::new(payload.to_string()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Package a composed still HEIC + MOV pair into an Apple Live Photo bundle
 /// directory (`bundle_path`, must end with `.pvt`). The pair is verified
 /// first and copied byte-for-byte; an existing bundle of the same name is
-/// replaced. Returns a JSON report with the bundle and inner file paths.
+/// replaced. Success is reported only after the bundle in place was read back
+/// and verified; on failure the new bundle is removed, a replaced one is
+/// restored, and `errorMessage` says so. Returns a JSON report with the bundle
+/// and inner file paths.
 #[no_mangle]
 pub extern "C" fn xdremux_make_live_photo_bundle(
     still_path: *const c_char,

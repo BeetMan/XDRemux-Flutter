@@ -260,6 +260,35 @@ private final class Seen: @unchecked Sendable {
 }
 
 extension EngineSmokeTests {
+    /// A pair that fails the core's read-back check is rolled back: the still
+    /// it replaced comes back, no MOV is left, the inputs are untouched.
+    func testFailedLivePhotoPublicationRollsBack() async throws {
+        let staging = tempDir.appendingPathComponent("staging")
+        let out = tempDir.appendingPathComponent("out")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let still = staging.appendingPathComponent("IMG_1.heic")
+        let video = staging.appendingPathComponent("IMG_1.mov")
+        try Data("not a paired still".utf8).write(to: still)
+        try Data("not a paired movie".utf8).write(to: video)
+        let published = out.appendingPathComponent("IMG_1_iso.heic")
+        try Data("converted still".utf8).write(to: published)
+
+        do {
+            _ = try await XDRemuxEngine.shared.publishLivePhotoPairFiles(
+                still: still.path, video: video.path,
+                toStill: published.path, toVideo: out.appendingPathComponent("IMG_1_iso.mov").path)
+            XCTFail("expected the read-back check to fail")
+        } catch XDRemuxError.coreFailure(let message) {
+            XCTAssertTrue(message?.contains("failed verification") == true, message ?? "")
+            XCTAssertTrue(message?.hasSuffix("restored the previous IMG_1_iso.heic") == true, message ?? "")
+        }
+        XCTAssertEqual(try Data(contentsOf: published), Data("converted still".utf8))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: out.path), ["IMG_1_iso.heic"])
+        XCTAssertEqual(try Data(contentsOf: still), Data("not a paired still".utf8))
+        XCTAssertEqual(try Data(contentsOf: video), Data("not a paired movie".utf8))
+    }
+
     /// Opt-in: `XDREMUX_MOTION_SAMPLE_DIR` with OPPO Motion Photo JPEGs →
     /// inspect, convert as a Live Photo pair, validate the pair.
     func testLivePhotoPairEndToEndIfSampleProvided() async throws {

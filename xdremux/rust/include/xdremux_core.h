@@ -143,6 +143,9 @@ char *xdremux_motion_photo_split(const char *path,
  * read from the source; the high-quality primary stream is used for
  * dual-stream files). Writes `<stem>.heic` and `<stem>.mov` into out_dir.
  * Returns a JSON report with the paths and the shared content identifier.
+ * Success is reported only after both files were read back and verified as
+ * a pair; on failure the files this call wrote are removed (replaced ones
+ * restored) and `errorMessage` says so. The source and still are not written.
  */
 char *xdremux_make_live_photo(const char *source_path,
                               const char *still_path,
@@ -174,10 +177,27 @@ uint8_t xdremux_live_photo_pair_valid(const char *still_path,
                                       const char *mov_path);
 
 /**
+ * Copy a composed Live Photo pair (`still_path` + `mov_path`, e.g. from
+ * `xdremux_make_live_photo` in a staging directory) to its final paths
+ * `out_still_path` + `out_mov_path`, replacing files already there. Success
+ * is reported only after both outputs were read back and verified as a pair
+ * identical to the inputs; on failure the outputs this call wrote are removed,
+ * replaced files are restored, and `errorMessage` says so. The inputs are not
+ * written. Returns a JSON report with the paths and the content identifier.
+ */
+char *xdremux_publish_live_photo_pair(const char *still_path,
+                                      const char *mov_path,
+                                      const char *out_still_path,
+                                      const char *out_mov_path);
+
+/**
  * Package a composed still HEIC + MOV pair into an Apple Live Photo bundle
  * directory (`bundle_path`, must end with `.pvt`). The pair is verified
  * first and copied byte-for-byte; an existing bundle of the same name is
- * replaced. Returns a JSON report with the bundle and inner file paths.
+ * replaced. Success is reported only after the bundle in place was read back
+ * and verified; on failure the new bundle is removed, a replaced one is
+ * restored, and `errorMessage` says so. Returns a JSON report with the bundle
+ * and inner file paths.
  */
 char *xdremux_make_live_photo_bundle(const char *still_path,
                                      const char *mov_path,

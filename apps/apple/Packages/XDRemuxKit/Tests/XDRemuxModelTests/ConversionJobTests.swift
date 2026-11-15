@@ -376,6 +376,8 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
     let fs: FakeFS
     var isMotion = true
     var pairValid = true
+    /// Simulates the core's verified copy failing (it has already rolled back).
+    var publishFails = false
 
     func convert(input: String, output: String, config: RustConvertConfig,
                  progress: @escaping @Sendable (Double) -> Void) async throws -> ConversionOutcome {
@@ -393,6 +395,14 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
         return LivePhotoFiles(stillPath: s, videoPath: v, contentIdentifier: "ABC")
     }
     func livePhotoPairIsValid(still: String, video: String) async throws -> Bool { pairValid }
+    func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String) async throws {
+        if publishFails { throw CocoaError(.fileWriteUnknown) }
+        try fs.lock.withLock {
+            guard fs.files.contains(still), fs.files.contains(video) else { throw CocoaError(.fileNoSuchFile) }
+            fs.files.insert(toStill); fs.files.insert(toVideo)
+            fs.log.append("publish \(toStill) \(toVideo)")
+        }
+    }
     func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
         let v = "\(outputDirectory)/x.video.mp4", p = "\(outputDirectory)/x.primary.mp4"
         fs.lock.withLock { fs.files.insert(v); fs.files.insert(p) }
@@ -425,6 +435,19 @@ final class MotionPhotoJobTests: XCTestCase {
             if case .livePhotoFailed = e {} else { XCTFail("\(e)") }
         } catch { XCTFail("\(error)") }
         XCTAssertTrue(fs.files.isEmpty, "\(fs.files)")
+    }
+
+    func testFailedPairPublicationLeavesOutputFolderEmpty() async {
+        let fs = FakeFS()
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs, publishFails: true), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        do {
+            _ = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+            XCTFail("expected failure")
+        } catch let e as ConversionJobError {
+            if case .livePhotoFailed = e {} else { XCTFail("\(e)") }
+        } catch { XCTFail("\(error)") }
+        XCTAssertTrue(fs.files.isEmpty, "the job itself moves nothing into /out: \(fs.files)")
+        XCTAssertFalse(fs.log.contains { $0.hasPrefix("mv ") }, "\(fs.log)")
     }
 
     func testStillOnlyIgnoresVideo() async throws {

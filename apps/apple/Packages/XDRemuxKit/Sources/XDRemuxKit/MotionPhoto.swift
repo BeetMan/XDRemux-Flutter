@@ -69,6 +69,28 @@ extension XDRemuxEngine {
         return LivePhotoFiles(stillPath: stillPath, videoPath: videoPath, contentIdentifier: report.contentIdentifier)
     }
 
+    /// `xdremux_publish_live_photo_pair`: copies a composed pair to `toStill` +
+    /// `toVideo`. The core reads the copies back and checks the pair before
+    /// reporting success; on failure it removes what it wrote and restores
+    /// what it replaced.
+    public func publishLivePhotoPairFiles(still: String, video: String, toStill: String, toVideo: String) async throws -> LivePhotoFiles {
+        let report: LivePhotoReport = try await runOnQueue {
+            try withCPath(still) { s in
+                try withCPath(video) { v in
+                    try withCPath(toStill) { o in
+                        try withCPath(toVideo) { m in
+                            try JSONReport(consuming: RustString(taking: xdremux_publish_live_photo_pair(s, v, o, m)))
+                        }
+                    }
+                }
+            }
+        }.decode()
+        guard report.success, let stillPath = report.stillPath, let videoPath = report.videoPath else {
+            throw XDRemuxError.coreFailure(message: report.errorMessage)
+        }
+        return LivePhotoFiles(stillPath: stillPath, videoPath: videoPath, contentIdentifier: report.contentIdentifier)
+    }
+
     /// `xdremux_live_photo_pair_valid`.
     public func livePhotoPairValid(still: String, video: String) async throws -> Bool {
         try await runOnQueue {
@@ -111,6 +133,10 @@ extension XDRemuxEngine: MotionPhotoBackend {
 
     public func livePhotoPairIsValid(still: String, video: String) async throws -> Bool {
         try await livePhotoPairValid(still: still, video: video)
+    }
+
+    public func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String) async throws {
+        _ = try await publishLivePhotoPairFiles(still: still, video: video, toStill: toStill, toVideo: toVideo)
     }
 
     public func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
