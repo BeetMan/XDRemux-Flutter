@@ -80,6 +80,7 @@
 | [styles-upstream-20261024-gap.md](research/styles-upstream-20261024-gap.md) | 上游 Styles 分支 vs 我方差距（2026-10-25，含差距矩阵与 P0 建议） |
 | [x265-main10-feasibility-20261025.md](research/x265-main10-feasibility-20261025.md) | x265 Main10（10-bit）可行性：multilib 构建/链接配方、单帧 Rext 坑、接入风险 |
 | [gainmap-decode-feasibility-20261025.md](research/gainmap-decode-feasibility-20261025.md) | tmap 增益图解码可行性：item 布局实测、rust_h265 仅支持 4:2:0、三条可行路径 |
+| [ohos-hw-hevc-20261115.md](research/ohos-hw-hevc-20261115.md) | 鸿蒙硬件 HEVC 编码可行性：x265 NEON 实测（输出逐字节相同，快 1.4–2.3 倍）、AVCodec 能力对照、真机阶段 0 计划 |
 | [cast-to-key1-study.md](research/cast-to-key1-study.md) | cast→key1 映射研究（结论：不存在文件级映射） |
 | [reverse-key1-eval-20260825.md](research/reverse-key1-eval-20260825.md) | ReverseKey1 Core ML 批量评估（34 样本） |
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
