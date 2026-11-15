@@ -122,10 +122,15 @@ import { convertHuaweiPortrait, hasNativeHuaweiStyleGraft, livePhotoStylesCompat
   mergeHuaweiInspection, verifyStillExtraction } from '../queue/HuaweiPhotoModel';
 import { HarmonyGalleryLibrary } from '../gallery/HarmonyGalleryLibrary';
 import {
+  GALLERY_LIBRARY_DIRECTORY,
   galleryMimeTypeForExtension,
   galleryItemPath
 } from '../gallery/GalleryLibraryModel';
 import type { GalleryLibraryItem } from '../gallery/GalleryLibraryModel';
+import { GalleryThumbnailStore, decodeGalleryPixelMap } from '../gallery/GalleryThumbnailStore';
+import type { GalleryDecodedImage, GalleryThumbnailInfo } from '../gallery/GalleryThumbnailStore';
+import { galleryLongEdgeDecodeSize } from '../gallery/GalleryThumbnailModel';
+import type { GallerySize, GalleryThumbnailSource } from '../gallery/GalleryThumbnailModel';
 
 interface NativeError {
   message?: string;
@@ -351,6 +356,13 @@ struct Index {
   // with a lazy grid most sizes arrive while detail pages are already shown,
   // so the frame-size builders read this to re-layout.
   @State private galleryDimensionsVersion: number = 0;
+  // Grid thumbnails live on disk (GalleryThumbnailStore); this is bumped when
+  // one becomes ready for a built tile, or when a tile must fall back to its
+  // original.
+  @State private galleryThumbnailVersion: number = 0;
+  private galleryThumbnails: GalleryThumbnailStore | undefined = undefined;
+  /** Grid tiles that are built: on screen or in the preload rows. */
+  private readonly galleryGridLiveIds: Set<string> = new Set<string>();
   private readonly galleryThumbnailPixelMapCache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
   private readonly galleryHeroPreviewDecodeFailedIds: Set<string> = new Set<string>();
   private readonly galleryDetailDecodedImageIds: Set<string> = new Set<string>();
@@ -450,6 +462,7 @@ struct Index {
     // silently after a foreground transition.
     this.pageVisible = true;
     this.transferAppVisible = true;
+    this.galleryThumbnails?.setPaused(false);
     this.ensureGalleryStatusBarVisible();
     this.attachShareInbox();
     this.attachQueueSession();
@@ -460,6 +473,7 @@ struct Index {
   onPageHide(): void {
     this.pageVisible = false;
     this.transferAppVisible = false;
+    this.galleryThumbnails?.setPaused(true);
     // A system picker temporarily hides the page. Its onPageHide callback is
     // not a user stop. Once the picker has returned, leaving the page stops
     // only later batch exports; the current FD copy is allowed to settle.
@@ -478,6 +492,7 @@ struct Index {
     this.clearGalleryPhotoHeaderRefreshTimer();
     this.ensureGalleryStatusBarVisible();
     this.releaseGallerySdrPreview();
+    this.galleryThumbnails?.dispose();
     // Page teardown is a real departure, unlike the temporary hide caused by
     // the system picker. Finish the current copy and stop later batch items.
     if (this.batchExportRunning) {
@@ -3087,22 +3102,12 @@ struct Index {
     // One decode at a time; a press during it is served when it finishes.
     if (this.gallerySdrCompareLoading) return;
     this.gallerySdrCompareLoading = true;
-    let imageSource: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
-      imageSource = image.createImageSource('file://' + this.gallerySandboxPath);
-      const info: image.ImageInfo = await imageSource.getImageInfo();
-      const longEdge: number = Math.max(info.size.width, info.size.height);
-      if (longEdge <= 0) throw new Error('无法读取照片尺寸');
-      const scale: number = Math.min(1, GALLERY_HERO_PREVIEW_MAX_EDGE / longEdge);
-      pixelMap = await imageSource.createPixelMap({
-        desiredSize: {
-          width: Math.max(1, Math.round(info.size.width * scale)),
-          height: Math.max(1, Math.round(info.size.height * scale))
-        },
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-        desiredDynamicRange: image.DecodingDynamicRange.SDR
-      });
+      const decoded: GalleryDecodedImage = await decodeGalleryPixelMap(this.gallerySandboxPath,
+        (width: number, height: number): GallerySize =>
+          galleryLongEdgeDecodeSize(width, height, GALLERY_HERO_PREVIEW_MAX_EDGE));
+      pixelMap = decoded.pixelMap;
       if (itemId !== this.galleryCurrentItem?.id) return;
       this.setGallerySdrPreview(itemId, pixelMap, true);
       pixelMap = undefined;
@@ -3112,13 +3117,6 @@ struct Index {
         this.galleryStatus = 'SDR 对比加载失败：' + this.errorMessage(error);
       }
     } finally {
-      if (imageSource !== undefined) {
-        try {
-          await imageSource.release();
-        } catch (releaseError) {
-          // The PixelMap is independent after decoding; source release is best effort.
-        }
-      }
       if (pixelMap !== undefined) {
         try {
           await pixelMap.release();
@@ -3449,6 +3447,8 @@ struct Index {
         path: this.galleryLibrary?.pathFor(item) ?? galleryItemPath(context.filesDir + '/xdremux-gallery', item)
       }));
       this.galleryLoadedPreviewIds = [];
+      // Before the first grid frame, so built tiles start from their thumbnails.
+      await this.loadGalleryThumbnails(context.filesDir + '/' + GALLERY_LIBRARY_DIRECTORY);
       this.gallerySwiperDataSource.replaceAll(this.galleryPhotos);
       this.galleryMediaCount = items.length;
       this.galleryLibraryReady = true;
@@ -3466,6 +3466,87 @@ struct Index {
     } finally {
       this.galleryLoading = false;
     }
+  }
+
+  /**
+   * Index the grid thumbnails. Without them (the folder cannot be used) the
+   * grid falls back to decoding originals, as before.
+   */
+  private async loadGalleryThumbnails(galleryRoot: string): Promise<void> {
+    if (this.galleryThumbnails === undefined) {
+      const created: GalleryThumbnailStore = new GalleryThumbnailStore(galleryRoot);
+      created.setListener((itemId: string, info: GalleryThumbnailInfo | undefined): void => {
+        this.onGalleryThumbnailSettled(itemId, info);
+      });
+      created.setPaused(!this.pageVisible);
+      this.galleryThumbnails = created;
+    }
+    const store: GalleryThumbnailStore = this.galleryThumbnails;
+    try {
+      await store.load(this.galleryPhotos.map((tile: GalleryPhotoTile): GalleryThumbnailSource => {
+        const source: GalleryThumbnailSource = { id: tile.item.id, path: tile.path };
+        return source;
+      }));
+    } catch (error) {
+      store.dispose();
+      if (this.galleryThumbnails === store) this.galleryThumbnails = undefined;
+      this.galleryThumbnailVersion += 1;
+      return;
+    }
+    // Thumbnail names carry each photo's displayed size, so detail frames
+    // have their aspect ratio before any original is decoded.
+    let sizesAdded: boolean = false;
+    store.forEachKnown((itemId: string, info: GalleryThumbnailInfo): void => {
+      if (this.galleryDecodedDimensionsCache.has(itemId)) return;
+      this.galleryDecodedDimensionsCache.set(itemId, [info.width, info.height]);
+      sizesAdded = true;
+    });
+    if (sizesAdded) this.galleryDimensionsVersion += 1;
+    this.galleryThumbnailVersion += 1;
+    // Let the first screen settle, then fill in the rest of the library.
+    const ids: Array<string> = this.galleryPhotos.map((tile: GalleryPhotoTile): string => tile.item.id);
+    setTimeout((): void => {
+      if (this.galleryThumbnails === store) store.startBackground(ids);
+    }, 1500);
+  }
+
+  private onGalleryThumbnailSettled(itemId: string, info: GalleryThumbnailInfo | undefined): void {
+    if (info !== undefined && !this.galleryDecodedDimensionsCache.has(itemId)) {
+      this.cacheGalleryDecodedDimensions(itemId, info.width, info.height);
+    }
+    // Unbuilt tiles read the store when they are built; only live ones need a refresh.
+    if (!this.galleryGridLiveIds.has(itemId)) return;
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, () => {
+      this.galleryThumbnailVersion += 1;
+    });
+  }
+
+  /** The tile's thumbnail file, or '' while it is being made or when there is none. */
+  private galleryGridThumbnailPath(itemId: string): string {
+    // Reading the version ties grid tiles to thumbnail updates.
+    if (this.galleryThumbnailVersion < 0) return '';
+    return this.galleryThumbnails?.lookup(itemId)?.path ?? '';
+  }
+
+  /** No thumbnail can be made for this photo (or thumbnails are off): show the original. */
+  private galleryGridShowsOriginal(itemId: string): boolean {
+    if (this.galleryThumbnailVersion < 0) return false;
+    return this.galleryThumbnails === undefined || this.galleryThumbnails.hasFailed(itemId);
+  }
+
+  private onGalleryGridTileAppear(tile: GalleryPhotoTile): void {
+    this.galleryGridLiveIds.add(tile.item.id);
+    this.galleryThumbnails?.request(tile.item.id, tile.path);
+  }
+
+  private onGalleryGridTileDisappear(itemId: string): void {
+    this.galleryGridLiveIds.delete(itemId);
+    this.galleryThumbnails?.cancel(itemId);
+  }
+
+  private onGalleryGridThumbnailError(itemId: string): void {
+    this.galleryThumbnails?.invalidate(itemId);
+    this.galleryThumbnailVersion += 1;
   }
 
   private async importGalleryPhotos(): Promise<void> {
@@ -3941,29 +4022,16 @@ struct Index {
   }
 
   private async decodeGalleryHeroPreview(tile: GalleryPhotoTile, selectionSerial: number): Promise<void> {
-    let imageSource: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
-      imageSource = image.createImageSource('file://' + tile.path);
-      let sourceWidth: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0;
-      let sourceHeight: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0;
-      if (sourceWidth <= 0 || sourceHeight <= 0) {
-        const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
-        sourceWidth = imageInfo.size.width;
-        sourceHeight = imageInfo.size.height;
+      // Upright by EXIF, like the AUTO-oriented Image that replaces it.
+      const decoded: GalleryDecodedImage = await decodeGalleryPixelMap(tile.path,
+        (width: number, height: number): GallerySize =>
+          galleryLongEdgeDecodeSize(width, height, GALLERY_HERO_PREVIEW_MAX_EDGE));
+      pixelMap = decoded.pixelMap;
+      if (!this.galleryDecodedDimensionsCache.has(tile.item.id)) {
+        this.cacheGalleryDecodedDimensions(tile.item.id, decoded.width, decoded.height);
       }
-      if (sourceWidth <= 0 || sourceHeight <= 0) throw new Error('无法读取照片尺寸');
-      const previewScale: number = Math.min(1, GALLERY_HERO_PREVIEW_MAX_EDGE /
-        Math.max(sourceWidth, sourceHeight));
-      pixelMap = await imageSource.createPixelMap({
-        desiredSize: {
-          width: Math.max(1, Math.round(sourceWidth * previewScale)),
-          height: Math.max(1, Math.round(sourceHeight * previewScale))
-        },
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-        desiredDynamicRange: image.DecodingDynamicRange.SDR
-      });
-      if (pixelMap === undefined) throw new Error('无法生成高分辨率预览');
       if (selectionSerial !== this.gallerySelectionSerial || this.galleryCurrentItem?.id !== tile.item.id) return;
       const previousPixelMap: image.PixelMap | undefined = this.galleryHeroPreviewPixelMap;
       this.galleryHeroPreviewItemId = tile.item.id;
@@ -3988,13 +4056,6 @@ struct Index {
         this.tryStartGalleryHeroTransition(tile.item.id);
       }
     } finally {
-      if (imageSource !== undefined) {
-        try {
-          await imageSource.release();
-        } catch (releaseError) {
-          // A decoded hero preview no longer depends on its image source.
-        }
-      }
       if (pixelMap !== undefined) {
         try {
           await pixelMap.release();
@@ -4021,30 +4082,14 @@ struct Index {
     if (this.galleryThumbnailPixelMapCache.has(tile.item.id) ||
       this.galleryThumbnailDecodeInFlight.has(tile.item.id)) return;
     this.galleryThumbnailDecodeInFlight.add(tile.item.id);
-    let imageSource: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
-      imageSource = image.createImageSource('file://' + tile.path);
-      let sourceWidth: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[0] ?? 0;
-      let sourceHeight: number = this.galleryDecodedDimensionsCache.get(tile.item.id)?.[1] ?? 0;
-      if (sourceWidth <= 0 || sourceHeight <= 0) {
-        const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
-        sourceWidth = imageInfo.size.width;
-        sourceHeight = imageInfo.size.height;
-      }
-      if (sourceWidth <= 0 || sourceHeight <= 0) throw new Error('无法读取照片尺寸');
-      const previewScale: number = Math.min(1,
-        Math.max(GALLERY_THUMBNAIL_DECODE_WIDTH, GALLERY_THUMBNAIL_DECODE_HEIGHT) /
-        Math.max(sourceWidth, sourceHeight));
-      pixelMap = await imageSource.createPixelMap({
-        desiredSize: {
-          width: Math.max(1, Math.round(sourceWidth * previewScale)),
-          height: Math.max(1, Math.round(sourceHeight * previewScale))
-        },
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-        desiredDynamicRange: image.DecodingDynamicRange.SDR
-      });
-      if (pixelMap === undefined) throw new Error('无法生成缩略图');
+      // The grid thumbnail (small, already upright) when there is one, else the original.
+      const gridThumbnail: GalleryThumbnailInfo | undefined = this.galleryThumbnails?.lookup(tile.item.id);
+      const decoded: GalleryDecodedImage = await decodeGalleryPixelMap(gridThumbnail?.path ?? tile.path,
+        (width: number, height: number): GallerySize => galleryLongEdgeDecodeSize(width, height,
+          Math.max(GALLERY_THUMBNAIL_DECODE_WIDTH, GALLERY_THUMBNAIL_DECODE_HEIGHT)));
+      pixelMap = decoded.pixelMap;
       if (!this.galleryPhotos.some((currentTile: GalleryPhotoTile): boolean =>
         currentTile.item.id === tile.item.id)) return;
       this.cacheGalleryThumbnail(tile.item.id, pixelMap);
@@ -4066,13 +4111,6 @@ struct Index {
       }
       this.tryStartGalleryHeroTransition(tile.item.id);
     } finally {
-      if (imageSource !== undefined) {
-        try {
-          await imageSource.release();
-        } catch (releaseError) {
-          // Decoded thumbnails are independent of their source.
-        }
-      }
       if (pixelMap !== undefined) {
         try {
           await pixelMap.release();
@@ -5184,6 +5222,7 @@ struct Index {
       const remainingPhotos: Array<GalleryPhotoTile> = this.galleryPhotos.filter(
         (photo: GalleryPhotoTile): boolean => photo.item.id !== itemId
       );
+      void this.galleryThumbnails?.remove(itemId);
       const oldThumbnail: image.PixelMap | undefined = this.galleryThumbnailPixelMapCache.get(itemId);
       this.galleryThumbnailPixelMapCache.delete(itemId);
       this.galleryCachedThumbnailIds = this.galleryCachedThumbnailIds.filter(
@@ -5380,30 +5419,50 @@ struct Index {
             LazyForEach(this.gallerySwiperDataSource, (tile: GalleryPhotoTile) => {
               GridItem() {
                 Stack() {
-                  if (!this.galleryPreviewIsLoaded(tile.item.id)) {
-                    Stack({ alignContent: Alignment.Center }) {
-                      SymbolGlyph($r('sys.symbol.picture'))
-                        .fontSize(20)
-                        .fontColor(['#55FFFFFF']);
+                  if (this.galleryGridThumbnailPath(tile.item.id).length > 0) {
+                    // A small upright JPEG, decoded synchronously: a tile rebuilt
+                    // while scrolling shows its photo in the same frame instead
+                    // of an empty cell. SDR, like the frame the detail opens
+                    // from, so the shared-element transition matches.
+                    Image('file://' + this.galleryGridThumbnailPath(tile.item.id))
+                      .width('100%')
+                      .height('100%')
+                      .objectFit(ImageFit.Cover)
+                      .autoResize(true)
+                      .syncLoad(true)
+                      .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                      // Fades in only when it arrives for a built tile (in animateTo).
+                      .transition(TransitionEffect.OPACITY)
+                      .onError((): void => {
+                        this.onGalleryGridThumbnailError(tile.item.id);
+                      });
+                  } else {
+                    if (!this.galleryGridShowsOriginal(tile.item.id) || !this.galleryPreviewIsLoaded(tile.item.id)) {
+                      Stack({ alignContent: Alignment.Center }) {
+                        SymbolGlyph($r('sys.symbol.picture'))
+                          .fontSize(20)
+                          .fontColor(['#55FFFFFF']);
+                      }
+                      .width('100%')
+                      .height('100%')
+                      .backgroundColor('#181B20');
                     }
-                    .width('100%')
-                    .height('100%')
-                    .backgroundColor('#181B20');
+                    if (this.galleryGridShowsOriginal(tile.item.id)) {
+                      // No thumbnail could be made: decode the original as before.
+                      Image('file://' + tile.path)
+                        .width('100%')
+                        .height('100%')
+                        .orientation(ImageRotateOrientation.AUTO)
+                        .objectFit(ImageFit.Cover)
+                        .autoResize(true)
+                        .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
+                        .onComplete((event): void => {
+                          this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
+                            Number(event?.height ?? 0));
+                        });
+                    }
                   }
-                  Image('file://' + tile.path)
-                    .width('100%')
-                    .height('100%')
-                    .orientation(ImageRotateOrientation.AUTO)
-                    .objectFit(ImageFit.Cover)
-                    .autoResize(true)
-                    // Keep grid cells SDR so their shared-element source
-                    // matches the SDR frame used while opening the detail.
-                    .dynamicRangeMode(DynamicRangeMode.STANDARD)
-                    .opacity(this.galleryPreviewIsLoaded(tile.item.id) ? 1 : 0)
-                    .onComplete((event): void => {
-                      this.onGalleryPreviewDecoded(tile.item.id, Number(event?.width ?? 0),
-                        Number(event?.height ?? 0));
-                    });
                 }
                 .width('100%')
                 .aspectRatio(1)
@@ -5414,6 +5473,12 @@ struct Index {
                   ? this.galleryTransitionId(tile.item.id) : '', { follow: true })
                 .zIndex(tile.item.id === this.galleryCurrentItem?.id && this.galleryHeroTransitionActive ? 30 : 0)
                 .transition(TransitionEffect.IDENTITY)
+                .onAppear((): void => {
+                  this.onGalleryGridTileAppear(tile);
+                })
+                .onDisAppear((): void => {
+                  this.onGalleryGridTileDisappear(tile.item.id);
+                })
                 .onClick((): void => {
                   this.openGalleryTile(tile);
                 });
@@ -5424,7 +5489,10 @@ struct Index {
         .columnsTemplate('1fr 1fr 1fr')
         .columnsGap(4)
         .rowsGap(4)
-        .cachedCount(3)
+        // Rows built ahead of the viewport (above and below). Thumbnail
+        // tiles are cheap, so build enough that a normal fling lands on
+        // tiles that are already decoded.
+        .cachedCount(4)
         .padding({ left: 4, right: 4, bottom: 96 })
         .layoutWeight(1)
         .width('100%')
@@ -5819,6 +5887,9 @@ struct Index {
           })
           .backgroundColor(this.galleryDetailScrimColor())
           .borderRadius(26)
+          // Without clipping, the blur layer kept square corners that
+          // rendered black outside the 26vp radius.
+          .clip(true)
           .hitTestBehavior(HitTestMode.None);
       }
       Column() {
