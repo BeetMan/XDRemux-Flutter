@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var showOrganize = false
     @State private var showTransfer = false
     @State private var confirmClearFinished = false
+    @State private var confirmClearAll = false
     /// Regular width (iPad, unfolded phones): both columns up from the
     /// start. Left to its default the split view opens with the sidebar
     /// hidden on an unfolded phone, leaving a lone toolbar capsule.
@@ -188,6 +189,13 @@ struct ContentView: View {
         } message: {
             Text(clearFinishedMessage)
         }
+        .alert("清除全部？", isPresented: $confirmClearAll) {
+            Button("清除", role: .destructive) { model.clearAll() }
+            Button("取消", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+        } message: {
+            Text(clearAllMessage)
+        }
         // In-app language: Text keys resolve against this locale; model
         // strings go through L() (see L10n.swift). Last in the chain so the
         // sheets and alerts above inherit it too.
@@ -198,6 +206,16 @@ struct ContentView: View {
     /// their imported copies go; the outputs stay where they were written.
     private var clearFinishedMessage: String {
         var text = L("从列表移出 \(model.finishedCount) 张已转换的照片并删除导入的副本；输出文件保留。")
+        #if os(iOS)
+        let unsaved = model.unsavedProducts.count
+        if unsaved > 0 { text += " " + L("其中 \(unsaved) 张尚未存入照片。") }
+        #endif
+        return text
+    }
+
+    /// Everything leaves the list, converted or not; same rule for files.
+    private var clearAllMessage: String {
+        var text = L("从列表移出全部 \(model.clearableCount) 张照片并删除导入的副本；已转换的输出文件保留。")
         #if os(iOS)
         let unsaved = model.unsavedProducts.count
         if unsaved > 0 { text += " " + L("其中 \(unsaved) 张尚未存入照片。") }
@@ -238,9 +256,22 @@ struct ContentView: View {
             .help("从文件导入 OPPO 原始照片（也可以拖到窗口里）")
             #endif
         }
+        #if os(iOS)
+        ToolbarItemGroup(placement: batchPlacement) {
+            // With nothing left to convert the bar belongs to saving; with
+            // both pending they sit side by side.
+            if model.isConverting || model.convertibleCount > 0 || model.unsavedProducts.isEmpty {
+                batchActionButton
+            }
+            if !model.isConverting, !model.unsavedProducts.isEmpty {
+                saveAllButton(prominent: model.convertibleCount == 0)
+            }
+        }
+        #else
         ToolbarItem(placement: batchPlacement) {
             batchActionButton
         }
+        #endif
         ToolbarItemGroup(placement: .secondaryAction) {
             #if os(iOS)
             let allSaved = model.finishedCount > 0 && model.unsavedProducts.isEmpty
@@ -262,6 +293,13 @@ struct ContentView: View {
             }
             .disabled(model.finishedCount == 0)
             .help("把已转换的照片移出列表；输出文件保留")
+            Button(role: .destructive) {
+                confirmClearAll = true
+            } label: {
+                Label("清除全部", systemImage: "trash")
+            }
+            .disabled(model.clearableCount == 0)
+            .help("把列表里的照片全部移出；输出文件保留")
             Button {
                 showRoundTrip = true
             } label: {
@@ -308,6 +346,28 @@ struct ContentView: View {
         false
         #endif
     }
+
+    #if os(iOS)
+    /// Bottom-bar twin of the overflow menu's 全部存入照片, shown while
+    /// finished photos are waiting; text-only for the same reason as the
+    /// batch button.
+    @ViewBuilder
+    private func saveAllButton(prominent: Bool) -> some View {
+        let button = Button {
+            Task {
+                let saved = await model.saveAllToPhotos()
+                if saved > 0, model.notice == nil { model.notice = L("已存入照片 \(saved) 张") }
+            }
+        } label: {
+            Text("全部存入照片（\(model.unsavedProducts.count)）").fontWeight(.semibold).padding(.horizontal, 8)
+        }
+        if prominent {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button
+        }
+    }
+    #endif
 
     /// The one prominent toolbar item: start the batch, or stop it.
     @ViewBuilder

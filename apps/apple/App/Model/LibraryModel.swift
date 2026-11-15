@@ -609,6 +609,17 @@ final class LibraryModel {
         }
     }
 
+    /// Photos `clearAll` would take out: everything not being converted.
+    var clearableCount: Int {
+        items.filter { !$0.state.isBusy }.count
+    }
+
+    /// Empties the list (a photo being converted stays): imported copies
+    /// and cached previews go, outputs stay where they were written.
+    func clearAll() {
+        for id in items.filter({ !$0.state.isBusy }).map(\.id) { remove(id) }
+    }
+
     func setMotionMode(_ mode: MotionPhotoMode, for id: PhotoItem.ID) {
         update(id) { $0.motionMode = mode }
     }
