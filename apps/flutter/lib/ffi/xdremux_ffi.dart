@@ -469,6 +469,22 @@ class XdRemuxFFI {
     }
   }
 
+  /// Sets the core's process-wide HEVC encoder (a name from
+  /// `codecCapabilities()['hevcEncoders']`; null restores the build default).
+  /// Applies to every legacy convert entry point, Live Photo and writeback.
+  /// Returns false, changing nothing, when the core lacks that encoder.
+  static bool setHevcEncoder(String? name) {
+    final select = _lib.lookupFunction<ffi.Bool Function(ffi.Pointer<Utf8>),
+        bool Function(ffi.Pointer<Utf8>)>('xdremux_set_hevc_encoder');
+    if (name == null) return select(ffi.nullptr);
+    final ptr = name.toNativeUtf8();
+    try {
+      return select(ptr);
+    } finally {
+      malloc.free(ptr);
+    }
+  }
+
   /// Returns the Rust core version string.
   static String version() {
     final ptr = _version();
