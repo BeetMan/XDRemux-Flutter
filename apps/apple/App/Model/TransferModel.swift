@@ -51,6 +51,9 @@ final class TransferModel {
     private(set) var savedToPhotos: Set<String> = []
     /// Transient confirmation after a batch action.
     var notice: String?
+    struct SaveProgress: Equatable { var done: Int; var total: Int }
+    /// Set while `saveAllToPhotos` runs (iOS).
+    private(set) var saveProgress: SaveProgress?
 
     private let root: URL
     private let defaults: UserDefaults
@@ -559,8 +562,12 @@ final class TransferModel {
 
     func saveAllToPhotos() async {
         var saved = 0, failed = 0
-        for receipt in inbox where savesToPhotos(receipt) && !savedToPhotos.contains(receipt.id) {
+        let pending = inbox.filter { savesToPhotos($0) && !savedToPhotos.contains($0.id) }
+        saveProgress = SaveProgress(done: 0, total: pending.count)
+        defer { saveProgress = nil }
+        for receipt in pending {
             if await saveToPhotos(receipt) != nil { saved += 1 } else { failed += 1; error = nil }
+            saveProgress?.done = saved + failed
         }
         notice = failed > 0 ? L("已存入照片 \(saved) 项，\(failed) 项失败") : L("已存入照片 \(saved) 项")
     }

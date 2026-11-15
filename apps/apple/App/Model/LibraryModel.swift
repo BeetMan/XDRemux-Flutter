@@ -654,6 +654,11 @@ final class LibraryModel {
 
     private var savingToPhotos = false
 
+    struct SaveProgress: Equatable { var done: Int; var total: Int }
+    /// Set while `saveAllToPhotos` runs, so the toolbar can show how far a
+    /// long save has got instead of sitting silent until the summary.
+    private(set) var saveProgress: SaveProgress?
+
     /// Settings → 转换完成后自动存入照片. A batch saves once at the end
     /// (like Flutter); a photo converted on its own is saved right away.
     private func autoSaveAfterConvert(_ id: PhotoItem.ID) {
@@ -673,13 +678,16 @@ final class LibraryModel {
         #if os(iOS)
         guard !savingToPhotos else { return 0 }
         savingToPhotos = true
-        defer { savingToPhotos = false }
-        for item in unsavedProducts {
+        let pending = unsavedProducts
+        saveProgress = SaveProgress(done: 0, total: pending.count)
+        defer { savingToPhotos = false; saveProgress = nil }
+        for item in pending {
             guard let product = item.product else { continue }
             do {
                 try await PhotosLibrary.save(product)
                 markSavedToPhotos(item.id)
                 saved += 1
+                saveProgress?.done = saved
             } catch {
                 notice = L("已存入照片 \(saved) 张；\(item.sourceName) 未存入：\(PhotosLibrary.describe(error))")
                 return saved

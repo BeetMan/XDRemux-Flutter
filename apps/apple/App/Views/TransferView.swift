@@ -369,10 +369,20 @@ struct TransferView: View {
             #if os(iOS)
             let hasSavable = model.inbox.contains { model.savesToPhotos($0) }
             let hasUnsaved = model.inbox.contains { model.savesToPhotos($0) && !model.savedToPhotos.contains($0.id) }
-            Button(hasSavable && !hasUnsaved ? "已全部存入照片" : "全部存入照片") {
-                Task { await model.saveAllToPhotos() }
+            if let progress = model.saveProgress {
+                // A long batch would otherwise sit silent until the summary.
+                HStack(spacing: 6) {
+                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                        .frame(width: 56)
+                    Text("正在存入照片 \(progress.done)/\(progress.total)")
+                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
+            } else {
+                Button(hasSavable && !hasUnsaved ? "已全部存入照片" : "全部存入照片") {
+                    Task { await model.saveAllToPhotos() }
+                }
+                .disabled(!hasUnsaved)
             }
-            .disabled(!hasUnsaved)
             #endif
             Button("全部加入列表") { Task { await model.importAll(into: library) } }
                 .disabled(!model.inbox.contains { model.queues($0) })

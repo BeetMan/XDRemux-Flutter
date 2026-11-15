@@ -5360,6 +5360,22 @@
         }
       }
     },
+    "正在存入照片 %1$lld/%2$lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving to Photos %1$lld/%2$lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在存入照片 %1$lld/%2$lld"
+          }
+        }
+      }
+    },
     "清除已完成？": {
       "localizations": {
         "en": {
