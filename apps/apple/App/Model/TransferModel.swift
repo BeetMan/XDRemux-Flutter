@@ -7,10 +7,11 @@ import UIKit
 #endif
 
 /// UI state over one `TransferService` (LocalSend v2). The service runs
-/// only while the transfer sheet is open: receiving binds a LAN port, so
-/// it is an explicit, visible state, never something left on in the
-/// background. Fingerprints are confirmed per session; nothing is sent to
-/// a peer the user has not looked at.
+/// only while the transfer sheet is open. It starts on loopback, which is
+/// enough to list and use the inbox and to send; receiving rebinds it to
+/// a LAN port, so that stays an explicit, visible state, never something
+/// left on in the background. Fingerprints are confirmed per session;
+/// nothing is sent to a peer the user has not looked at.
 @MainActor @Observable
 final class TransferModel {
     struct Progress: Equatable { var bytes: UInt64 = 0; var total: UInt64 = 0 }
@@ -57,6 +58,8 @@ final class TransferModel {
     private let log = Logger(subsystem: "io.github.beetman.xdremux.swiftui", category: "transfer")
     private var eventTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    /// Set by `close`; a start still in flight must not outlive the sheet.
+    private var closed = false
 
     init(root: URL, defaults: UserDefaults = .standard) {
         self.root = root
@@ -160,10 +163,34 @@ final class TransferModel {
 
     // MARK: Lifecycle
 
-    /// Send-only service on loopback; nothing is reachable from the LAN.
+    /// Called when the sheet appears: the inbox is listed straight away,
+    /// without turning reception on.
+    func open() async {
+        refreshInterfaces()
+        await ensureInbox()
+    }
+
+    /// Called when the sheet goes away.
+    func close() async {
+        closed = true
+        await stop()
+    }
+
+    /// Service on loopback; nothing is reachable from the LAN.
+    /// Serves the inbox and sending while reception is off.
     func ensureLocal() async throws {
-        if service != nil { return }
+        if service != nil || closed { return }
         try await start(bind: "127.0.0.1:0", receiving: false)
+    }
+
+    /// Brings the loopback service back so the inbox stays usable; a
+    /// failure here is only logged, the caller has its own error to show.
+    private func ensureInbox() async {
+        do {
+            try await ensureLocal()
+        } catch {
+            log.error("inbox service failed: \(Self.code(error), privacy: .public)")
+        }
     }
 
     /// Binds the chosen interface so other devices can send to us.
@@ -182,11 +209,13 @@ final class TransferModel {
         } catch {
             log.error("startReceiving failed: \(Self.code(error), privacy: .public)")
             self.error = Self.describe(error)
+            await ensureInbox()
         }
     }
 
     func stopReceiving() async {
         await stop()
+        await ensureInbox()
     }
 
     private func start(bind: String, receiving: Bool) async throws {
@@ -196,6 +225,10 @@ final class TransferModel {
         log.info("starting transfer service bind=\(bind, privacy: .public) root=\(self.root.path, privacy: .public)")
         let ready = try await service.start(.init(root: root, bind: bind, alias: alias))
         log.info("transfer service ready at \(ready.address, privacy: .public)")
+        if closed {
+            await service.stop()
+            return
+        }
         self.service = service
         self.ready = ready
         self.isReceiving = receiving

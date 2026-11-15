@@ -6,7 +6,8 @@ import PhotosUI
 #endif
 
 /// 局域网传输: send photos to another XDRemux / LocalSend device and
-/// receive from one. The service lives only while this sheet is open.
+/// receive from one. The service lives only while this sheet is open; the
+/// inbox is listed as soon as it opens, reception stays behind its switch.
 struct TransferView: View {
     @Bindable var library: LibraryModel
     @State private var model: TransferModel
@@ -50,11 +51,11 @@ struct TransferView: View {
             }
         }
         .task {
-            model.refreshInterfaces()
+            await model.open()
         }
         .onDisappear {
             model.clearPicks()
-            Task { await model.stop() }
+            Task { await model.close() }
         }
         .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.addPicks(urls, securityScoped: true) }
@@ -336,7 +337,7 @@ struct TransferView: View {
     private var inboxSection: some View {
         Section {
             if model.inbox.isEmpty {
-                Text(model.isRunning ? "还没有收到文件。" : "开启接收后，收到的文件会出现在这里。")
+                Text(model.isReceiving ? "还没有收到文件。" : "开启接收后，收到的文件会出现在这里。")
                     .foregroundStyle(.secondary)
             } else {
                 inboxActions

@@ -5280,6 +5280,86 @@
         }
       }
     },
+    "清除全部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear all"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除全部"
+          }
+        }
+      }
+    },
+    "清除全部？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear all?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除全部？"
+          }
+        }
+      }
+    },
+    "全部存入照片（%lld）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save all to Photos (%lld)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "全部存入照片（%lld）"
+          }
+        }
+      }
+    },
+    "把列表里的照片全部移出；输出文件保留": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove every photo from the list; output files are kept"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把列表里的照片全部移出；输出文件保留"
+          }
+        }
+      }
+    },
+    "从列表移出全部 %lld 张照片并删除导入的副本；已转换的输出文件保留。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removes all %lld photos from the list and deletes their imported copies; converted output files are kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从列表移出全部 %lld 张照片并删除导入的副本；已转换的输出文件保留。"
+          }
+        }
+      }
+    },
     "清除已完成？": {
       "localizations": {
         "en": {
