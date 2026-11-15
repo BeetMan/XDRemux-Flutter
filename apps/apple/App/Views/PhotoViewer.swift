@@ -3,34 +3,54 @@ import SwiftUI
 import UIKit
 #endif
 
-/// Full-screen look at the photo the preview card is showing, the way a
-/// photo library does it: pinch or double-tap to zoom, drag to pan, tap to
-/// hide the controls, swipe down (or the close button) to leave. With an
-/// HDR photo, pressing and holding shows the SDR base image, like on the
-/// card; the hold never zooms or dismisses, and a tap never compares.
+/// Full-screen look at the photos in the list, the way a photo library
+/// does it: swipe sideways for the next photo, pinch or double-tap to zoom,
+/// drag to pan, tap to hide the controls, swipe down (or the close button)
+/// to leave. With an HDR photo, pressing and holding shows the SDR base
+/// image, like on the card; the hold never zooms, pages or dismisses, and
+/// a tap never compares.
 ///
-/// It takes the images the card already decoded, so opening it costs no
-/// second decode and what is on screen matches the card exactly.
+/// It opens on the photo the card was showing, with the images the card
+/// already decoded, so the first page costs no second decode.
 struct PhotoViewer: View {
-    let image: PreviewCard.PreviewImage
-    /// The SDR rendition for the hold; `nil` when there is no HDR to compare.
-    let sdrImage: PreviewCard.PreviewImage?
-    /// Whether `image` should be drawn with HDR headroom.
-    let isHDR: Bool
+    typealias PreviewImage = PreviewCard.PreviewImage
+
+    let items: [PhotoItem]
+    /// The card's decoded images for the photo the viewer opens on.
+    let opening: Loaded?
+
+    struct Loaded {
+        var image: PreviewImage
+        /// The SDR rendition for the hold; `nil` when there is no HDR to compare.
+        var sdrImage: PreviewImage?
+        /// Whether `image` should be drawn with HDR headroom.
+        var isHDR: Bool
+    }
 
     @Environment(\.dismiss) private var dismiss
-    @State private var showSDR = false
+    private let start: PhotoItem.ID
+    @State private var current: PhotoItem.ID
     @State private var controlsHidden = false
+    /// The page the scroll view has settled on (iOS).
+    @State private var settled: PhotoItem.ID?
+    /// Set once the scroll view has jumped to the opening photo.
+    @State private var positioned = false
 
-    private var canCompare: Bool { isHDR && sdrImage != nil }
+    init(items: [PhotoItem], start: PhotoItem.ID, opening: Loaded?) {
+        self.items = items
+        self.opening = opening
+        self.start = start
+        _current = State(initialValue: start)
+    }
+
+    private var index: Int { items.firstIndex { $0.id == current } ?? 0 }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            photo.ignoresSafeArea()
+            pages.ignoresSafeArea()
             controls
         }
-        .sensoryFeedback(.selection, trigger: showSDR)
         #if os(iOS)
         .statusBarHidden(controlsHidden)
         .persistentSystemOverlays(controlsHidden ? .hidden : .automatic)
@@ -39,57 +59,183 @@ struct PhotoViewer: View {
         #endif
     }
 
-    @ViewBuilder
-    private var photo: some View {
-        let shown = showSDR ? (sdrImage ?? image) : image
-        #if os(iOS)
-        ZoomScroll(image: shown, highDynamicRange: isHDR && !showSDR,
+    private func page(_ item: PhotoItem) -> some View {
+        ViewerPage(item: item, isCurrent: item.id == current,
+                   preloaded: item.id == start ? opening : nil,
+                   controlsHidden: controlsHidden,
                    onTap: { withAnimation(.easeInOut(duration: 0.15)) { controlsHidden.toggle() } },
-                   onHold: { holding in if canCompare { showSDR = holding } },
                    onDismiss: { dismiss() })
+    }
+
+    @ViewBuilder
+    private var pages: some View {
+        #if os(iOS)
+        // A paging scroll view rather than a page-style TabView: the
+        // TabView keeps its pages inside the safe area, which on a phone
+        // with a side status area leaves the next photo showing at the edge.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    ForEach(items) { item in
+                        page(item)
+                            .containerRelativeFrame([.horizontal, .vertical])
+                            .id(item.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollIndicators(.hidden)
+            .scrollPosition(id: $settled)
+            .onChange(of: settled) { _, id in
+                // Before the jump to the opening photo the scroll view
+                // reports its first page; that is not a swipe.
+                if positioned, let id { current = id }
+            }
+            .onAppear {
+                proxy.scrollTo(start, anchor: .center)
+                DispatchQueue.main.async { positioned = true }
+            }
+        }
         #else
-        MacZoomImage(image: shown, highDynamicRange: isHDR && !showSDR,
-                     onHold: { holding in if canCompare { showSDR = holding } })
+        if let item = items.first(where: { $0.id == current }) {
+            page(item).id(item.id)
+        }
         #endif
+    }
+
+    private func step(_ delta: Int) {
+        let next = index + delta
+        guard items.indices.contains(next) else { return }
+        current = items[next].id
     }
 
     private var controls: some View {
         VStack {
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 36, height: 36)
-                        .background(.ultraThinMaterial, in: Circle())
+            ZStack {
+                // Name and position, centred; the corners stay clear for
+                // the close button and, on some phones, the status area.
+                VStack(spacing: 2) {
+                    Text(items.indices.contains(index) ? items[index].sourceName : "")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1).truncationMode(.middle)
+                    if items.count > 1 {
+                        Text(verbatim: "\(index + 1) / \(items.count)")
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("关闭")
-                Spacer()
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(.horizontal, 52)
+                HStack {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 36, height: 36)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel("关闭")
+                    Spacer()
+                }
             }
             Spacer()
-            if canCompare {
+            #if os(macOS)
+            // No swipe on a Mac: arrows, also on the arrow keys.
+            if items.count > 1 {
                 HStack {
+                    Button { step(-1) } label: { Image(systemName: "chevron.left").frame(width: 36, height: 36) }
+                        .keyboardShortcut(.leftArrow, modifiers: [])
+                        .disabled(index == 0)
                     Spacer()
-                    Label {
-                        Text(verbatim: showSDR ? "SDR" : "HDR")
-                    } icon: {
-                        Image(systemName: "circle.lefthalf.filled")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(showSDR ? AnyShapeStyle(.tint) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-                    .foregroundStyle(showSDR ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                    .allowsHitTesting(false)
+                    Button { step(1) } label: { Image(systemName: "chevron.right").frame(width: 36, height: 36) }
+                        .keyboardShortcut(.rightArrow, modifiers: [])
+                        .disabled(index >= items.count - 1)
                 }
+                .buttonStyle(.plain)
+                .background(.clear)
             }
+            #endif
         }
         .padding(16)
         .environment(\.colorScheme, .dark)
         .opacity(controlsHidden ? 0 : 1)
         .allowsHitTesting(!controlsHidden)
+    }
+}
+
+/// One photo. Only the page on screen holds full-size images (a 50 MP
+/// photo is some 200 MB decoded, twice with its SDR rendition); its
+/// neighbours show the list thumbnail until they are swiped to.
+private struct ViewerPage: View {
+    let item: PhotoItem
+    let isCurrent: Bool
+    let preloaded: PhotoViewer.Loaded?
+    let controlsHidden: Bool
+    let onTap: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var loaded: PhotoViewer.Loaded?
+    @State private var showSDR = false
+
+    private var canCompare: Bool { loaded?.isHDR == true && loaded?.sdrImage != nil }
+
+    var body: some View {
+        ZStack {
+            if let loaded {
+                let shown = showSDR ? (loaded.sdrImage ?? loaded.image) : loaded.image
+                #if os(iOS)
+                ZoomScroll(image: shown, highDynamicRange: loaded.isHDR && !showSDR,
+                           onTap: onTap,
+                           onHold: { holding in if canCompare { showSDR = holding } },
+                           onDismiss: onDismiss)
+                #else
+                MacZoomImage(image: shown, highDynamicRange: loaded.isHDR && !showSDR,
+                             onHold: { holding in if canCompare { showSDR = holding } })
+                #endif
+            } else if let thumb = item.thumbnail {
+                Image(decorative: thumb, scale: 1)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onTap() }
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        // Bottom centre: it travels with its photo while paging, and the
+        // corners belong to the photo (an OPPO watermark strip ends there).
+        .overlay(alignment: .bottom) {
+            if canCompare {
+                Label {
+                    Text(verbatim: showSDR ? "SDR" : "HDR")
+                } icon: {
+                    Image(systemName: "circle.lefthalf.filled")
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(showSDR ? AnyShapeStyle(.tint) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+                .foregroundStyle(showSDR ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .environment(\.colorScheme, .dark)
+                .padding(.bottom, 28)
+                .opacity(controlsHidden ? 0 : 1)
+                .allowsHitTesting(false)
+            }
+        }
+        .sensoryFeedback(.selection, trigger: showSDR)
+        .task(id: isCurrent) {
+            showSDR = false
+            guard isCurrent else {
+                loaded = nil
+                return
+            }
+            if loaded == nil { loaded = preloaded }
+            if loaded == nil { loaded = await PreviewCard.load(item) }
+        }
     }
 }
 

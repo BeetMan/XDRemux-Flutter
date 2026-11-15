@@ -24,7 +24,7 @@ struct PhotoDetailView: View {
             GeometryReader { geo in
                 if geo.size.width >= Self.twoColumnMinWidth {
                     HStack(alignment: .top, spacing: 16) {
-                        PreviewCard(item: item, fillsHeight: true)
+                        PreviewCard(item: item, fillsHeight: true, siblings: model.items)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         ScrollView {
                             VStack(alignment: .leading, spacing: 20) { sections(item) }
@@ -40,7 +40,8 @@ struct PhotoDetailView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             // 16pt page padding on both sides, 720pt column cap below.
                             PreviewCard(item: item, stackedSpace: CGSize(
-                                width: min(geo.size.width - 32, 720), height: geo.size.height))
+                                width: min(geo.size.width - 32, 720), height: geo.size.height),
+                                        siblings: model.items)
                             sections(item)
                         }
                         .padding()
@@ -292,6 +293,8 @@ struct PreviewCard: View {
     /// Stacked layout: the content width and the visible page height, from
     /// which the card takes the photo's shape (`stackedLayout`).
     var stackedSpace: CGSize?
+    /// The list the photo belongs to, for paging in the full-screen viewer.
+    var siblings: [PhotoItem] = []
     /// The converted output, or the pre-conversion HDR preview the model
     /// rendered through the same core (`LibraryModel.preparePreview`).
     private var displayURL: URL { item.product?.outputURL ?? item.previewURL ?? item.inputURL }
@@ -406,8 +409,26 @@ struct PreviewCard: View {
     @ViewBuilder
     private var viewer: some View {
         if let hdrImage {
-            PhotoViewer(image: hdrImage, sdrImage: hasHDR ? sdrImage : nil, isHDR: hasHDR)
+            let all = siblings.contains { $0.id == item.id } ? siblings : [item]
+            PhotoViewer(items: all, start: item.id,
+                        opening: .init(image: hdrImage, sdrImage: hasHDR ? sdrImage : nil, isHDR: hasHDR))
         }
+    }
+
+    /// What the viewer shows for a photo it pages to: the same choice of
+    /// file and of HDR as the card makes, in one go.
+    static func load(_ item: PhotoItem) async -> PhotoViewer.Loaded? {
+        let url = item.product?.outputURL ?? item.previewURL ?? item.inputURL
+        let isSource = item.product == nil && item.previewURL == nil
+        if isSource, (item.isConvertible && !item.plainSource) || item.state == .inspecting {
+            return await reduced(url).map { .init(image: $0, sdrImage: nil, isHDR: false) }
+        }
+        var isHDR = true
+        if isSource {
+            isHDR = await Task.detached(priority: .userInitiated) { ImageLoading.hasGainMap(at: url) }.value
+        }
+        guard let image = await decode(url, hdr: isHDR) else { return nil }
+        return .init(image: image, sdrImage: isHDR ? await decode(url, hdr: false) : nil, isHDR: isHDR)
     }
 
     var body: some View {
