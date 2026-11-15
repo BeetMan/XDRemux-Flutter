@@ -644,6 +644,13 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测（iPhone Duo 模拟器，Debug）：点垃圾桶弹出两项菜单，“清除全部”为红色，没有已完成照片时“清除已完成”为灰色。
 - 未验证：真机；macOS 构建没有重跑（改动只在 iOS 侧边栏分支里生效，但文件是共用的）。
 
+**TestFlight 0.1.1 (4)（2026-11-15，分支 `chore/testflight-build-4`）**
+
+- 构建号改为 4（版本仍是 0.1.1），在 PR #111、#112 合并后的代码上出包，编码器 `vt+x265`；内核和传输框架复用现成的（`XDREMUX_SKIP_CORE=1`、`XDREMUX_SKIP_TRANSFER=1`，Rust 源码自上次构建后没有变化）。脚本检查全部通过，“Upload succeeded”。
+- 相比构建 3 的变化：收件箱打开即显示、底部“全部存入照片”、清除全部、局域网传输移到导入旁、Duo 侧边栏放出更多按钮且两个清除合成一个菜单。
+- 出包时本机代理是关闭的，github.com 连不上：`git fetch` 拉不到刚合并的 main，于是用 GitHub 接口核对了 main 的树对象与本地已合并分支一致（`41092f7`）后从本地代码出包；第一次归档因为拉不到 `swift-argument-parser` 失败，第二次用 `GIT_CONFIG_*` 的 `insteadOf` 把这个地址指到本机 SwiftPM 缓存里的同一仓库（含锁定的 1.8.2 提交）后通过。脚本本身没有改。苹果的上传服务器在不走代理时可达。
+- 未验证：App Store Connect 的处理结果；TestFlight 安装后的表现；所有新界面在真机上的表现。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
