@@ -414,6 +414,67 @@ pub fn watermark_canvas_rect(
     Ok((0, image_height - canvas_height, image_width, canvas_height))
 }
 
+/// Read the picture rectangle, `(x, y, width, height)`, from the 14
+/// little-endian floats that end `watermark.master.params`: the part of a
+/// framed primary that is photograph. Only the styles in `styles` are read.
+///
+/// Floats 6 to 9 are the corners of the picture in the primary frame (left,
+/// top, right, bottom). The rest of the block is checked against them: float
+/// 0 is the bottom edge (two rows lower in one `hassel_style_1` original),
+/// float 1 lies between the right edge and the image width (one column short
+/// of the edge in some files), float 2 is the primary height, floats 3 and 4
+/// are zero and float 5 is all ones.
+/// See docs/formats/oppo-watermark.md §4.3.
+pub(crate) fn frame_picture_rect_in_params(
+    params: &[u8],
+    styles: &[&[u8]],
+    image_width: u32,
+    image_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if params.len() < 80 || params.get(..4) != Some(&1f32.to_le_bytes()) {
+        return None;
+    }
+    // The style id is a NUL-padded string in bytes 4..68.
+    let style = params.get(4..68)?.split(|&byte| byte == 0).next()?;
+    if !styles.contains(&style) {
+        return None;
+    }
+    let origin = params.len() - 56;
+    if params.get(origin + 20..origin + 24) != Some(&[0xff; 4]) {
+        return None;
+    }
+    let integer = |word: usize| -> Option<u32> {
+        let bytes = params.get(origin + word * 4..origin + word * 4 + 4)?;
+        let value = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        (value.is_finite() && (0.0..=1_000_000.0).contains(&value) && value.fract() == 0.0)
+            .then_some(value as u32)
+    };
+    let (left, top, right, bottom) = (integer(6)?, integer(7)?, integer(8)?, integer(9)?);
+    let (below, beside) = (integer(0)?, integer(1)?);
+    if below < bottom
+        || below > bottom + 2
+        || beside + 1 < right
+        || beside > image_width
+        || integer(2)? != image_height
+        || integer(3)? != 0
+        || integer(4)? != 0
+        || right > image_width
+        || bottom > image_height
+    {
+        return None;
+    }
+    let width = right.checked_sub(left)?;
+    let height = bottom.checked_sub(top)?;
+    // A frame leaves most of the image to the picture, and keeps some of it.
+    if width < image_width / 2
+        || height < image_height / 2
+        || (width == image_width && height == image_height)
+    {
+        return None;
+    }
+    Some((left, top, width, height))
+}
+
 /// Return the actual PNG overlay rectangle inside the reserved watermark
 /// canvas: `(x, y, width, height)`. Unlike `watermark_canvas_rect`, this
 /// excludes the transparent/configured insets and is suitable for a pixel

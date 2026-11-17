@@ -169,8 +169,9 @@ fn hassel_style_4_end_rect_is_the_content_frame() {
 
 #[test]
 fn master_mode_end_rect_matches_the_observed_frames() {
-    // Complete end blocks from three camera originals: rear portrait, plain
-    // master mode, front portrait.
+    // Complete end blocks from five camera originals: rear portrait, plain
+    // master mode, front portrait, and two landscape frames, where the second
+    // float sits 28 and 58 columns right of the picture.
     for (len, primary, words, expected) in [
         (6492, (3244, 5444), FRAMED_3244, (86, 674, 3072, 4096)),
         (
@@ -184,6 +185,18 @@ fn master_mode_end_rect_matches_the_observed_frames() {
             (5200, 8724),
             [7642., 5065., 8724., 0., 0., 0., 136., 1082., 5064., 7642., 136., 1082., 6696., 6010.],
             (136, 1082, 4928, 6560),
+        ),
+        (
+            45117,
+            (4268, 4420),
+            [3746., 4210., 4420., 0., 0., 0., 86., 674., 4182., 3746., 86., 674., 4182., 3746.],
+            (86, 674, 4096, 3072),
+        ),
+        (
+            45117,
+            (8532, 8840),
+            [7492., 8420., 8840., 0., 0., 0., 170., 1348., 8362., 7492., 170., 1348., 8362., 7492.],
+            (170, 1348, 8192, 6144),
         ),
     ] {
         let tail = framed_watermark("hassel_style_master_mode_1", len, words);
@@ -222,20 +235,25 @@ fn framed_end_rect_rejects_blocks_that_do_not_repeat_the_geometry() {
         parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None)
     };
     assert_eq!(parse(FRAMED_3244), Some((86, 674, 3072, 4096)));
-    // The right-edge copy differs from the quad by one in real files.
-    let mut off_by_one = FRAMED_3244;
-    off_by_one[1] = 3159.;
-    assert_eq!(parse(off_by_one), Some((86, 674, 3072, 4096)));
+    // The second float sits anywhere from one column left of the right edge
+    // to the frame width, the first up to two rows below the bottom edge.
+    for (slot, value) in [(1, 3159f32), (1, 3244.), (0, 4772.)] {
+        let mut loose = FRAMED_3244;
+        loose[slot] = value;
+        assert_eq!(parse(loose), Some((86, 674, 3072, 4096)), "slot {slot} = {value}");
+    }
     for (slot, value) in [
-        (0, 4768f32),  // bottom copy disagrees with the quad
-        (1, 3160.),    // right copy two pixels away
+        (0, 4768f32),  // above the bottom edge
+        (0, 4773.),    // three rows below it
+        (1, 3156.),    // two columns left of the right edge
+        (1, 3245.),    // outside the frame
         (2, 5440.),    // not the primary height
         (3, 1.),
         (4, 1.),
         (6, 86.5),     // not an integer
         (7, f32::NAN),
-        (8, 3161.),    // right edge disagrees with its copy
-        (9, 4772.),    // bottom edge disagrees with its copy
+        (8, 3161.),    // right edge past the second float
+        (9, 4772.),    // bottom edge past the first float
     ] {
         let mut bad = FRAMED_3244;
         bad[slot] = value;
@@ -367,6 +385,45 @@ fn mirror_flag_is_read_from_filter_info() {
     assert!(!source_is_mirrored(&manifest_file(&[("filter.info", &info(2))])));
     assert!(!source_is_mirrored(&manifest_file(&[("filter.info", &info(1)[..14])])));
     assert!(!source_is_mirrored(&manifest_file(&[("capture.mode", b"portrait")])));
+}
+
+#[test]
+fn mirror_flag_falls_back_to_the_front_depth_config() {
+    // End of the 544-byte config of both front originals: mirrorEnable 1,
+    // cameraRoll 270, f-number 4.5.
+    let config = |version: f32, len: usize, mirror: u32, roll: u32| {
+        let mut bytes = vec![0u8; len];
+        bytes[..4].copy_from_slice(&version.to_le_bytes());
+        let end = if version >= 1.1 { len - 4 } else { len };
+        bytes[end - 8..end - 4].copy_from_slice(&mirror.to_le_bytes());
+        bytes[end - 4..end].copy_from_slice(&roll.to_le_bytes());
+        if version >= 1.1 {
+            bytes[len - 4..].copy_from_slice(&4.5f32.to_le_bytes());
+        }
+        bytes
+    };
+    assert_eq!(front_config_mirror(&config(1.2, 544, 1, 270)), Some(true));
+    assert_eq!(front_config_mirror(&config(1.2, 544, 0, 90)), Some(false));
+    // Before version 1.1 the entry ends with the two integers.
+    assert_eq!(front_config_mirror(&config(1.0, 540, 1, 0)), Some(true));
+    // Not a flag, not a rotation, or too short to hold the fixed fields.
+    assert_eq!(front_config_mirror(&config(1.2, 544, 2, 270)), None);
+    assert_eq!(front_config_mirror(&config(1.2, 544, 1, 45)), None);
+    assert_eq!(front_config_mirror(&config(1.2, 280, 1, 270)), None);
+
+    let mirrored = config(1.2, 544, 1, 270);
+    assert!(source_is_mirrored(&manifest_file(&[("front.depth.config", &mirrored)])));
+    assert!(!source_is_mirrored(&manifest_file(&[(
+        "front.depth.config",
+        &config(1.2, 544, 0, 270)
+    )])));
+    // filter.info decides when it is there.
+    let mut info = vec![0u8; 140];
+    info[..4].copy_from_slice(&4f32.to_le_bytes());
+    assert!(!source_is_mirrored(&manifest_file(&[
+        ("filter.info", &info),
+        ("front.depth.config", &mirrored),
+    ])));
 }
 
 #[test]
@@ -582,11 +639,28 @@ fn front_near_side_follows_the_person_mask() {
     let depth = [10u8, 10, 200, 200];
     assert!(front_near_is_high(&depth, Some(&[0, 0, 254, 254])));
     assert!(!front_near_is_high(&depth, Some(&[254, 254, 0, 0])));
-    // The earlier reading stays when the mask cannot decide: missing, wrong
-    // size, covering everything or nothing, or level with the background.
-    assert!(front_near_is_high(&depth, None));
-    assert!(front_near_is_high(&depth, Some(&[254, 254, 0])));
-    assert!(front_near_is_high(&depth, Some(&[254; 4])));
-    assert!(front_near_is_high(&depth, Some(&[0; 4])));
-    assert!(front_near_is_high(&[90; 4], Some(&[254, 254, 0, 0])));
+    // Low is near when the mask cannot decide: missing, wrong size, covering
+    // everything or nothing, or level with the background.
+    assert!(!front_near_is_high(&depth, None));
+    assert!(!front_near_is_high(&depth, Some(&[254, 254, 0])));
+    assert!(!front_near_is_high(&depth, Some(&[254; 4])));
+    assert!(!front_near_is_high(&depth, Some(&[0; 4])));
+    assert!(!front_near_is_high(&[90; 4], Some(&[254, 254, 0, 0])));
+}
+
+#[test]
+fn front_depth_without_a_segment_takes_low_values_as_the_person() {
+    // Values of IMG20261011120934.heic: person 56, background 232.
+    let mut config = vec![0u8; 544];
+    config[..4].copy_from_slice(&1.2f32.to_le_bytes());
+    config[4..8].copy_from_slice(&4u32.to_le_bytes());
+    config[8..12].copy_from_slice(&2u32.to_le_bytes());
+    let depth = [232u8, 232, 56, 56, 232, 232, 56, 56];
+    let file = manifest_file(&[("front.depth", &depth), ("front.depth.config", &config)]);
+    let parsed = parse_depth(&file).expect("front depth");
+    assert_eq!(parsed.ranks, depth.to_vec());
+    assert_eq!(
+        parsed.portrait.as_deref(),
+        Some(&[0u8, 0, 254, 254, 0, 0, 254, 254][..])
+    );
 }

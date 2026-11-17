@@ -183,14 +183,14 @@ fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
 
 /// Whether high `front.depth` values are near. The person is the near subject
 /// of a front-camera portrait, so the side of the gray scale the person mask
-/// sits on is the near side. A camera original stores the person around 93,
-/// the chair behind at 140 to 160 and the far wall above 224, the opposite of
-/// the reading this layout was first given, so neither direction is assumed.
-/// Without a mask that splits the plane the earlier reading (high = near)
-/// stays. See docs/modules/portrait-pipeline.md §3.2.
+/// sits on is the near side. Both camera originals checked store near as low:
+/// one has the person around 93, the chair behind at 140 to 160 and the far
+/// wall above 224, the other the person at 56 and the background at 232. A
+/// mask that does not split the plane decides nothing, and low = near is
+/// taken. See docs/modules/portrait-pipeline.md §3.2.
 fn front_near_is_high(depth: &[u8], person: Option<&[u8]>) -> bool {
     let Some(mask) = person.filter(|mask| mask.len() == depth.len()) else {
-        return true;
+        return false;
     };
     let (mut inside, mut inside_count, mut outside, mut outside_count) = (0u64, 0u64, 0u64, 0u64);
     for (&value, &covered) in depth.iter().zip(mask) {
@@ -205,17 +205,19 @@ fn front_near_is_high(depth: &[u8], person: Option<&[u8]>) -> bool {
     // Either side below 1% of the plane says nothing about the other.
     let floor = depth.len() as u64 / 100;
     if inside_count <= floor || outside_count <= floor {
-        return true;
+        return false;
     }
-    // mean(inside) >= mean(outside), without the divisions.
-    inside * outside_count >= outside * inside_count
+    // mean(inside) > mean(outside), without the divisions.
+    inside * outside_count > outside * inside_count
 }
 
-/// Pixels brighter than the far background become the person mask.
+/// Person mask for a file without `front.segment`: the near half of the gray
+/// scale, near being low. In the two camera originals the person sits at 56
+/// and 93 and the nearest thing behind them at 140.
 fn person_mask_from_near_depth(depth: &[u8]) -> Vec<u8> {
     depth
         .iter()
-        .map(|value| if *value >= 160 { 254 } else { 0 })
+        .map(|value| if *value < 128 { 254 } else { 0 })
         .collect()
 }
 
@@ -590,16 +592,15 @@ fn watermark_content_rect(
     parse_watermark_rect(&tail, (primary_w, primary_h), source_dims, orientation, crop.as_deref())
 }
 
-/// Content rect stored at `len - 56` by `hassel_style_4` and
-/// `hassel_style_master_mode_1`. The four floats at `+24` are the corners of
-/// the picture inside the primary frame (left, top, right, bottom), not an
-/// origin and a size: with equal margins `left + right` also equals the frame
-/// width, so the two readings cannot be told apart by that sum. The block
-/// states the geometry twice, which is what the checks below rely on: `+0`
-/// repeats the bottom edge, `+4` the right edge (off by one in some files),
-/// `+8` is the primary height, `+12` and `+16` are zero. Only the two styles
-/// with samples are read; `hassel_style_1` keeps its own checked layout and
-/// every other style falls back to the full frame.
+/// Content rect of the framed styles `hassel_style_4` and
+/// `hassel_style_master_mode_1`, from the block at `len - 56`. The four floats
+/// at `+24` are the corners of the picture inside the primary frame (left,
+/// top, right, bottom), not an origin and a size: with equal margins
+/// `left + right` also equals the frame width, so the two readings cannot be
+/// told apart by that sum. Only the two styles with samples are read here;
+/// `hassel_style_1` keeps its own checked layout and every other style falls
+/// back to the full frame. The checks on the block are in
+/// [crate::container::frame_picture_rect_in_params].
 /// See docs/formats/oppo-watermark.md §4.3.
 fn hassel_end_content_rect(
     tail: &[u8],
@@ -607,43 +608,7 @@ fn hassel_end_content_rect(
     primary_h: u32,
 ) -> Option<(u32, u32, u32, u32)> {
     const FRAMED_STYLES: [&[u8]; 2] = [b"hassel_style_4", b"hassel_style_master_mode_1"];
-    if tail.len() < 80 || tail.get(..4) != Some(&1f32.to_le_bytes()) {
-        return None;
-    }
-    // The style id is a NUL-padded string in bytes 4..68.
-    let style = tail.get(4..68)?.split(|&byte| byte == 0).next()?;
-    if !FRAMED_STYLES.contains(&style) {
-        return None;
-    }
-    let origin = tail.len() - 56;
-    if tail.get(origin + 20..origin + 24) != Some(&[0xff; 4]) {
-        return None;
-    }
-    let integer = |offset: usize| -> Option<u32> {
-        let value = pd::read_f32le(tail, offset)?;
-        (value.is_finite() && value >= 0.0 && value <= 1_000_000.0 && value.fract() == 0.0)
-            .then_some(value as u32)
-    };
-    let left = integer(origin + 24)?;
-    let top = integer(origin + 28)?;
-    let right = integer(origin + 32)?;
-    let bottom = integer(origin + 36)?;
-    if integer(origin)? != bottom
-        || integer(origin + 4)?.abs_diff(right) > 1
-        || integer(origin + 8)? != primary_h
-        || integer(origin + 12)? != 0
-        || integer(origin + 16)? != 0
-        || right > primary_w
-        || bottom > primary_h
-    {
-        return None;
-    }
-    let w = right.checked_sub(left)?;
-    let h = bottom.checked_sub(top)?;
-    if w < primary_w / 2 || h < primary_h / 2 || w == 0 || h == 0 {
-        return None;
-    }
-    Some((left, top, w, h))
+    crate::container::frame_picture_rect_in_params(tail, &FRAMED_STYLES, primary_w, primary_h)
 }
 
 fn parse_watermark_rect(
@@ -795,13 +760,30 @@ impl PortraitPlacement {
 
 /// Whether the camera saved the picture mirrored relative to its source
 /// frame, as it does for a front-camera shot with the mirror setting on.
-/// `filter.info` keeps the flag as the integer at byte 12 (`srcMirror`); a
-/// file without that entry is taken as not mirrored.
+/// `filter.info` keeps the flag as the integer at byte 12 (`srcMirror`). A
+/// file without that entry is read from `front.depth.config`, and a file with
+/// neither is taken as not mirrored.
 /// See docs/modules/portrait-pipeline.md §3.2.
 fn source_is_mirrored(input: &[u8]) -> bool {
-    crate::container::extract_tail_entry(input, "filter.info")
-        .and_then(|info| pd::read_u32le(&info, 12))
-        == Some(1)
+    if let Some(info) = crate::container::extract_tail_entry(input, "filter.info") {
+        return pd::read_u32le(&info, 12) == Some(1);
+    }
+    crate::container::extract_tail_entry(input, "front.depth.config")
+        .and_then(|config| front_config_mirror(&config))
+        .unwrap_or(false)
+}
+
+/// `mirrorEnable` of `front.depth.config`. The entry ends with `mirrorEnable`,
+/// `cameraRoll` and, from version 1.1, the f-number, so the field is found
+/// from the end. `None` when the two integers are not a flag and a rotation.
+fn front_config_mirror(config: &[u8]) -> Option<bool> {
+    let version = pd::read_f32le(config, 0)?;
+    let end = if version >= 1.1 { config.len().checked_sub(4)? } else { config.len() };
+    // The fixed fields before the two integers take 276 bytes.
+    let at = end.checked_sub(8).filter(|at| *at >= 276)?;
+    let mirror = pd::read_u32le(config, at)?;
+    let roll = pd::read_u32le(config, at + 4)?;
+    (mirror <= 1 && matches!(roll, 0 | 90 | 180 | 270)).then_some(mirror == 1)
 }
 
 /// Source-frame plane as it sits in the saved picture: rotated upright, then
