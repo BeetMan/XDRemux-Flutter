@@ -144,10 +144,6 @@ extension XDRemuxEngine: MotionPhotoBackend {
         }
     }
 
-    public func livePhotoPairIsValid(still: String, video: String) async throws -> Bool {
-        try await livePhotoPairValid(still: still, video: video)
-    }
-
     public func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String,
                                      replace: Bool) async throws {
         do {
@@ -159,6 +155,10 @@ extension XDRemuxEngine: MotionPhotoBackend {
     }
 
     public func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
-        try await splitMotionPhoto(path: path, outputDirectory: outputDirectory)
+        do {
+            return try await splitMotionPhoto(path: path, outputDirectory: outputDirectory)
+        } catch XDRemuxError.coreFailure(let message) {
+            throw ConversionJobError.coreFailed(message)
+        }
     }
 }

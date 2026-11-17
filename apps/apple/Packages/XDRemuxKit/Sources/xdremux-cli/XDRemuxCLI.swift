@@ -229,7 +229,7 @@ struct Convert: AsyncParsableCommand {
         case ConversionJobError.livePhotoFailed(let m): return m ?? "Live Photo composition failed"
         case ConversionJobError.missingOutput: return "core reported success but wrote no file"
         case ConversionJobError.samePath: return "output path equals input path"
-        default: return String(describing: error)
+        default: return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         }
     }
 }

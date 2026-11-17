@@ -43,3 +43,20 @@ fn live_photo_ffi_refuses_outputs_over_its_inputs_before_reading_or_writing() {
     assert_eq!(std::fs::read(&source_in_out).unwrap(), b"source");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn live_photo_ffi_sees_through_a_dotdot_out_dir_that_does_not_exist_yet() {
+    let dir = std::env::temp_dir().join(format!("xdremux_live_dotdot_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // The outputs are <out>/<source stem>.heic and .mov; `new` does not exist,
+    // so "<dir>/new/.." only resolves to <dir> once it has been created.
+    let source = dir.join("IMG_1.heic");
+    let still = dir.join("converted.heic");
+    std::fs::write(&source, b"source").unwrap();
+    std::fs::write(&still, b"converted still").unwrap();
+    let report = make_live_photo(&source, &still, &dir.join("new").join(".."));
+    assert_eq!(report["success"], false);
+    assert!(report["errorMessage"].as_str().unwrap().contains("must not overwrite the source"), "{report}");
+    assert_eq!(std::fs::read(&source).unwrap(), b"source");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

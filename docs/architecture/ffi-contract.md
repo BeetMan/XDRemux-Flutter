@@ -106,7 +106,8 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 写出 Live Photo 的三个函数（`make_live_photo`、`publish_live_photo_pair`、`make_live_photo_bundle`）的共同规则，实现在 `xdremux/rust/src/live_photo_publish.rs`：
 
 - 写之前先在内存里用配对谓词 `existing_pair_is_valid` 检查这一对；不通过就直接返回错误，目标位置什么也不动。
-- 先写到同目录下定长的隐藏新文件（目录）`.xdremux-publish-*.partial`，刷盘后 rename 到最终位置。替换时，原有文件先改名为 `.xdremux-publish-*.old`；只替换同类条目（文件替换文件，`.pvt` 目录替换目录），不替换目录或符号链接。
+- 先写到同目录下定长的隐藏新文件（目录）`.xdremux-publish-<run>-<n>.partial`，刷盘后 rename 到最终位置。`<run>` 是每次运行的随机值，不会撞上别的运行（包括被杀掉的运行）留下的名字。替换时，原有文件先改名为 `.xdremux-publish-<run>-<n>.old`；只替换同类条目（文件替换文件，`.pvt` 目录替换目录），不替换目录或符号链接。
+- 所有改名（放到位、移开旧文件、回滚时放回旧文件）都不会覆盖已存在的条目。同一进程里输出路径相同的两次发布排队进行，不会互相移开对方的文件。
 - 放到位后逐块回读，内容必须与写入的完全相同（`.pvt` 另查结构和 `metadata.plist`）。回读可能命中系统缓存，能发现写错、截断和写后被改，查不出存储介质本身的损坏。
 - 通过后才删掉改名留存的旧文件，并返回 `success: true`。任一步失败都会删掉本次写出的文件、把旧文件改回原名，`errorMessage` 写明原因和回滚结果（`rolled back: …` 或 `rollback incomplete: …`）。
 - 输入文件始终只读。进程在放到位与提交之间被杀时会留下隐藏条目：一小时以上的 `.partial` 由下一次往同一目录发布时清掉；`.old` 可能是旧输出的唯一副本，保留不删。

@@ -4,15 +4,20 @@
 //!
 //! Each output is first written under a hidden name of fixed length that did
 //! not exist before (`.xdremux-publish-<run>-<n>.partial`, `create_new`),
-//! flushed, then renamed onto its final path. What happens to an entry already
-//! at that path depends on the publication:
+//! flushed, then renamed onto its final path. `<run>` is random, so a run
+//! never picks the name of an entry a killed run left behind, in this process
+//! or another (another machine writing to the same share included). What
+//! happens to an entry already at the final path depends on the publication:
 //!
-//! - replacing: it is renamed aside (`.xdremux-publish-<run>-<n>.old`) and
-//!   only deleted once the run commits;
+//! - replacing: it is renamed aside (`.xdremux-publish-<run>-<n>.old`, never
+//!   onto an existing entry) and only deleted once the run commits;
 //! - exclusive: the run fails with [`PublishError::target_exists`] and
-//!   touches nothing. The rename itself refuses an existing target
-//!   (`renameat2(RENAME_NOREPLACE)`, `renamex_np(RENAME_EXCL)`, `MoveFileExW`
-//!   without replace); on file systems without such a rename it checks first.
+//!   touches nothing.
+//!
+//! Every rename refuses an existing target (`renameat2(RENAME_NOREPLACE)`,
+//! `renamex_np(RENAME_EXCL)`, `MoveFileExW` without replace); on file systems
+//! without such a rename it checks first. Publications in one process that
+//! share an output path run one after the other.
 //!
 //! The caller then reads the final paths back. Only after that check passes
 //! does the run commit. On any failure it rolls back: what it placed is
@@ -23,11 +28,12 @@
 //!
 //! Only entries this run created are removed. On Unix a placed output is
 //! removed only while it is still the file or directory (device + inode) this
-//! run created; the identity is taken after writing and again after renaming,
-//! because FAT/exFAT number empty files with a placeholder and some network
-//! file systems derive it from the path. An output replaced by another writer
-//! in the meantime is left alone and named in the error. Other platforms
-//! identify outputs by path.
+//! run wrote. The identity is taken from the written file (FAT/exFAT number
+//! an empty file with a placeholder). After the rename it is taken again only
+//! if the entry at the final path still has the size and modification time
+//! this run wrote, since some network file systems derive it from the path.
+//! An output another writer has replaced is left alone and named in the error.
+//! Other platforms identify outputs by path.
 //!
 //! A run killed between placing and committing can leave hidden entries
 //! behind. The first run in a process that publishes into a directory removes
@@ -39,8 +45,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static NEXT_PUBLICATION: AtomicU64 = AtomicU64::new(0);
 const HIDDEN_PREFIX: &str = ".xdremux-publish-";
@@ -69,7 +75,8 @@ impl PublishError {
     }
 
     /// True when an exclusive publication found an entry at one of its
-    /// output paths. Nothing was replaced; pick another name and retry.
+    /// output paths and left everything as it was: pick another name and
+    /// retry. False when the rollback after that could not be completed.
     pub fn target_exists(&self) -> bool {
         self.target_exists
     }
@@ -102,10 +109,35 @@ fn identity_of(_meta: &fs::Metadata) -> Identity {
     None
 }
 
-fn identity(path: &Path) -> Identity {
-    fs::symlink_metadata(path)
-        .ok()
-        .and_then(|m| identity_of(&m))
+/// What this run's entry looked like when it was written: its identity, and
+/// its size and modification time to recognise it after a rename.
+#[derive(Clone, Copy)]
+struct Seen {
+    identity: Identity,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl Seen {
+    fn of(meta: &fs::Metadata) -> Self {
+        Self {
+            identity: identity_of(meta),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        }
+    }
+
+    /// False only when `meta` is provably another entry.
+    fn may_be(&self, meta: &fs::Metadata) -> bool {
+        self.identity.is_none() || identity_of(meta) == self.identity
+    }
+
+    /// Take the identity of `meta` if it still has this entry's size and time.
+    fn follow(&mut self, meta: &fs::Metadata) {
+        if meta.len() == self.len && meta.modified().ok() == self.modified {
+            self.identity = identity_of(meta);
+        }
+    }
 }
 
 fn file_name(path: &Path) -> String {
@@ -114,14 +146,11 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn parent_of(path: &Path) -> &Path {
+/// The directory `path` is in (`.` for a bare file name).
+pub(crate) fn parent_of(path: &Path) -> &Path {
     path.parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."))
-}
-
-fn is_missing(path: &Path) -> bool {
-    matches!(fs::symlink_metadata(path), Err(e) if e.kind() == ErrorKind::NotFound)
 }
 
 fn describe(meta: &fs::Metadata) -> &'static str {
@@ -144,11 +173,28 @@ fn remove_entry(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// A run's random tag. The OS seeds `RandomState`; the time, process and
+/// counter only make two tags in one process differ for certain.
+fn random_tag() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = RandomState::new().build_hasher();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    hasher.write_u128(nanos);
+    hasher.write_u32(std::process::id());
+    hasher.write_u64(NEXT_PUBLICATION.fetch_add(1, Ordering::Relaxed));
+    format!("{:016x}", hasher.finish())
+}
+
 /// Flush a written file before it is renamed into place: its data must reach
 /// the disk before the entry it replaces is deleted. Apple's `sync_all` is
 /// `F_FULLFSYNC`, which SMB shares without full-sync support and WebDAV
 /// reject. Ordering is all a publication needs, so use `F_BARRIERFSYNC` there
-/// and fall back to `fsync`, as SQLite and Go do.
+/// and fall back to `fsync` when a file system does not support it, as SQLite
+/// and Go do. Other errors (EIO) are reported.
 #[cfg(target_vendor = "apple")]
 fn sync(file: &File) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
@@ -163,8 +209,17 @@ fn sync(file: &File) -> std::io::Result<()> {
         }
     };
     // SAFETY: `fd` stays open (owned by `file`) for both calls.
-    retrying(&|| unsafe { libc::fcntl(fd, libc::F_BARRIERFSYNC) })
-        .or_else(|_| retrying(&|| unsafe { libc::fsync(fd) }))
+    match retrying(&|| unsafe { libc::fcntl(fd, libc::F_BARRIERFSYNC) }) {
+        Err(e)
+            if matches!(
+                e.raw_os_error(),
+                Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::ENOTTY | libc::EINVAL | libc::ENODEV)
+            ) =>
+        {
+            retrying(&|| unsafe { libc::fsync(fd) })
+        }
+        other => other,
+    }
 }
 
 #[cfg(not(target_vendor = "apple"))]
@@ -188,12 +243,11 @@ fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
     match rename_noreplace(from, to) {
         // No atomic no-replace rename on this file system (FUSE, some network
         // shares): check, then rename. Another writer could slip in between.
-        Err(e) if unsupported(&e) => {
-            if !is_missing(to) {
-                return Err(ErrorKind::AlreadyExists.into());
-            }
-            fs::rename(from, to)
-        }
+        Err(e) if unsupported(&e) => match fs::symlink_metadata(to) {
+            Err(e) if e.kind() == ErrorKind::NotFound => fs::rename(from, to),
+            Err(e) => Err(e),
+            Ok(_) => Err(ErrorKind::AlreadyExists.into()),
+        },
         other => other,
     }
 }
@@ -239,16 +293,43 @@ fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+/// `path` as an absolute, NUL-terminated `\\?\` path. Without that prefix
+/// `MoveFileExW` stops at MAX_PATH (260 UTF-16 units); `std::fs` adds it
+/// itself, and so must a direct call. `absolute` also turns `/` into `\` and
+/// resolves `.` and `..`, which a `\\?\` path no longer does.
+#[cfg(windows)]
+fn verbatim(path: &Path) -> std::io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    const SLASH: u16 = b'\\' as u16;
+    let absolute: Vec<u16> = std::path::absolute(path)?
+        .as_os_str()
+        .encode_wide()
+        .collect();
+    let mut wide = Vec::with_capacity(absolute.len() + 9);
+    if absolute.starts_with(&[SLASH, SLASH, b'?' as u16, SLASH])
+        || absolute.starts_with(&[SLASH, SLASH, b'.' as u16, SLASH])
+    {
+        wide.extend_from_slice(&absolute);
+    } else if absolute.starts_with(&[SLASH, SLASH]) {
+        // \\server\share\... becomes \\?\UNC\server\share\...
+        wide.extend(r"\\?\UNC\".encode_utf16());
+        wide.extend_from_slice(&absolute[2..]);
+    } else {
+        wide.extend(r"\\?\".encode_utf16());
+        wide.extend_from_slice(&absolute);
+    }
+    wide.push(0);
+    Ok(wide)
+}
+
 #[cfg(windows)]
 fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     extern "system" {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
-    let (from, to) = (wide(from), wide(to));
+    let (from, to) = (verbatim(from)?, verbatim(to)?);
     // SAFETY: NUL-terminated wide paths; without MOVEFILE_REPLACE_EXISTING the
     // call fails when `to` exists.
     if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } != 0 {
@@ -326,18 +407,21 @@ pub(crate) fn compare_file(path: &Path, expected: &[u8]) -> Result<(), String> {
 }
 
 /// Remove `.partial` entries a killed run left in `dir`: once per directory
-/// per process, and only those older than an hour, so a run still writing
+/// per process (the record is bounded; forgetting a directory only means a
+/// second sweep), and only those older than an hour, so a run still writing
 /// elsewhere is never touched.
 fn sweep_stale(dir: &Path) {
     static SWEPT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
     {
         let mut swept = SWEPT.lock().unwrap_or_else(|e| e.into_inner());
-        if !swept
-            .get_or_insert_with(HashSet::new)
-            .insert(dir.to_path_buf())
-        {
+        let swept = swept.get_or_insert_with(HashSet::new);
+        if swept.contains(dir) {
             return;
         }
+        if swept.len() >= 1024 {
+            swept.clear();
+        }
+        swept.insert(dir.to_path_buf());
     }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -361,6 +445,43 @@ fn sweep_stale(dir: &Path) {
     }
 }
 
+/// Output paths a publication in this process is placing, verifying and
+/// committing (or rolling back). Another publication that shares one waits
+/// until it is released, so two runs in one process never move each other's
+/// entries aside. Paths are compared by canonical directory and lowercased
+/// name: on a case-sensitive volume that only serialises a little more.
+static BUSY: (Mutex<Vec<PathBuf>>, Condvar) = (Mutex::new(Vec::new()), Condvar::new());
+
+struct Claim(Vec<PathBuf>);
+
+impl Claim {
+    fn take<'a>(targets: impl Iterator<Item = &'a Path>) -> Self {
+        let keys: Vec<PathBuf> = targets
+            .map(|target| {
+                let dir = parent_of(target);
+                let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+                dir.join(file_name(target).to_lowercase())
+            })
+            .collect();
+        let (lock, released) = &BUSY;
+        let mut busy = lock.lock().unwrap_or_else(|e| e.into_inner());
+        while keys.iter().any(|key| busy.contains(key)) {
+            busy = released.wait(busy).unwrap_or_else(|e| e.into_inner());
+        }
+        busy.extend(keys.iter().cloned());
+        Self(keys)
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let (lock, released) = &BUSY;
+        let mut busy = lock.lock().unwrap_or_else(|e| e.into_inner());
+        busy.retain(|key| !self.0.contains(key));
+        released.notify_all();
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     File,
@@ -372,10 +493,42 @@ struct Entry {
     staged: PathBuf,
     target: PathBuf,
     kind: Kind,
-    identity: Identity,
+    seen: Option<Seen>,
     /// Where the entry previously at `target` was moved aside.
     retired: Option<PathBuf>,
     placed: bool,
+}
+
+impl Entry {
+    /// The path this run's entry is at now.
+    fn current(&self) -> &Path {
+        if self.placed {
+            &self.target
+        } else {
+            &self.staged
+        }
+    }
+
+    /// How the entry is named in an error: its final name, and while it is
+    /// not placed also the hidden name it waits under.
+    fn label(&self) -> String {
+        if self.placed {
+            self.target.display().to_string()
+        } else {
+            format!(
+                "{} (staged for {})",
+                self.staged.display(),
+                file_name(&self.target)
+            )
+        }
+    }
+}
+
+/// What a rollback did: a clause for the error message, and whether
+/// everything was removed and restored.
+struct Rollback {
+    summary: String,
+    complete: bool,
 }
 
 /// One run's outputs. Dropping it without `finish` rolls back.
@@ -384,6 +537,8 @@ pub(crate) struct Publication {
     replace: bool,
     entries: Vec<Entry>,
     finished: bool,
+    #[cfg(test)]
+    after_rename: Option<Box<dyn Fn(&Path)>>,
 }
 
 impl Publication {
@@ -391,12 +546,13 @@ impl Publication {
     /// replaced; without it, an existing entry makes `finish` fail with
     /// [`PublishError::target_exists`] and nothing is touched.
     pub(crate) fn new(replace: bool) -> Self {
-        let n = NEXT_PUBLICATION.fetch_add(1, Ordering::Relaxed);
         Self {
-            tag: format!("{}-{n}", std::process::id()),
+            tag: random_tag(),
             replace,
             entries: Vec::new(),
             finished: false,
+            #[cfg(test)]
+            after_rename: None,
         }
     }
 
@@ -412,13 +568,18 @@ impl Publication {
         let staged = self.hidden(target, self.entries.len(), "partial");
         // A name that already exists is not ours: fail without adopting it.
         let mut file = create_new(&staged)?;
-        self.adopt(staged.clone(), target, Kind::File);
         let written = write_synced(&mut file, &staged, bytes);
-        // Take the identity from the written file: FAT/exFAT give an empty
-        // file a placeholder number that changes once it holds data.
-        if let Some(entry) = self.entries.last_mut() {
-            entry.identity = file.metadata().ok().and_then(|m| identity_of(&m));
-        }
+        // Recognise the file by what it is after writing (FAT/exFAT number an
+        // empty file with a placeholder), taken from the open file itself.
+        let seen = file.metadata().ok().map(|m| Seen::of(&m));
+        self.entries.push(Entry {
+            staged,
+            target: target.to_path_buf(),
+            kind: Kind::File,
+            seen,
+            retired: None,
+            placed: false,
+        });
         written
     }
 
@@ -428,27 +589,23 @@ impl Publication {
         sweep_stale(parent_of(target));
         let staged = self.hidden(target, self.entries.len(), "partial");
         fs::create_dir(&staged).map_err(|e| format!("cannot create {}: {e}", staged.display()))?;
-        self.adopt(staged.clone(), target, Kind::Directory);
-        Ok(staged)
-    }
-
-    fn adopt(&mut self, staged: PathBuf, target: &Path, kind: Kind) {
-        let identity = identity(&staged);
+        let seen = fs::symlink_metadata(&staged).ok().map(|m| Seen::of(&m));
         self.entries.push(Entry {
-            staged,
+            staged: staged.clone(),
             target: target.to_path_buf(),
-            kind,
-            identity,
+            kind: Kind::Directory,
+            seen,
             retired: None,
             placed: false,
         });
+        Ok(staged)
     }
 
     /// Give up before placing anything; `error` is why.
     pub(crate) fn abandon(self, what: &str, error: String) -> PublishError {
         PublishError::new(format!(
             "{what} could not be written: {error}; {}",
-            self.rollback()
+            self.rollback().summary
         ))
     }
 
@@ -460,14 +617,16 @@ impl Publication {
         what: &str,
         verify: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, PublishError> {
+        let _claim = Claim::take(self.entries.iter().map(|e| e.target.as_path()));
         if let Err(error) = self.place() {
+            let rollback = self.rollback();
             return Err(PublishError {
                 message: format!(
                     "{what} could not be written: {}; {}",
-                    error.message,
-                    self.rollback()
+                    error.message, rollback.summary
                 ),
-                target_exists: error.target_exists,
+                // "Nothing was touched" holds only if the rollback completed.
+                target_exists: error.target_exists && rollback.complete,
             });
         }
         match verify() {
@@ -477,7 +636,7 @@ impl Publication {
             }
             Err(error) => Err(PublishError::new(format!(
                 "{what} failed verification: {error}; {}",
-                self.rollback()
+                self.rollback().summary
             ))),
         }
     }
@@ -510,17 +669,22 @@ impl Publication {
                             describe(&meta)
                         )));
                     }
-                    let retired = self.hidden(&target, index, "old");
-                    fs::rename(&target, &retired).map_err(|e| {
-                        PublishError::new(format!(
-                            "cannot move the existing {} aside: {e}",
-                            target.display()
-                        ))
-                    })?;
+                    let retired = self.retire(&target, index)?;
                     self.entries[index].retired = Some(retired);
                 }
             }
-            match rename_exclusive(&self.entries[index].staged, &target) {
+            let entry = &mut self.entries[index];
+            if entry.kind == Kind::Directory {
+                // The caller has filled the directory since it was created.
+                if let (Some(seen), Ok(meta)) =
+                    (entry.seen.as_mut(), fs::symlink_metadata(&entry.staged))
+                {
+                    if seen.may_be(&meta) {
+                        *seen = Seen::of(&meta);
+                    }
+                }
+            }
+            match rename_exclusive(&entry.staged, &target) {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                     return Err(PublishError::exists(&target))
@@ -532,13 +696,50 @@ impl Publication {
                     )))
                 }
             }
-            let entry = &mut self.entries[index];
             entry.placed = true;
-            // Some network file systems derive the number from the path.
-            entry.identity = identity(&entry.target);
+            #[cfg(test)]
+            if let Some(hook) = &self.after_rename {
+                hook(&target);
+            }
+            // Most file systems keep the identity across a rename; some
+            // network ones derive it from the path. Follow it only to an entry
+            // that still has the size and time this run wrote, so a file
+            // swapped in by another writer is never taken for ours. If it
+            // cannot be read now, keep the one taken from the written file.
+            let entry = &mut self.entries[index];
+            if let (Some(seen), Ok(meta)) = (entry.seen.as_mut(), fs::symlink_metadata(&target)) {
+                if !seen.may_be(&meta) {
+                    seen.follow(&meta);
+                }
+            }
         }
         self.sync_directories();
         Ok(())
+    }
+
+    /// Move the entry at `target` aside under a hidden name that is free
+    /// (never onto an entry a killed run left there) and return that name.
+    fn retire(&self, target: &Path, index: usize) -> Result<PathBuf, PublishError> {
+        for attempt in 0..8 {
+            let retired = match attempt {
+                0 => self.hidden(target, index, "old"),
+                n => self.hidden(target, index, &format!("{n}.old")),
+            };
+            match rename_exclusive(target, &retired) {
+                Ok(()) => return Ok(retired),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    return Err(PublishError::new(format!(
+                        "cannot move the existing {} aside: {e}",
+                        target.display()
+                    )))
+                }
+            }
+        }
+        Err(PublishError::new(format!(
+            "cannot move the existing {} aside: no free hidden name",
+            target.display()
+        )))
     }
 
     fn sync_directories(&self) {
@@ -554,64 +755,64 @@ impl Publication {
     /// Keep the placed outputs and delete the entries they replaced.
     fn commit(mut self) {
         self.finished = true;
+        let mut removed_any = false;
         for entry in &self.entries {
             if let Some(retired) = &entry.retired {
-                let _ = remove_entry(retired);
+                removed_any |= remove_entry(retired).is_ok();
             }
         }
-        self.sync_directories();
+        if removed_any {
+            self.sync_directories();
+        }
     }
 
-    /// Undo this run. Returns a clause for the error message saying what was
-    /// removed and restored, or what could not be.
-    fn rollback(mut self) -> String {
+    /// Undo this run.
+    fn rollback(mut self) -> Rollback {
         self.finished = true;
         self.undo()
     }
 
-    fn undo(&mut self) -> String {
+    fn undo(&mut self) -> Rollback {
         let mut removed = Vec::new();
         let mut restored = Vec::new();
         let mut problems = Vec::new();
         for entry in self.entries.iter().rev() {
-            let ours = if entry.placed {
-                &entry.target
-            } else {
-                &entry.staged
-            };
+            let ours = entry.current();
             match fs::symlink_metadata(ours) {
                 Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => problems.push(format!("cannot inspect {}: {e}", ours.display())),
-                Ok(meta) if entry.identity.is_some() && identity_of(&meta) != entry.identity => {
+                Err(e) => problems.push(format!("cannot inspect {}: {e}", entry.label())),
+                Ok(meta) if entry.seen.is_some_and(|seen| !seen.may_be(&meta)) => {
                     problems.push(format!(
                         "left {} alone: it is no longer the entry this run wrote",
-                        ours.display()
+                        entry.label()
                     ))
                 }
                 Ok(_) => match remove_entry(ours) {
                     Ok(()) if entry.placed => removed.push(file_name(&entry.target)),
                     Ok(()) => {}
-                    Err(e) => problems.push(format!("cannot remove {}: {e}", ours.display())),
+                    Err(e) => problems.push(format!("cannot remove {}: {e}", entry.label())),
                 },
             }
             let Some(retired) = &entry.retired else {
                 continue;
             };
-            // Only a free target may take the earlier entry back: a rename
-            // onto an occupied path would replace whatever is there.
-            if is_missing(&entry.target) && fs::rename(retired, &entry.target).is_ok() {
-                restored.push(file_name(&entry.target));
-            } else {
-                problems.push(format!(
-                    "the previous {} is kept at {}",
+            // Never onto an occupied path: that would replace whatever is
+            // there, for example another writer's new output.
+            match rename_exclusive(retired, &entry.target) {
+                Ok(()) => restored.push(file_name(&entry.target)),
+                Err(e) => problems.push(format!(
+                    "the previous {} is kept at {} ({e})",
                     entry.target.display(),
                     retired.display()
-                ));
+                )),
             }
         }
         if !problems.is_empty() {
             problems.reverse();
-            return format!("rollback incomplete: {}", problems.join("; "));
+            return Rollback {
+                summary: format!("rollback incomplete: {}", problems.join("; ")),
+                complete: false,
+            };
         }
         removed.reverse();
         restored.reverse();
@@ -626,7 +827,10 @@ impl Publication {
                 restored.join(", ")
             ));
         }
-        summary
+        Rollback {
+            summary,
+            complete: true,
+        }
     }
 }
 
@@ -904,5 +1108,135 @@ mod tests {
         assert!(error.contains("the previous"), "{error}");
         assert_eq!(fs::read(&target).unwrap(), b"theirs");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_killed_runs_old_entry_is_never_overwritten() {
+        let dir = scratch("killed_old");
+        let target = dir.join("IMG_1.heic");
+        fs::write(&target, b"previous").unwrap();
+        let mut publication = Publication::new(true);
+        // What a killed run with the same name would have left behind.
+        let left = publication.hidden(&target, 0, "old");
+        fs::write(&left, b"only copy of an earlier output").unwrap();
+        publication.stage_file(&target, b"new").unwrap();
+        publication.finish("test output", || Ok(())).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert_eq!(fs::read(&left).unwrap(), b"only copy of an earlier output");
+        assert_eq!(names(&dir).len(), 2, "{:?}", names(&dir));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn runs_never_share_hidden_names() {
+        let a = Publication::new(true);
+        let b = Publication::new(true);
+        let target = Path::new("IMG_1.heic");
+        assert_ne!(a.hidden(target, 0, "old"), b.hidden(target, 0, "old"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_swapped_in_right_after_the_rename_is_not_taken_for_ours() {
+        let dir = scratch("swapped_in");
+        let target = dir.join("IMG_1.heic");
+        let theirs = dir.join("theirs");
+        let mut publication = Publication::new(true);
+        publication.stage_file(&target, b"ours").unwrap();
+        let swap_from = theirs.clone();
+        publication.after_rename = Some(Box::new(move |placed: &Path| {
+            fs::write(&swap_from, b"another writer's file").unwrap();
+            fs::rename(&swap_from, placed).unwrap();
+        }));
+        let error = publication
+            .finish("test output", || Err::<(), _>("changed".to_string()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("no longer the entry this run wrote"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"another writer's file");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_incomplete_rollback_does_not_report_target_exists() {
+        let dir = scratch("incomplete_exists");
+        let still = dir.join("IMG_1.heic");
+        let movie = dir.join("IMG_1.mov");
+        fs::write(&movie, b"someone's movie").unwrap();
+        let mut publication = Publication::new(false);
+        publication.stage_file(&still, b"still").unwrap();
+        publication.stage_file(&movie, b"movie").unwrap();
+        // The placed still is replaced before the MOV turns out to be taken,
+        // so the rollback cannot remove it: the destination is not as it was.
+        let theirs = dir.join("theirs");
+        publication.after_rename = Some(Box::new(move |placed: &Path| {
+            fs::write(&theirs, b"another still").unwrap();
+            fs::rename(&theirs, placed).unwrap();
+        }));
+        let error = publication.finish("test output", || Ok(())).unwrap_err();
+        assert!(!error.target_exists(), "{error}");
+        assert!(error.to_string().contains("already exists"), "{error}");
+        assert!(error.to_string().contains("rollback incomplete"), "{error}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn publications_to_the_same_target_in_one_process_take_turns() {
+        let dir = scratch("take_turns");
+        let still = dir.join("IMG_1.heic");
+        let movie = dir.join("IMG_1.mov");
+        fs::write(&still, b"old still").unwrap();
+        fs::write(&movie, b"old movie").unwrap();
+        let workers: Vec<_> = (0..4u8)
+            .map(|worker| {
+                let (still, movie) = (still.clone(), movie.clone());
+                std::thread::spawn(move || {
+                    for round in 0..25u8 {
+                        let tag = [worker, round];
+                        let mut publication = Publication::new(true);
+                        publication.stage_file(&still, &tag).unwrap();
+                        publication.stage_file(&movie, &tag).unwrap();
+                        publication
+                            .finish("test output", || {
+                                compare_file(&still, &tag)?;
+                                compare_file(&movie, &tag)
+                            })
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        // Every publication succeeded, the last one left a matching pair and
+        // nothing hidden stayed behind.
+        assert_eq!(fs::read(&still).unwrap(), fs::read(&movie).unwrap());
+        assert_eq!(names(&dir), ["IMG_1.heic", "IMG_1.mov"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_go_to_movefileexw_in_verbatim_form() {
+        let text = |p: &str| String::from_utf16(&verbatim(Path::new(p)).unwrap()).unwrap();
+        assert_eq!(
+            text(r"C:\photos\IMG_1.heic"),
+            "\\\\?\\C:\\photos\\IMG_1.heic\0"
+        );
+        assert_eq!(
+            text(r"C:/photos/./x/../IMG_1.heic"),
+            "\\\\?\\C:\\photos\\IMG_1.heic\0"
+        );
+        assert_eq!(
+            text(r"\\server\share\IMG_1.heic"),
+            "\\\\?\\UNC\\server\\share\\IMG_1.heic\0"
+        );
+        let long = format!(r"C:\{}\IMG_1.heic", "d".repeat(300));
+        assert!(text(&long).starts_with("\\\\?\\C:\\"));
     }
 }

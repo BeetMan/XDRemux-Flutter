@@ -840,7 +840,7 @@ class XdRemuxFFI {
     String movPath,
     String outStillPath,
     String outMovPath, {
-    bool replace = true,
+    required bool replace,
   }) {
     final stillPtr = stillPath.toNativeUtf8();
     final movPtr = movPath.toNativeUtf8();

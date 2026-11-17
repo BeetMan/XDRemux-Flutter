@@ -7,9 +7,14 @@ private final class FakeFS: ConversionFileSystem, @unchecked Sendable {
     let lock = NSLock()
     var files: Set<String> = []
     var dirs: Set<String> = []
+    /// Symbolic links that point nowhere: `fileExists` is false, `entryExists` true.
+    var danglingLinks: Set<String> = []
     var log: [String] = []
 
     func fileExists(_ url: URL) -> Bool { lock.withLock { files.contains(url.path) } }
+    func entryExists(_ url: URL) -> Bool {
+        lock.withLock { files.contains(url.path) || danglingLinks.contains(url.path) }
+    }
     func createDirectory(_ url: URL) throws { lock.withLock { dirs.insert(url.path); log.append("mkdir \(url.lastPathComponent)") } }
     func moveItem(from: URL, to: URL) throws {
         try lock.withLock {
@@ -380,6 +385,11 @@ private final class PublishLog: @unchecked Sendable {
     var loseFirstRace = false
 }
 
+private struct FakeCoreError: LocalizedError {
+    var text: String
+    var errorDescription: String? { text }
+}
+
 private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
     let fs: FakeFS
     var isMotion = true
@@ -405,7 +415,6 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
         fs.lock.withLock { fs.files.insert(s); fs.files.insert(v) }
         return LivePhotoFiles(stillPath: s, videoPath: v, contentIdentifier: "ABC")
     }
-    func livePhotoPairIsValid(still: String, video: String) async throws -> Bool { pairValid }
     func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String,
                               replace: Bool) async throws {
         let loseRace = publishes.lock.withLock {
@@ -413,10 +422,12 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
             defer { publishes.loseFirstRace = false }
             return publishes.loseFirstRace
         }
-        if publishFails { throw ConversionJobError.livePhotoFailed("failed verification; rolled back") }
+        // Not a ConversionJobError: the job itself must turn it into one.
+        if publishFails { throw FakeCoreError(text: "failed verification; rolled back") }
         try fs.lock.withLock {
             if loseRace { fs.files.insert(toStill) }   // another job got there first
-            if !replace, fs.files.contains(toStill) || fs.files.contains(toVideo) {
+            let taken = { (path: String) in fs.files.contains(path) || fs.danglingLinks.contains(path) }
+            if !replace, taken(toStill) || taken(toVideo) {
                 throw LivePhotoTargetExists(message: "\(toStill) already exists")
             }
             guard fs.files.contains(still), fs.files.contains(video) else { throw CocoaError(.fileNoSuchFile) }
@@ -465,7 +476,7 @@ final class MotionPhotoJobTests: XCTestCase {
             _ = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
             XCTFail("expected failure")
         } catch let e as ConversionJobError {
-            if case .livePhotoFailed = e {} else { XCTFail("\(e)") }
+            XCTAssertEqual(e, .livePhotoFailed("failed verification; rolled back"))
         } catch { XCTFail("\(error)") }
         XCTAssertTrue(fs.files.isEmpty, "the job itself moves nothing into /out: \(fs.files)")
         XCTAssertFalse(fs.log.contains { $0.hasPrefix("mv ") }, "\(fs.log)")
@@ -508,6 +519,18 @@ final class MotionPhotoJobTests: XCTestCase {
         XCTAssertEqual(backend.publishes.calls.map { $0.still }, ["/out/IMG_M_iso.heic", "/out/IMG_M_iso (2).heic"])
         XCTAssertEqual(p.outputURL.path, "/out/IMG_M_iso (2).heic")
         XCTAssertTrue(fs.files.contains("/out/IMG_M_iso.heic"), "the winner's still is kept")
+    }
+
+    func testKeepBothSkipsANameTakenByADanglingLink() async throws {
+        let fs = FakeFS()
+        fs.danglingLinks = ["/out/IMG_M_iso.heic"]
+        let backend = FakeMotionBackend(fs: fs)
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.skipExisting = false
+        let p = try await job.run(input: input, config: config, motionMode: .livePhotoPair)
+        XCTAssertEqual(p.outputURL.path, "/out/IMG_M_iso (2).heic")
+        XCTAssertEqual(backend.publishes.calls.count, 1, "no attempt at the taken name")
     }
 
     func testStillOnlyKeepsAnExistingOutputWhenNotOverwriting() async throws {

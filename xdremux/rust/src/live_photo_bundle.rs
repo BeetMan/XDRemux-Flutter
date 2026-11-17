@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::live_photo;
-use crate::live_photo_publish::{compare_file, write_new_synced, Publication};
+use crate::live_photo_publish::{compare_file, parent_of, write_new_synced, Publication};
 
 pub const BUNDLE_EXTENSION: &str = "pvt";
 pub const METADATA_FILE: &str = "metadata.plist";
@@ -165,11 +165,7 @@ fn write_bundle_with(
         return Err("still and MOV content identifiers do not match".into());
     }
 
-    let parent = bundle
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent).map_err(|e| format!("create bundle parent: {e}"))?;
+    fs::create_dir_all(parent_of(bundle)).map_err(|e| format!("create bundle parent: {e}"))?;
     let mut publication = Publication::new(true);
     let staging = publication.stage_directory(bundle)?;
     let still_ext = still
@@ -196,7 +192,7 @@ fn write_bundle_with(
 /// before writing.
 fn verify_written_bundle(bundle: &Path, still: &[u8], movie: &[u8]) -> Result<BundlePaths, String> {
     let paths = read_bundle(bundle)?;
-    live_photo::verify_written_pair(still, movie, &paths.still, &paths.movie)?;
+    live_photo::compare_written_pair(still, movie, &paths.still, &paths.movie)?;
     compare_file(&bundle.join(METADATA_FILE), METADATA_PLIST.as_bytes())?;
     Ok(paths)
 }

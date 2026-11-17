@@ -115,6 +115,23 @@ class MotionPhotoService {
     }
   }
 
+  /// The flat Live Photo MOV next to [outputPath] when it pairs with the
+  /// still there, else null. Converting the item again replaces that still,
+  /// so its MOV would stay behind unpaired. A MOV that does not pair with the
+  /// still is not this item's to delete.
+  static Future<String?> pairedMovieOf(String outputPath) async {
+    final movie = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.mov');
+    if (movie == outputPath ||
+        !File(outputPath).existsSync() ||
+        !File(movie).existsSync()) {
+      return null;
+    }
+    final paired = await Isolate.run(
+      () => XdRemuxFFI.livePhotoPairValid(outputPath, movie),
+    );
+    return paired ? movie : null;
+  }
+
   /// Inspect [path] and return a summary when it is a Motion Photo.
   static Future<MotionPhotoSummary?> inspect(String path) async {
     try {

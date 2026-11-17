@@ -51,6 +51,7 @@ void main() {
         movie,
         outputPath,
         livePhotoMoviePath(outputPath),
+        replace: true,
       );
 
       expect(report['success'], isFalse);
@@ -78,10 +79,27 @@ void main() {
         movie,
         still,
         '${temp.path}/other.mov',
+        replace: true,
       );
       expect(report['success'], isFalse);
       expect(report['errorMessage'], contains('must not overwrite its input'));
       expect(_names(temp), ['IMG_1.heic', 'IMG_1.mov']);
+    },
+    skip: _coreLoadable ? false : 'Rust core not loadable by this flutter_tester',
+  );
+
+  test(
+    'a MOV only belongs to the old still when the two pair',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('xdremux-paired-');
+      addTearDown(() => temp.delete(recursive: true));
+      final still = '${temp.path}/IMG_1_iso.heic';
+      expect(await MotionPhotoService.pairedMovieOf(still), isNull);
+      await File(still).writeAsString('converted still');
+      expect(await MotionPhotoService.pairedMovieOf(still), isNull);
+      // A MOV that does not pair with the still is not the item's to delete.
+      await File(livePhotoMoviePath(still)).writeAsString('some movie');
+      expect(await MotionPhotoService.pairedMovieOf(still), isNull);
     },
     skip: _coreLoadable ? false : 'Rust core not loadable by this flutter_tester',
   );
@@ -149,6 +167,8 @@ void main() {
         final still = await MotionPhotoService.composeLivePhoto(sample, flat);
         expect(still, flat);
         expect(XdRemuxFFI.livePhotoPairValid(flat, movie), isTrue);
+        // Converting this item again may delete exactly this MOV with the still.
+        expect(await MotionPhotoService.pairedMovieOf(flat), movie);
         expect(
           _names(temp),
           ['标准 1x_iso.heic', '标准 1x_iso.mov'],

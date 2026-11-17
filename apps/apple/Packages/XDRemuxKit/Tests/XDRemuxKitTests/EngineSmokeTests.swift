@@ -307,6 +307,33 @@ extension EngineSmokeTests {
         }
     }
 
+    /// The engine's other Motion Photo calls report core failures the same
+    /// way: make as `livePhotoFailed`, split as `coreFailed`.
+    func testMakeAndSplitFailuresReachTheJobAsReadableMessages() async throws {
+        let missing = tempDir.appendingPathComponent("missing.jpg").path
+        do {
+            _ = try await XDRemuxEngine.shared.makeLivePhoto(
+                source: missing, still: missing + ".heic",
+                outputDirectory: tempDir.appendingPathComponent("live").path)
+            XCTFail("expected failure")
+        } catch ConversionJobError.livePhotoFailed(let message) {
+            XCTAssertTrue(message?.hasPrefix("cannot read source") == true, message ?? "")
+        }
+        do {
+            _ = try await XDRemuxEngine.shared.splitMotionPhotoVideos(
+                path: missing, outputDirectory: tempDir.appendingPathComponent("split").path)
+            XCTFail("expected failure")
+        } catch ConversionJobError.coreFailed(let message) {
+            XCTAssertTrue(message?.hasPrefix("cannot read photo") == true, message ?? "")
+        }
+    }
+
+    func testCoreErrorsDescribeThemselves() {
+        XCTAssertEqual(XDRemuxError.coreFailure(message: "cannot read photo").localizedDescription, "cannot read photo")
+        XCTAssertFalse(XDRemuxError.nullResult.localizedDescription.contains("XDRemuxError"))
+        XCTAssertTrue(XDRemuxError.malformedReport("eof").localizedDescription.hasSuffix("eof"))
+    }
+
     /// Opt-in: `XDREMUX_MOTION_SAMPLE_DIR` with OPPO Motion Photo JPEGs →
     /// inspect, convert as a Live Photo pair, validate the pair.
     func testLivePhotoPairEndToEndIfSampleProvided() async throws {

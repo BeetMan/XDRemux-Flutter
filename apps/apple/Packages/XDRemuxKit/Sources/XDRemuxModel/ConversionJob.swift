@@ -67,7 +67,6 @@ public protocol MotionPhotoBackend: Sendable {
     /// The core checks the pair before writing it and reads it back before
     /// returning, so the returned files are a valid pair.
     func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles
-    func livePhotoPairIsValid(still: String, video: String) async throws -> Bool
     /// Copies a composed pair to `toStill` + `toVideo`. With `replace` files
     /// already there are replaced; without it an existing file at either path
     /// throws `LivePhotoTargetExists` and nothing is touched. Returns only
@@ -146,14 +145,26 @@ public struct ConversionOutcome: Codable, Equatable, Sendable {
 /// Minimal file-system surface so the job is testable without touching disk.
 public protocol ConversionFileSystem: Sendable {
     func fileExists(_ url: URL) -> Bool
+    /// Whether any entry is at `url`, a symbolic link included even when it
+    /// points nowhere (`fileExists` follows links). The core treats every
+    /// such entry as taken.
+    func entryExists(_ url: URL) -> Bool
     func createDirectory(_ url: URL) throws
     func moveItem(from: URL, to: URL) throws
     func removeItem(_ url: URL) throws
 }
 
+extension ConversionFileSystem {
+    public func entryExists(_ url: URL) -> Bool { fileExists(url) }
+}
+
 public struct DefaultConversionFileSystem: ConversionFileSystem {
     public init() {}
     public func fileExists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
+    public func entryExists(_ url: URL) -> Bool {
+        // attributesOfItem does not follow a final symbolic link.
+        (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
+    }
     public func createDirectory(_ url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
@@ -347,7 +358,7 @@ public struct ConversionJob: Sendable {
         let movie = { (url: URL) in url.deletingPathExtension().appendingPathExtension("mov") }
         for _ in 0..<8 {
             let target = replace ? planned : OutputPlanner.uniqueURL(planned, exists: {
-                fileSystem.fileExists($0) || fileSystem.fileExists(movie($0))
+                fileSystem.entryExists($0) || fileSystem.entryExists(movie($0))
             })
             do {
                 try await motion.publishLivePhotoPair(still: still.path, video: video.path,

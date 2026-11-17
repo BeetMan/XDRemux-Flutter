@@ -32,6 +32,7 @@ import 'services/transfer/transfer_desktop_lifecycle.dart';
 import 'transfer_page.dart';
 import 'services/file_action_service.dart';
 import 'services/output_export_service.dart';
+import 'services/output_overlap.dart';
 import 'services/hardware_encoder.dart';
 import 'services/motion_photo_service.dart';
 import 'services/huawei_photo_policy.dart';
@@ -1549,6 +1550,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       final inputFile = File(inputPath);
       if (!inputFile.existsSync()) return OutputPlanStatus.inputMissing;
+      // An empty file-name suffix with output next to the source turns
+      // IMG_1.HEIC into IMG_1.heic: on a case-insensitive volume that is the
+      // original itself, which conversion would delete first.
+      if (outputWouldOverwriteInput(inputPath, outputPath)) {
+        return OutputPlanStatus.outputIsInput;
+      }
 
       final outputFile = File(outputPath);
       final parent = outputFile.parent;
@@ -1947,22 +1954,28 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         return;
       }
 
+      // The existing output is deleted next. Never when it is the original
+      // under another name (letter case, a linked output folder): compare the
+      // files, not the path strings.
+      if (outputWouldOverwriteInput(item.inputPath, item.outputPath)) {
+        throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
+      }
+      // A flat Live Photo pair is composed again below. The MOV that pairs
+      // with the still about to be deleted would otherwise stay next to the
+      // new, unpaired still if composing failed. Only that MOV: an unpaired
+      // one is not this item's, and a bundled item's pair is in its bundle.
+      final stalePairMovie =
+          item.motionPhoto != null &&
+              item.motionPhotoMode == MotionPhotoMode.livePhotoPair &&
+              !runConfig.livePhotoBundle
+          ? await MotionPhotoService.pairedMovieOf(item.outputPath)
+          : null;
       // Remove existing output file if present
       final outFile = File(item.outputPath);
-      if (outFile.existsSync() && item.inputPath != item.outputPath) {
+      if (outFile.existsSync()) {
         outFile.deleteSync();
       }
-      // A Live Photo pair is composed again below. Its old MOV belonged to
-      // the still just removed; if composing failed it would otherwise sit
-      // next to the new unpaired still under the pair's name.
-      if (item.motionPhoto != null &&
-          item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
-        final staleMovie = File(livePhotoMoviePath(item.outputPath));
-        if (staleMovie.existsSync() &&
-            staleMovie.absolute.path != File(item.inputPath).absolute.path) {
-          staleMovie.deleteSync();
-        }
-      }
+      if (stalePairMovie != null) await File(stalePairMovie).delete();
 
       // Photographic Styles on an ordinary photo go through the conversion
       // pipeline. A Huawei portrait keeps its own remux, then the requested

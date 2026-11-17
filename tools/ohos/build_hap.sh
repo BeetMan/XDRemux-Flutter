@@ -58,7 +58,9 @@ else
 fi
 # The core .so is copied in by hand (not tracked) and Dart resolves each FFI
 # symbol on first use, so a stale core builds fine and fails only when a
-# feature is used. Require every symbol xdremux_ffi.dart looks up.
+# feature is used. Require every symbol xdremux_ffi.dart looks up (same check
+# as build_hap.ps1). Names only: a core whose function has the same name but
+# an older signature still passes.
 CORE="$APP/ohos/entry/libs/arm64-v8a/libxdremux_core.so"
 [ -f "$CORE" ] || { echo "Missing $CORE: run xdremux/rust/build_ohos.sh and copy its output there." >&2; exit 1; }
 NM="${OHOS_NATIVE:-$DEVECO/sdk/default/openharmony/native}/llvm/bin/llvm-nm"

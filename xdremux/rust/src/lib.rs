@@ -75,6 +75,15 @@ fn paths_refer_to_same_file(input: &str, output: &str) -> bool {
     if input == output {
         return true;
     }
+    // Two existing paths: compare the files themselves, which also catches
+    // a different spelling on a case-insensitive volume and hard links.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(input), std::fs::metadata(output)) {
+            return a.dev() == b.dev() && a.ino() == b.ino() && a.len() == b.len();
+        }
+    }
     match (std::fs::canonicalize(input), std::fs::canonicalize(output)) {
         (Ok(input), Ok(output)) => input == output,
         _ => false,
@@ -317,6 +326,10 @@ pub extern "C" fn xdremux_make_live_photo(
             .unwrap_or("livephoto");
         let still_out_path = format!("{out_dir}/{stem}.heic");
         let mov_path = format!("{out_dir}/{stem}.mov");
+        // Create out_dir first: a path through a directory that does not
+        // exist yet (`<dir>/new/..`) cannot be resolved, so the checks below
+        // would not see that it leads back to the source.
+        std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
         for output in [&still_out_path, &mov_path] {
             if paths_refer_to_same_file(source_path, output) {
                 return Err("Live Photo output must not overwrite the source".into());
@@ -351,7 +364,6 @@ pub extern "C" fn xdremux_make_live_photo(
         // Only the composed pair is needed from here on.
         drop(still);
         drop(source);
-        std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
         live_photo::publish_pair(
             &still_out,
             &mov,
@@ -509,7 +521,9 @@ pub extern "C" fn xdremux_publish_live_photo_pair(
     replace: u8,
 ) -> *mut c_char {
     let result = (|| -> Result<serde_json::Value, serde_json::Value> {
-        let fail = |message: String| serde_json::json!({ "success": false, "errorMessage": message });
+        let fail = |message: String| {
+            serde_json::json!({ "success": false, "errorMessage": message, "targetExists": false })
+        };
         if still_path.is_null()
             || mov_path.is_null()
             || out_still_path.is_null()

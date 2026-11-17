@@ -2032,15 +2032,7 @@ pub fn publish_pair(
     movie_path: &std::path::Path,
     replace: bool,
 ) -> Result<(), PublishError> {
-    publish_pair_with(
-        still,
-        movie,
-        still_path,
-        movie_path,
-        replace,
-        existing_pair_is_valid,
-        |_, _| {},
-    )
+    publish_pair_with(still, movie, still_path, movie_path, replace, |_, _| {})
 }
 
 fn publish_pair_with(
@@ -2049,7 +2041,6 @@ fn publish_pair_with(
     still_path: &std::path::Path,
     movie_path: &std::path::Path,
     replace: bool,
-    pair_is_valid: impl Fn(&[u8], &[u8]) -> bool,
     before_verify: impl FnOnce(&std::path::Path, &std::path::Path),
 ) -> Result<(), PublishError> {
     use crate::live_photo_publish::Publication;
@@ -2061,7 +2052,7 @@ fn publish_pair_with(
     }
     // Before anything at the destination moves: release builds abort on
     // panic, and nothing would then put a moved file back.
-    if !pair_is_valid(still, movie) {
+    if !existing_pair_is_valid(still, movie) {
         return Err(PublishError::new(
             "the composed still and MOV do not carry the same Live Photo content identifier; \
              nothing was written",
@@ -2076,12 +2067,12 @@ fn publish_pair_with(
     }
     publication.finish(WHAT, || {
         before_verify(still_path, movie_path);
-        verify_written_pair(still, movie, still_path, movie_path)
+        compare_written_pair(still, movie, still_path, movie_path)
     })
 }
 
 /// Read both outputs back and compare them with the bytes that were written.
-pub(crate) fn verify_written_pair(
+pub(crate) fn compare_written_pair(
     still: &[u8],
     movie: &[u8],
     still_path: &std::path::Path,
@@ -2268,17 +2259,9 @@ mod publish_tests {
         let dir = scratch(name);
         let (still, movie) = pair(CONTENT_ID);
         let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
-        let error = publish_pair_with(
-            &still,
-            &movie,
-            &still_path,
-            &movie_path,
-            true,
-            existing_pair_is_valid,
-            hook,
-        )
-        .unwrap_err()
-        .to_string();
+        let error = publish_pair_with(&still, &movie, &still_path, &movie_path, true, hook)
+            .unwrap_err()
+            .to_string();
         let left = names(&dir);
         fs::remove_dir_all(&dir).unwrap();
         (error, left)
@@ -2352,7 +2335,6 @@ mod publish_tests {
             &still_path,
             &movie_path,
             true,
-            existing_pair_is_valid,
             |placed, _| overwrite_at(placed, 0, b"changed"),
         )
         .unwrap_err()
