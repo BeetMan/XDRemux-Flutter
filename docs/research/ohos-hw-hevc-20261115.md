@@ -54,7 +54,8 @@
 
 - x265 只在 `CMAKE_SYSTEM_NAME` 为 `Linux|FreeBSD|OpenBSD|Darwin|Windows` 时才开启 ARM64 运行时 CPU 检测（`source/CMakeLists.txt:96-99`）。DevEco 的 `ohos.toolchain.cmake` 把系统名设为 OHOS，所以检测是关闭的。
 - 检测关闭、又没有设 `CROSS_COMPILE_ARM64` 时，x265 只在 Linux 和 Darwin 上检查编译器是否支持 dotprod、i8mm、SVE（`source/CMakeLists.txt:342-358`）。在 OHOS 上它会提示 "Compile-time CPU feature detection unsupported"，一个扩展都不启用，只剩基础 NEON。
-- 已用 DevEco 工具链交叉编译验证：默认配置和显式关闭扩展的配置，生成的定义都只有 `HAVE_NEON=1`（另有 `HAVE_GETAUXVAL` 等），静态库里没有 SVE、dotprod、i8mm 符号，NEON 函数有 1,365 个。
+- 已用 DevEco 工具链交叉编译验证：默认配置和显式关闭扩展的配置，生成的定义都只有 `HAVE_NEON=1`（另有 `HAVE_GETAUXVAL` 等），静态库里没有 SVE、dotprod、i8mm 符号。
+- **必须给汇编传目标**（2026-11-16 真机发现）：x265 用自定义命令汇编 `.S` 文件（`source/CMakeLists.txt:959-971`），拿不到工具链的 `--target`，clang 会按主机编译：在 macOS 上编成 Mach-O，在 Linux 上编成 x86。链接器跳过这些目标文件，核心里的 NEON 函数全部未定义；手机按 `BIND_NOW` 加载时失败，应用提示 Rust 核心不可用。上面统计的 NEON 符号其实来自这些 Mach-O 文件，没能发现问题。要传 `-DASM_FLAGS=--target=aarch64-linux-ohos`（会传到那条自定义命令），`build_ohos.sh` 编完后还会检查核心里没有未解析的 x265 符号。
 - 危险的配置是 x265 文档里交叉编译用的 `-DCROSS_COMPILE_ARM64=ON`。它会把全部扩展都编译进去，而在检测关闭时，`common/aarch64/cpu.h:200` 起的分支会**无条件**启用这些扩展，遇到不支持这些指令的 CPU 就会因非法指令崩溃。所以不要使用这个开关，同时显式关掉扩展，以免以后的改动在不知不觉中把它们打开。
 
 `build_ohos.sh` 中 8-bit 与 10-bit 两处 cmake 配置改为：
@@ -63,6 +64,7 @@
     -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=ON \
     -DENABLE_NEON_DOTPROD=OFF -DENABLE_NEON_I8MM=OFF \
     -DENABLE_SVE=OFF -DENABLE_SVE2=OFF -DENABLE_SVE2_BITPERM=OFF \
+    -DASM_FLAGS=--target=aarch64-linux-ohos \
 ```
 
 脚本只在 `libx265.a` 不存在时才重新配置，所以改完要先删掉 `vendor/x265/build_ohos` 和 `vendor/x265/build_ohos_10bit`。另外 Darwin 支持运行时检测，Flutter 的 iOS / macOS 构建如果仍用 x265，也能用同样的方式提速，而且可以保留全部扩展。这一点另行决定。
