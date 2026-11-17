@@ -24,9 +24,9 @@
 ## 2. 写入规则（`write_bundle`）
 
 1. 先用 `existing_pair_is_valid` 校验配对：两侧 content identifier 必须一致，否则拒绝。
-2. 在同级的隐藏目录 `.<stem>.pvt.partial-<run>` 里组装（`<run>` 为进程号加本进程内序号，目录必须是新建的）。
-3. 用 rename 换上去。已有同名包时，先把旧包改名为 `.<stem>.pvt.old-<run>`。
-4. 换上后从最终位置回读校验：`read_bundle` 结构完整、回读的静帧和 MOV 通过 `existing_pair_is_valid`、两者与源文件逐字节相同、`metadata.plist` 与写入的一致。通过后才删旧包并报告成功；不通过（或换上失败）就删掉本次写出的新包、把旧包改回原名，错误信息写明回滚了什么。重试会整包替换，不会留下旧文件。回滚只删本次创建的目录（Unix 上按设备号 + inode 确认）。共用逻辑在 `live_photo_publish.rs`，HEIC + MOV 配对的写出（`xdremux_make_live_photo`、`xdremux_publish_live_photo_pair`）也走同一套。
+2. 在同级的隐藏目录 `.xdremux-publish-<run>.partial` 里组装（名字定长、与包名无关，长文件名也不会超限；目录必须是新建的）。
+3. 用 rename 换上去。已有同名包时，先把旧包改名为 `.xdremux-publish-<run>.old`；只替换目录，同名的普通文件或符号链接不会被替换。
+4. 换上后从最终位置回读：`read_bundle` 结构完整，静帧、MOV、`metadata.plist` 与写入的逐字节相同（配对在第 1 步已经查过）。通过后才删旧包并报告成功；不通过（或换上失败）就删掉本次写出的新包、把旧包改回原名，错误信息写明回滚了什么。重试会整包替换，不会留下旧文件。回滚只删本次创建的目录（Unix 上按设备号 + inode 确认）。共用逻辑在 `live_photo_publish.rs`，HEIC + MOV 配对的写出（`xdremux_make_live_photo`、`xdremux_publish_live_photo_pair`）也走同一套，规则见 `docs/architecture/ffi-contract.md` §3。
 5. 源文件位于目标包内时拒绝，避免自己覆盖自己；源文件始终只读。
 6. 里面的文件名统一用小写扩展名（`.heic` / `.mov`）。读取时扩展名不区分大小写，并忽略 `.DS_Store` 这类隐藏文件。
 

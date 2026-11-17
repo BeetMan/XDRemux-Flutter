@@ -26,6 +26,11 @@ serde_json = "1.0"
 zstd = "0.13"
 png = "0.17"
 
+# Live Photo publication: no-replace rename, F_BARRIERFSYNC with an fsync
+# fallback (live_photo_publish.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = []
 # Native SDR decode fallback only; not an alternate HDR/container engine.

@@ -31,7 +31,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'a pair that fails verification is rolled back and the still restored',
+    'an invalid pair is refused before anything at the destination moves',
     () async {
       final temp = await Directory.systemTemp.createTemp('xdremux-publish-');
       addTearDown(() => temp.delete(recursive: true));
@@ -54,17 +54,10 @@ void main() {
       );
 
       expect(report['success'], isFalse);
-      final message = report['errorMessage'] as String;
-      expect(message, contains('failed verification'));
-      expect(
-        message,
-        endsWith(
-          'rolled back: removed IMG_1_iso.heic, IMG_1_iso.mov; '
-          'restored the previous IMG_1_iso.heic',
-        ),
-      );
+      expect(report['targetExists'], isFalse);
+      expect(report['errorMessage'] as String, contains('nothing was written'));
       expect(await File(outputPath).readAsString(), 'converted still');
-      expect(_names(out), ['IMG_1_iso.heic'], reason: 'nothing else left');
+      expect(_names(out), ['IMG_1_iso.heic'], reason: 'nothing staged or moved');
       expect(await File(still).readAsString(), 'not a paired still');
       expect(await File(movie).readAsString(), 'not a paired movie');
     },
@@ -129,16 +122,32 @@ void main() {
           reason: 'no staging or replaced files left behind',
         );
         // Each attempt composes a fresh pairing; the retry replaced both.
+        final copyStill = '${temp.path}/copy.heic';
+        final copyMovie = '${temp.path}/copy.mov';
         final report = XdRemuxFFI.publishLivePhotoPair(
           flat,
           movie,
-          '${temp.path}/copy.heic',
-          '${temp.path}/copy.mov',
+          copyStill,
+          copyMovie,
+          replace: false,
         );
         expect(report['success'], isTrue, reason: '${report['errorMessage']}');
         identifiers.add(report['contentIdentifier'] as String);
-        await File('${temp.path}/copy.heic').delete();
-        await File('${temp.path}/copy.mov').delete();
+        // Without replace, a taken name is refused and left as it is.
+        final copied = await File(copyMovie).readAsBytes();
+        final again = XdRemuxFFI.publishLivePhotoPair(
+          flat,
+          movie,
+          '${temp.path}/other.heic',
+          copyMovie,
+          replace: false,
+        );
+        expect(again['success'], isFalse);
+        expect(again['targetExists'], isTrue, reason: '${again['errorMessage']}');
+        expect(await File(copyMovie).readAsBytes(), copied);
+        expect(File('${temp.path}/other.heic').existsSync(), isFalse);
+        await File(copyStill).delete();
+        await File(copyMovie).delete();
       }
       expect(identifiers, hasLength(2));
       expect(sha256.convert(await File(sample).readAsBytes()), before);

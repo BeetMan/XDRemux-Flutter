@@ -64,15 +64,27 @@ public protocol MotionPhotoBackend: Sendable {
     func motionPhotoInfo(path: String) async throws -> MotionPhotoInfo?
     /// Writes `<stem>.heic` + `<stem>.mov` into `outputDirectory` from the
     /// original Motion Photo (`source`) and the converted still (`still`).
+    /// The core checks the pair before writing it and reads it back before
+    /// returning, so the returned files are a valid pair.
     func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles
     func livePhotoPairIsValid(still: String, video: String) async throws -> Bool
-    /// Copies a composed pair to `toStill` + `toVideo`, replacing files there.
-    /// Returns only after the copies were read back and checked as a pair;
-    /// on failure it has removed what it wrote, restored what it replaced,
-    /// and throws.
-    func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String) async throws
+    /// Copies a composed pair to `toStill` + `toVideo`. With `replace` files
+    /// already there are replaced; without it an existing file at either path
+    /// throws `LivePhotoTargetExists` and nothing is touched. Returns only
+    /// after the copies were read back and checked; on failure it has removed
+    /// what it wrote, restored what it replaced, and throws.
+    func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String,
+                              replace: Bool) async throws
     /// Splits the Motion Photo's embedded video(s) into `outputDirectory`.
     func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String]
+}
+
+/// `publishLivePhotoPair(replace: false)` found a file at one of its output
+/// paths (`message` names it); nothing was replaced. Another job may have
+/// taken the name since it was chosen.
+public struct LivePhotoTargetExists: Error, Equatable, Sendable {
+    public var message: String
+    public init(message: String) { self.message = message }
 }
 
 /// Backend-neutral summary of `xdremux_motion_photo_inspect`.
@@ -283,9 +295,9 @@ public struct ConversionJob: Sendable {
                 let files = try await motion.makeLivePhoto(source: input.path, still: temp.path, outputDirectory: liveDir.path)
                 let liveStill = URL(fileURLWithPath: files.stillPath)
                 let liveMov = URL(fileURLWithPath: files.videoPath)
-                guard fileSystem.fileExists(liveStill), fileSystem.fileExists(liveMov),
-                      try await motion.livePhotoPairIsValid(still: liveStill.path, video: liveMov.path) else {
-                    throw ConversionJobError.livePhotoFailed("Live Photo pair is missing or invalid")
+                // The core checked the pair before writing and read it back.
+                guard fileSystem.fileExists(liveStill), fileSystem.fileExists(liveMov) else {
+                    throw ConversionJobError.livePhotoFailed("Live Photo pair is missing")
                 }
                 still = liveStill
                 pairedVideo = liveMov
@@ -298,24 +310,17 @@ public struct ConversionJob: Sendable {
         }
 
         try fileSystem.createDirectory(published.deletingLastPathComponent())
-        if !config.skipExisting {
-            published = OutputPlanner.uniqueURL(published, exists: fileSystem.fileExists)
-        }
 
         var publishedVideo: URL?
         if let pairedVideo, let motion = backend as? MotionPhotoBackend {
-            // The core copies the pair into place and reads it back before
-            // returning; a failed check leaves the output folder as it was.
-            let target = published.deletingPathExtension().appendingPathExtension("mov")
-            do {
-                try await motion.publishLivePhotoPair(still: still.path, video: pairedVideo.path,
-                                                      toStill: published.path, toVideo: target.path)
-            } catch {
-                throw ConversionJobError.livePhotoFailed(String(describing: error))
-            }
-            publishedVideo = target
+            (published, publishedVideo) = try await publishLivePhoto(
+                motion, still: still, video: pairedVideo, planned: published, replace: config.skipExisting)
         } else {
-            if fileSystem.fileExists(published) { try fileSystem.removeItem(published) }
+            if !config.skipExisting {
+                published = OutputPlanner.uniqueURL(published, exists: fileSystem.fileExists)
+            } else if fileSystem.fileExists(published) {
+                try fileSystem.removeItem(published)
+            }
             try fileSystem.moveItem(from: still, to: published)
         }
         var publishedExtras: [URL] = []
@@ -330,6 +335,36 @@ public struct ConversionJob: Sendable {
         progress(1)
         return ConversionProduct(inputURL: input, outputURL: published, outcome: outcome, config: config,
                                  pairedVideoURL: publishedVideo, extraVideoURLs: publishedExtras)
+    }
+
+    /// Publishes the Live Photo pair through the core, which copies it into
+    /// place and reads it back; a failed check leaves the output folder as it
+    /// was. With `replace` ("overwrite same-name output") the planned names
+    /// are replaced. Otherwise both names must be free, and the core refuses
+    /// a name another job took meanwhile, so the next free name is tried.
+    private func publishLivePhoto(_ motion: MotionPhotoBackend, still: URL, video: URL, planned: URL,
+                                  replace: Bool) async throws -> (URL, URL) {
+        let movie = { (url: URL) in url.deletingPathExtension().appendingPathExtension("mov") }
+        for _ in 0..<8 {
+            let target = replace ? planned : OutputPlanner.uniqueURL(planned, exists: {
+                fileSystem.fileExists($0) || fileSystem.fileExists(movie($0))
+            })
+            do {
+                try await motion.publishLivePhotoPair(still: still.path, video: video.path,
+                                                      toStill: target.path, toVideo: movie(target).path,
+                                                      replace: replace)
+                return (target, movie(target))
+            } catch is LivePhotoTargetExists where !replace {
+                continue
+            } catch let error as ConversionJobError {
+                throw error
+            } catch let error as LivePhotoTargetExists {
+                throw ConversionJobError.livePhotoFailed(error.message)
+            } catch {
+                throw ConversionJobError.livePhotoFailed(error.localizedDescription)
+            }
+        }
+        throw ConversionJobError.livePhotoFailed("no free output name next to \(planned.lastPathComponent)")
     }
 
     /// Same hash as the Flutter backend (`_grainSeedFor`): Java-style string

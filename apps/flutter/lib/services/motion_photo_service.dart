@@ -48,18 +48,19 @@ class MotionPhotoService {
       }
       final still = report['stillPath'] as String?;
       final movie = report['videoPath'] as String?;
+      // Rust checked the pair before writing it and read both files back
+      // before reporting success, so there is nothing left to validate here.
       if (still == null ||
           movie == null ||
           !File(still).existsSync() ||
-          !File(movie).existsSync() ||
-          !XdRemuxFFI.livePhotoPairValid(still, movie)) {
-        throw StateError('Live Photo pair is missing or invalid');
+          !File(movie).existsSync()) {
+        throw StateError('Live Photo pair is missing');
       }
       if (bundle) {
         final bundlePath = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.pvt');
-        // Rust re-verifies the pair, swaps the bundle in and reads it back;
-        // if that check fails it restores the previous bundle. A retry
-        // replaces the previous bundle of the same name.
+        // Rust re-checks the pair, swaps the bundle in and reads it back; if
+        // that check fails it restores the previous bundle. A retry replaces
+        // the previous bundle of the same name.
         final report = await Isolate.run(
           () => XdRemuxFFI.makeLivePhotoBundle(still, movie, bundlePath),
         );
@@ -69,12 +70,14 @@ class MotionPhotoService {
             '${report['errorMessage'] ?? 'Live Photo bundle failed'}',
           );
         }
-        if (!XdRemuxFFI.livePhotoBundleValid(bundlePath)) {
-          throw StateError('Exported Live Photo bundle failed verification');
-        }
         // The converted still now lives inside the bundle (with the pairing
-        // MakerNote); drop the unpaired intermediate copy.
-        if (File(outputPath).existsSync()) await File(outputPath).delete();
+        // MakerNote); drop the unpaired intermediate copy. The bundle is
+        // already published, so failing to delete must not fail the item.
+        try {
+          if (File(outputPath).existsSync()) await File(outputPath).delete();
+        } catch (e) {
+          debugPrint('[XDRemux][motion] could not remove $outputPath: $e');
+        }
         return bundledStill;
       }
       // Rust copies the pair over the converted still and its sibling MOV,
@@ -88,6 +91,7 @@ class MotionPhotoService {
           movie,
           outputPath,
           movTarget,
+          replace: true,
         ),
       );
       if (published['success'] != true) {
@@ -97,7 +101,13 @@ class MotionPhotoService {
       }
       return outputPath;
     } finally {
-      await staging.delete(recursive: true);
+      // Published or not, a leftover staging directory only wastes space in
+      // the temporary folder; it must not change the item's result.
+      try {
+        await staging.delete(recursive: true);
+      } catch (e) {
+        debugPrint('[XDRemux][motion] could not remove ${staging.path}: $e');
+      }
     }
   }
 

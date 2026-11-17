@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，43 个 `extern "C"` 函数）、
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，45 个 `extern "C"` 函数）、
 > `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
 > 改导出后用 `tools/apple/check_header.sh` 校验）。
 
@@ -92,11 +92,9 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 | `xdremux_style_experiment` | 研究用：替换 styleMetadata 载荷（打过补丁的 bplist） |
 | `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
 | `xdremux_make_live_photo` | 由动态照片源 + 已转换静帧合成 Live Photo，写出 `<out_dir>/<源 stem>.heic` + `.mov` |
-| `xdremux_publish_live_photo_pair` | 把已合成的 HEIC+MOV 复制到指定的最终路径（覆盖已有文件），Flutter 平铺输出与原生 Apple 前端发布时调用 |
+| `xdremux_publish_live_photo_pair` | 把已合成的 HEIC+MOV 复制到指定的最终路径；`replace` = 1 替换已有文件，= 0 时目标已存在就失败并在报告里带 `targetExists: true`、什么也不动。Flutter 平铺输出与原生 Apple 前端发布时调用 |
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid` | 把已配对的 HEIC+MOV 打成 `.pvt` 包 / 校验 `.pvt` 包（见 `docs/formats/live-photo-pvt.md`） |
-
-上面三个写出 Live Photo 的函数（`make_live_photo`、`publish_live_photo_pair`、`make_live_photo_bundle`）都先写到隐藏的新文件或目录，再 rename 到最终位置，然后从最终位置回读：配对谓词 `existing_pair_is_valid` 必须成立，内容必须与写入的逐字节相同（`.pvt` 另查结构和 `metadata.plist`）。通过后才返回 `success: true`；任一步失败就删掉本次写出的文件、把被替换的文件改回原名，`errorMessage` 写明失败原因和回滚结果（`rolled back: …` 或 `rollback incomplete: …`）。输入文件始终只读。实现见 `xdremux/rust/src/live_photo_publish.rs`。
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
 | `xdremux_verify_output` / `xdremux_verify_styles_output` / `xdremux_verify_portrait_output` | 输出合法性自检（可解码 + 结构检查） |
 | `xdremux_inject_texture_styles` / `xdremux_inject_semantic_mattes` | 摄影风格 3 后处理：在已转换 HEIC 上追加 texture_styles 项与 12 个语义 matte 占位（Dart / Swift 前端在校验通过后按顺序调用） |
@@ -104,6 +102,14 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 | `xdremux_extract_thumbnail` / `xdremux_render_thumbnail` | 取 EXIF / 内嵌 JPEG 缩略图 / 渲染预览 |
 | `xdremux_convert_pipeline` / `xdremux_plan_output` | 一次调用的转换管线与只读输出规划（见 §2.6），三端共用的策略 |
 | `xdremux_free_string` / `xdremux_free_result` / `xdremux_free_classification_result` / `xdremux_free_prepared` / `xdremux_free_thumbnail` | 释放对应返回值（规则见 §2） |
+
+写出 Live Photo 的三个函数（`make_live_photo`、`publish_live_photo_pair`、`make_live_photo_bundle`）的共同规则，实现在 `xdremux/rust/src/live_photo_publish.rs`：
+
+- 写之前先在内存里用配对谓词 `existing_pair_is_valid` 检查这一对；不通过就直接返回错误，目标位置什么也不动。
+- 先写到同目录下定长的隐藏新文件（目录）`.xdremux-publish-*.partial`，刷盘后 rename 到最终位置。替换时，原有文件先改名为 `.xdremux-publish-*.old`；只替换同类条目（文件替换文件，`.pvt` 目录替换目录），不替换目录或符号链接。
+- 放到位后逐块回读，内容必须与写入的完全相同（`.pvt` 另查结构和 `metadata.plist`）。回读可能命中系统缓存，能发现写错、截断和写后被改，查不出存储介质本身的损坏。
+- 通过后才删掉改名留存的旧文件，并返回 `success: true`。任一步失败都会删掉本次写出的文件、把旧文件改回原名，`errorMessage` 写明原因和回滚结果（`rolled back: …` 或 `rollback incomplete: …`）。
+- 输入文件始终只读。进程在放到位与提交之间被杀时会留下隐藏条目：一小时以上的 `.partial` 由下一次往同一目录发布时清掉；`.old` 可能是旧输出的唯一副本，保留不删。
 
 当报告含 `huaweiPortrait` 时，嵌套对象只描述观察到的 ISOBMFF 资源：
 `edofItemId` / `edofDimensions` / `edofTileItemIds`、`edofAuxiliaryTypes`（`auxC`）、

@@ -1833,9 +1833,11 @@ pub fn read_still_content_identifier(still_heic: &[u8]) -> Option<String> {
     } else if payload.len() >= 10 && &payload[4..10] == b"Exif\0\0" {
         &payload[10..]
     } else {
-        &payload[4..]
+        payload.get(4..)?
     };
-    let le = &tiff[0..2] == b"II";
+    // A truncated Exif item must read as "no identifier", not panic: release
+    // builds abort on panic.
+    let le = tiff.get(0..2)? == b"II";
     let u16v = |t: &[u8], o: usize| -> Option<u16> {
         let b: [u8; 2] = t.get(o..o + 2)?.try_into().ok()?;
         Some(if le { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
@@ -2005,23 +2007,37 @@ pub fn existing_pair_is_valid(still_heic: &[u8], mov: &[u8]) -> bool {
 // Publishing a composed pair
 // ---------------------------------------------------------------------------
 
-/// Write a composed pair to `still_path` + `movie_path`, then check it before
-/// reporting success: both files are read back from their final paths, must
-/// still pair under [`existing_pair_is_valid`] and must equal the composed
-/// bytes. If writing or that check fails, the files this call wrote are
-/// removed, any file it replaced is restored, and the error says which. The
-/// inputs the pair was composed from are never written.
+pub use crate::live_photo_publish::PublishError;
+
+/// Write a composed pair to `still_path` + `movie_path` and check it before
+/// reporting success.
+///
+/// The pair must pass [`existing_pair_is_valid`] in memory before anything at
+/// the destination is touched. Once both files are in place they are read
+/// back and must equal those bytes, so the predicate holds for what was read
+/// back as well. The read-back may be served from the OS page cache: it
+/// catches a wrong, truncated or later-changed file, not faults of the
+/// storage medium.
+///
+/// With `replace`, files already at the output paths are replaced. Without
+/// it, an existing file makes the call fail with
+/// [`PublishError::target_exists`] and nothing is touched. If writing or the
+/// read-back fails, the files this call wrote are removed, any file it
+/// replaced is restored, and the error says which. The inputs the pair was
+/// composed from are never written.
 pub fn publish_pair(
     still: &[u8],
     movie: &[u8],
     still_path: &std::path::Path,
     movie_path: &std::path::Path,
-) -> Result<(), String> {
+    replace: bool,
+) -> Result<(), PublishError> {
     publish_pair_with(
         still,
         movie,
         still_path,
         movie_path,
+        replace,
         existing_pair_is_valid,
         |_, _| {},
     )
@@ -2032,71 +2048,47 @@ fn publish_pair_with(
     movie: &[u8],
     still_path: &std::path::Path,
     movie_path: &std::path::Path,
+    replace: bool,
     pair_is_valid: impl Fn(&[u8], &[u8]) -> bool,
     before_verify: impl FnOnce(&std::path::Path, &std::path::Path),
-) -> Result<(), String> {
+) -> Result<(), PublishError> {
     use crate::live_photo_publish::Publication;
+    const WHAT: &str = "Live Photo output";
     if still_path == movie_path {
-        return Err("Live Photo still and MOV need two different output paths".into());
-    }
-    let mut publication = Publication::new();
-    let placed = publication
-        .stage_file(still_path, still)
-        .and_then(|()| publication.stage_file(movie_path, movie))
-        .and_then(|()| publication.place());
-    if let Err(e) = placed {
-        return Err(format!(
-            "Live Photo output could not be written: {e}; {}",
-            publication.rollback()
+        return Err(PublishError::new(
+            "Live Photo still and MOV need two different output paths",
         ));
     }
-    before_verify(still_path, movie_path);
-    match verify_written_pair(still, movie, still_path, movie_path, &pair_is_valid) {
-        Ok(()) => {
-            publication.commit();
-            Ok(())
-        }
-        Err(e) => Err(format!(
-            "Live Photo output failed verification: {e}; {}",
-            publication.rollback()
-        )),
+    // Before anything at the destination moves: release builds abort on
+    // panic, and nothing would then put a moved file back.
+    if !pair_is_valid(still, movie) {
+        return Err(PublishError::new(
+            "the composed still and MOV do not carry the same Live Photo content identifier; \
+             nothing was written",
+        ));
     }
+    let mut publication = Publication::new(replace);
+    let staged = publication
+        .stage_file(still_path, still)
+        .and_then(|()| publication.stage_file(movie_path, movie));
+    if let Err(e) = staged {
+        return Err(publication.abandon(WHAT, e));
+    }
+    publication.finish(WHAT, || {
+        before_verify(still_path, movie_path);
+        verify_written_pair(still, movie, still_path, movie_path)
+    })
 }
 
-/// Read the pair back from disk: the pairing predicate must hold and the
-/// bytes must be exactly what was composed.
+/// Read both outputs back and compare them with the bytes that were written.
 pub(crate) fn verify_written_pair(
     still: &[u8],
     movie: &[u8],
     still_path: &std::path::Path,
     movie_path: &std::path::Path,
-    pair_is_valid: &dyn Fn(&[u8], &[u8]) -> bool,
 ) -> Result<(), String> {
-    let read = |path: &std::path::Path| {
-        std::fs::read(path).map_err(|e| format!("cannot read back {}: {e}", path.display()))
-    };
-    let (still_disk, movie_disk) = (read(still_path)?, read(movie_path)?);
-    if !pair_is_valid(&still_disk, &movie_disk) {
-        return Err(format!(
-            "{} and {} do not carry the same Live Photo content identifier",
-            still_path.display(),
-            movie_path.display()
-        ));
-    }
-    for (path, disk, composed) in [
-        (still_path, &still_disk, still),
-        (movie_path, &movie_disk, movie),
-    ] {
-        if disk.as_slice() != composed {
-            return Err(format!(
-                "{} differs from the composed bytes ({} bytes on disk, {} expected)",
-                path.display(),
-                disk.len(),
-                composed.len()
-            ));
-        }
-    }
-    Ok(())
+    crate::live_photo_publish::compare_file(still_path, still)?;
+    crate::live_photo_publish::compare_file(movie_path, movie)
 }
 
 #[cfg(test)]
@@ -2104,6 +2096,7 @@ pub(crate) mod pair_fixture {
     use crate::isobmff::{self, make_box, IlocEntry};
 
     pub(crate) const CONTENT_ID: &str = "8B2D9F64-3C1A-4E0B-9A57-2F6C1D3E4B5A";
+    pub(crate) const OTHER_ID: &str = "0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9";
 
     /// A still and MOV that pass `existing_pair_is_valid`: a minimal HEIF
     /// whose Exif item carries the Apple MakerNote with `content_id`, and a
@@ -2114,7 +2107,17 @@ pub(crate) mod pair_fixture {
         let mut exif = vec![0, 0, 0, 6];
         exif.extend_from_slice(b"Exif\0\0");
         exif.extend_from_slice(&tiff);
+        let movie = [
+            make_box(b"ftyp", b"qt  \0\0\0\0qt  "),
+            make_box(b"moov", &super::movie_metadata(content_id).unwrap()),
+            make_box(b"mdat", &[0x5a; 64]),
+        ]
+        .concat();
+        (heif_with_exif(&exif), movie)
+    }
 
+    /// Minimal HEIF whose Exif item (stored in `idat`) holds `exif`.
+    pub(crate) fn heif_with_exif(exif: &[u8]) -> Vec<u8> {
         let mut ftyp = b"heic".to_vec();
         ftyp.extend_from_slice(&0u32.to_be_bytes());
         ftyp.extend_from_slice(b"mif1heic");
@@ -2154,33 +2157,26 @@ pub(crate) mod pair_fixture {
             make_box(b"iinf", &iinf),
             iloc,
             iprp,
-            make_box(b"idat", &exif),
+            make_box(b"idat", exif),
         ] {
             meta.extend_from_slice(&child);
         }
-        let still = [
+        [
             make_box(b"ftyp", &ftyp),
             make_box(b"meta", &meta),
             make_box(b"mdat", &[0u8; 4]),
         ]
-        .concat();
-
-        let movie = [
-            make_box(b"ftyp", b"qt  \0\0\0\0qt  "),
-            make_box(b"moov", &super::movie_metadata(content_id).unwrap()),
-            make_box(b"mdat", &[0x5a; 64]),
-        ]
-        .concat();
-        (still, movie)
+        .concat()
     }
 }
 
 #[cfg(test)]
 mod publish_tests {
-    use super::pair_fixture::{pair, CONTENT_ID};
+    use super::pair_fixture::{heif_with_exif, pair, CONTENT_ID, OTHER_ID};
     use super::*;
-    use crate::live_photo_publish::test_support::{names, scratch};
+    use crate::live_photo_publish::test_support::{names, overwrite_at, scratch, truncate_to};
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn fixture_is_a_valid_pair() {
@@ -2194,8 +2190,19 @@ mod publish_tests {
             Some(CONTENT_ID)
         );
         assert!(existing_pair_is_valid(&still, &movie));
-        let (other, _) = pair("0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9");
+        let (other, _) = pair(OTHER_ID);
         assert!(!existing_pair_is_valid(&other, &movie));
+    }
+
+    #[test]
+    fn a_truncated_exif_item_reads_as_no_identifier() {
+        // Release builds abort on panic, so the predicate must not panic on
+        // short payloads ("Exif" header cut, TIFF header cut).
+        for len in 1..12 {
+            let still = heif_with_exif(&vec![b'M'; len][..]);
+            assert_eq!(read_still_content_identifier(&still), None, "len {len}");
+            assert!(!existing_pair_is_valid(&still, &pair(CONTENT_ID).1));
+        }
     }
 
     #[test]
@@ -2203,7 +2210,7 @@ mod publish_tests {
         let dir = scratch("pair_ok");
         let (still, movie) = pair(CONTENT_ID);
         let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
-        publish_pair(&still, &movie, &still_path, &movie_path).unwrap();
+        publish_pair(&still, &movie, &still_path, &movie_path, true).unwrap();
         assert_eq!(fs::read(&still_path).unwrap(), still);
         assert_eq!(fs::read(&movie_path).unwrap(), movie);
         assert_eq!(
@@ -2218,10 +2225,10 @@ mod publish_tests {
     fn a_retry_replaces_the_previous_pair() {
         let dir = scratch("pair_retry");
         let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
-        let (old_still, old_movie) = pair("0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9");
-        publish_pair(&old_still, &old_movie, &still_path, &movie_path).unwrap();
+        let (old_still, old_movie) = pair(OTHER_ID);
+        publish_pair(&old_still, &old_movie, &still_path, &movie_path, true).unwrap();
         let (still, movie) = pair(CONTENT_ID);
-        publish_pair(&still, &movie, &still_path, &movie_path).unwrap();
+        publish_pair(&still, &movie, &still_path, &movie_path, true).unwrap();
         assert_eq!(fs::read(&still_path).unwrap(), still);
         assert_eq!(fs::read(&movie_path).unwrap(), movie);
         assert_eq!(names(&dir), ["IMG_1.heic", "IMG_1.mov"]);
@@ -2229,80 +2236,106 @@ mod publish_tests {
     }
 
     #[test]
-    fn mismatched_identifiers_on_disk_are_rolled_back() {
-        let dir = scratch("pair_mismatch");
-        let (still, movie) = pair(CONTENT_ID);
+    fn exclusive_publication_keeps_an_existing_pair() {
+        let dir = scratch("pair_exclusive");
         let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
-        // Damage the written MOV's content identifier after the write.
-        let err = publish_pair_with(
-            &still,
-            &movie,
-            &still_path,
-            &movie_path,
-            existing_pair_is_valid,
-            |_, mov| {
-                let mut bytes = fs::read(mov).unwrap();
-                let at = bytes
-                    .windows(CONTENT_ID.len())
-                    .position(|w| w == CONTENT_ID.as_bytes())
-                    .unwrap();
-                bytes[at] = b'0';
-                fs::write(mov, bytes).unwrap();
-            },
-        )
-        .unwrap_err();
-        assert!(err.contains("failed verification"), "{err}");
-        assert!(err.contains("content identifier"), "{err}");
-        assert!(
-            err.contains("rolled back: removed IMG_1.heic, IMG_1.mov"),
-            "{err}"
-        );
-        assert!(
-            names(&dir).is_empty(),
-            "nothing left behind: {:?}",
-            names(&dir)
-        );
+        let (old_still, old_movie) = pair(OTHER_ID);
+        publish_pair(&old_still, &old_movie, &still_path, &movie_path, false).unwrap();
+        let (still, movie) = pair(CONTENT_ID);
+        let error = publish_pair(&still, &movie, &still_path, &movie_path, false).unwrap_err();
+        assert!(error.target_exists(), "{error}");
+        assert_eq!(fs::read(&still_path).unwrap(), old_still);
+        assert_eq!(fs::read(&movie_path).unwrap(), old_movie);
+        assert_eq!(names(&dir), ["IMG_1.heic", "IMG_1.mov"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn damaged_media_is_rolled_back_even_when_the_identifiers_survive() {
-        let dir = scratch("pair_media");
+    fn an_invalid_pair_is_refused_before_anything_moves() {
+        let dir = scratch("pair_invalid");
+        let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
+        fs::write(&still_path, b"converted still").unwrap();
+        let (still, _) = pair(CONTENT_ID);
+        let (_, movie) = pair(OTHER_ID);
+        let error = publish_pair(&still, &movie, &still_path, &movie_path, true).unwrap_err();
+        assert!(error.to_string().contains("nothing was written"), "{error}");
+        assert_eq!(fs::read(&still_path).unwrap(), b"converted still");
+        assert_eq!(names(&dir), ["IMG_1.heic"], "nothing staged or moved aside");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn changed_after_placing(name: &str, hook: impl FnOnce(&Path, &Path)) -> (String, Vec<String>) {
+        let dir = scratch(name);
         let (still, movie) = pair(CONTENT_ID);
         let (still_path, movie_path) = (dir.join("IMG_1.heic"), dir.join("IMG_1.mov"));
-        // Flip the last mdat byte: box sizes and the identifiers stay intact,
-        // so only the byte comparison can notice.
-        let err = publish_pair_with(
+        let error = publish_pair_with(
             &still,
             &movie,
             &still_path,
             &movie_path,
+            true,
             existing_pair_is_valid,
-            |_, mov| {
-                let mut bytes = fs::read(mov).unwrap();
-                *bytes.last_mut().unwrap() ^= 0xff;
-                assert!(existing_pair_is_valid(
-                    &fs::read(&still_path_of(mov)).unwrap(),
-                    &bytes
-                ));
-                fs::write(mov, bytes).unwrap();
-            },
+            hook,
         )
-        .unwrap_err();
-        assert!(
-            err.contains("IMG_1.mov differs from the composed bytes"),
-            "{err}"
-        );
-        assert!(
-            err.contains("rolled back: removed IMG_1.heic, IMG_1.mov"),
-            "{err}"
-        );
-        assert!(names(&dir).is_empty(), "{:?}", names(&dir));
+        .unwrap_err()
+        .to_string();
+        let left = names(&dir);
         fs::remove_dir_all(&dir).unwrap();
+        (error, left)
     }
 
-    fn still_path_of(mov: &std::path::Path) -> std::path::PathBuf {
-        mov.with_extension("heic")
+    #[test]
+    fn a_changed_identifier_after_writing_is_rolled_back() {
+        let (error, left) = changed_after_placing("pair_identifier", |_, mov| {
+            let bytes = fs::read(mov).unwrap();
+            let at = bytes
+                .windows(CONTENT_ID.len())
+                .position(|w| w == CONTENT_ID.as_bytes())
+                .unwrap();
+            overwrite_at(mov, at as u64, b"0");
+        });
+        assert!(error.contains("failed verification"), "{error}");
+        assert!(
+            error.contains("IMG_1.mov differs from what was written"),
+            "{error}"
+        );
+        assert!(
+            error.ends_with("rolled back: removed IMG_1.heic, IMG_1.mov"),
+            "{error}"
+        );
+        assert!(left.is_empty(), "nothing left behind: {left:?}");
+    }
+
+    #[test]
+    fn changed_movie_bytes_are_rolled_back_even_when_the_identifiers_survive() {
+        // Flip the last mdat byte: box sizes and the identifiers stay intact,
+        // so only the byte comparison can notice.
+        let (error, left) = changed_after_placing("pair_movie_bytes", |still, mov| {
+            let mut bytes = fs::read(mov).unwrap();
+            let last = bytes.len() - 1;
+            bytes[last] ^= 0xff;
+            assert!(existing_pair_is_valid(&fs::read(still).unwrap(), &bytes));
+            overwrite_at(mov, last as u64, &bytes[last..]);
+        });
+        assert!(
+            error.contains("IMG_1.mov differs from what was written"),
+            "{error}"
+        );
+        assert!(
+            error.ends_with("rolled back: removed IMG_1.heic, IMG_1.mov"),
+            "{error}"
+        );
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[test]
+    fn a_truncated_still_is_rolled_back() {
+        let (error, left) = changed_after_placing("pair_truncated", |still, _| {
+            let len = fs::metadata(still).unwrap().len();
+            truncate_to(still, len / 2);
+        });
+        assert!(error.contains("IMG_1.heic holds"), "{error}");
+        assert!(left.is_empty(), "{left:?}");
     }
 
     #[test]
@@ -2313,20 +2346,22 @@ mod publish_tests {
         // publishes over the converted still) and no MOV yet.
         fs::write(&still_path, b"converted still").unwrap();
         let (still, movie) = pair(CONTENT_ID);
-        let err = publish_pair_with(
+        let error = publish_pair_with(
             &still,
             &movie,
             &still_path,
             &movie_path,
-            |_, _| false,
-            |_, _| {},
+            true,
+            existing_pair_is_valid,
+            |placed, _| overwrite_at(placed, 0, b"changed"),
         )
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(
-            err.ends_with(
+            error.ends_with(
                 "rolled back: removed IMG_1.heic, IMG_1.mov; restored the previous IMG_1.heic"
             ),
-            "{err}"
+            "{error}"
         );
         assert_eq!(fs::read(&still_path).unwrap(), b"converted still");
         assert_eq!(names(&dir), ["IMG_1.heic"]);
@@ -2339,16 +2374,18 @@ mod publish_tests {
         let (still, movie) = pair(CONTENT_ID);
         // The MOV's directory does not exist, so staging it fails after the
         // still was already staged.
-        let err = publish_pair(
+        let error = publish_pair(
             &still,
             &movie,
             &dir.join("IMG_1.heic"),
             &dir.join("missing/IMG_1.mov"),
+            true,
         )
-        .unwrap_err();
-        assert!(err.contains("could not be written"), "{err}");
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("could not be written"), "{error}");
         assert!(names(&dir).is_empty(), "{:?}", names(&dir));
-        assert!(publish_pair(&still, &movie, &dir.join("a"), &dir.join("a")).is_err());
+        assert!(publish_pair(&still, &movie, &dir.join("a"), &dir.join("a"), true).is_err());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -1952,6 +1952,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (outFile.existsSync() && item.inputPath != item.outputPath) {
         outFile.deleteSync();
       }
+      // A Live Photo pair is composed again below. Its old MOV belonged to
+      // the still just removed; if composing failed it would otherwise sit
+      // next to the new unpaired still under the pair's name.
+      if (item.motionPhoto != null &&
+          item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
+        final staleMovie = File(livePhotoMoviePath(item.outputPath));
+        if (staleMovie.existsSync() &&
+            staleMovie.absolute.path != File(item.inputPath).absolute.path) {
+          staleMovie.deleteSync();
+        }
+      }
 
       // Photographic Styles on an ordinary photo go through the conversion
       // pipeline. A Huawei portrait keeps its own remux, then the requested

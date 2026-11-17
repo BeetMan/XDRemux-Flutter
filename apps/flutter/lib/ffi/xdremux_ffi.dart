@@ -363,12 +363,14 @@ class XdRemuxFFI {
         ffi.Pointer<Utf8>,
         ffi.Pointer<Utf8>,
         ffi.Pointer<Utf8>,
+        ffi.Uint8,
       ),
       ffi.Pointer<Utf8> Function(
         ffi.Pointer<Utf8>,
         ffi.Pointer<Utf8>,
         ffi.Pointer<Utf8>,
         ffi.Pointer<Utf8>,
+        int,
       )>('xdremux_publish_live_photo_pair');
 
   static final _livePhotoBundleValid = _lib.lookupFunction<
@@ -828,22 +830,31 @@ class XdRemuxFFI {
   }
 
   /// Copy a composed still + MOV pair to its final paths [outStillPath] and
-  /// [outMovPath], replacing files already there. Rust reads both outputs
-  /// back and checks the pair before reporting success; on failure it removes
-  /// what it wrote, restores what it replaced, and says so in `errorMessage`.
+  /// [outMovPath]. With [replace] files already there are replaced; without
+  /// it an existing file fails the call with `targetExists: true` and nothing
+  /// is touched. Rust checks the pair, writes it, and reads both outputs back
+  /// before reporting success; on failure it removes what it wrote, restores
+  /// what it replaced, and says so in `errorMessage`.
   static Map<String, dynamic> publishLivePhotoPair(
     String stillPath,
     String movPath,
     String outStillPath,
-    String outMovPath,
-  ) {
+    String outMovPath, {
+    bool replace = true,
+  }) {
     final stillPtr = stillPath.toNativeUtf8();
     final movPtr = movPath.toNativeUtf8();
     final outStillPtr = outStillPath.toNativeUtf8();
     final outMovPtr = outMovPath.toNativeUtf8();
     ffi.Pointer<Utf8> report = ffi.nullptr;
     try {
-      report = _publishLivePhotoPair(stillPtr, movPtr, outStillPtr, outMovPtr);
+      report = _publishLivePhotoPair(
+        stillPtr,
+        movPtr,
+        outStillPtr,
+        outMovPtr,
+        replace ? 1 : 0,
+      );
       if (report == ffi.nullptr) {
         return <String, dynamic>{
           'success': false,

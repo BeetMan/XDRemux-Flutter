@@ -56,6 +56,21 @@ if [ "$revision" = 62357a93d653bf844f730bb1f4b7cc9e2139d14e ]; then
 else
   echo "warning: no pinned kernel checksum for SDK $revision; runtime compatibility is not verified." >&2
 fi
+# The core .so is copied in by hand (not tracked) and Dart resolves each FFI
+# symbol on first use, so a stale core builds fine and fails only when a
+# feature is used. Require every symbol xdremux_ffi.dart looks up.
+CORE="$APP/ohos/entry/libs/arm64-v8a/libxdremux_core.so"
+[ -f "$CORE" ] || { echo "Missing $CORE: run xdremux/rust/build_ohos.sh and copy its output there." >&2; exit 1; }
+NM="${OHOS_NATIVE:-$DEVECO/sdk/default/openharmony/native}/llvm/bin/llvm-nm"
+[ -x "$NM" ] || NM=nm
+exported=$("$NM" -D --defined-only "$CORE" | awk '{print $NF}')
+missing=$(grep -oE "'xdremux_[a-z0-9_]+'" "$APP/lib/ffi/xdremux_ffi.dart" | tr -d "'" | sort -u |
+  while read -r symbol; do grep -qx "$symbol" <<<"$exported" || echo "$symbol"; done)
+if [ -n "$missing" ]; then
+  echo "libxdremux_core.so is older than lib/ffi/xdremux_ffi.dart; rebuild it (xdremux/rust/build_ohos.sh). Missing:" >&2
+  echo "$missing" >&2
+  exit 1
+fi
 if [ "$TRANSFER" = 1 ]; then
   OHOS_NATIVE="${OHOS_NATIVE:-$DEVECO/sdk/default/openharmony/native}" \
     bash "$ROOT/tools/native/build-transfer.sh" ohos

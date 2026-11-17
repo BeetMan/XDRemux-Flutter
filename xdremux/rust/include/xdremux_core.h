@@ -143,9 +143,11 @@ char *xdremux_motion_photo_split(const char *path,
  * read from the source; the high-quality primary stream is used for
  * dual-stream files). Writes `<stem>.heic` and `<stem>.mov` into out_dir.
  * Returns a JSON report with the paths and the shared content identifier.
- * Success is reported only after both files were read back and verified as
- * a pair; on failure the files this call wrote are removed (replaced ones
- * restored) and `errorMessage` says so. The source and still are not written.
+ * Files already at those paths are replaced, unless one of them is the
+ * source or the still (then nothing is written). The composed pair is
+ * checked in memory, written, and read back before success is reported; on
+ * failure the files this call wrote are removed, replaced ones are restored,
+ * and `errorMessage` says so. The source and still are never written.
  */
 char *xdremux_make_live_photo(const char *source_path,
                               const char *still_path,
@@ -179,16 +181,20 @@ uint8_t xdremux_live_photo_pair_valid(const char *still_path,
 /**
  * Copy a composed Live Photo pair (`still_path` + `mov_path`, e.g. from
  * `xdremux_make_live_photo` in a staging directory) to its final paths
- * `out_still_path` + `out_mov_path`, replacing files already there. Success
- * is reported only after both outputs were read back and verified as a pair
- * identical to the inputs; on failure the outputs this call wrote are removed,
- * replaced files are restored, and `errorMessage` says so. The inputs are not
- * written. Returns a JSON report with the paths and the content identifier.
+ * `out_still_path` + `out_mov_path`. With `replace` = 1, files already there
+ * are replaced. With 0, an existing file at either path makes the call fail
+ * with `targetExists: true` in the report and nothing is touched; pick
+ * another name and call again. The pair is checked in memory, written, and
+ * read back before success is reported; on failure the outputs this call
+ * wrote are removed, replaced files are restored, and `errorMessage` says so.
+ * The inputs are never written. Returns a JSON report with the paths and the
+ * content identifier.
  */
 char *xdremux_publish_live_photo_pair(const char *still_path,
                                       const char *mov_path,
                                       const char *out_still_path,
-                                      const char *out_mov_path);
+                                      const char *out_mov_path,
+                                      uint8_t replace);
 
 /**
  * Package a composed still HEIC + MOV pair into an Apple Live Photo bundle

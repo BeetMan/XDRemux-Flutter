@@ -287,9 +287,11 @@ pub extern "C" fn xdremux_motion_photo_split(
 /// read from the source; the high-quality primary stream is used for
 /// dual-stream files). Writes `<stem>.heic` and `<stem>.mov` into out_dir.
 /// Returns a JSON report with the paths and the shared content identifier.
-/// Success is reported only after both files were read back and verified as
-/// a pair; on failure the files this call wrote are removed (replaced ones
-/// restored) and `errorMessage` says so. The source and still are not written.
+/// Files already at those paths are replaced, unless one of them is the
+/// source or the still (then nothing is written). The composed pair is
+/// checked in memory, written, and read back before success is reported; on
+/// failure the files this call wrote are removed, replaced ones are restored,
+/// and `errorMessage` says so. The source and still are never written.
 #[no_mangle]
 pub extern "C" fn xdremux_make_live_photo(
     source_path: *const c_char,
@@ -309,6 +311,20 @@ pub extern "C" fn xdremux_make_live_photo(
         let out_dir = unsafe { CStr::from_ptr(out_dir) }
             .to_str()
             .map_err(|_| "out_dir is not valid UTF-8".to_string())?;
+        let stem = std::path::Path::new(source_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("livephoto");
+        let still_out_path = format!("{out_dir}/{stem}.heic");
+        let mov_path = format!("{out_dir}/{stem}.mov");
+        for output in [&still_out_path, &mov_path] {
+            if paths_refer_to_same_file(source_path, output) {
+                return Err("Live Photo output must not overwrite the source".into());
+            }
+            if paths_refer_to_same_file(still_path, output) {
+                return Err("Live Photo output must not overwrite the converted still".into());
+            }
+        }
         let source = std::fs::read(source_path)
             .map_err(|e| format!("cannot read source: {e}"))?;
         let still = std::fs::read(still_path)
@@ -332,24 +348,18 @@ pub extern "C" fn xdremux_make_live_photo(
             asset.presentation_timestamp_us,
             asset.vendor_metadata.as_ref(),
         )?;
+        // Only the composed pair is needed from here on.
+        drop(still);
+        drop(source);
         std::fs::create_dir_all(out_dir).map_err(|e| format!("create out_dir: {e}"))?;
-        let stem = std::path::Path::new(source_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("livephoto");
-        let still_out_path = format!("{out_dir}/{stem}.heic");
-        let mov_path = format!("{out_dir}/{stem}.mov");
-        if paths_refer_to_same_file(source_path, &still_out_path)
-            || paths_refer_to_same_file(source_path, &mov_path)
-        {
-            return Err("Live Photo output must not overwrite the source".into());
-        }
         live_photo::publish_pair(
             &still_out,
             &mov,
             std::path::Path::new(&still_out_path),
             std::path::Path::new(&mov_path),
-        )?;
+            true,
+        )
+        .map_err(String::from)?;
         Ok(serde_json::json!({
             "success": true,
             "stillPath": still_out_path,
@@ -482,31 +492,36 @@ pub extern "C" fn xdremux_live_photo_pair_valid(
 
 /// Copy a composed Live Photo pair (`still_path` + `mov_path`, e.g. from
 /// `xdremux_make_live_photo` in a staging directory) to its final paths
-/// `out_still_path` + `out_mov_path`, replacing files already there. Success
-/// is reported only after both outputs were read back and verified as a pair
-/// identical to the inputs; on failure the outputs this call wrote are removed,
-/// replaced files are restored, and `errorMessage` says so. The inputs are not
-/// written. Returns a JSON report with the paths and the content identifier.
+/// `out_still_path` + `out_mov_path`. With `replace` = 1, files already there
+/// are replaced. With 0, an existing file at either path makes the call fail
+/// with `targetExists: true` in the report and nothing is touched; pick
+/// another name and call again. The pair is checked in memory, written, and
+/// read back before success is reported; on failure the outputs this call
+/// wrote are removed, replaced files are restored, and `errorMessage` says so.
+/// The inputs are never written. Returns a JSON report with the paths and the
+/// content identifier.
 #[no_mangle]
 pub extern "C" fn xdremux_publish_live_photo_pair(
     still_path: *const c_char,
     mov_path: *const c_char,
     out_still_path: *const c_char,
     out_mov_path: *const c_char,
+    replace: u8,
 ) -> *mut c_char {
-    let result = (|| -> Result<serde_json::Value, String> {
+    let result = (|| -> Result<serde_json::Value, serde_json::Value> {
+        let fail = |message: String| serde_json::json!({ "success": false, "errorMessage": message });
         if still_path.is_null()
             || mov_path.is_null()
             || out_still_path.is_null()
             || out_mov_path.is_null()
         {
-            return Err("still/mov/output path is missing".into());
+            return Err(fail("still/mov/output path is missing".into()));
         }
-        let read = |p: *const c_char, what: &str| -> Result<String, String> {
+        let read = |p: *const c_char, what: &str| -> Result<String, serde_json::Value> {
             unsafe { CStr::from_ptr(p) }
                 .to_str()
                 .map(str::to_string)
-                .map_err(|_| format!("{what} path is not valid UTF-8"))
+                .map_err(|_| fail(format!("{what} path is not valid UTF-8")))
         };
         let still_path = read(still_path, "still")?;
         let mov_path = read(mov_path, "mov")?;
@@ -516,17 +531,25 @@ pub extern "C" fn xdremux_publish_live_photo_pair(
             if paths_refer_to_same_file(&still_path, output)
                 || paths_refer_to_same_file(&mov_path, output)
             {
-                return Err("Live Photo output must not overwrite its input".into());
+                return Err(fail("Live Photo output must not overwrite its input".into()));
             }
         }
-        let still = std::fs::read(&still_path).map_err(|e| format!("cannot read still: {e}"))?;
-        let mov = std::fs::read(&mov_path).map_err(|e| format!("cannot read movie: {e}"))?;
+        let still = std::fs::read(&still_path).map_err(|e| fail(format!("cannot read still: {e}")))?;
+        let mov = std::fs::read(&mov_path).map_err(|e| fail(format!("cannot read movie: {e}")))?;
         live_photo::publish_pair(
             &still,
             &mov,
             std::path::Path::new(&out_still),
             std::path::Path::new(&out_mov),
-        )?;
+            replace != 0,
+        )
+        .map_err(|e| {
+            serde_json::json!({
+                "success": false,
+                "errorMessage": e.to_string(),
+                "targetExists": e.target_exists(),
+            })
+        })?;
         Ok(serde_json::json!({
             "success": true,
             "stillPath": out_still,
@@ -534,10 +557,7 @@ pub extern "C" fn xdremux_publish_live_photo_pair(
             "contentIdentifier": live_photo::read_still_content_identifier(&still),
         }))
     })();
-    let payload = match result {
-        Ok(v) => v,
-        Err(e) => serde_json::json!({ "success": false, "errorMessage": e }),
-    };
+    let payload = result.unwrap_or_else(|failure| failure);
     match CString::new(payload.to_string()) {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
