@@ -86,6 +86,39 @@ void main() {
     skip: _coreLoadable ? false : 'Rust core not loadable by this flutter_tester',
   );
 
+  test(
+    'composing works when the temporary directory does not exist yet',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('xdremux-compose-');
+      addTearDown(() => temp.delete(recursive: true));
+      // macOS hands out ~/Library/Caches/<bundle id>, which may be missing.
+      final missing = '${temp.path}/Caches/com.example.xdremux';
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async => missing);
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final output = '${temp.path}/out/IMG_1_iso.heic';
+      // The source is not a Motion Photo, so the core refuses it; what
+      // matters is that composing gets as far as the core.
+      await expectLater(
+        MotionPhotoService.composeLivePhoto('${temp.path}/IMG_1.jpg', output),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot read source'),
+          ),
+        ),
+      );
+      expect(Directory(missing).existsSync(), isTrue);
+      expect(Directory(missing).listSync(), isEmpty, reason: 'staging removed');
+    },
+    skip: _coreLoadable ? false : 'Rust core not loadable by this flutter_tester',
+  );
+
   const sample =
       '/Volumes/MacData/XDRemux/test-media/sources/oppo-motion-photos/标准 1x.jpg';
   test(

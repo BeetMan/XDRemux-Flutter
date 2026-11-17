@@ -36,6 +36,10 @@ class MotionPhotoService {
       }
     }
     final temp = await getTemporaryDirectory();
+    // On macOS this is ~/Library/Caches/<bundle id>, which need not exist
+    // (nothing else may have created it yet, or caches were cleared), and
+    // createTemp does not create missing parents.
+    await temp.create(recursive: true);
     final staging = await temp.createTemp('xdremux-live-');
     try {
       final report = await Isolate.run(
