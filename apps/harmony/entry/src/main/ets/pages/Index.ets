@@ -182,6 +182,8 @@ const TRANSPARENT_SYSTEM_BAR_COLOR: string = '#00000000';
 const GALLERY_DETAIL_HDR_SETTLE_DELAY_MS: number = 260;
 const GALLERY_PHOTO_HEADER_REFRESH_DELAY_MS: number = 120;
 const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
+/** Holding the photo this long shows SDR; quicker touches stay taps and swipes. */
+const GALLERY_SDR_HOLD_MS: number = 250;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
 const GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT: number = 92;
@@ -3075,13 +3077,14 @@ struct Index {
     return hdrKind === 'lhdr' || hdrKind === 'uhdr';
   }
 
+  /** Holding the photo shows its SDR rendition, with or without the chrome. */
   private canCompareGallerySdr(): boolean {
-    return this.galleryDetailVisible && this.galleryChromeVisible && this.galleryCurrentItem !== undefined &&
+    return this.galleryDetailVisible && this.galleryCurrentItem !== undefined &&
       this.gallerySandboxPath.length > 0 && this.gallerySystemImageIsHdr;
   }
 
   /**
-   * Show the SDR rendition while the button is held. It reuses the open-time
+   * Show the SDR rendition while the photo is held. It reuses the open-time
    * 1920 px SDR preview when that belongs to this photo, else decodes once at
    * the same bounded size and keeps it until the photo changes. The old code
    * decoded the full-resolution image on every press (192 MB for 8192×6144),
@@ -5762,27 +5765,28 @@ struct Index {
     .zIndex(9);
   }
 
+  /**
+   * A state mark, not a button: HDR normally, SDR (accent) while the photo is
+   * held. Touches pass through to the photo, so pressing it is pressing the
+   * photo.
+   */
   @Builder
   private gallerySdrCompareButton() {
     if (this.canCompareGallerySdr() && this.galleryThumbnailStripVisible()) {
-      Button({ type: ButtonType.Circle, stateEffect: false }) {
+      Stack() {
         Text(this.gallerySdrCompareLoading ? '…' : this.gallerySdrCompareActive ? 'SDR' : 'HDR')
           .fontSize(10)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.font_primary'));
+          .fontColor(this.gallerySdrCompareActive ? $r('sys.color.font_emphasize') : $r('sys.color.font_primary'));
       }
       .width(40)
       .height(40)
+      .borderRadius(20)
+      .clip(true)
       .backgroundEffect({ radius: 24, saturation: 1.12, brightness: 1.0 })
       .backgroundColor(this.isSystemDarkMode() ? '#66000000' : '#66FFFFFF')
-      .accessibilityText('按下显示 SDR，松开恢复 HDR')
-      .onTouch((event: TouchEvent): void => {
-        if (event.type === TouchType.Down) {
-          void this.beginGallerySdrCompare();
-        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-          this.endGallerySdrCompare();
-        }
-      })
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityText(this.gallerySdrCompareActive ? '正在显示 SDR' : 'HDR 照片，按住照片显示 SDR')
       .position({
         x: Math.max(0, this.galleryViewportWidth - 18 - 40),
         y: Math.max(0, this.galleryThumbnailStripTop() - GALLERY_DETAIL_THUMBNAIL_GAP - 40)
@@ -6450,7 +6454,19 @@ struct Index {
                       .onActionEnd((): void => {
                         this.galleryPinchEnd();
                       }),
+                    // In one exclusive group with the taps, so a hold is never
+                    // also a tap that toggles the chrome.
                     GestureGroup(GestureMode.Exclusive,
+                      LongPressGesture({ fingers: 1, repeat: false, duration: GALLERY_SDR_HOLD_MS })
+                        .onAction((): void => {
+                          if (tile.item.id === this.galleryCurrentItem?.id) void this.beginGallerySdrCompare();
+                        })
+                        .onActionEnd((): void => {
+                          this.endGallerySdrCompare();
+                        })
+                        .onActionCancel((): void => {
+                          this.endGallerySdrCompare();
+                        }),
                       TapGesture({ count: 2 })
                         .onAction((event: GestureEvent): void => {
                           this.toggleGalleryZoom(event);
