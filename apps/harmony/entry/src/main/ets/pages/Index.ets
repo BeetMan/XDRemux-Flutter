@@ -184,6 +184,8 @@ const GALLERY_PHOTO_HEADER_REFRESH_DELAY_MS: number = 120;
 const GALLERY_HERO_PREVIEW_MAX_EDGE: number = 1920;
 /** Holding the photo this long shows SDR; quicker touches stay taps and swipes. */
 const GALLERY_SDR_HOLD_MS: number = 250;
+/** How long an HDR photo stays current before its SDR comparison is decoded. */
+const GALLERY_SDR_PREPARE_DELAY_MS: number = 600;
 const GALLERY_DETAIL_BAR_HEIGHT: number = 56;
 const GALLERY_DETAIL_BAR_BOTTOM_MARGIN: number = 28;
 const GALLERY_DETAIL_PANEL_COLLAPSED_HEIGHT: number = 92;
@@ -313,7 +315,8 @@ struct Index {
   @State private gallerySdrCompareHolding: boolean = false;
   @State private gallerySdrCompareLoading: boolean = false;
   @State private gallerySdrCompareActive: boolean = false;
-  @State private gallerySdrPreviewPixelMap: image.PixelMap | undefined = undefined;
+  /** Screen-size SDR decode of the current photo, shown while it is held. */
+  @State private gallerySdrPixelMap: image.PixelMap | undefined = undefined;
   @State private galleryMediaCount: number = 0;
   @State private galleryLoading: boolean = true;
   @State private galleryLibraryReady: boolean = false;
@@ -398,8 +401,10 @@ struct Index {
   private gallerySelectionSerial: number = 0;
   private galleryDetailSelectionUsesDelayedReveal: boolean = false;
   private galleryDetailSelectionIsSwipe: boolean = false;
-  private gallerySdrPreviewItemId: string = '';
-  private gallerySdrPreviewOwned: boolean = false;
+  private gallerySdrPixelMapItemId: string = '';
+  private gallerySdrDecodingItemId: string = '';
+  private gallerySdrDecodeSerial: number = 0;
+  private gallerySdrPrepareTimer: number = -1;
   private galleryChromeToggleBlockedUntil: number = 0;
   private galleryStatusBarResetTimer: number = -1;
   private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
@@ -493,7 +498,7 @@ struct Index {
     this.pageVisible = false;
     this.clearGalleryPhotoHeaderRefreshTimer();
     this.ensureGalleryStatusBarVisible();
-    this.releaseGallerySdrPreview();
+    this.resetGallerySdrCompare();
     this.galleryThumbnails?.dispose();
     // Page teardown is a real departure, unlike the temporary hide caused by
     // the system picker. Finish the current copy and stop later batch items.
@@ -3067,6 +3072,7 @@ struct Index {
     if (inspectionSucceeded) this.gallerySystemHdrCache.set(tile.item.id, isHdr);
     if (selectionSerial === this.gallerySelectionSerial && this.galleryCurrentItem?.id === tile.item.id) {
       this.gallerySystemImageIsHdr = isHdr;
+      if (isHdr) this.scheduleGallerySdrPrepare(tile.item.id);
     }
   }
 
@@ -3077,50 +3083,82 @@ struct Index {
     return hdrKind === 'lhdr' || hdrKind === 'uhdr';
   }
 
+  /**
+   * The SDR comparison is on screen for this photo. Its HDR layer is hidden
+   * meanwhile, not removed: while HDR content is on screen the system raises
+   * the screen brightness, and the SDR layer drawn over it came out brighter
+   * than the HDR photo instead of dimmer.
+   */
+  private galleryShowsSdrCompare(itemId: string): boolean {
+    return itemId === this.galleryCurrentItem?.id && this.gallerySdrCompareActive;
+  }
+
   /** Holding the photo shows its SDR rendition, with or without the chrome. */
   private canCompareGallerySdr(): boolean {
     return this.galleryDetailVisible && this.galleryCurrentItem !== undefined &&
       this.gallerySandboxPath.length > 0 && this.gallerySystemImageIsHdr;
   }
 
-  /**
-   * Show the SDR rendition while the photo is held. It reuses the open-time
-   * 1920 px SDR preview when that belongs to this photo, else decodes once at
-   * the same bounded size and keeps it until the photo changes. The old code
-   * decoded the full-resolution image on every press (192 MB for 8192×6144),
-   * and quick taps stacked several such decodes.
-   */
-  private async beginGallerySdrCompare(): Promise<void> {
+  /** Show the SDR rendition while the photo is held. */
+  private beginGallerySdrCompare(): void {
     if (!this.canCompareGallerySdr() || this.gallerySdrCompareActive) return;
     const itemId: string = this.galleryCurrentItem?.id ?? '';
     this.gallerySdrCompareHolding = true;
-    if (this.gallerySdrPreviewItemId === itemId && this.gallerySdrPreviewPixelMap !== undefined) {
+    if (this.gallerySdrPixelMapItemId === itemId && this.gallerySdrPixelMap !== undefined) {
       this.gallerySdrCompareActive = true;
       return;
     }
-    if (this.galleryHeroPreviewItemId === itemId && this.galleryHeroPreviewPixelMap !== undefined) {
-      this.setGallerySdrPreview(itemId, this.galleryHeroPreviewPixelMap, false);
-      this.gallerySdrCompareActive = true;
-      return;
-    }
-    // One decode at a time; a press during it is served when it finishes.
-    if (this.gallerySdrCompareLoading) return;
+    // Shown when the decode (already running, or started now) finishes.
     this.gallerySdrCompareLoading = true;
+    void this.prepareGallerySdrCompare();
+  }
+
+  /** A moment after an HDR photo becomes current, decode its SDR comparison; quick swipes cancel it. */
+  private scheduleGallerySdrPrepare(itemId: string): void {
+    if (this.gallerySdrPrepareTimer >= 0) clearTimeout(this.gallerySdrPrepareTimer);
+    this.gallerySdrPrepareTimer = setTimeout((): void => {
+      this.gallerySdrPrepareTimer = -1;
+      if (this.galleryCurrentItem?.id === itemId) void this.prepareGallerySdrCompare();
+    }, GALLERY_SDR_PREPARE_DELAY_MS);
+  }
+
+  /**
+   * Decode the SDR comparison at screen size, as sharp as the HDR frame whose
+   * Image also decodes at screen size. It is an explicit SDR decode into a
+   * PixelMap: a second Image on the same file (tried before) can end up with
+   * the HDR Image's decode, and then HDR and SDR look the same. Dimming the HDR
+   * Image itself with hdrBrightness(0) (API 19) was also tried on the device and
+   * showed no visible change.
+   */
+  private async prepareGallerySdrCompare(): Promise<void> {
+    const itemId: string = this.galleryCurrentItem?.id ?? '';
+    const path: string = this.gallerySandboxPath;
+    if (itemId.length === 0 || path.length === 0 || !this.canCompareGallerySdr()) return;
+    if (this.gallerySdrPixelMapItemId === itemId && this.gallerySdrPixelMap !== undefined) return;
+    if (this.gallerySdrDecodingItemId === itemId) return;
+    this.gallerySdrDecodingItemId = itemId;
+    this.gallerySdrDecodeSerial += 1;
+    const serial: number = this.gallerySdrDecodeSerial;
+    const screenLongEdge: number = Math.max(1, Math.ceil(this.getUIContext().vp2px(
+      Math.max(this.galleryViewportWidth, this.galleryViewportHeight))));
     let pixelMap: image.PixelMap | undefined = undefined;
     try {
-      const decoded: GalleryDecodedImage = await decodeGalleryPixelMap(this.gallerySandboxPath,
-        (width: number, height: number): GallerySize =>
-          galleryLongEdgeDecodeSize(width, height, GALLERY_HERO_PREVIEW_MAX_EDGE));
+      const decoded: GalleryDecodedImage = await decodeGalleryPixelMap(path,
+        (width: number, height: number): GallerySize => galleryLongEdgeDecodeSize(width, height, screenLongEdge));
       pixelMap = decoded.pixelMap;
-      if (itemId !== this.galleryCurrentItem?.id) return;
-      this.setGallerySdrPreview(itemId, pixelMap, true);
+      if (serial !== this.gallerySdrDecodeSerial || this.galleryCurrentItem?.id !== itemId) return;
+      this.setGallerySdrPixelMap(itemId, pixelMap);
       pixelMap = undefined;
       if (this.gallerySdrCompareHolding) this.gallerySdrCompareActive = true;
     } catch (error) {
-      if (itemId === this.galleryCurrentItem?.id && this.gallerySdrCompareHolding) {
+      if (serial === this.gallerySdrDecodeSerial && this.gallerySdrCompareHolding) {
         this.galleryStatus = 'SDR 对比加载失败：' + this.errorMessage(error);
       }
     } finally {
+      if (serial === this.gallerySdrDecodeSerial) {
+        this.gallerySdrDecodingItemId = '';
+        this.gallerySdrCompareLoading = false;
+      }
       if (pixelMap !== undefined) {
         try {
           await pixelMap.release();
@@ -3128,34 +3166,37 @@ struct Index {
           // A decode for a photo that is no longer shown.
         }
       }
-      this.gallerySdrCompareLoading = false;
     }
   }
 
-  /** Releasing the button only hides the SDR layer; the decode stays cached for this photo. */
-  private endGallerySdrCompare(): void {
-    this.gallerySdrCompareHolding = false;
-    this.gallerySdrCompareActive = false;
-  }
-
-  private setGallerySdrPreview(itemId: string, pixelMap: image.PixelMap | undefined, owned: boolean): void {
-    const previous: image.PixelMap | undefined = this.gallerySdrPreviewPixelMap;
-    const previousOwned: boolean = this.gallerySdrPreviewOwned;
-    this.gallerySdrPreviewPixelMap = pixelMap;
-    this.gallerySdrPreviewItemId = pixelMap === undefined ? '' : itemId;
-    this.gallerySdrPreviewOwned = owned;
-    // Only release decodes made here; the shared open-time preview has its own owner.
-    if (previous !== undefined && previous !== pixelMap && previousOwned) {
+  private setGallerySdrPixelMap(itemId: string, pixelMap: image.PixelMap | undefined): void {
+    const previous: image.PixelMap | undefined = this.gallerySdrPixelMap;
+    this.gallerySdrPixelMap = pixelMap;
+    this.gallerySdrPixelMapItemId = pixelMap === undefined ? '' : itemId;
+    // The old frame may still be drawn once more.
+    if (previous !== undefined && previous !== pixelMap) {
       setTimeout((): void => {
         void previous.release();
       }, 180);
     }
   }
 
-  /** Drop the cached SDR decode when the photo changes or the detail closes. */
-  private releaseGallerySdrPreview(): void {
+  private endGallerySdrCompare(): void {
+    this.gallerySdrCompareHolding = false;
+    this.gallerySdrCompareLoading = false;
+    this.gallerySdrCompareActive = false;
+  }
+
+  /** The photo changed or the detail closed: drop the comparison and its decode. */
+  private resetGallerySdrCompare(): void {
     this.endGallerySdrCompare();
-    this.setGallerySdrPreview('', undefined, false);
+    if (this.gallerySdrPrepareTimer >= 0) {
+      clearTimeout(this.gallerySdrPrepareTimer);
+      this.gallerySdrPrepareTimer = -1;
+    }
+    this.gallerySdrDecodeSerial += 1;
+    this.gallerySdrDecodingItemId = '';
+    this.setGallerySdrPixelMap('', undefined);
   }
 
   private canConvertGalleryPhotoDirectly(): boolean {
@@ -3719,8 +3760,8 @@ struct Index {
     delayHdrReveal: boolean = false
   ): Promise<void> {
     if (tile.path.length === 0) return;
-    if (this.gallerySdrPreviewItemId !== tile.item.id) {
-      this.releaseGallerySdrPreview();
+    if (this.gallerySdrPixelMapItemId !== tile.item.id) {
+      this.resetGallerySdrCompare();
     } else {
       this.endGallerySdrCompare();
     }
@@ -3738,6 +3779,7 @@ struct Index {
     }
     const cachedSystemHdr: boolean | undefined = this.gallerySystemHdrCache.get(tile.item.id);
     this.gallerySystemImageIsHdr = cachedSystemHdr === true;
+    if (this.gallerySystemImageIsHdr) this.scheduleGallerySdrPrepare(tile.item.id);
     if (shouldOpenDetail) {
       // A decoded image from a previous visit does not guarantee the newly
       // mounted HDR Image already has a frame to draw. Keep the SDR preview
@@ -3913,6 +3955,8 @@ struct Index {
       this.galleryDetailVisible = true;
       this.galleryInfoPanelVisible = true;
     });
+    // The detail is visible from here on, so the SDR comparison can be prepared.
+    if (this.gallerySystemImageIsHdr) this.scheduleGallerySdrPrepare(itemId);
     this.galleryHeroBackdropResetTimer = setTimeout((): void => {
       this.galleryHeroBackdropResetTimer = -1;
       if (this.galleryDetailVisible) {
@@ -3934,7 +3978,7 @@ struct Index {
     this.clearGalleryDetailImageRevealTimer();
     this.clearGalleryPhotoHeaderRefreshTimer();
     if (!this.galleryDetailVisible) return;
-    this.releaseGallerySdrPreview();
+    this.resetGallerySdrCompare();
     this.cancelGalleryInspection();
     if (this.galleryStatusBarResetTimer >= 0) clearTimeout(this.galleryStatusBarResetTimer);
     if (this.galleryHeroBackdropResetTimer >= 0) {
@@ -5261,7 +5305,7 @@ struct Index {
       } else {
         // The detail goes away without closeGalleryDetail(): release its SDR
         // decode and clear the open-time black backdrop here too.
-        this.releaseGallerySdrPreview();
+        this.resetGallerySdrCompare();
         this.galleryHeroBackdropOpacity = 0;
         this.cancelGalleryInspection();
         this.galleryCurrentItem = undefined;
@@ -6351,6 +6395,7 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .visibility(this.galleryShowsSdrCompare(tile.item.id) ? Visibility.Hidden : Visibility.Visible)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0));
@@ -6378,6 +6423,7 @@ struct Index {
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.HIGH)
+                        .visibility(this.galleryShowsSdrCompare(tile.item.id) ? Visibility.Hidden : Visibility.Visible)
                         .onComplete((event): void => {
                           this.onGalleryDetailImageDecoded(tile.item.id, Number(event?.width ?? 0),
                             Number(event?.height ?? 0));
@@ -6399,14 +6445,14 @@ struct Index {
                           this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
-                    if (tile.item.id === this.galleryCurrentItem?.id && this.gallerySdrCompareActive &&
-                      this.gallerySdrPreviewItemId === tile.item.id && this.gallerySdrPreviewPixelMap !== undefined) {
-                      // The HDR Image stays mounted underneath this ready SDR
-                      // PixelMap, so pressing or releasing cannot expose a blank frame.
-                      Image(this.gallerySdrPreviewPixelMap as image.PixelMap)
+                    if (this.galleryShowsSdrCompare(tile.item.id) && this.gallerySdrPixelMap !== undefined &&
+                      this.gallerySdrPixelMapItemId === tile.item.id) {
+                      // The screen-size SDR decode. The HDR Image above stays
+                      // mounted (hidden while this shows), so releasing needs no
+                      // new decode.
+                      Image(this.gallerySdrPixelMap as image.PixelMap)
                         .width('100%')
                         .height('100%')
-                        .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
