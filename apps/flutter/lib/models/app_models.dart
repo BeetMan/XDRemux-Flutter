@@ -424,12 +424,17 @@ enum OutputPlanStatus {
   skipsExistingValidOutput,
   duplicateOutput,
   inputMissing,
-  outputParentIsFile;
+  outputParentIsFile,
+
+  /// The output path is the input file itself (same path, another letter
+  /// case on a case-insensitive volume, or through a link).
+  outputIsInput;
 
   bool get blocksConversion =>
       this == OutputPlanStatus.duplicateOutput ||
       this == OutputPlanStatus.inputMissing ||
-      this == OutputPlanStatus.outputParentIsFile;
+      this == OutputPlanStatus.outputParentIsFile ||
+      this == OutputPlanStatus.outputIsInput;
 
   String get displayName {
     switch (this) {
@@ -445,6 +450,8 @@ enum OutputPlanStatus {
         return t('输入缺失', 'Input missing');
       case OutputPlanStatus.outputParentIsFile:
         return t('输出路径冲突', 'Output path conflict');
+      case OutputPlanStatus.outputIsInput:
+        return t('输出会覆盖原图', 'Output would overwrite the original');
     }
   }
 }

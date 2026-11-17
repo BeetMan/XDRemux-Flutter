@@ -36,6 +36,27 @@ $env:PATH = (Join-Path $FlutterSdk 'bin') + ';C:\tools\ohos-shim;' +
   'C:\Program Files\Huawei\DevEco Studio\jbr\bin;' + $env:PATH
 $env:DEVECO_SDK_HOME = 'C:\Program Files\Huawei\DevEco Studio\sdk'
 
+# The core .so is copied in by hand (not tracked) and Dart resolves each FFI
+# symbol on first use, so a stale core builds fine and fails only when a
+# feature is used. Require every symbol lib\ffi\xdremux_ffi.dart looks up
+# (same check as build_hap.sh). Names only: a core whose function has the
+# same name but an older signature still passes.
+$core = 'ohos\entry\libs\arm64-v8a\libxdremux_core.so'
+if (-not (Test-Path $core)) {
+    throw "$core missing: build it with xdremux/rust/build_ohos.sh and copy it there."
+}
+$nm = Join-Path $env:DEVECO_SDK_HOME 'default\openharmony\native\llvm\bin\llvm-nm.exe'
+if (-not (Test-Path $nm)) { throw "llvm-nm not found at $nm" }
+$exported = @(& $nm -D --defined-only $core | ForEach-Object { ($_ -split '\s+')[-1] })
+if ($LASTEXITCODE -ne 0) { throw "llvm-nm could not read $core" }
+$wanted = @(Select-String -Path 'lib\ffi\xdremux_ffi.dart' -Pattern "'(xdremux_[a-z0-9_]+)'" -AllMatches |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+$missing = @($wanted | Where-Object { $exported -notcontains $_ })
+if ($missing.Count -gt 0) {
+    throw ("libxdremux_core.so is older than lib\ffi\xdremux_ffi.dart; rebuild it " +
+        "(xdremux/rust/build_ohos.sh). Missing: " + ($missing -join ', '))
+}
+
 Copy-Item pubspec.yaml pubspec.yaml.mainline.bak -Force
 if (Test-Path pubspec.lock) { Copy-Item pubspec.lock pubspec.lock.mainline.bak -Force }
 $registrantPath = Join-Path $app 'macos\Flutter\GeneratedPluginRegistrant.swift'

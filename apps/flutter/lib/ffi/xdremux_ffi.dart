@@ -357,6 +357,22 @@ class XdRemuxFFI {
         ffi.Pointer<Utf8>,
       )>('xdremux_make_live_photo_bundle');
 
+  static final _publishLivePhotoPair = _lib.lookupFunction<
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Uint8,
+      ),
+      ffi.Pointer<Utf8> Function(
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        ffi.Pointer<Utf8>,
+        int,
+      )>('xdremux_publish_live_photo_pair');
+
   static final _livePhotoBundleValid = _lib.lookupFunction<
       ffi.Uint8 Function(ffi.Pointer<Utf8>),
       int Function(ffi.Pointer<Utf8>)>('xdremux_live_photo_bundle_valid');
@@ -810,6 +826,55 @@ class XdRemuxFFI {
       calloc.free(stillPtr);
       calloc.free(movPtr);
       calloc.free(bundlePtr);
+    }
+  }
+
+  /// Copy a composed still + MOV pair to its final paths [outStillPath] and
+  /// [outMovPath]. With [replace] files already there are replaced; without
+  /// it an existing file fails the call with `targetExists: true` and nothing
+  /// is touched. Rust checks the pair, writes it, and reads both outputs back
+  /// before reporting success; on failure it removes what it wrote, restores
+  /// what it replaced, and says so in `errorMessage`.
+  static Map<String, dynamic> publishLivePhotoPair(
+    String stillPath,
+    String movPath,
+    String outStillPath,
+    String outMovPath, {
+    required bool replace,
+  }) {
+    final stillPtr = stillPath.toNativeUtf8();
+    final movPtr = movPath.toNativeUtf8();
+    final outStillPtr = outStillPath.toNativeUtf8();
+    final outMovPtr = outMovPath.toNativeUtf8();
+    ffi.Pointer<Utf8> report = ffi.nullptr;
+    try {
+      report = _publishLivePhotoPair(
+        stillPtr,
+        movPtr,
+        outStillPtr,
+        outMovPtr,
+        replace ? 1 : 0,
+      );
+      if (report == ffi.nullptr) {
+        return <String, dynamic>{
+          'success': false,
+          'errorMessage': 'Rust live photo publisher returned an empty report',
+        };
+      }
+      final decoded = jsonDecode(report.toDartString());
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      return <String, dynamic>{
+        'success': false,
+        'errorMessage': 'Rust live photo publisher returned an invalid report',
+      };
+    } finally {
+      if (report != ffi.nullptr) _freeString(report);
+      calloc.free(stillPtr);
+      calloc.free(movPtr);
+      calloc.free(outStillPtr);
+      calloc.free(outMovPtr);
     }
   }
 

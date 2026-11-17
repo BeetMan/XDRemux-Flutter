@@ -42,6 +42,8 @@ struct LivePhotoReport: Decodable {
     var stillPath: String?
     var videoPath: String?
     var contentIdentifier: String?
+    /// `xdremux_publish_live_photo_pair` without replace found a file there.
+    var targetExists: Bool?
 }
 
 struct SplitReport: Decodable {
@@ -63,6 +65,35 @@ extension XDRemuxEngine {
         let report: LivePhotoReport = try await withCPaths(source, still, outputDirectory) { s, t, o in
             try JSONReport(consuming: RustString(taking: xdremux_make_live_photo(s, t, o)))
         }.decode()
+        guard report.success, let stillPath = report.stillPath, let videoPath = report.videoPath else {
+            throw XDRemuxError.coreFailure(message: report.errorMessage)
+        }
+        return LivePhotoFiles(stillPath: stillPath, videoPath: videoPath, contentIdentifier: report.contentIdentifier)
+    }
+
+    /// `xdremux_publish_live_photo_pair`: copies a composed pair to `toStill` +
+    /// `toVideo`, replacing files there when `replace` is true. Without it an
+    /// existing file throws `LivePhotoTargetExists` and nothing is touched.
+    /// The core reads the copies back and checks them before reporting
+    /// success; on failure it removes what it wrote and restores what it
+    /// replaced.
+    public func publishLivePhotoPairFiles(still: String, video: String, toStill: String, toVideo: String,
+                                          replace: Bool) async throws -> LivePhotoFiles {
+        let report: LivePhotoReport = try await runOnQueue {
+            try withCPath(still) { s in
+                try withCPath(video) { v in
+                    try withCPath(toStill) { o in
+                        try withCPath(toVideo) { m in
+                            try JSONReport(consuming: RustString(taking:
+                                xdremux_publish_live_photo_pair(s, v, o, m, replace ? 1 : 0)))
+                        }
+                    }
+                }
+            }
+        }.decode()
+        if report.targetExists == true {
+            throw LivePhotoTargetExists(message: report.errorMessage ?? "\(toStill) already exists")
+        }
         guard report.success, let stillPath = report.stillPath, let videoPath = report.videoPath else {
             throw XDRemuxError.coreFailure(message: report.errorMessage)
         }
@@ -106,14 +137,28 @@ extension XDRemuxEngine: MotionPhotoBackend {
     }
 
     public func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles {
-        try await makeLivePhotoFiles(source: source, still: still, outputDirectory: outputDirectory)
+        do {
+            return try await makeLivePhotoFiles(source: source, still: still, outputDirectory: outputDirectory)
+        } catch XDRemuxError.coreFailure(let message) {
+            throw ConversionJobError.livePhotoFailed(message)
+        }
     }
 
-    public func livePhotoPairIsValid(still: String, video: String) async throws -> Bool {
-        try await livePhotoPairValid(still: still, video: video)
+    public func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String,
+                                     replace: Bool) async throws {
+        do {
+            _ = try await publishLivePhotoPairFiles(still: still, video: video, toStill: toStill,
+                                                    toVideo: toVideo, replace: replace)
+        } catch XDRemuxError.coreFailure(let message) {
+            throw ConversionJobError.livePhotoFailed(message)
+        }
     }
 
     public func splitMotionPhotoVideos(path: String, outputDirectory: String) async throws -> [String] {
-        try await splitMotionPhoto(path: path, outputDirectory: outputDirectory)
+        do {
+            return try await splitMotionPhoto(path: path, outputDirectory: outputDirectory)
+        } catch XDRemuxError.coreFailure(let message) {
+            throw ConversionJobError.coreFailed(message)
+        }
     }
 }

@@ -226,9 +226,10 @@ struct Convert: AsyncParsableCommand {
         case ConversionJobError.coreFailed(let m): return m ?? "core failed"
         case ConversionJobError.verificationFailed: return "output failed verification and was discarded"
         case ConversionJobError.styles3Failed(let m): return "Photographic Styles 3 post-process failed: \(m ?? "unknown")"
+        case ConversionJobError.livePhotoFailed(let m): return m ?? "Live Photo composition failed"
         case ConversionJobError.missingOutput: return "core reported success but wrote no file"
         case ConversionJobError.samePath: return "output path equals input path"
-        default: return String(describing: error)
+        default: return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         }
     }
 }

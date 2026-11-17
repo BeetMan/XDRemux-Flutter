@@ -781,7 +781,7 @@ jobs:
               echo "Missing iOS runtime FFI symbol: $symbol" >&2
               exit 1
             fi
-          done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
+          done < <(grep -oE "'xdremux_[a-z0-9_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
           echo 'Validated all Dart runtime FFI exports in the iOS archive.'
           test -f "$APP/Frameworks/xdremux_transfer.framework/xdremux_transfer" || {
             echo "Local transfer framework missing from the app" >&2; exit 1; }

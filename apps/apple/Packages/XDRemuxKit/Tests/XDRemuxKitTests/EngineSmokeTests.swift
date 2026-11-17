@@ -260,6 +260,80 @@ private final class Seen: @unchecked Sendable {
 }
 
 extension EngineSmokeTests {
+    /// A pair the core cannot verify is refused before anything at the
+    /// destination moves: the still there stays, no MOV appears, the inputs
+    /// are untouched.
+    func testInvalidLivePhotoPairIsRefusedBeforeWriting() async throws {
+        let staging = tempDir.appendingPathComponent("staging")
+        let out = tempDir.appendingPathComponent("out")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let still = staging.appendingPathComponent("IMG_1.heic")
+        let video = staging.appendingPathComponent("IMG_1.mov")
+        try Data("not a paired still".utf8).write(to: still)
+        try Data("not a paired movie".utf8).write(to: video)
+        let published = out.appendingPathComponent("IMG_1_iso.heic")
+        try Data("converted still".utf8).write(to: published)
+
+        for replace in [true, false] {
+            do {
+                _ = try await XDRemuxEngine.shared.publishLivePhotoPairFiles(
+                    still: still.path, video: video.path,
+                    toStill: published.path, toVideo: out.appendingPathComponent("IMG_1_iso.mov").path,
+                    replace: replace)
+                XCTFail("expected the pair check to fail")
+            } catch XDRemuxError.coreFailure(let message) {
+                XCTAssertTrue(message?.contains("nothing was written") == true, message ?? "")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: published), Data("converted still".utf8))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: out.path), ["IMG_1_iso.heic"])
+        XCTAssertEqual(try Data(contentsOf: still), Data("not a paired still".utf8))
+        XCTAssertEqual(try Data(contentsOf: video), Data("not a paired movie".utf8))
+    }
+
+    /// The engine's `MotionPhotoBackend` reports core failures as plain
+    /// messages, not `coreFailure(message: Optional(…))`.
+    func testLivePhotoFailuresReachTheJobAsReadableMessages() async throws {
+        let missing = tempDir.appendingPathComponent("missing.heic").path
+        do {
+            try await XDRemuxEngine.shared.publishLivePhotoPair(
+                still: missing, video: missing + ".mov",
+                toStill: tempDir.appendingPathComponent("a.heic").path,
+                toVideo: tempDir.appendingPathComponent("a.mov").path, replace: false)
+            XCTFail("expected failure")
+        } catch ConversionJobError.livePhotoFailed(let message) {
+            XCTAssertTrue(message?.hasPrefix("cannot read still") == true, message ?? "")
+        }
+    }
+
+    /// The engine's other Motion Photo calls report core failures the same
+    /// way: make as `livePhotoFailed`, split as `coreFailed`.
+    func testMakeAndSplitFailuresReachTheJobAsReadableMessages() async throws {
+        let missing = tempDir.appendingPathComponent("missing.jpg").path
+        do {
+            _ = try await XDRemuxEngine.shared.makeLivePhoto(
+                source: missing, still: missing + ".heic",
+                outputDirectory: tempDir.appendingPathComponent("live").path)
+            XCTFail("expected failure")
+        } catch ConversionJobError.livePhotoFailed(let message) {
+            XCTAssertTrue(message?.hasPrefix("cannot read source") == true, message ?? "")
+        }
+        do {
+            _ = try await XDRemuxEngine.shared.splitMotionPhotoVideos(
+                path: missing, outputDirectory: tempDir.appendingPathComponent("split").path)
+            XCTFail("expected failure")
+        } catch ConversionJobError.coreFailed(let message) {
+            XCTAssertTrue(message?.hasPrefix("cannot read photo") == true, message ?? "")
+        }
+    }
+
+    func testCoreErrorsDescribeThemselves() {
+        XCTAssertEqual(XDRemuxError.coreFailure(message: "cannot read photo").localizedDescription, "cannot read photo")
+        XCTAssertFalse(XDRemuxError.nullResult.localizedDescription.contains("XDRemuxError"))
+        XCTAssertTrue(XDRemuxError.malformedReport("eof").localizedDescription.hasSuffix("eof"))
+    }
+
     /// Opt-in: `XDREMUX_MOTION_SAMPLE_DIR` with OPPO Motion Photo JPEGs →
     /// inspect, convert as a Live Photo pair, validate the pair.
     func testLivePhotoPairEndToEndIfSampleProvided() async throws {
