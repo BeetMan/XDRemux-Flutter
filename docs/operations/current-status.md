@@ -4,6 +4,7 @@
 > 更新时机：发版后、主线合并后、方向决策后。每次更新在标题保留日期，历史版本进 `docs/archive/`（上一版：[`archive/current-status-20261031.md`](../archive/current-status-20261031.md)）。
 > 断言遵循 `docs/style-guide.md` §3：已实测 / 推断 / 未验证。
 > 2026-11-15：v0.4.7、鸿蒙原生 0.5.4、SwiftUI `apple-v0.1.0` / `apple-v0.1.1` 预发布与 TestFlight、VideoToolbox HEVC 后端（PR #107–#109）、Flutter 3.50（PR #104）合入后重写。基准 `origin/main` = `256aad7`（PR #118 的合并提交，2026-11-15）；与上一版基准 `8385138` 之间 first-parent 共 64 个合并（PR #55–#115 与 #117–#119，`git log --first-parent 8385138..origin/main`）。
+> 2026-11-16：PR #124 合并、`main` 预检通过后只改了 §4.1 和 §5.1，并把 PR #124 挪动的三处 `release.yml` 行号各加 4；其余仍是 11-15 的快照。
 
 ## 1. 版本与发布
 
@@ -80,7 +81,7 @@
 | ProXDR → ISO 21496-1 HDR HEIC（UHDR/LHDR） | 可用 | 两种输出模式：OPPO 兼容 / Apple 标准 |
 | UHDR JPEG（MPF） | 可用（只作输入） | HDR 只输出 HEIC；单图 MPF 没有增益映射时按 SDR 处理 |
 | HEVC 编码后端 | 可用（新） | `xdremux/rust/src/hevc/` 拆成 `x265.rs`、`ffmpeg.rs`、`vt.rs`：构建期决定编入哪些，运行期按单次转换或进程级选择（`hevc/mod.rs:1-31`，PR #107、#108）。Flutter 各平台仍只编 x265；SwiftUI 默认构建只编 VideoToolbox（`xdremux/rust/build_apple.sh:50`），GitHub 发布包与 TestFlight 用 `vt+x265`（`tools/apple/package_release.sh:61`、`tools/apple/upload_testflight.sh:53`）。VideoToolbox 下三通道增益映射为 4:2:0，x265 保持 4:4:4（`apps/apple/README.md`） |
-| linear thumbnail（线性缩略图：Apple Log + 原生几何 + HDR 增益映射 + 可选 Main10） | 可用 | Android / iOS 发布包链接 10-bit x265（`release.yml:417-434`、`:693-694`），鸿蒙 Flutter 包为 10-bit（上一版记录，本地构建）；macOS / Windows / Linux 发布包为 8-bit（推断：`release.yml` 只有上述两处 10-bit 构建）。见 `docs/modules/styles-pipeline.md` §4 |
+| linear thumbnail（线性缩略图：Apple Log + 原生几何 + HDR 增益映射 + 可选 Main10） | 可用 | Android / iOS 发布包链接 10-bit x265（`release.yml:421-438`、`:697-698`），鸿蒙 Flutter 包为 10-bit（上一版记录，本地构建）；macOS / Windows / Linux 发布包为 8-bit（推断：`release.yml` 只有上述两处 10-bit 构建）。见 `docs/modules/styles-pipeline.md` §4 |
 | Photographic Styles 写入 | **实验性** | key 3（GTC）每图拟合，Standard key 1 固定 identity；`"i"`、`"h"`、`"6"`、`"c"` / `"d"` 仍是金样本参考值（`styles_native.rs:23-25`），天空蒙版为零值占位（R4）。PR #100：主图较大时 delta map 按 iPhone 的做法取约 5/7 主图尺寸、不再封顶 2880×2560，修复 macOS 照片 App 改风格保存后出现的绿色网格 |
 | Texture Styles（摄影风格 3） | 可用 | `texture_styles.rs` |
 | OPPO / 华为人像转换 | 可用（条件受限） | 依赖源文件深度数据与系统版本。PR #99：`verify_portrait_graph` 自 `97269d1`（2026-09-10）起恒为假，已修 |
@@ -95,7 +96,7 @@
 
 ## 4. 已知风险与未验证项
 
-1. **Flutter 3.50 之后 `release.yml` 没有跑通过**（已实测）：PR #104 合并前在 `ci/flutter-3.50.0 @ bb567fe` 手动触发的预检 run `43480790620`（11-13）中，Android APK 在 `:url_launcher_android:lintVitalAnalyzeRelease` 失败（lint 内部崩溃，报 `'java.lang.Object java.util.List.removeLast()'`）；macOS DMG 没拿到 runner、零步骤被取消；Windows x64、iOS、Linux 成功（Windows ARM64 为实验构建，允许失败）。此后没有再跑 `release.yml`。**推断**：`List.removeLast()` 是 JDK 21 才有的方法，而 `release.yml:345-349` 仍用 Temurin 17（PR #104 的本机验证用 JDK 21）。不修复则下一版 Flutter 的安卓包发不出来。**更新**：PR #124 把 Android job 换成 JDK 21（`release.yml:345-353`），上面的推断已证实：用 `javap` 核对，AGP 9.3.1 自带的 lint 32.3.1 调用 `List.removeLast()`，AGP 9.0.1 的 32.0.1 没有；Google 在 AGP 9.3.2 修了这个崩溃。该分支的预检 run `43745707746`（`45a9180`，11-15）中 Android APK、macOS DMG、Windows x64、iOS、Linux 全部通过（Windows ARM64 照旧在 Set up Flutter 失败）。§5.1 要求的 `main` 预检要等 PR #124 合并后再跑。
+1. **已解决：Flutter 3.50 之后 `release.yml` 的安卓构建失败**（已实测）：PR #104 合并前在 `ci/flutter-3.50.0 @ bb567fe` 手动触发的预检 run `43480790620`（11-13）中，Android APK 在 `:url_launcher_android:lintVitalAnalyzeRelease` 失败（lint 内部崩溃，报 `'java.lang.Object java.util.List.removeLast()'`），macOS DMG 没拿到 runner、零步骤被取消。原因：AGP 9.3.1 自带的 lint 32.3.1 调用 JDK 21 才有的 `List.removeLast()`（用 `javap` 核对，AGP 9.0.1 的 32.0.1 没有；Google 在 AGP 9.3.2 修了这个崩溃），而 Android job 当时用 Temurin 17。PR #124 改用 JDK 21（`release.yml:345-353`，合并提交 `b0ed888`）。之后在 `main @ b0ed888` 手动触发的预检 run `44004132722`（11-16）中 Android APK、macOS DMG、Windows x64、iOS、Linux 全部通过；Windows ARM64 为实验构建，照旧在 Set up Flutter 失败（允许失败）。以后若退回 JDK 17，AGP 至少要 9.3.2（`docs/operations/releasing.md` §4）。
 2. **Styles native 路径不是逐像素等价**：仅 key 3 按图拟合，key 1 为 identity，`"i"` / `"h"` / `"6"` / `"c"` / `"d"` 为参考值，天空分割待 R4。目标是"Apple 照片可继续编辑"，不是原生画质。PR #100 只在 macOS 照片 App 上人工核对了 7 种主图尺寸，iPhone 上**未验证**；Flutter 内的 Swift 研究管线仍是旧的 2880×2560 上限（`ApplePhotographicStylesPipeline.swift:2872-2873`），该管线不在产品路径（`app_models.dart:31-32`）。
 3. **linear thumbnail**：baseline exposure 的绝对亮度与「4:2:0 增益映射 + Main10 缩略图」组合在照片 App 中的接受度只在 iPhone 16e 与 macOS 27.2 上做过维护者验收；`docs/testing/styles-hdr-device-checklist.md` 自 10-26 起没有更新，完整 S1/S2/S3/S7 A/B **未跑**。原生 Apple tmap 文件重编码仍需解 HEVC 增益映射，`rust_h265` 只支持 4:2:0（`heif_decode.rs:6`）。VideoToolbox 后端的三通道增益映射同样是 4:2:0，对画质的影响**未验证**。
 4. **风格实况的 MOV 伴随轨道按原生 iOS 27 MOV 复刻**：用静帧代替每一帧（不解视频），matte 为空（`live_photo_styles.rs:21-22`、`:727`）；只验证了 macOS 27.2 / iPhone 16e 编辑不崩溃、保存后实况与颜色保留，其他系统版本**未验证**。
@@ -109,11 +110,11 @@
 9. **iPhone Duo**：Flutter 的安全区修复（0.4.6）与 SwiftUI 的两栏布局、侧边栏工具栏只在模拟器上验证，真机**未验证**。
 10. **CI 覆盖**：共 8 个 workflow。`ci.yml` 跑 Ubuntu 上的 Rust（同时链接 8-bit 与 10-bit x265）与 Flutter；`apple-ci.yml`（Swift 包、CLI、macOS App、iOS 模拟器构建）与 `apple-vt-core.yml`（VideoToolbox 后端的内核测试）因 macOS runner 紧张，只在 Rust 改动合入 `main` 后和改到 Apple 路径的 PR 上运行（PR #101），改 FFI 的 Rust PR 合并前要在 Mac 上跑 `tools/apple/verify_local.sh`；`transfer-ci.yml` 覆盖 Windows / Linux / macOS / OHOS 的传输库；安卓 APK 只在 `release.yml` 里构建。Windows / macOS 原生行为与真机照片验收不在 CI 内。`main` 最新一次 push（`256aad7`）的 CI 通过，最近一次 Rust 合入（`78df799`）触发的 CI、Conformance、Apple native、Apple VideoToolbox core、OHOS smoke 均通过（已实测，`gh run list --branch main`；CI 通过不等于真机验收）。`docs/operations/ci.md` 仍写"六个 workflow"，没有覆盖 `apple-vt-core.yml`、`transfer-ci.yml` 与 PR #101 的触发规则。
 11. **三个前端共用 Rust 内核**（Flutter、鸿蒙原生、SwiftUI），另共用传输 crate：FFI 改动需重新生成 `xdremux_core.h`（`ci.yml` 校验），并重建鸿蒙 `.so` 复测；`feat/harmony-native` 尚未同步 PR #99、#100、#107、#108。
-12. **安装包许可文本**：Windows（`tools/installer/xdremux.iss:63-64`）、macOS（`release.yml:656-658`）、Linux（`tools/linux/package_linux.sh:296`、`:369`）的打包步骤都复制 `LICENSE` / `LICENSING.md`，`v0.4.7` 的发布 run 成功；产物里的文件没有打开核对（**未验证**）。
+12. **安装包许可文本**：Windows（`tools/installer/xdremux.iss:63-64`）、macOS（`release.yml:660-662`）、Linux（`tools/linux/package_linux.sh:296`、`:369`）的打包步骤都复制 `LICENSE` / `LICENSING.md`，`v0.4.7` 的发布 run 成功；产物里的文件没有打开核对（**未验证**）。
 
 ## 5. 下一步优先级
 
-1. 修复 `release.yml` 的安卓构建（换 JDK 21，或按 lint 的提示处理 `lintVital`），在 `main` 上手动触发一次预检（`platforms: all`），确认 Android 与 macOS 两个任务通过（§4.1）。这是 Flutter 下一版的前置。
+1. **已完成**（11-16，已实测）：修复 `release.yml` 的安卓构建并在 `main` 上预检。PR #124 改用 JDK 21（`b0ed888`）；`main` 预检 run `44004132722`（`platforms: all`）中 Android APK 与 macOS DMG 都通过（§4.1）。Flutter 下一版的这个前置已满足。
 2. PR #116（Flutter macOS / iOS 改用内核的 VideoToolbox 后端）：由用户决定是否合并；之后发 Flutter 0.4.8，带上 `main` 上尚未发布的 #99、#100、#102–#105、#107、#108。
 3. SwiftUI：PR #120 由用户决定是否合并；出 0.1.2 预发布，带上 PR #99 的人像修复与 0.1.1 之后的界面改动（§4.7）；确认 TestFlight 构建 3–7 的处理结果与真机安装；开放公开测试链接前定下 x265 与 App Store 条款的问题；补传输框架的 dSYM。`docs/plans/apple-native.md` §3 的 P4 跨端回归仍无记录。
 4. Live Photo 发布校验补齐（`docs/research/upstream-20261115.md` 的 P1，沿用）：复核失败时回滚已写出的 MOV 与静帧、保留独立恢复副本，Flutter 与 SwiftUI 两端都做（§4.5）；约 2–3 天。
