@@ -37,7 +37,17 @@ cd apps/harmony && devecocli build --product default --build-mode debug
 
 `tools/native/build-transfer.sh ohos` builds the LocalSend transfer adapter (`crates/xdremux-transfer-ffi`, pinned Rust 1.97.1). The bridge links it, so the staging helper refuses to continue without it. The PowerShell staging script does not stage it yet; on Windows copy `libxdremux_transfer.so` into `entry/libs/arm64-v8a/` yourself.
 
-For a release package, build from a clean export whose `build-profile.json5` has no `signingConfigs`, so the build log shows signing was skipped rather than failed.
+The committed `build-profile.json5` has no `signingConfigs`, so a build from a clean checkout or export is unsigned and its log shows signing was skipped rather than failed. Release packages are built that way.
+
+### Local device-test signing
+
+DevEco's automatic signing (or a manual signing profile) writes `signingConfigs` with machine-specific paths and encrypted passwords into `build-profile.json5`. Keep that local:
+
+```bash
+git update-index --skip-worktree apps/harmony/build-profile.json5
+```
+
+Undo it with `--no-skip-worktree` before changing other settings in that file on purpose.
 
 ## Verify the built package
 
