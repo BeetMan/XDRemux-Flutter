@@ -97,7 +97,7 @@ meta
 │   （与我们为 OPPO 转换生成的结构逐字节同型）
 ├─ mime 'urn:com:huawei:photo:5:1:0:meta:xtstyle'（442KB，XMAGE 色卡，见 6.4）
 ├─ mime 'DfxData'（473KB，内嵌 TIFF 'HUAWEI' + 相机诊断数据）
-├─ it35（237B，13 条记录，HDR Vivid/CUVA 元数据）
+├─ it35（237B，HDR Vivid/CUVA 元数据；原记「13 条记录」，结构见 §6.12，Mate 70 未逐字段验证）
 └─ Exif（ImageDescription = '_cuva'，HUAWEI MakerNote，GPS 正常）
 iprp: rICC(672B) + nclx(BT.2020 primaries=9 / HLG transfer=18 / BT.2020 matrix=9)
       + clli(maxCLL=900) + mdcv（静态 HDR 元数据齐备）
@@ -169,7 +169,9 @@ Step 2 结构诊断已落地到 `xdremux_huawei_inspect`：报告 `xtstyleVersio
 - [x] 已采集「鲜艳」/「明快」两种标准模式样本并确认 payload version 5/6 差异（见 §6.9）
 - [x] 在 Apple Photos 中比较两组原图的编辑面板、导出和回读结果；编辑副本仍能显示 HDR
 - [ ] 验证 233644 增益映射是否恒等（解码增益图看数值范围）
-- [ ] it35 记录与 T/UWA 005 (HDR Vivid) 语法元素逐字段对应
+- [x] it35 与 GB/T 48347 UWAInfo、T/UWA 005.1 (HDR Vivid) 语法元素逐字段对应（Pura X View 样本，见 §6.12）
+- [ ] 用 Mate 70 原图（237B / 160B 两种 `it35`）复核 §6.12；原图不在当前 Mac 上
+- [ ] §6.12 动态块表 11 之后的字节与 extension 块的语义（需 GB/T 48347、GB/T 46269.1 或 T/UWA 005.1 原文）
 - [x] xtstyle 固定字节形状初步确认：442368B = `u16le[6][192][192]`（只作布局观察）
 - [ ] xtstyle plane/尾部字段的语义和系数布局仍待不同 XMAGE 设定样本验证
 - [ ] DfxData 内嵌 TIFF 完整解析（可能含编辑参数）
@@ -251,6 +253,142 @@ HDR 的直通判定。** 这仍不是 version 5/6 字段语义的完整逆向，
 | `IMG20260807131731.heic` | OPPO / OPPO Find X8 Ultra | `not-huawei`；无 Huawei marker、无完整 tmap graph |
 
 这只是两张探索性负样本，不能替代完整误分类矩阵；规范 Huawei 样本仍以 PLR-AL50 原始 HEIC 为准。
+
+### 6.12 `it35` 逐字段对照：GB/T 48347 UWAInfo（2026-11-15，Pura X View 样本）
+
+> 问题：华为 HEIC 的 `it35` 是不是 GB/T 48347—2026（HDR Vivid 静态图国标）的 UWAInfo？各字节对应哪些语法元素？
+> 样本：**HUAWEI Pura X View** 原始 HEIC 4 张，**不是 Mate 70 Pro**（Mate 70 原图不在当前 Mac 上）。§6.2 记录的 Mate 70 `it35` 237B / 160B **未验证**，原图到位后用下面同一条命令复核。
+> 结论状态：UWAInfo 外层结构已实测；静态块字段名、动态块按 T/UWA 005.1 表 11 的解读为推断；动态块尾部与 extension 块的语义未验证。
+> 字段依据：上游作者的 libheif 分叉 `21Z121Z1/libheif` 分支 `eval/gbt48347-iso-audit-20261114 @ 7848098`（`libheif/gbt48347.h`、`libheif/gbt48347.cc`、`tests/gbt48347_metadata.cc`；该提交未并入分叉 `master`，也未并入官方 libheif）；动态元数据语法取 FFmpeg `libavcodec/dynamic_hdr_vivid.c @ 0834db5163`（注释标为 T/UWA 005.1-2022 表 11）。两者只参考字段定义，代码未引入本仓库。
+
+**一页结论**
+
+1. **已实测**：4 张样本的 `it35` 都以 `26 0004 0007 02 02010100` 开头，即 `country_code=0x26`、`terminal_provide_code=0x0004`、`terminal_provide_oriented_code=0x0007`、`extended_frame_number=2`、`extended_type=0x02010100`（`file_type=2`、`meta_type=1`、`enhance_type=1`），与分叉中 GB/T 48347 表 28 的常量一致；之后的静态块、动态块、extension 块各带 16 位长度前缀，恰好读到 item 末尾。Pura X View 的 `it35` 就是 UWAInfo。
+2. **已实测**：`metadata_size` = 静态 + 动态 + 4（195 = 28 + 163 + 4；118 = 28 + 86 + 4），两个 16 位长度字段也计入。分叉按 9.2.3a 只认「静态 + 动态」，并在测试中明确拒绝 +4（`tests/gbt48347_metadata.cc:154-169`）。
+3. **已实测**：extension 块（61 字节）不是分叉表 15 的 base / combined 两个映射块：按表 15 读，第一个长度前缀是 `0x0100` = 256，超过剩余的 59 字节。实际内容是 1 字节 `0x01`、同一文件 `tmap` 的 ISO 21496-1 第 0 通道参数（40 字节，逐字节相同）、16 字节色彩码和 4 字节 0。
+4. **推断**（读代码，未运行分叉）：因第 2、3 点，分叉的 `parse_uwa_info` 会把这 4 个 `it35` 判为 malformed（`libheif/gbt48347.cc:450-458` 的 `metadata_size` 检查在先，`:475-480` 的 extension 解析也会失败）。要读华为文件，解析器需接受 +4，并把 extension 当不透明字节。
+5. **已实测**：静态块（28 字节）的数值与同一文件 `tmap` item 上的 `mdcv` + `clli` 逐一相等，只是三原色按 x、x、x、y、y、y 排列（`mdcv` 为每个原色 x/y 相邻）。字段名据此 **推断**。
+6. **已实测**：动态块的前 460 bit 能按 T/UWA 005.1-2022 表 11 完整解析，数值合理；其后还有 105 字节（4320×5760）/ 28 字节（3072×4096）不属于表 11，含义 **未验证**。
+7. **已实测**：三张 270 字节样本之间只有动态块不同；静态块 4 张相同；extension 块只有 193 字节样本的两个色彩码不同。
+
+**样本**（EXIF 均为 `HUAWEI` / `HUAWEI Pura X View`；结构均为 `tmap` + base / gain map grid（增益映射 1536×2048）+ `DfxData` + `it35`，无 `xtstyle`；样本含 GPS，存于维护者本机迁移包，不入库）
+
+| 文件 | 主图 | 等效焦距 | 文件大小 | 文件 SHA-256 前 16 位 | `it35` | `it35` SHA-256 前 16 位 |
+|---|---:|---:|---:|---|---:|---|
+| `IMG_20260913_154619.heic` | 4320×5760 | 90 mm | 2,583,446 字节 | `8ac20ed7b3abf9ba` | 270 字节 | `73880d23e357a5fb` |
+| `IMG_20260913_155020.heic` | 4320×5760 | 24 mm | 2,231,828 字节 | `9717a8af554d8466` | 270 字节 | `074f99ba0c843dd7` |
+| `IMG_20260914_113446.heic` | 4320×5760 | 50 mm | 3,284,309 字节 | `71dbb74424b6b7e2` | 270 字节 | `f5e85f17305b1579` |
+| `IMG_20260914_180800.heic` | 3072×4096 | 240 mm | 1,953,487 字节 | `811bf33d0cc14e63` | 193 字节 | `b12d912e214c456a` |
+
+**UWAInfo 字段表**（GB/T 48347—2026 表 28；位宽与约束取自分叉 `gbt48347.h` / `gbt48347.cc`，大端）
+
+| 字段 | 位宽 | 取值 / 约束（分叉） |
+|---|---|---|
+| `country_code` | u(8) | 固定 `0x26` |
+| `terminal_provide_code` | u(16) | 固定 `0x0004` |
+| `terminal_provide_oriented_code` | u(16) | 固定 `0x0007`（HDR Vivid 视频 SEI 用 `0x0005`，见 FFmpeg `libavcodec/itut35.c`） |
+| `extended_frame_number` | u(8) | 分叉默认 2，不校验 |
+| `extended_type` | u(32) | 自高到低字节：`file_type`、`meta_type`、`enhance_type`、保留；分叉常量 `0x01000000`、`0x02010100`、`0x02010000` |
+| `metadata_size` | u(16) | `meta_type == 1` 时出现；分叉要求等于静态 + 动态字节数 |
+| `static_metadata_size`、`static_metadata` | u(16)、字节串 | 分叉不解析内容 |
+| `dynamic_metadata_size`、`dynamic_metadata` | u(16)、字节串 | 分叉不解析内容（其 L5 依赖 GB/T 46269.1，分叉标为未验证） |
+| `extension_size`、`extend_info_extension` | u(16)、字节串 | `enhance_type == 1` 时出现；表 15：base、combined 两个 u(16) 长度前缀块，块内 `flag` u(8) 取 0、16、32，非 0 时 9 个 fp16 / fp32 矩阵元素加 N³ LUT |
+
+**逐字段对照**（偏移以 270 字节样本为准；193 字节样本的动态块短 77 字节，extension 两行偏移为 130 / 132）
+
+| 偏移 | 字段 | 270 字节样本 | 193 字节样本 | 状态 |
+|---:|---|---|---|---|
+| 0 | `country_code` | `0x26` | `0x26` | 已实测 |
+| 1 | `terminal_provide_code` | `0x0004` | `0x0004` | 已实测 |
+| 3 | `terminal_provide_oriented_code` | `0x0007` | `0x0007` | 已实测 |
+| 5 | `extended_frame_number` | 2 | 2 | 已实测 |
+| 6 | `extended_type` | `0x02010100` | `0x02010100` | 已实测 |
+| 10 | `metadata_size` | 195（28 + 163 + 4） | 118（28 + 86 + 4） | 已实测；与分叉不符 |
+| 12 | `static_metadata_size` | 28 | 28 | 已实测 |
+| 14 | `static_metadata` | 见静态块表 | 见静态块表 | 数值已实测，字段名推断 |
+| 42 | `dynamic_metadata_size` | 163 | 86 | 已实测 |
+| 44 | `dynamic_metadata` | 见动态块表 | 见动态块表 | 前 460 bit 推断，其余未验证 |
+| 207 | `extension_size` | 61 | 61 | 已实测 |
+| 209 | `extend_info_extension` | 见 extension 表 | 见 extension 表 | 字节已实测，语义推断或未验证 |
+
+**静态块**（28 字节，4 张相同；字段名按与 `mdcv` / `clli` 的逐值对应推断）
+
+| 块内偏移 | 推断字段 | 位宽与单位 | 实测值 | 对应 box 字段 |
+|---:|---|---|---|---|
+| 0 | `display_primaries_x[0..2]` | 3 × u(16)，0.00002 | 13250、7500、34000（0.265、0.150、0.680） | `mdcv` 三原色 x |
+| 6 | `display_primaries_y[0..2]` | 3 × u(16)，0.00002 | 34500、3000、16000（0.690、0.060、0.320） | `mdcv` 三原色 y |
+| 12 | `white_point_x`、`white_point_y` | 2 × u(16)，0.00002 | 15635、16450（0.3127、0.3290） | `mdcv` 白点 |
+| 16 | `max_display_mastering_luminance` | u(32)，0.0001 cd/m² | 10000000（1000 cd/m²） | `mdcv` |
+| 20 | `min_display_mastering_luminance` | u(32)，0.0001 cd/m² | 0 | `mdcv` |
+| 24 | `max_content_light_level` | u(16)，cd/m² | 900 | `clli` MaxCLL |
+| 26 | `max_pic_average_light_level` | u(16)，cd/m² | 203 | `clli` MaxPALL |
+
+三原色依次为 P3 的 G、B、R，白点 D65，与 `mdcv` 的原色次序相同。另：`tmap` 的 `alternate_hdr_headroom` = 2148445 / 1000000，约等于 log2(900 / 203)，即由 MaxCLL / MaxPALL 推出（**推断**）。
+
+**动态块**（语法与刻度取自 FFmpeg 对 T/UWA 005.1-2022 表 11 的实现，解读为 **推断**；数值 **已实测**）
+
+| 语法元素 | 位宽 | 刻度 | 4 张实测值 | 逐张变化 |
+|---|---|---|---|---|
+| `system_start_code` | u(8) | — | 1 | 否 |
+| `minimum_maxrgb`、`average_maxrgb`、`variance_maxrgb`、`maximum_maxrgb` | 各 u(12) | /4095 | 1417、1839、2223、2953 | 否 |
+| `tone_mapping_mode_flag`、`tone_mapping_param_num` | u(1)、u(1) + 1 | — | 1、2 | 否 |
+| `[0] targeted_system_display_maximum_luminance` | u(12) | /4095 | 3078（0.7516） | 否 |
+| `[0] base_param_m_p`、`m_m`、`m_a`、`m_b`、`m_n` | u(14)、u(6)、u(10)、u(10)、u(6) | /16383、/10、/1023、/1023、/10 | 9100、24、720、0、10 | 否 |
+| `[0] base_param_k1`、`k2`、`k3`、`Delta_enable_mode`、`Delta` | u(2)、u(2)、u(4)、u(3)、u(7) | `Delta` 为 /127 | 1、1、1、6、0 | 否 |
+| `[0] three_Spline_num` 与两组样条 | u(1) + 1；每组 50 或 42 bit | 见 FFmpeg | `TH_mode` 0（`TH_enable_MB` 252）、1 | 否 |
+| `[1] targeted_system_display_maximum_luminance` | u(12) | /4095 | 2377（0.5805） | 否 |
+| `[1] base_param_m_p`、`m_a` | u(14)、u(10) | /16383、/1023 | 4847–5108、777–804 | 是 |
+| `[1]` 其余 base 参数 | 同 `[0]` | 同 `[0]` | `m_m` 20、`m_b` 0、`m_n` 10、`k1`–`k3` 1、`Delta_enable_mode` 6、`Delta` 0 | 否 |
+| `[1]` 两组样条 | 同 `[0]` | 同 `[0]` | `TH_mode` 0、1；阈值与强度逐张不同 | 是 |
+| `color_saturation_mapping_flag`、`color_saturation_num`、`color_saturation_gain[0..6]` | u(1)、u(3)、各 u(8) | /128 | 1、7、0、0、0、72、85、65、87 | 否 |
+| 表 11 之后的字节 | — | — | 105 字节（270 字节样本）、28 字节（193 字节样本） | 是 |
+
+- **推断**：两组色调映射参数的目标亮度 0.7516、0.5805 若按 PQ 码值换算，约为 1000 cd/m² 和 200 cd/m²（PQ(203 cd/m²) ≈ 0.5808），分别面向 1000 nit 显示器和接近 SDR 参考白的显示器；只有后一组逐张变化。FFmpeg 只注明这些值以 1/4095 为单位，PQ 解读不是它的说法。
+- **推断**：4 张不同场景的 `maxrgb` 统计值完全相同，可能是固定值而不是逐张统计。
+- **未验证**：表 11 之后的字节逐张变化，且长度随分辨率不同（105 − 28 = 77，正是两种 `it35` 的长度差）；含义需对照 GB/T 46269.1 或 T/UWA 005.1 原文。
+
+**extension 块**（61 字节；字节已实测，语义见各行）
+
+| 块内偏移 | 长度 | 实测内容 | 解读 |
+|---:|---:|---|---|
+| 0 | 1 | `0x01` | 未验证（可能是通道数；`tmap` 为单通道，flags `0x40`） |
+| 1 | 40 | 5 组 u32 分子 / u32 分母：0 / 1000000、2170949 / 1000000、1000000 / 1000000、0 / 1000000、0 / 1000000 | 已实测：与同一文件 `tmap` 第 22–61 字节逐字节相同，即 ISO 21496-1 第 0 通道的 `gain_map_min`、`gain_map_max`、`gamma`、`base_offset`、`alternate_offset` |
+| 41 | 16 | 4 组 4 字节：`03 0c 0d 05`、`03 0c 0d 05`、`03 02 02 05`、`03 0c 08 00` | 推断为 H.273 色彩码（原色、传递特性、矩阵），首字节 3 含义未验证 |
+| 57 | 4 | 全 0 | 未验证 |
+
+- 色彩码的对应（**推断**）：12 = P3-D65、13 = sRGB、8 = 线性、2 = 未指定，矩阵 5 = BT.601、0 = 恒等。第 3 组 (2, 2, 5) 与增益映射 grid 上的 `nclx`（2, 2, 5，full range）一致（**已实测**）；第 1、2 组 (12, 13, 5) 与主图 ICC（描述为 `sRGB EOTF with DCI-P3 Color Gamut`）相符；第 4 组 (12, 8, 0) 像是增益映射运算用的线性 P3 RGB 空间。`tmap` 上 HDR 呈现的 `nclx`（9, 18, 9）不在其中。
+- 193 字节样本的第 1、4 组为 `03 06 0d 05`、`03 06 08 00`（原色码 6），但它的主图 ICC 描述与其他三张相同，差异原因 **未验证**。
+
+**与 Mate 70 记录的关系**（均 **未验证**）
+
+- §6.2 记录 Mate 70 Pro 的 `it35` 为 237 字节（4320×5760）和 160 字节（3072×4096），相差 77 字节；Pura X View 的 270 / 193 字节也相差 77 字节，且差值全部来自动态块尾部。**推断**：Mate 70 是同一结构，随分辨率变化的也是动态块尾部。
+- 两台设备同分辨率相差 33 字节，差在哪个块不知道。
+- §6.2 的「13 条记录」没有留下划分方法，无法与本节字段对应；以本节为准，Mate 70 原图到位后复核。
+
+**对 XDRemux 的含义**：不影响 §6.6 的直通判定；`isobmff.rs` 仍把 `it35` 当不透明字节保留。若将来要为输出写 `it35`，静态块可由 `mdcv`、`clli` 推出，extension 中的 40 字节可由 `tmap` 推出；extension 的首字节、色彩码和动态块都不能（**推断**）。
+
+**复现命令**
+
+```bash
+cd xdremux/rust
+# ffmpeg 后端不链接 x265，因此不需要未入库的 vendor/x265；本命令不做编码
+XDREMUX_HEVC_BACKEND=ffmpeg cargo run --example huawei_it35 -- <样本.heic>
+```
+
+输出依次是字段偏移表、静态块分解、按表 11 的动态块分解与剩余字节、两项交叉校验（静态块对 `mdcv` + `clli`，extension 对 `tmap` 第 0 通道）。对 4 张样本分别运行并 diff 输出，即可看到只有动态块逐张变化。
+
+**已实测** 环境：macOS 27.2.1（Apple Silicon）、rustc 1.100.0，`origin/main @ e5bb1d2` 加本节同一 PR 新增的 `huawei_it35` example；x265 与 ffmpeg 两种后端输出逐字节相同。以 `IMG_20260914_180800.heic` 为例的关键输出：
+
+```text
+it35: 193 bytes, sha256 b12d912e214c456a
+6       4      extended_type                    0x02010100 (file_type=2 meta_type=1 enhance_type=1 reserved=0)
+10      2      metadata_size                    118 (payloads+size-fields: static 28 + dynamic 86)
+  table 11 used 460 bits; 28 of 86 bytes follow that table 11 does not describe: …
+  static_metadata == mdcv (primaries as x,x,x,y,y,y) + clli: true
+  extend_info_extension[1..41] == tmap[22..62] (ISO 21496-1 channel 0): true
+```
+
+**代码**：`xdremux/rust/src/huawei_heic.rs` 新增只读函数 `parse_uwa_info`、`observe_uwa_static_metadata`、`parse_hdr_vivid_dynamic_metadata`、`it35_payload` / `first_item_payload`，单元测试只用合成字节。`HuaweiHeicReport` 与 `huawei_probe` 输出不变（**已实测**：4 张样本在 `origin/main` 与本分支上的 `huawei_probe` JSON 逐字节相同）。
 
 ## 7. 产出目标
 
