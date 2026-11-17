@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--flutter-bundle-name", default="io.github.beetman.xdremux")
     parser.add_argument("--version-name", required=True)
     parser.add_argument("--version-code", required=True, type=int)
-    parser.add_argument("--compatible-api", default=18, type=int)
+    parser.add_argument("--compatible-api", default=26, type=int)
     parser.add_argument("--expected-core-sha256")
     parser.add_argument("--report", type=Path, help="write the verification JSON to this path")
     arguments = parser.parse_args(argv)

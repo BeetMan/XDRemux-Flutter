@@ -1,6 +1,6 @@
 # XDRemux 鸿蒙原生版
 
-**当前版本：0.5.4** · HarmonyOS 7 / API 26 开发基准
+**当前版本：0.5.4** · 需要 HarmonyOS 7（API 26）及以上
 
 [下载鸿蒙原生版 0.5.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
 

@@ -1,4 +1,4 @@
-import { Available, deviceInfo } from '@kit.BasicServicesKit';
+import { Available } from '@kit.BasicServicesKit';
 import { ChipGroup, ChipSize, ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
@@ -617,8 +617,7 @@ struct Index {
   }
 
   private onMainTabChange(index: number): void {
-    if (index !== this.mainTabIndex && this.importMiniBarExpanded &&
-      deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0')) {
+    if (index !== this.mainTabIndex && this.importMiniBarExpanded) {
       this.setImportMiniBarExpanded(false);
     }
     this.mainTabIndex = index;
@@ -5331,8 +5330,12 @@ struct Index {
     }
   }
 
+  /**
+   * Always true since the app requires API 26 (compatibleSdkVersion 26.0.0).
+   * The non-immersive branches behind it are now unreachable and can go.
+   */
   private shouldUseImmersiveMainChrome(): boolean {
-    return deviceInfo.sdkApiVersion >= 26 && deviceInfo.apiAvailable('26.0.0');
+    return true;
   }
 
   @Available({ minApiVersion: '26.0.0' })
