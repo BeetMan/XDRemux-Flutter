@@ -129,24 +129,143 @@ fn framed_watermark_tail_is_not_a_content_rect() {
     assert_eq!(parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None), None);
 }
 
+/// A framed-watermark tail whose last 56 bytes are `words`. Slot 5 is the
+/// `0xffffffff` sentinel whatever the caller passes there.
+fn framed_watermark(style: &str, len: usize, words: [f32; 14]) -> Vec<u8> {
+    let mut tail = vec![0u8; len];
+    tail[..4].copy_from_slice(&1f32.to_le_bytes());
+    tail[4..4 + style.len()].copy_from_slice(style.as_bytes());
+    let origin = len - 56;
+    for (i, v) in words.iter().enumerate() {
+        tail[origin + i * 4..origin + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    tail[origin + 20..origin + 24].copy_from_slice(&[0xff; 4]);
+    tail
+}
+
+// End block of IMG20260807144352.heic (hassel_style_master_mode_1, 3244x5444).
+const FRAMED_3244: [f32; 14] = [
+    4770., 3157., 5444., 0., 0., 0., 86., 674., 3158., 4770., 86., 674., 4182., 3746.,
+];
+
 #[test]
 fn hassel_style_4_end_rect_is_the_content_frame() {
-    let mut tail = vec![0u8; 23487];
-    tail[..4].copy_from_slice(&1f32.to_le_bytes());
-    tail[4..19].copy_from_slice(b"hassel_style_4\0");
-    let origin = tail.len() - 56;
-    tail[origin + 20..origin + 24].copy_from_slice(&[0xff; 4]);
-    for (step, value) in [(24, 136.0f32), (28, 1082.0), (32, 5064.0), (36, 7642.0)] {
-        tail[origin + step..origin + step + 4].copy_from_slice(&value.to_le_bytes());
-    }
+    // The first ten words as read from IMG20261011120934.heic. The quad holds
+    // corners: the picture is 4928x6560, centred, not 5064x7642.
+    let tail = framed_watermark(
+        "hassel_style_4",
+        23487,
+        [7642., 5064., 8724., 0., 0., 0., 136., 1082., 5064., 7642., 0., 0., 0., 0.],
+    );
     assert_eq!(
         parse_watermark_rect(&tail, (5200, 8724), (3280, 2464), 1, None),
-        Some((136, 1082, 5064, 7642))
+        Some((136, 1082, 4928, 6560))
     );
     assert_eq!(
         parse_watermark_rect(&tail, (3244, 5444), (3280, 2464), 1, None),
         None
     );
+}
+
+#[test]
+fn master_mode_end_rect_matches_the_observed_frames() {
+    // Complete end blocks from three camera originals: rear portrait, plain
+    // master mode, front portrait.
+    for (len, primary, words, expected) in [
+        (6492, (3244, 5444), FRAMED_3244, (86, 674, 3072, 4096)),
+        (
+            45117,
+            (6484, 10888),
+            [9540., 6315., 10888., 0., 0., 0., 170., 1348., 6314., 9540., 170., 1348., 8362., 7492.],
+            (170, 1348, 6144, 8192),
+        ),
+        (
+            6492,
+            (5200, 8724),
+            [7642., 5065., 8724., 0., 0., 0., 136., 1082., 5064., 7642., 136., 1082., 6696., 6010.],
+            (136, 1082, 4928, 6560),
+        ),
+    ] {
+        let tail = framed_watermark("hassel_style_master_mode_1", len, words);
+        assert_eq!(
+            parse_watermark_rect(&tail, primary, (4096, 3072), 6, None),
+            Some(expected),
+            "{primary:?}"
+        );
+    }
+}
+
+#[test]
+fn framed_content_rect_keeps_auxiliaries_off_the_frame() {
+    let tail = framed_watermark("hassel_style_master_mode_1", 6492, FRAMED_3244);
+    let rect = parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None);
+    // Depth is 1024x768 in sensor orientation, 768x1024 once rotated.
+    let placement = PortraitPlacement::new((3244, 5444), rect, (768, 1024));
+    assert_eq!(placement.canvas, (1622, 2722));
+    assert_eq!(placement.content, (43, 337, 1536, 2048));
+    assert_eq!(placement.crop, (0, 0, 768, 1024));
+    let (matte, w, h) = placement.place(&vec![255; 768 * 1024], 768, 1024);
+    assert_eq!((w, h), (1622, 2722));
+    for (y, row) in matte.chunks_exact(1622).enumerate() {
+        let inside = (337..337 + 2048).contains(&y);
+        for (x, &v) in row.iter().enumerate() {
+            let expected = if inside && (43..43 + 1536).contains(&x) { 255 } else { 0 };
+            assert_eq!(v, expected, "({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn framed_end_rect_rejects_blocks_that_do_not_repeat_the_geometry() {
+    let parse = |words: [f32; 14]| {
+        let tail = framed_watermark("hassel_style_master_mode_1", 6492, words);
+        parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None)
+    };
+    assert_eq!(parse(FRAMED_3244), Some((86, 674, 3072, 4096)));
+    // The right-edge copy differs from the quad by one in real files.
+    let mut off_by_one = FRAMED_3244;
+    off_by_one[1] = 3159.;
+    assert_eq!(parse(off_by_one), Some((86, 674, 3072, 4096)));
+    for (slot, value) in [
+        (0, 4768f32),  // bottom copy disagrees with the quad
+        (1, 3160.),    // right copy two pixels away
+        (2, 5440.),    // not the primary height
+        (3, 1.),
+        (4, 1.),
+        (6, 86.5),     // not an integer
+        (7, f32::NAN),
+        (8, 3161.),    // right edge disagrees with its copy
+        (9, 4772.),    // bottom edge disagrees with its copy
+    ] {
+        let mut bad = FRAMED_3244;
+        bad[slot] = value;
+        assert_eq!(parse(bad), None, "slot {slot}");
+    }
+    // Edges outside the frame, or in the wrong order, are rejected even when
+    // the copies agree with the quad.
+    for (slots, value) in [((1, 8), 3300f32), ((0, 9), 5446.), ((1, 8), 80.)] {
+        let mut bad = FRAMED_3244;
+        (bad[slots.0], bad[slots.1]) = (value, value);
+        assert_eq!(parse(bad), None, "slots {slots:?} = {value}");
+    }
+    // A picture smaller than half the frame is not a watermark frame.
+    let mut small = FRAMED_3244;
+    (small[0], small[9]) = (2000., 2000.);
+    assert_eq!(parse(small), None);
+    // Styles without a sample are not read, whatever their end block says.
+    for style in ["hassel_style_2", "hassel_style_xpan_1", "hassel_style_master_mode_10"] {
+        let tail = framed_watermark(style, 6492, FRAMED_3244);
+        assert_eq!(
+            parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None),
+            None,
+            "{style}"
+        );
+    }
+    // Without the sentinel the block is not this layout.
+    let mut tail = framed_watermark("hassel_style_master_mode_1", 6492, FRAMED_3244);
+    let origin = tail.len() - 56;
+    tail[origin + 20..origin + 24].copy_from_slice(&0f32.to_le_bytes());
+    assert_eq!(parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None), None);
 }
 
 #[test]
@@ -209,6 +328,45 @@ fn inverse_cover_crop_focus_matches_raster_in_all_turns_and_padding() {
     }
     let padded = PortraitPlacement::new((400, 300), Some((100, 50, 200, 200)), (200, 100));
     assert_eq!(padded.focus((0.375, 0.5)), (0.375, 0.5));
+}
+
+#[test]
+fn mirrored_planes_and_focus_stay_together_in_all_turns() {
+    assert_eq!(orient_plane(&[1, 2, 3, 4, 5, 6], 3, 2, 0, true), (vec![3, 2, 1, 6, 5, 4], 3, 2));
+    assert_eq!(orient_plane(&[1, 2, 3, 4, 5, 6], 3, 2, 0, false), (vec![1, 2, 3, 4, 5, 6], 3, 2));
+    assert_eq!(orient_focus((0.25, 0.75), 0, true), (0.75, 0.75));
+    assert_eq!(orient_focus((0.25, 0.75), 0, false), (0.25, 0.75));
+    for turns in 0..4 {
+        let (w, h) = (200, 100);
+        let mut plane = vec![0; w * h];
+        plane[40 * w + 75] = 255;
+        let (oriented, ow, oh) = orient_plane(&plane, w, h, turns, true);
+        // The flip moves the mark; an unflipped copy must not share its place.
+        assert_ne!(oriented, rotate_plane(&plane, w, h, turns).0, "turns {turns}");
+        let placement = PortraitPlacement::new((200, 200), None, (ow, oh));
+        let (placed, cw, ch) = placement.place(&oriented, ow, oh);
+        let point = placement.focus(orient_focus((75.5 / w as f64, 40.5 / h as f64), turns, true));
+        let ix = (point.0 * cw as f64).floor() as usize;
+        let iy = (point.1 * ch as f64).floor() as usize;
+        assert_eq!(placed[iy * cw as usize + ix], 255, "turns {turns}");
+    }
+}
+
+#[test]
+fn mirror_flag_is_read_from_filter_info() {
+    let info = |mirror: u32| {
+        let mut bytes = vec![0u8; 140];
+        bytes[..4].copy_from_slice(&4f32.to_le_bytes());
+        bytes[12..16].copy_from_slice(&mirror.to_le_bytes());
+        bytes
+    };
+    assert!(source_is_mirrored(&manifest_file(&[("filter.info", &info(1))])));
+    assert!(!source_is_mirrored(&manifest_file(&[("filter.info", &info(0))])));
+    // Anything but the observed flag value, a short entry or no entry at all
+    // leaves the planes unflipped.
+    assert!(!source_is_mirrored(&manifest_file(&[("filter.info", &info(2))])));
+    assert!(!source_is_mirrored(&manifest_file(&[("filter.info", &info(1)[..14])])));
+    assert!(!source_is_mirrored(&manifest_file(&[("capture.mode", b"portrait")])));
 }
 
 #[test]
@@ -394,4 +552,41 @@ fn front_depth_inverts_near_values_and_keeps_the_person_mask() {
     assert_eq!(report["classification"], "front-depth");
     assert_eq!(report["available"], true);
     assert_eq!(report["safeToTransform"], true);
+}
+
+#[test]
+fn front_depth_with_a_low_valued_person_keeps_its_values() {
+    // Values of IMG20260807145722.heic: person about 93, the chair behind
+    // about 150, the far wall above 224. Low is near, so nothing is inverted.
+    let mut config = vec![0u8; 544];
+    config[..4].copy_from_slice(&1.2f32.to_le_bytes());
+    config[4..8].copy_from_slice(&4u32.to_le_bytes());
+    config[8..12].copy_from_slice(&2u32.to_le_bytes());
+    let depth = [224u8, 224, 93, 93, 224, 150, 93, 93];
+    let segment = [0u8, 0, 254, 254, 0, 0, 254, 254];
+    let file = manifest_file(&[
+        ("front.depth", &depth),
+        ("front.depth.config", &config),
+        ("front.segment", &segment),
+    ]);
+    let parsed = parse_depth(&file).expect("front depth");
+    assert_eq!(parsed.ranks, depth.to_vec());
+    // Disparity then puts the person nearest, the chair between, the wall last.
+    let scale = pd::APPLE_REFERENCE_SPAN / 255.0;
+    let (disparity, ..) = build_disparity(&parsed.ranks, parsed.exponentiation, scale, true);
+    assert!(disparity[2] > disparity[5] && disparity[5] > disparity[0], "{disparity:?}");
+}
+
+#[test]
+fn front_near_side_follows_the_person_mask() {
+    let depth = [10u8, 10, 200, 200];
+    assert!(front_near_is_high(&depth, Some(&[0, 0, 254, 254])));
+    assert!(!front_near_is_high(&depth, Some(&[254, 254, 0, 0])));
+    // The earlier reading stays when the mask cannot decide: missing, wrong
+    // size, covering everything or nothing, or level with the background.
+    assert!(front_near_is_high(&depth, None));
+    assert!(front_near_is_high(&depth, Some(&[254, 254, 0])));
+    assert!(front_near_is_high(&depth, Some(&[254; 4])));
+    assert!(front_near_is_high(&depth, Some(&[0; 4])));
+    assert!(front_near_is_high(&[90; 4], Some(&[254, 254, 0, 0])));
 }

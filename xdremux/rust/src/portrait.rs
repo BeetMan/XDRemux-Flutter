@@ -84,9 +84,10 @@ fn parse_depth(source: &[u8]) -> Result<DepthData, String> {
     parse_front_depth(source)
 }
 
-/// Front-camera portrait. `front.depth` is raw 8-bit gray (high = near),
-/// `front.segment` is the person mask, and `front.hair.mask` is the hair
-/// mask. The config's first two integers are the depth width and height.
+/// Front-camera portrait. `front.depth` is raw 8-bit gray, `front.segment`
+/// is the person mask, and `front.hair.mask` is the hair mask. The config's
+/// first two integers are the depth width and height. Which end of the gray
+/// scale is near is read from the person mask, see [front_near_is_high].
 fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
     let depth = crate::container::extract_tail_entry(source, "front.depth")
         .ok_or("no rear.depth or front.depth tail entry (not an OPPO portrait photo?)")?;
@@ -110,8 +111,6 @@ fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
             depth.len()
         ));
     }
-    // Rear ranks use 0 as near. Front gray uses high values as near.
-    let ranks: Vec<u8> = depth.iter().map(|value| 255 - value).collect();
     let portrait = match crate::container::extract_tail_entry(source, "front.segment") {
         Some(segment) if segment.len() == plane => Some(segment),
         // Observed segment is the depth size plus two trailing rows.
@@ -124,6 +123,12 @@ fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
             ));
         }
         None => Some(person_mask_from_near_depth(&depth)),
+    };
+    // Rear ranks use 0 as near, so near gray values must end up low.
+    let ranks: Vec<u8> = if front_near_is_high(&depth, portrait.as_deref()) {
+        depth.iter().map(|value| 255 - value).collect()
+    } else {
+        depth
     };
     let hair = crate::container::extract_tail_entry(source, "front.hair.mask")
         .filter(|mask| mask.len() == plane);
@@ -174,6 +179,36 @@ fn parse_front_depth(source: &[u8]) -> Result<DepthData, String> {
         decision: pd::ScaleDecision::FrontStretch(scale),
         src_dims,
     })
+}
+
+/// Whether high `front.depth` values are near. The person is the near subject
+/// of a front-camera portrait, so the side of the gray scale the person mask
+/// sits on is the near side. A camera original stores the person around 93,
+/// the chair behind at 140 to 160 and the far wall above 224, the opposite of
+/// the reading this layout was first given, so neither direction is assumed.
+/// Without a mask that splits the plane the earlier reading (high = near)
+/// stays. See docs/modules/portrait-pipeline.md §3.2.
+fn front_near_is_high(depth: &[u8], person: Option<&[u8]>) -> bool {
+    let Some(mask) = person.filter(|mask| mask.len() == depth.len()) else {
+        return true;
+    };
+    let (mut inside, mut inside_count, mut outside, mut outside_count) = (0u64, 0u64, 0u64, 0u64);
+    for (&value, &covered) in depth.iter().zip(mask) {
+        if covered >= 128 {
+            inside += value as u64;
+            inside_count += 1;
+        } else {
+            outside += value as u64;
+            outside_count += 1;
+        }
+    }
+    // Either side below 1% of the plane says nothing about the other.
+    let floor = depth.len() as u64 / 100;
+    if inside_count <= floor || outside_count <= floor {
+        return true;
+    }
+    // mean(inside) >= mean(outside), without the divisions.
+    inside * outside_count >= outside * inside_count
 }
 
 /// Pixels brighter than the far background become the person mask.
@@ -556,17 +591,28 @@ fn watermark_content_rect(
 }
 
 /// Content rect stored at `len - 56` by `hassel_style_4` and
-/// `hassel_style_master_mode_1`. `x + width` and `y + height` equal the
-/// primary frame. `hassel_style_1` keeps its own checked layout.
+/// `hassel_style_master_mode_1`. The four floats at `+24` are the corners of
+/// the picture inside the primary frame (left, top, right, bottom), not an
+/// origin and a size: with equal margins `left + right` also equals the frame
+/// width, so the two readings cannot be told apart by that sum. The block
+/// states the geometry twice, which is what the checks below rely on: `+0`
+/// repeats the bottom edge, `+4` the right edge (off by one in some files),
+/// `+8` is the primary height, `+12` and `+16` are zero. Only the two styles
+/// with samples are read; `hassel_style_1` keeps its own checked layout and
+/// every other style falls back to the full frame.
+/// See docs/formats/oppo-watermark.md §4.3.
 fn hassel_end_content_rect(
     tail: &[u8],
     primary_w: u32,
     primary_h: u32,
 ) -> Option<(u32, u32, u32, u32)> {
+    const FRAMED_STYLES: [&[u8]; 2] = [b"hassel_style_4", b"hassel_style_master_mode_1"];
     if tail.len() < 80 || tail.get(..4) != Some(&1f32.to_le_bytes()) {
         return None;
     }
-    if tail.get(4..10) != Some(b"hassel") {
+    // The style id is a NUL-padded string in bytes 4..68.
+    let style = tail.get(4..68)?.split(|&byte| byte == 0).next()?;
+    if !FRAMED_STYLES.contains(&style) {
         return None;
     }
     let origin = tail.len() - 56;
@@ -578,20 +624,26 @@ fn hassel_end_content_rect(
         (value.is_finite() && value >= 0.0 && value <= 1_000_000.0 && value.fract() == 0.0)
             .then_some(value as u32)
     };
-    let x = integer(origin + 24)?;
-    let y = integer(origin + 28)?;
-    let w = integer(origin + 32)?;
-    let h = integer(origin + 36)?;
-    if w == 0
-        || h == 0
-        || x.checked_add(w)? != primary_w
-        || y.checked_add(h)? != primary_h
-        || w < primary_w / 2
-        || h < primary_h / 2
+    let left = integer(origin + 24)?;
+    let top = integer(origin + 28)?;
+    let right = integer(origin + 32)?;
+    let bottom = integer(origin + 36)?;
+    if integer(origin)? != bottom
+        || integer(origin + 4)?.abs_diff(right) > 1
+        || integer(origin + 8)? != primary_h
+        || integer(origin + 12)? != 0
+        || integer(origin + 16)? != 0
+        || right > primary_w
+        || bottom > primary_h
     {
         return None;
     }
-    Some((x, y, w, h))
+    let w = right.checked_sub(left)?;
+    let h = bottom.checked_sub(top)?;
+    if w < primary_w / 2 || h < primary_h / 2 || w == 0 || h == 0 {
+        return None;
+    }
+    Some((left, top, w, h))
 }
 
 fn parse_watermark_rect(
@@ -739,6 +791,35 @@ impl PortraitPlacement {
         }
         (canvas, self.canvas.0 as u32, self.canvas.1 as u32)
     }
+}
+
+/// Whether the camera saved the picture mirrored relative to its source
+/// frame, as it does for a front-camera shot with the mirror setting on.
+/// `filter.info` keeps the flag as the integer at byte 12 (`srcMirror`); a
+/// file without that entry is taken as not mirrored.
+/// See docs/modules/portrait-pipeline.md §3.2.
+fn source_is_mirrored(input: &[u8]) -> bool {
+    crate::container::extract_tail_entry(input, "filter.info")
+        .and_then(|info| pd::read_u32le(&info, 12))
+        == Some(1)
+}
+
+/// Source-frame plane as it sits in the saved picture: rotated upright, then
+/// flipped left to right when the picture was saved mirrored.
+fn orient_plane(plane: &[u8], w: usize, h: usize, turns: u8, mirrored: bool) -> (Vec<u8>, usize, usize) {
+    let (mut oriented, ow, oh) = rotate_plane(plane, w, h, turns);
+    if mirrored {
+        for row in oriented.chunks_exact_mut(ow.max(1)) {
+            row.reverse();
+        }
+    }
+    (oriented, ow, oh)
+}
+
+/// The focus point through the same rotation and flip as [orient_plane].
+fn orient_focus(focus: (f64, f64), turns: u8, mirrored: bool) -> (f64, f64) {
+    let (x, y) = rotate_focus(focus, turns);
+    if mirrored { (1.0 - x, y) } else { (x, y) }
 }
 
 fn rotate_focus((x, y): (f64, f64), turns: u8) -> (f64, f64) {
@@ -1133,16 +1214,20 @@ pub fn run_portrait(input: &[u8], base: &[u8], origin: BaseOrigin) -> Result<Vec
         else if source_orientation == 3 { 2 } else { 0 };
     let source = if turns % 2 == 1 { (depth.height, depth.width) } else { (depth.width, depth.height) };
     let placement = PortraitPlacement::new((pw_frame, ph_frame), content_rect, source);
-    eprintln!("portrait: primary frame {pw_frame}x{ph_frame}, quarter-turns={turns}, watermark content rect: {content_rect:?}");
+    // A mirrored selfie is saved flipped left to right, while the tail planes
+    // keep the source frame. src.image is that source frame, so only the OPPO
+    // primary base needs the flip.
+    let mirrored = origin == BaseOrigin::OppoPrimary && source_is_mirrored(input);
+    eprintln!("portrait: primary frame {pw_frame}x{ph_frame}, quarter-turns={turns}, mirrored={mirrored}, watermark content rect: {content_rect:?}");
     let cfg = depth.config.as_ref();
     let source_focus = (
         cfg.map(|c| c.focus_x as f64 / depth.src_dims.0.max(1) as f64).unwrap_or(0.5),
         cfg.map(|c| c.focus_y as f64 / depth.src_dims.1.max(1) as f64).unwrap_or(0.5),
     );
-    let focus = placement.focus(rotate_focus(source_focus, turns));
+    let focus = placement.focus(orient_focus(source_focus, turns, mirrored));
     let place = |plane: &[u8], w: usize, h: usize| {
-        let (rotated, rw, rh) = rotate_plane(plane, w, h, turns);
-        placement.place(&rotated, rw, rh)
+        let (oriented, ow, oh) = orient_plane(plane, w, h, turns, mirrored);
+        placement.place(&oriented, ow, oh)
     };
     let (disp_final, disp_fw, disp_fh) = place(&disparity_u8, depth.width, depth.height);
     let (matte_final, matte_fw, matte_fh) = place(&person_up, mu_w as usize, mu_h as usize);
