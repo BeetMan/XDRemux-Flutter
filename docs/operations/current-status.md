@@ -10,7 +10,7 @@
 | 项 | 状态 | 依据 |
 |---|---|---|
 | Flutter 跨平台版 | **0.4.6（0.4.6+40）已发布**（2026-10-31，GitHub Latest） | `apps/flutter/pubspec.yaml:5`、标签 `v0.4.6`、`tools/installer/RELEASE_NOTES_v0.4.6.md` |
-| 鸿蒙原生版（ArkUI） | **0.5.4 已发布**（2026-11-07，独立标签 `harmony-v0.5.4`、独立 HAP，内核 0.4.7） | `README.md:13`；过程记录在 `feat/harmony-native` 分支的 `docs/plans/harmony-native.md` |
+| 鸿蒙原生版（ArkUI） | **0.5.4 已发布**（2026-11-07，独立标签 `harmony-v0.5.4`、独立 HAP，内核 0.4.7） | `README.md:13`；过程记录在 `docs/plans/harmony-native.md` |
 | 原生 Apple 版（SwiftUI） | **未发布**，在 `main` 的 `apps/apple/` 开发，P0–P2 与 P3 三批已完成 | `apps/apple/README.md`、`docs/plans/apple-native.md` |
 | 0.4.6 内容 | Live Photo `.pvt` 包（默认开启）、摄影风格 2/3 与实况同时使用的编辑修复（MOV 风格伴随轨道）、安卓 AAC 实况音频修复、风格 HDR 缩略图（Log + 增益图，Android/iOS/鸿蒙 10-bit）、每图 GTC 拟合 + Standard key 1 identity、MPF 无增益图 JPEG 按 SDR、iPhone Duo 安全区 | `tools/installer/RELEASE_NOTES_v0.4.6.md` |
 | 平台范围 | Windows x64、macOS Apple Silicon、Android arm64、iOS（未签名）、Linux x64（预览）、HarmonyOS Flutter（未签名） | `README.md` 下载表 |

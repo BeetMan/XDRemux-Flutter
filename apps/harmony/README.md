@@ -1,4 +1,127 @@
-# XDRemux for HarmonyOS
+# XDRemux 鸿蒙原生版
+
+**当前版本：0.5.4** · HarmonyOS 7 / API 26 开发基准
+
+[下载鸿蒙原生版 0.5.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
+
+[问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](BUILDING.md) · [开发计划](../../docs/plans/harmony-native.md)
+
+**让照片跨越设备，也保留继续创作的可能。**
+
+XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，采用 ArkTS / ArkUI 构建原生界面，搭配 Rust 图像处理引擎，将照片导入、浏览、信息查看、转换与导出整合到一个应用中。
+
+它支持将 OPPO、一加、realme 拍摄的 ProXDR 照片转换为标准 HDR HEIC，并根据后续使用场景选择「OPPO 兼容」或「Apple 标准」输出。原生版还提供了华为照片识别、符合条件的华为人像转换、Apple 摄影风格数据写入，以及动态照片拆分和 Live Photo 配对等能力，让不同设备拍摄的照片拥有更多跨平台使用方式。
+
+<img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/12e107f2-1c13-4bd3-a8dc-77277cb77919" />
+
+应用围绕 **图库、队列、互传、设置** 四个 Tab 展开：在图库中浏览和处理单张照片，在队列中管理批量任务，在互传中与同一 Wi-Fi 下的设备收发照片，在设置中调整默认转换选项。界面采用鸿蒙原生组件，并在支持的系统上呈现沉浸式导航与材质效果。
+
+> 原生版的功能和设备兼容性仍在持续完善。Apple 摄影风格、人像及 Live Photo 等能力包含实验性实现，实际效果以照片结构、系统版本和目标设备为准。
+
+## Flutter 版：共享转换核心的跨平台版本
+
+除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本见[最新发布](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
+
+原生 0.5.4 使用与 Flutter 0.4.7 相同的 Rust 0.4.7 转换核心。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮新增与 Flutter 版共用的局域网互传（LocalSend），并纳入开启摄影风格时 Live Photo 配对失败的修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
+
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.4 更新说明](RELEASE_NOTES_v0.5.4.md)列出了本轮变化和使用范围。
+
+## 图库：从浏览照片开始
+
+图库是应用的主要入口。通过系统照片选择器导入照片后，应用会将所选原图复制到本地私有存储，并以三列网格展示。已导入的照片可以在应用重启后继续浏览，无需每次重新选择。
+
+点击照片即可进入大图详情。详情页支持左右切换照片、双指缩放和双击放大，方便查看画面细节；在支持的照片和设备上，还可以按住照片查看 SDR 画面，松开后恢复 HDR 显示，直观比较高光与亮度表现。
+
+<img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/180a5c9b-f275-4025-a3a3-138cc04d8e07" />
+
+照片信息与转换操作集中在可展开的底部面板中。你可以查看文件格式、图像尺寸、HDR 类型，以及照片中已有的相机型号、拍摄时间、曝光、光圈、ISO、焦距等信息，了解这张照片的来源和可用能力。
+
+<img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/bfc6b893-6351-4b8e-aafd-731aba192e5e" />
+
+**每张照片都可以拥有独立的转换设置。** 应用会根据照片识别结果显示可用的输出模式与功能选项。你可以直接转换当前照片，也可以先加入队列，稍后统一处理；单张照片的设置会随对应任务保存，方便在同一批照片中采用不同的处理方式。
+
+顶栏会显示拍摄设备型号与识别到的模式，支持识别 OPPO 拍摄的各种模式、华为人像模式、本软件转换后的模式等。
+
+<img width="3645" height="1327" alt="image" src="https://github.com/user-attachments/assets/d441806d-02f7-4a47-b9a8-774fde7d0eba" />
+
+图库中的转换会生成新文件并保留原图。转换结果保存在应用本地图库，可通过详情页分享按钮分享文件；队列中的转换结果可通过导出选择保存位置。
+
+## 队列：集中管理批量转换
+
+队列用于管理多张照片的转换任务。你可以从文件选择器添加照片，从图库中加入单张或全部照片，也可以通过系统分享将支持的 HEIC、HEIF、JPEG 图片交给 XDRemux 处理。
+
+<img width="1320" height="2232" alt="image" src="https://github.com/user-attachments/assets/21f80d19-7794-4ee2-98ed-c159c579bb4a" />
+
+队列按「全部」「待处理」「已完成」「失败」分类展示任务。每个项目会显示处理状态、使用的转换模式和运行进度，便于快速找到尚未处理的照片、查看转换结果，或定位失败原因。
+
+批量转换采用串行处理。一张照片转换失败后，后续待处理任务仍可继续；失败项目可以重新加入处理，已完成项目也可以调整设置后重新转换。如果重新转换失败，应用会保留上一次成功结果，便于继续导出。
+
+任务记录会保存到本地，重启后可以恢复队列中的项目及已有结果。当前转换需要应用保持前台；停止操作会在当前任务结束后阻止后续任务启动，重启应用后也需要手动开始后续处理。
+
+完成的照片支持单独导出，也可以批量导出尚未导出的结果。队列管理区域还提供存储查看、缓存清理与最近批量导出记录，方便管理应用内的处理文件。
+
+对于识别为 Motion Photo 的照片，队列详情还提供动态照片处理入口：
+
+- 查看可读取的视频尺寸、时长、编码和音轨信息。
+- 拆分静态照片与视频资源，并分别导出。
+- 对符合条件的照片生成 Live Photo 配对文件，成对导出 HEIC 与 MOV，或导出 / 分享为 `.pvt` 包（`<名称>.pvt.zip`，在 Mac 上解压后「照片」可导入为一张 Live Photo）。在图库对动态照片点「转换单张」会在队列中单独转换并直接进入这些操作。
+
+Live Photo 的实际导入、播放和声音表现仍需在目标设备上验证。
+
+## 互传：在局域网内收发照片
+
+「互传」与 LocalSend 协议兼容，可以和同一 Wi-Fi 下运行 LocalSend 或 XDRemux 的手机、电脑直接互传，不经过云端。
+
+- **发送**：点选附近设备即可发送；可以从相册选择照片，也可以在队列详情里把转换结果「发送到其他设备」。找不到设备时会自动扫描网段，也可以手动输入对方 IP。
+- **接收**：手动打开「可被发现」后才会接收，每次有人发来文件都需要你确认。打开「互传」页就能看到收件箱；收件箱显示预览，iPhone 发来的实况照片（同名照片 + MOV）和 `.pvt.zip` 显示为一张实况照片，可以直接加入转换队列，或存入图库、存入相册、分享。
+- 接收开启后可以切到其他页面继续接收；应用切到后台时停止。传输过程中屏幕保持常亮。
+
+## 设置：选择照片的输出方式
+
+设置页用于调整后续任务默认使用的转换选项。你可以先编辑设置，再明确保存，也可以取消修改或恢复默认值。保存后的设置会在应用重启后保留；正在转换的任务继续使用启动时的参数。
+
+应用提供两种主要输出模式：
+
+| 输出模式 | 适用场景 |
+|---|---|
+| **OPPO 兼容** | 面向 OPPO、一加、realme 图库使用，可配置兼容策略及相机附加信息的保留方式。 |
+| **Apple 标准** | 面向 Apple 照片及标准 HDR 工作流，并可按照片条件写入摄影风格或人像编辑数据。 |
+
+Apple 相关选项包括：
+
+- **摄影风格数据**：为支持的照片写入可继续调整的摄影风格数据。
+- **摄影风格 3（质感 + 颗粒）**：在基础摄影风格之外，加入用于支持设备上质感与颗粒编辑的数据。
+- **人像数据**：对具备可用景深信息且结构受支持的照片，生成可供 Apple 照片继续编辑的人像数据。
+
+这些选项用于生成可继续编辑的照片文件。人像转换需要源照片提供可用的景深信息，应用会根据照片条件决定可用功能。
+
+原生版也提供了符合条件的华为人像照片向 Apple 人像转换的路径，并支持在该路径上追加摄影风格。对于已兼容 Apple 的华为 HDR 照片，可保存独立静帧或按条件附加风格数据。
+
+高级设置中提供「严格 ISO 兼容」选项，用于特定标准兼容性测试；普通使用建议保持默认配置。
+
+## 开始使用
+
+1. 在「图库」中导入照片，或通过文件选择、系统分享添加到「队列」。
+2. 查看照片信息，选择输出模式及需要的功能。
+3. 直接转换单张照片，或在队列中开始批量转换。
+4. 转换完成后导出结果；动态照片可按条件拆分资源或导出 Live Photo 配对文件。
+
+当前发布包为未签名 HAP，需要通过 DevEco Studio 等方式完成本地签名与安装。建议保留原始照片，并先用少量样本确认目标设备上的 HDR、摄影风格、人像和实况照片效果。
+
+欢迎反馈使用问题，并附上设备型号、系统版本、转换选项与可供复现的原始样本，帮助原生版逐步完善。
+
+## 开发与技术文档
+
+- [构建与验证](BUILDING.md)：Rust 库准备、DevEco 构建、本地签名与 HAP 校验。
+- [开发说明（英文）](#development-notes)：各版本的同步记录、队列与持久化设计、主机测试。
+- [鸿蒙原生开发计划](../../docs/plans/harmony-native.md)：开发阶段与验证记录。
+- [技术文档索引](../../docs/README.md)：共享 Rust 引擎、照片容器、摄影风格与人像管线。
+
+原生工程位于 `apps/harmony/`，复用 `xdremux/rust/` 图像处理引擎。应用使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版共存。发布 HAP 保持未签名，设备测试使用 DevEco 本地签名。
+
+---
+
+## Development notes
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
