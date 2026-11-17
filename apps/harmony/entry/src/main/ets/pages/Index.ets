@@ -2628,6 +2628,7 @@ struct Index {
       chipsInTitleBar: this.shouldUseImmersiveMainChrome(),
       sendRequest: this.transferSendRequest,
       appVisible: this.transferAppVisible,
+      tabVisible: this.mainTabIndex === TRANSFER_TAB_INDEX,
       // Same offsets as the queue page with its filter chips in the title bar.
       topInset: this.shouldUseImmersiveMainChrome() ? 136 : 28,
       bottomInset: 108,

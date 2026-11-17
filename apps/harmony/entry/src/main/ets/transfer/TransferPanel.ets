@@ -85,6 +85,8 @@ const EMPTY_VIEW: TransferView = {
   running: false, ready: false, discoveryError: '', peers: [], offers: [], activities: [], inbox: []
 };
 const LISTEN_PORT: number = 53319;
+/** Inbox-only service: nothing is reachable from the LAN. */
+const LOOPBACK_BIND: string = '127.0.0.1:0';
 const PREFS_NAME: string = 'xdremux_transfer';
 const ALIAS_KEY: string = 'alias.v1';
 const SCAN_BATCH: number = 64;
@@ -100,6 +102,8 @@ export struct TransferPanel {
   @Prop @Watch('onSendRequest') sendRequest: TransferSendRequest = { id: 0, sources: [], label: '' };
   /** Page visibility from the host; going to the background stops the service. */
   @Prop @Watch('onVisibilityChange') appVisible: boolean = true;
+  /** The 互传 tab is on screen; the loopback inbox service runs only then. */
+  @Prop @Watch('onTabVisibility') tabVisible: boolean = false;
   /** Space above and below the content for the host's title bar and tab bar. */
   @Prop topInset: number = 0;
   @Prop bottomInset: number = 0;
@@ -130,8 +134,16 @@ export struct TransferPanel {
   @State private manualAddress: string = '';
   @State private scanning: boolean = false;
   @State private previews: Record<string, string> = {};
+  /**
+   * Listening on the LAN (searchable, can receive). Otherwise the service, if
+   * any, is the loopback one that only serves the inbox.
+   */
+  @State private lan: boolean = false;
+  @State private lanStarting: boolean = false;
 
   private controller: TransferController | undefined = undefined;
+  /** Service starts and stops run one at a time. */
+  private serviceChain: Promise<void> = Promise.resolve();
   private discoveryTimer: number = -1;
   private startedAt: number = 0;
   private autoScanned: boolean = false;
@@ -149,6 +161,7 @@ export struct TransferPanel {
     });
     void this.loadDeviceName().then((): void => {
       this.onSendRequest();
+      void this.ensureInbox();
     });
   }
 
@@ -164,12 +177,22 @@ export struct TransferPanel {
     this.sendFiles = request.sources.slice();
     this.sendLabel = request.label;
     this.status = '';
-    if (!this.view.running) void this.start();
+    if (!this.lan) void this.start();
   }
 
   onVisibilityChange(): void {
-    // Leaving the app stops listening; returning never re-enables it silently.
-    if (!this.appVisible && this.systemUiOpen === 0 && this.view.running) void this.stop();
+    // Leaving the app stops the service; returning brings back only the
+    // loopback inbox service, never the LAN listener.
+    if (!this.appVisible && this.systemUiOpen === 0 && this.view.running) void this.stop(false);
+    if (this.appVisible) void this.ensureInbox();
+  }
+
+  onTabVisibility(): void {
+    if (this.tabVisible) {
+      void this.ensureInbox();
+    } else {
+      void this.stopInbox();
+    }
   }
 
   private async withSystemUi<T>(action: () => Promise<T>): Promise<T> {
@@ -272,51 +295,111 @@ export struct TransferPanel {
       await prefs.flush();
       this.deviceName = clean;
       this.editingName = false;
-      this.status = this.view.running ? '新名称在重新开启接收后生效' : '';
+      this.status = this.lan ? '新名称在重新开启接收后生效' : '';
     } catch (error) {
       this.status = '保存名称失败：' + this.errorText(error);
     }
   }
 
-  private async start(): Promise<void> {
-    const controller: TransferController | undefined = this.controller;
-    if (controller === undefined || controller.running || this.busy) return;
-    this.busy = true;
-    this.status = '';
-    try {
-      await controller.start({
-        root: this.context().filesDir + '/transfer',
-        alias: this.visibleName(),
-        bind: '0.0.0.0:' + String(LISTEN_PORT)
-      });
-      this.startedAt = Date.now();
-      this.autoScanned = false;
-      this.localAddresses = this.localIPv4s();
-      await controller.refreshReceipts();
-      await this.refreshDiscovery();
-      this.discoveryTimer = setInterval((): void => {
-        void this.tick();
-      }, 2000);
-    } catch (error) {
-      this.status = this.errorText(error);
-    } finally {
-      this.busy = false;
-      this.publish();
-    }
+  private serial(task: () => Promise<void>): Promise<void> {
+    const run: Promise<void> = this.serviceChain.then(task, task);
+    this.serviceChain = run.catch((): void => {});
+    return run;
   }
 
-  private async stop(): Promise<void> {
-    if (this.discoveryTimer >= 0) {
-      clearInterval(this.discoveryTimer);
-      this.discoveryTimer = -1;
-    }
-    this.busy = true;
-    try {
-      await this.controller?.stop();
-    } finally {
-      this.busy = false;
-      this.publish();
-    }
+  /** Listen on the LAN: searchable and able to receive, with discovery and subnet scan. */
+  private start(): Promise<void> {
+    return this.serial(async (): Promise<void> => {
+      const controller: TransferController | undefined = this.controller;
+      if (controller === undefined || this.lan || !this.alive) return;
+      this.busy = true;
+      this.lanStarting = true;
+      this.status = '';
+      try {
+        // The loopback inbox service gives way to the LAN listener.
+        if (controller.running) await controller.stop();
+        await controller.start({
+          root: this.context().filesDir + '/transfer',
+          alias: this.visibleName(),
+          bind: '0.0.0.0:' + String(LISTEN_PORT)
+        });
+        this.lan = true;
+        this.startedAt = Date.now();
+        this.autoScanned = false;
+        this.localAddresses = this.localIPv4s();
+        await controller.refreshReceipts();
+        await this.refreshDiscovery();
+        this.discoveryTimer = setInterval((): void => {
+          void this.tick();
+        }, 2000);
+      } catch (error) {
+        this.status = this.errorText(error);
+      } finally {
+        this.busy = false;
+        this.lanStarting = false;
+        this.publish();
+      }
+      // If the LAN listener did not start, keep the inbox listed.
+      if (!this.lan) void this.ensureInbox();
+    });
+  }
+
+  /** Stop listening on the LAN; `keepInbox` brings back the loopback inbox service. */
+  private stop(keepInbox: boolean): Promise<void> {
+    return this.serial(async (): Promise<void> => {
+      if (this.discoveryTimer >= 0) {
+        clearInterval(this.discoveryTimer);
+        this.discoveryTimer = -1;
+      }
+      this.busy = true;
+      try {
+        await this.controller?.stop();
+      } finally {
+        this.lan = false;
+        this.busy = false;
+        this.publish();
+      }
+      if (keepInbox) void this.ensureInbox();
+    });
+  }
+
+  /**
+   * While the tab is on screen, run the service on loopback so the inbox is
+   * listed and usable without turning reception on. Nothing is reachable from
+   * the LAN and no discovery runs (the Apple app does the same).
+   */
+  private ensureInbox(): Promise<void> {
+    return this.serial(async (): Promise<void> => {
+      const controller: TransferController | undefined = this.controller;
+      if (controller === undefined || controller.running || !this.alive || !this.tabVisible ||
+        !this.appVisible) return;
+      try {
+        await controller.start({
+          root: this.context().filesDir + '/transfer',
+          alias: this.visibleName(),
+          bind: LOOPBACK_BIND
+        });
+        await controller.refreshReceipts();
+      } catch (error) {
+        // Without it the inbox stays hidden; turning reception on reports its own errors.
+      } finally {
+        this.publish();
+      }
+    });
+  }
+
+  /** The tab left the screen with reception off: the inbox service is not needed. */
+  private stopInbox(): Promise<void> {
+    return this.serial(async (): Promise<void> => {
+      const controller: TransferController | undefined = this.controller;
+      // Keep it while an inbox action or a share/save dialog from this panel is open.
+      if (controller === undefined || this.lan || !controller.running || this.busy || this.systemUiOpen > 0) return;
+      try {
+        await controller.stop();
+      } finally {
+        this.publish();
+      }
+    });
   }
 
   private async tick(): Promise<void> {
@@ -460,7 +543,7 @@ export struct TransferPanel {
       this.sendFiles = [...this.sendFiles, ...added];
       // A mixed set no longer matches a single queue item's label.
       this.sendLabel = String(this.sendFiles.length) + ' 个文件';
-      if (!this.view.running) void this.start();
+      if (!this.lan) void this.start();
     } catch (error) {
       this.status = '选择照片失败：' + this.errorText(error);
     }
@@ -921,9 +1004,9 @@ export struct TransferPanel {
         .margin({ top: -4, bottom: 8 });
       }
 
-      if (!this.view.running) {
+      if (!this.lan) {
         this.summaryCard({
-          title: this.busy ? '正在开启…' : '附近设备',
+          title: this.lanStarting ? '正在开启…' : '附近设备',
           note: '开始搜索后，本机也会出现在对方的设备列表里',
           action: 'search'
         });
@@ -1114,12 +1197,12 @@ export struct TransferPanel {
 
   @Builder
   receiveToggle() {
-    Toggle({ type: ToggleType.Switch, isOn: this.view.running })
+    Toggle({ type: ToggleType.Switch, isOn: this.lan })
       .enabled(!this.busy)
       .margin({ right: 6 })
       .onChange((isOn: boolean): void => {
-        if (isOn && !this.view.running) void this.start();
-        if (!isOn && this.view.running) void this.stop();
+        if (isOn && !this.lan) void this.start();
+        if (!isOn && this.lan) void this.stop(true);
       });
   }
 
@@ -1150,8 +1233,8 @@ export struct TransferPanel {
   receiveTab() {
     Column() {
       this.summaryCard({
-        title: this.view.running ? (this.view.ready ? '可被发现' : '正在开启…') : '接收已关闭',
-        note: this.view.running ? '收到的文件需要你点接收后才会保存' : '开启后才能被发现和收文件；切到后台会停止',
+        title: this.lan ? (this.view.ready ? '可被发现' : '正在开启…') : (this.lanStarting ? '正在开启…' : '接收已关闭'),
+        note: this.lan ? '收到的文件需要你点接收后才会保存' : '开启后才能被发现和收文件；切到后台会停止',
         action: 'toggle'
       });
 
