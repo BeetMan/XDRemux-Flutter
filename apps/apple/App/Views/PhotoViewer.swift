@@ -12,12 +12,26 @@ import UIKit
 ///
 /// It opens on the photo the card was showing, with the images the card
 /// already decoded, so the first page costs no second decode.
+/// What the detail page hands over when its photo is tapped. Presented
+/// from the root view, so the page underneath can change while it is up.
+struct PhotoViewerRequest: Identifiable {
+    let id = UUID()
+    var start: PhotoItem.ID
+    /// The card's decoded images for the photo the viewer opens on.
+    var opening: PhotoViewer.Loaded?
+}
+
 struct PhotoViewer: View {
     typealias PreviewImage = PreviewCard.PreviewImage
 
-    let items: [PhotoItem]
+    /// Read live: a photo's HDR preview can arrive while it is on screen.
+    let model: LibraryModel
+    private var items: [PhotoItem] { model.items }
     /// The card's decoded images for the photo the viewer opens on.
     let opening: Loaded?
+    /// Leaves the viewer; gets the photo it was showing, so the page
+    /// underneath can be on that photo when the viewer is gone.
+    let onClose: (PhotoItem.ID) -> Void
 
     struct Loaded {
         var image: PreviewImage
@@ -27,7 +41,6 @@ struct PhotoViewer: View {
         var isHDR: Bool
     }
 
-    @Environment(\.dismiss) private var dismiss
     private let start: PhotoItem.ID
     @State private var current: PhotoItem.ID
     @State private var controlsHidden = false
@@ -36,12 +49,15 @@ struct PhotoViewer: View {
     /// Set once the scroll view has jumped to the opening photo.
     @State private var positioned = false
 
-    init(items: [PhotoItem], start: PhotoItem.ID, opening: Loaded?) {
-        self.items = items
-        self.opening = opening
-        self.start = start
-        _current = State(initialValue: start)
+    init(model: LibraryModel, request: PhotoViewerRequest, onClose: @escaping (PhotoItem.ID) -> Void) {
+        self.model = model
+        self.opening = request.opening
+        self.start = request.start
+        self.onClose = onClose
+        _current = State(initialValue: request.start)
     }
+
+    private func close() { onClose(current) }
 
     private var index: Int { items.firstIndex { $0.id == current } ?? 0 }
 
@@ -60,11 +76,11 @@ struct PhotoViewer: View {
     }
 
     private func page(_ item: PhotoItem) -> some View {
-        ViewerPage(item: item, isCurrent: item.id == current,
+        ViewerPage(model: model, item: item, isCurrent: item.id == current,
                    preloaded: item.id == start ? opening : nil,
                    controlsHidden: controlsHidden,
                    onTap: { withAnimation(.easeInOut(duration: 0.15)) { controlsHidden.toggle() } },
-                   onDismiss: { dismiss() })
+                   onDismiss: { close() })
     }
 
     @ViewBuilder
@@ -129,7 +145,7 @@ struct PhotoViewer: View {
                 .padding(.horizontal, 52)
                 HStack {
                     Button {
-                        dismiss()
+                        close()
                     } label: {
                         Image(systemName: "xmark")
                             .font(.body.weight(.semibold))
@@ -171,6 +187,7 @@ struct PhotoViewer: View {
 /// photo is some 200 MB decoded, twice with its SDR rendition); its
 /// neighbours show the list thumbnail until they are swiped to.
 private struct ViewerPage: View {
+    let model: LibraryModel
     let item: PhotoItem
     let isCurrent: Bool
     let preloaded: PhotoViewer.Loaded?
@@ -180,6 +197,16 @@ private struct ViewerPage: View {
 
     @State private var loaded: PhotoViewer.Loaded?
     @State private var showSDR = false
+    @State private var usedPreloaded = false
+
+    /// What decides the picture: whether this page is on screen, and which
+    /// file stands for the photo right now (source, core preview, output).
+    private struct LoadKey: Equatable { var isCurrent: Bool; var url: URL; var inspecting: Bool }
+    private var loadKey: LoadKey {
+        LoadKey(isCurrent: isCurrent,
+                url: item.product?.outputURL ?? item.previewURL ?? item.inputURL,
+                inspecting: item.state == .inspecting)
+    }
 
     private var canCompare: Bool { loaded?.isHDR == true && loaded?.sdrImage != nil }
 
@@ -226,15 +253,43 @@ private struct ViewerPage: View {
                 .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .bottom) {
+            // A ProXDR source swiped to before it had a preview: the core
+            // renders one now, and the page switches to it when it is ready.
+            if isCurrent, item.previewState == .rendering, !canCompare {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("正在生成 HDR 预览…")
+                }
+                .font(.caption2)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .environment(\.colorScheme, .dark)
+                .padding(.bottom, 28)
+                .opacity(controlsHidden ? 0 : 1)
+                .allowsHitTesting(false)
+            }
+        }
         .sensoryFeedback(.selection, trigger: showSDR)
-        .task(id: isCurrent) {
+        .task(id: loadKey) {
             showSDR = false
             guard isCurrent else {
                 loaded = nil
+                usedPreloaded = false
                 return
             }
-            if loaded == nil { loaded = preloaded }
-            if loaded == nil { loaded = await PreviewCard.load(item) }
+            if loaded == nil, !usedPreloaded, let preloaded {
+                // The card's images, valid for the file it was showing.
+                usedPreloaded = true
+                loaded = preloaded
+                return
+            }
+            // Keeps the picture on screen until the next one is decoded.
+            if let next = await PreviewCard.load(item) { loaded = next }
+        }
+        .task(id: isCurrent) {
+            // Same as opening the photo's page: render the HDR preview.
+            if isCurrent { await model.preparePreview(item.id) }
         }
     }
 }

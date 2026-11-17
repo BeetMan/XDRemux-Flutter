@@ -24,7 +24,7 @@ struct PhotoDetailView: View {
             GeometryReader { geo in
                 if geo.size.width >= Self.twoColumnMinWidth {
                     HStack(alignment: .top, spacing: 16) {
-                        PreviewCard(item: item, fillsHeight: true, siblings: model.items)
+                        PreviewCard(item: item, fillsHeight: true, onOpenViewer: { model.photoViewer = $0 })
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         ScrollView {
                             VStack(alignment: .leading, spacing: 20) { sections(item) }
@@ -41,7 +41,7 @@ struct PhotoDetailView: View {
                             // 16pt page padding on both sides, 720pt column cap below.
                             PreviewCard(item: item, stackedSpace: CGSize(
                                 width: min(geo.size.width - 32, 720), height: geo.size.height),
-                                        siblings: model.items)
+                                        onOpenViewer: { model.photoViewer = $0 })
                             sections(item)
                         }
                         .padding()
@@ -293,8 +293,8 @@ struct PreviewCard: View {
     /// Stacked layout: the content width and the visible page height, from
     /// which the card takes the photo's shape (`stackedLayout`).
     var stackedSpace: CGSize?
-    /// The list the photo belongs to, for paging in the full-screen viewer.
-    var siblings: [PhotoItem] = []
+    /// Opens the full-screen viewer on this photo (presented by the root).
+    var onOpenViewer: (PhotoViewerRequest) -> Void = { _ in }
     /// The converted output, or the pre-conversion HDR preview the model
     /// rendered through the same core (`LibraryModel.preparePreview`).
     private var displayURL: URL { item.product?.outputURL ?? item.previewURL ?? item.inputURL }
@@ -332,7 +332,6 @@ struct PreviewCard: View {
     @State private var holdTimer: Task<Void, Never>?
     /// The imported file carries a gain map (only read for `.source`).
     @State private var sourceHasHDR = false
-    @State private var showViewer = false
     /// When the current (or last) touch on the photo went down: a touch
     /// that stayed longer than `tapLimit` was a hold, not a tap.
     @State private var pressStart: Date?
@@ -401,18 +400,15 @@ struct PreviewCard: View {
     /// the comparison starts the moment the finger lands.
     private func tapped() {
         if let pressStart, Date.now.timeIntervalSince(pressStart) > Self.tapLimit { return }
-        guard hdrImage != nil else { return }
         pressingChanged(false)
-        showViewer = true
+        openViewer()
     }
 
-    @ViewBuilder
-    private var viewer: some View {
-        if let hdrImage {
-            let all = siblings.contains { $0.id == item.id } ? siblings : [item]
-            PhotoViewer(items: all, start: item.id,
-                        opening: .init(image: hdrImage, sdrImage: hasHDR ? sdrImage : nil, isHDR: hasHDR))
-        }
+    private func openViewer() {
+        guard let hdrImage else { return }
+        onOpenViewer(PhotoViewerRequest(
+            start: item.id,
+            opening: .init(image: hdrImage, sdrImage: hasHDR ? sdrImage : nil, isHDR: hasHDR)))
     }
 
     /// What the viewer shows for a photo it pages to: the same choice of
@@ -462,7 +458,7 @@ struct PreviewCard: View {
                     .accessibilityLabel(badgeText)
                     .accessibilityHint(hasHDR ? "轻点全屏查看，按住显示 SDR 效果" : "轻点全屏查看")
                     .accessibilityAddTraits([.isImage, .isButton])
-                    .accessibilityAction { showViewer = true }
+                    .accessibilityAction { openViewer() }
                     .help(hasHDR ? "点击全屏查看；按住查看没有 HDR 时这张照片的样子" : "点击全屏查看")
             } else if let thumb = item.thumbnail {
                 // Only until the first decode lands.
@@ -476,11 +472,6 @@ struct PreviewCard: View {
                 ProgressView()
             }
         }
-        #if os(iOS)
-        .fullScreenCover(isPresented: $showViewer) { viewer }
-        #else
-        .sheet(isPresented: $showViewer) { viewer }
-        #endif
         .frame(width: layout?.card.width, height: layout?.card.height)
         .frame(maxWidth: .infinity)
         .frame(minHeight: layout == nil ? 220 : nil, maxHeight: layout == nil ? .infinity : nil)

@@ -61,7 +61,7 @@
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 六个 workflow 剖析（含 apple-ci）、runner 矩阵 |
 | [operations/installing.md](operations/installing.md) | 各平台侧载与 macOS 授权步骤 |
-| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步 |
+| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步；超过约两周即重写，历史快照按日期归档为 `archive/current-status-YYYYMMDD.md`（上一版 [20261031](archive/current-status-20261031.md)） |
 
 ## 写作与证据规范
 

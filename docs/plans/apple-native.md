@@ -681,6 +681,16 @@ Flutter 版生成的检查点文件可被原生版读取。
 - 实测（iPhone Duo 模拟器，Debug）：轻点进入全屏并停在所点的照片；双击放大、拖动平移；左右滑动翻页，标题和计数跟着变；在卡片上按住 1.2 秒后松手不进入全屏；从照片上起手的上下滑动仍能滚动页面。iOS 模拟器构建通过；macOS 在加入翻页的第一版时构建通过，之后只改了 iOS 分支里的代码。
 - 未验证：真机上的手感（缩放、翻页与下拉关闭之间的冲突、按住对比的实际 HDR 变化）；放大状态下左右拖到边缘是否顺畅地接到翻页；模拟器里有一次滑动后控件被隐藏，没能复现，原因未明；列表很长时的翻页表现；macOS 的全屏查看界面；iPad。
 
+**全屏查看：退出停在最后看的照片、翻到即生成 HDR 预览（2026-11-15，分支 `feat/apple-viewer-return-and-preview`）**
+
+- 用户反馈两点：从全屏查看退出后回到的是进入时那张照片的页面，而不是最后看的那张；翻到未转换的 OPPO 照片时不会生成 HDR 预览。
+- 全屏查看改由根视图呈现（`LibraryModel.photoViewer`，`ContentView` 上的 `fullScreenCover(item:)` / macOS `sheet(item:)`），不再挂在详情页的预览卡片上，这样它还盖着屏幕时就能换掉下面的页面。退出时先不带动画地调用 `LibraryModel.showDetail(_:)`（分栏布局改 `selectedID`，手机上的导航栈改 `detailPath`，栈现在用 `NavigationStack(path:)`），再关闭。
+- 翻到某一页时调用 `preparePreview`，和打开该照片的详情页一样；页面按“当前显示哪个文件”重新加载，预览生成好后自动换成 HDR 预览，期间底部显示“正在生成 HDR 预览…”。换图时旧图保留到新图解码完成。
+- 全屏查看直接读 `model.items`（实时），不再用打开时的列表快照。
+- 实测（iPhone Duo 模拟器，Debug）：从第 9 张进入，翻到第 11 张（未转换的 OPPO 照片），片刻后出现 HDR 标记，即预览已生成并换上；点关闭，下面的页面标题是第 11 张。iOS 模拟器与 macOS 构建通过。
+- TestFlight：构建号改为 8，从这个分支出包并上传成功（`vt+x265`，复用现成内核）。
+- 未验证：真机；分栏布局（iPad、展开态 Duo、macOS）下退出后的选中状态；预览生成较慢的大图上的等待表现；翻页很快时连续触发多张预览渲染的开销（每张只渲染一次，结果留在缓存里）。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter
