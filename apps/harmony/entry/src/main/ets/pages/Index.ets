@@ -3790,12 +3790,11 @@ struct Index {
       : '已读取本地原图 ' + this.galleryFormatLabel() + ' · ' +
         String(cachedInspection.details.width ?? 0) + ' × ' + String(cachedInspection.details.height ?? 0);
     if (shouldOpenDetail) {
-      // Start dimming the gallery backing at the tap. The shared-element
-      // destination is mounted later, after its preview and metadata are ready.
+      // The backdrop darkens together with the shared-element flight (see
+      // tryStartGalleryHeroTransition), not at the tap: the preview and
+      // metadata take a moment, and the gallery used to turn black before the
+      // photo started to move.
       this.galleryHeroBackdropOpacity = 0;
-      this.getUIContext().animateTo({ duration: 420, curve: Curve.Friction }, () => {
-        this.galleryHeroBackdropOpacity = 1;
-      });
       if (this.galleryStatusBarResetTimer >= 0) {
         clearTimeout(this.galleryStatusBarResetTimer);
         this.galleryStatusBarResetTimer = -1;
@@ -3909,6 +3908,7 @@ struct Index {
     this.galleryHeroOpening = true;
     this.ensureGalleryStatusBarVisible();
     this.getUIContext().animateTo({ duration: 420, curve: Curve.Friction }, () => {
+      this.galleryHeroBackdropOpacity = 1;
       this.galleryDetailMounted = true;
       this.galleryDetailVisible = true;
       this.galleryInfoPanelVisible = true;
