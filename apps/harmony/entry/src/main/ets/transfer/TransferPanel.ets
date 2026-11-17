@@ -140,6 +140,12 @@ export struct TransferPanel {
    */
   @State private lan: boolean = false;
   @State private lanStarting: boolean = false;
+  /**
+   * The service is being replaced (loopback ⇄ LAN). The old one stops before
+   * the new one has listed the inbox, so the list used to vanish and come
+   * back, flashing the page; it stays on screen until the new listing.
+   */
+  @State private swapping: boolean = false;
 
   private controller: TransferController | undefined = undefined;
   /** Service starts and stops run one at a time. */
@@ -252,7 +258,7 @@ export struct TransferPanel {
         id: activity.id, direction: activity.direction, label: activity.label, fileCount: activity.fileCount,
         bytes: activity.bytes, total: activity.total, status: activity.status, error: activity.error
       })),
-      inbox: groupTransferInbox(session.receipts)
+      inbox: this.swapping ? this.view.inbox : groupTransferInbox(session.receipts)
     };
     this.setKeepAwake(this.view.activities.some((activity: TransferActivity): boolean =>
       activity.status === 'active' || activity.status === 'pending'));
@@ -315,6 +321,7 @@ export struct TransferPanel {
       this.busy = true;
       this.lanStarting = true;
       this.status = '';
+      this.swapping = true;
       try {
         // The loopback inbox service gives way to the LAN listener.
         if (controller.running) await controller.stop();
@@ -328,6 +335,7 @@ export struct TransferPanel {
         this.autoScanned = false;
         this.localAddresses = this.localIPv4s();
         await controller.refreshReceipts();
+        this.swapping = false;
         await this.refreshDiscovery();
         this.discoveryTimer = setInterval((): void => {
           void this.tick();
@@ -337,6 +345,9 @@ export struct TransferPanel {
       } finally {
         this.busy = false;
         this.lanStarting = false;
+        // Without the LAN listener the loopback service lists the inbox
+        // again below, which ends the swap.
+        if (this.lan) this.swapping = false;
         this.publish();
       }
       // If the LAN listener did not start, keep the inbox listed.
@@ -352,6 +363,7 @@ export struct TransferPanel {
         this.discoveryTimer = -1;
       }
       this.busy = true;
+      if (keepInbox) this.swapping = true;
       try {
         await this.controller?.stop();
       } finally {
@@ -371,9 +383,9 @@ export struct TransferPanel {
   private ensureInbox(): Promise<void> {
     return this.serial(async (): Promise<void> => {
       const controller: TransferController | undefined = this.controller;
-      if (controller === undefined || controller.running || !this.alive || !this.tabVisible ||
-        !this.appVisible) return;
       try {
+        if (controller === undefined || controller.running || !this.alive || !this.tabVisible ||
+          !this.appVisible) return;
         await controller.start({
           root: this.context().filesDir + '/transfer',
           alias: this.visibleName(),
@@ -383,6 +395,8 @@ export struct TransferPanel {
       } catch (error) {
         // Without it the inbox stays hidden; turning reception on reports its own errors.
       } finally {
+        // Ends a swap whether or not the loopback service came up.
+        this.swapping = false;
         this.publish();
       }
     });
@@ -1359,7 +1373,7 @@ export struct TransferPanel {
 
       this.activityCards();
 
-      if (this.view.running && this.view.inbox.length > 0) {
+      if ((this.view.running || this.swapping) && this.view.inbox.length > 0) {
         this.summaryCard({
           title: '收件箱 ' + String(this.view.inbox.length) + ' 项',
           note: '点按收到的文件查看更多操作',
