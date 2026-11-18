@@ -611,6 +611,10 @@ jobs:
           fi
 
       - name: Build Rust core
+        # VideoToolbox and x265 both compiled in; the app picks one at run
+        # time (GPU hardware encoding switch, xdremux_set_hevc_encoder).
+        env:
+          XDREMUX_HEVC_BACKEND: videotoolbox+x265
         run: cargo build -p xdremux-core --release
 
       - name: Build local transfer library
@@ -639,6 +643,14 @@ jobs:
           test -x "$DY" || { echo "Rust dylib is not executable" >&2; exit 1; }
           test -f "$APP/Contents/Frameworks/libxdremux_transfer.dylib" || {
             echo "Local transfer dylib missing from the bundle" >&2; exit 1; }
+          # Both HEVC encoders: VideoToolbox linked, x265 compiled in.
+          # (Captured first: grep -q closing a pipe early fails under pipefail.)
+          links="$(otool -L "$DY")"
+          grep -q '/VideoToolbox.framework/' <<<"$links" || {
+            echo "Rust dylib does not link VideoToolbox" >&2; exit 1; }
+          text="$(strings -a "$DY")"
+          grep -q 'x265' <<<"$text" || {
+            echo "Rust dylib does not contain x265" >&2; exit 1; }
           # The copy phase runs before CodeSign, so both the dylib and the app
           # seal must be intact. A post-build copy would break the seal.
           codesign -v --deep --strict "$APP"
@@ -729,6 +741,14 @@ jobs:
           # build_ios.sh hardcodes an Xcode-beta SDK path; IPHONEOS_SDK points
           # it at the runner's current iPhoneOS SDK.
           bash xdremux/rust/build_ios.sh
+          # Both HEVC encoders in the staticlib: the VideoToolbox backend
+          # (references VTCompressionSessionCreate) and x265.
+          lib=apps/flutter/ios/Runner/Frameworks/libxdremux_core.a
+          # nm exits non-zero on the Rust members when their LLVM is newer
+          # than Xcode's; the C members (VideoToolbox glue, x265) still list.
+          syms="$(nm "$lib" 2>/dev/null || true)"
+          grep -q ' U _VTCompressionSessionCreate$' <<<"$syms"
+          grep -q 'x265' <<<"$syms"
 
       - name: Build local transfer framework
         run: |

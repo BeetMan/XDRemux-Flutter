@@ -1894,6 +1894,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _convertOne(int index) async {
     final item = _queue[index];
     final runConfig = _config.copy();
+    // macOS/iOS: the GPU switch picks the core's encoder (VideoToolbox or
+    // x265) for this conversion and its Live Photo.
+    HardwareEncodeService.selectCoreEncoder(hardware: runConfig.hardwareEncode);
     // A retried .pvt item converts at its planned flat path again; composing
     // then rebuilds (or, with bundling off, replaces) the pair.
     item.outputPath = livePhotoFlatPath(item.outputPath);
@@ -2083,14 +2086,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         }
       }
 
-      // Android (MediaCodec) + Apple (VideoToolbox on macOS/iOS) + toggle on:
-      // try the hardware encode path. Any failure falls back to the proven
-      // software path so conversion never silently breaks.
+      // Android (MediaCodec) + toggle on: try the hardware tile path. Any
+      // failure falls back to the proven software path so conversion never
+      // silently breaks. macOS/iOS encode with VideoToolbox inside the core.
       if (result == null &&
           runConfig.backend == ConversionBackend.rust &&
           !runConfig.applePhotographicStyles &&
           !runConfig.applePhotographicStyles3 &&
-          (Platform.isAndroid || Platform.isMacOS || Platform.isIOS) &&
+          Platform.isAndroid &&
           runConfig.hardwareEncode &&
           await HardwareEncodeService.isAvailable()) {
         result = await _convertOneHardware(item, runConfig);
@@ -4511,8 +4514,13 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   late final TextEditingController _suffixController;
 
   /// Hardware-encoding availability probe result (null = not yet known).
-  /// Only probed on Android, where the MediaCodec path exists.
+  /// Android: MediaCodec. macOS/iOS: the core's VideoToolbox encoder.
   bool? _hwAvailable;
+
+  /// Android's tile path only covers plain HDR output, so there the GPU
+  /// switch and the Apple Photos editable features exclude each other.
+  /// macOS/iOS encode everything in the core, VideoToolbox included.
+  bool get _gpuExcludesAppleEditing => !HardwareEncodeService.usesCoreEncoder;
 
   String? _writebackDonorPath;
   String? _writebackReturnedPath;
@@ -4639,6 +4647,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     }
     setState(() => _writebackRunning = true);
     final output = _writebackOutputPath();
+    HardwareEncodeService.selectCoreEncoder(hardware: _cfg.hardwareEncode);
     try {
       final result = await XdRemuxService.writebackReturnedPhoto(
         originalPath: _writebackDonorPath,
@@ -4875,9 +4884,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                   '摄影风格 3 已包含摄影风格 2；如需单独调整，请先关闭摄影风格 3。',
                                   'Photographic Styles 3 includes Photographic Styles 2; turn it off to change this.',
                                 )
-                              : _t(
+                              : _gpuExcludesAppleEditing
+                              ? _t(
                                  '写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
                                  'Writes Photographic Styles data so tone, color and intensity can be adjusted in Apple Photos; selects Apple Standard output and disables GPU encoding.',
+                               )
+                              : _t(
+                                 '写入摄影风格数据，可在 Apple“照片”中调整色调、颜色和强度；自动使用 Apple 标准输出。',
+                                 'Writes Photographic Styles data so tone, color and intensity can be adjusted in Apple Photos; selects Apple Standard output.',
                                ),
                         ),
                         value: _cfg.applePhotographicStyles,
@@ -4890,7 +4904,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
                               _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                              _cfg.hardwareEncode = false;
+                              if (_gpuExcludesAppleEditing) {
+                                _cfg.hardwareEncode = false;
+                              }
                             }
                           });
                           _emit();
@@ -4905,10 +4921,15 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           ),
                         ),
                         subtitle: Text(
-                          _t(
-                            '在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
-                            'Adds texture (such as Soft Skin, Glow or Film) and grain to Photographic Styles 2, adjustable in Apple Photos on iOS 27 or later; selects Apple Standard output and disables GPU encoding.',
-                          ),
+                          _gpuExcludesAppleEditing
+                              ? _t(
+                                  '在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本；自动使用 Apple 标准输出，并关闭 GPU 硬件编码。',
+                                  'Adds texture (such as Soft Skin, Glow or Film) and grain to Photographic Styles 2, adjustable in Apple Photos on iOS 27 or later; selects Apple Standard output and disables GPU encoding.',
+                                )
+                              : _t(
+                                  '在摄影风格 2 的基础上，还可在 Apple“照片”中调整质感（如柔肤、光晕、胶片）和颗粒，需要 iOS 27 或更高版本；自动使用 Apple 标准输出。',
+                                  'Adds texture (such as Soft Skin, Glow or Film) and grain to Photographic Styles 2, adjustable in Apple Photos on iOS 27 or later; selects Apple Standard output.',
+                                ),
                         ),
                         value: _cfg.applePhotographicStyles3,
                         onChanged: (value) {
@@ -4918,7 +4939,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
                               _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                              _cfg.hardwareEncode = false;
+                              if (_gpuExcludesAppleEditing) {
+                                _cfg.hardwareEncode = false;
+                              }
                               // PS3 output carries the 2023 styles item too;
                               // the plain-styles toggle becomes implied.
                               _cfg.applePhotographicStyles = true;
@@ -4941,7 +4964,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               _cfg.outputMode = OutputMode.apple;
                               _cfg.oppoCompatibility = OppoCompatMode.off;
                               _cfg.oppoCameraTail = OppoCameraTailMode.off;
-                              _cfg.hardwareEncode = false;
+                              if (_gpuExcludesAppleEditing) {
+                                _cfg.hardwareEncode = false;
+                              }
                             }
                           });
                           _emit();
@@ -5481,8 +5506,9 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                       const SizedBox(height: 8),
                     ],
 
-                    // Hardware encoding toggle (Android MediaCodec / Apple
-                    // VideoToolbox on macOS+iOS, experimental)
+                    // Hardware encoding toggle (Android MediaCodec tile path /
+                    // the core's VideoToolbox encoder on macOS+iOS,
+                    // experimental)
                     if (Platform.isAndroid ||
                         Platform.isMacOS ||
                         Platform.isIOS) ...[
@@ -5490,12 +5516,14 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(_t('GPU 硬件编码', 'GPU hardware encoding')),
                         subtitle: Text(
-                          _cfg.applePhotographicStyles || _cfg.applePortrait
+                          _gpuExcludesAppleEditing &&
+                                  (_cfg.applePhotographicStyles ||
+                                      _cfg.applePortrait)
                               ? _t(
                                   'Apple 照片可调功能需要软件编码，已自动关闭。',
                                   'Apple Photos editable features require software encoding and disable this option.',
                                 )
-                              : '${_t('使用设备硬件加速普通 HDR 转换。', 'Use hardware acceleration for standard HDR conversion.')} '
+                              : '${_gpuExcludesAppleEditing ? _t('使用设备硬件加速普通 HDR 转换。', 'Use hardware acceleration for standard HDR conversion.') : _t('用 VideoToolbox 编码所有转换，包括摄影风格、人像和实况照片；关闭时使用 x265 软件编码。', 'Encodes every conversion with VideoToolbox, including Photographic Styles, Portrait and Live Photos; off uses x265 software encoding.')} '
                                     '${switch (_hwAvailable) {
                                       null => _t('正在检测硬件编码器…', 'Detecting hardware encoder…'),
                                       true => _t('硬件编码器：可用', 'Hardware encoder: available'),
@@ -5506,8 +5534,17 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         value: _cfg.hardwareEncode,
                         dense: true,
                         onChanged:
-                            _cfg.applePhotographicStyles || _cfg.applePortrait
+                            _gpuExcludesAppleEditing &&
+                                (_cfg.applePhotographicStyles ||
+                                    _cfg.applePortrait)
                             ? null
+                            : !_gpuExcludesAppleEditing
+                            // macOS/iOS: only the encoder changes; the core
+                            // keeps the chosen output and its options.
+                            ? (v) {
+                                setState(() => _cfg.hardwareEncode = v);
+                                _emit();
+                              }
                             : (v) {
                                 // GPU 硬件编码只输出 4:2:0 gain map，正好是 OPPO 图库
                                 // 需要的格式。开启时强制 OPPO 兼容模式，保证输出能

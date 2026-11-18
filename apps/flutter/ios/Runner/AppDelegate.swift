@@ -444,38 +444,6 @@ private final class SwiftBackendProgressStreamHandler: NSObject, FlutterStreamHa
       }
     }
 
-    // Hardware HEVC encoding for gain-map tiles (VideoToolbox).
-    let hwChannel = FlutterMethodChannel(
-      name: "xdremux/hw-encode",
-      binaryMessenger: messenger
-    )
-    hwChannel.setMethodCallHandler { call, result in
-      switch call.method {
-      case "canEncode":
-        result(VideoToolboxHevcEncoder.canEncode420())
-      case "reset":
-        VideoToolboxHevcEncoder.isFirstTile = true
-        result(true)
-      case "encodeTile":
-        guard let args = call.arguments as? [String: Any],
-              let yuv = args["yuv"] as? FlutterStandardTypedData,
-              let width = args["width"] as? Int,
-              let height = args["height"] as? Int else {
-          result(FlutterError(code: "bad_args", message: "invalid encodeTile args", details: nil))
-          return
-        }
-        let encoded = VideoToolboxHevcEncoder.encodeTile(
-          yuv: yuv.data, width: width, height: height)
-        if let encoded = encoded {
-          result(FlutterStandardTypedData(bytes: encoded))
-        } else {
-          result(nil)
-        }
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
-
     // iOS 27 platform layout traits. The system can place a vertical bar on a
     // leading or trailing edge (iPhone Duo reserves its 84pt right inset for a
     // trailing bar), and `UITraitCollection.verticalBarEdge` reports the edge

@@ -17,6 +17,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"   # -> xdremux/rust
 
+# Both HEVC encoders: VideoToolbox (the GPU hardware encoding switch) and x265
+# (the default). The app picks one at run time through xdremux_set_hevc_encoder.
+export XDREMUX_HEVC_BACKEND="${XDREMUX_HEVC_BACKEND:-videotoolbox+x265}"
+
 DEST="../../apps/flutter/ios/Runner/Frameworks"
 mkdir -p "$DEST"
 
