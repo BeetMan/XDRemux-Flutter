@@ -2685,4 +2685,3 @@ pub fn cmd_huawei_portrait(args: &[String]) -> Result<(), String> {
     println!("huawei_portrait: {} -> {} bytes", args[1], out.len());
     Ok(())
 }
-

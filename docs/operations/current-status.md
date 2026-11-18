@@ -13,7 +13,7 @@
 | 项 | 状态 | 依据 |
 |---|---|---|
 | Flutter 跨平台版 | **0.4.7（0.4.7+41）已发布**（2026-11-06，GitHub Latest） | `apps/flutter/pubspec.yaml:5`、标签 `v0.4.7` → `7dd8c8b`（PR #84）、`tools/installer/RELEASE_NOTES_v0.4.7.md` |
-| 鸿蒙原生版（ArkUI） | **0.5.4 已发布**（2026-11-07，独立标签 `harmony-v0.5.4` → `aca3bc0`，在 `feat/harmony-native` 上、不在 `main`；内核 0.4.7） | `README.md:13`；过程记录在该分支的 `docs/plans/harmony-native.md` |
+| 鸿蒙原生版（ArkUI） | **0.5.4 已发布**（2026-11-07，独立标签 `harmony-v0.5.4` → `aca3bc0`；内核 0.4.7）；工程在 `apps/harmony/` | `README.md:13`、`apps/harmony/README.md`；过程记录在 `docs/plans/harmony-native.md` |
 | 原生 Apple 版（SwiftUI） | **`apple-v0.1.1` 预发布**（2026-11-10，→ `3838330`，PR #97）；`apple-v0.1.0` 预发布（2026-11-07，→ `555b882`，PR #90）。不接管 Latest；bundle ID `io.github.beetman.xdremux.swiftui`，与 Flutter 版并存 | `tools/installer/RELEASE_NOTES_apple-v0.1.1.md`、`apps/apple/project.yml:50` |
 | TestFlight（SwiftUI iOS） | 0.1.1 构建 3（11-14）与构建 4–7（11-15）已上传，均带 `vt+x265` 两个编码器；`main` 上构建号为 7（构建 8 的记录在 PR #120 分支上） | `apps/apple/project.yml:22`、`docs/plans/apple-native.md` 11-14 / 11-15 条目 |
 | `main` 上尚未发布的改动 | 内核：人像校验修复（#99）、delta map（差值图）尺寸（#100）、HEVC 后端拆分与 VideoToolbox 后端（#107、#108）；Flutter：HDR 增益映射设计的应用图标（#102）、导入探测与整理扫描移出 UI isolate（#103、#105）、Flutter 3.50（#104）；SwiftUI：#98、#106、#109–#115、#118；测试：LibLivePhoto 解析器差分（#119） | `git log --first-parent v0.4.7..origin/main` |
@@ -39,7 +39,7 @@
 
 | 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
 |---|---|---|---|---|
-| `feat/harmony-native` | +122 / −79 | 11-06 | 1 文件（`README.md`） | 鸿蒙 ArkUI 原生工程，0.5.4 已发（内核 0.4.7，含「互传」页）。与 `main` 的 merge-base 是 `ce35efd`（PR #89），之后 `main` 的内核改动 #99、#100、#107、#108 尚未同步。长期分支，定期 merge main，不并回 main；同步后需重建 `.so` 并复测 |
+| `feat/harmony-native` | 并入 `main` 中 | 11-16 | 0 | 鸿蒙 ArkUI 原生工程，0.5.4 已发（内核 0.4.7，含「互传」页）。11-15、11-16 已同步 `main`（含 #99、#100、#107、#108、#122）。按用户 11-15 的决定不拆 repo，整体并入 `main` 的 `apps/harmony/`；合并后删除分支，在 `main` 上用短分支开发，仍以 `harmony-v*` 标签独立发版 |
 
 ### 2.3 研究分支（不直接合并）
 
@@ -109,7 +109,7 @@
 8. **TestFlight / App Store**：App Store Connect 的处理结果、TestFlight 安装后的界面与两种编码器的真机表现**未验证**；`XDRemuxTransferCore.framework` 缺 dSYM（上传警告，只影响崩溃符号化）；带 x265 的构建与 App Store 条款是否相容未决，开放公开测试链接前需要定下来。
 9. **iPhone Duo**：Flutter 的安全区修复（0.4.6）与 SwiftUI 的两栏布局、侧边栏工具栏只在模拟器上验证，真机**未验证**。
 10. **CI 覆盖**：共 8 个 workflow。`ci.yml` 跑 Ubuntu 上的 Rust（同时链接 8-bit 与 10-bit x265）与 Flutter；`apple-ci.yml`（Swift 包、CLI、macOS App、iOS 模拟器构建）与 `apple-vt-core.yml`（VideoToolbox 后端的内核测试）因 macOS runner 紧张，只在 Rust 改动合入 `main` 后和改到 Apple 路径的 PR 上运行（PR #101），改 FFI 的 Rust PR 合并前要在 Mac 上跑 `tools/apple/verify_local.sh`；`transfer-ci.yml` 覆盖 Windows / Linux / macOS / OHOS 的传输库；安卓 APK 只在 `release.yml` 里构建。Windows / macOS 原生行为与真机照片验收不在 CI 内。`main` 最新一次 push（`256aad7`）的 CI 通过，最近一次 Rust 合入（`78df799`）触发的 CI、Conformance、Apple native、Apple VideoToolbox core、OHOS smoke 均通过（已实测，`gh run list --branch main`；CI 通过不等于真机验收）。`docs/operations/ci.md` 仍写"六个 workflow"，没有覆盖 `apple-vt-core.yml`、`transfer-ci.yml` 与 PR #101 的触发规则。
-11. **三个前端共用 Rust 内核**（Flutter、鸿蒙原生、SwiftUI），另共用传输 crate：FFI 改动需重新生成 `xdremux_core.h`（`ci.yml` 校验），并重建鸿蒙 `.so` 复测；`feat/harmony-native` 尚未同步 PR #99、#100、#107、#108。
+11. **三个前端共用 Rust 内核**（Flutter、鸿蒙原生、SwiftUI），另共用传输 crate：FFI 改动需重新生成 `xdremux_core.h`（`ci.yml` 校验），并重建鸿蒙 `.so` 复测；鸿蒙原生工程在 `apps/harmony/`。
 12. **安装包许可文本**：Windows（`tools/installer/xdremux.iss:63-64`）、macOS（`release.yml:660-662`）、Linux（`tools/linux/package_linux.sh:296`、`:369`）的打包步骤都复制 `LICENSE` / `LICENSING.md`，`v0.4.7` 的发布 run 成功；产物里的文件没有打开核对（**未验证**）。
 
 ## 5. 下一步优先级
@@ -118,7 +118,7 @@
 2. PR #116（Flutter macOS / iOS 改用内核的 VideoToolbox 后端）：由用户决定是否合并；之后发 Flutter 0.4.8，带上 `main` 上尚未发布的 #99、#100、#102–#105、#107、#108。
 3. SwiftUI：PR #120 由用户决定是否合并；出 0.1.2 预发布，带上 PR #99 的人像修复与 0.1.1 之后的界面改动（§4.7）；确认 TestFlight 构建 3–7 的处理结果与真机安装；开放公开测试链接前定下 x265 与 App Store 条款的问题；补传输框架的 dSYM。`docs/plans/apple-native.md` §3 的 P4 跨端回归仍无记录。
 4. Live Photo 发布校验补齐（`docs/research/upstream-20261115.md` 的 P1，沿用）：复核失败时回滚已写出的 MOV 与静帧、保留独立恢复副本，Flutter 与 SwiftUI 两端都做（§4.5）；约 2–3 天。
-5. `feat/harmony-native` 同步 `main`（PR #99、#100、#107、#108），重建 `.so` 复测后再定鸿蒙原生的下一版。
+5. 鸿蒙原生版（`apps/harmony/`）：真机复测后发 0.5.5，带上 PR #99 的人像校验修复与 NEON 版 x265（`docs/research/ohos-hw-hevc-20261115.md`）。
 6. 按 `docs/testing/styles-hdr-device-checklist.md` 跑完整真机 A/B（覆盖 §4.3），并在 iPhone 上复核 PR #100；之后是每图的 key 4 / `"h"`（`linear_metadata`）与 P1-3 统计。
 7. `upstream-20261115.md` 的 P2：华为 `it35` 按 GB/T 48347 UWAInfo 逐字段对应（只读解析，约 1–2 天）；用已链接的 libheif 解增益映射（先约 1 小时探针，确认 libde265 能否解 Rext 4:0:0，可行再投入 2–3 天）；对照上游 #83 / #84 加 BT.2020 解码回算断言。
 8. PR #119 留下的两项（§4.6）：先找三星只写 SEF 的真机样本，确认后再决定是否识别；在照片 App / AVFoundation 上测带厂商尾字节的拆分 MP4，有问题再让 `xdremux_motion_photo_split` 裁剪。

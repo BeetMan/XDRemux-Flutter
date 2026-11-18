@@ -8,7 +8,7 @@ XDRemux 是一款跨平台照片格式转换工具。它将 OPPO、一加、real
 
 Flutter 跨平台版采用 **Flutter 界面 + Rust 图像处理引擎**，覆盖 Windows、macOS、Linux、Android、iOS 和 HarmonyOS。HarmonyOS 另有共用 Rust 引擎的 ArkUI 原生预览版；iOS / iPadOS / macOS 另有共用同一引擎的 SwiftUI 原生版（预发布）。
 
-[官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native) · [苹果原生版](apps/apple/README.md)
+[官网 xdremux.app](https://xdremux.app) · [下载最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest) · [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [技术文档](docs/README.md) · [鸿蒙原生版](apps/harmony/README.md) · [苹果原生版](apps/apple/README.md)
 
 > 当前已发布跨平台版本：**v0.4.7（0.4.7+41）**。鸿蒙原生版：**0.5.4**，苹果 SwiftUI 原生版：**0.1.1（预发布）**，各自使用独立发布标签与安装包。
 > 本轮新增局域网互传（兼容 LocalSend），并修复开启摄影风格时部分实况照片转换失败的问题，见 [0.4.7 更新说明](tools/installer/RELEASE_NOTES_v0.4.7.md)。
@@ -184,9 +184,9 @@ XMAGE `xtstyle` 目前用于只读诊断，尚未实现华为色彩风格到 App
 - **HarmonyOS（Flutter）**：通过独立鸿蒙 Flutter 引擎与插件接入系统选择器和单文件分享，使用 Rust 转换核心；当前统一相册保存与配对双文件分享仍未接入。
 - **Linux（本地开发 / 预览）**：使用 GTK 拖放与命令行参数导入照片，Rust FFI + 静态链接 x265 完成转换；文件选择走 XDG Desktop Portal。已提供 AppImage 与 tar.gz 预览包；系统托盘与完成通知暂未接入。
 
-**鸿蒙原生预览版**在 [`feat/harmony-native`](https://github.com/BeetMan/XDRemux-Flutter/tree/feat/harmony-native) 分支开发，采用 ArkTS / ArkUI，围绕「图库、队列、设置」组织界面。它共用 Rust 引擎，提供 HDR、摄影风格、人像与动态照片等核心能力；图库浏览、任务管理和导出交互则采用原生实现。
+**鸿蒙原生预览版**位于 [`apps/harmony/`](apps/harmony/README.md)，采用 ArkTS / ArkUI，围绕「图库、队列、互传、设置」组织界面。它共用 Rust 引擎，提供 HDR、摄影风格、人像与动态照片等核心能力；图库浏览、任务管理和导出交互则采用原生实现。
 
-原生版使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版 `io.github.beetman.xdremux` 共存。当前版本为 **0.5.4**，独立标签 `harmony-v0.5.4` 不代表跨平台主线已经升级到 0.5.4。两端共享转换核心，但界面、预览、相册和文件导出分别集成，不能把一端的验收视为另一端已经通过。原生界面、构建方式与兼容边界请以[原生版 README](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/README.md)为准。
+原生版使用独立包名 `io.github.beetman.xdremux.arkui`，可与 Flutter 版 `io.github.beetman.xdremux` 共存。当前版本为 **0.5.4**，独立标签 `harmony-v0.5.4` 不代表跨平台主线已经升级到 0.5.4。两端共享转换核心，但界面、预览、相册和文件导出分别集成，不能把一端的验收视为另一端已经通过。原生界面、构建方式与兼容边界请以[原生版 README](apps/harmony/README.md)为准。
 
 **苹果 SwiftUI 原生版**在主线 [`apps/apple/`](apps/apple/README.md) 开发，一个多平台 SwiftUI 工程同时产出 iOS / iPadOS 与 macOS 应用，共用同一个 Rust 引擎与局域网互传核心。iPhone 上是列表 + 详情，iPad 与 Mac 是两栏；详情优先展示识别结果与 HDR 预览，再选转换选项；支持相册 / 文件 / 分享面板导入、单张与批量转换、Live Photo 配对、转换后自动存入照片、Flutter 检查点互读（macOS）与局域网互传，中英双语。
 
@@ -219,7 +219,7 @@ Linux 桌面本地开发使用同一 Flutter 3.50.0。系统依赖为 clang、cm
 - [v0.4.6 更新记录](tools/installer/RELEASE_NOTES_v0.4.6.md)：Live Photo `.pvt`、摄影风格与实况编辑、Styles HDR 缩略图、Duo 安全区修复。
 - [v0.4.5 更新记录](tools/installer/RELEASE_NOTES_v0.4.5.md)：JPEG HDR/ICC、Duo、Apple 缩略图、Linux 及 Android ABI 修复。
 - [v0.4.4 更新记录](tools/installer/RELEASE_NOTES_v0.4.4.md)：Live Photo 导出、前摄人像、诊断、工具链与打包修复。
-- [鸿蒙原生工程说明](https://github.com/BeetMan/XDRemux-Flutter/blob/feat/harmony-native/apps/harmony/README.md)：原生版构建、本地签名与设备安装。
+- [鸿蒙原生工程说明](apps/harmony/README.md)：原生版构建、本地签名与设备安装。
 - [苹果原生工程说明](apps/apple/README.md)：SwiftUI 工程、xcframework 构建、模拟器 / 真机运行与发布打包；更新记录见 [apple-v0.1.1 发布说明](tools/installer/RELEASE_NOTES_apple-v0.1.1.md)。
 
 主线仓库结构：
@@ -233,7 +233,7 @@ Linux 桌面本地开发使用同一 Flutter 3.50.0。系统依赖为 clang、cm
 | `docs/` | 技术文档、研究计划与验证记录 |
 | `tools/` | 平台构建、安装器与发布工具 |
 
-鸿蒙原生工程 `apps/harmony/` 位于原生开发分支，并非当前主线的 Flutter 应用目录。
+鸿蒙原生工程位于 `apps/harmony/`，与 Flutter 应用 `apps/flutter/`、苹果原生应用 `apps/apple/` 并列，共用 `xdremux/rust/` 引擎。
 
 ## 致谢与许可
 

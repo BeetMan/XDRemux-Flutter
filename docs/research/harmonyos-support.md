@@ -147,7 +147,7 @@ PATH 追加：
 - ~~需要的工作~~（已完成，详见 §0.5）：
   1. ~~安装 DevEco Studio（含 OHOS NDK，musl-based clang 交叉工具链）~~ ✅
   2. ~~`build.rs` 增加 OHOS 平台分支~~ ✅（注意：`CARGO_CFG_TARGET_OS=linux`，须用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定）
-  3. ~~x265 用 OHOS NDK 的 CMake 工具链交叉编译~~ ✅（`ohos.toolchain.cmake` + `-DENABLE_ASSEMBLY=OFF`）
+  3. ~~x265 用 OHOS NDK 的 CMake 工具链交叉编译~~ ✅（`ohos.toolchain.cmake` + `-DENABLE_ASSEMBLY=OFF`；2026-11-15 起改为只开基础 NEON，见 [ohos-hw-hevc-20261115.md](ohos-hw-hevc-20261115.md)）
   4. ~~cargo 目标构建~~ ✅（`aarch64-unknown-linux-ohos`，cdylib 直出 .so）
 - 风险判断：**低**（实测证实）。x265 是纯 C++/汇编库（OHOS 下汇编关掉即可），Rust 核心无平台特定 syscall
 

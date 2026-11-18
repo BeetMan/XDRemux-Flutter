@@ -1,0 +1,82 @@
+# Native HarmonyOS build and verification
+
+The host CI workflow at `.github/workflows/harmony-native-ci.yml` runs the deterministic ArkTS model/queue tests, the HAP verifier's unit tests, and the C++ PS3 pipeline helper. It does not compile ArkTS or package a HAP. Full app packaging requires the locally installed DevEco SDK and `devecocli`.
+
+## Build an unsigned HAP
+
+GitHub's public unsigned HAP uses **debug** mode (`app.debug: true`) so users can sign it with a matching development certificate/Profile for registered devices. Keep the Rust core optimized with `cargo build --release`; the ArkTS packaging mode does not require rebuilding Rust in debug mode. Do not substitute a release-mode HAP under the same download name: that belongs to the separate release-signing/distribution workflow. Unsigned does not mean directly installable, and development signing does not enable unrestricted public installation.
+
+Run from the repository root in PowerShell. Use the Rust core already produced by `xdremux/rust/build_ohos.sh`; `prepare_harmony_native.ps1` stages that library and the matching DevEco C++ runtime but does not build Rust.
+
+```powershell
+$corePath = 'C:\path\to\existing\libxdremux_core.so'
+.\tools\ohos\prepare_harmony_native.ps1 -CorePath $corePath
+
+Push-Location .\apps\harmony
+devecocli build --product default --build-mode debug 2>&1 |
+    Tee-Object -FilePath 'C:\path\to\external\logs\build.log'
+$buildExitCode = $LASTEXITCODE
+Pop-Location
+if ($buildExitCode -ne 0) { throw 'DevEco HAP build failed' }
+```
+
+DevEco writes the HAP to `apps/harmony/entry/build/default/outputs/default/entry-default-unsigned.hap` when no signing profile is configured. Copy each reviewed build to the external `harmony-native` log/artifact directory; never add HAP files, staged libraries, signing profiles, or signing credentials to Git.
+
+## macOS
+
+DevEco Studio's bundled SDK, ohpm, hvigor and hdc work on Apple Silicon. `xdremux/rust/build_ohos.sh` defaults to the DevEco.app native SDK and its ninja; `tools/ohos/prepare_harmony_native.sh` is the bash counterpart of the PowerShell staging script. `devecocli` installs from npm (`@deveco/deveco-cli`).
+
+```bash
+rustup target add aarch64-unknown-linux-ohos
+rustup toolchain install 1.97.1 --profile minimal --target aarch64-unknown-linux-ohos
+bash xdremux/rust/build_ohos.sh
+tools/native/build-transfer.sh ohos
+tools/ohos/prepare_harmony_native.sh
+cd apps/harmony && devecocli build --product default --build-mode debug
+```
+
+`tools/native/build-transfer.sh ohos` builds the LocalSend transfer adapter (`crates/xdremux-transfer-ffi`, pinned Rust 1.97.1). The bridge links it, so the staging helper refuses to continue without it. The PowerShell staging script does not stage it yet; on Windows copy `libxdremux_transfer.so` into `entry/libs/arm64-v8a/` yourself.
+
+The committed `build-profile.json5` has no `signingConfigs`, so a build from a clean checkout or export is unsigned and its log shows signing was skipped rather than failed. Release packages are built that way.
+
+### Local device-test signing
+
+DevEco's automatic signing (or a manual signing profile) writes `signingConfigs` with machine-specific paths and encrypted passwords into `build-profile.json5`. Keep that local:
+
+```bash
+git update-index --skip-worktree apps/harmony/build-profile.json5
+```
+
+Undo it with `--no-skip-worktree` before changing other settings in that file on purpose.
+
+## Verify the built package
+
+The verifier reads the packaged `module.json` and `pack.info`, checks the native bundle identity is distinct from the Flutter bundle, version and compatible API, checks the arm64 bridge/core/runtime libraries, rejects recognized signature entries, and reports hashes for the HAP and packaged Rust core.
+
+```powershell
+python .\apps\harmony\tools\verify_harmony_hap.py `
+  'C:\path\to\external\logs\entry-default-unsigned-codeNNNNN.hap' `
+  --version-name 0.5.4 `
+  --version-code 50400 `
+  --compatible-api 26 `
+  --expected-core-sha256 <packaged-core-sha256> `
+  --report 'C:\path\to\external\logs\hap-verification.json'
+```
+
+Record the Rust input library hash separately with `Get-FileHash` or the preparation script's JSON output. The HAP's core is toolchain-stripped, so its hash is expected to differ from the staged input. Pair the manifest report with the DevEco build log showing whether signing was skipped. Local device-test signing belongs in DevEco and must use the native bundle identity; release artifacts remain unsigned.
+
+Before replacing the GitHub download, also inspect `module.json` and require `app.debug == true` and `app.buildMode == "debug"`, check ZIP CRC, and use `hap-sign-tool verify-app` to confirm the absence of a HAP Signing Block. Back up the old asset, update its SHA256SUMS entry and Release signing instructions together, then download the uploaded asset again and verify its hash. Structural checks do not replace an actual signing/install test.
+
+## Host regressions
+
+The workflow command list can also be run locally from the repository root:
+
+```powershell
+Get-ChildItem .\apps\harmony\tests -Filter '*.mjs' | ForEach-Object {
+  node --experimental-strip-types $_.FullName
+  if ($LASTEXITCODE -ne 0) { throw "Test failed: $($_.Name)" }
+}
+python -m unittest apps.harmony.tests.hap_verifier_test
+```
+
+These host regressions do not prove Harmony Share Kit, file-picker permissions, ArkUI lifecycle, N-API loading, or photo/gallery behavior. Use the signed-device checklist in the external `harmony-native` artifact folder for those checks.

@@ -23,7 +23,7 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 | Android | `vendor/x265/build_android` | 必须静态（SELinux 禁子进程） |
 | iOS | `vendor/x265/build_ios` | `-DCMAKE_SYSTEM_NAME=iOS`，无汇编 |
 | macOS/Linux | `vendor/x265/build_desktop` | Linux 未装 nasm 时加 `-DENABLE_ASSEMBLY=OFF` |
-| 鸿蒙 | `vendor/x265/build_ohos` | DevEco NDK 交叉，关汇编；平台分支用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定 |
+| 鸿蒙 | `vendor/x265/build_ohos` | DevEco NDK 交叉，只开基础 ARM64 NEON（dotprod/i8mm/SVE 关闭，OHOS 下无运行时 CPU 检测；见 `docs/research/ohos-hw-hevc-20261115.md`）；平台分支用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定 |
 
 `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`）。
 

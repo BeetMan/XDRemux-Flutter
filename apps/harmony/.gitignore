@@ -1,0 +1,19 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+# Prebuilt Rust and C++ runtime artifacts are staged locally by
+# tools/ohos/prepare_harmony_native.ps1 and must not enter source control.
+/entry/libs/
+**/.cxx/
+**/*.hap
+**/*.app
+**/signing/
