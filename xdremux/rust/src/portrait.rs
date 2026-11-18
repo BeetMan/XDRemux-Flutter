@@ -555,9 +555,10 @@ fn watermark_content_rect(
     parse_watermark_rect(&tail, (primary_w, primary_h), source_dims, orientation, crop.as_deref())
 }
 
-/// Content rect stored at `len - 56` by `hassel_style_4` and
-/// `hassel_style_master_mode_1`. `x + width` and `y + height` equal the
-/// primary frame. `hassel_style_1` keeps its own checked layout.
+/// Content corner quad `(x0, y0, x1, y1)` stored at `len - 56` by
+/// `hassel_style_4` and `hassel_style_master_mode_1`, converted to
+/// `(x0, y0, width, height)`. `x0 + x1` and `y0 + y1` equal the primary frame
+/// for symmetric frames. `hassel_style_1` keeps its own checked layout.
 fn hassel_end_content_rect(
     tail: &[u8],
     primary_w: u32,
@@ -578,20 +579,23 @@ fn hassel_end_content_rect(
         (value.is_finite() && value >= 0.0 && value <= 1_000_000.0 && value.fract() == 0.0)
             .then_some(value as u32)
     };
-    let x = integer(origin + 24)?;
-    let y = integer(origin + 28)?;
-    let w = integer(origin + 32)?;
-    let h = integer(origin + 36)?;
-    if w == 0
-        || h == 0
-        || x.checked_add(w)? != primary_w
-        || y.checked_add(h)? != primary_h
-        || w < primary_w / 2
-        || h < primary_h / 2
+    let x0 = integer(origin + 24)?;
+    let y0 = integer(origin + 28)?;
+    let x1 = integer(origin + 32)?;
+    let y1 = integer(origin + 36)?;
+    if x1 > primary_w
+        || y1 > primary_h
+        || x0.checked_add(x1)? != primary_w
+        || y0.checked_add(y1)? != primary_h
     {
         return None;
     }
-    Some((x, y, w, h))
+    let w = x1.checked_sub(x0)?;
+    let h = y1.checked_sub(y0)?;
+    if w == 0 || h == 0 || w < primary_w / 2 || h < primary_h / 2 {
+        return None;
+    }
+    Some((x0, y0, w, h))
 }
 
 fn parse_watermark_rect(

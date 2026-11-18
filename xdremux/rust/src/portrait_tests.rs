@@ -141,12 +141,28 @@ fn hassel_style_4_end_rect_is_the_content_frame() {
     }
     assert_eq!(
         parse_watermark_rect(&tail, (5200, 8724), (3280, 2464), 1, None),
-        Some((136, 1082, 5064, 7642))
+        Some((136, 1082, 4928, 6560))
     );
     assert_eq!(
         parse_watermark_rect(&tail, (3244, 5444), (3280, 2464), 1, None),
         None
     );
+}
+
+#[test]
+fn hassel_style_master_mode_1_end_rect_subtracts_corners_for_content_size() {
+    let mut tail = vec![0u8; 45117];
+    tail[..4].copy_from_slice(&1f32.to_le_bytes());
+    tail[4..30].copy_from_slice(b"hassel_style_master_mode_1");
+    let origin = tail.len() - 56;
+    tail[origin + 20..origin + 24].copy_from_slice(&[0xff; 4]);
+    for (step, value) in [(24, 86.0f32), (28, 674.0), (32, 4182.0), (36, 3746.0)] {
+        tail[origin + step..origin + step + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    let rect = parse_watermark_rect(&tail, (4268, 4420), (4096, 3072), 1, None);
+    assert_eq!(rect, Some((86, 674, 4096, 3072)));
+    let placement = PortraitPlacement::new((4268, 4420), rect, (1024, 768));
+    assert_eq!(placement.content, (43, 337, 2048, 1536));
 }
 
 #[test]

@@ -1335,8 +1335,17 @@ pub fn standalone_bmff_length(data: &[u8]) -> Result<usize, String> {
         });
         match parsed {
             Some(b) => {
+                let has = |k: &[u8; 4]| kinds.iter().any(|x| x == k);
                 if kinds.is_empty() && &b.kind != b"ftyp" {
                     return Err("embedded video does not begin with ftyp".into());
+                }
+                if !kinds.is_empty()
+                    && &b.kind == b"ftyp"
+                    && has(b"ftyp")
+                    && has(b"moov")
+                    && has(b"mdat")
+                {
+                    break;
                 }
                 kinds.push(b.kind);
                 offset += b.size as usize;

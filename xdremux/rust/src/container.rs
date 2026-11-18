@@ -498,10 +498,14 @@ fn apply_oppo_tail_policy(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>
     // Rebuild payload: kept entry bytes + new manifest + vendor footer.
     let mut payload = Vec::new();
     let mut offsets_from_start: Vec<usize> = Vec::new();
+    let mut emptyspace_pos: Option<usize> = None;
     for (source_start, entry) in &kept {
         let start_in_payload = payload.len();
         let end = source_start + entry.length as usize;
         payload.extend_from_slice(&tail[*source_start..end]);
+        if entry.name == "private.emptyspace" && entry.length == 4 {
+            emptyspace_pos = Some(start_in_payload);
+        }
         offsets_from_start.push(start_in_payload);
     }
 
@@ -530,6 +534,13 @@ fn apply_oppo_tail_policy(tail: &[u8], policy: OppoCameraTail) -> Option<Vec<u8>
     let footer_size = (manifest_bytes.len() + 9) as u32;
     payload.extend_from_slice(b"jxrs");
     payload.extend_from_slice(&footer_size.to_le_bytes());
+
+    // `private.emptyspace` stores the big-endian total length of the `jxrs`
+    // region so standard ISOBMFF readers can skip it as one top-level box.
+    if let Some(pos) = emptyspace_pos {
+        let total_len = u32::try_from(payload.len()).ok()?;
+        payload[pos..pos + 4].copy_from_slice(&total_len.to_be_bytes());
+    }
 
     Some(payload)
 }
@@ -1184,6 +1195,21 @@ mod tests {
                 &apply_oppo_tail_policy(&tail, OppoCameraTail::Watermark).expect("watermark tail"),
             ),
             vec!["watermark.text", "color.space"],
+        );
+        let tail_with_emptyspace = make_manifest_tail(&[
+            ("private.emptyspace", &999_999u32.to_be_bytes()),
+            ("watermark.device", b"Find X8 Ultra"),
+            ("src.image", &[0x55u8; 256]),
+        ]);
+        let watermark_only = apply_oppo_tail_policy(&tail_with_emptyspace, OppoCameraTail::Watermark)
+            .expect("watermark tail with emptyspace");
+        assert_eq!(
+            manifest_names(&watermark_only),
+            vec!["private.emptyspace", "watermark.device"],
+        );
+        assert_eq!(
+            &watermark_only[..4],
+            &(watermark_only.len() as u32).to_be_bytes()
         );
         assert_eq!(
             manifest_names(
