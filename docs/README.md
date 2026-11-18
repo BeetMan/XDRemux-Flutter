@@ -86,6 +86,7 @@
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
 | [oppo-gallery-17.10.5.md](research/oppo-gallery-17.10.5.md) | ColorOS 相册 17.10.5 静态阅读：HDR / 编辑 / 人像机制、OPPO 尾部布局实测、Find X8 Ultra 前置人像与大水印 |
+| [oppo-gallery-17.24.76.md](research/oppo-gallery-17.24.76.md) | ColorOS 相册 17.24.12/17.24.76 与 Find X8 Ultra 真机 `/odm/` 实测：`jxrs` 布局、`wmtest` 升级至 ISO 21496-1 `tmap` 实测、OLive 偏移校验与查找表规格 |
 | [styles-key1-color-grid-20261030.md](research/styles-key1-color-grid-20261030.md) | Standard key 1 拟合在 Photos 画色格的复现与判定（结论：key 1 回 identity，PR #38） |
 | [huawei-xmage-format.md](research/huawei-xmage-format.md) | 华为相机 HDR（XMAGE）表示法与能否纳入转换管线、鸿蒙图库输出需求 |
 | [oppo-proxdr-families.md](research/oppo-proxdr-families.md) | Find N3 / Find X8 Ultra ProXDR 采样分析（2026-09） |
