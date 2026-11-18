@@ -115,3 +115,34 @@ JSON 每一项 `{ "name", "offset", "length", "version": 1 }` 的起始文件偏
 | `basictone/vig/VigTab_Main` | `884 B` | `17 × 13` `float32_le` 暗角网格 | `[0.78125, 1.00000]`，对应 `VigTableWidth=17, VigTableHeight=13` |
 
 同时确认核心 native 符号边界：**可移植模块**包括 `assets/pipeline/{uhdr/fs_uhdr.glsl, gray/fs_gain_single.glsl, gamut/fs_gamut.glsl}`（log 域系数、单通道 `pow(max, 1/2.2)`、HLG/PQ/sRGB 矩阵）与 `assets/glsl/basic_tone_*`；**强依赖真机 `/odm/` 与 `/product/` 闭源 `.so`** 的能力包括 `libCombineLut.so`（`CombineLut_V2.0.3.3`）、`libPalette-Jni.so`（`PaletteP010Gl.cpp` P010/RGBA1010102 AHardwareBuffer 渲染）、`libOPAlgoCamHDRTransformCamera.so`、`libOPAlgoCamCoverEnhancer.so`（OpenCL + `RRDBNet_sm8750.bin` 等模型）及 `libOPAlgoCamITMC.so`。
+
+---
+
+## 5. XDRemux 主线代码对照与实测发现（`origin/main @ 3d005d4d`）
+
+在 `XDREMUX_HEVC_BACKEND=ffmpeg` 环境下（跳过 `vendor/x265`），使用仓库自带的 `xdremux-conformance`、`xdremux-core` 单元测试与 `tests/motion-diff` 对上述 5 份 Find X8 Ultra 真机样张及源码进行对照验证，结果如下：
+
+### 5.1 基准测试与 `xdremux-conformance` 实测结果
+
+**已实测**：
+- `cargo test -p xdremux-core --lib container::tests`：11 passed / 0 failed
+- `cargo test -p xdremux-core --lib motion_photo::tests`：9 passed / 0 failed
+- `cargo test -p xdremux-core --lib portrait`：26 passed / 0 failed
+- `xdremux-conformance inspect` 对 `IMG20261116112820.heic`、`wmtest-orig.heic`、`wmtest-final.heic` 均正常解析尾部 UHDR 载荷（`mode="uhdr"`，`family="x7"`，`edr_scale=4.92610836`，`gain_map_max=[2.300448418 × 3]`，`apple_62` MD5 `70080171b2cd2bfec16d1ef5d017f876`）。
+- `xdremux-conformance compare-dump` 对 `wmtest-orig.heic` 与 `wmtest-final.heic` 给出完整结构变更：主图 `pitm` 从 `10081` 变为 `193`，`iinf` 从 `83` 项增至 `193` 项，新增 `111 (tmap)`、`110 (grid)` 与 `ftyp` 兼容品牌 `tmap, MiHE, miaf, MiHB`。
+
+### 5.2 实测发现的 3 处代码边界与不一致
+
+1. **`portrait.rs` 对包尾哈苏水印矩形把角点 `(x0, y0, x1, y1)` 误作宽高 `(x, y, w, h)`**（`已实测`样本 + `推断`影响）：
+   - 在 `wmtest-orig.heic` / `wmtest-final.heic`（主图 `4268×4420`，内嵌 `src.image` JPEG 实测 `4096×3072`）中，`watermark.master.params`（`45,117` B，`hassel_style_master_mode_1`）末尾 `len - 56`（字节 `45,061`）的哨兵 `0xffffffff` 后 4 个 float 为 **`[86.0, 674.0, 4182.0, 3746.0]`**。
+   - 算术核对：`4182 - 86 = 4096`（`src.image` 宽）、`3746 - 674 = 3072`（`src.image` 高），左右边框各 `86 px`（`86 + 4182 = 4268`）、上下边框各 `674 px`（`674 + 3746 = 4420`）。这与 `xdremux/rust/src/portrait.rs:675-679`（老扫描分支）及 `tests/conformance/src/portrait.rs:393-443` 注释一致：**该四元组为角点 `(x0, y0, x1, y1)`**。
+   - 但 `xdremux/rust/src/portrait.rs:581-594`（`hassel_end_content_rect`，处理 `hassel_style_4` / `hassel_style_master_mode_1`）直接返回 `Some((x, y, w, h))` 而未减去 `x`、`y`（仅因对称边框使 `x0 + x1 == primary_w` 与 `y0 + y1 == primary_h` 通过校验）；`xdremux/rust/src/portrait_tests.rs:143-145` 也断言了 `Some((136, 1082, 5064, 7642))`。下游 `PortraitPlacement::new`（`portrait.rs:701-710`）将其作为宽高并按 `canvas - cx/cy` 夹紧后，人像深度/遮罩区域会延伸至右下角水印边框边缘而非真实内嵌画面区域。
+
+2. **`motion_photo.rs` 扫描尾部 `jxrs["live.subVideo"]` 导致伪双流判定与 `split` 尾字节污染**（`已实测`）：
+   - 运行 `cargo run --manifest-path tests/motion-diff/Cargo.toml -- --json` 对 `IMG20261114172831.jpg` 与 `IMG20261114172818.jpg` 对拍：两者静态范围均一致判为 `0..3664008` 与 `0..3806800`，经 `standalone_bmff_length` 裁剪后的视频范围均一致判为 `3664008..7016584` 与 `3806800..7618097`；但 `xdremux` 均附带告警 `"note": "full video 3664008..9655339, raw primary ends 9335833"`（及 `3806800..10323795, raw primary ends 9983006`），`LibLivePhoto` 也给出 `OpaqueSuffix { source_index: 0, range: 7016584..9335833 }`。
+   - 原因：主 MP4 `moov` 含 `lpexLivePhotoExtension`（`"version": 1`），`motion_photo.rs:1264-1271` 通过 `ftyp_offsets` 同时扫描到了主 MP4 与 `jxrs` 末尾的辅流 `live.subVideo`（`ftypmp42` 位于 `@9,335,833` 与 `@9,983,006`），误置 `stream_count = 2`（`isDualStream = true`）并把 `primary_video_range`（`motion_photo.rs:1303-1321`）切至两处 `ftyp` 之间。
+   - `xdremux_make_live_photo`（`xdremux/rust/src/lib.rs:323`）因调用了 `standalone_bmff_length` 在 `moov + mdat` 后截断而未受污染；但 **`xdremux_motion_photo_split`（`lib.rs:258-264`）未调用 `standalone_bmff_length`**，会按 `asset.video_range` 与 `primary_video_range` 直接写出包含 `2.64 MB` 完整 `jxrs` 的 `.video.mp4` 及包含 `2.32~2.36 MB` 非视频 `jxrs` 载荷（含 `src.image` JPEG）的 `.primary.mp4`（相对 `docs/operations/current-status.md` §4.6 记录的"OPPO 约 2.6 KB 尾字节"，带 `src.image` 与 `live.subVideo` 的 Find X8 Ultra 样本尾污染实测达 `2.5+ MB`）。
+
+3. **`container.rs::rebuild_oppo_tail` 未同步刷新 `"private.emptyspace"`**（`推断`，读代码 `xdremux/rust/src/container.rs:58`、`L498-535`）：
+   - `WATERMARK_AUXILIARY_ENTRY_NAMES` 包含 `"private.emptyspace"`，而 `rebuild_oppo_tail` 对保留条目逐字节原样拷贝（`container.rs:503-504`）。当 `Watermark`、`Compact`、`PreserveWithoutPortrait`、`PreserveWithoutPrivateHdr` 等策略裁剪 `src.image` 或增益映射条目时，`"private.emptyspace"` 内的 4 字节大端总长仍保持原始文件尾长，写入新 HEIF 后会大于实际重建的 `jxrs` 尾块总长。
+
