@@ -39,6 +39,7 @@
 | [styles-pipeline.md](modules/styles-pipeline.md) | 风格管线 scaffold->assemble、引用图语义 |
 | [watermark-restore.md](modules/watermark-restore.md) | 水印恢复 API 与不变量 |
 | [portrait-pipeline.md](modules/portrait-pipeline.md) | 人像深度转换、disparity 标定现状 |
+| [photo-details.md](modules/photo-details.md) | 照片详情报告、OPPO 私有数据各字段的依据 |
 
 ## 应用（app/）
 

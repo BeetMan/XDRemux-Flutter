@@ -244,6 +244,17 @@ pub fn tail_entry_names(data: &[u8]) -> Vec<String> {
     }
 }
 
+/// The tail manifest as `(name, payload length)` pairs, in manifest order.
+pub fn tail_entries(data: &[u8]) -> Vec<(String, u64)> {
+    let Ok((_ext_start, ext)) = find_extension_region(data) else {
+        return Vec::new();
+    };
+    match parse_manifest(ext) {
+        Some((entries, _, _)) => entries.into_iter().map(|e| (e.name, e.length)).collect(),
+        None => Vec::new(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Extension region discovery
 // ---------------------------------------------------------------------------

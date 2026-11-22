@@ -15,6 +15,7 @@ pub mod live_photo;
 pub mod live_photo_styles;
 pub mod live_photo_bundle;
 pub mod motion_photo;
+pub mod oppo_details;
 pub mod photo_details;
 pub mod uhdr_jpeg;
 pub mod gainmap;

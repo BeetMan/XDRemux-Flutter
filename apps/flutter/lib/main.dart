@@ -6960,6 +6960,20 @@ class PhotoDetailsContent extends StatelessWidget {
                 ],
               ),
 
+              // OPPO private tail
+              if (details.oppo != null) ...[
+                const SizedBox(height: 12),
+                _buildSection(
+                  theme,
+                  icon: Icons.inventory_2_outlined,
+                  title: t('OPPO 私有数据', 'OPPO Private Data'),
+                  children: [
+                    for (final row in details.oppo!.rows())
+                      _detailRow(theme, row.label, row.value, selectable: row.selectable),
+                  ],
+                ),
+              ],
+
               // Motion Photo
               if (item.motionPhoto != null) ...[
                 const SizedBox(height: 12),
@@ -7205,6 +7219,10 @@ class PhotoDetailsContent extends StatelessWidget {
     }
     if (details.gainMapMax != null) {
       buffer.writeln('GainMap Max: +${details.gainMapMax!.toStringAsFixed(2)} EV');
+    }
+    if (details.oppo != null) {
+      buffer.writeln('--- ${t('OPPO 私有数据', 'OPPO Private Data')} ---');
+      buffer.writeln(details.oppo!.toClipboardText());
     }
     if (item.motionPhoto != null) {
       buffer.writeln('--- 实况/动态照片 ---');

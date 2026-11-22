@@ -4,6 +4,7 @@ library;
 import 'dart:io';
 
 import '../l10n/l10n.dart';
+import 'oppo_tail_details.dart';
 
 // ---------------------------------------------------------------------------
 // Enums (mirror Swift Family / OppoCompatibility / InputProcessingBranch)
@@ -986,6 +987,9 @@ class PhotoDetailsModel {
   final double? edrScale;
   final double? gainMapMax;
 
+  /// OPPO private tail data; `null` for a file without an OPPO tail.
+  final OppoTailDetails? oppo;
+
   const PhotoDetailsModel({
     required this.success,
     this.errorMessage,
@@ -1004,6 +1008,7 @@ class PhotoDetailsModel {
     this.hdrParseError,
     this.edrScale,
     this.gainMapMax,
+    this.oppo,
   });
 
   factory PhotoDetailsModel.fromJson(Map<String, dynamic> json) {
@@ -1025,6 +1030,7 @@ class PhotoDetailsModel {
       hdrParseError: json['hdrParseError'] as String?,
       edrScale: (json['edrScale'] as num?)?.toDouble(),
       gainMapMax: (json['gainMapMax'] as num?)?.toDouble(),
+      oppo: OppoTailDetails.fromJson(json['oppo']),
     );
   }
 

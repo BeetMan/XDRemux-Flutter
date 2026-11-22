@@ -80,7 +80,7 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 |---|---|
 | `xdremux_version` | 版本串（与 Cargo 一致） |
 | `xdremux_classify` / `xdremux_inspect` | 输入分类 / 结构检查 |
-| `xdremux_inspect_photo_details` | 照片详情 JSON（机型、光圈、快门、ISO 等拍摄参数与 HDR headroom） |
+| `xdremux_inspect_photo_details` | 照片详情 JSON（机型、光圈、快门、ISO 等拍摄参数与 HDR headroom；带 OPPO 尾部的文件多一个 `oppo` 对象，见 `modules/photo-details.md`） |
 | `xdremux_codec_capabilities` | 编码路径能力报告（是否链接 10-bit x265 等；`hevcEncoders` / `defaultHevcEncoder` 列出本二进制编入的 HEVC 编码器） |
 | `xdremux_set_hevc_encoder` | 进程级选择 HEVC 编码器（NULL 或空串恢复默认；本二进制没有该编码器时返回 false） |
 | `xdremux_huawei_inspect` | Huawei HDR / 人像 HEIC 只读识别与“无需转换”诊断（含 `xtstyle` 及 `huaweiPortrait` 的 `edof`、`auxC`、`auxl`、`RfDataB` 尺寸/字节形态；不做语义转换） |
