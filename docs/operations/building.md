@@ -5,13 +5,16 @@
 ## 1. Rust 核心（所有平台的地基）
 
 ```bash
-cargo build --release -p xdremux-core          # Windows/macOS/Linux 宿主
+cargo build --release -p xdremux-core          # Windows/Linux 宿主
+XDREMUX_HEVC_BACKEND=videotoolbox+x265 cargo build --release -p xdremux-core   # macOS（Flutter 版）
 cargo ndk -t arm64-v8a -o apps/flutter/android/app/src/main/jniLibs build --release -p xdremux-core   # Android
 xdremux/rust/build_ios.sh                        # iOS 真机（见脚本头注释，产物进 ios/Runner/Frameworks）
 xdremux/rust/build_ios_sim.sh                    # iOS 模拟器（同上，供模拟器/UI 验收用）
 bash xdremux/rust/build_ohos.sh                  # 鸿蒙（产物在仓库根 target/aarch64-unknown-linux-ohos/，
                                                  # 拷到 apps/flutter/ohos/entry/libs/arm64-v8a/）
 ```
+
+Flutter 版的 macOS 与 iOS 内核同时编入 VideoToolbox 和 x265（`build_ios.sh` / `build_ios_sim.sh` 默认就设了 `XDREMUX_HEVC_BACKEND=videotoolbox+x265`，`release.yml` 的 macOS 与 iOS job 同样如此）：设置里的「GPU 硬件编码」开启时 Dart 调 `xdremux_set_hevc_encoder("videotoolbox")`，关闭时选 `x265`，对所有转换、实况照片与回传生效。不带 VideoToolbox 的旧内核也能用，只是开关显示“不可用”。
 
 真机与模拟器的归档不能混用：Podfile 通过 `$HOME/xdremux_ios_libs` 强制链接，两个脚本都会覆盖同一份暂存目录，切回真机时重跑 `build_ios.sh` 即可（否则链接报 `building for 'iOS', but linking in object file ... built for 'iOS-simulator'`，反之亦然）。
 
@@ -23,7 +26,7 @@ x265 静态库由 `build.rs` 按平台自动链接，位置约定：
 | Android | `vendor/x265/build_android` | 必须静态（SELinux 禁子进程） |
 | iOS | `vendor/x265/build_ios` | `-DCMAKE_SYSTEM_NAME=iOS`，无汇编 |
 | macOS/Linux | `vendor/x265/build_desktop` | Linux 未装 nasm 时加 `-DENABLE_ASSEMBLY=OFF` |
-| 鸿蒙 | `vendor/x265/build_ohos` | DevEco NDK 交叉，关汇编；平台分支用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定 |
+| 鸿蒙 | `vendor/x265/build_ohos` | DevEco NDK 交叉，只开基础 ARM64 NEON（dotprod/i8mm/SVE 关闭，OHOS 下无运行时 CPU 检测；见 `docs/research/ohos-hw-hevc-20261115.md`）；平台分支用 `CARGO_CFG_TARGET_ENV == "ohos"` 判定 |
 
 `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`）。
 

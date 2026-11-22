@@ -14,7 +14,7 @@ fn main() {
     }
     let data = std::fs::read(&args[1]).expect("read file");
     let meta = xdremux_core::isobmff::parse_source_meta(&data).expect("parse meta");
-    
+
     println!("Primary item ID: {}", meta.primary_id);
     for e in &meta.ipma_entries {
         if e.item_id == 15 || e.item_id == 35 {

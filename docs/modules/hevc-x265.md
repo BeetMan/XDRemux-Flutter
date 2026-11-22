@@ -41,7 +41,7 @@
 - Android：`vendor/x265/build_android`（SELinux 禁止子进程，必须静态）
 - iOS：`build_ios.sh` / `build_ios_sim.sh`（交叉编译，无汇编；默认同时构建 `build_ios_10bit` / `build_ios_sim_10bit`）
 - 原生 Apple：`build_apple.sh`（XCFramework 切片）
-- 鸿蒙：`build_ohos.sh`（DevEco NDK 交叉；含 `build_ohos_10bit`）
+- 鸿蒙：`build_ohos.sh`（DevEco NDK 交叉；含 `build_ohos_10bit`；只开基础 ARM64 NEON，输出与关汇编时逐字节相同）
 - macOS/Linux：`vendor/x265/build_desktop`（10-bit：`build_desktop_10bit`）
 - 10-bit 在发布包中的状态：Android（`release.yml`）、iOS（`release.yml`）、鸿蒙为 10-bit；Linux 在 `ci.yml`、macOS 在 `apple-ci.yml` 中构建 10-bit；macOS / Windows 发布包仍 8-bit
 - `x265_helper.c` 以 C++ 编译（x265.h 用了 `bool`，MSVC C 模式没有）

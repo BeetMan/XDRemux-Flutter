@@ -7,6 +7,7 @@ Use this directory for tests and validation harnesses that compare converter beh
 Current layout:
 
 - `tests/conformance/` holds the conformance crate (`xdremux-conformance`) and `driver.py`. See `docs/testing/conformance-suite.md`.
+- `tests/motion-diff/` compares the core Motion Photo parser with LibLivePhoto. It is its own Cargo workspace, so normal builds and CI never fetch LibLivePhoto. See `docs/research/motion-photo-liblivephoto-diff-20261115.md`.
 - Real photos and golden corpora are not committed. Policy is in `fixtures/README.md`.
 
 App-specific tests live with each app. Flutter tests are in `apps/flutter/test/` (`flutter test`). Native Apple tests are in `apps/apple/Packages/XDRemuxKit/Tests/` (`swift test`; build the XCFramework first). Converter correctness tests belong in the Rust core or here, so they do not depend on any app layout.

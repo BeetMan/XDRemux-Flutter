@@ -78,6 +78,7 @@ Linux 使用 `workflow_call` 复用构建；tag 后缀用于资产命名，并�
 - Release 失败但 tag 已推：**先征得维护者同意再移动 tag**（v0.3.0 曾强移到修复提交）
 - v0.4.4：托管 macOS arm64 runner 容量不足，iOS job 排队 15 分钟后被判 `The job was not acquired by Runner of type hosted`，而 publish 当时只 gate windows+android，于是 Release 缺 iOS IPA。补救方式：本机用同一 Flutter/Xcode 线 `flutter build ipa --release --no-codesign`，校验 Dart FFI 符号后打包上传到已有 Release；同时给 publish 加上 macOS/iOS 成功门禁与产物校验（见 §3）。
 - v0.4.4：Windows ARM64 job 用 `architecture: arm64` 请求 Flutter SDK 会在 setup 阶段 4 秒失败（`Unable to determine Flutter version ... architecture: arm64`），说明上游没有该版本的 Windows ARM64 SDK；`continue-on-error` 保证不阻塞发布。
+- Flutter 3.50（AGP 9.3.1）：lint 32.3.1 自带的 intellij-core 调用 JDK 21 才有的 `List.removeLast()`，Android job 在 Temurin 17 上 `lintVitalAnalyzeRelease` 崩溃（`NoSuchMethodError`，预检 run `43480790620`）-> 改用 JDK 21（`58e1613`）。Google 在 AGP 9.3.2 修了这个崩溃；以后若退回 JDK 17，AGP 至少要 9.3.2。
 
 ## 5. 发版后验证
 

@@ -45,5 +45,7 @@
 
 - OPPO 真机动态照片尚未验证（上游真实 fixture 为私有，未随 git 分发）；
   OPPO 路径目前只有合成 fixture 覆盖，等采样计划 E 组到货后复跑本验证。
+  （2026-11-15 已由 `motion-photo-liblivephoto-diff-20261115.md` 用上游公开的
+  ColorOS 15/16 真机 fixture 和本机 OPPO 实况覆盖，结果一致。）
 - `motion_photo.rs` 未移植 LPEX 矩阵字段（EIS/crop matrices，Live Photo
   合成才需要），3a 阶段不影响。

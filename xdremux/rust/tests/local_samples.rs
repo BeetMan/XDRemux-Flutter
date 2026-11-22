@@ -5,7 +5,7 @@
 //! Outputs are written to a unique temporary directory and deleted on exit.
 
 use std::env;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -255,6 +255,19 @@ fn recognizes_huawei_motion_samples_when_available() {
                 assert!(metadata.video_id.is_some());
 
                 let still = &data[asset.still_range.start as usize..asset.still_range.end as usize];
+                let temp = TempOutputDir::new().expect("create temporary extraction directory");
+                let output_path = temp.path.join("extracted-still.heic");
+                let source_c = CString::new(sample.to_str().expect("UTF-8 sample path")).unwrap();
+                let output_c = CString::new(output_path.to_str().expect("UTF-8 output path")).unwrap();
+                let response = xdremux_core::xdremux_motion_photo_extract_still(
+                    source_c.as_ptr(), output_c.as_ptr());
+                assert!(!response.is_null(), "still extraction returned a null report");
+                let report: serde_json::Value = serde_json::from_str(
+                    unsafe { CStr::from_ptr(response) }.to_str().expect("UTF-8 report"))
+                    .expect("JSON extraction report");
+                xdremux_core::xdremux_free_string(response);
+                assert_eq!(report["success"], true, "{report}");
+                assert_eq!(fs::read(&output_path).expect("read extracted still"), still);
                 let (still_out, mov, content_id) = xdremux_core::live_photo::make_live_photo(
                     still,
                     &video[..clean_len],
@@ -490,6 +503,13 @@ fn remuxes_huawei_portrait_samples_when_available() {
             "{}: portrait graph lost after styles attach",
             sample.display()
         );
+        let verify_dir = TempOutputDir::new().expect("temporary verification directory");
+        let styles_path = verify_dir.path.join("portrait-styles.heic");
+        fs::write(&styles_path, &styles_only.0).expect("write styles verification sample");
+        let inspected = xdremux_core::photo_details::inspect_photo_details(&styles_path)
+            .expect("inspect grafted portrait output");
+        assert!(inspected.apple_photographic_styles,
+            "{}: styles graft was not recognized", sample.display());
         assert!(
             !styles_only.0.windows(texture_uri.len()).any(|w| w == texture_uri),
             "{}: styles-only output contains texture_styles",
@@ -828,7 +848,7 @@ fn inspect_apple_and_huawei_depth() {
         let meta = xdremux_core::isobmff::parse_source_meta(&bytes).expect("meta");
         let base_grid = meta.items.iter().find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"base")).unwrap();
         let edof_grid = meta.items.iter().find(|i| i.itype == "grid" && i.raw_infe.windows(4).any(|w| w == b"edof")).unwrap();
-        
+
         let base_tiles = meta.refs.iter().find(|r| r.rtype == "dimg" && r.from == base_grid.item_id).unwrap();
         let edof_tiles = meta.refs.iter().find(|r| r.rtype == "dimg" && r.from == edof_grid.item_id).unwrap();
 
@@ -867,7 +887,3 @@ fn inspect_apple_and_huawei_depth() {
         }
     }
 }
-
-
-
-

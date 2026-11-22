@@ -50,14 +50,39 @@ else
   NINJA=()
 fi
 
-echo "==> x265 (OHOS arm64-v8a, no assembly)"
-if [ ! -f vendor/x265/build_ohos/libx265.a ]; then
+# x265's ARM64 NEON code produces the same bitstream as its C code (only
+# x265's info SEI differs, and the container drops SEI) and encodes tiles
+# 1.4-2.3x faster per core; see docs/research/ohos-hw-hevc-20261115.md.
+# Plain NEON only: under the OHOS toolchain (CMAKE_SYSTEM_NAME=OHOS) x265 has
+# no run-time CPU detection, so any optional extension compiled in would run
+# unconditionally and crash phones without it. Never add CROSS_COMPILE_ARM64,
+# which compiles all of them in.
+# x265 assembles its .S files with a custom command that does not get the
+# toolchain's target, so clang built them for the host (Mach-O on macOS, x86
+# on Linux); the linker skipped them and the core shipped with its NEON
+# routines unresolved, so the app could not load it. ASM_FLAGS reaches that
+# command.
+X265_ARM64_FLAGS=(-DENABLE_ASSEMBLY=ON
+  -DENABLE_NEON_DOTPROD=OFF -DENABLE_NEON_I8MM=OFF
+  -DENABLE_SVE=OFF -DENABLE_SVE2=OFF -DENABLE_SVE2_BITPERM=OFF
+  "-DASM_FLAGS=--target=$LLVM_TARGET")
+
+# Configure a build directory that is new or was configured without these flags.
+x265_needs_configure() {
+  [ ! -f "$1/libx265.a" ] ||
+    ! grep -q '^ENABLE_ASSEMBLY:BOOL=ON$' "$1/CMakeCache.txt" 2>/dev/null ||
+    ! grep -q "^ASM_FLAGS:[A-Z]*=--target=$LLVM_TARGET\$" "$1/CMakeCache.txt" 2>/dev/null
+}
+
+echo "==> x265 (OHOS arm64-v8a, NEON)"
+if x265_needs_configure vendor/x265/build_ohos; then
+  rm -rf vendor/x265/build_ohos
   cmake -S vendor/x265/source -B vendor/x265/build_ohos \
     -G Ninja \
     ${NINJA[@]+"${NINJA[@]}"} \
     -DCMAKE_TOOLCHAIN_FILE="$NATIVE/build/cmake/ohos.toolchain.cmake" \
     -DOHOS_ARCH=arm64-v8a \
-    -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+    -DENABLE_SHARED=OFF -DENABLE_CLI=OFF "${X265_ARM64_FLAGS[@]}" \
     -DCMAKE_BUILD_TYPE=Release
 fi
 cmake --build vendor/x265/build_ohos --target x265-static -j
@@ -69,14 +94,15 @@ cp vendor/x265/build_ohos/x265_config.h vendor/x265/include/x265_config.h
 # to skip). EXPORT_C_API=OFF puts the objects in namespace x265_10bit so
 # build.rs can link this archive next to the 8-bit one.
 if [ "${XDREMUX_MAIN10:-1}" != "0" ]; then
-  echo "==> x265 10-bit (OHOS arm64-v8a, no assembly)"
-  if [ ! -f vendor/x265/build_ohos_10bit/libx265.a ]; then
+  echo "==> x265 10-bit (OHOS arm64-v8a, NEON)"
+  if x265_needs_configure vendor/x265/build_ohos_10bit; then
+    rm -rf vendor/x265/build_ohos_10bit
     cmake -S vendor/x265/source -B vendor/x265/build_ohos_10bit \
       -G Ninja \
       ${NINJA[@]+"${NINJA[@]}"} \
       -DCMAKE_TOOLCHAIN_FILE="$NATIVE/build/cmake/ohos.toolchain.cmake" \
       -DOHOS_ARCH=arm64-v8a \
-      -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_ASSEMBLY=OFF \
+      -DENABLE_SHARED=OFF -DENABLE_CLI=OFF "${X265_ARM64_FLAGS[@]}" \
       -DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF \
       -DCMAKE_BUILD_TYPE=Release
   fi
@@ -98,6 +124,20 @@ export CXXFLAGS_${TARGET_UNDERSCORE}="-target $LLVM_TARGET --sysroot=$SYSROOT -D
 export CARGO_TARGET_${TARGET_UPPER}_LINKER="$CLANGXX"
 export CARGO_TARGET_${TARGET_UPPER}_RUSTFLAGS="-C link-args=--target=$LLVM_TARGET -C link-args=--sysroot=$SYSROOT"
 
+# Unwind, not the workspace's release `panic = "abort"`: the exports catch
+# panics in src/ffi_guard.rs and return a failure value, but catch_unwind only
+# works when panics unwind. Other platforms keep the workspace default.
+export CARGO_PROFILE_RELEASE_PANIC=unwind
 cargo build --target "$TARGET" --release
+
+# A shared library may link with undefined symbols; the phone's loader then
+# refuses it (BIND_NOW) and the app reports the core as unavailable. No x265
+# routine may be left to the loader.
+CORE_SO="${CARGO_TARGET_DIR:-../../target}/$TARGET/release/libxdremux_core.so"
+UNRESOLVED_X265=$("$NATIVE/llvm/bin/llvm-nm" -D --undefined-only "$CORE_SO" | awk '$1 == "U" && $2 ~ /^_?x265_/ {print $2}')
+if [ -n "$UNRESOLVED_X265" ]; then
+  echo "error: $CORE_SO leaves $(printf '%s\n' "$UNRESOLVED_X265" | wc -l | tr -d ' ') x265 symbols unresolved, for example $(printf '%s\n' "$UNRESOLVED_X265" | head -1)" >&2
+  exit 1
+fi
 
 echo "==> done: target/$TARGET/release/libxdremux_core.so"

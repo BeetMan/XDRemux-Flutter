@@ -10,6 +10,7 @@ pub mod container;
 pub mod container_build;
 pub mod edr;
 pub mod exif;
+mod ffi_guard;
 pub mod live_photo;
 pub mod live_photo_styles;
 pub mod live_photo_bundle;
@@ -146,6 +147,10 @@ pub struct ConvertConfig {
 /// Returns an owned version string. Caller must free with `xdremux_free_string`.
 #[no_mangle]
 pub extern "C" fn xdremux_version() -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), xdremux_version_impl)
+}
+
+fn xdremux_version_impl() -> *mut c_char {
     match CString::new(env!("CARGO_PKG_VERSION")) {
         Ok(s) => s.into_raw(),
         Err(_) => ptr::null_mut(),
@@ -192,6 +197,10 @@ pub extern "C" fn xdremux_set_hevc_encoder(name: *const c_char) -> bool {
 /// `isMotionPhoto` plus the resolved still/video byte ranges when present.
 #[no_mangle]
 pub extern "C" fn xdremux_motion_photo_inspect(path: *const c_char) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || xdremux_motion_photo_inspect_impl(path))
+}
+
+fn xdremux_motion_photo_inspect_impl(path: *const c_char) -> *mut c_char {
     let result = (|| -> Result<serde_json::Value, String> {
         if path.is_null() {
             return Err("path is missing".into());
@@ -222,6 +231,13 @@ pub extern "C" fn xdremux_motion_photo_inspect(path: *const c_char) -> *mut c_ch
 /// Returns a JSON report with the written paths and asset metadata.
 #[no_mangle]
 pub extern "C" fn xdremux_motion_photo_split(
+    path: *const c_char,
+    out_dir: *const c_char,
+) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || xdremux_motion_photo_split_impl(path, out_dir))
+}
+
+fn xdremux_motion_photo_split_impl(
     path: *const c_char,
     out_dir: *const c_char,
 ) -> *mut c_char {
@@ -291,6 +307,47 @@ pub extern "C" fn xdremux_motion_photo_split(
     }
 }
 
+/// Write only the still range of a Motion Photo to a distinct output path.
+/// This avoids carrying the appended video into a standalone HEIC export.
+#[no_mangle]
+pub extern "C" fn xdremux_motion_photo_extract_still(
+    path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || {
+        xdremux_motion_photo_extract_still_impl(path, output_path)
+    })
+}
+
+fn xdremux_motion_photo_extract_still_impl(
+    path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> Result<serde_json::Value, String> {
+        if path.is_null() || output_path.is_null() {
+            return Err("path/output_path is missing".into());
+        }
+        let path = unsafe { CStr::from_ptr(path) }
+            .to_str().map_err(|_| "path is not valid UTF-8".to_string())?;
+        let output_path = unsafe { CStr::from_ptr(output_path) }
+            .to_str().map_err(|_| "output_path is not valid UTF-8".to_string())?;
+        if path == output_path {
+            return Err("input and output paths must differ".into());
+        }
+        let data = std::fs::read(path).map_err(|e| format!("cannot read photo: {e}"))?;
+        let asset = motion_photo::parse_motion_photo(&data)?
+            .ok_or("photo is not a Motion Photo")?;
+        let still = &data[asset.still_range.start as usize..asset.still_range.end as usize];
+        std::fs::write(output_path, still).map_err(|e| format!("write still: {e}"))?;
+        Ok(serde_json::json!({ "success": true, "stillBytes": still.len() }))
+    })();
+    let payload = match result {
+        Ok(value) => value,
+        Err(error) => serde_json::json!({ "success": false, "errorMessage": error }),
+    };
+    CString::new(payload.to_string()).map_or(ptr::null_mut(), CString::into_raw)
+}
+
 /// Compose an Apple Live Photo pair from a converted HEIC still and the
 /// original Motion Photo source (its video range and OPPO LPEX metadata are
 /// read from the source; the high-quality primary stream is used for
@@ -303,6 +360,16 @@ pub extern "C" fn xdremux_motion_photo_split(
 /// and `errorMessage` says so. The source and still are never written.
 #[no_mangle]
 pub extern "C" fn xdremux_make_live_photo(
+    source_path: *const c_char,
+    still_path: *const c_char,
+    out_dir: *const c_char,
+) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || {
+        xdremux_make_live_photo_impl(source_path, still_path, out_dir)
+    })
+}
+
+fn xdremux_make_live_photo_impl(
     source_path: *const c_char,
     still_path: *const c_char,
     out_dir: *const c_char,
@@ -394,6 +461,10 @@ pub extern "C" fn xdremux_make_live_photo(
 /// and HDR headroom. Free the returned pointer with `xdremux_free_string`.
 #[no_mangle]
 pub extern "C" fn xdremux_inspect_photo_details(path: *const c_char) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || xdremux_inspect_photo_details_impl(path))
+}
+
+fn xdremux_inspect_photo_details_impl(path: *const c_char) -> *mut c_char {
     let result = (|| -> Result<serde_json::Value, String> {
         if path.is_null() {
             return Err("path is missing".into());
@@ -482,6 +553,13 @@ pub extern "C" fn xdremux_style_experiment(
 /// (their content identifiers match). Returns 1 when the pair is valid.
 #[no_mangle]
 pub extern "C" fn xdremux_live_photo_pair_valid(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+) -> u8 {
+    ffi_guard::catch_or(0, || xdremux_live_photo_pair_valid_impl(still_path, mov_path))
+}
+
+fn xdremux_live_photo_pair_valid_impl(
     still_path: *const c_char,
     mov_path: *const c_char,
 ) -> u8 {
@@ -591,6 +669,16 @@ pub extern "C" fn xdremux_make_live_photo_bundle(
     mov_path: *const c_char,
     bundle_path: *const c_char,
 ) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || {
+        xdremux_make_live_photo_bundle_impl(still_path, mov_path, bundle_path)
+    })
+}
+
+fn xdremux_make_live_photo_bundle_impl(
+    still_path: *const c_char,
+    mov_path: *const c_char,
+    bundle_path: *const c_char,
+) -> *mut c_char {
     let result = (|| -> Result<serde_json::Value, String> {
         if still_path.is_null() || mov_path.is_null() || bundle_path.is_null() {
             return Err("still/mov/bundle path is missing".into());
@@ -644,6 +732,13 @@ pub extern "C" fn xdremux_live_photo_bundle_valid(bundle_path: *const c_char) ->
 /// existing converted HEIC (post-process). Returns 1 on success, 0 on failure.
 #[no_mangle]
 pub extern "C" fn xdremux_inject_semantic_mattes(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> u8 {
+    ffi_guard::catch_or(0, || xdremux_inject_semantic_mattes_impl(input_path, output_path))
+}
+
+fn xdremux_inject_semantic_mattes_impl(
     input_path: *const c_char,
     output_path: *const c_char,
 ) -> u8 {
@@ -714,6 +809,17 @@ pub extern "C" fn xdremux_attach_style_layers(
     grain_seed: u64,
     flags: u32,
 ) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || {
+        xdremux_attach_style_layers_impl(input_path, output_path, grain_seed, flags)
+    })
+}
+
+fn xdremux_attach_style_layers_impl(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+    flags: u32,
+) -> *mut c_char {
     let result = (|| -> Result<String, String> {
         let read = |p: *const c_char| -> Option<String> {
             unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
@@ -767,6 +873,16 @@ pub extern "C" fn xdremux_inject_texture_styles(
     output_path: *const c_char,
     grain_seed: u64,
 ) -> u8 {
+    ffi_guard::catch_or(0, || {
+        xdremux_inject_texture_styles_impl(input_path, output_path, grain_seed)
+    })
+}
+
+fn xdremux_inject_texture_styles_impl(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    grain_seed: u64,
+) -> u8 {
     let result = (|| -> Option<()> {
         let read = |p: *const c_char| -> Option<String> {
             unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_string())
@@ -786,6 +902,10 @@ pub extern "C" fn xdremux_inject_texture_styles(
 /// and never transforms or rewrites the source file.
 #[no_mangle]
 pub extern "C" fn xdremux_diagnose_portrait(input_path: *const c_char) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || xdremux_diagnose_portrait_impl(input_path))
+}
+
+fn xdremux_diagnose_portrait_impl(input_path: *const c_char) -> *mut c_char {
     let report = if input_path.is_null() {
         serde_json::json!({
             "schema": "xdremux-portrait-depth-diagnostic-v1",
@@ -1131,6 +1251,12 @@ pub(crate) fn extract_lhdr_or_uhdr_from_bytes(
 /// container when it is a ProXDR HEIC or Ultra HDR JPEG.
 #[no_mangle]
 pub extern "C" fn xdremux_classify(input_path: *const c_char) -> ClassificationResult {
+    ffi_guard::catch_or_else(ffi_guard::classification_panicked, || {
+        xdremux_classify_impl(input_path)
+    })
+}
+
+fn xdremux_classify_impl(input_path: *const c_char) -> ClassificationResult {
     let (path, data) = if input_path.is_null() {
         (String::new(), None)
     } else {
@@ -1190,6 +1316,10 @@ pub extern "C" fn xdremux_free_classification_result(result: ClassificationResul
 /// The returned JSON is owned and must be released with `xdremux_free_string`.
 #[no_mangle]
 pub extern "C" fn xdremux_huawei_inspect(input_path: *const c_char) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || xdremux_huawei_inspect_impl(input_path))
+}
+
+fn xdremux_huawei_inspect_impl(input_path: *const c_char) -> *mut c_char {
     let report = std::panic::catch_unwind(|| {
         if input_path.is_null() {
             serde_json::json!({
@@ -1247,6 +1377,15 @@ pub extern "C" fn xdremux_huawei_inspect(input_path: *const c_char) -> *mut c_ch
 /// The returned string is owned and must be released with `xdremux_free_string`.
 #[no_mangle]
 pub extern "C" fn xdremux_remux_huawei_portrait(
+    input_path: *const c_char,
+    output_path: *const c_char,
+) -> *mut c_char {
+    ffi_guard::catch_or(ptr::null_mut(), || {
+        xdremux_remux_huawei_portrait_impl(input_path, output_path)
+    })
+}
+
+fn xdremux_remux_huawei_portrait_impl(
     input_path: *const c_char,
     output_path: *const c_char,
 ) -> *mut c_char {
@@ -1540,6 +1679,18 @@ pub extern "C" fn xdremux_convert(
     output_path: *const c_char,
     config: *const ConvertConfig,
 ) -> ConversionResult {
+    // On panic, conversion_panicked also detaches this thread's progress handle.
+    ffi_guard::catch_or_else(ffi_guard::conversion_panicked, || {
+        xdremux_convert_legacy_impl(input_path, output_path, config)
+    })
+}
+
+// Not `xdremux_convert_impl`: that is the body both convert exports share.
+fn xdremux_convert_legacy_impl(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+) -> ConversionResult {
     // Legacy path: own a progress slot for this thread so the plain
     // `xdremux_read_progress` view tracks this conversion.
     progress::begin_progress();
@@ -1553,6 +1704,18 @@ pub extern "C" fn xdremux_convert(
 /// duration; the caller keeps ownership and releases it after polling.
 #[no_mangle]
 pub extern "C" fn xdremux_convert_with_progress(
+    input_path: *const c_char,
+    output_path: *const c_char,
+    config: *const ConvertConfig,
+    handle: u32,
+) -> ConversionResult {
+    // On panic, conversion_panicked also detaches this thread's progress handle.
+    ffi_guard::catch_or_else(ffi_guard::conversion_panicked, || {
+        xdremux_convert_with_progress_impl(input_path, output_path, config, handle)
+    })
+}
+
+fn xdremux_convert_with_progress_impl(
     input_path: *const c_char,
     output_path: *const c_char,
     config: *const ConvertConfig,
@@ -2656,6 +2819,10 @@ pub extern "C" fn xdremux_verify_output(path: *const c_char) -> bool {
 /// final authority for edit behaviour.
 #[no_mangle]
 pub extern "C" fn xdremux_verify_styles_output(path: *const c_char) -> bool {
+    ffi_guard::catch_or(false, || xdremux_verify_styles_output_impl(path))
+}
+
+fn xdremux_verify_styles_output_impl(path: *const c_char) -> bool {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(s) => s,
         Err(_) => return false,
@@ -2682,6 +2849,10 @@ pub fn huawei_portrait_output_ok(data: &[u8]) -> bool {
 /// final authority for rendering the editable depth effect.
 #[no_mangle]
 pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
+    ffi_guard::catch_or(false, || xdremux_verify_portrait_output_impl(path))
+}
+
+fn xdremux_verify_portrait_output_impl(path: *const c_char) -> bool {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(s) => s,
         Err(_) => return false,
@@ -2696,6 +2867,10 @@ pub extern "C" fn xdremux_verify_portrait_output(path: *const c_char) -> bool {
 /// Huawei portrait check used by the app. See [`huawei_portrait_output_ok`].
 #[no_mangle]
 pub extern "C" fn xdremux_verify_huawei_portrait_output(path: *const c_char) -> bool {
+    ffi_guard::catch_or(false, || xdremux_verify_huawei_portrait_output_impl(path))
+}
+
+fn xdremux_verify_huawei_portrait_output_impl(path: *const c_char) -> bool {
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(s) => s,
         Err(_) => return false,

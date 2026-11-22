@@ -138,6 +138,13 @@ char *xdremux_motion_photo_split(const char *path,
                                  const char *out_dir);
 
 /**
+ * Write only the still range of a Motion Photo to a distinct output path.
+ * This avoids carrying the appended video into a standalone HEIC export.
+ */
+char *xdremux_motion_photo_extract_still(const char *path,
+                                         const char *output_path);
+
+/**
  * Compose an Apple Live Photo pair from a converted HEIC still and the
  * original Motion Photo source (its video range and OPPO LPEX metadata are
  * read from the source; the high-quality primary stream is used for

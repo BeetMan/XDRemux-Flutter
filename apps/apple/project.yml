@@ -19,7 +19,7 @@ settings:
     # Build number for both the app and the Share Extension. App Store Connect
     # wants it to grow with every upload; tools/apple/upload_testflight.sh can
     # override it per upload (XDREMUX_BUILD_NO).
-    CURRENT_PROJECT_VERSION: "4"
+    CURRENT_PROJECT_VERSION: "8"
 packages:
   XDRemuxKit:
     path: Packages/XDRemuxKit

@@ -21,7 +21,6 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		C1D2E3F4051627384A5B6C7D /* HeicThumbnailRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F4051627384A5B6C7E /* HeicThumbnailRenderer.swift */; };
 		D001B97A5C62A1F0406A1775 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 996E22F8B3B618EF07C36447 /* Pods_RunnerTests.framework */; };
-		D1E2F3041526374859A6B7C8 /* VideoToolboxHevcEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */; };
 		D1E2F3041526374870AABB01 /* ApplePrivateAbiProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */; };
 		D1E2F3041526374880BBCC03 /* PortraitDepthDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374880BBCC04 /* PortraitDepthDiagnostics.swift */; };
 		D1E2F3041526374880BBCC05 /* PortraitCalibrationResearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3041526374880BBCC06 /* PortraitCalibrationResearch.swift */; };
@@ -103,7 +102,6 @@
 		9B45E196E9EC5D8A5BBF85B6 /* AppleReturnedPhotoWritebackBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleReturnedPhotoWritebackBridge.swift; path = AppleReturnedPhotoWritebackBridge.swift; sourceTree = "<group>"; };
 		BB235B5143A503CF5BB93DC6 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		C1D2E3F4051627384A5B6C7E /* HeicThumbnailRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeicThumbnailRenderer.swift; sourceTree = "<group>"; };
-		D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoToolboxHevcEncoder.swift; sourceTree = "<group>"; };
 		D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePrivateAbiProbe.swift; sourceTree = "<group>"; };
 		D1E2F3041526374880BBCC04 /* PortraitDepthDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitDepthDiagnostics.swift; sourceTree = "<group>"; };
 		D1E2F3041526374880BBCC06 /* PortraitCalibrationResearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitCalibrationResearch.swift; sourceTree = "<group>"; };
@@ -226,7 +224,6 @@
 				1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */,
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
-				D1E2F3041526374859A6B7C9 /* VideoToolboxHevcEncoder.swift */,
 				D1E2F3041526374870AABB02 /* ApplePrivateAbiProbe.swift */,
 				D1E2F3041526374880BBCC04 /* PortraitDepthDiagnostics.swift */,
 				D1E2F3041526374880BBCC06 /* PortraitCalibrationResearch.swift */,
@@ -531,7 +528,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
-				D1E2F3041526374859A6B7C8 /* VideoToolboxHevcEncoder.swift in Sources */,
 				D1E2F3041526374870AABB01 /* ApplePrivateAbiProbe.swift in Sources */,
 				D1E2F3041526374880BBCC03 /* PortraitDepthDiagnostics.swift in Sources */,
 				D1E2F3041526374880BBCC05 /* PortraitCalibrationResearch.swift in Sources */,
