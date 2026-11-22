@@ -36,6 +36,10 @@ class MotionPhotoService {
       }
     }
     final temp = await getTemporaryDirectory();
+    // On macOS this is ~/Library/Caches/<bundle id>, which need not exist
+    // (nothing else may have created it yet, or caches were cleared), and
+    // createTemp does not create missing parents.
+    await temp.create(recursive: true);
     final staging = await temp.createTemp('xdremux-live-');
     try {
       final report = await Isolate.run(
@@ -48,17 +52,19 @@ class MotionPhotoService {
       }
       final still = report['stillPath'] as String?;
       final movie = report['videoPath'] as String?;
+      // Rust checked the pair before writing it and read both files back
+      // before reporting success, so there is nothing left to validate here.
       if (still == null ||
           movie == null ||
           !File(still).existsSync() ||
-          !File(movie).existsSync() ||
-          !XdRemuxFFI.livePhotoPairValid(still, movie)) {
-        throw StateError('Live Photo pair is missing or invalid');
+          !File(movie).existsSync()) {
+        throw StateError('Live Photo pair is missing');
       }
       if (bundle) {
         final bundlePath = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.pvt');
-        // Rust re-verifies the pair and swaps the bundle in atomically; a
-        // retry replaces the previous bundle of the same name.
+        // Rust re-checks the pair, swaps the bundle in and reads it back; if
+        // that check fails it restores the previous bundle. A retry replaces
+        // the previous bundle of the same name.
         final report = await Isolate.run(
           () => XdRemuxFFI.makeLivePhotoBundle(still, movie, bundlePath),
         );
@@ -68,25 +74,62 @@ class MotionPhotoService {
             '${report['errorMessage'] ?? 'Live Photo bundle failed'}',
           );
         }
-        if (!XdRemuxFFI.livePhotoBundleValid(bundlePath)) {
-          throw StateError('Exported Live Photo bundle failed verification');
-        }
         // The converted still now lives inside the bundle (with the pairing
-        // MakerNote); drop the unpaired intermediate copy.
-        if (File(outputPath).existsSync()) await File(outputPath).delete();
+        // MakerNote); drop the unpaired intermediate copy. The bundle is
+        // already published, so failing to delete must not fail the item.
+        try {
+          if (File(outputPath).existsSync()) await File(outputPath).delete();
+        } catch (e) {
+          debugPrint('[XDRemux][motion] could not remove $outputPath: $e');
+        }
         return bundledStill;
       }
-      // A retry replaces the sibling MOV, rather than creating a numbered
-      // file that checkpoint restoration would not be able to locate.
-      await File(movie).copy(movTarget);
-      await File(still).copy(outputPath);
-      if (!XdRemuxFFI.livePhotoPairValid(outputPath, movTarget)) {
-        throw StateError('Exported Live Photo pair failed verification');
+      // Rust copies the pair over the converted still and its sibling MOV,
+      // reads both back and checks them before reporting success; on failure
+      // it removes what it wrote and puts the converted still back. A retry
+      // replaces the sibling MOV, rather than creating a numbered file that
+      // checkpoint restoration would not be able to locate.
+      final published = await Isolate.run(
+        () => XdRemuxFFI.publishLivePhotoPair(
+          still,
+          movie,
+          outputPath,
+          movTarget,
+          replace: true,
+        ),
+      );
+      if (published['success'] != true) {
+        throw StateError(
+          '${published['errorMessage'] ?? 'Live Photo publication failed'}',
+        );
       }
       return outputPath;
     } finally {
-      await staging.delete(recursive: true);
+      // Published or not, a leftover staging directory only wastes space in
+      // the temporary folder; it must not change the item's result.
+      try {
+        await staging.delete(recursive: true);
+      } catch (e) {
+        debugPrint('[XDRemux][motion] could not remove ${staging.path}: $e');
+      }
     }
+  }
+
+  /// The flat Live Photo MOV next to [outputPath] when it pairs with the
+  /// still there, else null. Converting the item again replaces that still,
+  /// so its MOV would stay behind unpaired. A MOV that does not pair with the
+  /// still is not this item's to delete.
+  static Future<String?> pairedMovieOf(String outputPath) async {
+    final movie = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.mov');
+    if (movie == outputPath ||
+        !File(outputPath).existsSync() ||
+        !File(movie).existsSync()) {
+      return null;
+    }
+    final paired = await Isolate.run(
+      () => XdRemuxFFI.livePhotoPairValid(outputPath, movie),
+    );
+    return paired ? movie : null;
   }
 
   /// Inspect [path] and return a summary when it is a Motion Photo.

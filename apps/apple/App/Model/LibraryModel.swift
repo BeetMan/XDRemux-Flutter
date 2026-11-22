@@ -436,7 +436,9 @@ final class LibraryModel {
         } catch {
             update(id) { item in
                 item.thumbnail = thumbnail
-                if !keepState || item.state == .inspecting { item.state = .failed(L("读取失败：\(String(describing: error))")) }
+                if !keepState || item.state == .inspecting {
+                    item.state = .failed(L("读取失败：\(Self.readableError(error))"))
+                }
             }
         }
     }
@@ -492,7 +494,7 @@ final class LibraryModel {
             } catch let error as ConversionJobError {
                 self?.update(id) { $0.state = .failed(Self.describe(error)) }
             } catch {
-                self?.update(id) { $0.state = .failed(String(describing: error)) }
+                self?.update(id) { $0.state = .failed(Self.readableError(error)) }
             }
         }
         conversionTasks[id] = task
@@ -717,7 +719,11 @@ final class LibraryModel {
         body(&items[index])
     }
 
-    private static func describe(_ error: ConversionJobError) -> String {
+    static func readableError(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+    }
+
+    static func describe(_ error: ConversionJobError) -> String {
         switch error {
         case .coreFailed(let message): return message ?? L("内核未给出原因")
         case .verificationFailed: return L("输出未通过结构校验，已丢弃")
