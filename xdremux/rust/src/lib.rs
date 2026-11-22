@@ -270,15 +270,33 @@ fn xdremux_motion_photo_split_impl(
             .map_err(|e| format!("write {name}: {e}"))?;
             Ok(dest)
         };
+        let trim_bmff = |range: motion_photo::ByteRange| -> motion_photo::ByteRange {
+            let start = range.start as usize;
+            let end = range.end as usize;
+            if start < end && end <= data.len() {
+                if let Ok(len) = motion_photo::standalone_bmff_length(&data[start..end]) {
+                    if len > 0 {
+                        return motion_photo::ByteRange {
+                            start: range.start,
+                            end: range.start + len as u64,
+                        };
+                    }
+                }
+            }
+            range
+        };
         let still_path = write_range(asset.still_range, &format!("{stem}.still.{still_ext}"))?;
-        let video_path = write_range(asset.video_range, &format!("{stem}.video.mp4"))?;
-        let primary = motion_photo::primary_video_range(&data, &asset);
-        let primary_path = if primary != asset.video_range {
+        let video_range = trim_bmff(asset.video_range);
+        let video_path = write_range(video_range, &format!("{stem}.video.mp4"))?;
+        let primary = trim_bmff(motion_photo::primary_video_range(&data, &asset));
+        let primary_path = if primary != video_range {
             Some(write_range(primary, &format!("{stem}.primary.mp4"))?)
         } else {
             None
         };
         let mut report = asset.to_json();
+        report["videoStart"] = video_range.start.into();
+        report["videoEnd"] = video_range.end.into();
         report["success"] = true.into();
         report["stillPath"] = still_path.into();
         report["videoPath"] = video_path.into();
@@ -4005,6 +4023,84 @@ mod tests {
             "uri item named styleMetadata must pass"
         );
         assert!(verify_iso_gain_map(&data));
+    }
+
+    #[test]
+    fn motion_photo_split_trims_trailing_jxrs_and_avoids_duplicate_primary() {
+        fn bmff_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+            let mut v = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
+            v.extend_from_slice(kind);
+            v.extend_from_slice(payload);
+            v
+        }
+        fn mp4_stream(mdat_body: &[u8], lpex_json: Option<&[u8]>) -> Vec<u8> {
+            let mut v = Vec::new();
+            let ftyp = b"mp42\0\0\0\0isommp42";
+            v.extend_from_slice(&bmff_box(b"ftyp", ftyp));
+            let mut moov_payload = Vec::new();
+            if let Some(lpex) = lpex_json {
+                moov_payload.extend_from_slice(b"lpexLivePhotoExtension");
+                moov_payload.extend_from_slice(lpex);
+            }
+            v.extend_from_slice(&bmff_box(b"moov", &moov_payload));
+            v.extend_from_slice(&bmff_box(b"mdat", mdat_body));
+            v
+        }
+
+        let main_mp4 = mp4_stream(
+            b"main-video-payload",
+            Some(br#"{"version":1,"coverFramePts":1268130,"videoSize":[1728,1296]}"#),
+        );
+        let sub_mp4 = mp4_stream(b"sub-video", None);
+        let src_jpg = [0xFF, 0xD8, 0x11, 0x22, 0xFF, 0xD9];
+        let mut jxrs_tail = Vec::new();
+        jxrs_tail.extend_from_slice(&src_jpg);
+        jxrs_tail.extend_from_slice(&sub_mp4);
+        let payload_len = jxrs_tail.len();
+        let manifest = format!(
+            r#"[{{"name":"src.image","offset":{payload_len},"length":{},"version":1}},{{"name":"live.subVideo","offset":{},"length":{},"version":1}}]"#,
+            src_jpg.len(),
+            sub_mp4.len(),
+            sub_mp4.len()
+        );
+        jxrs_tail.extend_from_slice(manifest.as_bytes());
+        jxrs_tail.push(0);
+        let tail_len = (manifest.len() + 9) as u32;
+        jxrs_tail.extend_from_slice(b"jxrs");
+        jxrs_tail.extend_from_slice(&tail_len.to_le_bytes());
+
+        let video_len = main_mp4.len() + jxrs_tail.len();
+        let xmp = format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:GCamera="http://ns.google.com/photos/1.0/camera/" xmlns:OpCamera="http://com.oppo/camera" GCamera:MotionPhoto="1" GCamera:MotionPhotoVersion="1" OpCamera:VideoLength="{}"><Container:Directory><rdf:Seq><rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary" Item:Length="0" Item:Padding="0"/></rdf:li><rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="{video_len}" Item:Padding="0"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>"#,
+            main_mp4.len()
+        );
+        let mut file_bytes = vec![0xFF, 0xD8, 0xAA, 0xBB, 0xFF, 0xD9];
+        file_bytes.extend_from_slice(xmp.as_bytes());
+        file_bytes.extend_from_slice(&main_mp4);
+        file_bytes.extend_from_slice(&jxrs_tail);
+
+        let dir = std::env::temp_dir().join(format!("xdremux_split_trim_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let input_path = dir.join("sample.jpg");
+        std::fs::write(&input_path, &file_bytes).unwrap();
+
+        let c_in = CString::new(input_path.to_str().unwrap()).unwrap();
+        let c_out = CString::new(dir.to_str().unwrap()).unwrap();
+        let raw_ptr = xdremux_motion_photo_split(c_in.as_ptr(), c_out.as_ptr());
+        let json_str = unsafe { CStr::from_ptr(raw_ptr) }.to_string_lossy().into_owned();
+        xdremux_free_string(raw_ptr);
+
+        let report: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(report["success"], true);
+        assert!(report["primaryVideoPath"].is_null(), "{report}");
+        let reported_video_len =
+            report["videoEnd"].as_u64().unwrap() - report["videoStart"].as_u64().unwrap();
+        assert_eq!(reported_video_len, main_mp4.len() as u64);
+        let exported_video = std::fs::read(report["videoPath"].as_str().unwrap()).unwrap();
+        assert_eq!(exported_video, main_mp4);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Real-photo conversions live in `tests/local_samples.rs`. They are

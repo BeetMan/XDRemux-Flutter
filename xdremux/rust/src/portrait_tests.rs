@@ -209,6 +209,19 @@ fn master_mode_end_rect_matches_the_observed_frames() {
 }
 
 #[test]
+fn landscape_master_mode_end_rect_places_auxiliaries_inside_picture() {
+    let tail = framed_watermark(
+        "hassel_style_master_mode_1",
+        45117,
+        [3746., 4210., 4420., 0., 0., 0., 86., 674., 4182., 3746., 86., 674., 4182., 3746.],
+    );
+    let rect = parse_watermark_rect(&tail, (4268, 4420), (4096, 3072), 1, None);
+    assert_eq!(rect, Some((86, 674, 4096, 3072)));
+    let placement = PortraitPlacement::new((4268, 4420), rect, (1024, 768));
+    assert_eq!(placement.content, (43, 337, 2048, 1536));
+}
+
+#[test]
 fn framed_content_rect_keeps_auxiliaries_off_the_frame() {
     let tail = framed_watermark("hassel_style_master_mode_1", 6492, FRAMED_3244);
     let rect = parse_watermark_rect(&tail, (3244, 5444), (4096, 3072), 6, None);
