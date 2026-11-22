@@ -3,4 +3,7 @@
 module XDRemuxCoreC {
     header "xdremux_core.h"
     export *
+    link framework "AVFoundation"
+    link framework "CoreGraphics"
+    link framework "CoreImage"
 }

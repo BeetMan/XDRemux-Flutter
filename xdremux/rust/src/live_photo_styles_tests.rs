@@ -1,4 +1,5 @@
 use super::*;
+use crate::linear_thumbnail::MovieLinearThumbnail;
 
 const CID: &str = "01234567-89AB-4DEF-8DEF-0123456789AB";
 
@@ -79,6 +80,18 @@ fn fake_thumbnail(
     }
 }
 
+fn attach_still(
+    mov: &[u8],
+    styles: &StillStyles,
+    level: MovieStyleLevel,
+    thumbnail: impl FnOnce(u32, u32, u32) -> Result<MovieLinearThumbnail, String>,
+) -> Result<Vec<u8>, String> {
+    attach_with(mov, styles, level, |video, _, w, h| {
+        let thumbnail = thumbnail((4 - video.display_cw_quarter_turns()) % 4, w, h)?;
+        Ok(StyleFrames::from_still(thumbnail, styles, level, video.durations.len()))
+    })
+}
+
 fn moov_of(mov: &[u8]) -> &[u8] {
     let top = scan_boxes(mov, 0, mov.len()).unwrap();
     let b = top.iter().find(|b| &b.kind == b"moov").unwrap();
@@ -105,6 +118,45 @@ fn chunk_offset(moov: &[u8], trak: &MovBox) -> usize {
     let stco = direct_child(moov, &stbl, b"stco").unwrap();
     let at = stco.payload_offset() + 8;
     u32::from_be_bytes(moov[at..at + 4].try_into().unwrap()) as usize
+}
+
+#[test]
+fn variable_size_companion_samples_follow_presentation_timing() {
+    let mov = paired_movie();
+    let styles = styles(false);
+    let packets = [b"first".to_vec(), b"2".to_vec(), b"last".to_vec()];
+    let out = attach_with(&mov, &styles, MovieStyleLevel::Info, |video, _, _, _| {
+        video.durations = vec![2_700, 3_300, 3_000];
+        video.first_frame_offset = 250;
+        Ok(StyleFrames {
+            thumbnails: TrackSamples::individual(packets.clone()),
+            hvcc: vec![1, 2, 3],
+            matrix: 9,
+            info: Some(TrackSamples::individual(packets.iter().map(|p| mebx_sample(p)))),
+        })
+    }).unwrap();
+
+    let moov = moov_of(&out);
+    let tracks = traks(moov);
+    for (track, samples) in [
+        (&tracks[2], packets.to_vec()),
+        (&tracks[4], packets.iter().map(|p| mebx_sample(p)).collect()),
+    ] {
+        let mdia = direct_child(moov, track, b"mdia").unwrap();
+        let minf = direct_child(moov, &mdia, b"minf").unwrap();
+        let stbl = direct_child(moov, &minf, b"stbl").unwrap();
+        let stsz = direct_child(moov, &stbl, b"stsz").unwrap();
+        let words: Vec<usize> = moov[stsz.payload_offset() + 4..stsz.end()]
+            .chunks_exact(4).map(be).collect();
+        assert_eq!(words, [vec![0, 3], samples.iter().map(Vec::len).collect()].concat());
+        let at = chunk_offset(moov, track);
+        let data = samples.concat();
+        assert_eq!(&out[at..at + data.len()], &data);
+        assert_eq!(
+            sample_pts_seconds(moov, track).unwrap(),
+            [250, 2_950, 6_250].map(|tick| tick as f64 / 90_000.0),
+        );
+    }
 }
 
 #[test]
@@ -149,7 +201,7 @@ fn bplist_reader_round_trips_writer_output() {
 fn off_level_returns_movie_unchanged() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
-    let out = attach_with(&mov, &styles(true), MovieStyleLevel::Off, fake_thumbnail(&seen)).unwrap();
+    let out = attach_still(&mov, &styles(true), MovieStyleLevel::Off, fake_thumbnail(&seen)).unwrap();
     assert_eq!(out, mov);
     assert!(seen.get().is_none());
 }
@@ -159,7 +211,7 @@ fn thumbnail_level_adds_linear_thumbnail_track_only() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
     let out =
-        attach_with(&mov, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen)).unwrap();
+        attach_still(&mov, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen)).unwrap();
     // Coded 1728×1296 landscape shown through a 90° CW matrix: the
     // display-oriented still rotates 3 CW turns back to coded geometry.
     assert_eq!(seen.get(), Some((3, 128, 96)));
@@ -203,7 +255,7 @@ fn thumbnail_level_adds_linear_thumbnail_track_only() {
 fn info_level_adds_smartstyle_track_and_movie_keys() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
-    let out = attach_with(&mov, &styles(true), MovieStyleLevel::Info, fake_thumbnail(&seen)).unwrap();
+    let out = attach_still(&mov, &styles(true), MovieStyleLevel::Info, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
     let tracks = traks(moov);
     assert_eq!(tracks.len(), 5);
@@ -233,7 +285,7 @@ fn info_level_adds_smartstyle_track_and_movie_keys() {
 fn full_level_adds_mattes_and_texture_style() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
-    let out = attach_with(&mov, &styles(true), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
+    let out = attach_still(&mov, &styles(true), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
     let tracks = traks(moov);
     assert_eq!(tracks.len(), 2 + 2 + 3 + 2);
@@ -259,7 +311,7 @@ fn full_level_adds_mattes_and_texture_style() {
 fn full_level_without_texture_skips_texture_track() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
-    let out = attach_with(&mov, &styles(false), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
+    let out = attach_still(&mov, &styles(false), MovieStyleLevel::Full, fake_thumbnail(&seen)).unwrap();
     let moov = moov_of(&out);
     assert_eq!(traks(moov).len(), 2 + 2 + 3 + 1);
     assert!(!contains(moov, b"texturestyle"));
@@ -269,7 +321,7 @@ fn full_level_without_texture_skips_texture_track() {
 fn second_attach_is_rejected() {
     let mov = paired_movie();
     let seen = std::cell::Cell::new(None);
-    let once = attach_with(&mov, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen)).unwrap();
-    let again = attach_with(&once, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen));
+    let once = attach_still(&mov, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen)).unwrap();
+    let again = attach_still(&once, &styles(true), MovieStyleLevel::Thumbnail, fake_thumbnail(&seen));
     assert!(again.is_err());
 }
