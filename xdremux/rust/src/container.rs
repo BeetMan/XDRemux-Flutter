@@ -333,6 +333,16 @@ pub fn has_watermark_entries(data: &[u8]) -> bool {
         .any(|name| name == "watermark" || name.starts_with("watermark."))
 }
 
+/// Return whether the camera rendered a watermark into the picture, which is
+/// what a writeback has to restore. `watermark.device` alone does not say so:
+/// it only names the phone, and Find X10 originals shot with the watermark off
+/// carry it with no other watermark entry and no frame in the pixels.
+pub fn has_rendered_watermark(data: &[u8]) -> bool {
+    tail_entry_names(data).iter().any(|name| {
+        name == "watermark" || (name.starts_with("watermark.") && name != "watermark.device")
+    })
+}
+
 /// Disable Apple's display-time filter recipe after raster watermark restore.
 ///
 /// Photos may keep the returned edit recipe in an Exif/XMP JSON payload even
@@ -412,6 +422,27 @@ pub fn watermark_canvas_rect(
     }
     let canvas_height = configured_height + vertical_inset * 2;
     Ok((0, image_height - canvas_height, image_width, canvas_height))
+}
+
+/// Styles whose `watermark.master.params` end block has been checked against
+/// camera originals: 14, 1 and 20 of them.
+const FRAMED_WATERMARK_STYLES: [&[u8]; 3] = [
+    b"hassel_style_1",
+    b"hassel_style_4",
+    b"hassel_style_master_mode_1",
+];
+
+/// Picture rectangle inside a framed primary, `(x, y, width, height)`: the
+/// part of the image that is photograph, with the baked-in frame around it.
+/// `None` when the file has no `watermark.master.params`, the style is not one
+/// of the checked ones, or the stored geometry does not fit the image.
+pub fn watermark_frame_picture_rect(
+    data: &[u8],
+    image_width: u32,
+    image_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let params = extract_tail_entry(data, "watermark.master.params")?;
+    frame_picture_rect_in_params(&params, &FRAMED_WATERMARK_STYLES, image_width, image_height)
 }
 
 /// Read the picture rectangle, `(x, y, width, height)`, from the 14
@@ -1060,6 +1091,39 @@ fn bytes_to_f32s(bytes: &[u8]) -> Vec<f32> {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// A file ending in an OPPO tail that holds `entries`.
+    pub(crate) fn tail_file(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        let mut starts = Vec::new();
+        for (_, bytes) in entries {
+            starts.push(payload.len());
+            payload.extend_from_slice(bytes);
+        }
+        let payload_length = payload.len();
+        let items: Vec<String> = entries
+            .iter()
+            .zip(starts)
+            .map(|((name, bytes), start)| {
+                format!(
+                    r#"{{"length":{},"name":"{name}","offset":{},"version":1}}"#,
+                    bytes.len(),
+                    payload_length - start
+                )
+            })
+            .collect();
+        let manifest = format!("[{}]", items.join(",")).into_bytes();
+        payload.extend_from_slice(&manifest);
+        payload.push(0);
+        payload.extend_from_slice(b"jxrs");
+        payload.extend_from_slice(&((manifest.len() + 9) as u32).to_le_bytes());
+        let mut file = vec![0u8; 32];
+        file.extend(payload);
+        file
+    }
+}
 
 #[cfg(test)]
 mod tests {

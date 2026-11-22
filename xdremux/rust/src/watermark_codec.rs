@@ -167,6 +167,10 @@ pub fn strip_existing_gain_map_graph(source: &[u8]) -> Result<Vec<u8>, String> {
 /// OPPO's private renderer depends on the whole reserved canvas, not only the
 /// glyph pixels, so this is intentionally different from the Apple-output
 /// local mask below.
+///
+/// Three sources say where the watermark is, tried in this order: the PNG
+/// payload's canvas, the picture rectangle a framed style stores in
+/// `watermark.master.params`, and frame bands detected in the donor pixels.
 fn restore_watermark_canvas(
     donor: &[u8],
     donor_rgba: &[u8],
@@ -184,6 +188,12 @@ fn restore_watermark_canvas(
             }
         }
         Err(payload_error) => {
+            if let Some(picture) =
+                stored_frame_picture_rect(donor, donor_rgba, image_width, image_height)
+            {
+                copy_frame_around(donor_rgba, returned_rgba, image_width, image_height, picture);
+                return Ok(());
+            }
             let bands = detect_frame_bands(donor_rgba, image_width, image_height)
                 .map_err(|band_error| format!("{payload_error}; {band_error}"))?;
             for (y0, y1) in bands {
@@ -196,6 +206,93 @@ fn restore_watermark_canvas(
         }
     }
     Ok(())
+}
+
+/// Picture rectangle of a framed watermark, `(x, y, width, height)`, when the
+/// donor both stores one and shows a frame around it.
+///
+/// The stored rectangle covers what band detection cannot: a bottom bar with
+/// the photograph reaching the top corners (`hassel_style_1`), and the side
+/// borders of a full frame, which no row band contains. The pixel check keeps
+/// a stale entry from replacing photograph: a donor whose image was changed
+/// after the camera wrote the entry has no solid frame where the entry says.
+pub fn stored_frame_picture_rect(
+    donor: &[u8],
+    donor_rgba: &[u8],
+    image_width: u32,
+    image_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let expected = image_width as usize * image_height as usize * 4;
+    if donor_rgba.len() < expected {
+        return None;
+    }
+    let picture = container::watermark_frame_picture_rect(donor, image_width, image_height)?;
+    frame_is_solid(donor_rgba, image_width, image_height, picture).then_some(picture)
+}
+
+/// Whether everything outside `picture` is one colour with sparse text on it.
+/// The colour is the commonest one among the sampled frame pixels, and 60% of
+/// them have to stay within +/-6 of it, the same margins [detect_frame_bands]
+/// uses for a row. Camera originals measure 94% to 99%.
+fn frame_is_solid(rgba: &[u8], width: u32, height: u32, picture: (u32, u32, u32, u32)) -> bool {
+    let (x, y, w, h) = picture;
+    let stride = width as usize * 4;
+    let mut samples: Vec<[u8; 3]> = Vec::new();
+    for row in (0..height).step_by(8) {
+        let inside_rows = row >= y && row < y + h;
+        for column in (0..width).step_by(16) {
+            if inside_rows && column >= x && column < x + w {
+                continue;
+            }
+            let base = row as usize * stride + column as usize * 4;
+            samples.push([rgba[base], rgba[base + 1], rgba[base + 2]]);
+        }
+    }
+    if samples.len() < 64 {
+        return false;
+    }
+    let mut bins: std::collections::HashMap<[u8; 3], (u32, [u32; 3])> =
+        std::collections::HashMap::new();
+    for sample in &samples {
+        let bin = bins.entry(sample.map(|value| value / 8)).or_default();
+        bin.0 += 1;
+        for channel in 0..3 {
+            bin.1[channel] += sample[channel] as u32;
+        }
+    }
+    let Some((count, sums)) = bins.into_values().max_by_key(|bin| bin.0) else {
+        return false;
+    };
+    let frame = sums.map(|sum| (sum / count) as u8);
+    let solid = samples
+        .iter()
+        .filter(|sample| (0..3).all(|channel| sample[channel].abs_diff(frame[channel]) <= 6))
+        .count();
+    solid * 100 >= samples.len() * 60
+}
+
+/// Copy every donor pixel outside `picture` over the returned raster.
+fn copy_frame_around(
+    donor_rgba: &[u8],
+    returned_rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    picture: (u32, u32, u32, u32),
+) {
+    let (x, y, w, h) = picture;
+    let stride = width as usize * 4;
+    let (left_end, right_start) = (x as usize * 4, (x + w) as usize * 4);
+    for row in 0..height {
+        let start = row as usize * stride;
+        if row < y || row >= y + h {
+            returned_rgba[start..start + stride].copy_from_slice(&donor_rgba[start..start + stride]);
+            continue;
+        }
+        returned_rgba[start..start + left_end]
+            .copy_from_slice(&donor_rgba[start..start + left_end]);
+        returned_rgba[start + right_start..start + stride]
+            .copy_from_slice(&donor_rgba[start + right_start..start + stride]);
+    }
 }
 
 /// Restore only the visible watermark pixels from the untouched donor.
@@ -877,7 +974,7 @@ fn rewrite_primary_grid_in_place(
 /// Detects uniform frame bands at the top and bottom of a donor raster.
 ///
 /// Frame-style watermarks fill the bands with one solid colour (corner
-/// sampled) plus sparse text; a row counts as frame when at least 85% of
+/// sampled) plus sparse text; a row counts as frame when at least 60% of
 /// sampled pixels stay within +/-6 of the frame colour. Returns the
 /// `(y0, y1)` row ranges to copy from the donor.
 pub fn detect_frame_bands(
@@ -1311,3 +1408,7 @@ fn build_meta(
     }
     Ok(isobmff::make_box(b"meta", &payload))
 }
+
+#[cfg(test)]
+#[path = "watermark_codec_tests.rs"]
+mod tests;

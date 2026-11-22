@@ -13,9 +13,11 @@ OPPO 相机的可见水印是**烘焙在主图像素里**的（不是渲染层�
 | 类型 | 尾部条目 | 恢复路径 |
 |---|---|---|
 | **PNG 载荷型**（标准水印） | `watermark`（PNG）+ `watermark.config`（几何） | 画布矩形恢复 |
-| **烘焙边框型**（Hasselblad 大师模式等） | 仅 `watermark.params` / `watermark.color` / `watermark.device` / `watermark.master.params`，**无 PNG** | 边框带检测回退 |
+| **烘焙边框型**（Hasselblad 底栏、大师模式画框等） | 仅 `watermark.params` / `watermark.color` / `watermark.device` / `watermark.master.params`，**无 PNG** | 按存储的画面矩形恢复（§4.4），读不到时回退边框带检测（§4.1） |
 
-判定顺序：先试 PNG 载荷路径，失败（缺条目或几何不匹配）则回退到边框带检测。两条路径都失败时**整体失败关闭**，绝不猜测。
+判定顺序：先试 PNG 载荷路径；失败（缺条目或几何不匹配）则读 `watermark.master.params` 里的画面矩形；再失败则回退到边框带检测。三条路径都失败时**整体失败关闭**，绝不猜测。
+
+只带 `watermark.device` 的文件没有可见水印，写回时不做恢复（`container::has_rendered_watermark`）。**已实测**（2026-11-17）：Find X10 关闭水印拍的原片只有这一个水印条目，主图是传感器的标准尺寸；此前这类文件也被当成有水印，两种输出模式的写回都以 `donor corners disagree` 失败。
 
 ## 2. OPPO 私有尾部（tail）
 
@@ -58,6 +60,8 @@ Find X7 Ultra 实测：PNG 3688×218，左右 inset 204、上下 inset 111 → �
 - `watermark_overlay_rect`：排除透明 inset 的 PNG 实际覆盖区，适合做像素蒙版，避免覆盖文字周围被编辑过的背景。
 
 ## 4. 烘焙边框型：边框带检测（`detect_frame_bands`）
+
+烘焙边框型先按 §4.4 读存储的画面矩形，读不到时才用本节的检测。检测只能找到顶部和底部的整行条带：只有底栏的 `hassel_style_1` 四角颜色不一致，检测直接判失败；四边画框的左右边框不在任何条带里。
 
 ### 4.1 算法
 
@@ -108,7 +112,24 @@ Find X7 Ultra 实测：PNG 3688×218，左右 inset 204、上下 inset 111 → �
 
 - 读取和校验在 `container.rs::frame_picture_rect_in_params`：读词 6 到 9，换算成 (x, y, 宽, 高)。校验条件是词 0 在「下边」到「下边 + 2」之间，词 1 在「右边 − 1」到主图宽之间，词 2 等于主图高，词 3、4 为 0，词 5 是哨兵，画面不小于主图的一半且不等于整幅。
 - 人像管线的 `portrait.rs::hassel_end_content_rect` 调用它，只认 `hassel_style_4` 和 `hassel_style_master_mode_1`；`hassel_style_1` 走自己的 14185 字节布局；其余样式按整幅处理。
-- 水印恢复不读这个块，仍用 §4.1 的检测。
+- 水印恢复的 `watermark_codec.rs::stored_frame_picture_rect` 经 `container::watermark_frame_picture_rect` 调用它，认 `hassel_style_1`、`hassel_style_4`、`hassel_style_master_mode_1` 三种，见 §4.4。
+
+### 4.4 按画面矩形恢复
+
+`restore_watermark_canvas` 在 PNG 载荷路径失败后走这一步：
+
+1. 读 §4.3 的画面矩形。样式不在三种之内、校验不过或矩形等于整幅时放弃，回退 §4.1。
+2. 用原片像素确认：矩形以外按 16 列、8 行的步长采样，取出现最多的颜色当框色，至少 60% 的采样点落在框色 ±6 以内才采用。条目与像素对不上（例如图像在相机写入条目之后被改过）时放弃，回退 §4.1。
+3. 把矩形以外的所有像素从原片复制到回传光栅，矩形以内不动。
+
+**已实测**（2026-11-17）：
+
+- 本机 35 张画框原片全部读到矩形并通过像素确认，框色占比 94.7% 到 99.1%。五张原片（三种样式、黑白两种框色）逐边核对，矩形的四条边都精确到像素。
+- 同一批原片上 §4.1 的检测：14 张 `hassel_style_1` 全部失败；21 张四边画框只覆盖边框面积的 86% 到 92%，缺的是左右边框。
+- 真实 iPhone 编辑件写回（`wb_probe`，heif-oxide 解码后逐像素比较，数值是各通道最大差的平均）：
+  - `hassel_style_1`（原片 `IMG20260822161608.heic`，回传 `edit-ab-pairs/IMG_3731/IMG_E3731.heic`）：改动前两种输出模式都以 `donor corners disagree` 失败。改动后成功，底栏与原片差 0.03（回传件自身差 13.40），画面与回传件差 2.91。
+  - `hassel_style_master_mode_1`（原片 `IMG20260819191729.heic`，回传 `iphone-styles-native/IMG_3506.HEIC`）：改动前上下条带与原片差 0.04，左右边框差 16.03，没有恢复。改动后左右边框差 0.37，画面与回传件差 1.84，前后相同。
+- **未验证**：真机上的观感；`hassel_style_4` 的端到端写回（没有对应的回传件，只跑了矩形读取和像素确认）；三种以外的样式仍走 §4.1。
 
 ## 5. 编码约定（关键！）
 
@@ -127,6 +148,8 @@ Find X7 Ultra 实测：PNG 3688×218，左右 inset 204、上下 inset 111 → �
 - x265 参数：`range=full`、`colormatrix=smpte170m`、`colorprim=bt470bg`、`transfer=iec61966-2-1`
 - tile 尺寸 512，CRF 14
 
+**ImageIO 下的差异**（**已实测**，2026-11-17，macOS）：ImageIO 把相机原片的白色底栏解码成 254，把写回输出的同一块解码成 234，两种输出模式都是这样；heif-oxide 下两者一致。**推断**：原片没有 nclx、被 ImageIO 当作 limited 数据展开，而输出继承了回传件的 full-range nclx。**未验证**：这在 iPhone 相册里是否看得出来。
+
 **闭环验证**（Find X8 Ultra 大师模式样张）：边框和文字在 WIC（28/171 视角）和 heif-oxide（16/180 视角）两种解码器下都与原图逐像素一致，同时照片区域保留 iPhone 编辑。这正是 limited+full 标记约定的好处：两种解码器行为都被复现。
 
 ## 6. 与写回管线的衔接
@@ -135,9 +158,10 @@ Find X7 Ultra 实测：PNG 3688×218，左右 inset 204、上下 inset 111 → �
 
 1. 解码 donor 与回传文件（尺寸不一致 → 失败关闭）
 2. 优先 PNG 载荷路径：`watermark_canvas_rect` → 复制画布区
-3. 回退边框带检测：`detect_frame_bands` → 复制带区
-4. 合成光栅 → 512×512 tile → `x265_encode_tiles_oppo_sdr`（4:2:0）
-5. `rewrite_primary_grid`：追加新 tile、新 grid item、pitm 切换、iloc/idat/iref 重建
-6. 剥离旧 footer → 追加恢复的 OPPO 完整尾部
+3. 其次读存储的画面矩形：`stored_frame_picture_rect` → 复制矩形以外的整圈边框（§4.4）
+4. 回退边框带检测：`detect_frame_bands` → 复制带区
+5. 合成光栅 → 512×512 tile → `x265_encode_tiles_oppo_sdr`（4:2:0）
+6. `rewrite_primary_grid`：追加新 tile、新 grid item、pitm 切换、iloc/idat/iref 重建
+7. 剥离旧 footer → 追加恢复的 OPPO 完整尾部
 
 新 tile 的关联属性（ipma）继承回传文件首 tile 模板并替换 hvcC；新 grid 继承回传文件的 grid 模板。继承的 nclx colr（BT.601、full-range=1）与上述编码约定一致，无需改写。

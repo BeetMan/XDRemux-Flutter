@@ -899,7 +899,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                         .as_deref()
                         .ok_or("donor photo has no UHDR gain-map payload")?;
                     let mut source = container::strip_oppo_tail(&returned);
-                    let has_watermark = container::has_watermark_entries(&donor);
+                    let has_watermark = container::has_rendered_watermark(&donor);
                     if restore_watermark != 0 && has_watermark {
                         let t = std::time::Instant::now();
                         source = watermark_codec::restore_on_donor_graph(&donor, &source)?;
@@ -955,7 +955,7 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     .as_deref()
                     .ok_or("donor photo has no UHDR gain-map payload")?;
                 let mut source = container::strip_oppo_tail(&returned);
-                if container::has_watermark_entries(&donor) {
+                if container::has_rendered_watermark(&donor) {
                     // Restore the donor canvas before rebuilding the ISO graph.
                     // The canvas helper handles both rectangular and frame-style
                     // watermark layouts, including non-standard shapes.
