@@ -16,8 +16,10 @@
 //!
 //! Every rename refuses an existing target (`renameat2(RENAME_NOREPLACE)`,
 //! `renamex_np(RENAME_EXCL)`, `MoveFileExW` without replace); on file systems
-//! without such a rename it checks first. Publications in one process that
-//! share an output path run one after the other.
+//! without such a rename it checks first, which cannot guard against another
+//! process slipping in between. Publications in one process that target the
+//! same directory run one after the other while placing, verifying and
+//! committing (or rolling back).
 //!
 //! The caller then reads the final paths back. Only after that check passes
 //! does the run commit. On any failure it rolls back: what it placed is
@@ -29,9 +31,10 @@
 //! Only entries this run created are removed. On Unix a placed output is
 //! removed only while it is still the file or directory (device + inode) this
 //! run wrote. The identity is taken from the written file (FAT/exFAT number
-//! an empty file with a placeholder). After the rename it is taken again only
-//! if the entry at the final path still has the size and modification time
-//! this run wrote, since some network file systems derive it from the path.
+//! an empty file with a placeholder). After the rename, when a file system
+//! derives a new identity from the destination path (some network shares), the
+//! identity is followed only if the entry at the final path still hashes
+//! (SHA-256) identically to what this run wrote.
 //! An output another writer has replaced is left alone and named in the error.
 //! Other platforms identify outputs by path.
 //!
@@ -40,6 +43,7 @@
 //! `.partial` entries older than an hour there. `.old` entries are kept: one
 //! may be the only copy of an earlier output.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -110,20 +114,19 @@ fn identity_of(_meta: &fs::Metadata) -> Identity {
 }
 
 /// What this run's entry looked like when it was written: its identity, and
-/// its size and modification time to recognise it after a rename.
+/// a SHA-256 digest of what it wrote so a path-derived identity can be
+/// verified after a rename without trusting size or coarse modification times.
 #[derive(Clone, Copy)]
 struct Seen {
     identity: Identity,
-    len: u64,
-    modified: Option<SystemTime>,
+    digest: [u8; 32],
 }
 
 impl Seen {
-    fn of(meta: &fs::Metadata) -> Self {
+    fn of(meta: &fs::Metadata, digest: [u8; 32]) -> Self {
         Self {
             identity: identity_of(meta),
-            len: meta.len(),
-            modified: meta.modified().ok(),
+            digest,
         }
     }
 
@@ -132,12 +135,90 @@ impl Seen {
         self.identity.is_none() || identity_of(meta) == self.identity
     }
 
-    /// Take the identity of `meta` if it still has this entry's size and time.
-    fn follow(&mut self, meta: &fs::Metadata) {
-        if meta.len() == self.len && meta.modified().ok() == self.modified {
+    /// Take the identity of `meta` only if the entry on disk at `path` still
+    /// hashes identically to what this run wrote.
+    fn follow(&mut self, path: &Path, kind: Kind, meta: &fs::Metadata) {
+        let actual = match kind {
+            Kind::File => sha256_file(path),
+            Kind::Directory => sha256_dir_on_disk(path),
+        };
+        if actual.ok() == Some(self.digest) {
             self.identity = identity_of(meta);
         }
     }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn sha256_dir_entries(files: &[(&str, &[u8])]) -> [u8; 32] {
+    let mut sorted: Vec<(&str, &[u8])> = files.to_vec();
+    sorted.sort_by_key(|(name, _)| *name);
+    let mut hasher = Sha256::new();
+    for (name, bytes) in sorted {
+        hasher.update((name.len() as u64).to_le_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+    hasher.finalize().into()
+}
+
+fn sha256_dir_on_disk(dir: &Path) -> std::io::Result<[u8; 32]> {
+    let mut entries = Vec::new();
+    for item in fs::read_dir(dir)? {
+        let item = item?;
+        let name = item.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(std::io::Error::from(ErrorKind::InvalidData));
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = item.path();
+        let meta = fs::symlink_metadata(&path)?;
+        if !meta.file_type().is_file() {
+            return Err(std::io::Error::from(ErrorKind::InvalidData));
+        }
+        entries.push((name.to_string(), path, meta.len()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    for (name, path, len) in entries {
+        hasher.update((name.len() as u64).to_le_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update(len.to_le_bytes());
+        let mut file = File::open(&path)?;
+        let mut seen_len = 0u64;
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            seen_len += n as u64;
+            hasher.update(&buf[..n]);
+        }
+        if seen_len != len {
+            return Err(std::io::Error::from(ErrorKind::InvalidData));
+        }
+    }
+    Ok(hasher.finalize().into())
 }
 
 fn file_name(path: &Path) -> String {
@@ -445,24 +526,24 @@ fn sweep_stale(dir: &Path) {
     }
 }
 
-/// Output paths a publication in this process is placing, verifying and
-/// committing (or rolling back). Another publication that shares one waits
-/// until it is released, so two runs in one process never move each other's
-/// entries aside. Paths are compared by canonical directory and lowercased
-/// name: on a case-sensitive volume that only serialises a little more.
+/// Output directories a publication in this process is placing, verifying
+/// and committing (or rolling back). Another publication targeting the same
+/// canonical directory waits until it is released, avoiding Unicode case/NFD
+/// mismatches so two runs in one process never move each other's entries aside.
 static BUSY: (Mutex<Vec<PathBuf>>, Condvar) = (Mutex::new(Vec::new()), Condvar::new());
 
 struct Claim(Vec<PathBuf>);
 
 impl Claim {
     fn take<'a>(targets: impl Iterator<Item = &'a Path>) -> Self {
-        let keys: Vec<PathBuf> = targets
+        let mut keys: Vec<PathBuf> = targets
             .map(|target| {
                 let dir = parent_of(target);
-                let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-                dir.join(file_name(target).to_lowercase())
+                fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
             })
             .collect();
+        keys.sort();
+        keys.dedup();
         let (lock, released) = &BUSY;
         let mut busy = lock.lock().unwrap_or_else(|e| e.into_inner());
         while keys.iter().any(|key| busy.contains(key)) {
@@ -569,9 +650,10 @@ impl Publication {
         // A name that already exists is not ours: fail without adopting it.
         let mut file = create_new(&staged)?;
         let written = write_synced(&mut file, &staged, bytes);
+        let digest = sha256_bytes(bytes);
         // Recognise the file by what it is after writing (FAT/exFAT number an
         // empty file with a placeholder), taken from the open file itself.
-        let seen = file.metadata().ok().map(|m| Seen::of(&m));
+        let seen = file.metadata().ok().map(|m| Seen::of(&m, digest));
         self.entries.push(Entry {
             staged,
             target: target.to_path_buf(),
@@ -583,13 +665,20 @@ impl Publication {
         written
     }
 
-    /// Create a new hidden, empty directory next to `target` for the caller
-    /// to fill (the `.pvt` bundle) and return its path.
-    pub(crate) fn stage_directory(&mut self, target: &Path) -> Result<PathBuf, String> {
+    /// Create a new hidden directory next to `target` holding `files` (each
+    /// created exclusively and synced), and record its combined SHA-256 digest.
+    pub(crate) fn stage_directory(
+        &mut self,
+        target: &Path,
+        files: &[(&str, &[u8])],
+    ) -> Result<(), String> {
         sweep_stale(parent_of(target));
         let staged = self.hidden(target, self.entries.len(), "partial");
         fs::create_dir(&staged).map_err(|e| format!("cannot create {}: {e}", staged.display()))?;
-        let seen = fs::symlink_metadata(&staged).ok().map(|m| Seen::of(&m));
+        let digest = sha256_dir_entries(files);
+        let seen = fs::symlink_metadata(&staged)
+            .ok()
+            .map(|m| Seen::of(&m, digest));
         self.entries.push(Entry {
             staged: staged.clone(),
             target: target.to_path_buf(),
@@ -598,7 +687,10 @@ impl Publication {
             retired: None,
             placed: false,
         });
-        Ok(staged)
+        for (name, bytes) in files {
+            write_new_synced(&staged.join(name), bytes)?;
+        }
+        Ok(())
     }
 
     /// Give up before placing anything; `error` is why.
@@ -613,13 +705,16 @@ impl Publication {
     /// commit if it passes and roll back if anything fails. `what` names the
     /// output in error messages.
     pub(crate) fn finish<T>(
-        mut self,
+        self,
         what: &str,
         verify: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, PublishError> {
+        // Claim before moving `self` so that if `verify` panics and unwinds,
+        // `publication`'s Drop rollback still runs under the claim.
         let _claim = Claim::take(self.entries.iter().map(|e| e.target.as_path()));
-        if let Err(error) = self.place() {
-            let rollback = self.rollback();
+        let mut publication = self;
+        if let Err(error) = publication.place() {
+            let rollback = publication.rollback();
             return Err(PublishError {
                 message: format!(
                     "{what} could not be written: {}; {}",
@@ -631,12 +726,12 @@ impl Publication {
         }
         match verify() {
             Ok(value) => {
-                self.commit();
+                publication.commit();
                 Ok(value)
             }
             Err(error) => Err(PublishError::new(format!(
                 "{what} failed verification: {error}; {}",
-                self.rollback().summary
+                publication.rollback().summary
             ))),
         }
     }
@@ -674,16 +769,6 @@ impl Publication {
                 }
             }
             let entry = &mut self.entries[index];
-            if entry.kind == Kind::Directory {
-                // The caller has filled the directory since it was created.
-                if let (Some(seen), Ok(meta)) =
-                    (entry.seen.as_mut(), fs::symlink_metadata(&entry.staged))
-                {
-                    if seen.may_be(&meta) {
-                        *seen = Seen::of(&meta);
-                    }
-                }
-            }
             match rename_exclusive(&entry.staged, &target) {
                 Ok(()) => {}
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
@@ -702,14 +787,13 @@ impl Publication {
                 hook(&target);
             }
             // Most file systems keep the identity across a rename; some
-            // network ones derive it from the path. Follow it only to an entry
-            // that still has the size and time this run wrote, so a file
-            // swapped in by another writer is never taken for ours. If it
-            // cannot be read now, keep the one taken from the written file.
+            // network ones derive it from the path. Follow it only when the
+            // entry on disk still hashes identically to what this run wrote,
+            // so a file swapped in by another writer is never taken for ours.
             let entry = &mut self.entries[index];
             if let (Some(seen), Ok(meta)) = (entry.seen.as_mut(), fs::symlink_metadata(&target)) {
                 if !seen.may_be(&meta) {
-                    seen.follow(&meta);
+                    seen.follow(&target, entry.kind, &meta);
                 }
             }
         }
@@ -1157,6 +1241,38 @@ mod tests {
             "{error}"
         );
         assert_eq!(fs::read(&target).unwrap(), b"another writer's file");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_same_size_same_mtime_file_swapped_in_after_rename_is_not_taken_for_ours() {
+        let dir = scratch("swapped_in_same_mtime");
+        let target = dir.join("IMG_1.heic");
+        let theirs = dir.join("theirs");
+        let mut publication = Publication::new(true);
+        publication.stage_file(&target, b"ours").unwrap();
+        let swap_from = theirs.clone();
+        publication.after_rename = Some(Box::new(move |placed: &Path| {
+            let mtime = fs::symlink_metadata(placed).unwrap().modified().unwrap();
+            fs::write(&swap_from, b"them").unwrap();
+            File::options()
+                .write(true)
+                .open(&swap_from)
+                .unwrap()
+                .set_modified(mtime)
+                .unwrap();
+            fs::rename(&swap_from, placed).unwrap();
+        }));
+        let error = publication
+            .finish("test output", || Err::<(), _>("changed".to_string()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("no longer the entry this run wrote"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"them");
         fs::remove_dir_all(&dir).unwrap();
     }
 

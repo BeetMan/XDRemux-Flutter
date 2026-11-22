@@ -1604,6 +1604,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     _preflightIssues.clear();
     for (int i = 0; i < _queue.length; i++) {
       final item = _queue[i];
+      if (item.status == QueueItemStatus.running) continue;
       if (refreshAll ||
           item.status == QueueItemStatus.pending ||
           item.status == QueueItemStatus.failed ||
@@ -1904,9 +1905,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // macOS/iOS: the GPU switch picks the core's encoder (VideoToolbox or
     // x265) for this conversion and its Live Photo.
     HardwareEncodeService.selectCoreEncoder(hardware: runConfig.hardwareEncode);
+    final inputPath = item.inputPath;
     // A retried .pvt item converts at its planned flat path again; composing
     // then rebuilds (or, with bundling off, replaces) the pair.
-    item.outputPath = livePhotoFlatPath(item.outputPath);
+    final outputPath = livePhotoFlatPath(item.outputPath);
+    item.outputPath = outputPath;
     runConfig.backend = ConversionBackend.rust;
     item.backend = runConfig.backend;
     // Styles (2 and 3) are kept on Live Photo pairs: when the paired still
@@ -1931,9 +1934,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     try {
       if ((item.huaweiHdr || item.huaweiPortrait != null) &&
-          (File(item.inputPath).absolute.path == File(item.outputPath).absolute.path ||
-              (File(item.outputPath).existsSync() &&
-                  FileSystemEntity.identicalSync(item.inputPath, item.outputPath)))) {
+          outputWouldOverwriteInput(inputPath, outputPath)) {
         throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
       }
       // Skip if the input is already a converted ISO HDR output —
@@ -1941,7 +1942,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       if (runConfig.skipExisting &&
           await XdRemuxService.verifyOutputForBackend(
             runConfig.backend,
-            item.inputPath,
+            inputPath,
             applePhotographicStyles: runConfig.applePhotographicStyles,
             applePortrait: runConfig.applePortrait,
           )) {
@@ -1958,27 +1959,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
 
       // The existing output is deleted next. Never when it is the original
-      // under another name (letter case, a linked output folder): compare the
-      // files, not the path strings.
-      if (outputWouldOverwriteInput(item.inputPath, item.outputPath)) {
+      // under another name (letter case, symlink, linked output folder).
+      if (outputWouldOverwriteInput(inputPath, outputPath)) {
         throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
       }
-      // A flat Live Photo pair is composed again below. The MOV that pairs
-      // with the still about to be deleted would otherwise stay next to the
-      // new, unpaired still if composing failed. Only that MOV: an unpaired
-      // one is not this item's, and a bundled item's pair is in its bundle.
+      // A flat Live Photo pair is composed again below (or packed into .pvt).
+      // The MOV that pairs with the still about to be deleted would otherwise
+      // remain orphaned next to the new still or bundle.
       final stalePairMovie =
           item.motionPhoto != null &&
-              item.motionPhotoMode == MotionPhotoMode.livePhotoPair &&
-              !runConfig.livePhotoBundle
-          ? await MotionPhotoService.pairedMovieOf(item.outputPath)
+              item.motionPhotoMode == MotionPhotoMode.livePhotoPair
+          ? await MotionPhotoService.pairedMovieOf(outputPath)
           : null;
+      if (outputWouldOverwriteInput(inputPath, outputPath)) {
+        throw StateError(t('输出不能覆盖原始照片', 'Output must not overwrite the original photo'));
+      }
       // Remove existing output file if present
-      final outFile = File(item.outputPath);
+      final outFile = File(outputPath);
       if (outFile.existsSync()) {
         outFile.deleteSync();
       }
-      if (stalePairMovie != null) await File(stalePairMovie).delete();
+      if (stalePairMovie != null && File(stalePairMovie).existsSync()) {
+        await File(stalePairMovie).delete();
+      }
 
       // Photographic Styles on an ordinary photo go through the conversion
       // pipeline. A Huawei portrait keeps its own remux, then the requested
@@ -1993,7 +1996,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       final styleFlags = (wantStyles || wantStyles3 ? XdRemuxFFI.styleLayerStyles : 0) |
           (wantStyles3 ? XdRemuxFFI.styleLayerTexture | XdRemuxFFI.styleLayerMattes : 0);
       var grainSeed = 0;
-      for (final c in item.inputPath.codeUnits) {
+      for (final c in inputPath.codeUnits) {
         grainSeed = (grainSeed * 31 + c) & 0x7fffffff;
       }
       Map<String, dynamic>? result;
@@ -2001,11 +2004,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           item.huaweiPortrait!['safeToTransform'] == true) {
         result = await Isolate.run(() {
           final report = XdRemuxFFI.remuxHuaweiPortrait(
-            item.inputPath,
-            item.outputPath,
+            inputPath,
+            outputPath,
           );
           if (report['success'] == true) {
-            final outputValid = XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath);
+            final outputValid = XdRemuxFFI.verifyHuaweiPortraitOutput(outputPath);
             if (!outputValid) {
               return <String, dynamic>{
                 'success': false,
@@ -2018,8 +2021,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             }
             if (styleFlags != 0) {
               final attached = XdRemuxFFI.attachStyleLayers(
-                item.outputPath,
-                item.outputPath,
+                outputPath,
+                outputPath,
                 grainSeed,
                 styleFlags,
               );
@@ -2033,7 +2036,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 };
               }
-              if (!XdRemuxFFI.verifyHuaweiPortraitOutput(item.outputPath)) {
+              if (!XdRemuxFFI.verifyHuaweiPortraitOutput(outputPath)) {
                 return <String, dynamic>{
                   'success': false,
                   'outputValid': false,
@@ -2061,8 +2064,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         // materialized here so Live Photo pairing or video export can run.
         result = await Isolate.run(() async {
           try {
-            final inFile = File(item.inputPath);
-            final outFile = File(item.outputPath);
+            final inFile = File(inputPath);
+            final outFile = File(outputPath);
             final parent = outFile.parent;
             if (!parent.existsSync()) {
               parent.createSync(recursive: true);
@@ -2076,13 +2079,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               } finally {
                 await raf.close();
               }
-            } else if (item.inputPath != item.outputPath) {
-              await inFile.copy(item.outputPath);
+            } else if (inputPath != outputPath) {
+              await inFile.copy(outputPath);
             }
             if (styleFlags != 0) {
               final attached = XdRemuxFFI.attachStyleLayers(
-                item.outputPath,
-                item.outputPath,
+                outputPath,
+                outputPath,
                 grainSeed,
                 styleFlags,
               );
@@ -2128,8 +2131,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           id: item.id,
           backend: runConfig.backend,
           outputMode: runConfig.outputMode,
-          inputPath: item.inputPath,
-          outputPath: item.outputPath,
+          inputPath: inputPath,
+          outputPath: outputPath,
           oppoCompat: effectiveOppoCompatibility.rustValue,
           oppoCameraTail: effectiveOppoCameraTail.rustValue,
           strictTmap: runConfig.strictTmap,
@@ -2156,8 +2159,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             item.motionPhotoMode == MotionPhotoMode.stillAndVideo) {
           try {
             final written = await MotionPhotoService.exportVideos(
-              item.inputPath,
-              item.outputPath,
+              inputPath,
+              outputPath,
             );
             // Mobile: the output directory is app-specific and unreachable
             // from gallery apps, so put the exported videos in the gallery
@@ -2168,7 +2171,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 granted = await FileActionService.requestGalleryPermission();
               }
               if (granted) {
-                final parent = File(item.outputPath).parent.path;
+                final parent = File(outputPath).parent.path;
                 for (final name in written) {
                   await Gal.putVideo(
                     '$parent${Platform.pathSeparator}$name',
@@ -2192,8 +2195,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             item.motionPhotoMode == MotionPhotoMode.livePhotoPair) {
           try {
             item.outputPath = await MotionPhotoService.composeLivePhoto(
-              item.inputPath,
-              item.outputPath,
+              inputPath,
+              outputPath,
               bundle: runConfig.livePhotoBundle,
             );
           } catch (e) {

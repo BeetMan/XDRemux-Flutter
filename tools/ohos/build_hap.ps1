@@ -49,9 +49,9 @@ $nm = Join-Path $env:DEVECO_SDK_HOME 'default\openharmony\native\llvm\bin\llvm-n
 if (-not (Test-Path $nm)) { throw "llvm-nm not found at $nm" }
 $exported = @(& $nm -D --defined-only $core | ForEach-Object { ($_ -split '\s+')[-1] })
 if ($LASTEXITCODE -ne 0) { throw "llvm-nm could not read $core" }
-$wanted = @(Select-String -Path 'lib\ffi\xdremux_ffi.dart' -Pattern "'(xdremux_[a-z0-9_]+)'" -AllMatches |
-    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-$missing = @($wanted | Where-Object { $exported -notcontains $_ })
+$wanted = @(Select-String -Path 'lib\ffi\xdremux_ffi.dart' -Pattern "'(xdremux_[a-z0-9_]+)'" -AllMatches -CaseSensitive |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique -CaseSensitive)
+$missing = @($wanted | Where-Object { $exported -cnotcontains $_ })
 if ($missing.Count -gt 0) {
     throw ("libxdremux_core.so is older than lib\ffi\xdremux_ffi.dart; rebuild it " +
         "(xdremux/rust/build_ohos.sh). Missing: " + ($missing -join ', '))

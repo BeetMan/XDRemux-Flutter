@@ -189,13 +189,14 @@ uint8_t xdremux_live_photo_pair_valid(const char *still_path,
  * Copy a composed Live Photo pair (`still_path` + `mov_path`, e.g. from
  * `xdremux_make_live_photo` in a staging directory) to its final paths
  * `out_still_path` + `out_mov_path`. With `replace` = 1, files already there
- * are replaced. With 0, an existing file at either path makes the call fail
- * with `targetExists: true` in the report and nothing is touched; pick
- * another name and call again. The pair is checked in memory, written, and
- * read back before success is reported; on failure the outputs this call
- * wrote are removed, replaced files are restored, and `errorMessage` says so.
- * The inputs are never written. Returns a JSON report with the paths and the
- * content identifier.
+ * are replaced. With 0, an existing file at either path makes the call fail;
+ * when rollback completes leaving the destination untouched, `targetExists` is
+ * `true` in the report so the caller can pick another name and retry (if
+ * rollback is incomplete, `targetExists` is `false`). The pair is checked in
+ * memory, written, and read back before success is reported; on failure the
+ * outputs this call wrote are removed, replaced files are restored, and
+ * `errorMessage` says so. The inputs are never written. Returns a JSON report
+ * with the paths and the content identifier.
  */
 char *xdremux_publish_live_photo_pair(const char *still_path,
                                       const char *mov_path,

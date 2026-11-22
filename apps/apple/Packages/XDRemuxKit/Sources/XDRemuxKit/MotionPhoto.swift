@@ -73,10 +73,10 @@ extension XDRemuxEngine {
 
     /// `xdremux_publish_live_photo_pair`: copies a composed pair to `toStill` +
     /// `toVideo`, replacing files there when `replace` is true. Without it an
-    /// existing file throws `LivePhotoTargetExists` and nothing is touched.
-    /// The core reads the copies back and checks them before reporting
-    /// success; on failure it removes what it wrote and restores what it
-    /// replaced.
+    /// existing file throws `LivePhotoTargetExists` when rollback completed
+    /// and left the destination untouched. The core reads the copies back and
+    /// checks them before reporting success; on failure it removes what it
+    /// wrote and restores what it replaced.
     public func publishLivePhotoPairFiles(still: String, video: String, toStill: String, toVideo: String,
                                           replace: Bool) async throws -> LivePhotoFiles {
         let report: LivePhotoReport = try await runOnQueue {

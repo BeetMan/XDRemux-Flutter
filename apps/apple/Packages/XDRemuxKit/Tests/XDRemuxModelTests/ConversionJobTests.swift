@@ -397,6 +397,8 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
     var pairValid = true
     /// Simulates the core's verified copy failing (it has already rolled back).
     var publishFails = false
+    /// Optional explicit error thrown from `publishLivePhotoPair`.
+    var customPublishError: (any Error & Sendable)?
     var publishes = PublishLog()
 
     func convert(input: String, output: String, config: RustConvertConfig,
@@ -423,6 +425,7 @@ private struct FakeMotionBackend: ConversionBackend, MotionPhotoBackend {
             return publishes.loseFirstRace
         }
         // Not a ConversionJobError: the job itself must turn it into one.
+        if let customPublishError { throw customPublishError }
         if publishFails { throw FakeCoreError(text: "failed verification; rolled back") }
         try fs.lock.withLock {
             if loseRace { fs.files.insert(toStill) }   // another job got there first
@@ -566,6 +569,92 @@ final class MotionPhotoJobTests: XCTestCase {
         let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
         XCTAssertNil(p.pairedVideoURL)
         XCTAssertEqual(fs.files, ["/out/IMG_M_iso.heic"])
+    }
+
+    func testPublishPassesThroughConversionJobError() async {
+        let fs = FakeFS()
+        let backend = FakeMotionBackend(fs: fs, customPublishError: ConversionJobError.coreFailed("custom core"))
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        do {
+            _ = try await job.run(input: input, config: ConversionConfig(), motionMode: .livePhotoPair)
+            XCTFail("expected failure")
+        } catch let e as ConversionJobError {
+            XCTAssertEqual(e, .coreFailed("custom core"))
+        } catch { XCTFail("\(error)") }
+    }
+
+    func testReplaceModeMapsTargetExistsToLivePhotoFailedWithoutRetrying() async {
+        let fs = FakeFS()
+        let backend = FakeMotionBackend(fs: fs, customPublishError: LivePhotoTargetExists(message: "msg"))
+        let job = ConversionJob(backend: backend, scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.skipExisting = true
+        do {
+            _ = try await job.run(input: input, config: config, motionMode: .livePhotoPair)
+            XCTFail("expected failure")
+        } catch let e as ConversionJobError {
+            XCTAssertEqual(e, .livePhotoFailed("msg"))
+        } catch { XCTFail("\(error)") }
+        XCTAssertEqual(backend.publishes.calls.count, 1)
+    }
+
+    func testStillOnlySkipsDanglingLinkWhenNotOverwriting() async throws {
+        let fs = FakeFS()
+        fs.danglingLinks = ["/out/IMG_M_iso.heic"]
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        var config = ConversionConfig()
+        config.skipExisting = false
+        let p = try await job.run(input: input, config: config, motionMode: .still)
+        XCTAssertEqual(p.outputURL.path, "/out/IMG_M_iso (2).heic")
+    }
+
+    func testStillAndVideoSkipsDanglingClipLink() async throws {
+        let fs = FakeFS()
+        fs.danglingLinks = ["/out/IMG_M_iso.motion.mp4"]
+        let job = ConversionJob(backend: FakeMotionBackend(fs: fs), scratchRoot: scratch, outputRoot: outRoot, fileSystem: fs)
+        let p = try await job.run(input: input, config: ConversionConfig(), motionMode: .stillAndVideo)
+        XCTAssertEqual(Set(p.extraVideoURLs.map(\.lastPathComponent)), ["IMG_M_iso.motion (2).mp4", "IMG_M_iso.primary.mp4"])
+    }
+}
+
+final class DefaultConversionFileSystemTests: XCTestCase {
+    func testEntryExistsDetectsDanglingSymlinkButFileExistsDoesNot() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-fs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let link = dir.appendingPathComponent("dangling.heic")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "/nonexistent/target.heic")
+        let fs = DefaultConversionFileSystem()
+        XCTAssertTrue(fs.entryExists(link))
+        XCTAssertFalse(fs.fileExists(link))
+    }
+
+    func testSameFileDetectsSymlinkLinkedDirAndCaseVariants() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xdremux-same-\(UUID().uuidString)")
+        let src = dir.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let orig = src.appendingPathComponent("IMG_1.HEIC")
+        try Data("orig".utf8).write(to: orig)
+        let link = dir.appendingPathComponent("queued.heic")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: orig)
+        let outDirLink = dir.appendingPathComponent("out")
+        try FileManager.default.createSymbolicLink(at: outDirLink, withDestinationURL: src)
+
+        let fs = DefaultConversionFileSystem()
+        XCTAssertTrue(fs.sameFile(link, orig))
+        XCTAssertTrue(fs.sameFile(orig, link))
+        XCTAssertTrue(fs.sameFile(orig, outDirLink.appendingPathComponent("IMG_1.HEIC")))
+
+        let lower = src.appendingPathComponent("IMG_1.heic")
+        let caseInsensitive = FileManager.default.fileExists(atPath: lower.path)
+        XCTAssertEqual(fs.sameFile(orig, lower), caseInsensitive)
+        if !caseInsensitive {
+            try Data("other".utf8).write(to: lower)
+            XCTAssertFalse(fs.sameFile(orig, lower))
+        }
     }
 }
 

@@ -222,15 +222,19 @@ struct Convert: AsyncParsableCommand {
     }
 
     private func describe(_ error: Error) -> String {
-        switch error {
-        case ConversionJobError.coreFailed(let m): return m ?? "core failed"
-        case ConversionJobError.verificationFailed: return "output failed verification and was discarded"
-        case ConversionJobError.styles3Failed(let m): return "Photographic Styles 3 post-process failed: \(m ?? "unknown")"
-        case ConversionJobError.livePhotoFailed(let m): return m ?? "Live Photo composition failed"
-        case ConversionJobError.missingOutput: return "core reported success but wrote no file"
-        case ConversionJobError.samePath: return "output path equals input path"
-        default: return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-        }
+        readableCLIError(error)
+    }
+}
+
+private func readableCLIError(_ error: Error) -> String {
+    switch error {
+    case ConversionJobError.coreFailed(let m): return m ?? "core failed"
+    case ConversionJobError.verificationFailed: return "output failed verification and was discarded"
+    case ConversionJobError.styles3Failed(let m): return "Photographic Styles 3 post-process failed: \(m ?? "unknown")"
+    case ConversionJobError.livePhotoFailed(let m): return m ?? "Live Photo composition failed"
+    case ConversionJobError.missingOutput: return "core reported success but wrote no file"
+    case ConversionJobError.samePath: return "output path equals input path"
+    default: return (error as? LocalizedError)?.errorDescription ?? String(describing: error)
     }
 }
 
@@ -359,8 +363,9 @@ struct EditCopy: AsyncParsableCommand {
                 else { print("\(input.lastPathComponent) → \(product.outputURL.path)") }
             } catch {
                 failures += 1
-                if format.json { emitJSON(["input": input.path, "success": false, "error": String(describing: error)]) }
-                else { console.write("\(input.lastPathComponent) 失败：\(error)\n") }
+                let message = readableCLIError(error)
+                if format.json { emitJSON(["input": input.path, "success": false, "error": message]) }
+                else { console.write("\(input.lastPathComponent) 失败：\(message)\n") }
             }
         }
         if failures > 0 { throw ExitCode(1) }
@@ -415,7 +420,7 @@ struct Writeback: AsyncParsableCommand {
             case RoundTripError.donorRequired: message = "OPPO 兼容输出或恢复水印需要 --donor"
             case RoundTripError.writebackFailed(let m): message = m ?? "writeback failed"
             case RoundTripError.outputMissing: message = "core reported success but wrote no file"
-            default: message = String(describing: error)
+            default: message = readableCLIError(error)
             }
             if format.json { emitJSON(["returned": returned, "success": false, "error": message]) }
             else { console.write("写回失败：\(message)\n") }

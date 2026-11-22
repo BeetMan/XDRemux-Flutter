@@ -1,6 +1,6 @@
 # Dart ↔ Rust FFI 契约
 
-> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，45 个 `extern "C"` 函数）、
+> 对应代码：`apps/flutter/lib/ffi/xdremux_ffi.dart`（Dart 绑定）、`xdremux/rust/src/lib.rs`（导出，46 个 `extern "C"` 函数）、
 > `xdremux/rust/include/xdremux_core.h`（cbindgen 生成的 C 头文件，原生 Apple 应用经 `XDRemuxCoreC` 模块导入；
 > 改导出后用 `tools/apple/check_header.sh` 校验）。
 
@@ -90,9 +90,9 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 | `xdremux_remux_huawei_portrait` / `xdremux_verify_huawei_portrait_output` | 华为原生人像 HEIC → Apple 兼容人像 HEIC / 输出校验 |
 | `xdremux_attach_styles` / `xdremux_attach_style_layers` | 给非 OPPO 照片补风格项；`flags` 位 0 = 2023 styles、位 1 = 纹理/颗粒、位 2 = 12 个语义 matte（华为人像 remux 后调用，免二次编码） |
 | `xdremux_style_experiment` | 研究用：替换 styleMetadata 载荷（打过补丁的 bplist） |
-| `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` | 动态照片识别 / 拆分 |
+| `xdremux_motion_photo_inspect` / `xdremux_motion_photo_split` / `xdremux_motion_photo_extract_still` | 动态照片识别 / 拆分 / 仅提取静帧范围到独立路径 |
 | `xdremux_make_live_photo` | 由动态照片源 + 已转换静帧合成 Live Photo，写出 `<out_dir>/<源 stem>.heic` + `.mov` |
-| `xdremux_publish_live_photo_pair` | 把已合成的 HEIC+MOV 复制到指定的最终路径；`replace` = 1 替换已有文件，= 0 时目标已存在就失败并在报告里带 `targetExists: true`、什么也不动。Flutter 平铺输出与原生 Apple 前端发布时调用 |
+| `xdremux_publish_live_photo_pair` | 把已合成的 HEIC+MOV 复制到指定的最终路径；`replace` = 1 替换已有文件，= 0 时目标已存在就失败，并在回滚完整且未改动目标时于报告里带 `targetExists: true`（回滚不完整时为 `false`）。Flutter 平铺输出与原生 Apple 前端发布时调用 |
 | `xdremux_live_photo_pair_valid` | Live Photo HEIC+MOV 配对校验 |
 | `xdremux_make_live_photo_bundle` / `xdremux_live_photo_bundle_valid` | 把已配对的 HEIC+MOV 打成 `.pvt` 包 / 校验 `.pvt` 包（见 `docs/formats/live-photo-pvt.md`） |
 | `xdremux_prepare_tiles` / `xdremux_assemble_tiles` | 分块转换（长图/大图内存控制） |
@@ -107,7 +107,7 @@ captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按
 
 - 写之前先在内存里用配对谓词 `existing_pair_is_valid` 检查这一对；不通过就直接返回错误，目标位置什么也不动。
 - 先写到同目录下定长的隐藏新文件（目录）`.xdremux-publish-<run>-<n>.partial`，刷盘后 rename 到最终位置。`<run>` 是每次运行的随机值，不会撞上别的运行（包括被杀掉的运行）留下的名字。替换时，原有文件先改名为 `.xdremux-publish-<run>-<n>.old`；只替换同类条目（文件替换文件，`.pvt` 目录替换目录），不替换目录或符号链接。
-- 所有改名（放到位、移开旧文件、回滚时放回旧文件）都不会覆盖已存在的条目。同一进程里输出路径相同的两次发布排队进行，不会互相移开对方的文件。
+- 在支持原子不覆盖改名的文件系统上，所有改名（放到位、移开旧文件、回滚时放回旧文件）都不会覆盖已存在的条目；不支持该原语的挂载（如 macOS FAT / exFAT / WebDAV 等）回退为先查后改名，仅在单进程内按目标目录排队互斥，不保证跨进程原子性。对于会在改名后变更文件身份的网络文件系统，仅在按内容 SHA-256 校验和确认仍是本次写出的文件或目录时才更新身份记录。
 - 放到位后逐块回读，内容必须与写入的完全相同（`.pvt` 另查结构和 `metadata.plist`）。回读可能命中系统缓存，能发现写错、截断和写后被改，查不出存储介质本身的损坏。
 - 通过后才删掉改名留存的旧文件，并返回 `success: true`。任一步失败都会删掉本次写出的文件、把旧文件改回原名，`errorMessage` 写明原因和回滚结果（`rolled back: …` 或 `rollback incomplete: …`）。
 - 输入文件始终只读。进程在放到位与提交之间被杀时会留下隐藏条目：一小时以上的 `.partial` 由下一次往同一目录发布时清掉；`.old` 可能是旧输出的唯一副本，保留不删。

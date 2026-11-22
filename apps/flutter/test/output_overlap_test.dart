@@ -30,7 +30,24 @@ void main() {
     File(input).writeAsStringSync('original');
     final caseInsensitive = File(output).existsSync();
     expect(outputWouldOverwriteInput(input, output), caseInsensitive);
+    if (!caseInsensitive) {
+      File(output).writeAsStringSync('separate');
+      expect(outputWouldOverwriteInput(input, output), isFalse);
+    }
   });
+
+  test(
+    'a queued symlink input pointing to the output file is the input',
+    () {
+      final target = '${dir.path}/IMG_1.heic';
+      final link = '${dir.path}/queued.heic';
+      File(target).writeAsStringSync('original');
+      Link(link).createSync(target);
+      expect(outputWouldOverwriteInput(link, target), isTrue);
+      expect(outputWouldOverwriteInput(target, link), isTrue);
+    },
+    skip: Platform.isWindows ? 'links need extra rights on Windows' : false,
+  );
 
   test(
     'an output folder that links to the source folder is the input',

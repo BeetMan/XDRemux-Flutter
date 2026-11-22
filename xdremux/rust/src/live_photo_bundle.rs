@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::live_photo;
-use crate::live_photo_publish::{compare_file, parent_of, write_new_synced, Publication};
+use crate::live_photo_publish::{compare_file, parent_of, Publication};
 
 pub const BUNDLE_EXTENSION: &str = "pvt";
 pub const METADATA_FILE: &str = "metadata.plist";
@@ -166,17 +166,22 @@ fn write_bundle_with(
     }
 
     fs::create_dir_all(parent_of(bundle)).map_err(|e| format!("create bundle parent: {e}"))?;
-    let mut publication = Publication::new(true);
-    let staging = publication.stage_directory(bundle)?;
     let still_ext = still
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("heic")
         .to_ascii_lowercase();
-    let filled = write_new_synced(&staging.join(format!("{stem}.{still_ext}")), &still_bytes)
-        .and_then(|()| write_new_synced(&staging.join(format!("{stem}.mov")), &movie_bytes))
-        .and_then(|()| write_new_synced(&staging.join(METADATA_FILE), METADATA_PLIST.as_bytes()));
-    if let Err(e) = filled {
+    let still_name = format!("{stem}.{still_ext}");
+    let movie_name = format!("{stem}.mov");
+    let mut publication = Publication::new(true);
+    if let Err(e) = publication.stage_directory(
+        bundle,
+        &[
+            (still_name.as_str(), still_bytes.as_slice()),
+            (movie_name.as_str(), movie_bytes.as_slice()),
+            (METADATA_FILE, METADATA_PLIST.as_bytes()),
+        ],
+    ) {
         return Err(publication.abandon(WHAT, e).into());
     }
     publication

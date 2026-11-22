@@ -69,9 +69,9 @@ public protocol MotionPhotoBackend: Sendable {
     func makeLivePhoto(source: String, still: String, outputDirectory: String) async throws -> LivePhotoFiles
     /// Copies a composed pair to `toStill` + `toVideo`. With `replace` files
     /// already there are replaced; without it an existing file at either path
-    /// throws `LivePhotoTargetExists` and nothing is touched. Returns only
-    /// after the copies were read back and checked; on failure it has removed
-    /// what it wrote, restored what it replaced, and throws.
+    /// throws `LivePhotoTargetExists` when rollback leaves the destination
+    /// untouched. Returns only after the copies were read back and checked; on
+    /// failure it has removed what it wrote, restored what it replaced, and throws.
     func publishLivePhotoPair(still: String, video: String, toStill: String, toVideo: String,
                               replace: Bool) async throws
     /// Splits the Motion Photo's embedded video(s) into `outputDirectory`.
@@ -149,6 +149,9 @@ public protocol ConversionFileSystem: Sendable {
     /// points nowhere (`fileExists` follows links). The core treats every
     /// such entry as taken.
     func entryExists(_ url: URL) -> Bool
+    /// True when `a` and `b` refer to the same existing file (case variants on
+    /// case-insensitive volumes, symlinks, or linked parent directories).
+    func sameFile(_ a: URL, _ b: URL) -> Bool
     func createDirectory(_ url: URL) throws
     func moveItem(from: URL, to: URL) throws
     func removeItem(_ url: URL) throws
@@ -156,6 +159,9 @@ public protocol ConversionFileSystem: Sendable {
 
 extension ConversionFileSystem {
     public func entryExists(_ url: URL) -> Bool { fileExists(url) }
+    public func sameFile(_ a: URL, _ b: URL) -> Bool {
+        a.standardizedFileURL == b.standardizedFileURL
+    }
 }
 
 public struct DefaultConversionFileSystem: ConversionFileSystem {
@@ -165,11 +171,56 @@ public struct DefaultConversionFileSystem: ConversionFileSystem {
         // attributesOfItem does not follow a final symbolic link.
         (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
     }
+    public func sameFile(_ a: URL, _ b: URL) -> Bool {
+        if a.standardizedFileURL == b.standardizedFileURL { return true }
+        guard fileExists(a), fileExists(b) else { return false }
+        let ra = a.resolvingSymlinksInPath().standardizedFileURL
+        let rb = b.resolvingSymlinksInPath().standardizedFileURL
+        if ra == rb { return true }
+        if let idA = (try? ra.resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject,
+           let idB = (try? rb.resourceValues(forKeys: [.fileResourceIdentifierKey]))?.fileResourceIdentifier as? NSObject,
+           idA.isEqual(idB) {
+            return true
+        }
+        return Self.sameCaseInsensitiveFile(ra, rb)
+    }
     public func createDirectory(_ url: URL) throws {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
     public func moveItem(from: URL, to: URL) throws { try FileManager.default.moveItem(at: from, to: to) }
     public func removeItem(_ url: URL) throws { try FileManager.default.removeItem(at: url) }
+
+    private static func sameCaseInsensitiveFile(_ ra: URL, _ rb: URL) -> Bool {
+        let dirA = ra.deletingLastPathComponent()
+        guard dirA == rb.deletingLastPathComponent() else { return false }
+        let nameA = ra.lastPathComponent
+        let nameB = rb.lastPathComponent
+        if nameA == nameB { return true }
+        guard nameA.lowercased() == nameB.lowercased() else { return false }
+        if let variant = thirdASCIICaseVariant(nameA, nameB) {
+            return FileManager.default.fileExists(atPath: dirA.appendingPathComponent(variant).path)
+        }
+        guard let attrA = try? FileManager.default.attributesOfItem(atPath: ra.path),
+              let attrB = try? FileManager.default.attributesOfItem(atPath: rb.path) else {
+            return false
+        }
+        return (attrA[.size] as? NSNumber) == (attrB[.size] as? NSNumber)
+            && (attrA[.modificationDate] as? Date) == (attrB[.modificationDate] as? Date)
+    }
+
+    private static func thirdASCIICaseVariant(_ a: String, _ b: String) -> String? {
+        let scalars = Array(a.unicodeScalars)
+        for i in scalars.indices {
+            let v = scalars[i].value
+            let flipped: UInt32? = (65...90).contains(v) ? v + 32 : ((97...122).contains(v) ? v - 32 : nil)
+            guard let f = flipped, let scalar = UnicodeScalar(f) else { continue }
+            var copy = scalars
+            copy[i] = scalar
+            let candidate = String(String.UnicodeScalarView(copy))
+            if candidate != a && candidate != b { return candidate }
+        }
+        return nil
+    }
 }
 
 public enum ConversionJobError: Error, Equatable, Sendable {
@@ -245,7 +296,7 @@ public struct ConversionJob: Sendable {
         let temp = OutputPlanner.temporaryURL(forInput: name, config: config, scratchRoot: scratchRoot)
         let scratchDir = temp.deletingLastPathComponent()
         var published = OutputPlanner.publishedURL(forInput: name, config: config, outputRoot: outputRoot)
-        if published.standardizedFileURL == input.standardizedFileURL { throw ConversionJobError.samePath }
+        if fileSystem.sameFile(published, input) { throw ConversionJobError.samePath }
 
         try fileSystem.createDirectory(scratchDir)
         defer { try? fileSystem.removeItem(scratchDir) }
@@ -328,8 +379,9 @@ public struct ConversionJob: Sendable {
                 motion, still: still, video: pairedVideo, planned: published, replace: config.skipExisting)
         } else {
             if !config.skipExisting {
-                published = OutputPlanner.uniqueURL(published, exists: fileSystem.fileExists)
-            } else if fileSystem.fileExists(published) {
+                published = OutputPlanner.uniqueURL(published, exists: fileSystem.entryExists)
+            } else if fileSystem.entryExists(published) {
+                if fileSystem.sameFile(published, input) { throw ConversionJobError.samePath }
                 try fileSystem.removeItem(published)
             }
             try fileSystem.moveItem(from: still, to: published)
@@ -339,7 +391,7 @@ public struct ConversionJob: Sendable {
             // "<stem>.video.mp4" → "<published stem>.motion.mp4", "<stem>.primary.mp4" → "<published stem>.primary.mp4"
             let kind = clip.lastPathComponent.contains(".primary.") ? "primary" : "motion"
             var target = published.deletingPathExtension().appendingPathExtension("\(kind).mp4")
-            target = OutputPlanner.uniqueURL(target, exists: fileSystem.fileExists)
+            target = OutputPlanner.uniqueURL(target, exists: fileSystem.entryExists)
             try fileSystem.moveItem(from: clip, to: target)
             publishedExtras.append(target)
         }
