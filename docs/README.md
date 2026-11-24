@@ -59,9 +59,10 @@
 | [testing/styles-hdr-device-checklist.md](testing/styles-hdr-device-checklist.md) | Styles HDR 缩略图真机 A/B 测试清单（样本矩阵、自动预检、Photos 步骤、判定口径） |
 | [operations/building.md](operations/building.md) | 跨平台构建（含 Linux 本地开发）、变体说明（含鸿蒙 hap） |
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
-| [operations/ci.md](operations/ci.md) | 六个 workflow 剖析（含 apple-ci）、runner 矩阵 |
+| [operations/ci.md](operations/ci.md) | 九个 workflow 剖析（触发规则、runner 矩阵、修改纪律） |
 | [operations/installing.md](operations/installing.md) | 各平台侧载与 macOS 授权步骤 |
-| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步；超过约两周即重写，历史快照按日期归档为 `archive/current-status-YYYYMMDD.md`（上一版 [20261031](archive/current-status-20261031.md)） |
+| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步；超过约两周即重写，历史快照按日期归档为 `archive/current-status-YYYYMMDD.md`（上一版 [20261115](archive/current-status-20261115.md)） |
+| [testing/local-transfer-p30.md](testing/local-transfer-p30.md) 等 `testing/local-transfer-*.md` | 局域网互传各阶段真机记录（P1–P32，20 余篇）：Windows / Android / OHOS 与官方 LocalSend 互通、发现顺序、收件箱对账、崩溃与运行时边界 |
 
 ## 写作与证据规范
 
@@ -87,6 +88,7 @@
 | [native-fidelity-gap.md](research/native-fidelity-gap.md) | 合成输出 vs iPhone 原生差距分析（含联合编辑终局实验） |
 | [upstream-issue-macos27-private-api.md](research/upstream-issue-macos27-private-api.md) | macOS 27 私有 API issue 草稿（已关闭：上游自修） |
 | [oppo-gallery-17.10.5.md](research/oppo-gallery-17.10.5.md) | ColorOS 相册 17.10.5 静态阅读：HDR / 编辑 / 人像机制、OPPO 尾部布局实测、Find X8 Ultra 前置人像与大水印 |
+| [oppo-gallery-17.24.12-20261114.md](research/oppo-gallery-17.24.12-20261114.md) | ColorOS 相册 17.24.12 增量核对（2026-11-14）：`filter.info` 字节布局、大师水印画框四角读法与 `dp2Pixel`、gain map 合成对照 ISO 21496-1、OLive XMP 属性；附探测脚本 `oppo_gallery_tail_probe.py` |
 | [styles-key1-color-grid-20261030.md](research/styles-key1-color-grid-20261030.md) | Standard key 1 拟合在 Photos 画色格的复现与判定（结论：key 1 回 identity，PR #38） |
 | [huawei-xmage-format.md](research/huawei-xmage-format.md) | 华为相机 HDR（XMAGE）表示法与能否纳入转换管线、鸿蒙图库输出需求 |
 | [oppo-proxdr-families.md](research/oppo-proxdr-families.md) | Find N3 / Find X8 Ultra ProXDR 采样分析（2026-09） |
@@ -97,6 +99,8 @@
 ## 路线图
 
 - [`docs/plans/apple-native.md`](plans/apple-native.md)：原生 Apple（SwiftUI）前端计划与 P0–P3 执行记录（进行中）
+- [`docs/plans/harmony-native.md`](plans/harmony-native.md)：鸿蒙 ArkUI 原生版开发阶段与验证记录（0.5.4 已发布，工程在 `apps/harmony/`）
+- [`docs/plans/apple-drop-x265.md`](plans/apple-drop-x265.md)：原生 Apple 版去掉 x265、改用 VideoToolbox 的开发计划（2026-11-12 计划稿，11-17 更新；只做了调研，未改产品代码）
 - [内置局域网文件传输开发计划](plans/local-transfer-plan.md)：LocalSend 互操作、独立 Rust 服务、Flutter 收发及照片资源分组（2026-10-17，P0 Windows/Android 验证通过，P1 待开发）。
 - [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
 - [`docs/plans/huawei-to-apple-plan.md`](plans/huawei-to-apple-plan.md)：Mate 70 原生 HDR 识别、XMAGE 风格、人像与 Live Photo 研究计划（普通 HDR 无需转换）
@@ -114,7 +118,7 @@
 
 1. 发版检查单含"相关 docs/ 页面是否更新"；发版/合并后更新 [operations/current-status.md](operations/current-status.md)
 2. 代码注释引用文档页（如 `// see docs/formats/oppo-watermark.md §band-detection`）
-3. `docs/` 在 .gitignore 中，新增文档需 `git add -f docs/<path>`
+3. `docs/` 默认跟踪，只有 `docs/plans/current-handoff.md` 这类会话级交接稿留在 .gitignore；新文档正常 `git add`，提交前用 `git status` 确认它出现在列表里（2026-11-24 之前 `docs/` 整体被忽略，靠 `git add -f` 入库，期间曾丢过文档）
 4. 中文为主，box 名/字段名保留英文；术语按 style-guide §1.2 锁定写法
 5. 技术断言必须标「已实测 / 推断 / 未验证」并给可复现证据；**CI 绿 ≠ 真机验收**
 6. 引用上游（21Z121Z1/XDRemux）必须写 `branch @ commit` 与是否已并入 `upstream/main`，不能把未合并分支说成"上游已支持"

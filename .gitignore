@@ -32,7 +32,6 @@ xdremux.app
 .github/workflows/*
 !.github/workflows/*.yml
 skills/
-docs/
 AGENTS.md
 CLAUDE.md
 HANDOFF.md
@@ -78,20 +77,10 @@ AGENTS.md
 CLAUDE.md
 HANDOFF.md
 Makefile
-docs/
 skills/
-!docs/
-docs/*
-!docs/plans/
-docs/plans/*
-!docs/plans/codec-library-poc-20261005.md
-!docs/plans/live-photo-export-fix.md
-!docs/plans/release-candidate-044.md
-!docs/plans/mac-acceptance-044.md
-!docs/plans/apple-native.md
-!docs/testing/
-docs/testing/*
-!docs/testing/windows-codec-test-02.md
+# docs/ is tracked by default (research, plans, validation and status pages
+# are project record). Only session-local handoff notes stay out.
+docs/plans/current-handoff.md
 **/MIGRATION_PLAN.md
 scripts/agent_completion_gate.py
 tests/validation/test_agent_completion_gate.py
@@ -99,7 +88,7 @@ tests/validation/verify_swift_cli_sample.py
 apk_analysis_results/
 evals/
 handoff_package/
-archive/
+/archive/
 harness/
 oracle-dump/
 proxdr-probe-app/

@@ -52,9 +52,9 @@
 | `research/` | 逆向研究记录、上游对比、方案评估 | 结案后保留，结论过期标注 | 标题带日期 `name-YYYYMMDD.md`；引用块写「问题/样本/结论状态」 |
 | `standards/` | 标准中译（ISO 21496-1、23008-12 等） | 长期，改动需核对原文 | 引用块写「对应标准版本/条款」 |
 | `archive/` | 历史计划、已完成清单、过期验证 | 只读考古 | 首行写「历史文档，勿当现状」 |
-| `plans/` | 个人/会话级计划（**在 .gitignore 中**） | 会话级 | 不作为团队事实来源 |
+| `plans/` | 开发计划与执行记录（随 PR 入库；会话级交接稿 `current-handoff.md` 不入库） | 计划期内；结束后归档 | 标题带日期或版本；引用块写「状态 / 范围」 |
 
-`plans/` 是本地草稿区：不提交、不引用为证据。要固化的计划写进 `operations/` 或 `research/`。
+`plans/` 里的计划与执行记录随 PR 提交，可以被 `operations/current-status.md` 引用；只有会话级交接稿（`current-handoff.md`）留在本机，不引用为证据。要固化的结论写进 `operations/` 或 `research/`。
 
 ## 3. 证据规则（最重要）
 
@@ -156,12 +156,12 @@
 - [ ] 表格列数一致、没有 `|` 未转义
 - [ ] 引用上游时写明 `branch @ commit` 与是否已合并
 - [ ] 过期内容标注日期或移入 `docs/archive/`
-- [ ] `docs/` 在 `.gitignore` 中：**新文件用 `git add -f docs/<path>`**，否则不会进提交
+- [ ] 新文档出现在 `git status` 里（`docs/` 默认跟踪，只有 `docs/plans/current-handoff.md` 被忽略）
 - [ ] 涉及发版事实时对照 `tools/installer/RELEASE_NOTES_v<版本>.md` 与 `apps/flutter/pubspec.yaml`
 
 ## 8. 不适用条件
 
 - 本规范不约束 `docs/archive/` 下的历史文档（只读，不回改）。
-- 不约束 `docs/plans/`（gitignored 本地草稿）。
+- 不约束 `docs/plans/current-handoff.md`（本机交接稿）。
 - 涉及标准原文时，以 `docs/standards/` 的中译为准；本标准不替代对 ISO 原文的核对。
 - 若上游把 `docs/` 改为双语并给出自己的 termbase，本规范需与其对齐后重写，不能并行两套规则。
