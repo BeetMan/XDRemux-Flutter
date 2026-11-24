@@ -3,7 +3,7 @@
 > 读者：接手项目的开发者 / agent。用途：给出**可提交、可审计**的现状快照，替代只存在于本机的 `docs/plans/current-handoff.md`。
 > 更新时机：发版后、主线合并后、方向决策后。每次更新在标题保留日期，历史版本进 `docs/archive/`（上一版：[`archive/current-status-20261115.md`](../archive/current-status-20261115.md)）。
 > 断言遵循 `docs/style-guide.md` §3：已实测 / 推断 / 未验证。
-> 2026-11-24：按 `origin/main` = `034684a`（PR #123 的合并提交，2026-11-22 23:37）重写。与上一版基准 `256aad7` 之间 first-parent 共 8 个合并（PR #116、#120、#121、#122、#123、#124、#125、#126，`git log --first-parent 256aad7..origin/main`）。本次 GitHub API 被限流：PR 开合状态只从 PR 页面读到 #127、#128 为 open；CI 只读 shields 徽章（§4.10）；发布附件没有重新核对。
+> 2026-11-24：按 `origin/main` = `034684a`（PR #123 的合并提交，2026-11-22 23:37）重写。与上一版基准 `256aad7` 之间 first-parent 共 8 个合并（PR #116、#120、#121、#122、#123、#124、#125、#126，`git log --first-parent 256aad7..origin/main`）。主线 CI 覆盖见 §4.10，发布附件沿用 11-15 的记录。
 
 ## 1. 版本与发布
 
@@ -17,7 +17,7 @@
 | 0.4.7 内容 | 局域网互传（兼容 LocalSend，Flutter 全平台）、开启摄影风格时部分实况转换失败的修复（#86）、设置页「开源许可」与安装包附带 `LICENSE` / `LICENSING.md` | `tools/installer/RELEASE_NOTES_v0.4.7.md` |
 | 平台范围 | Flutter：Windows x64、macOS Apple Silicon、Android arm64、iOS（未签名）、Linux x64（预览）、HarmonyOS（未签名）；SwiftUI：macOS 14+ Apple Silicon（ad-hoc 签名）、iOS / iPadOS 17+（未签名 IPA）；鸿蒙原生（未签名 HAP，需 HarmonyOS 7 / API 26） | `README.md` 下载表、`apps/harmony/build-profile.json5` |
 | 明确不提供 | Windows ARM64 安装包（`release.yml` 中 `continue-on-error` 实验构建）、Intel Mac 转换、Flutter Linux 托盘；SwiftUI 版自 11-14 起不再构建 x86_64 切片 | `README.md`、`docs/operations/ci.md` §3、`docs/plans/apple-native.md` 11-14 条目 |
-| 许可 | **GPL-3.0-only**（PR #54）；历史标签另授 GPL-3.0-only，原 MIT 授权不撤回。带 x265 的构建经 TestFlight / App Store 分发是否与 GPL 相容**未决**；解决方案的计划稿见 `docs/plans/apple-drop-x265.md`（只做了调研，未改产品代码） | `LICENSE`、`LICENSING.md`、`docs/plans/apple-drop-x265.md` |
+| 许可 | **GPL-3.0-only**（PR #54）；历史标签另授 GPL-3.0-only，原 MIT 授权不撤回。带 x265 的构建经 TestFlight / App Store 分发是否与 GPL 相容**未决**；解决方案的计划稿见 `docs/plans/apple-drop-x265.md`（后端已落地，分发构建仍带 x265） | `LICENSE`、`LICENSING.md`、`docs/plans/apple-drop-x265.md` |
 
 > 发布核对沿用上一版（2026-11-15，`gh release view` / `gh run view`）：`v0.4.7` 发布 run `42266554910` 成功，8 个附件；`apple-v0.1.1` 附 DMG、未签名 IPA、`BUILD_RECORD.txt` 与 `SHA256SUMS.txt`；`harmony-v0.5.4` 附 HAP 与 `SHA256SUMS.txt`。本版没有重新核对。TestFlight 构建 5–8 在 App Store Connect 的处理结果与安装后表现**未验证**。
 
@@ -29,7 +29,7 @@
 
 | 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
 |---|---|---|---|---|
-| `feat/apple-live-styles-per-frame`（PR #130） | +1 / −0 | 11-23 | 0 | Apple 端按视频帧生成 Live Photo 摄影风格的线性缩略图与色调曲线，取代「每帧都用静帧」的做法（§4.4）。单提交 `602e3f0`，13 个文件 +631 / −98：`live_photo_styles.rs`、`live_photo_styles_apple.rs`、`apple_live_style_video.m`、`hevc/`，测试 +66 行；`build.rs`、`module.modulemap` 与 iOS `Podfile` 的符号表同步。基于最新 `main`。PR 开合状态未查到；真机表现**未验证** |
+| `feat/apple-live-styles-per-frame`（[PR #130](https://github.com/BeetMan/XDRemux-Flutter/pull/130)，open） | +1 / −0 | 11-23 | 0 | `602e3f0` 按视频帧生成线性缩略图和色调曲线。两份 ColorOS 16 HLG 样本已在 macOS「照片」完成编辑、保存和重开；iPhone 设备目标已编译。两项 CI 的公共 C 头文件检查待修（§5.4）。 |
 | `fix/oppo-17.24-portrait-container-motion`（PR #127，open） | +3 / −7 | 11-22 | 0 | ColorOS 17.24 人像：读横屏帧、配置里的镜像标志、深度值低者为近（`577c028`、`ba0ace6`）；拆分 MP4 裁掉厂商尾字节并刷新 `private.emptyspace`（`8a89706`）。依据 `docs/research/oppo-gallery-17.24.12-20261114.md` |
 | `feat/watermark-frame-restore`（PR #128，open；基于 #127） | +4 / −7 | 11-22 | 0 | 按尾部里存的画面矩形（四角）还原大师水印画框（`a09e3c9`）。三个 OPPO 分支是堆叠关系，按 #127 → #128 → #129 顺序合；都落后 `main` 7 个提交（#123 之后），合并前先同步 |
 | `feat/photo-details-oppo-tail`（PR #129；基于 #128） | +5 / −7 | 11-22 | 0 | 详情页检查并展示 OPPO 私有尾部数据（`be31ef1`）。PR 开合状态未查到 |
@@ -104,19 +104,19 @@
    - OHOS 核心新增 `libc` 依赖（`renameat2` 系统调用），`ohos-ci.yml` 会编译该目标，真机**未验证**。
 6. **Motion Photo 解析覆盖**（PR #119 的结论，已实测于样本，设备行为未验证）：只写在三星 SEF 里、没有 Google XMP 的动态照片不识别；`xdremux_motion_photo_split` 写出的 MP4 带厂商尾字节（三星 SEF 116 B、OPPO 约 2.6 KB），照片 App / AVFoundation 的反应**未验证**；Live Photo 转换路径已裁剪，不受影响。OPPO 17.24 的拆分 MP4 裁尾在 PR #127。
 7. **SwiftUI 预发布包的人像转换**（推断）：`apple-v0.1.0` / `apple-v0.1.1` 用 0.4.7 内核，早于 PR #99；PR #99 的复现显示修复前 `xdremux_convert_pipeline` 对两张 OPPO 人像样张在 `stage: verify` 失败，而 SwiftUI 走的正是这条管线。预发布包上的实际表现**未验证**，0.1.2 才会带上。
-8. **TestFlight / App Store**：App Store Connect 的处理结果、TestFlight 安装后的界面与两种编码器的真机表现**未验证**；`XDRemuxTransferCore.framework` 缺 dSYM（上传警告，只影响崩溃符号化）；带 x265 的构建与 App Store 条款是否相容未决，开放公开测试链接前需要定下来。去 x265 的方案只有计划稿（`docs/plans/apple-drop-x265.md`）。
+8. **TestFlight / App Store**：App Store Connect 的处理结果、TestFlight 安装后的界面与两种编码器的真机表现**未验证**；`XDRemuxTransferCore.framework` 缺 dSYM（上传警告，只影响崩溃符号化）；带 x265 的构建与 App Store 条款是否相容未决，开放公开测试链接前需要定下来。SwiftUI 本地默认构建已使用 VideoToolbox，发布包和 TestFlight 仍带 x265（`docs/plans/apple-drop-x265.md`）。
 9. **iPhone Duo**：Flutter 的安全区修复（0.4.6）与 SwiftUI 的两栏布局、侧边栏工具栏只在模拟器上验证，真机**未验证**。
 10. **CI 覆盖**：共 9 个 workflow（`docs/operations/ci.md`）。只有 `ci.yml` 对每个 PR 都跑；`apple-ci.yml` 与 `apple-vt-core.yml` 因 macOS runner 紧张只在 Rust 改动合入 `main` 后和改到 Apple 路径的 PR 上运行（PR #101），改 FFI 的 Rust PR 合并前要在 Mac 上跑 `tools/apple/verify_local.sh`；`harmony-native-ci.yml` 只跑宿主侧回归；安卓 APK 只在 `release.yml` 里构建；Windows / macOS 原生行为与真机照片验收不在 CI 内。11-24 读 shields 徽章：`ci`、`conformance`、`apple-ci`、`apple-vt-core`、`ohos-ci`、`harmony-native-ci`、`transfer-ci`、`release` 在 `main` 上最近一次运行均 passing，`linux.yml` 没有独立运行；徽章不区分提交，`034684a` 上实际跑了哪些**未查**（API 限流）。CI 通过不等于真机验收。
 11. **三个前端共用 Rust 内核**（Flutter、鸿蒙原生、SwiftUI），另共用传输 crate：FFI 改动需重新生成 `xdremux_core.h`（`ci.yml` 与 `apple-ci.yml` 校验），并重建鸿蒙 `.so` 复测；`tools/ohos/build_hap.*` 会先核对 `.so` 导出了 Dart 绑定查到的每个符号（PR #123）。`xdremux/rust/src/ffi_guard.rs` 的 panic 守卫只在 `panic = "unwind"` 下生效，目前只有 `build_ohos.sh` 这样编；其他平台解析器 panic 仍会杀掉宿主 App（模块注释写明，遗留限制）。
 12. **安装包许可文本**：Windows、macOS、Linux 的打包步骤都复制 `LICENSE` / `LICENSING.md`，`v0.4.7` 的发布 run 成功；产物里的文件没有打开核对（**未验证**）。
-13. **文档治理**：2026-11-24 之前 `.gitignore` 把 `docs/` 整体忽略、靠 `git add -f` 入库，期间 `docs/research/oppo-gallery-17.24.12-20261114.md`（PR #127 / #128 的依据）和 `docs/plans/apple-drop-x265.md` 只存在于本机；已改为默认跟踪并补入（PR 见 §5.8）。`docs/validation/ios-device-20260816.md` 含设备 UDID，仍未入库，需脱敏后再定。
+13. **文档治理**：2026-11-24 之前 `.gitignore` 把 `docs/` 整体忽略、靠 `git add -f` 入库，期间 `docs/research/oppo-gallery-17.24.12-20261114.md`（PR #127 / #128 的依据）和 `docs/plans/apple-drop-x265.md` 只存在于本机；文档分支已补入两份记录，并将 `docs/` 改为默认跟踪。`docs/validation/ios-device-20260816.md` 含设备 UDID，按路径单独忽略。
 
 ## 5. 下一步优先级
 
 1. **Flutter 0.4.8**：前置已满足（#116、#124）。先在 `main` 跑一次全平台预检（`gh workflow run release.yml -R BeetMan/XDRemux-Flutter --ref main -f platforms=all`，覆盖 §4.1），通过后切 `pubspec.yaml` 版本号并发版，带上 `v0.4.7` 之后的 40 个合并。
 2. SwiftUI：出 0.1.2 预发布，带上 PR #99 的人像修复与 0.1.1 之后的界面改动（§4.7）；确认 TestFlight 构建 5–8 的处理结果与真机安装；开放公开测试链接前按 `docs/plans/apple-drop-x265.md` 定下 x265 与 App Store 条款的问题；补传输框架的 dSYM。`docs/plans/apple-native.md` §3 的 P4 跨端回归仍无记录。
 3. OPPO 17.24 堆叠 PR #127 → #128 → #129：三个分支各同步 `main`（落后 7 个提交）后按顺序合；合并后删 §2.2 的两个 11-18 前身分支（先打 `archive/*` 标签）。
-4. PR #130（Apple 逐帧实况风格）：合并前在 iPhone / macOS 照片 App 上验证 §4.4 的编辑与颜色保留。
+4. PR #130（Apple 逐帧实况风格）：修正 cbindgen 对内部视频回调的导出，待 [Rust CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/45045501106/job/137279107437) 和 [Apple CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/45045500987/job/137279107287) 的公共头文件检查通过后合并。
 5. 鸿蒙原生版：真机复测后发 0.5.5，带上 PR #99 的人像校验修复、PR #123 的发布原语（OHOS 真机**未验证**）与 NEON 版 x265（`docs/research/ohos-hw-hevc-20261115.md`）。
 6. 普通静帧输出事务化（§4.5）：评估把 `live_photo_publish.rs` 的 staging → 改名 → 回读推广到 `xdremux_convert` 系列的输出，并让 Flutter 不再在转换前删旧输出；约 2–3 天。
 7. 按 `docs/testing/styles-hdr-device-checklist.md` 跑完整真机 A/B（覆盖 §4.3），并在 iPhone 上复核 PR #100 与 #116 的 VideoToolbox 输出；之后是每图的 key 4 / `"h"`（`linear_metadata`）与 P1-3 统计。
@@ -127,7 +127,7 @@
 
 暂缓 / 观察（不排期）：
 
-- Apple 实况 → 安卓动态照片：暂缓，等上游 #97 合入且 `android-motion-gallery-matrix` 出现实机 PASS 再定（`upstream-20261115.md` 待决策项）。
+- Apple 实况 → 安卓动态照片：上游写入器已合入。待当前产物在目标相册有实机识别和播放记录后再定。[上游 #97](https://github.com/21Z121Z1/XDRemux/pull/97) · [相册验收矩阵](https://github.com/21Z121Z1/XDRemux/blob/457c955/docs/validation/android-motion-gallery-matrix.md)。
 - 上游 #92（MakerNote tag 25）、#91（双层 HDR JPEG）、研究仓 PR #10：只观察，触发条件见 `upstream-20261115.md`。
 - `feat/oppo-filter-ecosystem`、`feat/m9-moment`：维持 10-29 的暂缓接入决定（§2.4）。
 - `research/iphone-next` 吸收上游 #85：沿用 `upstream-20261030.md` 的 P1，10-29 之后没有进展。

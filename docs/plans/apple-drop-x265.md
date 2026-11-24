@@ -1,6 +1,6 @@
 # 苹果原生版去掉 x265：改用 VideoToolbox 的开发计划
 
-> 状态：计划稿（2026-11-12）。只做了调研，没有改任何产品代码。
+> 设计基准为 2026-11-12。到 2026-11-24，VideoToolbox 后端已合入，SwiftUI 本地默认构建只编入 VideoToolbox。发布包与 TestFlight 仍编入 VideoToolbox 和 x265，后续工作是切换分发构建并验收产物。见[当前后端配置](../operations/current-status.md#3-能力现状主线)。
 > 范围：原生 SwiftUI 版 `apps/apple`（iOS / iPadOS / macOS，bundle id `io.github.beetman.xdremux.swiftui`）。
 > Flutter 版、Android、Windows、Linux、鸿蒙继续用 x265，不在本计划内。
 

@@ -78,9 +78,9 @@ CLAUDE.md
 HANDOFF.md
 Makefile
 skills/
-# docs/ is tracked by default (research, plans, validation and status pages
-# are project record). Only session-local handoff notes stay out.
+# Local handoff and device-specific validation notes.
 docs/plans/current-handoff.md
+/docs/validation/ios-device-20260816.md
 **/MIGRATION_PLAN.md
 scripts/agent_completion_gate.py
 tests/validation/test_agent_completion_gate.py
