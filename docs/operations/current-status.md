@@ -5,6 +5,8 @@
 > 断言遵循 `docs/style-guide.md` §3：已实测 / 推断 / 未验证。
 > 2026-11-24：按 `origin/main` = `034684a`（PR #123 的合并提交，2026-11-22 23:37）重写。与上一版基准 `256aad7` 之间 first-parent 共 8 个合并（PR #116、#120、#121、#122、#123、#124、#125、#126，`git log --first-parent 256aad7..origin/main`）。主线 CI 覆盖见 §4.10，发布附件沿用 11-15 的记录。
 
+> 后续主线变更：[PR #130](https://github.com/BeetMan/XDRemux-Flutter/pull/130) 已合入 `main @ 20ae590`。下列分支计数和发布统计保留 `034684a` 快照。
+
 ## 1. 版本与发布
 
 | 项 | 状态 | 依据 |
@@ -29,7 +31,6 @@
 
 | 分支 | ahead / behind | 最后提交 | 冲突 | 说明 |
 |---|---|---|---|---|
-| `feat/apple-live-styles-per-frame`（[PR #130](https://github.com/BeetMan/XDRemux-Flutter/pull/130)，open） | +1 / −0 | 11-23 | 0 | `602e3f0` 按视频帧生成线性缩略图和色调曲线。两份 ColorOS 16 HLG 样本已在 macOS「照片」完成编辑、保存和重开；iPhone 设备目标已编译。两项 CI 的公共 C 头文件检查待修（§5.4）。 |
 | `fix/oppo-17.24-portrait-container-motion`（PR #127，open） | +3 / −7 | 11-22 | 0 | ColorOS 17.24 人像：读横屏帧、配置里的镜像标志、深度值低者为近（`577c028`、`ba0ace6`）；拆分 MP4 裁掉厂商尾字节并刷新 `private.emptyspace`（`8a89706`）。依据 `docs/research/oppo-gallery-17.24.12-20261114.md` |
 | `feat/watermark-frame-restore`（PR #128，open；基于 #127） | +4 / −7 | 11-22 | 0 | 按尾部里存的画面矩形（四角）还原大师水印画框（`a09e3c9`）。三个 OPPO 分支是堆叠关系，按 #127 → #128 → #129 顺序合；都落后 `main` 7 个提交（#123 之后），合并前先同步 |
 | `feat/photo-details-oppo-tail`（PR #129；基于 #128） | +5 / −7 | 11-22 | 0 | 详情页检查并展示 OPPO 私有尾部数据（`be31ef1`）。PR 开合状态未查到 |
@@ -82,7 +83,7 @@
 | OPPO / 华为人像转换 | 可用（条件受限） | 依赖源文件深度数据与系统版本。PR #99 修复 `verify_portrait_graph` 恒为假。ColorOS 17.24 的人像几何与画框修复在 PR #127 / #128（§2.1），尚未进 `main` |
 | Motion Photo → Live Photo | 可用 | 配对谓词 `existing_pair_is_valid`（`live_photo.rs`）、FFI `xdremux_live_photo_pair_valid`；PR #86 修复开启摄影风格时的配对失败（0.4.7）。PR #119 与 LibLivePhoto 对拍：21 个真机动态照片识别、静帧范围、视频范围、呈现时间全部一致，174 个普通照片全部判为非动态（`docs/research/motion-photo-liblivephoto-diff-20261115.md`） |
 | Live Photo 输出发布 | 可用（新，PR #123） | 写入 → 不覆盖改名 → 回读 → 提交或回滚，HEIC + MOV 平铺配对与 `.pvt` 包共用一套（`xdremux/rust/src/live_photo_publish.rs`，规则见 `docs/architecture/ffi-contract.md` §3）。Flutter 平铺输出改走新 FFI `xdremux_publish_live_photo_pair`，SwiftUI 经 `MotionPhoto.swift` 调同一函数。回滚失败会在 `errorMessage` 里写明 |
-| 风格 + 实况 | 可用（0.4.6 起） | `live_photo_styles::attach_style_tracks` 向 MOV 追加 linear thumbnail、smartstyle-info、live-photo-info 与 matte 伴随轨道；目前用静帧代替每一帧、matte 为空（§4.4）。逐帧生成在 PR #130 |
+| 风格 + 实况 | 可用（0.4.6 起） | `live_photo_styles::attach_style_tracks` 向 MOV 追加 linear thumbnail、smartstyle-info、live-photo-info 与 matte 伴随轨道；自 #130 起，Apple 端按视频帧生成缩略图与色调曲线，其他平台复用封面。matte 为空（§4.4） |
 | Live Photo `.pvt` 包输出 | 可用（默认开启） | `live_photo_bundle.rs`；iOS / macOS 分享 `.pvt`，其他平台分享 `.pvt.zip`；见 `docs/formats/live-photo-pvt.md` |
 | 统一转换管线 | 可用 | `xdremux_convert_pipeline`（`pipeline.rs`，PR #63）：转换 → 校验（ISO / Styles / 人像）→ 摄影风格 3 后处理 → 再校验。SwiftUI 版经 `Pipeline.swift` 调用；Flutter 版不调用（推断：`apps/flutter/lib` 中无引用） |
 | 局域网互传（LocalSend v2） | 可用（0.4.7 起） | 独立 crate `crates/xdremux-transfer`、`crates/xdremux-transfer-ffi`（vendor LocalSend，Rust 固定 1.97.1）；Flutter 全平台、SwiftUI、鸿蒙原生 0.5.4。iPhone 没有多播授权，靠 /24 网段扫描发现对端。Windows ↔ Android 及与官方 LocalSend 互通有真机记录（`docs/testing/local-transfer-*.md`）；Apple 真机扫描到真实对端**未验证** |
@@ -96,7 +97,7 @@
 1. **已解决：Flutter 3.50 之后 `release.yml` 的安卓构建失败**（已实测，11-17）：AGP 9.3.1 自带的 lint 32.3.1 调用 JDK 21 才有的 `List.removeLast()`；PR #124 改用 JDK 21（`release.yml:345-353`）。`main @ b0ed888` 的预检 run `44004132722`（`platforms: all`）Android APK、macOS DMG、Windows x64、iOS、Linux 全部通过。之后 #126、#116、#123 又进了 FFI 与内核改动，**当前 `034684a` 没有新的全平台预检记录**；0.4.8 切版本号前先跑一次（§5.1）。
 2. **Styles native 路径不是逐像素等价**：仅 key 3 按图拟合，key 1 为 identity，`"i"` / `"h"` / `"6"` / `"c"` / `"d"` 为参考值，天空分割待 R4。目标是「Apple 照片可继续编辑」，不是原生画质。PR #100 只在 macOS 照片 App 上人工核对了 7 种主图尺寸，iPhone 上**未验证**；Flutter 内的 Swift 研究管线仍是旧的 2880×2560 上限，该管线不在产品路径。
 3. **linear thumbnail**：baseline exposure 的绝对亮度与「4:2:0 增益映射 + Main10 缩略图」组合在照片 App 中的接受度只在 iPhone 16e 与 macOS 27.2 上做过维护者验收；`docs/testing/styles-hdr-device-checklist.md` 自 10-26 起没有更新，完整 S1/S2/S3/S7 A/B **未跑**。原生 Apple tmap 文件重编码仍需解 HEVC 增益映射，`rust_h265` 只支持 4:2:0（`heif_decode.rs:6`）。Flutter macOS / iOS 开 GPU 后走 VideoToolbox（#116），三通道增益映射同为 4:2:0，对画质的影响**未验证**。
-4. **风格实况的 MOV 伴随轨道按原生 iOS 27 MOV 复刻**：用静帧代替每一帧（不解视频），matte 为空（`live_photo_styles.rs`）；只验证了 macOS 27.2 / iPhone 16e 编辑不崩溃、保存后实况与颜色保留，其他系统版本**未验证**。PR #130 改为逐帧生成，仍在飞。
+4. **风格实况**：#130 的两份 ColorOS 16 HLG 样本在 macOS「照片」完成编辑、保存和重开。编辑导出保留视频显示时间戳和 AAC 包。iPhone 设备目标通过编译，逐帧路径的交互验收在 Mac 上完成。
 5. **Live Photo 输出发布已事务化（PR #123，已实测于单元 / 集成测试与两端宿主测试）**，实现在 `xdremux/rust/src/live_photo_publish.rs`：先在内存里用配对谓词校验，写到同目录定长隐藏名 `.xdremux-publish-<run>-<n>.partial` 并刷盘，再以不覆盖改名（Linux / Android `renameat2(RENAME_NOREPLACE)`，Apple `renamex_np(RENAME_EXCL)`，Windows `MoveFileExW` 不带替换标志）放到位，逐字节回读（`.pvt` 另比对结构与 `metadata.plist`），通过才删掉改名留存的旧文件（`.old`）；任一步失败删掉本次写出的条目、把旧文件改回原名，`errorMessage` 写明回滚结果。仍留着的：
    - 不支持原子不改名的文件系统（macOS FAT / exFAT、WebDAV、部分网络共享）回退为先查后改名，只在单进程内按目录排队，跨进程不保证原子（模块注释写明）。
    - 进程在放到位与提交之间被杀会留下 `.partial` / `.old`；一小时以上的 `.partial` 由下一次往同目录发布时清掉，`.old` 永不自动清理（可能是旧输出的唯一副本）。Windows 上点前缀不隐藏，用户在资源管理器里能看到它们。
@@ -116,7 +117,7 @@
 1. **Flutter 0.4.8**：前置已满足（#116、#124）。先在 `main` 跑一次全平台预检（`gh workflow run release.yml -R BeetMan/XDRemux-Flutter --ref main -f platforms=all`，覆盖 §4.1），通过后切 `pubspec.yaml` 版本号并发版，带上 `v0.4.7` 之后的 40 个合并。
 2. SwiftUI：出 0.1.2 预发布，带上 PR #99 的人像修复与 0.1.1 之后的界面改动（§4.7）；确认 TestFlight 构建 5–8 的处理结果与真机安装；开放公开测试链接前按 `docs/plans/apple-drop-x265.md` 定下 x265 与 App Store 条款的问题；补传输框架的 dSYM。`docs/plans/apple-native.md` §3 的 P4 跨端回归仍无记录。
 3. OPPO 17.24 堆叠 PR #127 → #128 → #129：三个分支各同步 `main`（落后 7 个提交）后按顺序合；合并后删 §2.2 的两个 11-18 前身分支（先打 `archive/*` 标签）。
-4. PR #130（Apple 逐帧实况风格）：修正 cbindgen 对内部视频回调的导出，待 [Rust CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/45045501106/job/137279107437) 和 [Apple CI](https://github.com/BeetMan/XDRemux-Flutter/actions/runs/45045500987/job/137279107287) 的公共头文件检查通过后合并。
+4. **已完成**：[PR #130](https://github.com/BeetMan/XDRemux-Flutter/pull/130) 的公共头文件检查已通过，Apple 逐帧实况风格已合入主线（§4.4）。
 5. 鸿蒙原生版：真机复测后发 0.5.5，带上 PR #99 的人像校验修复、PR #123 的发布原语（OHOS 真机**未验证**）与 NEON 版 x265（`docs/research/ohos-hw-hevc-20261115.md`）。
 6. 普通静帧输出事务化（§4.5）：评估把 `live_photo_publish.rs` 的 staging → 改名 → 回读推广到 `xdremux_convert` 系列的输出，并让 Flutter 不再在转换前删旧输出；约 2–3 天。
 7. 按 `docs/testing/styles-hdr-device-checklist.md` 跑完整真机 A/B（覆盖 §4.3），并在 iPhone 上复核 PR #100 与 #116 的 VideoToolbox 输出；之后是每图的 key 4 / `"h"`（`linear_metadata`）与 P1-3 统计。
