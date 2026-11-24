@@ -36,6 +36,9 @@ fn main() {
     // unlike `aarch64-apple-ios-sim`; both need the simulator x265 build.
     let is_ios_sim = target_os == "ios" && (target_env == "sim" || target_arch == "x86_64");
     build_libheif_decoder(&target_os);
+    if matches!(target_os.as_str(), "macos" | "ios") {
+        build_live_style_decoder();
+    }
 
     println!("cargo:rerun-if-env-changed=XDREMUX_HEVC_BACKEND");
     println!("cargo:rerun-if-env-changed=XDREMUX_USE_FFMPEG");
@@ -274,6 +277,22 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/x265_helper.c");
     println!("cargo:rerun-if-changed={lib_file}");
+}
+
+fn build_live_style_decoder() {
+    println!("cargo:rerun-if-changed=src/apple_live_style_video.m");
+    cc::Build::new()
+        .file("src/apple_live_style_video.m")
+        .flag("-fobjc-arc")
+        // The synchronous track APIs also work on the app's iOS 15 target.
+        .flag("-Wno-deprecated-declarations")
+        .opt_level(2)
+        .compile("xdremux_live_style_video");
+    for framework in [
+        "AVFoundation", "CoreImage", "CoreGraphics", "CoreMedia", "CoreVideo", "Foundation",
+    ] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
 }
 
 /// VideoToolbox backend: one C file against the public C API of
