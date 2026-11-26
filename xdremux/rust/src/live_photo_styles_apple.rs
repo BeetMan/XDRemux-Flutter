@@ -70,7 +70,15 @@ fn set_presentation_timing(
         .iter()
         .map(|&(time, _)| time)
         .chain(std::iter::once(end));
-    let scale = times.clone().try_fold(movie_scale, |clock, time| {
+    let base_scale = if video.start > 0 {
+        if movie_scale == 0 {
+            return Err(invalid());
+        }
+        movie_scale
+    } else {
+        1
+    };
+    let scale = times.clone().try_fold(base_scale, |clock, time| {
         let scale = u32::try_from(time.scale)
             .ok()
             .filter(|&s| s > 0)
@@ -88,7 +96,14 @@ fn set_presentation_timing(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let leading_edit = video.start * u64::from(scale / movie_scale);
+    let leading_edit = if video.start > 0 {
+        video
+            .start
+            .checked_mul(u64::from(scale / movie_scale))
+            .ok_or_else(invalid)?
+    } else {
+        0
+    };
     let first = *ticks.first().ok_or_else(invalid)?;
     let offset = first.checked_sub(leading_edit).ok_or_else(invalid)?;
     let durations = ticks
@@ -224,4 +239,89 @@ pub(super) fn style_frames(
         matrix,
         info,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub_video(start: u64) -> VideoTrack {
+        VideoTrack {
+            id: 1,
+            matrix: [0u8; 36],
+            duration: 900,
+            coded_width: 1920,
+            coded_height: 1440,
+            media_timescale: 90_000,
+            durations: vec![3_000],
+            start,
+            first_frame_offset: 0,
+        }
+    }
+
+    fn frame(value: i64, scale: i32) -> (FrameTime, Vec<f32>) {
+        (FrameTime { value, scale }, Vec::new())
+    }
+
+    #[test]
+    fn presentation_timing_preserves_bframe_offset_and_leading_edit() {
+        // Leading empty edit = 100/600s (= 15000/90000s); first frame at 18000/90000s -> ctts 3000.
+        let mut video = stub_video(100);
+        let frames = [
+            frame(18_000, 90_000),
+            frame(21_000, 90_000),
+            frame(24_000, 90_000),
+        ];
+        set_presentation_timing(&mut video, 600, &frames, FrameTime { value: 27_000, scale: 90_000 })
+            .unwrap();
+        assert_eq!(video.media_timescale, 90_000);
+        assert_eq!(video.first_frame_offset, 3_000);
+        assert_eq!(video.durations, vec![3_000, 3_000, 3_000]);
+    }
+
+    #[test]
+    fn presentation_timing_skips_unrelated_movie_scale_when_no_leading_edit() {
+        // Nanosecond frame clock + coprime movie_scale must not overflow u32 when video.start == 0.
+        let mut video = stub_video(0);
+        let frames = [
+            frame(33_333_333, 1_000_000_000),
+            frame(66_666_667, 1_000_000_000),
+        ];
+        set_presentation_timing(
+            &mut video,
+            44_100,
+            &frames,
+            FrameTime { value: 100_000_000, scale: 1_000_000_000 },
+        )
+        .unwrap();
+        assert_eq!(video.media_timescale, 1_000_000_000);
+        assert_eq!(video.first_frame_offset, 33_333_333);
+        assert_eq!(video.durations, vec![33_333_334, 33_333_333]);
+    }
+
+    #[test]
+    fn presentation_timing_rejects_non_monotonic_or_invalid_clocks() {
+        let mut video = stub_video(0);
+        assert!(set_presentation_timing(
+            &mut video,
+            600,
+            &[frame(100, 1000), frame(100, 1000)],
+            FrameTime { value: 200, scale: 1000 },
+        )
+        .is_err());
+        assert!(set_presentation_timing(
+            &mut video,
+            600,
+            &[frame(100, 1000)],
+            FrameTime { value: 100, scale: 1000 },
+        )
+        .is_err());
+        assert!(set_presentation_timing(
+            &mut video,
+            600,
+            &[],
+            FrameTime { value: 100, scale: 1000 },
+        )
+        .is_err());
+    }
 }

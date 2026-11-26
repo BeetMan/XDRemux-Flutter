@@ -48,7 +48,14 @@ pub(super) fn encode(
             if layout != HevcLayout::Yuv420 || !matches!(color, HevcColor::Bt601LimitedLinear | HevcColor::Bt2020LimitedLog) {
                 return Err(unsupported("10-bit pictures other than limited-range 4:2:0"));
             }
-            codes16.iter().map(|codes| encode_10bit(codes, width, height, color))
+            codes16
+                .iter()
+                .map(|codes| {
+                    if crate::progress::is_cancelled() {
+                        return Err(io_err(crate::progress::CANCELLED_MESSAGE));
+                    }
+                    encode_10bit(codes, width, height, color)
+                })
                 .collect::<std::io::Result<Vec<_>>>()?
         }
         _ => return Err(unsupported("source sample depth does not match the coded bit depth")),

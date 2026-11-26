@@ -60,13 +60,18 @@ static NSString *decode_frames(NSURL *url, int32_t track_id, uint32_t width, uin
                     // Keep coded orientation. The MOV carries the display transform.
                     CIImage *image = [CIImage imageWithCVPixelBuffer:pixels];
                     CGRect extent = image.extent;
-                    image = [image imageByApplyingTransform:CGAffineTransformMakeTranslation(
-                        -CGRectGetMinX(extent), -CGRectGetMinY(extent))];
-                    image = [image imageByApplyingTransform:CGAffineTransformMakeScale(
-                        width / CGRectGetWidth(extent), height / CGRectGetHeight(extent))];
-                    [ci render:image toBitmap:bitmap.mutableBytes rowBytes:row_bytes
-                        bounds:CGRectMake(0, 0, width, height) format:kCIFormatRGBAf colorSpace:space];
-                    if (!receive(context, time, bitmap.bytes)) failure = @"could not record video frame";
+                    if (CGRectIsNull(extent) || CGRectIsEmpty(extent) || CGRectIsInfinite(extent) ||
+                        CGRectGetWidth(extent) < 1.0 || CGRectGetHeight(extent) < 1.0) {
+                        failure = @"video decoder returned a frame with an invalid extent";
+                    } else {
+                        image = [image imageByApplyingTransform:CGAffineTransformMakeTranslation(
+                            -CGRectGetMinX(extent), -CGRectGetMinY(extent))];
+                        image = [image imageByApplyingTransform:CGAffineTransformMakeScale(
+                            width / CGRectGetWidth(extent), height / CGRectGetHeight(extent))];
+                        [ci render:image toBitmap:bitmap.mutableBytes rowBytes:row_bytes
+                            bounds:CGRectMake(0, 0, width, height) format:kCIFormatRGBAf colorSpace:space];
+                        if (!receive(context, time, bitmap.bytes)) failure = @"could not record video frame";
+                    }
                 } else {
                     failure = @"video decoder returned a frame without pixels or a presentation time";
                 }
@@ -98,16 +103,21 @@ bool xdremux_observe_live_style_video(const uint8_t *movie, size_t size, int32_t
         NSError *file_error = nil;
         if (![files createDirectoryAtURL:directory withIntermediateDirectories:NO attributes:nil
                                   error:&file_error]) {
-            snprintf(error, error_size, "%s", file_error.localizedDescription.UTF8String);
+            if (error && error_size > 0) {
+                snprintf(error, error_size, "%s",
+                         file_error.localizedDescription.UTF8String ?: "cannot create staging directory");
+            }
             return false;
         }
         NSURL *url = [directory URLByAppendingPathComponent:@"paired.mov"];
         NSData *bytes = [NSData dataWithBytesNoCopy:(void *)movie length:size freeWhenDone:NO];
         NSString *failure = [bytes writeToURL:url options:0 error:&file_error]
             ? decode_frames(url, track_id, width, height, receive, context, end)
-            : file_error.localizedDescription;
+            : (file_error.localizedDescription ?: @"cannot write staged movie");
         [files removeItemAtURL:directory error:NULL];
-        if (failure) snprintf(error, error_size, "%s", failure.UTF8String);
+        if (failure && error && error_size > 0) {
+            snprintf(error, error_size, "%s", failure.UTF8String ?: "video decode failed");
+        }
         return failure == nil;
     }
 }
