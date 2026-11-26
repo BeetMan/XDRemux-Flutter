@@ -27,20 +27,20 @@ Flutter 跨平台版见 [v0.4.7 发布页](https://github.com/BeetMan/XDRemux-Fl
 | iOS · Flutter | [0.4.7 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-iOS-0.4.7-unsigned.ipa) | iOS 15+，需自行签名侧载；Duo 功能要求相应新系统 |
 | HarmonyOS · Flutter | [0.4.7 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/v0.4.7/XDRemux-HarmonyOS-0.4.7-unsigned.hap) | Profile / AOT、`debug:true`，需开发自签；注意下方导出限制 |
 | HarmonyOS · ArkUI 原生版 | [0.5.4 未签名 HAP](https://github.com/BeetMan/XDRemux-Flutter/releases/download/harmony-v0.5.4/XDRemux-HarmonyOS-Native-0.5.4-unsigned.hap) | Debug / `debug:true`，Rust 核心保持 Release 优化，需开发自签 |
-| macOS · Apple Silicon · SwiftUI 原生版（预发布） | [0.1.1 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/apple-v0.1.1/XDRemux-Apple-macOS-0.1.1.dmg) | macOS 14+，ad-hoc 签名，授权步骤同 Flutter 版 DMG；可与 Flutter 版并存 |
+| macOS · Apple Silicon · SwiftUI 原生版（预发布） | [0.1.1 DMG](https://github.com/BeetMan/XDRemux-Flutter/releases/download/apple-v0.1.1/XDRemux-Apple-macOS-0.1.1.dmg) | macOS 14+，0.1.1 为 ad-hoc 签名，授权步骤同 Flutter 版 DMG；后续版支持 Developer ID 公证，可与 Flutter 版（后续包为 `XDRemux Flutter.app`）并存 |
 | iOS / iPadOS · SwiftUI 原生版（预发布） | [0.1.1 未签名 IPA](https://github.com/BeetMan/XDRemux-Flutter/releases/download/apple-v0.1.1/XDRemux-Apple-iOS-0.1.1-unsigned.ipa) | iOS 17+，需自行签名侧载；分享面板入口依赖签名工具签上 App Group |
 
 当前发布不提供 Windows ARM64 安装包。Linux x64 随 v0.4.7 提供 AppImage / tar.gz，已纳入统一构建与发布资产检查，但仍按预览支持发布，不代表所有发行版和桌面功能已完整验收；构建与打包方式见[构建指南的 Linux 小节](docs/operations/building.md#linux-桌面本地开发)。请从上述官方发布页下载安装包。
 
 iOS 与 HarmonyOS 安装包未签名，不能直接按普通商店应用安装。HarmonyOS 两个当前附件都供开发自签使用，证书与 Profile 需匹配包名和目标设备，且受设备范围与有效期约束；它们不是免签包或应用市场上架包。Flutter 与原生版包名不同（鸿蒙 `.arkui`、苹果 `.swiftui`），签名配置不能直接混用。iOS 请使用适合自己设备的签名与侧载方式。
 
-macOS 包未做 Developer ID 签名与公证。将应用拖入「应用程序」并确认下载来源可信后，在 Mac 终端执行，再打开应用：
+当前已发布的 `v0.4.7` 与 `apple-v0.1.1` macOS 包未做 Developer ID 签名与公证（主线自后续版本起：Flutter 版应用改名为 `XDRemux Flutter.app` 并在 DMG 附「隐私与安全性」快捷入口，SwiftUI 版保留 `XDRemux.app` 并接入签名与公证脚本）。未公证的 macOS 包将应用拖入「应用程序」并确认下载来源可信后，在 Mac 终端执行（若使用新版 Flutter 包请把路径改为 `XDRemux Flutter.app`），再打开应用：
 
 ```bash
 sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
 ```
 
-此命令仅清除该 App 的下载隔离标记；照片、文件访问权限仍需按系统提示单独授权。也可在「系统设置 → 隐私与安全性」中选择「仍要打开」。完整步骤见[安装与侧载说明](docs/operations/installing.md)。
+此命令仅清除该 App 的下载隔离标记；照片、文件访问权限仍需按系统提示单独授权。也可在「系统设置 → 隐私与安全性」中选择「仍要打开」（新版未公证 DMG 内提供直达该页面的快捷入口）。完整步骤见[安装与侧载说明](docs/operations/installing.md)。
 
 ## 0.4.7 本轮更新
 

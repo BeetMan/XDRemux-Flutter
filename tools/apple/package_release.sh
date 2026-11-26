@@ -2,10 +2,10 @@
 # Package the native SwiftUI app (apps/apple) for a GitHub release:
 #
 #   apps/apple/build/release/<version>/
-#     ├── XDRemux-Apple-macOS-<version>.dmg            ad-hoc signed, Apple Silicon
+#     ├── XDRemux-Apple-macOS-<version>.dmg            Developer ID + notarized when configured, else ad-hoc
 #     ├── XDRemux-Apple-iOS-<version>-unsigned.ipa     Payload/XDRemux.app, no signature
 #     ├── XDRemux.xcarchive/                           the iOS archive (not uploaded)
-#     ├── BUILD_RECORD.txt                             commits, core / transfer records, hashes
+#     ├── BUILD_RECORD.txt                             commits, core / transfer records, signing, hashes
 #     └── SHA256SUMS.txt
 #
 # Like the HarmonyOS native app, this is run on a developer Mac and uploaded by
@@ -19,10 +19,10 @@
 #      let the user choose; needs the vendored x265 checkout), so the
 #      bundled cores match HEAD (both are gitignored and go stale otherwise);
 #      the simulator slice is not shipped but keeps the dev workflow working
-#   2. xcodegen, Release builds for macOS (ad-hoc signed) and iOS (unsigned archive)
+#   2. xcodegen, Release builds for macOS (Developer ID or ad-hoc) and iOS (unsigned archive)
 #   3. sanity checks: version in the bundles, core record vs. HEAD, transfer
-#      framework and Share Extension present, macOS seal valid
-#   4. DMG (app + /Applications link + licence files), IPA, SHA256SUMS
+#      framework and Share Extension present, macOS seal (and runtime/timestamp) valid
+#   4. package DMG (+ privacy shortcut if unnotarized), sign DMG and run single-pass notarization/stapling when enabled, IPA, SHA256SUMS
 #
 # Env:
 #   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. NOT
@@ -34,11 +34,23 @@
 #                             not compared yet.
 #   XDREMUX_SKIP_TRANSFER=1   reuse the existing XDRemuxTransferCore.xcframework
 #   XDREMUX_RELEASE_OUT       output dir (default apps/apple/build/release/<version>)
+#   XDREMUX_TEAM_ID           developer team (default W94G5B6VGC; "" disables team filter)
+#   XDREMUX_MACOS_SIGN        auto (default) | developer-id | ad-hoc
+#   XDREMUX_DEVELOPER_ID      explicit "Developer ID Application: ..." identity or SHA-1
+#   XDREMUX_NOTARIZE          auto (default) | 1 | 0
+#   XDREMUX_STAPLE_APP=1      also notarize and staple XDRemux.app before building the DMG
+#   XDREMUX_NOTARY_TIMEOUT    optional --timeout passed to notarytool submit --wait (e.g. 20m)
+#   XDREMUX_NOTARY_PROFILE    notarytool keychain profile name (with optional XDREMUX_NOTARY_KEYCHAIN)
+#   ASC_KEY_PATH / ASC_KEY_ID / ASC_ISSUER_ID
+#                             App Store Connect API key (.p8) for notarytool if no profile is set
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_DIR="$ROOT/apps/apple"
 cd "$APP_DIR"
+
+# shellcheck source=tools/apple/macos_release_signing.sh
+source "$ROOT/tools/apple/macos_release_signing.sh"
 
 VERSION="$(sed -nE 's/^[[:space:]]*CFBundleShortVersionString:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
 BUILD_NO="$(sed -nE 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -n1)"
@@ -47,7 +59,10 @@ BUILD_NO="$(sed -nE 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"([^"]+)
 OUT="${XDREMUX_RELEASE_OUT:-$APP_DIR/build/release/$VERSION}"
 DD="$APP_DIR/build/release/DerivedData"
 HEAD_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-echo "==> XDRemux Apple native $VERSION ($BUILD_NO) from $HEAD_SHA"
+
+resolve_macos_signing
+resolve_macos_notarization
+echo "==> XDRemux Apple native $VERSION ($BUILD_NO) from $HEAD_SHA (macOS sign: $MACOS_SIGN_MODE, notarize: $MACOS_DO_NOTARIZE)"
 if [ -n "$(git -C "$ROOT" status --porcelain -- apps/apple xdremux/rust crates tools/apple)" ]; then
   echo "warning: working tree has uncommitted changes under apps/apple, xdremux/rust, crates or tools/apple" >&2
 fi
@@ -89,20 +104,44 @@ done
 echo "==> xcodegen"
 xcodegen generate >/dev/null
 
-echo "==> macOS Release (ad-hoc signed)"
-xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -configuration Release \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DD" \
-  CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
-  build | /usr/bin/grep -E 'error:|warning: .*(deprecated|unused)|\*\* BUILD' || true
+echo "==> macOS Release ($MACOS_SIGN_MODE signed)"
+MAC_BUILD_LOG="$OUT/macos-build.log"
+set +e
+if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
+  xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -configuration Release \
+    -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DD" \
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$MACOS_SIGN_IDENTITY" \
+    DEVELOPMENT_TEAM="${XDREMUX_TEAM_ID-W94G5B6VGC}" \
+    ENABLE_HARDENED_RUNTIME=YES OTHER_CODE_SIGN_FLAGS="--timestamp" \
+    build >"$MAC_BUILD_LOG" 2>&1
+else
+  xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -configuration Release \
+    -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DD" \
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= \
+    build >"$MAC_BUILD_LOG" 2>&1
+fi
+rc=$?
+set -e
+/usr/bin/grep -E 'error:|warning: .*(deprecated|unused)|\*\* BUILD' "$MAC_BUILD_LOG" || true
+[ $rc -eq 0 ] || { echo "macOS build failed; full log: $MAC_BUILD_LOG" >&2; exit 1; }
 MAC_APP="$DD/Build/Products/Release/XDRemux.app"
 [ -d "$MAC_APP" ] || { echo "macOS build produced no app" >&2; exit 1; }
+if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
+  sign_macos_bundle_developer_id "$MAC_APP" "$MACOS_SIGN_IDENTITY" "$APP_DIR/App/XDRemux-macOS.entitlements"
+fi
 
 echo "==> iOS Release archive (unsigned)"
 ARCHIVE="$OUT/XDRemux.xcarchive"
+IOS_BUILD_LOG="$OUT/ios-archive.log"
+set +e
 xcodebuild -project XDRemux.xcodeproj -scheme XDRemux -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath "$DD" -archivePath "$ARCHIVE" \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-  archive | /usr/bin/grep -E 'error:|\*\* ARCHIVE' || true
+  archive >"$IOS_BUILD_LOG" 2>&1
+rc=$?
+set -e
+/usr/bin/grep -E 'error:|\*\* ARCHIVE' "$IOS_BUILD_LOG" || true
+[ $rc -eq 0 ] || { echo "iOS archive failed; full log: $IOS_BUILD_LOG" >&2; exit 1; }
 IOS_APP="$ARCHIVE/Products/Applications/XDRemux.app"
 [ -d "$IOS_APP" ] || { echo "iOS archive produced no app" >&2; exit 1; }
 
@@ -129,9 +168,18 @@ test -z "$(find "$MAC_APP" -name '*.appex')" || { echo "macOS bundle must not em
 lipo -info "$MAC_APP/Contents/MacOS/XDRemux" | /usr/bin/grep -q arm64
 codesign -v --deep --strict "$MAC_APP"
 codesign -d --entitlements - "$MAC_APP" 2>/dev/null | /usr/bin/grep -q 'com.apple.security.app-sandbox' || { echo "macOS app lost its sandbox entitlement" >&2; exit 1; }
+if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
+  verify_macos_developer_id_signature "$MAC_APP"
+fi
 echo "bundles OK: version $VERSION ($BUILD_NO), core linked, transfer framework embedded, Share Extension present"
 
 # ---------------------------------------------------------------- 4. artefacts
+if [ "$MACOS_DO_NOTARIZE" -eq 1 ] && [ "${XDREMUX_STAPLE_APP:-0}" = "1" ]; then
+  echo "==> Notarizing macOS app"
+  notarize_and_staple_target "$MAC_APP"
+  spctl --assess --type execute -vv "$MAC_APP"
+fi
+
 echo "==> DMG"
 STAGE="$OUT/dmg-stage"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
@@ -139,9 +187,20 @@ cp -R "$MAC_APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 cp "$ROOT/LICENSE" "$STAGE/LICENSE.txt"
 cp "$ROOT/LICENSING.md" "$STAGE/LICENSING.md"
+if [ "$MACOS_DO_NOTARIZE" -eq 0 ]; then
+  "$ROOT/tools/apple/write_privacy_shortcut.sh" "$STAGE" >/dev/null
+fi
 DMG="$OUT/XDRemux-Apple-macOS-$VERSION.dmg"
 hdiutil create -volname XDRemux -srcfolder "$STAGE" -ov -quiet -format UDZO "$DMG"
 rm -rf "$STAGE"
+if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
+  codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+  codesign -v --strict "$DMG"
+  if [ "$MACOS_DO_NOTARIZE" -eq 1 ]; then
+    echo "==> Notarizing DMG"
+    notarize_and_staple_target "$DMG"
+  fi
+fi
 
 echo "==> IPA"
 IPA_STAGE="$OUT/ipa-stage"
@@ -156,6 +215,9 @@ rm -rf "$IPA_STAGE"
   echo "build=$BUILD_NO"
   echo "commit=$HEAD_SHA"
   echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+  echo "macos_sign_mode=$MACOS_SIGN_MODE"
+  echo "macos_sign_identity=$MACOS_SIGN_IDENTITY"
+  echo "macos_notarized=$MACOS_DO_NOTARIZE"
   echo "--- XDRemuxCore.xcframework"; cat "$CORE_REC"
   echo "--- XDRemuxTransferCore.xcframework"; cat "$XFER_REC"
 } > "$OUT/BUILD_RECORD.txt"
