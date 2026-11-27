@@ -6,16 +6,17 @@
 
 ### macOS（Apple Silicon）
 
-1. 下载 `XDRemux-macOS-0.4.5.dmg`，打开后将 `XDRemux.app` 拖入「应用程序」。
-2. 本包未做 Developer ID 签名与公证。确认从本项目官方发布页下载后，在 **Mac 的「终端」** 执行以下授权命令，再打开应用：
+1. 下载 `XDRemux-macOS-0.4.5.dmg`，打开后将应用拖入「应用程序」（`v0.4.7` 及更早版本为 `XDRemux.app`，后续构建改为 `XDRemux Flutter.app` 以避免与 SwiftUI 原生版 `XDRemux.app` 重名）。
+2. 若该安装包未做 Developer ID 签名与公证，确认从本项目官方发布页下载后，在 **Mac 的「终端」** 执行以下授权命令（路径按实际 `.app` 名称调整），再打开应用：
 
 ```bash
-sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"
+sudo xattr -rd com.apple.quarantine "/Applications/XDRemux.app"          # v0.4.7 及更早版本
+sudo xattr -rd com.apple.quarantine "/Applications/XDRemux Flutter.app"  # v0.4.7 之后构建
 ```
 
-按提示输入 Mac 登录密码（输入时终端不会显示字符）。命令只清除这个 App 的下载隔离标记，不需要全局关闭 Gatekeeper 或 SIP；如果安装到其他目录，请将路径改成实际的 `XDRemux.app` 路径。若仍提示文件损坏，请先重新下载，不要反复降低系统安全设置。
+按提示输入 Mac 登录密码（输入时终端不会显示字符）。命令只清除这个 App 的下载隔离标记，不需要全局关闭 Gatekeeper 或 SIP；如果安装到其他目录，请将路径改成实际的 `.app` 路径。若仍提示文件损坏，请先重新下载，不要反复降低系统安全设置。
 
-也可在尝试打开后，到「系统设置 → 隐私与安全性」点击「仍要打开」。照片、文件等访问权限与上述启动授权不同，使用对应功能时再按系统提示授予。当前 DMG 仅支持 Apple Silicon，不支持 Intel Mac 转换。
+也可在尝试打开后，到「系统设置 → 隐私与安全性」点击「仍要打开」（`v0.4.7` 之后的未公证 DMG 内附带直达该页面的快捷入口 `.inetloc`）。照片、文件等访问权限与上述启动授权不同，使用对应功能时再按系统提示授予。当前 DMG 仅支持 Apple Silicon，不支持 Intel Mac 转换。
 
 ### iOS（需签名侧载）
 

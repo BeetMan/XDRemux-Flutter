@@ -18,10 +18,9 @@
 //! * mebx `texturestyle-info` and the `smartstyle.*` / `texturestyle.*`
 //!   movie keys.
 //!
-//! The port has no video decoder, so every frame reuses the still: one
-//! thumbnail and one (empty) matte sample, repeated at the main video's
-//! timing. Main video samples are never touched; the new samples go into an
-//! appended `mdat` and `moov` is rebuilt, as in `live_photo::write_live_photo_movie`.
+//! On Apple platforms the linear thumbnail and tone curve follow the decoded
+//! video frames. Other platforms reuse the still's thumbnail and tone curve
+//! at the video timing. Companion samples go into an appended `mdat`.
 //! Which of these Photos actually requires is still being narrowed down on
 //! device, hence [`MovieStyleLevel`].
 
@@ -29,10 +28,13 @@ use crate::live_photo::{
     direct_child, full_box, handler_type, make_box, mdhd_timescale, movie_timescale,
     sample_pts_seconds, scan_boxes, track_id, MovBox, QUICKTIME_EPOCH_OFFSET,
 };
-use crate::linear_thumbnail::MovieLinearThumbnail;
 use crate::styles_attach::{find_item, item_payload_bytes, STYLES_URI};
 use crate::styles_bplist::BplistWriter;
 use crate::texture_styles::TEXTURE_STYLES_URI;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[path = "live_photo_styles_apple.rs"]
+mod apple;
 
 /// Environment override for [`MovieStyleLevel`] (`off|thumbnail|info|full`).
 pub const LEVEL_ENV: &str = "XDREMUX_LIVE_STYLE_TRACKS";
@@ -293,10 +295,13 @@ struct VideoTrack {
     durations: Vec<u32>,
     /// Movie time of the first frame (leading empty edits).
     start: u64,
+    /// Offset from the leading edit to the first frame, in media ticks.
+    first_frame_offset: u32,
 }
 
 impl VideoTrack {
     /// Quarter turns (CW) the track matrix applies to coded frames.
+    #[cfg(any(test, not(any(target_os = "macos", target_os = "ios"))))]
     fn display_cw_quarter_turns(&self) -> u32 {
         let fixed = |i: usize| i32::from_be_bytes(self.matrix[i * 4..i * 4 + 4].try_into().unwrap());
         match (fixed(0).signum(), fixed(1).signum(), fixed(3).signum(), fixed(4).signum()) {
@@ -417,6 +422,7 @@ fn video_track(moov: &[u8]) -> Result<VideoTrack, String> {
         media_timescale,
         durations,
         start,
+        first_frame_offset: 0,
     })
 }
 
@@ -425,6 +431,31 @@ struct Companion {
     /// Builds the trak once the chunk offset is known.
     build: Box<dyn Fn(u64) -> Vec<u8>>,
     data: Vec<u8>,
+}
+
+struct TrackSamples {
+    sizes: Vec<u32>,
+    data: Vec<u8>,
+}
+
+impl TrackSamples {
+    fn repeated(sample: &[u8], count: usize) -> Self {
+        Self {
+            sizes: vec![sample.len() as u32],
+            data: sample.repeat(count),
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos", target_os = "ios"))]
+    fn individual(samples: impl IntoIterator<Item = Vec<u8>>) -> Self {
+        let mut data = Vec::new();
+        let mut sizes = Vec::new();
+        for sample in samples {
+            sizes.push(sample.len() as u32);
+            data.extend(sample);
+        }
+        Self { sizes, data }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -499,8 +530,8 @@ fn data_info_boxes() -> Vec<u8> {
     [data_handler, make_box(b"dinf", &full_box(b"dref", 0, 0, &dref))].concat()
 }
 
-/// Sample table: one chunk holding every sample, all of `sample_size` bytes.
-fn stbl_box(stsd_entry: &[u8], durations: &[u32], sample_size: usize, chunk_offset: u64) -> Vec<u8> {
+/// Sample table for one chunk holding all samples in presentation order.
+fn stbl_box(stsd_entry: &[u8], durations: &[u32], sizes: &[u32], first_offset: u32, chunk_offset: u64) -> Vec<u8> {
     let mut stsd = 1u32.to_be_bytes().to_vec();
     stsd.extend_from_slice(stsd_entry);
     let mut runs: Vec<(u32, u32)> = Vec::new();
@@ -519,8 +550,22 @@ fn stbl_box(stsd_entry: &[u8], durations: &[u32], sample_size: usize, chunk_offs
     for v in [1u32, durations.len() as u32, 1] {
         stsc.extend_from_slice(&v.to_be_bytes());
     }
-    let mut stsz = (sample_size as u32).to_be_bytes().to_vec();
+    let constant_size = if sizes.len() == 1 { sizes[0] } else { 0 };
+    let mut stsz = constant_size.to_be_bytes().to_vec();
     stsz.extend_from_slice(&(durations.len() as u32).to_be_bytes());
+    if constant_size == 0 {
+        for size in sizes {
+            stsz.extend_from_slice(&size.to_be_bytes());
+        }
+    }
+    let ctts = if first_offset == 0 {
+        Vec::new()
+    } else {
+        let mut p = 1u32.to_be_bytes().to_vec();
+        p.extend_from_slice(&(durations.len() as u32).to_be_bytes());
+        p.extend_from_slice(&first_offset.to_be_bytes());
+        full_box(b"ctts", 0, 0, &p)
+    };
     let chunk = if chunk_offset > 0xFFFF_FFFF {
         let mut p = 1u32.to_be_bytes().to_vec();
         p.extend_from_slice(&chunk_offset.to_be_bytes());
@@ -535,6 +580,7 @@ fn stbl_box(stsd_entry: &[u8], durations: &[u32], sample_size: usize, chunk_offs
         &[
             full_box(b"stsd", 0, 0, &stsd),
             full_box(b"stts", 0, 0, &stts),
+            ctts,
             full_box(b"stsc", 0, 0, &stsc),
             full_box(b"stsz", 0, 0, &stsz),
             chunk,
@@ -574,19 +620,17 @@ fn hvc1_entry(width: u32, height: u32, hvcc: &[u8], nclc: (u16, u16, u16), logs:
     make_box(b"hvc1", &e)
 }
 
-/// Auxiliary picture track repeating one coded `sample` at the video timing.
+/// Auxiliary picture track at the video timing.
 fn aux_video_track(
     common: TrackCommon<'_>,
     tag: &'static [u8],
-    sample: Vec<u8>,
+    samples: TrackSamples,
     stsd_entry: Vec<u8>,
     width: u32,
     height: u32,
 ) -> Companion {
     let video = common.video;
-    let n = video.durations.len();
-    let data = sample.repeat(n);
-    let size = sample.len();
+    let TrackSamples { sizes, data } = samples;
     let tkhd = tkhd_box(common, 0x0e, width, height);
     let edts = edts_box(video);
     let tref = make_box(b"tref", &make_box(b"vmap", &video.id.to_be_bytes()));
@@ -599,9 +643,10 @@ fn aux_video_track(
     let vmhd = full_box(b"vmhd", 0, 1, &vmhd);
     let udta = make_box(b"udta", &make_box(b"tagc", tag));
     let durations = video.durations.clone();
+    let first_offset = video.first_frame_offset;
     Companion {
         build: Box::new(move |offset| {
-            let stbl = stbl_box(&stsd_entry, &durations, size, offset);
+            let stbl = stbl_box(&stsd_entry, &durations, &sizes, first_offset, offset);
             let minf = make_box(b"minf", &[vmhd.clone(), data_info_boxes(), stbl].concat());
             let mdia = make_box(b"mdia", &[mdhd.clone(), hdlr.clone(), minf].concat());
             make_box(b"trak", &[tkhd.clone(), edts.clone(), tref.clone(), mdia, udta.clone()].concat())
@@ -620,16 +665,16 @@ fn plain_key_body(key: &[u8]) -> Vec<u8> {
     [make_box(b"keyd", &keyd), make_box(b"dtyp", &dtyp), sdpd].concat()
 }
 
-/// Timed metadata track with one key (`key_body`: keyd, dtyp, ...) whose
-/// `payload` repeats per frame.
-fn mebx_track(common: TrackCommon<'_>, key_body: &[u8], payload: &[u8]) -> Companion {
-    let video = common.video;
+fn mebx_sample(payload: &[u8]) -> Vec<u8> {
     let mut sample = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
     sample.extend_from_slice(&1u32.to_be_bytes());
     sample.extend_from_slice(payload);
-    let size = sample.len();
-    let data = sample.repeat(video.durations.len());
+    sample
+}
 
+fn mebx_track(common: TrackCommon<'_>, key_body: &[u8], samples: TrackSamples) -> Companion {
+    let video = common.video;
+    let TrackSamples { sizes, data } = samples;
     let key_atom = make_box(&1u32.to_be_bytes(), key_body);
     let mut mebx = vec![0u8; 6];
     mebx.extend_from_slice(&1u16.to_be_bytes());
@@ -650,9 +695,10 @@ fn mebx_track(common: TrackCommon<'_>, key_body: &[u8], payload: &[u8]) -> Compa
     gmin.extend_from_slice(&[0u8; 4]);
     let gmhd = make_box(b"gmhd", &full_box(b"gmin", 0, 0, &gmin));
     let durations = video.durations.clone();
+    let first_offset = video.first_frame_offset;
     Companion {
         build: Box::new(move |offset| {
-            let stbl = stbl_box(&stsd_entry, &durations, size, offset);
+            let stbl = stbl_box(&stsd_entry, &durations, &sizes, first_offset, offset);
             let minf = make_box(b"minf", &[gmhd.clone(), data_info_boxes(), stbl].concat());
             let mdia = make_box(b"mdia", &[mdhd.clone(), hdlr.clone(), minf].concat());
             make_box(b"trak", &[tkhd.clone(), edts.clone(), tref.clone(), mdia].concat())
@@ -661,23 +707,23 @@ fn mebx_track(common: TrackCommon<'_>, key_body: &[u8], payload: &[u8]) -> Compa
     }
 }
 
-fn smartstyle_info_payload(styles: &StillStyles, with_mattes: bool) -> Vec<u8> {
+fn smartstyle_info_payload(tone_curve: &[u8], exposure: f64, key5: u64, headroom: f64, with_mattes: bool) -> Vec<u8> {
     let mut w = BplistWriter::new();
     let mut entries = Vec::new();
     let k = w.add_str("0");
     let v = w.add_int(SMARTSTYLE_INFO_VERSION);
     entries.push((k, v));
     let k = w.add_str("3");
-    let v = w.add_data(&styles.tone_curve);
+    let v = w.add_data(tone_curve);
     entries.push((k, v));
     let k = w.add_str("4");
-    let v = w.add_real(styles.baseline_exposure as f32 as f64);
+    let v = w.add_real(exposure as f32 as f64);
     entries.push((k, v));
     let k = w.add_str("5");
-    let v = w.add_int(styles.key5);
+    let v = w.add_int(key5);
     entries.push((k, v));
     let k = w.add_str("h");
-    let v = w.add_real(styles.h as f32 as f64);
+    let v = w.add_real(headroom as f32 as f64);
     entries.push((k, v));
     if with_mattes {
         // Native frames that carry matte samples also carry b = 0.0.
@@ -930,24 +976,62 @@ pub fn attach_style_tracks(
     }
     let styles = read_still_styles(still_heic)
         .ok_or("paired still has no readable Photographic Styles plist")?;
-    attach_with(mov, &styles, level, |coded_turns, width, height| {
-        crate::linear_thumbnail::generate_movie_linear_thumbnail(
-            still_heic,
-            coded_turns,
-            width,
-            height,
-            styles.baseline_exposure as f32,
-        )
+    attach_with(mov, &styles, level, |video, movie_scale, width, height| {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        return apple::style_frames(mov, video, movie_scale, width, height, &styles, level);
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            let _ = movie_scale;
+            let coded_turns = (4 - video.display_cw_quarter_turns()) % 4;
+            let thumbnail = crate::linear_thumbnail::generate_movie_linear_thumbnail(
+                still_heic,
+                coded_turns,
+                width,
+                height,
+                styles.baseline_exposure as f32,
+            )?;
+            Ok(StyleFrames::from_still(thumbnail, &styles, level, video.durations.len()))
+        }
     })
 }
 
-/// [`attach_style_tracks`] with the thumbnail source injected:
-/// `thumbnail(coded_cw_quarter_turns, width, height)`.
+struct StyleFrames {
+    thumbnails: TrackSamples,
+    hvcc: Vec<u8>,
+    matrix: u16,
+    info: Option<TrackSamples>,
+}
+
+#[cfg(any(test, not(any(target_os = "macos", target_os = "ios"))))]
+impl StyleFrames {
+    fn from_still(
+        thumbnail: crate::linear_thumbnail::MovieLinearThumbnail,
+        styles: &StillStyles,
+        level: MovieStyleLevel,
+        count: usize,
+    ) -> Self {
+        let info = (level >= MovieStyleLevel::Info).then(|| {
+            let payload = smartstyle_info_payload(
+                &styles.tone_curve, styles.baseline_exposure, styles.key5, styles.h,
+                level >= MovieStyleLevel::Full,
+            );
+            TrackSamples::repeated(&mebx_sample(&payload), count)
+        });
+        Self {
+            thumbnails: TrackSamples::repeated(&thumbnail.sample, count),
+            hvcc: thumbnail.hvcc,
+            matrix: 9,
+            info,
+        }
+    }
+}
+
 fn attach_with(
     mov: &[u8],
     styles: &StillStyles,
     level: MovieStyleLevel,
-    thumbnail: impl FnOnce(u32, u32, u32) -> Result<MovieLinearThumbnail, String>,
+    frames: impl FnOnce(&mut VideoTrack, u32, u32, u32) -> Result<StyleFrames, String>,
 ) -> Result<Vec<u8>, String> {
     if level == MovieStyleLevel::Off {
         return Ok(mov.to_vec());
@@ -962,8 +1046,8 @@ fn attach_with(
     if moov.windows(THUMBNAIL_TAG.len()).any(|w| w == THUMBNAIL_TAG) {
         return Err("movie already carries style companion tracks".into());
     }
-    let (_, _) = movie_timescale(moov)?;
-    let video = video_track(moov)?;
+    let (movie_scale, _) = movie_timescale(moov)?;
+    let mut video = video_track(moov)?;
     let root = MovBox {
         offset: 0,
         size: moov.len(),
@@ -986,29 +1070,28 @@ fn attach_with(
         .map(|d| d.as_secs())
         .unwrap_or(0)
         + QUICKTIME_EPOCH_OFFSET;
-    let mut common = || TrackCommon {
-        id: ids.next().unwrap(),
-        timestamp,
-        video: &video,
-    };
-
-    let mut companions: Vec<Companion> = Vec::new();
-    let display_turns = video.display_cw_quarter_turns();
     let (tw, th) = crate::linear_thumbnail::fitted_even_dimensions(
         video.coded_width,
         video.coded_height,
         THUMBNAIL_MAX_EDGE,
     )?;
-    let thumb = thumbnail((4 - display_turns) % 4, tw, th)?;
-    let entry = hvc1_entry(tw, th, &thumb.hvcc, (9, 1, 9), Some(APPLE_LOG_TRANSFER));
-    companions.push(aux_video_track(common(), THUMBNAIL_TAG, thumb.sample, entry, tw, th));
+    let frames = frames(&mut video, movie_scale, tw, th)?;
+    let mut common = || TrackCommon {
+        id: ids.next().unwrap(),
+        timestamp,
+        video: &video,
+    };
+    let count = video.durations.len();
+    let mut companions: Vec<Companion> = Vec::new();
+    let entry = hvc1_entry(tw, th, &frames.hvcc, (9, 1, frames.matrix), Some(APPLE_LOG_TRANSFER));
+    companions.push(aux_video_track(common(), THUMBNAIL_TAG, frames.thumbnails, entry, tw, th));
     // photographicStyleLearn also reads faceInfoTimedMetadata from the
     // asset's livePhotoInfo port (macOS 27.2 assert once the thumbnail
     // resolved). Every native Live Photo MOV carries this track.
     companions.push(mebx_track(
         common(),
         &live_photo_info_key_body(video.coded_width, video.coded_height),
-        &LIVE_PHOTO_INFO_RECORD,
+        TrackSamples::repeated(&mebx_sample(&LIVE_PHOTO_INFO_RECORD), count),
     ));
 
     if level >= MovieStyleLevel::Full {
@@ -1020,17 +1103,20 @@ fn attach_with(
         let (matte, hvcc) = empty_matte(mw, mh)?;
         for tag in MATTE_TAGS {
             let entry = hvc1_entry(mw, mh, &hvcc, (12, 1, 6), None);
-            companions.push(aux_video_track(common(), tag, matte.clone(), entry, mw, mh));
+            let samples = TrackSamples::repeated(&matte, count);
+            companions.push(aux_video_track(common(), tag, samples, entry, mw, mh));
         }
     }
-    if level >= MovieStyleLevel::Info {
-        let payload = smartstyle_info_payload(styles, level >= MovieStyleLevel::Full);
-        companions.push(mebx_track(common(), &plain_key_body(SMARTSTYLE_INFO_KEY), &payload));
+    if let Some(info) = frames.info {
+        companions.push(mebx_track(common(), &plain_key_body(SMARTSTYLE_INFO_KEY), info));
     }
     if level >= MovieStyleLevel::Full {
         if let Some(texture) = &styles.texture {
             let payload = texturestyle_info_payload(texture);
-            companions.push(mebx_track(common(), &plain_key_body(TEXTURESTYLE_INFO_KEY), &payload));
+            companions.push(mebx_track(
+                common(), &plain_key_body(TEXTURESTYLE_INFO_KEY),
+                TrackSamples::repeated(&mebx_sample(&payload), count),
+            ));
         }
     }
     let next_id = first_id + companions.len() as u32;

@@ -38,17 +38,25 @@ pub(super) fn encode(
                 HevcColor::Bt709Full => (false, false),
                 HevcColor::OppoSdr => (true, false),
                 HevcColor::IccPrimary => (false, true),
-                HevcColor::Bt601LimitedLinear => {
-                    return Err(unsupported("8-bit BT.601 limited RGB tiles"))
+                HevcColor::Bt601LimitedLinear | HevcColor::Bt2020LimitedLog => {
+                    return Err(unsupported("8-bit limited-range RGB tiles"))
                 }
             };
             encode_8bit_tiles(tiles, width, height, 3, use_420, oppo_sdr, icc_rgb)?
         }
         (SourcePictures::Rgb16(codes16), HevcBitDepth::Ten) => {
-            if layout != HevcLayout::Yuv420 || color != HevcColor::Bt601LimitedLinear {
-                return Err(unsupported("10-bit pictures other than 4:2:0 BT.601 limited"));
+            if layout != HevcLayout::Yuv420 || !matches!(color, HevcColor::Bt601LimitedLinear | HevcColor::Bt2020LimitedLog) {
+                return Err(unsupported("10-bit pictures other than limited-range 4:2:0"));
             }
-            vec![encode_10bit(codes16, width, height)?]
+            codes16
+                .iter()
+                .map(|codes| {
+                    if crate::progress::is_cancelled() {
+                        return Err(io_err(crate::progress::CANCELLED_MESSAGE));
+                    }
+                    encode_10bit(codes, width, height, color)
+                })
+                .collect::<std::io::Result<Vec<_>>>()?
         }
         _ => return Err(unsupported("source sample depth does not match the coded bit depth")),
     };
@@ -642,6 +650,7 @@ fn encode_10bit(
     codes16: &[u16],
     width: u32,
     height: u32,
+    color: HevcColor,
 ) -> std::io::Result<Vec<u8>> {
     use std::os::raw::c_int;
     if width == 0 || height == 0 {
@@ -650,7 +659,8 @@ fn encode_10bit(
     if codes16.len() != (width as usize) * (height as usize) * 3 {
         return Err(io_err("10-bit thumbnail: raster size mismatch"));
     }
-    let (y_plane, u_plane, v_plane) = super::codes16_to_yuv420_10bit(codes16, width, height);
+    let (y_plane, u_plane, v_plane) =
+        super::codes16_to_yuv420_10bit_matrix(codes16, width, height, color);
     let mut out_ptr: *mut u8 = std::ptr::null_mut();
     let mut out_len: c_int = 0;
     let status = unsafe {
@@ -679,6 +689,6 @@ fn encode_10bit(
 /// Builds without the 10-bit x265 archive: `main10_available()` is false and
 /// callers take their 8-bit path instead of reaching this.
 #[cfg(not(xdremux_main10))]
-fn encode_10bit(_codes16: &[u16], _width: u32, _height: u32) -> std::io::Result<Vec<u8>> {
+fn encode_10bit(_codes16: &[u16], _width: u32, _height: u32, _color: HevcColor) -> std::io::Result<Vec<u8>> {
     Err(unsupported("10-bit pictures (no Main10 x265 archive linked)"))
 }

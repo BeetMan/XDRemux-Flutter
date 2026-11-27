@@ -260,6 +260,8 @@ pub enum HevcColor {
     /// BT.601 limited range with no colour description (Styles linear
     /// thumbnail, Apple Log codes).
     Bt601LimitedLinear,
+    /// Rec.2020 non-constant luminance, video-range Apple Log thumbnail.
+    Bt2020LimitedLog,
 }
 
 /// What the picture is. Backends whose rate control is not content-neutral
@@ -303,10 +305,10 @@ pub(crate) enum SourcePictures<'a> {
     Gray8(&'a [&'a [u8]]),
     /// Packed 8-bit R-G-B, `width * height * 3` bytes per picture.
     Rgb8(&'a [&'a [u8]]),
-    /// One picture of packed 16-bit R-G-B Apple Log codes. Only a backend
+    /// Packed 16-bit R-G-B Apple Log codes per picture. Only a backend
     /// with a 10-bit encoder reads it; the ffmpeg smoke build has none.
     Rgb16(
-        #[cfg_attr(not(any(xdremux_hevc_x265, xdremux_hevc_vt)), allow(dead_code))] &'a [u16],
+        #[cfg_attr(not(any(xdremux_hevc_x265, xdremux_hevc_vt)), allow(dead_code))] &'a [&'a [u16]],
     ),
 }
 
@@ -975,6 +977,20 @@ pub fn codes16_to_yuv420_10bit(
     width: u32,
     height: u32,
 ) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
+    codes16_to_yuv420_10bit_matrix(codes16, width, height, HevcColor::Bt601LimitedLinear)
+}
+
+fn codes16_to_yuv420_10bit_matrix(
+    codes16: &[u16],
+    width: u32,
+    height: u32,
+    color: HevcColor,
+) -> (Vec<u16>, Vec<u16>, Vec<u16>) {
+    let (y, u, v) = if color == HevcColor::Bt2020LimitedLog {
+        ([0.2627, 0.6780, 0.0593], [-0.139_630, -0.360_370, 0.5], [0.5, -0.459_786, -0.040_214])
+    } else {
+        ([0.299, 0.587, 0.114], [-0.168_736, -0.331_264, 0.5], [0.5, -0.418_688, -0.081_312])
+    };
     let (w, h) = (width as usize, height as usize);
     let plane = w * h;
     debug_assert_eq!(codes16.len(), plane * 3);
@@ -985,11 +1001,11 @@ pub fn codes16_to_yuv420_10bit(
         let r = f32::from(code16_to_10bit(codes16[i * 3])) / 1023.0;
         let g = f32::from(code16_to_10bit(codes16[i * 3 + 1])) / 1023.0;
         let b = f32::from(code16_to_10bit(codes16[i * 3 + 2])) / 1023.0;
-        y_plane[i] = (64.0 + 876.0 * (0.299 * r + 0.587 * g + 0.114 * b))
+        y_plane[i] = (64.0 + 876.0 * (y[0] * r + y[1] * g + y[2] * b))
             .round()
             .clamp(0.0, 1023.0) as u16;
-        u_full[i] = 512.0 + 896.0 * (-0.168_736 * r - 0.331_264 * g + 0.5 * b);
-        v_full[i] = 512.0 + 896.0 * (0.5 * r - 0.418_688 * g - 0.081_312 * b);
+        u_full[i] = 512.0 + 896.0 * (u[0] * r + u[1] * g + u[2] * b);
+        v_full[i] = 512.0 + 896.0 * (v[0] * r + v[1] * g + v[2] * b);
     }
     let cw = w.div_ceil(2);
     let ch = h.div_ceil(2);
@@ -1029,12 +1045,21 @@ pub fn encode_thumbnail_10bit(
     width: u32,
     height: u32,
 ) -> std::io::Result<EncodedTiles> {
+    encode_thumbnails_10bit(&[codes16], width, height, HevcColor::Bt601LimitedLinear)
+}
+
+pub(crate) fn encode_thumbnails_10bit(
+    codes16: &[&[u16]],
+    width: u32,
+    height: u32,
+    color: HevcColor,
+) -> std::io::Result<EncodedTiles> {
     let request = EncodeRequest {
         width,
         height,
         layout: HevcLayout::Yuv420,
         bit_depth: HevcBitDepth::Ten,
-        color: HevcColor::Bt601LimitedLinear,
+        color,
         content: HevcContent::LinearThumbnail,
     };
     encode(&request, SourcePictures::Rgb16(codes16))

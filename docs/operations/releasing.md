@@ -39,7 +39,7 @@ XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 | Windows installer | windows-2022 | x64 Setup.exe（x265 缓存 + NASM） |
 | Windows ARM64 | windows-11-arm | arm64 Setup.exe（x265 无汇编） |
 | Android | ubuntu-latest | APK（SDK 36 / build-tools 36.0.0） |
-| macOS | macos-latest | DMG |
+| macOS | macos-latest | DMG（`v0.4.7` 之后产物包内应用改为 `XDRemux Flutter.app`，附「隐私与安全性」`.inetloc` 快捷入口，资产文件名仍为 `XDRemux-macOS-*.dmg`） |
 | iOS | xcode-27，显式选 Xcode 27.1 | unsigned IPA（编译前验证 Duo API，打包前校验所有 Dart FFI 符号） |
 | Linux | ubuntu-22.04（复用 linux.yml） | x64 AppImage / tar.gz / sha256（预览） |
 | publish | ubuntu-latest | 汇总挂载（`needs` 含全部构建 job） |

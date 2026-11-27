@@ -75,6 +75,7 @@ post_install do |installer|
     _xdremux_motion_photo_inspect _xdremux_motion_photo_split
     _xdremux_make_live_photo _xdremux_live_photo_pair_valid
     _xdremux_make_live_photo_bundle _xdremux_live_photo_bundle_valid
+    _xdremux_publish_live_photo_pair
     _xdremux_attach_styles _xdremux_attach_style_layers
     _xdremux_render_thumbnail _xdremux_codec_capabilities
     _xdremux_inject_texture_styles _xdremux_inject_semantic_mattes
@@ -82,7 +83,7 @@ post_install do |installer|
     _xdremux_set_hevc_encoder
   ]
   keep = ffisyms.map { |s| "-u #{s}" }.join(' ')
-  force = "-force_load #{File.join(libdir, 'libx265.a')} -force_load #{File.join(libdir, 'libxdremux_core.a')} -lc++ -framework Security -framework VideoToolbox -framework CoreMedia -framework CoreVideo #{keep}"
+  force = "-force_load #{File.join(libdir, 'libx265.a')} -force_load #{File.join(libdir, 'libxdremux_core.a')} -lc++ -framework Security -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreImage -framework AVFoundation #{keep}"
   Dir.glob(File.join(File.expand_path('Pods', __dir__), 'Target Support Files', 'Pods-Runner', '*.xcconfig')).each do |f|
     content = File.read(f)
     content = content.sub(

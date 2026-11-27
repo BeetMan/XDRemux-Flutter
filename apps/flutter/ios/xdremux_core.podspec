@@ -21,5 +21,6 @@ Pod::Spec.new do |s|
   ]
   s.static_framework = true
   s.libraries = ['c++']
-  s.frameworks = ['Security', 'VideoToolbox', 'CoreMedia', 'CoreVideo']
+  s.frameworks = ['Security', 'VideoToolbox', 'CoreMedia', 'CoreVideo',
+                  'CoreGraphics', 'CoreImage', 'AVFoundation']
 end

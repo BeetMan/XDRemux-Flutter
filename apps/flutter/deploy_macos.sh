@@ -24,14 +24,14 @@ fi
 echo "==> flutter build macos --${MODE}"
 flutter build macos --${MODE}
 
-# Note: the product is XDRemux.app (capitalized). ${MODE^} needs bash 4;
+# Note: the product is "XDRemux Flutter.app". ${MODE^} needs bash 4;
 # macOS ships bash 3.2, so map the product directory explicitly.
 if [ "$MODE" = "release" ]; then
   PRODUCT_DIR="Release"
 else
   PRODUCT_DIR="Debug"
 fi
-APP="build/macos/Build/Products/${PRODUCT_DIR}/XDRemux.app"
+APP="build/macos/Build/Products/${PRODUCT_DIR}/XDRemux Flutter.app"
 
 ROOT_APP="$(dirname "$(dirname "$(pwd)")")/xdremux.app"
 echo "==> deploying to ${ROOT_APP}"

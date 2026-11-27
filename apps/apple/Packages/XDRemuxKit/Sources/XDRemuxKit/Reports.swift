@@ -12,6 +12,17 @@ public enum XDRemuxError: Error, Equatable, Sendable {
     case nullResult
 }
 
+extension XDRemuxError: LocalizedError {
+    /// The core's own message where there is one, never an enum dump.
+    public var errorDescription: String? {
+        switch self {
+        case .coreFailure(let message): return message ?? "The core reported a failure without a reason."
+        case .malformedReport(let detail): return "The core returned a report that could not be read: \(detail)"
+        case .nullResult: return "The core returned no result."
+        }
+    }
+}
+
 /// Swift copy of `ClassificationResult`; the Rust struct is freed before this
 /// value is returned.
 public struct Classification: Codable, Equatable, Sendable {

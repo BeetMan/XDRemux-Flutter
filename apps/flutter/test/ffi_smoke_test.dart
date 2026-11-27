@@ -23,7 +23,7 @@ void main() {
   test('packaged core exports every runtime symbol used by Flutter', () {
     final lib = DynamicLibrary.open(_libraryPath);
     final source = File('lib/ffi/xdremux_ffi.dart').readAsStringSync();
-    final symbols = RegExp(r"'((?:xdremux_)[a-z_]+)'")
+    final symbols = RegExp(r"'((?:xdremux_)[a-z0-9_]+)'")
         .allMatches(source).map((match) => match.group(1)!).toSet();
     for (final symbol in symbols) {
       expect(lib.providesSymbol(symbol), isTrue, reason: 'Missing $symbol');

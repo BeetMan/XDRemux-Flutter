@@ -5,7 +5,9 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = XDRemux
+// Distinguish the Flutter macOS app from the SwiftUI native app (`XDRemux.app`)
+// so both can coexist in /Applications without replacing each other.
+PRODUCT_NAME = XDRemux Flutter
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.example.xdremux
