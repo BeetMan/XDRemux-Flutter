@@ -881,10 +881,28 @@ pub fn find_idat_box(data: &[u8]) -> Option<BoxHeader> {
     children.into_iter().find(|b| &b.btype == b"idat")
 }
 
+/// Return the tone-map item and its gain-map input for the primary image.
+/// The ordered dimg pair identifies the gain map in both native HEICs and
+/// XDRemux output.
+pub(crate) fn primary_tone_map(meta: &ParsedMeta) -> Option<(u32, u32)> {
+    let tmap = meta.items.iter().find(|item| item.itype == "tmap")?.item_id;
+    let reference = meta
+        .refs
+        .iter()
+        .find(|r| r.rtype == "dimg" && r.from == tmap)?;
+    let &[base, gain] = reference.to.as_slice() else {
+        return None;
+    };
+    (base == meta.primary_id
+        && gain != base
+        && gain != tmap
+        && meta.items.iter().any(|item| item.item_id == base)
+        && meta.items.iter().any(|item| item.item_id == gain))
+    .then_some((tmap, gain))
+}
+
 /// Return true when an existing ISO 21496 gain-map graph is encoded as
-/// 4:2:0. The primary image is intentionally excluded: ordinary HEIC primary
-/// images are often 4:2:0, whereas only the `auxC`/`auxl`-linked gain tiles
-/// are relevant to lossy gain-map promotion.
+/// 4:2:0. Follow the gain-map input or a legacy ISO auxiliary link.
 pub fn has_lossy_iso_gainmap_420(data: &[u8]) -> bool {
     parse_source_meta(data)
         .map(|meta| has_lossy_iso_gainmap_420_in_meta(&meta))
@@ -892,7 +910,7 @@ pub fn has_lossy_iso_gainmap_420(data: &[u8]) -> bool {
 }
 
 fn has_lossy_iso_gainmap_420_in_meta(meta: &ParsedMeta) -> bool {
-    let gain_map_items: Vec<u32> = meta
+    let legacy_aux = meta
         .refs
         .iter()
         .filter(|reference| {
@@ -900,26 +918,28 @@ fn has_lossy_iso_gainmap_420_in_meta(meta: &ParsedMeta) -> bool {
                 && reference.to.contains(&meta.primary_id)
                 && item_has_iso_auxc(meta, reference.from)
         })
-        .flat_map(|reference| {
-            let tiles: Vec<u32> = meta
+        .map(|reference| reference.from);
+    primary_tone_map(meta)
+        .map(|(_, gain)| gain)
+        .into_iter()
+        .chain(legacy_aux)
+        .any(|gain| {
+            let is_420 = |item_id| {
+                item_property(meta, item_id, "hvcC")
+                    .and_then(|property| hvcc_chroma_format_idc(&property.raw))
+                    == Some(1)
+            };
+            match meta
                 .refs
                 .iter()
-                .filter(|candidate| candidate.rtype == "dimg" && candidate.from == reference.from)
-                .flat_map(|candidate| candidate.to.iter().copied())
-                .collect();
-            if tiles.is_empty() {
-                vec![reference.from]
-            } else {
-                tiles
+                .find(|reference| reference.rtype == "dimg" && reference.from == gain)
+            {
+                Some(reference) if !reference.to.is_empty() => {
+                    reference.to.iter().copied().any(is_420)
+                }
+                _ => is_420(gain),
             }
         })
-        .collect();
-
-    gain_map_items.into_iter().any(|item_id| {
-        item_property(meta, item_id, "hvcC")
-            .and_then(|property| hvcc_chroma_format_idc(&property.raw))
-            == Some(1)
-    })
 }
 
 fn item_has_iso_auxc(meta: &ParsedMeta, item_id: u32) -> bool {
@@ -1290,6 +1310,31 @@ mod tests {
             associations: vec![(2, true)],
         });
         assert!(!has_lossy_iso_gainmap_420_in_meta(&only_primary_is_420));
+    }
+
+    #[test]
+    fn detects_420_gain_tiles_referenced_by_tmap_without_auxl() {
+        let mut meta = test_iso_gainmap_meta(1);
+        meta.items = [
+            (1, "grid"),
+            (20, "grid"),
+            (21, "hvc1"),
+            (22, "tmap"),
+        ]
+        .into_iter()
+        .map(|(item_id, itype)| ItemInfo {
+            item_id,
+            itype: itype.into(),
+            flags: 0,
+            raw_infe: Vec::new(),
+        })
+        .collect();
+        meta.refs[0] = IrefEntry {
+            rtype: "dimg".into(),
+            from: 22,
+            to: vec![1, 20],
+        };
+        assert!(has_lossy_iso_gainmap_420_in_meta(&meta));
     }
 
     #[test]

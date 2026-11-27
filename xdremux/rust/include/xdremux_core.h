@@ -442,14 +442,7 @@ void xdremux_progress_report(uint32_t handle,
                              uint32_t total);
 
 /**
- * Verifies an output file contains ISO gain-map auxiliary data.
- *
- * Checks for:
- * 1. `auxC` property box with `urn:iso:std:iso:ts:21496:-1` in ipco
- * 2. `tmap` item type in iinf
- * 3. `auxl` reference in iref
- *
- * All three must be present for the output to be considered valid ISO HDR.
+ * Verifies the output's `tmap` links the primary and gain-map image items.
  */
 bool xdremux_verify_output(const char *path);
 

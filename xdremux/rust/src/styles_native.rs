@@ -91,8 +91,14 @@ pub fn styles_native_with_gain_map(
     standard: &[u8],
     gain_map: Option<&crate::linear_thumbnail::GainMapPlane<'_>>,
 ) -> Result<Vec<u8>, String> {
-    let scaffolded = styles_scaffold::scaffold(standard)?;
+    let scaffolded = styles_scaffold::scaffold(standard, false)?;
     assemble_styles(&scaffolded, gain_map)
+}
+
+/// Add Styles to an existing HDR container while retaining its HDR properties.
+pub(crate) fn styles_native_preserving_hdr(standard: &[u8]) -> Result<Vec<u8>, String> {
+    let scaffolded = styles_scaffold::scaffold(standard, true)?;
+    assemble_styles(&scaffolded, None)
 }
 
 fn assemble_styles(

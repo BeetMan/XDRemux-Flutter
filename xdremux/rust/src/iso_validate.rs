@@ -161,13 +161,12 @@ fn item_payload(
                 let relative = usize::try_from(offset).map_err(|_| {
                     invalid(format!("item {} idat offset exceeds usize", entry.item_id))
                 })?;
-                if idat_start + relative > idat_end {
-                    return Err(invalid(format!(
-                        "item {} idat extent starts outside idat",
-                        entry.item_id
-                    )));
-                }
-                idat_start + relative
+                idat_start
+                    .checked_add(relative)
+                    .filter(|&start| start <= idat_end)
+                    .ok_or_else(|| {
+                        invalid(format!("item {} idat extent starts outside idat", entry.item_id))
+                    })?
             }
             method => {
                 return Err(invalid(format!(
@@ -193,6 +192,20 @@ fn item_payload(
         payload.extend_from_slice(&data[start..end]);
     }
     Ok(payload)
+}
+
+pub(crate) fn read_item_payload(
+    data: &[u8],
+    meta: &ParsedMeta,
+    item_id: u32,
+) -> Result<Vec<u8>, String> {
+    let entry = meta
+        .iloc_entries
+        .iter()
+        .find(|entry| entry.item_id == item_id)
+        .ok_or_else(|| invalid(format!("item {item_id} has no iloc entry")))?;
+    let idat = crate::isobmff::find_idat_box(data).map(|box_| (box_.data_start, box_.data_end));
+    item_payload(data, idat, entry)
 }
 
 struct MetaIndex<'a> {
