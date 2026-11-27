@@ -1335,8 +1335,17 @@ pub fn standalone_bmff_length(data: &[u8]) -> Result<usize, String> {
         });
         match parsed {
             Some(b) => {
+                let has = |k: &[u8; 4]| kinds.iter().any(|x| x == k);
                 if kinds.is_empty() && &b.kind != b"ftyp" {
                     return Err("embedded video does not begin with ftyp".into());
+                }
+                if !kinds.is_empty()
+                    && &b.kind == b"ftyp"
+                    && has(b"ftyp")
+                    && has(b"moov")
+                    && has(b"mdat")
+                {
+                    break;
                 }
                 kinds.push(b.kind);
                 offset += b.size as usize;
@@ -1898,5 +1907,23 @@ mod tests {
         assert_eq!(json["audioSampleRate"], 16000);
         assert_eq!(json["secondaryWidth"], 1920);
         assert_eq!(json["secondaryHeight"], 1440);
+    }
+
+    #[test]
+    fn standalone_bmff_length_stops_before_second_ftyp_stream() {
+        let mp4 = |mdat: &[u8]| {
+            let mut v = make_box(b"ftyp", b"mp42\0\0\0\0isommp42");
+            v.extend_from_slice(&make_box(b"moov", &[]));
+            v.extend_from_slice(&make_box(b"mdat", mdat));
+            v
+        };
+        let first = mp4(b"first-stream");
+        let second = mp4(b"second-stream-payload");
+        let mut combined = first.clone();
+        combined.extend_from_slice(&second);
+        assert_eq!(
+            standalone_bmff_length(&combined).expect("first stream length"),
+            first.len()
+        );
     }
 }

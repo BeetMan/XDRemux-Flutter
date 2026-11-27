@@ -70,17 +70,66 @@ OPPO 的 JPEG 导出带同样的尾部条目，因此与 HEIC 走同一路径。
 
 非标准尺寸亦有观察：深度平面 `1020×768`（非 1024）、`src.image` `3072×4080`（非 4096）；部分样本无 hair 平面。
 
+## 3.2 前置景深（`front.depth`）
+
+没有 `rear.depth`、只有 `front.depth` 的文件走 `parse_front_depth`。`front.depth` 是 8-bit 灰度平面，`front.segment` 是人物遮罩，`front.hair.mask` 是头发遮罩。标定固定为 `front-stretch`：把本张的取值范围拉伸到 Apple 参考 span 2.1。
+
+**远近方向由人物遮罩决定**（`front_near_is_high`）。比较遮罩内外的灰度均值，人物所在的一端是近端。遮罩尺寸不符，或者某一侧不足平面的 1%、内外均值相同时，按「数值越小越近」处理。没有 `front.segment` 的文件，把小于 128 的像素当作人物。
+
+- **已实测**（2026-11-17，两张 Find X8 Ultra 相机原片）：两张都是数值越小越近。
+  - `IMG20260807145722.heic`：人物均值 93，背后的椅背 140 到 160，远处墙面 224 以上。
+  - `IMG20261011120934.heic`：人物均值 56，背景 232。`research/oppo-gallery-17.10.5.md` 早先把这张记成「背景 56，主体 240 以上」，记反了。
+- 此前代码固定按「越大越近」取反。修正前后的转换结果（人物 / 背景的平均视差）：第一张 0.0008 / 1.73 变成 2.10 / 0.37，第二张 0.0011 / 1.88 变成 2.10 / 0.22。两条底图路径结果相同。
+- **未验证**：没有 `front.segment` 的前置人像（两张原片都带这个条目）。
+
+**镜像**（`source_is_mirrored`）。前置开镜像时成片左右翻转，尾部各平面仍是原始帧的方向。底图是 OPPO 主图时，平面和焦点先旋转、再左右翻转；底图是 `src.image` 时不需要，它本身就是原始帧。标志按下面的顺序取：
+
+1. 有 `filter.info` 时读偏移 12 的整数 `srcMirror`，等于 1 时翻转。
+2. 没有 `filter.info` 时读 `front.depth.config` 的 `mirrorEnable`（`front_config_mirror`），等于 1 时翻转。
+3. 两者都没有时按不镜像处理。
+
+`front.depth.config` 的字段顺序来自相册 17.24.12 的 `FrontDepthData.toBytes`，全部小端。**已实测**：两张原片的条目都是 544 字节、版本 1.2；尺寸、旋转、人脸框、光圈表、`mirrorEnable`、`cameraRoll` 和光圈值都落在下表的位置上。偏移 268 的 `isNegEVImgEnable` 一张是 2、一张是无意义的大数，没有核对。
+
+| 偏移 | 字段 |
+|---|---|
+| 0 | `version`（float） |
+| 4、8 | `depthWidth`、`depthHeight` |
+| 12 到 32 | `segment`、`hairmask`、`matteinfo` 的宽和高 |
+| 36 到 48 | `startXSrc`、`startYSrc`、`widthSrc`、`heightSrc` |
+| 52、56 | `negevimgWidth`、`negevimgHeight` |
+| 60 | `format` |
+| 64 到 76 | `width`、`height`、`widthPadding`、`heightPadding` |
+| 80 | `rotation` |
+| 84 | `faceCount` |
+| 88 到 247 | `faceLeft`、`faceTop`、`faceWidth`、`faceHeight`，各 10 个整数 |
+| 248、252 | `blurStrength`、`lightStrength`（float） |
+| 256 到 272 | `iso`、`lux`、`refocusModeAps`、`isNegEVImgEnable`、`mRenderMode` |
+| 276 到 531 | `blurApertures`、`blurValue`，各 32 个 float |
+| 532 | `mirrorEnable` |
+| 536 | `cameraRoll` |
+| 540 | 光圈值（float，版本 1.1 起才有） |
+
+代码从条目末尾倒着找 `mirrorEnable` 和 `cameraRoll`，并要求前者是 0 或 1、后者是 0、90、180、270 之一，否则不采用。
+
+- **已实测**（2026-11-17，四张相机原片）：把 `src.image` 和主图里的画面缩小后比相关度。
+  - `IMG20260807145722.heic`（前置，`srcMirror` 为 1，`mirrorEnable` 为 1）：翻转后 0.98，不翻转 0.69。
+  - `IMG20261011120934.heic`（前置，没有 `filter.info`，`mirrorEnable` 为 1）：翻转后 0.98，其余方向最高 0.28。
+  - 两张 `srcMirror` 为 0 的后摄样张：不翻转 0.99，翻转 0.39 和 0.60。
+  - 修正后两张前置样张的人物遮罩都与主图里的人对齐。
+- **未验证**：关闭镜像拍的前置人像（`mirrorEnable` 为 0 的原片还没见过）；`filter.info` 和 `mirrorEnable` 不一致的文件；真机上的效果。
+
 ## 4. 边界规则
 
 - 尾部缺 `rear.depth` / `rear.depth.config` -> 跳过人像处理，不影响主转换（不报错）
 - 深度平面尺寸与主图不匹配 -> 失败关闭
-- `front.depth` 等前置深度条目目前不消费（仅尾部保留策略涉及，见 `formats/oppo-proxdr.md` §4）
+- 前置人像读 `front.depth`、`front.depth.config`、`front.segment`、`front.hair.mask`（§3.2）；`front.matter.info` 和 `front.negevimg` 不消费，只受尾部保留策略影响（见 `formats/oppo-proxdr.md` §4）
 
 ## 5. Portrait + Styles 元数据与几何约束
 
 - Styles 保留已有完整 Apple MakerNote（含未知标签和 UUID）；缺字段时仅合并 Styles 所需的 43/84。Apple 偏移以 MakerNote 起点为基准，不是 TIFF 起点。当前 portrait 模板已含相同的 Styles flags，整段保持不变。若不完整的 note 扩展目录需移动未知的 out-of-line UNDEFINED 数据，则明确报错，不猜测其内部偏移；已验证的自相对 tag84 plist 除外。
 - CustomRendered 使用正确的 `0xA401 / SHORT / count=1`，保留 `DigitalZoomRatio (0xA404)`。值 **9** 来自 Swift 参考源码；本次未找到可核对的本地 golden EXIF，也不代表已证明 Photos 的能力开关含义。
 - 水印识别新增严格限定的 `version=1 / hassel_style_1 / 14185 bytes` packed 布局，校验源尺寸、方向、全幅 crop.region、已观察到的零起点和边界；两张 192113/192141 样本内容为 `(0,0,3072,4096)`，外框 `3072×4608`。旧 aligned 对称边框格式仍支持，未知 packed 布局不做任意浮点扫描。
+- 画框样式（`hassel_style_4`、`hassel_style_master_mode_1`）读 `watermark.master.params` 末尾的四角（左、上、右、下），换算成内容框；布局与校验见 `formats/oppo-watermark.md` §4.3。只在底图是 OPPO 主图时用到。**已实测**（2026-11-16，三张相机原片，`XDREMUX_PORTRAIT_OPPO_BASE=1`）：主图 3244×5444 的辅助平面落在 `(43, 337, 1536, 2048)`，主图 5200×8724 的落在 `(68, 541, 2464, 3280)`（`hassel_style_4` 的那张原片也是这个结果），都是画面矩形的一半；此前按 x、y、宽、高读，平面一直铺到右边框和底栏。**未验证**：真机上的景深对位。
 - 焦点与 disparity/人物/头发平面共享旋转、居中 cover crop、padding 映射；焦点只归一化一次。上述样本半幅 aux 的底部 256 行为零，不覆盖水印。
 - 本修复不改变主图像素来源以外的 HDR 策略、REND 强度。设备验收状态：真机已确认 HDR 正常、人像开关可打开、分层正确、光圈调整有虚化；跨图库方向（iOS / OPPO / 鸿蒙）与拍摄 EXIF 保留已在真机验证（对应提交 `d3b07b1`）；**未实现**「默认开启人像」——实测写 `PortraitScore`/`PortraitScoreIsHigh` 不会改变默认状态，那需要主图本身虚化（与「关闭时显示清晰原图」的取舍），已决定维持默认关闭。
 - 回归测试：`cargo test --offline -p xdremux-core --lib`（`portrait_tests.rs`、`styles_scaffold_tests.rs`）。
