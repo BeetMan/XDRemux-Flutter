@@ -2444,7 +2444,7 @@ const fn should_reject_lossy_gainmap_promotion(
     has_lossy_gainmap: bool,
     oppo_compat: OppoCompat,
 ) -> bool {
-    has_lossy_gainmap && !oppo_compat.wants_oppo_compat()
+    has_lossy_gainmap && !isobmff_write::gain_map_use_420(oppo_compat)
 }
 
 fn convert_lhdr(
