@@ -1854,6 +1854,13 @@ fn xdremux_convert_impl(
         }
     };
 
+    // A finished ISO HDR HEIC only needs the Styles layers added: its own
+    // primary and gain map are kept byte-for-byte, so nothing is decoded,
+    // re-encoded or promoted and the lossy-promotion guard does not apply.
+    if apple_photographic_styles && !apple_portrait && is_iso_styles_source(&source) {
+        return add_styles_to_iso_source(&source, output);
+    }
+
     if let Err(error) = reject_lossy_gainmap_promotion(&source, oppo_compat) {
         return ConversionResult {
             success: false,
@@ -2426,6 +2433,54 @@ fn portrait_src_image_base(source: &[u8]) -> Option<(Vec<u8>, container::Extract
             manifest_entries: None,
         },
     ))
+}
+
+/// A finished ISO 21496-1 HDR HEIC (an earlier Apple-standard conversion or a
+/// native Apple photo) rather than an OPPO ProXDR, Ultra HDR JPEG or Huawei
+/// HDR source. Such a file has no LHDR/UHDR tail, so it would otherwise be
+/// decoded as plain SDR and lose its gain map.
+fn is_iso_styles_source(source: &[u8]) -> bool {
+    !source.starts_with(&[0xFF, 0xD8])
+        && container::extract_lhdr_from_bytes(source).is_err()
+        && !huawei_heic::inspect_bytes(source).is_huawei_hdr
+        && verify_iso_gain_map(source)
+}
+
+fn conversion_failure(message: String) -> ConversionResult {
+    ConversionResult {
+        success: false,
+        mode: ptr::null_mut(),
+        family: ptr::null_mut(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: CString::new(message).unwrap().into_raw(),
+    }
+}
+
+/// Add Photographic Styles to a finished ISO HDR HEIC, keeping its HDR graph.
+///
+/// The linear thumbnail is generated without the gain map (its plane is not
+/// decoded back out of the HEVC-coded item), so the Styles preview carries no
+/// HDR headroom; the primary image and gain map themselves are untouched.
+fn add_styles_to_iso_source(source: &[u8], output: &str) -> ConversionResult {
+    if verify_photographic_styles(source) {
+        return conversion_failure("source already carries Photographic Styles".into());
+    }
+    let styled = match styles_native::styles_native(source) {
+        Ok(styled) => styled,
+        Err(e) => return conversion_failure(format!("Rust Photographic Styles: {e}")),
+    };
+    if let Err(e) = std::fs::write(output, styled) {
+        return conversion_failure(format!("write Rust Photographic Styles output: {e}"));
+    }
+    ConversionResult {
+        success: true,
+        mode: CString::new("iso").unwrap().into_raw(),
+        family: CString::new("iso").unwrap().into_raw(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: ptr::null_mut(),
+    }
 }
 
 fn reject_lossy_gainmap_promotion(source: &[u8], oppo_compat: OppoCompat) -> Result<(), String> {
@@ -3405,6 +3460,55 @@ mod tests {
             true,
             OppoCompat::Iso
         ));
+    }
+
+    /// Build a finished ISO HDR HEIC (no styles) from a synthetic SDR source.
+    fn iso_hdr_fixture(tag: &str) -> (Vec<u8>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("xdremux_iso_styles_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exif = Some(sdr_source::minimal_exif_tiff("2020:01:01 00:00:00"));
+        let source = uhdr_jpeg::synthesize_source_container_from_rgb(
+            &vec![80; 128 * 96 * 3], 128, 96, exif, true).unwrap();
+        let extracted = container::ExtractedLhdr {
+            mode: "uhdr".into(),
+            meta_bytes: Vec::new(),
+            meta_floats: uhdr_jpeg::neutral_meta_floats(),
+            gainmap_use_base_color_space: true,
+            mask_data: None,
+            gainmap_data: Some(uhdr_jpeg::IDENTITY_GAINMAP_JPEG.to_vec()),
+            manifest_entries: None,
+        };
+        let base = dir.join("base.heic");
+        convert_uhdr(&extracted, &source, base.to_str().unwrap(), OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off), false).unwrap();
+        (std::fs::read(&base).unwrap(), dir)
+    }
+
+    #[test]
+    fn iso_styles_source_is_only_a_finished_iso_hdr_heic() {
+        assert!(!is_iso_styles_source(b"not a photo"));
+        assert!(!is_iso_styles_source(&[0xFF, 0xD8, 0xFF, 0xD9]));
+        let (iso, dir) = iso_hdr_fixture("detect");
+        assert!(is_iso_styles_source(&iso));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn styles_are_added_to_an_iso_hdr_heic_without_touching_its_hdr_graph() {
+        let (iso, dir) = iso_hdr_fixture("add");
+        let output = dir.join("styled.heic");
+        let result = add_styles_to_iso_source(&iso, output.to_str().unwrap());
+        assert!(result.success);
+        xdremux_free_result(result);
+        let styled = std::fs::read(&output).unwrap();
+        assert!(verify_iso_gain_map(&styled));
+        assert!(verify_photographic_styles(&styled));
+
+        // A second pass must refuse rather than stack a second Styles graph.
+        let again = add_styles_to_iso_source(&styled, dir.join("twice.heic").to_str().unwrap());
+        assert!(!again.success);
+        xdremux_free_result(again);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
