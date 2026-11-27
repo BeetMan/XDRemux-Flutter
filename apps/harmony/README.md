@@ -207,7 +207,7 @@ This worktree merged `origin/main` at `747ad8ffd4e59ecc7ea2c65feb068bb989d1f692`
 
 The previously verified main-sync HAP used staged core `D2C6BBA679846718124FE77BDDDD0276367B9EFB810A789C97714F273B828A80`; that artifact and its old-feature limitation are historical. The current code40009 build reuses staged core `B994FB28E379C8C43B40BB952B7276EF75E38E5D40DC38DCC8E579C9F81CA63D` (4,321,800 bytes), including the native Photographic Styles 3 post-processing path.
 
-The previous code40008 unsigned HAP was copied to `C:\\Users\\Beet\\Documents\\XDRemux-Flutter-logs\\harmony-native\\p3-styles3\\entry-default-unsigned-code40008-p3-styles3.hap` (5,448,800 bytes, SHA-256 `FE8F31DB6C151A73F794124061B49BC216F7BDA03EDB0F4E08FD43BA54994F67`). The earlier post-merge main-sync artifact remains at `C:\\Users\\Beet\\Documents\\XDRemux-Flutter-logs\\harmony-native\\main-sync\\entry-default-unsigned-main-sync.hap` for historical comparison.
+The previous code40008 unsigned HAP (5,448,800 bytes, SHA-256 `FE8F31DB6C151A73F794124061B49BC216F7BDA03EDB0F4E08FD43BA54994F67`) and the earlier post-merge main-sync artifact are kept outside the repository, under the `harmony-native/` evidence directory (`p3-styles3/` and `main-sync/`), for historical comparison.
 
 The user has confirmed the code40007 basic workflow works; that confirmation does not cover every error branch, boundary, cache/lifecycle path, or device compatibility case.
 
@@ -261,7 +261,7 @@ node --experimental-strip-types apps/harmony/tests/share_import_model_test.mjs
 The persistence and sandbox tests exercise the production queue codec/store and path policy through fake IO adapters, including malformed-record preservation, missing-file recovery, ownership isolation, symlink refusal, orphan cleanup, schema validation, exact Rust mappings, serial writes, and flush failure recovery. These tests do not prove Harmony picker, N-API, codec, Preferences framework integration, or device export behavior. Those require the signed-device checklist above.
 ## Motion Photo split (code40009)
 
-The previous code40009 unsigned artifact is `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/p3-motion-split/entry-default-unsigned-code40009-p3-motion-split.hap` (5,537,354 bytes, SHA256 `A80165677C2F709E29FEC1E6FAAA91EA1AEA4D7F6CCE33C3BE0955C7240A76CA`). It reuses the code40008 Rust core without rebuilding it. Build and test evidence, plus the pending device checklist, are in the same external directory.
+The previous code40009 unsigned artifact (5,537,354 bytes, SHA256 `A80165677C2F709E29FEC1E6FAAA91EA1AEA4D7F6CCE33C3BE0955C7240A76CA`) is kept outside the repository, under the `harmony-native/p3-motion-split/` evidence directory together with its build and test evidence and the pending device checklist. It reuses the code40008 Rust core without rebuilding it.
 
 After inspection identifies a Motion Photo, the details panel can split its still and video resources. Each attempt copies the materialized input to a unique scratch path and registers all candidate outputs before writing. Existing files or ownership conflicts stop the attempt without deletion. The split report must match exact candidate names, MIME-derived extensions, regular files, and expected byte lengths. Failures clean only that attempt and preserve previous successful split and conversion results; cleanup failures retain ownership for later task deletion.
 
@@ -269,9 +269,9 @@ Split results are cached by task and source input for this session. Restart requ
 
 Twelve Node test files and the unchanged C++ PS3 helper regression passed for code40009. This is host-side validation, not device N-API, picker lifecycle, playback, or Apple Photos validation. code40008 and code40009 device checks remain pending; unsigned delivery is unchanged.
 
-## Live Photo paired files (code40010)
+## Live Photo paired files (code40010, historical)
 
-The Harmony bundle ID is `io.github.beetman.xdremux.native`, distinct from the Flutter app's `io.github.beetman.xdremux` so both can be installed side by side. The versionCode is 40010 and it reuses the existing staged Rust0.4.2 core. The unsigned DevEco artifact is `C:/Users/Beet/Documents/XDRemux-Flutter-logs/harmony-native/p3-live-photo/entry-default-unsigned-code40010-p3-live-photo.hap` (5,636,835 bytes, SHA256 `8ADAE2D6540500726C09E891897AE4032CEE2DF12504A2CAD21B962653A1B42B`). DevEco skipped signing because the project has no signing profile; sign locally in DevEco only for device testing.
+This section records the code40010 test build from before the `.arkui` identity existed: it used the bundle ID `io.github.beetman.xdremux.native` (distinct from the Flutter app's `io.github.beetman.xdremux`, so both could be installed side by side), versionCode 40010 and the staged Rust 0.4.2 core. The current app is `io.github.beetman.xdremux.arkui` at 0.5.4 (see Build above). The unsigned DevEco artifact (5,636,835 bytes, SHA256 `8ADAE2D6540500726C09E891897AE4032CEE2DF12504A2CAD21B962653A1B42B`) is kept outside the repository under the `harmony-native/p3-live-photo/` evidence directory. DevEco skipped signing because the project had no signing profile; sign locally in DevEco only for device testing.
 
 Pair generation requires a currently identified Motion Photo and an Apple HEIC result whose persisted sourceInputPath exactly matches the current source. Older queue records may omit this field and remain exportable, but must be converted again before pairing. This prevents a newly imported Motion Photo from being combined with a stale successful result retained during preparation.
 

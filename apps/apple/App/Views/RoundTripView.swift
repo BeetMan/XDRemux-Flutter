@@ -162,8 +162,10 @@ final class RoundTripModel {
                                                              base: library.config, job: job)
             editCopy = product.outputURL
             status = L("Apple 编辑副本已生成：\(product.outputURL.lastPathComponent)")
+        } catch let error as ConversionJobError {
+            self.error = L("Apple 照片摄影风格失败：\(LibraryModel.describe(error))")
         } catch {
-            self.error = L("Apple 照片摄影风格失败：\(String(describing: error))")
+            self.error = L("Apple 照片摄影风格失败：\(LibraryModel.readableError(error))")
         }
     }
 
@@ -184,7 +186,7 @@ final class RoundTripModel {
         } catch RoundTripError.writebackFailed(let message) {
             error = L("写回失败：\(message ?? L("未知原因"))")
         } catch {
-            self.error = L("写回失败：\(String(describing: error))")
+            self.error = L("写回失败：\(LibraryModel.readableError(error))")
         }
     }
 }

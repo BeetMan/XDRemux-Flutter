@@ -20,9 +20,9 @@ typedef struct {
     int32_t monochrome;     /* 1: 4:0:0, 0: 4:2:0 */
     int32_t bit_depth;      /* 8 or 10 */
     int32_t full_range;     /* sample range of the pixel buffer */
-    int32_t primaries;      /* 0 unspecified, 1 BT.709, 2 EBU 3213 (bt470bg) */
+    int32_t primaries;      /* 0 unspecified, 1 BT.709, 2 EBU 3213 (bt470bg), 9 BT.2020 */
     int32_t transfer;       /* 0 unspecified, 1 BT.709, 2 sRGB */
-    int32_t matrix;         /* 0 unspecified, 1 BT.709, 2 BT.601 */
+    int32_t matrix;         /* 0 unspecified, 1 BT.709, 2 BT.601, 9 BT.2020 */
     int32_t force_software; /* 1: never use the hardware encoder */
     float quality;          /* kVTCompressionPropertyKey_Quality, 0..1 */
 } xdremux_vt_config;
@@ -182,9 +182,10 @@ void *xdremux_vt_open(const xdremux_vt_config *config, int32_t *stage, int32_t *
     /* The VUI colour description comes from session properties; attachments
      * on the pixel buffer alone are not written to the stream. */
     if (st == noErr && config->primaries != 0) {
-        st = VTSessionSetProperty(s->session, kVTCompressionPropertyKey_ColorPrimaries,
-                                  config->primaries == 2 ? kCVImageBufferColorPrimaries_EBU_3213
-                                                         : kCVImageBufferColorPrimaries_ITU_R_709_2);
+        CFStringRef primaries = kCVImageBufferColorPrimaries_ITU_R_709_2;
+        if (config->primaries == 2) primaries = kCVImageBufferColorPrimaries_EBU_3213;
+        if (config->primaries == 9) primaries = kCVImageBufferColorPrimaries_ITU_R_2020;
+        st = VTSessionSetProperty(s->session, kVTCompressionPropertyKey_ColorPrimaries, primaries);
     }
     if (st == noErr && config->transfer != 0) {
         st = VTSessionSetProperty(s->session, kVTCompressionPropertyKey_TransferFunction,
@@ -192,9 +193,10 @@ void *xdremux_vt_open(const xdremux_vt_config *config, int32_t *stage, int32_t *
                                                         : kCVImageBufferTransferFunction_ITU_R_709_2);
     }
     if (st == noErr && config->matrix != 0) {
-        st = VTSessionSetProperty(s->session, kVTCompressionPropertyKey_YCbCrMatrix,
-                                  config->matrix == 2 ? kCVImageBufferYCbCrMatrix_ITU_R_601_4
-                                                      : kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+        CFStringRef matrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2;
+        if (config->matrix == 2) matrix = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
+        if (config->matrix == 9) matrix = kCVImageBufferYCbCrMatrix_ITU_R_2020;
+        st = VTSessionSetProperty(s->session, kVTCompressionPropertyKey_YCbCrMatrix, matrix);
     }
     if (st != noErr) {
         *stage = VT_STAGE_PROPERTY;

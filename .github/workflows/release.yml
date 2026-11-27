@@ -634,7 +634,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux Flutter.app"
           DY="$APP/Contents/Frameworks/libxdremux_core.dylib"
           # The Runner target's "Bundle Framework" copy phase must produce this;
           # a missing dylib means the build silently produced an app that cannot
@@ -660,7 +660,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux.app"
+          APP="apps/flutter/build/macos/Build/Products/Release/XDRemux Flutter.app"
           STAGE="apps/flutter/build/dmg/stage"
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
@@ -672,9 +672,12 @@ jobs:
           # GPL-3.0-only notice next to the app (see LICENSING.md).
           cp LICENSE "$STAGE/LICENSE.txt"
           cp LICENSING.md "$STAGE/LICENSING.md"
+          # Quick shortcut to Privacy & Security for unnotarized Gatekeeper approval.
+          shortcut="$(bash tools/apple/write_privacy_shortcut.sh "$STAGE")"
           test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
-          test -d "$STAGE/XDRemux.app" || { echo "DMG stage is missing XDRemux.app" >&2; exit 1; }
-          hdiutil create -volname XDRemux \
+          test -d "$STAGE/XDRemux Flutter.app" || { echo "DMG stage is missing XDRemux Flutter.app" >&2; exit 1; }
+          test -f "$shortcut" || { echo "DMG stage is missing the Privacy & Security shortcut" >&2; exit 1; }
+          hdiutil create -volname "XDRemux Flutter" \
             -srcfolder "$STAGE" \
             -ov -format UDZO \
             "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
@@ -801,7 +804,7 @@ jobs:
               echo "Missing iOS runtime FFI symbol: $symbol" >&2
               exit 1
             fi
-          done < <(grep -oE "'xdremux_[a-z_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
+          done < <(grep -oE "'xdremux_[a-z0-9_]+'" apps/flutter/lib/ffi/xdremux_ffi.dart | tr -d "'" | sort -u)
           echo 'Validated all Dart runtime FFI exports in the iOS archive.'
           test -f "$APP/Frameworks/xdremux_transfer.framework/xdremux_transfer" || {
             echo "Local transfer framework missing from the app" >&2; exit 1; }

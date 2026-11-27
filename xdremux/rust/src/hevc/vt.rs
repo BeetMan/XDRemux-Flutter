@@ -16,7 +16,7 @@
 use std::os::raw::c_void;
 
 use super::{
-    codes16_to_yuv420_10bit, rgb_to_yuv420, rgb_to_yuv420_limited601, EncodeRequest,
+    codes16_to_yuv420_10bit_matrix, rgb_to_yuv420, rgb_to_yuv420_limited601, EncodeRequest,
     EncodedTiles, HevcBitDepth, HevcColor, HevcContent, HevcLayout, SourcePictures,
 };
 
@@ -208,7 +208,7 @@ pub(super) fn encode(
         Gray(&'a [&'a [u8]]),
         GrayAs420(&'a [&'a [u8]]),
         Rgb { tiles: &'a [&'a [u8]], limited601: bool },
-        Codes16(&'a [u16]),
+        Codes16(&'a [&'a [u16]]),
     }
     let (source, coded) = match (pictures, bit_depth) {
         (SourcePictures::Gray8(tiles), HevcBitDepth::Eight) => match layout {
@@ -239,21 +239,24 @@ pub(super) fn encode(
                     config.matrix = 1;
                     false
                 }
-                HevcColor::Bt601LimitedLinear => {
-                    return Err(unsupported("8-bit BT.601 limited RGB tiles"))
+                HevcColor::Bt601LimitedLinear | HevcColor::Bt2020LimitedLog => {
+                    return Err(unsupported("8-bit limited-range RGB tiles"))
                 }
             };
             (Source::Rgb { tiles, limited601 }, HevcLayout::Yuv420)
         }
         (SourcePictures::Rgb16(codes16), HevcBitDepth::Ten) => {
-            if layout != HevcLayout::Yuv420 || color != HevcColor::Bt601LimitedLinear {
-                return Err(unsupported("10-bit pictures other than 4:2:0 BT.601 limited"));
+            if layout != HevcLayout::Yuv420 || !matches!(color, HevcColor::Bt601LimitedLinear | HevcColor::Bt2020LimitedLog) {
+                return Err(unsupported("10-bit pictures other than limited-range 4:2:0"));
             }
-            if codes16.len() != pixels * 3 {
+            if codes16.iter().any(|tile| tile.len() != pixels * 3) {
                 return Err(io_err("10-bit thumbnail: raster size mismatch".into()));
             }
             config.bit_depth = 10;
             config.full_range = 0;
+            if color == HevcColor::Bt2020LimitedLog {
+                (config.primaries, config.transfer, config.matrix) = (9, 1, 9);
+            }
             (Source::Codes16(codes16), HevcLayout::Yuv420)
         }
         _ => return Err(unsupported("source sample depth that differs from the coded bit depth")),
@@ -262,7 +265,7 @@ pub(super) fn encode(
     let count = match &source {
         Source::Gray(t) | Source::GrayAs420(t) => t.len(),
         Source::Rgb { tiles, .. } => tiles.len(),
-        Source::Codes16(_) => 1,
+        Source::Codes16(tiles) => tiles.len(),
     };
     if count == 0 {
         return Ok(EncodedTiles { streams: Vec::new(), layout: coded });
@@ -320,7 +323,7 @@ pub(super) fn encode(
                     session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
                 }
                 Source::Codes16(codes16) => {
-                    let (y, u, v) = codes16_to_yuv420_10bit(codes16, width, height);
+                    let (y, u, v) = codes16_to_yuv420_10bit_matrix(codes16[index], width, height, color);
                     session.encode(y.as_ptr().cast(), u.as_ptr().cast(), v.as_ptr().cast())?
                 }
             };
@@ -774,7 +777,7 @@ mod tests {
             }
         }
         let (stream, _) = vt(|| encode_thumbnail_10bit(&codes, w, h)).unwrap().into_single().unwrap();
-        let (y, _, _) = codes16_to_yuv420_10bit(&codes, w, h);
+        let (y, _, _) = super::super::codes16_to_yuv420_10bit(&codes, w, h);
         let psnr = luma_psnr(&stream, &y, w, h, 1023.0);
         eprintln!("10-bit luma PSNR {psnr:.1} dB");
         assert!(psnr > 38.0, "10-bit luma PSNR {psnr:.1} dB");

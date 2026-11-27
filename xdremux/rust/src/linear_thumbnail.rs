@@ -237,11 +237,10 @@ pub struct MovieLinearThumbnail {
     pub bit_depth: u8,
 }
 
-/// Build the per-frame linear thumbnail of a Live Photo MOV from its still.
+/// Build the repeated MOV thumbnail when the conversion uses the still.
 ///
 /// Native iPhone MOVs carry a 128×96 Main10 Apple Log track at the video's
-/// coded geometry. The port has no video decoder, so the still stands in for
-/// every frame: decode the display-oriented primary, rotate it into the
+/// coded geometry. Decode the display-oriented primary, rotate it into the
 /// video's coded orientation (`coded_cw_quarter_turns`), resize in linear
 /// light to `width`×`height`, then apply the same baseline exposure and Apple
 /// Log curve as the HEIC linear thumbnail.

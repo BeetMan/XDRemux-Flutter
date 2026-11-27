@@ -50,6 +50,8 @@ exclude = [
   "xdremux_encode_10bit_planes_checked",
   # hevc/vt.rs imports from vt_hevc.c, internal as well.
   "xdremux_vt_open", "xdremux_vt_encode", "xdremux_vt_close", "xdremux_vt_free", "VtConfig",
+  # live_photo_styles_apple.rs imports from apple_live_style_video.m, internal as well.
+  "FrameTime", "xdremux_observe_live_style_video",
   "StyleLayers",
 ]
 

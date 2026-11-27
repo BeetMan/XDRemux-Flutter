@@ -146,8 +146,11 @@ importing `XDRemuxCoreC` links it and neither the package nor the app declares i
 ## Identity
 
 Bundle ID `io.github.beetman.xdremux.swiftui`, distinct from the Flutter app
-(`io.github.beetman.xdremux`) so both install side by side. Signing and notarization are not set
-up (plan §5): releases are ad-hoc signed (macOS) and unsigned (iOS).
+(`com.example.xdremux` on macOS, `io.github.beetman.xdremux` on iOS). On macOS the Flutter app
+ships as `XDRemux Flutter.app` while the native SwiftUI app keeps `XDRemux.app`, so both install
+side by side in `/Applications` without colliding. The Xcode project stays ad-hoc signed by
+default for local/CI builds; `tools/apple/package_release.sh` supports Developer ID signing and
+notarization for macOS releases, while iOS GitHub artifacts remain unsigned IPAs.
 
 ## Release
 
@@ -157,14 +160,32 @@ release are untouched):
 
 ```bash
 tools/apple/package_release.sh      # XDREMUX_SKIP_CORE=1 / XDREMUX_SKIP_TRANSFER=1 to reuse the built cores
+XDREMUX_NOTARY_PROFILE=xdremux-notary tools/apple/package_release.sh   # Developer ID sign + notarize + staple
 ```
 
 It rebuilds both xcframeworks from the checked-out sources (and refuses a core whose
 `BUILD_RECORD.txt` predates a change to `xdremux/rust` or the transfer crates), builds the macOS
-Release app (ad-hoc) and an unsigned iOS archive, checks version / bundle id / embedded core /
+Release app and an unsigned iOS archive, checks version / bundle id / embedded core /
 transfer framework / Share Extension, then writes `apps/apple/build/release/<version>/`:
 `XDRemux-Apple-macOS-<version>.dmg`, `XDRemux-Apple-iOS-<version>-unsigned.ipa`, `BUILD_RECORD.txt`
-and `SHA256SUMS.txt`. The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
+and `SHA256SUMS.txt`.
+
+macOS signing & notarization (`XDREMUX_MACOS_SIGN=auto` by default):
+
+- If a `Developer ID Application` certificate for `XDREMUX_TEAM_ID` (default `W94G5B6VGC`, or set
+  `XDREMUX_DEVELOPER_ID` explicitly) is present in the keychain, the script enables Hardened Runtime
+  (`--options runtime`) and secure timestamps (`--timestamp`), signs the embedded
+  `XDRemuxTransferCore.framework` and `XDRemux.app` inside-out, verifies the signature, and signs
+  the `.dmg`. With `XDREMUX_NOTARY_PROFILE` (a `notarytool` keychain profile) or
+  `ASC_KEY_PATH` / `ASC_KEY_ID` / `ASC_ISSUER_ID`, it notarizes and staples the signed `.dmg` in
+  one pass (covering the embedded app too; pass `XDREMUX_STAPLE_APP=1` to also staple `XDRemux.app`
+  individually before packing, and `XDREMUX_NOTARY_TIMEOUT=20m` to bound `--wait`). Setting
+  `XDREMUX_NOTARIZE=1` fails instead of skipping when credentials are missing.
+- If no Developer ID certificate is found (or `XDREMUX_MACOS_SIGN=ad-hoc`), it falls back to
+  ad-hoc signing and adds a `打开隐私与安全性 (Privacy & Security).inetloc` shortcut inside the DMG
+  (omitted from notarized DMGs).
+
+The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
 (in both targets) and `CURRENT_PROJECT_VERSION`, the build number shared by the app and the Share
 Extension, before packaging. Release notes live in
 `tools/installer/RELEASE_NOTES_apple-v<version>.md`; publish with
