@@ -1,5 +1,7 @@
 import { Available } from '@kit.BasicServicesKit';
-import { ChipGroup, ChipSize, ColorMetrics, LengthMetrics, SymbolGlyphModifier, uiMaterial, window } from '@kit.ArkUI';
+import {
+  ChipGroup, ChipSize, ColorMetrics, FrameCallback, LengthMetrics, SymbolGlyphModifier, UIContext, uiMaterial, window
+} from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
@@ -214,6 +216,29 @@ class OriginalPhotoSelectOptions extends photoAccessHelper.PhotoSelectOptions {
   assetCompatibleCapability: QueueHeicCompatibleCapability = new QueueHeicCompatibleCapability();
 }
 
+/** Runs an action at the start of a later frame, once the frames before it have been drawn. */
+class GalleryAfterFrames extends FrameCallback {
+  private remaining: number;
+  private readonly uiContext: UIContext;
+  private readonly action: () => void;
+
+  constructor(uiContext: UIContext, frames: number, action: () => void) {
+    super();
+    this.uiContext = uiContext;
+    this.remaining = frames;
+    this.action = action;
+  }
+
+  onFrame(frameTimeInNano: number): void {
+    this.remaining -= 1;
+    if (this.remaining > 0) {
+      this.uiContext.postFrameCallback(this);
+      return;
+    }
+    this.action();
+  }
+}
+
 const TRANSFER_TAB_INDEX: number = 2;
 const SETTINGS_TAB_INDEX: number = 3;
 
@@ -313,6 +338,7 @@ struct Index {
   @State private galleryCachedThumbnailIds: Array<string> = [];
   @State private galleryThumbnailDecodeFailedIds: Array<string> = [];
   @State private gallerySdrCompareHolding: boolean = false;
+  @State private gallerySdrCompareLocked: boolean = false;
   @State private gallerySdrCompareLoading: boolean = false;
   @State private gallerySdrCompareActive: boolean = false;
   /** Screen-size SDR decode of the current photo, shown while it is held. */
@@ -405,6 +431,8 @@ struct Index {
   private gallerySdrDecodingItemId: string = '';
   private gallerySdrDecodeSerial: number = 0;
   private gallerySdrPrepareTimer: number = -1;
+  private gallerySdrButtonDownAt: number = 0;
+  private gallerySdrButtonTouchHadLocked: boolean = false;
   private galleryChromeToggleBlockedUntil: number = 0;
   private galleryStatusBarResetTimer: number = -1;
   private galleryStatusBarUpdate: Promise<void> = Promise.resolve();
@@ -3098,11 +3126,16 @@ struct Index {
       this.gallerySandboxPath.length > 0 && this.gallerySystemImageIsHdr;
   }
 
-  /** Show the SDR rendition while the photo is held. */
+  private wantsGallerySdrCompare(): boolean {
+    return this.gallerySdrCompareHolding || this.gallerySdrCompareLocked;
+  }
+
+  /** Show the SDR rendition while the photo is held or the button toggles SDR. */
   private beginGallerySdrCompare(): void {
-    if (!this.canCompareGallerySdr() || this.gallerySdrCompareActive) return;
+    if (!this.canCompareGallerySdr()) return;
     const itemId: string = this.galleryCurrentItem?.id ?? '';
     this.gallerySdrCompareHolding = true;
+    if (this.gallerySdrCompareActive) return;
     if (this.gallerySdrPixelMapItemId === itemId && this.gallerySdrPixelMap !== undefined) {
       this.gallerySdrCompareActive = true;
       return;
@@ -3148,10 +3181,13 @@ struct Index {
       if (serial !== this.gallerySdrDecodeSerial || this.galleryCurrentItem?.id !== itemId) return;
       this.setGallerySdrPixelMap(itemId, pixelMap);
       pixelMap = undefined;
-      if (this.gallerySdrCompareHolding) this.gallerySdrCompareActive = true;
+      if (this.wantsGallerySdrCompare()) this.activateGallerySdrCompareAfterDraw(itemId);
     } catch (error) {
-      if (serial === this.gallerySdrDecodeSerial && this.gallerySdrCompareHolding) {
+      if (serial === this.gallerySdrDecodeSerial && this.wantsGallerySdrCompare()) {
         this.galleryStatus = 'SDR 对比加载失败：' + this.errorMessage(error);
+        this.gallerySdrCompareLocked = false;
+        this.gallerySdrCompareHolding = false;
+        this.gallerySdrCompareActive = false;
       }
     } finally {
       if (serial === this.gallerySdrDecodeSerial) {
@@ -3180,14 +3216,34 @@ struct Index {
     }
   }
 
+  /**
+   * The photo is held while its SDR decode finishes. The SDR layer mounts with
+   * the PixelMap; hide the HDR layer only once that layer has been drawn, two
+   * frames later, or no layer is drawn for a frame and the photo flashes black.
+   */
+  private activateGallerySdrCompareAfterDraw(itemId: string): void {
+    const uiContext: UIContext = this.getUIContext();
+    uiContext.postFrameCallback(new GalleryAfterFrames(uiContext, 2, (): void => {
+      if (this.wantsGallerySdrCompare() && this.gallerySdrPixelMapItemId === itemId &&
+        this.galleryCurrentItem?.id === itemId) {
+        this.gallerySdrCompareActive = true;
+      }
+    }));
+  }
+
   private endGallerySdrCompare(): void {
     this.gallerySdrCompareHolding = false;
-    this.gallerySdrCompareLoading = false;
-    this.gallerySdrCompareActive = false;
+    if (!this.gallerySdrCompareLocked) {
+      this.gallerySdrCompareLoading = false;
+      this.gallerySdrCompareActive = false;
+    }
   }
 
   /** The photo changed or the detail closed: drop the comparison and its decode. */
   private resetGallerySdrCompare(): void {
+    this.gallerySdrCompareLocked = false;
+    this.gallerySdrButtonDownAt = 0;
+    this.gallerySdrButtonTouchHadLocked = false;
     this.endGallerySdrCompare();
     if (this.gallerySdrPrepareTimer >= 0) {
       clearTimeout(this.gallerySdrPrepareTimer);
@@ -5813,14 +5869,13 @@ struct Index {
   }
 
   /**
-   * A state mark, not a button: HDR normally, SDR (accent) while the photo is
-   * held. Touches pass through to the photo, so pressing it is pressing the
-   * photo.
+   * HDR/SDR toggle and hold-to-compare button: tapping switches between HDR
+   * and SDR; holding compares SDR immediately and restores HDR on release.
    */
   @Builder
   private gallerySdrCompareButton() {
     if (this.canCompareGallerySdr() && this.galleryThumbnailStripVisible()) {
-      Stack() {
+      Button({ type: ButtonType.Circle, stateEffect: false }) {
         Text(this.gallerySdrCompareLoading ? '…' : this.gallerySdrCompareActive ? 'SDR' : 'HDR')
           .fontSize(10)
           .fontWeight(FontWeight.Bold)
@@ -5828,12 +5883,39 @@ struct Index {
       }
       .width(40)
       .height(40)
-      .borderRadius(20)
-      .clip(true)
       .backgroundEffect({ radius: 24, saturation: 1.12, brightness: 1.0 })
       .backgroundColor(this.isSystemDarkMode() ? '#66000000' : '#66FFFFFF')
-      .hitTestBehavior(HitTestMode.None)
-      .accessibilityText(this.gallerySdrCompareActive ? '正在显示 SDR' : 'HDR 照片，按住照片显示 SDR')
+      .hitTestBehavior(HitTestMode.Block)
+      .accessibilityText(this.gallerySdrCompareActive ? '正在显示 SDR，点击切回 HDR' : '点击或按住显示 SDR')
+      .onTouch((event: TouchEvent): void => {
+        if (event.type === TouchType.Down) {
+          this.gallerySdrButtonTouchHadLocked = this.gallerySdrCompareLocked;
+          this.gallerySdrButtonDownAt = Date.now();
+          if (!this.gallerySdrCompareLocked) {
+            this.beginGallerySdrCompare();
+          }
+        } else if (event.type === TouchType.Up) {
+          if (this.gallerySdrButtonTouchHadLocked) {
+            this.gallerySdrCompareLocked = false;
+            this.endGallerySdrCompare();
+          } else {
+            const touch: TouchObject | undefined = event.touches.length > 0 ? event.touches[0] : undefined;
+            const insideButton: boolean = touch === undefined ||
+              (touch.x >= -12 && touch.x <= 52 && touch.y >= -12 && touch.y <= 52);
+            if (insideButton && Date.now() - this.gallerySdrButtonDownAt < GALLERY_SDR_HOLD_MS) {
+              this.gallerySdrCompareLocked = true;
+              this.gallerySdrCompareHolding = false;
+            } else {
+              this.gallerySdrCompareLocked = false;
+              this.endGallerySdrCompare();
+            }
+          }
+        } else if (event.type === TouchType.Cancel) {
+          if (!this.gallerySdrButtonTouchHadLocked) {
+            this.endGallerySdrCompare();
+          }
+        }
+      })
       .position({
         x: Math.max(0, this.galleryViewportWidth - 18 - 40),
         y: Math.max(0, this.galleryThumbnailStripTop() - GALLERY_DETAIL_THUMBNAIL_GAP - 40)
@@ -6397,6 +6479,7 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .draggable(false)
                         .dynamicRangeMode(DynamicRangeMode.HIGH)
                         .visibility(this.galleryShowsSdrCompare(tile.item.id) ? Visibility.Hidden : Visibility.Visible)
                         .onComplete((event): void => {
@@ -6409,6 +6492,7 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .draggable(false)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .opacity(tile.item.id === this.galleryCurrentItem?.id && !this.galleryHeroOpening &&
                           this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
@@ -6425,6 +6509,7 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .draggable(false)
                         .dynamicRangeMode(DynamicRangeMode.HIGH)
                         .visibility(this.galleryShowsSdrCompare(tile.item.id) ? Visibility.Hidden : Visibility.Visible)
                         .onComplete((event): void => {
@@ -6443,22 +6528,28 @@ struct Index {
                         .orientation(ImageRotateOrientation.AUTO)
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .draggable(false)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
                         .opacity(!this.galleryHeroOpening &&
                           this.galleryDetailLoadedImageId === tile.item.id ? 0 : 1)
                         .hitTestBehavior(HitTestMode.None);
                     }
-                    if (this.galleryShowsSdrCompare(tile.item.id) && this.gallerySdrPixelMap !== undefined &&
-                      this.gallerySdrPixelMapItemId === tile.item.id) {
-                      // The screen-size SDR decode. The HDR Image above stays
-                      // mounted (hidden while this shows), so releasing needs no
-                      // new decode.
+                    if (this.gallerySdrPixelMap !== undefined && this.gallerySdrPixelMapItemId === tile.item.id) {
+                      // The screen-size SDR decode, mounted transparent as soon as
+                      // it is ready, so holding the photo only changes opacity.
+                      // Created at the press instead, it loaded a frame or two after
+                      // the HDR layer above was hidden, and the photo flashed black.
+                      // The HDR Image stays mounted (hidden while this shows), so
+                      // releasing needs no new decode either.
                       Image(this.gallerySdrPixelMap as image.PixelMap)
                         .width('100%')
                         .height('100%')
                         .objectFit(ImageFit.Contain)
                         .autoResize(true)
+                        .draggable(false)
+                        .syncLoad(true)
                         .dynamicRangeMode(DynamicRangeMode.STANDARD)
+                        .opacity(this.galleryShowsSdrCompare(tile.item.id) ? 1 : 0)
                         .hitTestBehavior(HitTestMode.None);
                     }
                   }
@@ -6506,7 +6597,12 @@ struct Index {
                     // In one exclusive group with the taps, so a hold is never
                     // also a tap that toggles the chrome.
                     GestureGroup(GestureMode.Exclusive,
-                      LongPressGesture({ fingers: 1, repeat: false, duration: GALLERY_SDR_HOLD_MS })
+                      LongPressGesture({
+                        fingers: 1,
+                        repeat: false,
+                        duration: GALLERY_SDR_HOLD_MS,
+                        allowableMovement: 36
+                      })
                         .onAction((): void => {
                           if (tile.item.id === this.galleryCurrentItem?.id) void this.beginGallerySdrCompare();
                         })
