@@ -182,7 +182,7 @@ macOS signing & notarization (`XDREMUX_MACOS_SIGN=auto` by default):
   individually before packing, and `XDREMUX_NOTARY_TIMEOUT=20m` to bound `--wait`). Setting
   `XDREMUX_NOTARIZE=1` fails instead of skipping when credentials are missing.
 - If no Developer ID certificate is found (or `XDREMUX_MACOS_SIGN=ad-hoc`), it falls back to
-  ad-hoc signing and adds a `打开隐私与安全性 (Privacy & Security).webloc` shortcut inside the DMG
+  ad-hoc signing and adds a `打开隐私与安全性 (Privacy & Security).inetloc` shortcut inside the DMG
   (omitted from notarized DMGs).
 
 The version comes from `CFBundleShortVersionString` in `project.yml`; bump it

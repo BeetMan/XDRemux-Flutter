@@ -54,18 +54,18 @@ class MacOSReleaseHelpersTest(unittest.TestCase):
                 text=True,
             )
 
-    def test_write_privacy_shortcut_creates_valid_webloc(self):
+    def test_write_privacy_shortcut_creates_valid_inetloc(self):
         script = APPLE_TOOLS_DIR / "write_privacy_shortcut.sh"
-        with tempfile.TemporaryDirectory(prefix="xdremux-webloc-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="xdremux-inetloc-") as tmp:
             res = subprocess.run(
                 ["bash", str(script), tmp],
                 capture_output=True,
                 text=True,
             )
             self.assertEqual(res.returncode, 0, res.stderr)
-            webloc = Path(tmp) / "打开隐私与安全性 (Privacy & Security).webloc"
-            self.assertTrue(webloc.is_file())
-            with webloc.open("rb") as f:
+            inetloc = Path(tmp) / "打开隐私与安全性 (Privacy & Security).inetloc"
+            self.assertTrue(inetloc.is_file())
+            with inetloc.open("rb") as f:
                 data = plistlib.load(f)
             self.assertEqual(
                 data["URL"],

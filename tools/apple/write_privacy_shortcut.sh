@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Write a macOS .webloc shortcut opening System Settings -> Privacy & Security
+# Write a macOS .inetloc shortcut opening System Settings -> Privacy & Security
 # inside a DMG staging directory so users of unnotarized builds can jump to
 # the "Open Anyway" section directly from the DMG window.
+# (.webloc only accepts http/https URLs in LaunchServices and fails with -10400
+# on x-apple.systempreferences: URLs.)
 set -euo pipefail
 
 DEST_DIR="${1:-}"
@@ -10,7 +12,7 @@ if [ -z "$DEST_DIR" ] || [ ! -d "$DEST_DIR" ]; then
   exit 2
 fi
 
-SHORTCUT_NAME="${XDREMUX_PRIVACY_SHORTCUT_NAME:-打开隐私与安全性 (Privacy & Security).webloc}"
+SHORTCUT_NAME="${XDREMUX_PRIVACY_SHORTCUT_NAME:-打开隐私与安全性 (Privacy & Security).inetloc}"
 OUT="$DEST_DIR/$SHORTCUT_NAME"
 
 cat > "$OUT" <<'PLIST'
