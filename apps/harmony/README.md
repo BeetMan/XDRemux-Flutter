@@ -1,8 +1,8 @@
 # XDRemux 鸿蒙原生版
 
-**当前版本：0.5.4** · 需要 HarmonyOS 7（API 26）及以上
+**当前版本：0.5.5** · 需要 HarmonyOS 7（API 26）及以上
 
-[下载鸿蒙原生版 0.5.4](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.4) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
+[下载鸿蒙原生版 0.5.5](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.5) · Flutter 跨平台版：[最新版本](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)
 
 [问题反馈](https://github.com/BeetMan/XDRemux-Flutter/issues) · [构建与安装](BUILDING.md) · [开发计划](../../docs/plans/harmony-native.md)
 
@@ -22,9 +22,9 @@ XDRemux 鸿蒙原生版是一款面向 HarmonyOS 的照片格式转换工具，�
 
 除鸿蒙原生版外，XDRemux 的 Flutter 跨平台版本见[最新发布](https://github.com/BeetMan/XDRemux-Flutter/releases/latest)，覆盖 Windows、macOS、Android、iOS 和 HarmonyOS（Flutter 引擎）。
 
-原生 0.5.4 使用与 Flutter 0.4.7 相同的 Rust 0.4.7 转换核心。核心包含 ProXDR 转标准 HDR HEIC、OPPO 兼容与 Apple 标准、符合条件的人像转换、摄影风格与动态照片处理能力。本轮新增与 Flutter 版共用的局域网互传（LocalSend），并纳入开启摄影风格时 Live Photo 配对失败的修复。两端的界面、预览和导出接入独立；Flutter 的 iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
+原生 0.5.5 使用与 Flutter 0.4.8 相同的 Rust 0.4.8 转换核心，包含统一 ISO `62/142` 字节 `tmap`、为已转换 ISO HDR HEIC / 风格 2 照片追加风格、鸿蒙全模式 4:2:0 增益图编码、OPPO / ColorOS 17.24 人像与水印边框还原、Live Photo 事务式发布以及基于 `xdremux_core` 的核心能力。本轮原生端带来图标更新、HarmonyOS 7（API 26）基线、全图按住对比 SDR（隐藏 HDR 涂层）、图库缩略图缓存与背景转暗过渡、局域网互传收件箱首开刷新、以及队列写入与图库并发的多项修复；并保留了与 Flutter 版共用的局域网互传（LocalSend）。两端的界面、预览和导出接入独立；Flutter 的 macOS / iOS VideoToolbox、iOS PhotoKit 保存、编解码诊断 UI，以及可选 libheif 解码扩展不等同于鸿蒙原生版已接入。
 
-在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.4 更新说明](RELEASE_NOTES_v0.5.4.md)列出了本轮变化和使用范围。
+在 HarmonyOS 上可选择 ArkUI 原生交互；需要在桌面或其他移动平台处理照片时，可选择 Flutter 版。[原生 0.5.5 更新说明](RELEASE_NOTES_v0.5.5.md)列出了本轮变化和使用范围。
 
 ## 图库：从浏览照片开始
 
@@ -123,6 +123,10 @@ Apple 相关选项包括：
 
 This is the HarmonyOS native app for the existing Rust bridge. Its Gallery tab is a three-column XDRemux local library: users import selected photos through PhotoViewPicker, the app physically copies originals into persistent private storage, and tapping a tile opens the oversized detail card with format, dimensions, EXIF information, classification, and conversion controls. The app does not request `ohos.permission.READ_IMAGEVIDEO` or enumerate the device library. Gallery and queue imports both copy each selected URI into the app sandbox before Rust reads it; the queue retains its API 26 CURRENT-original and high-resolution HEIC options. The top navigation keeps Gallery, Queue, and Settings on the left and places Gallery's Import action on the right. The app uses a transparent immersive status bar and HDS Navigation detail title bar with adaptive material. It also receives supported HEIC/JPEG shares into sandbox files, runs a bounded foreground conversion queue, exports completed results through one serial multi-file save session, and can inspect and split Motion Photos, create eligible Live Photo pairs, and export paired HEIC/MOV files. Settings and queue recovery stay in same-page panels so opening them does not destroy the queue session.
 
+## Native 0.5.5 release (2026-11-28)
+
+The native branch catches up to main `v0.4.8` (`1782fee`), advancing the shared Rust core to `0.4.8` (matching Flutter v0.4.8: unified ISO 21496-1 62/142-byte `tmap`, HarmonyOS 4:2:0 gain map encoding in all modes, Photographic Styles 2 → 3 append without losing HDR, ColorOS 17.24 portrait/watermark border restoration, Live Photo transactional publish/rollback, and x265 ARM64 NEON on OHOS). Native app metadata is `0.5.5` / code `50500`; `.arkui` bundle identity, `compatibleSdkVersion` 26 (HarmonyOS 7), and queue/settings schemas stay backward-compatible (legacy `strictTmap` JSON fields remain tolerated). Native UI & stability updates: gain-map app icon, upright thumbnail cache for the gallery grid, hold-anywhere SDR compare with the HDR layer hidden and backdrop fade on open, instant 互传 inbox listing on tab open while switching reception cleanly, reliable HDR/SDR button tap target, and coalesced gallery/queue persistence fixes. See [0.5.5 release notes](RELEASE_NOTES_v0.5.5.md).
+
 ## Native 0.5.4 release (2026-11-07)
 
 The native branch merges main `ce35efd`, so the shared Rust core is `0.4.7` (same as Flutter v0.4.7, including the Live Photo MakerNote fix for styled stills). Native app metadata is `0.5.4` / code `50400`; the `.arkui` identity and queue/settings schemas are unchanged. New: the 互传 tab (LocalSend device transfer, described below), Settings → 开源许可 with the GPL-3.0-only notice and the XDRemux, x265 and LocalSend license texts, and the `INTERNET` / `GET_NETWORK_INFO` permissions. See [0.5.4 release notes](RELEASE_NOTES_v0.5.4.md).
@@ -174,7 +178,7 @@ Set-Location .\apps\harmony
 devecocli build --product default --build-mode debug
 ```
 
-When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.4` and version code `50400`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
+When no local signing profile is selected, the unsigned HAP is written to `entry/build/default/outputs/default/entry-default-unsigned.hap`. The app is displayed as `XDRemux`, with version name `0.5.5` and version code `50500`. The project targets arm64 devices and uses the independent bundle ID `io.github.beetman.xdremux.arkui`. Use local DevEco signing for device tests and leave release packages unsigned.
 
 The local gallery index is `filesDir/xdremux-gallery/library.json`; imported originals live under `filesDir/xdremux-gallery/items/`. Queue-owned inputs remain separate under the queue sandbox. Import copies are committed to the index only after the copied file is verified, and the index is replaced atomically.
 
