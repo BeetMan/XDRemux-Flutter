@@ -57,7 +57,6 @@ fn convert_lhdr(
         edr_scale,
         oppo_compat,
         OppoCameraTail::default_for_compat(oppo_compat),
-        false,
         output,
     )?;
     Ok(())
@@ -81,7 +80,6 @@ fn convert_uhdr(
         &extracted.meta_floats,
         oppo_compat,
         OppoCameraTail::default_for_compat(oppo_compat),
-        false,
         output,
     )?;
     Ok(())

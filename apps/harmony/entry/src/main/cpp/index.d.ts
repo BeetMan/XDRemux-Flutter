@@ -43,6 +43,7 @@ export interface ConversionResult {
 export interface ConvertConfig {
   oppoCompat: number;
   oppoCameraTail: number;
+  /** Deprecated/ignored slot kept to match Rust ConvertConfig ABI; pass 0. */
   strictTmap: number;
   applePhotographicStyles: number;
   applePortrait: number;

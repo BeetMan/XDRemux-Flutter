@@ -638,26 +638,6 @@ pub fn make_clean_tmap_payload(meta: &IsoMeta) -> Vec<u8> {
     }
 }
 
-/// Convert a 62-byte Apple or 142-byte ImageIO tmap payload to ISO 21496-1
-/// strict form. The standard reserves three bytes immediately after the
-/// version/dimensions/flags header, producing 65-byte and 145-byte payloads.
-pub fn make_strict_tmap_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
-    match payload.len() {
-        62 | 142 => {}
-        length => {
-            return Err(format!(
-                "strict tmap requires a 62- or 142-byte ImageIO payload, got {length} bytes"
-            ))
-        }
-    }
-
-    let mut strict = Vec::with_capacity(payload.len() + 3);
-    strict.extend_from_slice(&payload[..6]);
-    strict.extend_from_slice(&[0, 0, 0]);
-    strict.extend_from_slice(&payload[6..]);
-    Ok(strict)
-}
-
 // ---------------------------------------------------------------------------
 // Strict ISO 21496-1 GainMapMetadata (C.2.2)
 // ---------------------------------------------------------------------------
@@ -1079,26 +1059,6 @@ mod tests {
         let payload = make_imageio_native_tmap_payload(&meta);
         // flags at offset 5 (after version + two u16)
         assert_eq!(payload[5], 0xC0);
-    }
-
-    #[test]
-    fn strict_tmap_adds_reserved_bytes_after_the_six_byte_header() {
-        let meta = build_iso_metadata_from_uhdr(&make_sample_uhdr_floats()).unwrap();
-        for payload in [
-            make_apple_tmap_payload(&meta),
-            make_imageio_native_tmap_payload(&meta),
-        ] {
-            let strict = make_strict_tmap_payload(&payload).expect("strict tmap");
-            assert_eq!(strict.len(), payload.len() + 3);
-            assert_eq!(&strict[..6], &payload[..6]);
-            assert_eq!(&strict[6..9], &[0, 0, 0]);
-            assert_eq!(&strict[9..], &payload[6..]);
-        }
-    }
-
-    #[test]
-    fn strict_tmap_rejects_unknown_payload_lengths() {
-        assert!(make_strict_tmap_payload(&[0; 61]).is_err());
     }
 
     #[test]

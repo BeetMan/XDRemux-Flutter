@@ -198,7 +198,6 @@ public enum PortraitCalibrationResearch {
                     oppoCompatibility: .off,
                     inputProcessingBranch: .hybrid,
                     oppoCameraTail: .off,
-                    tmapFormat: .imageIO,
                     applePhotographicStyles: false,
                     applePortrait: true,
                     eventHandler: { _ in }

@@ -17,8 +17,8 @@ extension ToDartStringOrNull on ffi.Pointer<Utf8> {
 /// - `oppoCompat`: 0=off, 1=auto, 2=on, 3=tail, 4=iso,
 ///   5=iso-no-local, 6=iso-graph
 /// - `oppoCameraTail`: 0=off through 9=preserve-no-hdr; 255=automatic
-/// - `strictTmap`: false=ImageIO-compatible 62/142-byte payload;
-///   true=strict ISO 65/145-byte payload
+/// - `strictTmap`: deprecated/ignored (kept at offset 2 for C ABI layout);
+///   callers write 0. Outputs always use normative 62/142-byte payloads.
 /// - `applePhotographicStyles`: 1 generates the native Rust Styles 2 graph;
 ///   2 generates or upgrades Styles 2 to Photographic Styles 3.
 /// - `applePortrait`: generate the native Rust Apple Portrait graph
@@ -571,7 +571,6 @@ class XdRemuxFFI {
     String outputPath, {
     int oppoCompat = 0,
     int oppoCameraTail = 255,
-    bool strictTmap = false,
     bool applePhotographicStyles = false,
     bool applePhotographicStyles3 = false,
     bool applePortrait = false,
@@ -581,7 +580,7 @@ class XdRemuxFFI {
     final cfg = calloc<ConvertConfig>();
     cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
-    cfg.ref.strictTmap = strictTmap ? 1 : 0;
+    cfg.ref.strictTmap = 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles3
         ? 2
         : (applePhotographicStyles ? 1 : 0);
@@ -605,7 +604,6 @@ class XdRemuxFFI {
     required int progressHandle,
     int oppoCompat = 0,
     int oppoCameraTail = 255,
-    bool strictTmap = false,
     bool applePhotographicStyles = false,
     bool applePhotographicStyles3 = false,
     bool applePortrait = false,
@@ -615,7 +613,7 @@ class XdRemuxFFI {
     final cfg = calloc<ConvertConfig>();
     cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
-    cfg.ref.strictTmap = strictTmap ? 1 : 0;
+    cfg.ref.strictTmap = 0;
     cfg.ref.applePhotographicStyles = applePhotographicStyles3
         ? 2
         : (applePhotographicStyles ? 1 : 0);
@@ -1168,14 +1166,13 @@ class XdRemuxFFI {
     String inputPath, {
     int oppoCompat = 0,
     int oppoCameraTail = 255,
-    bool strictTmap = false,
     int progressHandle = 0,
   }) {
     final path = inputPath.toNativeUtf8();
     final cfg = calloc<ConvertConfig>();
     cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
-    cfg.ref.strictTmap = strictTmap ? 1 : 0;
+    cfg.ref.strictTmap = 0;
     try {
       return _prepareTiles(path, cfg, progressHandle);
     } finally {

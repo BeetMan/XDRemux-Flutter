@@ -608,22 +608,6 @@
         }
       }
     },
-    "严格 ISO 21496-1 tmap": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Strict ISO 21496-1 tmap"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "严格 ISO 21496-1 tmap"
-          }
-        }
-      }
-    },
     "人像": {
       "localizations": {
         "en": {

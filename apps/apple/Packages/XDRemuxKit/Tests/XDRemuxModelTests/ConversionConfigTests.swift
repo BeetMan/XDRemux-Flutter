@@ -35,7 +35,7 @@ final class ConversionConfigTests: XCTestCase {
         XCTAssertEqual(c.outputDirectory, "/tmp/out")
         XCTAssertEqual(c.oppoCompatibility, .isoGraph)
         XCTAssertEqual(c.oppoCameraTail, .preserveNoHdr)
-        XCTAssertTrue(c.strictTmap)
+        XCTAssertEqual(c.rustConfig.strictTmap, 0)
         XCTAssertTrue(c.applePhotographicStyles3)
         XCTAssertEqual(c.maxConcurrentJobs, 2)
         XCTAssertEqual(c.fileNameSuffix, "_hdr")

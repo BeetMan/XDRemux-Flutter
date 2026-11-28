@@ -12,9 +12,10 @@
 //!
 //! The JSON config uses the Dart / Swift `ConversionConfig` keys verbatim:
 //! `outputMode` ("oppo" | "apple"), `oppoCompatibility`, `oppoCameraTail`,
-//! `strictTmap`, `applePhotographicStyles`, `applePhotographicStyles3`,
-//! `applePortrait`, `fileNameSuffix`, `categorizeOutputByMode`. Missing keys
-//! take the shared defaults.
+//! `applePhotographicStyles`, `applePhotographicStyles3`, `applePortrait`,
+//! `fileNameSuffix`, `categorizeOutputByMode`. Deprecated `strictTmap` keys in
+//! saved configs are accepted and ignored. Missing keys take the shared
+//! defaults.
 
 use std::ffi::CString;
 
@@ -28,7 +29,6 @@ pub struct PipelineConfig {
     pub apple_output: bool,
     pub oppo_compat: u8,
     pub oppo_camera_tail: u8,
-    pub strict_tmap: bool,
     pub styles: bool,
     pub styles3: bool,
     pub portrait: bool,
@@ -46,7 +46,6 @@ impl Default for PipelineConfig {
             apple_output: false,
             oppo_compat: 2,        // "on"
             oppo_camera_tail: 255, // "automatic"
-            strict_tmap: false,
             styles: false,
             styles3: false,
             portrait: false,
@@ -111,7 +110,6 @@ pub fn parse_config(config_json: &str) -> Result<PipelineConfig, String> {
     if let Some(name) = s("oppoCameraTail") {
         cfg.oppo_camera_tail = oppo_camera_tail_byte(name)?;
     }
-    cfg.strict_tmap = b("strictTmap", false);
     cfg.styles = b("applePhotographicStyles", false);
     cfg.styles3 = b("applePhotographicStyles3", false);
     cfg.portrait = b("applePortrait", false);
@@ -132,7 +130,7 @@ impl PipelineConfig {
             ConvertConfig {
                 oppo_compat: 0,
                 oppo_camera_tail: 0,
-                strict_tmap: self.strict_tmap as u8,
+                strict_tmap: 0,
                 apple_photographic_styles: if self.styles3 {
                     2
                 } else if self.styles {
@@ -146,7 +144,7 @@ impl PipelineConfig {
             ConvertConfig {
                 oppo_compat: self.oppo_compat,
                 oppo_camera_tail: self.oppo_camera_tail,
-                strict_tmap: self.strict_tmap as u8,
+                strict_tmap: 0,
                 apple_photographic_styles: 0,
                 apple_portrait: 0,
             }
@@ -460,7 +458,7 @@ mod tests {
                 b.strict_tmap,
                 b.apple_photographic_styles
             ),
-            (6, 9, 1, 0)
+            (6, 9, 0, 0)
         );
         assert!(!o.wants_styles());
 

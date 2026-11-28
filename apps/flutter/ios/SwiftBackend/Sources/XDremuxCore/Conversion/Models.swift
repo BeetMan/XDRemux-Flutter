@@ -142,13 +142,6 @@ public enum InputProcessingBranch: String, CaseIterable, Codable, Sendable, Iden
     public var id: String { rawValue }
 }
 
-public enum TmapFormat: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
-    case strict = "strict"
-    case imageIO = "imageio"
-
-    public var id: String { rawValue }
-}
-
 public enum OppoCompatibility: String, CaseIterable, Codable, Sendable, Identifiable, Hashable {
     case auto
     case iso
@@ -218,7 +211,6 @@ public struct ConversionConfiguration: Sendable {
     public var oppoCompatibility: OppoCompatibility
     public var inputProcessingBranch: InputProcessingBranch
     public var oppoCameraTail: OppoCameraTail
-    public var tmapFormat: TmapFormat
     public var debugDirectory: URL?
     public var fileNameSuffix: String
     public var skipExisting: Bool
@@ -236,7 +228,6 @@ public struct ConversionConfiguration: Sendable {
         oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .hybrid,
         oppoCameraTail: OppoCameraTail = .preserveWithoutPrivateHDR,
-        tmapFormat: TmapFormat = .imageIO,
         debugDirectory: URL? = nil,
         fileNameSuffix: String = "_iso",
         skipExisting: Bool = true,
@@ -253,7 +244,6 @@ public struct ConversionConfiguration: Sendable {
         self.oppoCompatibility = oppoCompatibility
         self.inputProcessingBranch = inputProcessingBranch
         self.oppoCameraTail = oppoCameraTail
-        self.tmapFormat = tmapFormat
         self.debugDirectory = debugDirectory
         self.fileNameSuffix = fileNameSuffix
         self.skipExisting = skipExisting

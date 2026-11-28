@@ -13,7 +13,6 @@ export interface NativeSettings {
   outputMode: SettingsOutputMode;
   oppoCompat: number;
   oppoCameraTail: number;
-  strictTmap: boolean;
   applePhotographicStyles: boolean;
   applePhotographicStyles3: boolean;
   applePortrait: boolean;
@@ -35,7 +34,8 @@ export interface SettingsRecord {
   outputMode: string;
   oppoCompat: number;
   oppoCameraTail: number;
-  strictTmap: boolean;
+  /** Deprecated; older Preferences may still carry this field. Ignored on decode. */
+  strictTmap?: boolean;
   applePhotographicStyles: boolean;
   /** Added without changing schema 1; old Preferences may omit this field. */
   applePhotographicStyles3?: boolean;
@@ -48,7 +48,6 @@ export const DEFAULT_SETTINGS: NativeSettings = {
   outputMode: 'oppo',
   oppoCompat: 2,
   oppoCameraTail: 255,
-  strictTmap: false,
   applePhotographicStyles: false,
   applePhotographicStyles3: false,
   applePortrait: false
@@ -83,7 +82,6 @@ export function cloneSettings(values: NativeSettings): NativeSettings {
     outputMode: values.outputMode,
     oppoCompat: values.oppoCompat,
     oppoCameraTail: values.oppoCameraTail,
-    strictTmap: values.strictTmap,
     applePhotographicStyles: values.applePhotographicStyles,
     applePhotographicStyles3: values.applePhotographicStyles3,
     applePortrait: values.applePortrait
@@ -119,8 +117,7 @@ export function normalizeSettings(values: NativeSettings): NativeSettings {
   if (!isValidCameraTail(normalized.oppoCameraTail)) {
     throw new Error('相机附加信息值无效');
   }
-  if (typeof normalized.strictTmap !== 'boolean' ||
-    typeof normalized.applePhotographicStyles !== 'boolean' ||
+  if (typeof normalized.applePhotographicStyles !== 'boolean' ||
     typeof normalized.applePhotographicStyles3 !== 'boolean' ||
     typeof normalized.applePortrait !== 'boolean') {
     throw new Error('布尔设置无效');
@@ -152,7 +149,6 @@ export function settingsToRecord(values: NativeSettings): SettingsRecord {
     outputMode: normalized.outputMode,
     oppoCompat: normalized.oppoCompat,
     oppoCameraTail: normalized.oppoCameraTail,
-    strictTmap: normalized.strictTmap,
     applePhotographicStyles: normalized.applePhotographicStyles,
     applePhotographicStyles3: normalized.applePhotographicStyles3,
     applePortrait: normalized.applePortrait
@@ -201,7 +197,7 @@ export function decodeSettingsJson(raw: string): SettingsDecodeResult {
   if (typeof record.oppoCameraTail !== 'number' || !isValidCameraTail(record.oppoCameraTail)) {
     return invalidStoredSettings('相机附加信息值错误');
   }
-  if (typeof record.strictTmap !== 'boolean' ||
+  if ((record.strictTmap !== undefined && typeof record.strictTmap !== 'boolean') ||
     typeof record.applePhotographicStyles !== 'boolean' ||
     (record.applePhotographicStyles3 !== undefined &&
       typeof record.applePhotographicStyles3 !== 'boolean') ||
@@ -213,7 +209,6 @@ export function decodeSettingsJson(raw: string): SettingsDecodeResult {
       outputMode: record.outputMode as SettingsOutputMode,
       oppoCompat: record.oppoCompat,
       oppoCameraTail: record.oppoCameraTail,
-      strictTmap: record.strictTmap,
       applePhotographicStyles: record.applePhotographicStyles,
       // Schema 1 records written before PS3 did not have this key. Treating
       // the missing field as false is the only migration needed.
@@ -230,7 +225,6 @@ export function settingsEqual(left: NativeSettings, right: NativeSettings): bool
   return left.outputMode === right.outputMode &&
     left.oppoCompat === right.oppoCompat &&
     left.oppoCameraTail === right.oppoCameraTail &&
-    left.strictTmap === right.strictTmap &&
     left.applePhotographicStyles === right.applePhotographicStyles &&
     left.applePhotographicStyles3 === right.applePhotographicStyles3 &&
     left.applePortrait === right.applePortrait;
@@ -267,9 +261,6 @@ export function modeLabel(values: NativeSettings): string {
     labels.push('OPPO 兼容');
     labels.push('兼容模式：' + compatLabel(normalized.oppoCompat));
     labels.push('附加信息：' + cameraTailLabel(normalized.oppoCameraTail));
-  }
-  if (normalized.strictTmap) {
-    labels.push('严格 ISO');
   }
   return labels.join(' · ');
 }

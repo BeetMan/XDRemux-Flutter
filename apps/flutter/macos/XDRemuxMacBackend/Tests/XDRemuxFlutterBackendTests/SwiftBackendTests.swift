@@ -105,8 +105,7 @@ final class SwiftBackendTests: XCTestCase {
                 inputPath: inputURL.path,
                 outputPath: outputURL.path,
                 oppoCompatibility: 0,
-                oppoCameraTail: 255,
-                strictTmap: false
+                oppoCameraTail: 255
             )
             let result = XDRemuxSwiftBackend.convert(request) { _ in }
             XCTAssertTrue(result.success, "Swift conversion failed for \(inputURL.lastPathComponent): \(result.errorMessage ?? "unknown error")")
@@ -150,7 +149,6 @@ final class SwiftBackendTests: XCTestCase {
                 outputMode: "apple",
                 oppoCompatibility: 0,
                 oppoCameraTail: 0,
-                strictTmap: false,
                 applePhotographicStyles: true
             )
             let result = XDRemuxSwiftBackend.convert(request) { _ in }
@@ -191,7 +189,6 @@ final class SwiftBackendTests: XCTestCase {
             outputMode: "apple",
             oppoCompatibility: 0,
             oppoCameraTail: 0,
-            strictTmap: false,
             applePhotographicStyles: true
         )
         let result = XDRemuxSwiftBackend.convert(request) { _ in }
@@ -256,7 +253,6 @@ final class SwiftBackendTests: XCTestCase {
             outputMode: "apple",
             oppoCompatibility: 0,
             oppoCameraTail: 0,
-            strictTmap: false,
             applePhotographicStyles: true
         )
         let result = XDRemuxSwiftBackend.convert(request) { _ in }
@@ -370,8 +366,7 @@ final class SwiftBackendTests: XCTestCase {
                 outputPath: outputPath,
                 outputMode: outputMode,
                 oppoCompatibility: outputMode == "oppo" ? 2 : 0,
-                oppoCameraTail: outputMode == "oppo" ? 3 : 0,
-                strictTmap: false
+                oppoCameraTail: outputMode == "oppo" ? 3 : 0
             )
             let result = XDRemuxSwiftBackend.convert(request) { _ in }
             XCTAssertTrue(
@@ -417,8 +412,7 @@ final class SwiftBackendTests: XCTestCase {
                 outputPath: oppoOutputPath,
                 outputMode: "oppo",
                 oppoCompatibility: 2,
-                oppoCameraTail: 3,
-                strictTmap: false
+                oppoCameraTail: 3
             )
         ) { _ in }
         XCTAssertTrue(
@@ -435,7 +429,6 @@ final class SwiftBackendTests: XCTestCase {
                 outputMode: "apple",
                 oppoCompatibility: 0,
                 oppoCameraTail: 0,
-                strictTmap: false,
                 applePhotographicStyles: true
             )
         ) { _ in }

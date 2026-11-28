@@ -16,7 +16,6 @@ class ConversionRequest {
   final String outputPath;
   final int oppoCompat;
   final int oppoCameraTail;
-  final bool strictTmap;
   final bool applePhotographicStyles;
   final bool applePortrait;
   final bool applePhotographicStyles3;
@@ -31,7 +30,6 @@ class ConversionRequest {
     required this.outputPath,
     required this.oppoCompat,
     required this.oppoCameraTail,
-    required this.strictTmap,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
     this.applePhotographicStyles3 = false,
@@ -175,7 +173,6 @@ class RustConversionBackend implements ConversionBackendAdapter {
               progressHandle: request.progressHandle,
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
-              strictTmap: request.strictTmap,
               applePhotographicStyles: effectiveStyles,
               applePhotographicStyles3: request.applePhotographicStyles3,
               applePortrait: request.applePortrait,
@@ -185,7 +182,6 @@ class RustConversionBackend implements ConversionBackendAdapter {
               request.outputPath,
               oppoCompat: effectiveOppoCompat,
               oppoCameraTail: effectiveOppoCameraTail,
-              strictTmap: request.strictTmap,
               applePhotographicStyles: effectiveStyles,
               applePhotographicStyles3: request.applePhotographicStyles3,
               applePortrait: request.applePortrait,
@@ -330,7 +326,6 @@ class SwiftConversionBackend implements ConversionBackendAdapter {
         'outputMode': request.outputMode.name,
         'oppoCompat': request.oppoCompat,
         'oppoCameraTail': request.oppoCameraTail,
-        'strictTmap': request.strictTmap,
         'applePhotographicStyles': request.applePhotographicStyles,
         'applePortrait': request.applePortrait,
         'appleWatermarkPolicy': request.appleWatermarkPolicy.name,

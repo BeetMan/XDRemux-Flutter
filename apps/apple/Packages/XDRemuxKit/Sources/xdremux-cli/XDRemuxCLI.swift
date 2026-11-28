@@ -91,9 +91,6 @@ struct ConversionOptions: ParsableArguments {
     @Option(name: .long, help: "OPPO camera tail policy (oppo mode): \(OppoCameraTailMode.allCases.map(\.rawValue).joined(separator: ", ")).")
     var cameraTail: OppoCameraTailMode = .automatic
 
-    @Flag(name: .long, help: "Strict ISO 21496-1 tmap payload instead of the ImageIO-compatible one.")
-    var strictTmap = false
-
     @Flag(name: .long, help: "Apple Photographic Styles graph (apple mode).")
     var styles = false
 
@@ -120,7 +117,6 @@ struct ConversionOptions: ParsableArguments {
         c.outputMode = mode
         c.oppoCompatibility = compat
         c.oppoCameraTail = cameraTail
-        c.strictTmap = strictTmap
         c.applePhotographicStyles = styles || styles3
         c.applePhotographicStyles3 = styles3
         c.applePortrait = portrait

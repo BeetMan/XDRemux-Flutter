@@ -2140,7 +2140,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           outputPath: outputPath,
           oppoCompat: effectiveOppoCompatibility.rustValue,
           oppoCameraTail: effectiveOppoCameraTail.rustValue,
-          strictTmap: runConfig.strictTmap,
           applePhotographicStyles: runConfig.applePhotographicStyles,
           applePortrait: runConfig.applePortrait,
           applePhotographicStyles3: runConfig.applePhotographicStyles3,
@@ -2262,7 +2261,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           oppoCameraTail: runConfig.outputMode == OutputMode.apple
               ? OppoCameraTailMode.off.rustValue
               : runConfig.oppoCameraTail.rustValue,
-          strictTmap: runConfig.strictTmap,
           progressHandle: handle,
         ),
       );
@@ -2368,7 +2366,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 outputPath: item.outputPath,
                 oppoCompat: 0,
                 oppoCameraTail: 255,
-                strictTmap: false,
                 progressHandle: item.progressHandle,
               ),
             );
@@ -4596,7 +4593,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     widget.config.outputDirectory = _cfg.outputDirectory;
     widget.config.oppoCompatibility = _cfg.oppoCompatibility;
     widget.config.oppoCameraTail = _cfg.oppoCameraTail;
-    widget.config.strictTmap = _cfg.strictTmap;
     widget.config.applePhotographicStyles = _cfg.applePhotographicStyles;
     widget.config.applePhotographicStyles3 = _cfg.applePhotographicStyles3;
     widget.config.applePortrait = _cfg.applePortrait;
@@ -5296,19 +5292,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
-                        ),
-                        const SizedBox(height: 20),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(t('严格 ISO 兼容（高级）', 'Strict ISO compliance (advanced)')),
-                          subtitle: Text(
-                            t('仅用于早期草案（65/145 字节）兼容研究；默认关闭即正式版 ISO 21496-1（62/142 字节）。开启会使有理数字段错位，在鸿蒙相册显示全白并导致 Find X9 Ultra 解析异常，普通用户请勿开启。', 'For legacy 65/145-byte draft testing only; default off already emits ratified ISO 21496-1 (62/142-byte). Enabling misaligns rational fields (pure-white HDR in HarmonyOS Gallery / breaks Find X9 Ultra); keep off for normal use.'),
-                          ),
-                          value: _cfg.strictTmap,
-                          onChanged: (value) {
-                            setState(() => _cfg.strictTmap = value);
-                            _emit();
-                          },
                         ),
                       ],
                     ),

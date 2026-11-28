@@ -83,7 +83,6 @@ void main(List<String> args) {
         input.path,
         destination,
         oppoCameraTail: 0,
-        strictTmap: true,
         applePhotographicStyles: styles,
       );
       late final bool success;

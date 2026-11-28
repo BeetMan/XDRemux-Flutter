@@ -17,7 +17,6 @@ const assertDefaults = () => {
     outputMode: 'oppo',
     oppoCompat: 2,
     oppoCameraTail: 255,
-    strictTmap: false,
     applePhotographicStyles: false,
     applePhotographicStyles3: false,
     applePortrait: false
@@ -36,12 +35,10 @@ const assertModeTransitions = () => {
     ...DEFAULT_SETTINGS,
     outputMode: 'oppo',
     applePhotographicStyles: true,
-    applePortrait: true,
-    strictTmap: true
+    applePortrait: true
   });
   assert.equal(appleFeatures.outputMode, 'apple');
-  assert.equal(appleFeatures.strictTmap, true);
-  assert.equal(modeLabel(appleFeatures), 'Apple 标准 · 摄影风格 2 · 人像数据 · 严格 ISO');
+  assert.equal(modeLabel(appleFeatures), 'Apple 标准 · 摄影风格 2 · 人像数据');
 
   const styles3 = normalizeSettings({
     ...DEFAULT_SETTINGS,
@@ -84,7 +81,6 @@ const assertStorageValidation = () => {
     outputMode: 'oppo',
     oppoCompat: 8,
     oppoCameraTail: 255,
-    strictTmap: false,
     applePhotographicStyles: false,
     applePortrait: false
   }));
@@ -95,28 +91,27 @@ const assertStorageValidation = () => {
     outputMode: 'oppo',
     oppoCompat: 2,
     oppoCameraTail: 255,
-    strictTmap: 1,
-    applePhotographicStyles: false,
+    applePhotographicStyles: 1,
     applePortrait: false
   }));
   assert.match(wrongType.warning, /布尔值错误/);
-  const legacy = decodeSettingsJson(JSON.stringify({
+  const legacyStrict = decodeSettingsJson(JSON.stringify({
     schema: 1,
     outputMode: 'oppo',
     oppoCompat: 2,
     oppoCameraTail: 255,
-    strictTmap: false,
+    strictTmap: true,
     applePhotographicStyles: false,
     applePortrait: false
   }));
-  assert.equal(legacy.warning, '');
-  assert.equal(legacy.values.applePhotographicStyles3, false);
+  assert.equal(legacyStrict.warning, '');
+  assert.deepEqual(legacyStrict.values, DEFAULT_SETTINGS);
+  assert.equal(legacyStrict.values.applePhotographicStyles3, false);
   const invalidStyles3 = decodeSettingsJson(JSON.stringify({
     schema: 1,
     outputMode: 'apple',
     oppoCompat: 0,
     oppoCameraTail: 0,
-    strictTmap: false,
     applePhotographicStyles: true,
     applePhotographicStyles3: 'yes',
     applePortrait: false
@@ -127,12 +122,12 @@ const assertStorageValidation = () => {
     applePhotographicStyles3: true
   })));
   assert.equal(persistedStyles3.applePhotographicStyles3, true);
+  assert.equal('strictTmap' in persistedStyles3, false);
   const wrongSchema = decodeSettingsJson(JSON.stringify({
     schema: 2,
     outputMode: 'oppo',
     oppoCompat: 2,
     oppoCameraTail: 255,
-    strictTmap: false,
     applePhotographicStyles: false,
     applePortrait: false
   }));
@@ -197,12 +192,12 @@ const assertPersistenceRollback = async () => {
   assert.match(corruptLoad.warning, /原数据未覆盖/);
   corrupt.failNext();
   await assert.rejects(
-    corruptPersistence.save({ ...DEFAULT_SETTINGS, strictTmap: true }),
+    corruptPersistence.save({ ...DEFAULT_SETTINGS, applePhotographicStyles: true, outputMode: 'apple' }),
     /已保留未保存草稿/
   );
   assert.equal(corrupt.raw, '{broken persisted settings');
-  await corruptPersistence.save({ ...DEFAULT_SETTINGS, strictTmap: true });
-  assert.match(corrupt.raw, /"strictTmap":true/);
+  await corruptPersistence.save({ ...DEFAULT_SETTINGS, applePhotographicStyles: true, outputMode: 'apple' });
+  assert.match(corrupt.raw, /"applePhotographicStyles":true/);
 
   const normalizedStore = fakePreferences(undefined);
   const normalizedPersistence = new SettingsPersistence(normalizedStore);

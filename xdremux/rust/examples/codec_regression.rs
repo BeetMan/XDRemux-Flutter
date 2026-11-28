@@ -31,7 +31,7 @@ fn main() -> Result<(), String> {
     let mut config = xdremux_core::ConvertConfig {
         oppo_compat: 0,
         oppo_camera_tail: 0,
-        strict_tmap: 1,
+        strict_tmap: 0,
         apple_photographic_styles: 1,
         apple_portrait: 0,
     };

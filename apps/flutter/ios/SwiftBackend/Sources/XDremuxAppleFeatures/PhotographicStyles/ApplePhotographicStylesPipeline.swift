@@ -174,7 +174,6 @@ package enum ApplePhotographicStylesPipeline {
         let oppoCompatibility: OppoCompatibility
         let inputProcessingBranch: InputProcessingBranch
         let oppoCameraTail: OppoCameraTail
-        let tmapFormat: TmapFormat
         let features: AppleFeatureFlags
         let rawDNGURL: URL?
         let styleDataProducer: AppleStyleDataProducerMode
@@ -195,7 +194,6 @@ package enum ApplePhotographicStylesPipeline {
                 oppoCompatibility: configuration.oppoCompatibility,
                 inputProcessingBranch: configuration.inputProcessingBranch,
                 oppoCameraTail: configuration.oppoCameraTail,
-                tmapFormat: configuration.tmapFormat,
                 features: configuration.appleFeatureOptions,
                 rawDNGURL: configuration.appleStylesRawDNGURL,
                 styleDataProducer: configuration.appleStyleDataProducer
@@ -3962,7 +3960,6 @@ package enum ApplePhotographicStylesPipeline {
                     oppoCompatibility: options.oppoCompatibility,
                     inputProcessingBranch: options.inputProcessingBranch,
                     oppoCameraTail: options.oppoCameraTail,
-                    tmapFormat: options.tmapFormat,
                     eventHandler: options.eventHandler
                 )
             }

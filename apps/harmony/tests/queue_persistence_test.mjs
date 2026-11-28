@@ -189,7 +189,13 @@ const testPhotoModeOverrideRoundTrip = () => {
   const encoded = serializeQueueSnapshot(snapshotWith([queueItem({ modeOverride })], 2));
   const decoded = decodeQueueSnapshot(encoded);
   assert.equal(decoded.corrupt, false);
-  assert.deepEqual(decoded.snapshot.items[0].modeOverride, modeOverride);
+  assert.deepEqual(decoded.snapshot.items[0].modeOverride, {
+    ...modeOverride,
+    config: {
+      ...modeOverride.config,
+      strictTmap: 0
+    }
+  });
 
   const legacy = validSerializedRecord();
   delete legacy.items[0].modeOverride;

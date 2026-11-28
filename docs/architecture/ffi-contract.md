@@ -69,8 +69,8 @@ family）、`convertible` 与 `convertError`、`huawei`（isHdr / hasXtstyle / p
 captureModeFolder、outputModeFolder；Dart 按拍摄模式分目录、Swift 按输出模式分目录，两者都给）。
 
 `config_json` 的键与 Dart / Swift `ConversionConfig` 一致：`outputMode`、`oppoCompatibility`、`oppoCameraTail`、
-`strictTmap`、`applePhotographicStyles`、`applePhotographicStyles3`、`applePortrait`、`fileNameSuffix`、
-`categorizeOutputByMode`；缺省键取共享默认值，枚举名到 `ConvertConfig` 字节的映射在 `pipeline.rs`（与两端
+`applePhotographicStyles`、`applePhotographicStyles3`、`applePortrait`、`fileNameSuffix`、
+`categorizeOutputByMode`（旧配置中的 `strictTmap` 键会被兼容忽略）；缺省键取共享默认值，枚举名到 `ConvertConfig` 字节的映射在 `pipeline.rs`（与两端
 `rustValue` 表一致，Apple 输出强制 compat=0 / tail=0，摄影风格 3 蕴含摄影风格）。颗粒种子用 Dart `_grainSeedFor`
 的哈希。两个返回值都用 `xdremux_free_string` 释放。
 

@@ -256,7 +256,6 @@ struct Index {
   @State private draftOutputMode: SettingsOutputMode = 'oppo';
   @State private draftOppoCompat: number = DEFAULT_SETTINGS.oppoCompat;
   @State private draftOppoCameraTail: number = DEFAULT_SETTINGS.oppoCameraTail;
-  @State private draftStrictTmap: boolean = DEFAULT_SETTINGS.strictTmap;
   @State private draftApplePhotographicStyles: boolean = DEFAULT_SETTINGS.applePhotographicStyles;
   @State private draftApplePhotographicStyles3: boolean = DEFAULT_SETTINGS.applePhotographicStyles3;
   @State private draftApplePortrait: boolean = DEFAULT_SETTINGS.applePortrait;
@@ -570,7 +569,6 @@ struct Index {
     this.draftOutputMode = snapshot.outputMode;
     this.draftOppoCompat = snapshot.oppoCompat;
     this.draftOppoCameraTail = snapshot.oppoCameraTail;
-    this.draftStrictTmap = snapshot.strictTmap;
     this.draftApplePhotographicStyles = snapshot.applePhotographicStyles;
     this.draftApplePhotographicStyles3 = snapshot.applePhotographicStyles3;
     this.draftApplePortrait = snapshot.applePortrait;
@@ -581,7 +579,6 @@ struct Index {
       outputMode: this.draftOutputMode,
       oppoCompat: this.draftOppoCompat,
       oppoCameraTail: this.draftOppoCameraTail,
-      strictTmap: this.draftStrictTmap,
       applePhotographicStyles: this.draftApplePhotographicStyles,
       applePhotographicStyles3: this.draftApplePhotographicStyles3,
       applePortrait: this.draftApplePortrait
@@ -748,14 +745,6 @@ struct Index {
       this.draftOppoCompat = 0;
       this.draftOppoCameraTail = 0;
     }
-    this.settingsError = '';
-  }
-
-  private setDraftStrict(enabled: boolean): void {
-    if (!this.settingsLoaded || this.settingsSaving) {
-      return;
-    }
-    this.draftStrictTmap = enabled;
     this.settingsError = '';
   }
 
@@ -3040,7 +3029,7 @@ struct Index {
       config: {
         oppoCompat: settings.oppoCompat,
         oppoCameraTail: settings.oppoCameraTail,
-        strictTmap: settings.strictTmap ? 1 : 0,
+        strictTmap: 0,
         applePhotographicStyles: settings.applePhotographicStyles ? 1 : 0,
         applePortrait: settings.applePortrait ? 1 : 0
       }
@@ -3052,7 +3041,6 @@ struct Index {
       outputMode: snapshot.modeKey as SettingsOutputMode,
       oppoCompat: snapshot.config.oppoCompat,
       oppoCameraTail: snapshot.config.oppoCameraTail,
-      strictTmap: snapshot.config.strictTmap === 1,
       applePhotographicStyles: snapshot.config.applePhotographicStyles === 1,
       applePhotographicStyles3: snapshot.applePhotographicStyles3 === true,
       applePortrait: snapshot.config.applePortrait === 1
@@ -3396,12 +3384,6 @@ struct Index {
     settings.applePhotographicStyles = false;
     settings.applePhotographicStyles3 = false;
     settings.applePortrait = false;
-    this.updateGalleryPhotoSettings(settings);
-  }
-
-  private setGalleryPhotoStrictTmap(enabled: boolean): void {
-    const settings: NativeSettings = cloneSettings(this.galleryPhotoSettingsView);
-    settings.strictTmap = enabled;
     this.updateGalleryPhotoSettings(settings);
   }
 
@@ -6423,28 +6405,6 @@ struct Index {
             .height(46);
           }
         }
-
-        if (this.galleryDetails?.huaweiPortraitReady !== true) {
-        Row() {
-          Text('严格 ISO 兼容')
-            .fontSize(14)
-            .fontColor(this.galleryInfoPanelPrimaryTextColor())
-            .layoutWeight(1);
-          Toggle({ type: ToggleType.Switch, isOn: this.galleryPhotoSettingsView.strictTmap })
-            .onChange((isOn: boolean): void => {
-              this.setGalleryPhotoStrictTmap(isOn);
-            });
-        }
-        .width('100%')
-        .height(46)
-        .margin({ top: 8 });
-        Text('默认关闭即正式版 ISO 21496-1（62/142 字节）；开启会写入早期 65/145 字节草案格式，鸿蒙相册 HDR 会显示全白，普通用户请勿开启。')
-          .fontSize(12)
-          .fontColor(this.galleryInfoPanelSecondaryTextColor())
-          .lineHeight(18)
-          .width('100%')
-          .margin({ top: 2 });
-        }
       }
 
       Text('当前转换：' + this.galleryPhotoSettingsSummary())
@@ -7344,30 +7304,6 @@ struct Index {
           }
         }
 
-        if (item.details?.huaweiPortraitReady !== true) {
-        Row() {
-          Text('严格 ISO 兼容')
-            .fontSize(14)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1);
-          Toggle({ type: ToggleType.Switch, isOn: this.queuePhotoSettingsView.strictTmap })
-            .enabled(!this.queueRunning)
-            .onChange((isOn: boolean): void => {
-              const settings: NativeSettings = cloneSettings(this.queuePhotoSettingsView);
-              settings.strictTmap = isOn;
-              void this.saveQueueItemSettings(item, settings);
-            });
-        }
-        .width('100%')
-        .height(42)
-        .margin({ top: 4 });
-        Text('默认关闭即正式版 ISO 21496-1（62/142 字节）；开启会写入早期 65/145 字节草案格式，鸿蒙相册 HDR 会显示全白，普通用户请勿开启。')
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .lineHeight(18)
-          .width('100%')
-          .margin({ top: 2 });
-        }
         if (!this.queueItemSupportsNativeConversion(item) && item.details?.huaweiPortraitReady !== true &&
           item.details?.huaweiHdr !== true && !this.queuePhotoSettingsView.applePhotographicStyles &&
           !this.queuePhotoSettingsView.applePhotographicStyles3) {
@@ -7937,24 +7873,6 @@ struct Index {
       }
       .width('100%')
       .margin({ top: 4 });
-      Row() {
-        Text('严格 ISO 兼容（高级）')
-          .fontSize(14)
-          .fontColor($r('sys.color.font_primary'))
-          .layoutWeight(1);
-        Toggle({ type: ToggleType.Switch, isOn: this.draftStrictTmap })
-          .enabled(!this.settingsSaving)
-          .onChange((isOn: boolean): void => {
-            this.setDraftStrict(isOn);
-          });
-      }
-      .width('100%')
-      .margin({ top: 4 });
-      Text('仅用于兼容早期草案（65/145 字节）研究；默认关闭即正式版 ISO 21496-1（62/142 字节）。开启后会导致有理数字段错位，鸿蒙系统相册 HDR 会渲染为全白（OPPO Find X9 Ultra 亦不兼容），普通用户请勿开启。')
-        .fontSize(12)
-        .fontColor($r('sys.color.font_secondary'))
-        .width('100%')
-        .margin({ top: 3 });
 
       Text('草稿摘要：' + this.draftSettingsLabel())
         .fontSize(13)

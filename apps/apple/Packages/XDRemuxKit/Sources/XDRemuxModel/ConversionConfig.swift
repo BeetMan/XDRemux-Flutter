@@ -133,7 +133,6 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
     public var outputDirectory: String? = nil
     public var oppoCompatibility: OppoCompatMode = .on
     public var oppoCameraTail: OppoCameraTailMode = .automatic
-    public var strictTmap: Bool = false
     public var applePhotographicStyles: Bool = false
     public var applePortrait: Bool = false
     public var applePhotographicStyles3: Bool = false
@@ -158,10 +157,11 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
     public init() {}
 
     /// Dart writes `backend` too; it is always "rust" for product builds and
-    /// is not modelled here. Unknown keys are ignored on decode.
+    /// is not modelled here. Unknown keys (including deprecated `strictTmap`)
+    /// are ignored on decode.
     enum CodingKeys: String, CodingKey {
         case language, family, outputMode, outputDirectory, oppoCompatibility, oppoCameraTail
-        case strictTmap, applePhotographicStyles, applePortrait, applePhotographicStyles3
+        case applePhotographicStyles, applePortrait, applePhotographicStyles3
         case skipExisting, maxConcurrentJobs, fileNameSuffix, categorizeOutputByMode
         case autoSaveToGallery, hardwareEncode, encoderChoiceVersion, motionPhotoDefaultMode
     }
@@ -175,7 +175,6 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
         outputDirectory = try c.decodeIfPresent(String.self, forKey: .outputDirectory)
         oppoCompatibility = try c.decodeIfPresent(OppoCompatMode.self, forKey: .oppoCompatibility) ?? d.oppoCompatibility
         oppoCameraTail = try c.decodeIfPresent(OppoCameraTailMode.self, forKey: .oppoCameraTail) ?? d.oppoCameraTail
-        strictTmap = try c.decodeIfPresent(Bool.self, forKey: .strictTmap) ?? d.strictTmap
         applePhotographicStyles = try c.decodeIfPresent(Bool.self, forKey: .applePhotographicStyles) ?? d.applePhotographicStyles
         applePortrait = try c.decodeIfPresent(Bool.self, forKey: .applePortrait) ?? d.applePortrait
         applePhotographicStyles3 = try c.decodeIfPresent(Bool.self, forKey: .applePhotographicStyles3) ?? d.applePhotographicStyles3
@@ -206,14 +205,14 @@ public struct ConversionConfig: Codable, Equatable, Sendable {
             return RustConvertConfig(
                 oppoCompat: oppoCompatibility.rustValue,
                 oppoCameraTail: oppoCameraTail.rustValue,
-                strictTmap: strictTmap ? 1 : 0,
+                strictTmap: 0,
                 applePhotographicStyles: 0,
                 applePortrait: 0)
         case .apple:
             return RustConvertConfig(
                 oppoCompat: 0,
                 oppoCameraTail: 0,
-                strictTmap: strictTmap ? 1 : 0,
+                strictTmap: 0,
                 applePhotographicStyles: (applePhotographicStyles || applePhotographicStyles3) ? 1 : 0,
                 applePortrait: applePortrait ? 1 : 0)
         }

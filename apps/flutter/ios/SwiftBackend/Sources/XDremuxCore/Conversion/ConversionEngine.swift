@@ -17,7 +17,6 @@ package enum XDRemuxProductCore {
         oppoCompatibility: OppoCompatibility = .off,
         inputProcessingBranch: InputProcessingBranch = .hybrid,
         oppoCameraTail: OppoCameraTail = .preserveWithoutPrivateHDR,
-        tmapFormat: TmapFormat = .imageIO,
         eventHandler: ConversionEventHandler? = nil
     ) throws -> SampleReport {
         guard fileManager.fileExists(atPath: inputURL.path) else {
@@ -62,7 +61,6 @@ package enum XDRemuxProductCore {
                 || oppoCameraTail == .preserveWithoutPortraitOrPrivateHDR
                 || oppoCameraTail == .preserveWithoutPrivateUHDR
                 || oppoCameraTail == .preserveWithoutPrivateHDR
-                || tmapFormat == .strict
         )
             ? .hybrid
             : inputProcessingBranch
@@ -73,7 +71,6 @@ package enum XDRemuxProductCore {
             productInput: productInput,
             oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: effectiveInputProcessingBranch,
-            strictISO21496: tmapFormat == .strict,
             eventHandler: eventHandler
         )
         try restoreOppoUserCommentFromSource(
@@ -256,7 +253,6 @@ public enum ConversionEngine {
             oppoCompatibility: config.oppoCompatibility,
             inputProcessingBranch: config.inputProcessingBranch,
             oppoCameraTail: config.oppoCameraTail,
-            tmapFormat: config.tmapFormat,
             eventHandler: config.eventHandler
         )
         return ConversionResult(input: request.input, output: request.output)
@@ -301,7 +297,6 @@ package enum ProductGainMapWriter {
         productInput: XDRemuxProductCore.ProductInput,
         oppoCompatibility: OppoCompatibility,
         inputProcessingBranch: InputProcessingBranch,
-        strictISO21496: Bool,
         eventHandler: ConversionEventHandler?
     ) throws {
         switch inputProcessingBranch {
@@ -326,7 +321,6 @@ package enum ProductGainMapWriter {
                 sourceData: sourceData,
                 productInput: productInput,
                 oppoCompatibility: oppoCompatibility,
-                strictISO21496: strictISO21496,
                 eventHandler: eventHandler
             )
         case .passthrough:
@@ -362,7 +356,6 @@ package enum HybridGainMapWriter {
         sourceData: Data,
         productInput: XDRemuxProductCore.ProductInput,
         oppoCompatibility: OppoCompatibility,
-        strictISO21496: Bool,
         eventHandler: ConversionEventHandler?
     ) throws {
         try writeImageIOPreservedGainMapPassthrough(
@@ -372,7 +365,6 @@ package enum HybridGainMapWriter {
             productInput: productInput,
             oppoCompatibility: oppoCompatibility,
             temporaryLabel: "hybrid",
-            strictISO21496: strictISO21496,
             eventHandler: eventHandler
         )
     }
@@ -497,12 +489,10 @@ func writeImageIOPreservedGainMapPassthrough(
     productInput: XDRemuxProductCore.ProductInput,
     oppoCompatibility: OppoCompatibility,
     temporaryLabel: String,
-    strictISO21496: Bool = false,
     eventHandler: ConversionEventHandler? = nil
 ) throws {
     if ProcessInfo.processInfo.environment["XDREMUX_DISABLE_DIRECT_GAIN"] != "1",
        !oppoCompatibility.wantsOppoCompat,
-       !strictISO21496,
        !gainMapEncodingMatchesTarget(at: inputURL, compatibility: oppoCompatibility) {
         do {
             try writeDirectNativeGainMapPreservingPrimary(
@@ -588,7 +578,6 @@ func writeImageIOPreservedGainMapPassthrough(
         outputURL: outputURL,
         patchedUserComment: patchedUserComment,
         preserveTmapColor: oppoCompatibility.wantsOppoCompat,
-        strictISO21496Tmap: strictISO21496,
         fallbackXMPPayload: makeHdrgmXMP(infoFloats: productInput.extracted.metaFloats)
     )
 }
