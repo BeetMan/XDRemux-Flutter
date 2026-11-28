@@ -44,7 +44,7 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux Flutter.app"
 
 ## 0.4.8 本轮更新
 
-- **规范 ISO `tmap` 与摄影风格增强**：移除旧「严格 ISO tmap」选项，所有输出统一写符合 ISO 21496-1 的 `62/142` 字节 `tmap`；已转为 ISO HDR HEIC 或写入「摄影风格 2」的照片继续叠加风格 2 / 3 时保留原有 HDR 增益图；较大主图 delta map 按约 5/7 尺寸计算，修复 Apple「照片」编辑出现绿色网格问题。
+- **规范 ISO `tmap` 与摄影风格增强**：移除旧「严格 ISO tmap」选项，所有输出统一写符合 ISO 21496-1 的 `62/142` 字节 `tmap`；已转换的 ISO HDR HEIC 可追加风格 2 或 3，已有风格 2 的照片可升级到风格 3，均保留原有 HDR 增益图；较大主图 delta map 按约 5/7 尺寸计算，修复 Apple「照片」编辑出现绿色网格问题。
 - **VideoToolbox 硬件编码**：Flutter macOS 与 iOS 接入 Rust 核心内的 VideoToolbox 后端（批内异常自动回退软件编码）；SwiftUI 原生版默认启用 VideoToolbox，GitHub 包保留 `vt+x265` 双编码器切换。
 - **ColorOS 17.24 人像与 Live Photo 加固**：修复 17.24 人像横屏布局、前摄镜像与深度读取，新增大师水印边框还原与动态照片 MP4 尾部裁剪；Live Photo 改走事务式发布与回滚，Apple 平台「实况 + 摄影风格」改为逐视频帧生成缩略图。
 - **多端共存命名与同步发布**：Flutter 的 macOS / iOS / 鸿蒙桌面显示名统一为 **`XDRemux Flutter`**（保留既有包名与升级兼容）；鸿蒙原生版同步发布 **[0.5.5](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/harmony-v0.5.5)**（API 26 基线、长按对比 SDR、新图标），SwiftUI 原生版同步发布 **[0.1.2（预发布）](https://github.com/BeetMan/XDRemux-Flutter/releases/tag/apple-v0.1.2)**（全屏查看器、按压对比 SDR、公证 DMG）。

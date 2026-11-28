@@ -61,7 +61,7 @@
 | [operations/releasing.md](operations/releasing.md) | 发版清单、资产命名、鸿蒙本地发布、历史踩坑 |
 | [operations/ci.md](operations/ci.md) | 九个 workflow 剖析（触发规则、runner 矩阵、修改纪律） |
 | [operations/installing.md](operations/installing.md) | 各平台侧载与 macOS 授权步骤 |
-| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：版本/分支地图/能力现状/已知风险/下一步；超过约两周即重写，历史快照按日期归档为 `archive/current-status-YYYYMMDD.md`（上一版 [20261115](archive/current-status-20261115.md)） |
+| [operations/current-status.md](operations/current-status.md) | **当前开发状态快照**：发布版本、主线能力、开放 PR 与维护重点；超过约两周即重写，历史快照按日期归档为 `archive/current-status-YYYYMMDD.md`（上一版 [20261124](archive/current-status-20261124.md)） |
 | [testing/local-transfer-p30.md](testing/local-transfer-p30.md) 等 `testing/local-transfer-*.md` | 局域网互传各阶段真机记录（P1–P32，20 余篇）：Windows / Android / OHOS 与官方 LocalSend 互通、发现顺序、收件箱对账、崩溃与运行时边界 |
 
 ## 写作与证据规范
@@ -99,8 +99,8 @@
 ## 路线图
 
 - [`docs/plans/apple-native.md`](plans/apple-native.md)：原生 Apple（SwiftUI）前端计划与 P0–P3 执行记录（进行中）
-- [`docs/plans/harmony-native.md`](plans/harmony-native.md)：鸿蒙 ArkUI 原生版开发阶段与验证记录（0.5.4 已发布，工程在 `apps/harmony/`）
-- [`docs/plans/apple-drop-x265.md`](plans/apple-drop-x265.md)：原生 Apple 版去掉 x265、改用 VideoToolbox 的开发计划（2026-11-12 计划稿，11-17 更新；只做了调研，未改产品代码）
+- [`docs/plans/harmony-native.md`](plans/harmony-native.md)：鸿蒙 ArkUI 原生版开发阶段与验证记录（0.5.5 已发布，工程在 `apps/harmony/`）
+- [`docs/plans/apple-drop-x265.md`](plans/apple-drop-x265.md)：原生 Apple 版去掉 x265、改用 VideoToolbox 的开发计划（2026-11-12 计划稿，11-17 更新；本地默认使用 VideoToolbox，发布包仍含 x265）
 - [内置局域网文件传输开发计划](plans/local-transfer-plan.md)：LocalSend 互操作、独立 Rust 服务、Flutter 收发及照片资源分组（2026-10-17，P0 Windows/Android 验证通过，P1 待开发）。
 - [`docs/plans/v0.4-roadmap.md`](plans/v0.4-roadmap.md)：当前版本路线图（Phase 1 质量闭环 ✅ → Phase 2 ReverseKey1 评估关闭 → Phase 3 动态照片 ✅ → Phase 4 性能与分发）
 - [`docs/plans/huawei-to-apple-plan.md`](plans/huawei-to-apple-plan.md)：Mate 70 原生 HDR 识别、XMAGE 风格、人像与 Live Photo 研究计划（普通 HDR 无需转换）
