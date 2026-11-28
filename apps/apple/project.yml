@@ -19,7 +19,7 @@ settings:
     # Build number for both the app and the Share Extension. App Store Connect
     # wants it to grow with every upload; tools/apple/upload_testflight.sh can
     # override it per upload (XDREMUX_BUILD_NO).
-    CURRENT_PROJECT_VERSION: "8"
+    CURRENT_PROJECT_VERSION: "9"
 packages:
   XDRemuxKit:
     path: Packages/XDRemuxKit
@@ -47,7 +47,7 @@ targets:
         CFBundleDisplayName: XDRemux
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
-        CFBundleShortVersionString: "0.1.1"
+        CFBundleShortVersionString: "0.1.2"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.photography
         # Only the system TLS stack (LocalSend HTTPS); exempt from export
@@ -127,7 +127,7 @@ targets:
         CFBundleDisplayName: XDRemux
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations: [zh-Hans, en]
-        CFBundleShortVersionString: "0.1.1"
+        CFBundleShortVersionString: "0.1.2"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # xcodegen regenerates Info.plist from here, so the extension point
         # lives in this file rather than in a hand-written plist.
