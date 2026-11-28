@@ -656,6 +656,11 @@ jobs:
           codesign -v --deep --strict "$APP"
           echo "dylib bundled and app seal valid"
 
+      - name: Set up Python for dmgbuild
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
       - name: Package DMG
         shell: bash
         run: |
@@ -677,10 +682,12 @@ jobs:
           test -L "$STAGE/Applications" || { echo "DMG stage is missing the /Applications link" >&2; exit 1; }
           test -d "$STAGE/XDRemux Flutter.app" || { echo "DMG stage is missing XDRemux Flutter.app" >&2; exit 1; }
           test -f "$shortcut" || { echo "DMG stage is missing the Privacy & Security shortcut" >&2; exit 1; }
-          hdiutil create -volname "XDRemux Flutter" \
-            -srcfolder "$STAGE" \
-            -ov -format UDZO \
-            "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg"
+          # Installer window: app -> Applications on a drawn background
+          # (tools/apple/dmg). Strict, so a broken dmgbuild setup fails here
+          # instead of shipping an image without the layout unnoticed.
+          XDREMUX_DMG_STRICT=1 bash tools/apple/dmg/make_dmg.sh "XDRemux Flutter" \
+            "apps/flutter/build/dmg/XDRemux-macOS-$TAG_VERSION.dmg" "$STAGE" \
+            "$APP/Contents/Resources/AppIcon.icns"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v7

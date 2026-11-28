@@ -110,6 +110,14 @@ tools/ohos/*
 tools/apple/*
 !tools/apple/*.sh
 !tools/apple/test_*.py
+# macOS installer window: dmgbuild settings, the background picture and its generator.
+!tools/apple/dmg/
+tools/apple/dmg/*
+!tools/apple/dmg/*.sh
+!tools/apple/dmg/*.py
+!tools/apple/dmg/*.swift
+!tools/apple/dmg/*.txt
+!tools/apple/dmg/background*.png
 !tools/android/
 tools/android/*
 !tools/android/*.py

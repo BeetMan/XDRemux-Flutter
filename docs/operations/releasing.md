@@ -46,6 +46,8 @@ XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 
 macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 按 runner 实际 VS 版本选择 CMake 生成器。
 
+两个 macOS DMG（CI 的 Flutter 版、本机 `package_release.sh` 的原生版）的安装窗口都由 `tools/apple/dmg/make_dmg.sh` 生成：app → Applications 拖拽布局、浅色网格背景，图标名字底下有中灰底（Finder 的标签颜色随系统外观变，纯浅或纯深的底都会让其中一种外观看不清），许可证文件和「隐私与安全性」快捷入口排在窗口底部，快捷入口带“系统设置”图标（打包时从本机系统取，仓库不存 Apple 素材）。布局由 dmgbuild 直接写 `.DS_Store`，需要 Python ≥ 3.11（CI 固定 3.12；本机首次运行会装到 `~/.cache/xdremux/dmgbuild-venv`）。装不上时 CI 和 `package_release.sh` 都直接失败（两者都设 `XDREMUX_DMG_STRICT=1`），不会签一张没有布局的镜像。改窗口尺寸或图标位置要同时改 `settings.py` 与 `gen_background.swift`，再用 `swift tools/apple/dmg/gen_background.swift` 重新生成背景。
+
 `publish` 要求 **windows / android / macos / ios / linux 全部成功**，并额外校验各类产物文件都已落地，缺任何一个都不创建 Release（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。
 
 ### 3.1 只构建的发版预检

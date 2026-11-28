@@ -22,7 +22,9 @@
 #   2. xcodegen, Release builds for macOS (Developer ID or ad-hoc) and iOS (unsigned archive)
 #   3. sanity checks: version in the bundles, core record vs. HEAD, transfer
 #      framework and Share Extension present, macOS seal (and runtime/timestamp) valid
-#   4. package DMG (+ privacy shortcut if unnotarized), sign DMG and run single-pass notarization/stapling when enabled, IPA, SHA256SUMS
+#   4. package DMG (+ privacy shortcut if unnotarized) with the installer
+#      window from tools/apple/dmg, sign DMG and run single-pass
+#      notarization/stapling when enabled, IPA, SHA256SUMS
 #
 # Env:
 #   XDREMUX_SKIP_CORE=1       reuse the existing XDRemuxCore.xcframework. NOT
@@ -191,7 +193,10 @@ if [ "$MACOS_DO_NOTARIZE" -eq 0 ]; then
   "$ROOT/tools/apple/write_privacy_shortcut.sh" "$STAGE" >/dev/null
 fi
 DMG="$OUT/XDRemux-Apple-macOS-$VERSION.dmg"
-hdiutil create -volname XDRemux -srcfolder "$STAGE" -ov -quiet -format UDZO "$DMG"
+# Installer window (app -> Applications on a drawn background), see tools/apple/dmg.
+# Strict, same as CI: a broken dmgbuild setup fails here instead of signing
+# and notarizing an image without the layout.
+XDREMUX_DMG_STRICT=1 "$ROOT/tools/apple/dmg/make_dmg.sh" XDRemux "$DMG" "$STAGE" "$MAC_APP/Contents/Resources/AppIcon.icns"
 rm -rf "$STAGE"
 if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
   codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
