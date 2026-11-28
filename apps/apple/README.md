@@ -184,6 +184,9 @@ macOS signing & notarization (`XDREMUX_MACOS_SIGN=auto` by default):
 - If no Developer ID certificate is found (or `XDREMUX_MACOS_SIGN=ad-hoc`), it falls back to
   ad-hoc signing and adds a `打开隐私与安全性 (Privacy & Security).inetloc` shortcut inside the DMG
   (omitted from notarized DMGs).
+- The DMG opens on an installer window (app, an arrow, the Applications link, the licence files
+  and the shortcut in a row underneath) built by `tools/apple/dmg/make_dmg.sh`; it needs Python
+  >= 3.11 for dmgbuild and warns, then falls back to a plain image, when that is missing.
 
 The version comes from `CFBundleShortVersionString` in `project.yml`; bump it
 (in both targets) and `CURRENT_PROJECT_VERSION`, the build number shared by the app and the Share
