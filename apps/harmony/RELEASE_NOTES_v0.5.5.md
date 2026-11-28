@@ -27,7 +27,8 @@
 
 ## 验证与使用范围
 
-- 本轮已完成宿主自动化回归、OHOS 二进制剥离/符号与 HAP 解包清单校验（具体结果将在打包与真机验证前留档更新）。
+- 宿主回归与包校验通过：`20` 份鸿蒙模型/队列/互传/图库 Node 测试、`5` 项 HAP verifier 单测及 C++ PS3 辅助回归全通过；HAP 解包校验确认包名 `io.github.beetman.xdremux.arkui`、版本 `0.5.5` / code `50500`、`compatibleApi: 26`、`app.debug: true` / `buildMode: debug`、无签名记录、ZIP CRC 全部正常、包内核心含 `0.4.8` 版本且 `libentry.so` 所需的 32 个 `xdremux_*` 符号及全部 55 个桥接/库依赖符号均可解析。
+- 本轮尚未在鸿蒙真机上安装与实测 `0.5.5` 包，设备侧已验范围与未验项沿用 `0.5.4` 说明（「存入相册」、分享、选择照片发送、网段扫描发现及与 iPhone / Android LocalSend 的直接互传仍待真机验证）。
 - 转换保持前台运行；人像、摄影风格、Live Photo 与局域网互传仍含实验能力。未启用可选 libheif 解码器。
 
 原生版本使用独立标签 `harmony-v0.5.5`，不接管 Flutter 版的 Latest 下载入口。

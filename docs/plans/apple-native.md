@@ -691,6 +691,14 @@ Flutter 版生成的检查点文件可被原生版读取。
 - TestFlight：构建号改为 8，从这个分支出包并上传成功（`vt+x265`，复用现成内核）。
 - 未验证：真机；分栏布局（iPad、展开态 Duo、macOS）下退出后的选中状态；预览生成较慢的大图上的等待表现；翻页很快时连续触发多张预览渲染的开销（每张只渲染一次，结果留在缓存里）。
 
+**发布准备：apple-v0.1.2（2026-11-28，分支 `release/native-0.4.8-prep`）**
+
+- 随 `v0.4.8` 三端同步准备发布：版本号升至 `0.1.2`（`CURRENT_PROJECT_VERSION = "9"`），共享 Rust `0.4.8` 内核与 LocalSend 传输库（`183a0cd` 上 `xdremux/rust` 与 `crates/xdremux-transfer*` 同主线 `v0.4.8` `1782fee`），覆盖 PR #98–#138 的全部原生 SwiftUI 与核心更新（VideoToolbox 默认后端 + `vt+x265` 双编码器、统一 62/142B ISO `tmap`、Styles 2/3 追加保留 HDR、ColorOS 17.24 人像与水印边框、Live Photo 事务发布、全屏 PhotoViewer 与退出定位、按压对比 SDR、非 ProXDR 全图预览、存入照片进度条、增益图新图标、Developer ID 公证 DMG 与安装包窗口）。
+- 打包结果（`XDREMUX_NOTARY_PROFILE=xdremux-notary tools/apple/package_release.sh`，`hevc_backend=vt+x265`，slices `macos ios ios-sim` arm64）：
+  - `XDRemux-Apple-macOS-0.1.2.dmg`：`10,101,793` 字节，SHA256 `6bdbd16c89a90fe85ff5c188eafbbd61601078b7e5d6e0bf1b6a864fe6034f42`；Developer ID (`W94G5B6VGC`) 签名并完成 Apple 公证（Submission ID `b31496eb-9296-4859-a306-2ebf62bfdbd9`）与 `stapler validate`、`spctl --assess` (`Notarized Developer ID`) 通过。
+  - `XDRemux-Apple-iOS-0.1.2-unsigned.ipa`：`6,545,175` 字节，SHA256 `e4138c84fa359ab1c765795273eaf4af60dafa68535cc330c2fd7f3176a6afba`；27 个包内条目，包含 `XDRemuxShare.appex`、`CFBundleShortVersionString=0.1.2` / `CFBundleVersion=9`，无 `_CodeSignature`。
+- 检查：`tools/apple/check_header.sh` 通过；`swift test` 共执行 115 项、0 失败（`XDRemuxModelTests` 74 项全通过、`XDRemuxKitTests` 21 通过 / 6 需本地样片跳过、`XDRemuxTransferTests` 11 通过 / 3 跳过）；Release `xdremux` CLI `--version` 输出 `0.4.8`、`capabilities` 报告 `videotoolbox` 与 `x265`。新增 `tools/installer/RELEASE_NOTES_apple-v0.1.2.md`，创建非公开 Draft Pre-release `apple-v0.1.2` 待维护者复核后发布。本轮未对 `0.1.2 (9)` 安装包重跑实体机交互验收。
+
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
 - 新 target `XDRemuxShare`（iOS app-extension，`platformFilter: iOS` 只嵌入 iOS 包）。`ShareViewController` 移植 Flutter

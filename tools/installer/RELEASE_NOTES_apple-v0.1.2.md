@@ -39,6 +39,7 @@ Bundle ID `io.github.beetman.xdremux.swiftui`，桌面显示名为 **`XDRemux`**
 
 ## 验证范围与已知边界
 
-- 宿主自动检查与构建结果见本次发布记录与附件 `BUILD_RECORD.txt`（待本次打包检查结果写入）。
-- iOS 未签名 IPA 保留为 `unsigned` 侧载产物；真机上的重签侧载安装、Share Extension App Group 行为及物理实机全景验收需按所用签名方式自行核对。
+- Rust 内核 `0.4.8` 与传输库（`BUILD_RECORD.txt` 记录了 `rust_commit`、`transfer_ffi_commit`、`core_version=0.4.8` 与 `hevc_backend=vt+x265`）；Release `xdremux` CLI 返回内核版本 `0.4.8` 与 `["videotoolbox","x265"]`。
+- Swift `XDRemuxKit` 自动化测试共执行 115 项、0 失败（`XDRemuxModelTests` 74 项全通过；`XDRemuxKitTests` 27 项中 21 项通过、6 项需本地样片跳过；`XDRemuxTransferTests` 14 项中 11 项通过、3 项跳过）；macOS Release（Developer ID 签名与 Apple 公证装订，`spctl --assess` 通过）与 iOS unsigned Release archive 均验证通过。
+- 本轮未重新执行 iPhone / iPad / Mac 真机交互全功能手测；iOS 为未签名 IPA，侧载重签后的 Share Extension 可用性仍取决于签名工具是否为其与主应用配置同一个 App Group。
 - 没有应用内更新检查；新版本请看本项目 Releases。

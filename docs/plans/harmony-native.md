@@ -1,5 +1,12 @@
 # 原生 HarmonyOS 前端开发计划
 
+## 2026-11-28：发布准备：原生 0.5.5（内核 0.4.8）
+
+- 随 `v0.4.8`（`1782fee`）三端同步准备发布；原生元数据升为 `0.5.5` / code `50500`，`.arkui` 身份、HarmonyOS 7（API 26 `compatibleSdkVersion` / `targetSdkVersion`）与队列/设置持久化向后兼容。
+- 本轮同步：Rust 核心升至 `0.4.8`（统一 ISO `62/142`B `tmap`、鸿蒙全模式 4:2:0 增益图、Styles 2 → 3 保留 HDR、ColorOS 17.24 人像与水印边框还原、Live Photo 事务式发布、OHOS x265 NEON）；原生端含新增益图图标、HarmonyOS 7 / API 26 基线、全图按住对比 SDR（隐藏 HDR 图层并在屏幕尺寸解码预览）、HDR/SDR 按钮热区修复、图库暗色过渡与正立缩略图缓存、互传首开刷新收件箱及队列/图库持久化并发修复。
+- 在 macOS 使用 DevEco Studio（`/Volumes/MacData/Applications/DevEco-Studio.app`）执行 `tools/ohos/prepare_harmony_native.sh` + `devecocli build --product default --build-mode debug`（42 tasks 全部执行成功，跳过签名）。unsigned HAP `18,509,979` 字节，SHA256 `DE25682609F76C8FCD23F9AB5E3D0CEF1DD6A8F131F06AFAA1D72CCAFF4E352B`；暂存核心 `9,909,896` 字节 / `96BCE3F959CD1380CD890EEDF7B5D75726B4E57CC1C281E68DB53012F032E102`，暂存互传库 `6,738,248` 字节 / `4D9D48340457D30EEF1E68D8610F3D0E63D3C5E7AD38D3628105791BDD25AF35`；包内剥离核心 `7,990,784` 字节 / `0B34FFF6E22C612A50CCA4236EC515D24F377DA96B0A57BE45FCCBB7363AD50D`（与 Flutter `0.4.8` OHOS HAP 内核心字节一致），包内剥离互传库 `6,738,008` 字节 / `7AB2E32CF42B80D28823EEE76B7FF6E18FCB6FEDA9B200BD02EE3D093A211339`。
+- 校验：`20` 份 Node、`5` 项 HAP verifier、C++ PS3 辅助通过；`verify_harmony_hap.py` 通过（`.arkui`、`0.5.5` / `50500`、`compatibleApi: 26`、`unsigned: true`），`app.debug: true` / `buildMode: debug`、ZIP CRC 无错误、`INTERNET` / `GET_NETWORK_INFO` 权限、包内核心含 `0.4.8`、桥接所需 32 个 `xdremux_*` 与全部 55 个外部依赖符号可解析。更新 `apps/harmony/README.md`、`BUILDING.md` 与 `RELEASE_NOTES_v0.5.5.md`，创建非公开 Draft Release `harmony-v0.5.5`（非 Latest）。本轮尚未在真机上安装或重新验收 `0.5.5`。
+
 ## 2026-11-07：发布原生 0.5.4（内核 0.4.7）
 
 - 用户要求发版并同步 0.4.7 内核。合并主线 `ce35efd`（含 v0.4.7 与 Live Photo MakerNote 修复 `ee6f97b`）；原生元数据升为 `0.5.4` / code `50400`，`.arkui`、API26 目标 / API18 最低兼容及持久化 schema 不变。
