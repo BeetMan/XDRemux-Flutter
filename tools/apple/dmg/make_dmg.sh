@@ -3,18 +3,22 @@
 #
 #   make_dmg.sh <volume-name> <output.dmg> <stage-dir> [volume-icon.icns]
 #
-# The window follows xdremux.app (black, glows, gradient wordmark drawn by
-# gen_background.swift) and shows the app on the left, the /Applications link
-# on the right with an arrow between them, the website link in the top-right
-# corner and the remaining staged files (licence files, the Privacy &
-# Security shortcut) in a row along the bottom. See settings.py for the
-# positions.#
+# The window follows the light theme of xdremux.app (off-white surface, glows
+# and the gradient wordmark drawn by gen_background.swift). Mid-gray mats sit
+# behind the icon labels so the names stay readable in both appearances:
+# Finder paints labels in the system colour, near-black in light mode and
+# near-white in dark mode, and neither a black nor a white picture can carry
+# both. The window shows the app on the left, the /Applications link on the
+# right with an arrow between them, the website link in the top-right corner
+# and the remaining staged files (licence files, the Privacy & Security
+# shortcut) in a row along the bottom. See settings.py for the positions.
 # dmgbuild writes the Finder layout (.DS_Store) itself, so no Finder session
 # or AppleScript is needed and a developer Mac and CI produce the same image.
 # It needs Python >= 3.11 and is installed once into a cached virtualenv from
 # requirements.txt. When that is not possible the image is still built, only
 # without the layout, unless XDREMUX_DMG_STRICT=1 makes that an error (use it
-# in CI so a broken environment cannot ship an unstyled DMG unnoticed).
+# in CI and package_release.sh so a broken environment cannot ship an
+# unstyled DMG unnoticed).
 #
 # Env:
 #   XDREMUX_DMG_VENV     virtualenv location (default ~/.cache/xdremux/dmgbuild-venv)
@@ -100,17 +104,22 @@ LINKS="$WORK/links"; mkdir -p "$LINKS"
 
 decorate() {  # <file> <icon.icns>: copy into DECORATED with the icon
   local name; name="$(basename "$1")"
+  # Best-effort. Returning non-zero here used to abort the whole script under
+  # set -e (the call is the last command of an &&/|| list), so dmgbuild and
+  # the plain-image fallback never ran. A missing icon keeps the generic one.
   cp "$1" "$DECORATED/$name" && "$PY" "$HERE/set_file_icon.py" "$DECORATED/$name" "$2" || {
     echo "warning: no custom icon for $name" >&2
     rm -f "$DECORATED/$name"
-    return 1
+    return 0
   }
 }
 
 SETTINGS_ICON="/System/Applications/System Settings.app/Contents/Resources/Settings.icns"
 if [ -f "$SETTINGS_ICON" ]; then
   for f in "$STAGE"/*.inetloc; do
-    [ -e "$f" ] && decorate "$f" "$SETTINGS_ICON"
+    if [ -e "$f" ]; then
+      decorate "$f" "$SETTINGS_ICON" || true
+    fi
   done
 fi
 
@@ -131,7 +140,9 @@ for p in /Applications/Safari.app/Contents/Resources/AppIconUpdated.icns \
          /Applications/Safari.app/Contents/Resources/App.icns; do
   [ -f "$p" ] && SAFARI_ICON="$p" && break
 done
-[ -z "$SAFARI_ICON" ] || decorate "$LINKS/$WEBSITE_NAME" "$SAFARI_ICON"
+if [ -n "$SAFARI_ICON" ]; then
+  decorate "$LINKS/$WEBSITE_NAME" "$SAFARI_ICON" || true
+fi
 
 rm -f "$OUT"
 echo "==> DMG layout: $APP -> Applications (+ extras), window from settings.py"

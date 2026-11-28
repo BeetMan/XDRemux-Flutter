@@ -194,8 +194,9 @@ if [ "$MACOS_DO_NOTARIZE" -eq 0 ]; then
 fi
 DMG="$OUT/XDRemux-Apple-macOS-$VERSION.dmg"
 # Installer window (app -> Applications on a drawn background), see tools/apple/dmg.
-# Without Python >= 3.11 for dmgbuild this still produces a plain image and warns.
-"$ROOT/tools/apple/dmg/make_dmg.sh" XDRemux "$DMG" "$STAGE" "$MAC_APP/Contents/Resources/AppIcon.icns"
+# Strict, same as CI: a broken dmgbuild setup fails here instead of signing
+# and notarizing an image without the layout.
+XDREMUX_DMG_STRICT=1 "$ROOT/tools/apple/dmg/make_dmg.sh" XDRemux "$DMG" "$STAGE" "$MAC_APP/Contents/Resources/AppIcon.icns"
 rm -rf "$STAGE"
 if [ "$MACOS_SIGN_MODE" = "developer-id" ]; then
   codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"

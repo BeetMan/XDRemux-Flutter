@@ -24,8 +24,9 @@ import os
 CONTENT = (660, 470)
 HERO_Y = 172
 SMALL_Y = 340
-# Wide enough that the two-line labels of the licence files and the privacy
-# shortcut do not touch; tightened only when four or more items are staged.
+# Wide enough that the privacy shortcut's name, at text_size 12, does not
+# touch its neighbour or the window edge. Tightened only when four or more
+# items are staged.
 SMALL_SPACING = 200
 # Website link, under the top-right corner, clear of the hero row. Far
 # enough from the edge for its label, even when Finder shows extensions.
@@ -85,6 +86,10 @@ for index, name in enumerate(extras):
 format = defines.get("format", "UDZO")
 window_rect = ((200, 120), (CONTENT[0], CONTENT[1] + TITLE_BAR))
 icon_size = 96.0
+# dmgbuild's default is 16pt. At that size the privacy shortcut's name
+# ("打开隐私与安全性 (Privacy & Security)", ~210pt wide at 12pt) runs into the
+# neighbouring licence file and off the right edge of the window.
+text_size = 12.0
 icon = volume_icon
 background = os.path.join(defines["assets"], "background.png")
 default_view = "icon-view"
