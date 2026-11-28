@@ -698,6 +698,7 @@ Flutter 版生成的检查点文件可被原生版读取。
   - `XDRemux-Apple-macOS-0.1.2.dmg`：`10,101,793` 字节，SHA256 `6bdbd16c89a90fe85ff5c188eafbbd61601078b7e5d6e0bf1b6a864fe6034f42`；Developer ID (`W94G5B6VGC`) 签名并完成 Apple 公证（Submission ID `b31496eb-9296-4859-a306-2ebf62bfdbd9`）与 `stapler validate`、`spctl --assess` (`Notarized Developer ID`) 通过。
   - `XDRemux-Apple-iOS-0.1.2-unsigned.ipa`：`6,545,175` 字节，SHA256 `e4138c84fa359ab1c765795273eaf4af60dafa68535cc330c2fd7f3176a6afba`；27 个包内条目，包含 `XDRemuxShare.appex`、`CFBundleShortVersionString=0.1.2` / `CFBundleVersion=9`，无 `_CodeSignature`。
 - 检查：`tools/apple/check_header.sh` 通过；`swift test` 共执行 115 项、0 失败（`XDRemuxModelTests` 74 项全通过、`XDRemuxKitTests` 21 通过 / 6 需本地样片跳过、`XDRemuxTransferTests` 11 通过 / 3 跳过）；Release `xdremux` CLI `--version` 输出 `0.4.8`、`capabilities` 报告 `videotoolbox` 与 `x265`。新增 `tools/installer/RELEASE_NOTES_apple-v0.1.2.md`，创建非公开 Draft Pre-release `apple-v0.1.2` 待维护者复核后发布。本轮未对 `0.1.2 (9)` 安装包重跑实体机交互验收。
+- TestFlight：同日按 `main`（`acf1307`，复用上述 `0.4.8` `vt+x265` 内核）通过 `tools/apple/upload_testflight.sh` 完成 `0.1.2 (9)` 自动签名归档（`Apple Distribution`、Team `W94G5B6VGC`、`XDRemuxShare.appex`、`App Group`、`PrivacyInfo.xcprivacy`、`ITSAppUsesNonExemptEncryption=false` 与 `vt+x265` 校验通过），关闭系统代理经 TUN 直连上传至 App Store Connect 成功（`Upload succeeded` / `Uploaded XDRemux` / `** EXPORT SUCCEEDED **`；保留既有预编译 `XDRemuxTransferCore.framework` 无 dSYM 警告），待 App Store Connect 服务端处理完成即可在 TestFlight 分发。
 
 **P3 执行记录（第四批：iOS Share Extension，2026-11-01，分支 `feat/apple-share-extension`）**
 
