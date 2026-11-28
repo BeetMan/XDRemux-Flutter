@@ -133,7 +133,13 @@ impl PipelineConfig {
                 oppo_compat: 0,
                 oppo_camera_tail: 0,
                 strict_tmap: self.strict_tmap as u8,
-                apple_photographic_styles: (self.styles || self.styles3) as u8,
+                apple_photographic_styles: if self.styles3 {
+                    2
+                } else if self.styles {
+                    1
+                } else {
+                    0
+                },
                 apple_portrait: self.portrait as u8,
             }
         } else {
@@ -441,7 +447,7 @@ mod tests {
                 b.apple_photographic_styles,
                 b.apple_portrait
             ),
-            (0, 0, 1, 1)
+            (0, 0, 2, 1)
         );
         assert!(a.wants_styles() && a.wants_styles3() && a.wants_portrait());
 

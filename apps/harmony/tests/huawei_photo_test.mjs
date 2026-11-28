@@ -33,7 +33,10 @@ assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePho
 assert.equal(livePhotoStylesCompatible({ applePhotographicStyles: true, applePhotographicStyles3: false }), true);
 assert.equal(livePhotoStylesCompatible({}), false);
 assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles-native","texture"]}'), true);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["texture","mattes"]}'), true);
 assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles"]}'), false);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["styles","texture","mattes"]}'), false);
+assert.equal(hasNativeHuaweiStyleGraft('{"status":"attached","added":["texture","maker-note-skipped"]}'), false);
 assert.equal(hasNativeHuaweiStyleGraft('{"status":"error","added":["styles-native"]}'), false);
 let attached = false;
 const badBase = { remux: async () => '{"success":true}', verify: async () => false,

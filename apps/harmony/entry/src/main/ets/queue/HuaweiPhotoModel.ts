@@ -25,8 +25,11 @@ interface StyleLayerReport {
 
 export function hasNativeHuaweiStyleGraft(json: string): boolean {
   const report: StyleLayerReport = JSON.parse(json) as StyleLayerReport;
+  const added: Array<string> = Array.isArray(report?.added) ? report.added : [];
   return report !== null && report.status === 'attached' &&
-    Array.isArray(report.added) && report.added.includes('styles-native');
+    (added.includes('styles-native') ||
+      (!added.includes('styles') && !added.includes('maker-note-skipped') &&
+        (added.includes('texture') || added.includes('mattes') || added.includes('mattes-person'))));
 }
 
 interface StillExtractReport {

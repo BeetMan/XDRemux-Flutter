@@ -6438,6 +6438,12 @@ struct Index {
         .width('100%')
         .height(46)
         .margin({ top: 8 });
+        Text('默认关闭即正式版 ISO 21496-1（62/142 字节）；开启会写入早期 65/145 字节草案格式，鸿蒙相册 HDR 会显示全白，普通用户请勿开启。')
+          .fontSize(12)
+          .fontColor(this.galleryInfoPanelSecondaryTextColor())
+          .lineHeight(18)
+          .width('100%')
+          .margin({ top: 2 });
         }
       }
 
@@ -7355,6 +7361,12 @@ struct Index {
         .width('100%')
         .height(42)
         .margin({ top: 4 });
+        Text('默认关闭即正式版 ISO 21496-1（62/142 字节）；开启会写入早期 65/145 字节草案格式，鸿蒙相册 HDR 会显示全白，普通用户请勿开启。')
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(18)
+          .width('100%')
+          .margin({ top: 2 });
         }
         if (!this.queueItemSupportsNativeConversion(item) && item.details?.huaweiPortraitReady !== true &&
           item.details?.huaweiHdr !== true && !this.queuePhotoSettingsView.applePhotographicStyles &&
@@ -7938,7 +7950,7 @@ struct Index {
       }
       .width('100%')
       .margin({ top: 4 });
-      Text('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。')
+      Text('仅用于兼容早期草案（65/145 字节）研究；默认关闭即正式版 ISO 21496-1（62/142 字节）。开启后会导致有理数字段错位，鸿蒙系统相册 HDR 会渲染为全白（OPPO Find X9 Ultra 亦不兼容），普通用户请勿开启。')
         .fontSize(12)
         .fontColor($r('sys.color.font_secondary'))
         .width('100%')

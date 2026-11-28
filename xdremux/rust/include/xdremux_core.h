@@ -60,7 +60,8 @@ typedef struct ConversionResult {
  *   255 selects the compatibility-dependent default.
  * - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
  *   ISO 21496-1 65/145-byte payload.
- * - `apple_photographic_styles`: 1 generates the native Rust Styles graph.
+ * - `apple_photographic_styles`: 1 generates the native Rust Styles 2 graph;
+ *   2 generates or upgrades Styles 2 to Photographic Styles 3.
  */
 typedef struct ConvertConfig {
   uint8_t oppo_compat;

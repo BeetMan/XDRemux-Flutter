@@ -2092,7 +2092,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               final added = attached['added'];
               final grafted = attached['status'] != 'error' &&
                   added is List &&
-                  added.contains('styles-native');
+                  (added.contains('styles-native') ||
+                      (!added.contains('styles') &&
+                          !added.contains('maker-note-skipped') &&
+                          (added.contains('texture') ||
+                              added.contains('mattes') ||
+                              added.contains('mattes-person'))));
               if (!grafted) {
                 return <String, dynamic>{'fallback': true};
               }
@@ -5297,7 +5302,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           contentPadding: EdgeInsets.zero,
                           title: Text(t('严格 ISO 兼容（高级）', 'Strict ISO compliance (advanced)')),
                           subtitle: Text(
-                            t('仅用于严格 ISO 21496-1 测试；普通用户建议关闭，可能降低部分相册兼容性。', 'Only for strict ISO 21496-1 testing; keep off for normal use — it may reduce gallery compatibility.'),
+                            t('仅用于早期草案（65/145 字节）兼容研究；默认关闭即正式版 ISO 21496-1（62/142 字节）。开启会使有理数字段错位，在鸿蒙相册显示全白并导致 Find X9 Ultra 解析异常，普通用户请勿开启。', 'For legacy 65/145-byte draft testing only; default off already emits ratified ISO 21496-1 (62/142-byte). Enabling misaligns rational fields (pure-white HDR in HarmonyOS Gallery / breaks Find X9 Ultra); keep off for normal use.'),
                           ),
                           value: _cfg.strictTmap,
                           onChanged: (value) {

@@ -110,6 +110,16 @@ pub fn inject_uri_metadata_item(
     // Our own outputs can carry primary_id=0, so resolve the largest-ispe grid
     // item instead, falling back to pitm primary_id when it names a real item.
     let parsed = isobmff::parse_source_meta(data)?;
+    let uri_z = [uri.as_bytes(), b"\0"].concat();
+    if parsed.items.iter().any(|item| {
+        item.itype == "uri "
+            && item
+                .raw_infe
+                .windows(uri_z.len())
+                .any(|window| window == uri_z.as_slice())
+    }) {
+        return Err(format!("URI metadata item {uri} already present"));
+    }
     let pitm_id = isobmff::parse_pitm(data, pitm);
     let id_exists = |id: u32| parsed.items.iter().any(|i| i.item_id == id);
     let main_image_id = if pitm_id != 0 && id_exists(pitm_id) {
