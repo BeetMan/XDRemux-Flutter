@@ -72,7 +72,7 @@ Job 结构与缓存策略：
 - **Windows**：NASM 安装 -> x265 -> Rust -> Flutter -> Inno Setup（`BuildArch` 参数）
 - **Android**：SDK 36 约束（runner 无 API 37）+ JVM target 分插件对齐已固化在构建脚本；JDK 用 Temurin 21（PR #124：AGP 9.3.1 自带的 lint 32.3.1 调用 JDK 21 才有的 `List.removeLast()`，JDK 17 下 `lintVitalAnalyzeRelease` 崩溃；退回 17 需 AGP ≥ 9.3.2，见 `operations/releasing.md` §4）
 - **macOS / iOS**：内核以 `XDREMUX_HEVC_BACKEND=videotoolbox+x265` 编入两个 HEVC 后端（PR #116）；构建后分别用 `otool -L` / `strings` 与 `nm` 核对产物同时含 VideoToolbox 与 x265，再用 `grep` 扫 Dart 绑定里的每个 `xdremux_*` 符号（PR #123 把正则放宽到含数字的名字）
-- **publish job**：汇集 dist/ 下各产物挂到 Release；不生成/覆盖 Release 文案；`needs` 必须包含全部构建 job（`[windows, windows-arm64, android, macos, ios, linux]`；曾因漏 needs 导致 pre.2 缺 ARM64 包，`0eb097b` 修）
+- **publish job**：汇集 dist/ 下各产物挂到 Release 草稿（`draft: true`，供维护者补传本地鸿蒙 HAP 并验包后再公开）；不生成/覆盖 Release 文案；`needs` 必须包含全部构建 job（`[windows, windows-arm64, android, macos, ios, linux]`；曾因漏 needs 导致 pre.2 缺 ARM64 包，`0eb097b` 修）
 - **windows-arm64**：`continue-on-error: true`，只做实验性构建、不出安装包，失败不阻断 publish（与 README「不提供 Windows ARM64 安装包」一致）
 - 鸿蒙 hap 不进 release.yml：本地构建（Windows `tools/ohos/build_hap.ps1`，macOS `tools/ohos/build_hap.sh`，见 `operations/building.md`）后手动挂资产；两个脚本会先核对 `libxdremux_core.so` 导出了 Dart 绑定查到的每个 FFI 符号，核心比绑定旧就直接失败（PR #123）
 - iOS 使用 `xcode-27`，显式选择 Xcode 27.1，先检查 SDK/API，再构建归档和校验 FFI；不降级 Duo 功能来适配旧 SDK。

@@ -894,6 +894,10 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
+          # Publish as a draft so the maintainer can attach the local Flutter
+          # HarmonyOS HAP and verify every uploaded package before making the
+          # release public or updating /releases/latest.
+          draft: true
           generate_release_notes: false
           # Tags carrying a -suffix (v0.1.9-pre.1) publish as pre-release so
           # they don't become /releases/latest or trigger in-app update checks.

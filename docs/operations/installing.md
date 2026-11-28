@@ -20,7 +20,7 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux Flutter.app"  # v0.4.
 
 ### iOS（需签名侧载）
 
-下载 `XDRemux-iOS-0.4.5-unsigned.ipa`。这是**未签名 IPA**，不能在「文件」App 中直接点开安装，也不是 App Store / TestFlight 安装包。
+下载 `XDRemux-iOS-0.4.5-unsigned.ipa`。这是**未签名 IPA**，不能在「文件」App 中直接点开安装，也不是 App Store / TestFlight 安装包。自 `v0.4.8` 起 Flutter 版桌面显示名为 `XDRemux Flutter`（保留包名 `io.github.beetman.xdremux`），以便与 SwiftUI 原生版 `XDRemux` 同机区分。
 
 请使用自己的 Apple ID / 开发证书，通过可信的签名侧载工具重新签名并安装；按所用方式完成系统要求的开发者模式或证书信任设置。签名有效期、设备范围和刷新要求由所用账号、证书及工具决定，过期后需重新签名或刷新。最低系统为 iOS 15，Duo 新功能需相应新系统；使用相册导入或保存时仍需单独允许照片权限。
 
@@ -28,8 +28,8 @@ sudo xattr -rd com.apple.quarantine "/Applications/XDRemux Flutter.app"  # v0.4.
 
 本发布页同时提供：
 
-- **原生版 0.5.2**：`XDRemux-HarmonyOS-Native-0.5.2-unsigned.hap`，ArkUI 原生界面，包名 `io.github.beetman.xdremux.arkui`；Debug 包，Rust 核心保持 Release 优化。
-- **Flutter 版 0.4.5**：`XDRemux-HarmonyOS-0.4.5-unsigned.hap`，包名 `io.github.beetman.xdremux`；profile AOT 包，保留开发签名所需的 `debug:true`。
+- **原生版 0.5.2**：`XDRemux-HarmonyOS-Native-0.5.2-unsigned.hap`，ArkUI 原生界面，桌面显示名为 `XDRemux`，包名 `io.github.beetman.xdremux.arkui`；Debug 包，Rust 核心保持 Release 优化。
+- **Flutter 版 0.4.5**：`XDRemux-HarmonyOS-0.4.5-unsigned.hap`，包名 `io.github.beetman.xdremux`（自 `v0.4.8` 起桌面显示名为 `XDRemux Flutter`）；profile AOT 包，保留开发签名所需的 `debug:true`。
 
 两份都是 **unsigned HAP**，不是免签安装包，也不是应用市场分发包。请用 DevEco Studio 或兼容的开发签名侧载工具，准备与所选版本**包名、开发证书和目标设备范围**匹配的 Development Profile，完成签名后再安装。
 

@@ -7,7 +7,7 @@
 
 #define AppName "XDRemux"
 #ifndef AppVersion
-#define AppVersion "0.4.7"
+#define AppVersion "0.4.8"
 #endif
 #ifndef BuildArch
 #define BuildArch "x64"
