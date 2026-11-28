@@ -11,8 +11,9 @@ generic document icon. Run it on a volume that keeps extended attributes
 (APFS), never on exFAT or SMB: the attributes are silently dropped there.
 """
 
+import ctypes
+import ctypes.util
 import struct
-import subprocess
 import sys
 
 ICNS_TYPE = b"icns"
@@ -48,7 +49,19 @@ def resource_fork(icns: bytes) -> bytes:
 
 
 def set_xattr(path: str, name: str, value: bytes) -> None:
-    subprocess.check_call(["/usr/bin/xattr", "-w", "-x", name, value.hex(), path])
+    """Write a macOS extended attribute directly via setxattr(2) to avoid argv limits."""
+    libc = ctypes.CDLL(ctypes.util.find_library("c") or "libSystem.B.dylib", use_errno=True)
+    rc = libc.setxattr(
+        path.encode("utf-8"),
+        name.encode("utf-8"),
+        value,
+        ctypes.c_size_t(len(value)),
+        ctypes.c_uint32(0),
+        ctypes.c_int(0),
+    )
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, f"setxattr({name}) failed on {path}: errno {err}")
 
 
 def set_file_icon(path: str, icns_path: str) -> None:

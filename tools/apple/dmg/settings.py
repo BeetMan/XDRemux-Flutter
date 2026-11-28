@@ -21,16 +21,17 @@
 import os
 
 # Content area of the window in points; background.png is drawn for it.
-CONTENT = (660, 476)
-HERO_Y = 188
-SMALL_Y = 352
+# LINK at y=70 keeps the 96pt icon >= 22pt below the title bar so Finder does
+# not shift the entire icon canvas downward (+12pt clamp at y=52).
+CONTENT = (660, 504)
+HERO_Y = 212
+SMALL_Y = 376
 # Wide enough that the privacy shortcut's name, at text_size 12, fits cleanly
-# inside the bottom shelf. Tightened only when four or more items are staged.
+# inside its bottom pill. Tightened only when four or more items are staged.
 SMALL_SPACING = 186
-# Website link, under the top-right corner, clear of the hero row (14pt gap
-# between the bottom of the 24pt label mat and Applications' icon top) and
-# far enough from the edge even when Finder shows extensions.
-LINK = (548, 52)
+# Website link in the top-right corner, clear of the top edge and leaving a
+# clear gap between its label pill and Applications' top edge below it.
+LINK = (548, 70)
 
 # Finder's window bounds include the title bar, so the window is taller than
 # the picture. 32 is the title bar of a toolbar-less window on macOS 26; on
