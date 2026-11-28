@@ -1,7 +1,7 @@
 # 发版流程
 
-> 触发：推送 `v*` tag 到 GitHub -> `release.yml` 构建五个平台产物并挂到 Release；Flutter 鸿蒙另行本地构建和补附件。
-> **tag 与 Release 文案由维护者掌控**：CI 只负责产物，不覆盖手写文案。
+> 触发：推送 `v*` tag 到 GitHub -> `release.yml` 构建五个平台产物并创建 Release 草稿（`draft: true`）；Flutter 鸿蒙另行本地构建并补传附件，全部核对后由维护者在 GitHub 手动点击 Publish 正式公开。
+> **tag 与 Release 文案由维护者掌控**：CI 只负责构建和创建草稿，不覆盖手写文案，也不直接公开更新 `/releases/latest`。
 
 ## 1. 发版清单
 
@@ -40,15 +40,15 @@ XDRemux-HarmonyOS-<tag>-unsigned.hap     （本地构建，见 §3.5）
 | Windows ARM64 | windows-11-arm | arm64 Setup.exe（x265 无汇编） |
 | Android | ubuntu-latest | APK（SDK 36 / build-tools 36.0.0） |
 | macOS | macos-latest | DMG（`v0.4.7` 之后产物包内应用改为 `XDRemux Flutter.app`，附「隐私与安全性」`.inetloc` 快捷入口，资产文件名仍为 `XDRemux-macOS-*.dmg`） |
-| iOS | xcode-27，显式选 Xcode 27.1 | unsigned IPA（编译前验证 Duo API，打包前校验所有 Dart FFI 符号） |
+| iOS | xcode-27，显式选 Xcode 27.1 | unsigned IPA（自 `v0.4.8` 起桌面显示名为 `XDRemux Flutter`，保留包名 `io.github.beetman.xdremux`；编译前验证 Duo API，打包前校验所有 Dart FFI 符号） |
 | Linux | ubuntu-22.04（复用 linux.yml） | x64 AppImage / tar.gz / sha256（预览） |
-| publish | ubuntu-latest | 汇总挂载（`needs` 含全部构建 job） |
+| publish | ubuntu-latest | 汇总挂载到草稿 Release（`draft: true`，`needs` 含全部构建 job） |
 
 macOS / iOS 已纳入 CI；Windows ARM64 为实验性且非发布阻塞，x265 按 runner 实际 VS 版本选择 CMake 生成器。
 
 两个 macOS DMG（CI 的 Flutter 版、本机 `package_release.sh` 的原生版）的安装窗口都由 `tools/apple/dmg/make_dmg.sh` 生成：app → Applications 拖拽布局、浅色网格背景，图标名字底下有中灰底（Finder 的标签颜色随系统外观变，纯浅或纯深的底都会让其中一种外观看不清），许可证文件和「隐私与安全性」快捷入口排在窗口底部，快捷入口带“系统设置”图标（打包时从本机系统取，仓库不存 Apple 素材）。布局由 dmgbuild 直接写 `.DS_Store`，需要 Python ≥ 3.11（CI 固定 3.12；本机首次运行会装到 `~/.cache/xdremux/dmgbuild-venv`）。装不上时 CI 和 `package_release.sh` 都直接失败（两者都设 `XDREMUX_DMG_STRICT=1`），不会签一张没有布局的镜像。改窗口尺寸或图标位置要同时改 `settings.py` 与 `gen_background.swift`，再用 `swift tools/apple/dmg/gen_background.swift` 重新生成背景。
 
-`publish` 要求 **windows / android / macos / ios / linux 全部成功**，并额外校验各类产物文件都已落地，缺任何一个都不创建 Release（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。
+`publish` 要求 **windows / android / macos / ios / linux 全部成功**，并额外校验各类产物文件都已落地，缺任何一个都不创建 Release 草稿（Windows ARM64 因 `continue-on-error` 不参与 gate）。如果 macOS/iOS 因托管 runner 容量被取消，tag 会存在但没有 Release 草稿：先重跑失败 job，再 `Re-run all jobs`（被 `needs` 跳过的 publish 不会被“重跑失败 job”带走）。Release 草稿生成后不会立刻出现在 `/releases/latest`，方便先补传鸿蒙 HAP 并验包再公开。
 
 ### 3.1 只构建的发版预检
 
