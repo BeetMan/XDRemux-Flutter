@@ -1,8 +1,8 @@
 #!/usr/bin/env swift
 // Render the installer window background for the macOS DMG:
 //
-//   tools/apple/dmg/background.png     660x530  (1x)
-//   tools/apple/dmg/background@2x.png  1320x1060 (Retina)
+//   tools/apple/dmg/background.png     660x536  (1x)
+//   tools/apple/dmg/background@2x.png  1320x1072 (Retina)
 //
 // Follows the light theme of xdremux.app: an off-white surface with soft
 // teal, blue and warm horizon glows, the "XDRemux" wordmark in the site's
@@ -19,7 +19,7 @@
 // licence files and the privacy shortcut move sideways as the file count
 // changes.
 //
-// The picture is drawn 470 points tall like the window's content area, plus
+// The picture is drawn 476 points tall like the window's content area, plus
 // 60 points of spare background underneath: Finder crops the picture at the
 // bottom of the content area, whose height depends on the title bar.
 // The window size and the icon positions live in settings.py; keep the
@@ -33,15 +33,15 @@ import ImageIO
 import UniformTypeIdentifiers
 
 let width = 660.0
-let contentHeight = 470.0
+let contentHeight = 476.0
 let height = contentHeight + 60.0
 
 // Icon centres and size from settings.py.
-let heroY = 172.0
-let smallY = 340.0
-let link = (x: 536.0, y: 58.0)
+let heroY = 188.0
+let smallY = 352.0
+let link = (x: 548.0, y: 52.0)
 let iconSize = 96.0
-let dividerY = 286.0
+let dividerY = 294.0
 // #7d7d7d is the gray where near-black and white labels both stay near 4:1.
 let labelPlate = "7d7d7d"
 
@@ -159,25 +159,25 @@ func render(scale: Int) -> CGImage? {
     glow(ctx, center: CGPoint(x: 330, y: 190), radius: 320, warm1, alpha: 0.16)
 
     // Label mats. Just below a 96pt icon whose centre is `iconY`.
-    // The website label has only the gap above the Applications icon (that
-    // icon starts at heroY - 48), so its mat is one line tall and stops there.
+    // The website link label mat gets 24pt height and still leaves a clear
+    // 14pt gap above the top edge of the Applications icon (`heroY - 48`).
     let belowIcon = iconSize / 2 + 2
     labelMat(ctx, centerX: 170, top: heroY + belowIcon, textWidth: 100, lines: 1)   // XDRemux Flutter
     labelMat(ctx, centerX: 490, top: heroY + belowIcon, textWidth: 80, lines: 1)    // Applications
-    let linkMat = CGRect(x: link.x - 86, y: link.y + iconSize / 2 + 2, width: 172, height: 16)
-    ctx.addPath(CGPath(roundedRect: linkMat, cornerWidth: 6, cornerHeight: 6, transform: nil))
+    let linkMat = CGRect(x: link.x - 86, y: link.y + belowIcon, width: 172, height: 24)
+    ctx.addPath(CGPath(roundedRect: linkMat, cornerWidth: 8, cornerHeight: 8, transform: nil))
     ctx.setFillColor(color(labelPlate))
     ctx.fillPath()
     let shelfTop = smallY + belowIcon
-    let shelf = CGRect(x: 36, y: shelfTop, width: width - 72, height: 2 * 16 + 14)
+    let shelf = CGRect(x: 28, y: shelfTop, width: width - 56, height: 2 * 16 + 14)
     ctx.addPath(CGPath(roundedRect: shelf, cornerWidth: 10, cornerHeight: 10, transform: nil))
     ctx.setFillColor(color(labelPlate))
     ctx.fillPath()
 
     // Wordmark and tagline, top-left.
-    gradientText(ctx, "XDRemux", x: 48, baseline: 78, size: 40, weight: .bold,
+    gradientText(ctx, "XDRemux", x: 48, baseline: 74, size: 40, weight: .bold,
                  stops: ["5d86c4", "8b6aa8", "d07a4c"], at: [0, 0.45, 1])
-    text(ctx, "让照片跨越设备，也保留继续创作的可能。", x: 50, baseline: 104, size: 13, fill: color(fgDim))
+    text(ctx, "让照片跨越设备，也保留继续创作的可能。", x: 50, baseline: 100, size: 13, fill: color(fgDim))
 
     // Hairline between the drag row and the small print.
     ctx.setStrokeColor(color("000000", 0.10))

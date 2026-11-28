@@ -661,6 +661,12 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Restore dmgbuild virtualenv
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/xdremux/dmgbuild-venv
+          key: dmgbuild-${{ runner.os }}-py312-${{ hashFiles('tools/apple/dmg/requirements.txt') }}
+
       - name: Package DMG
         shell: bash
         run: |
