@@ -46,10 +46,11 @@ let oneLinePillHeight = 22.0
 let twoLinePillHeight = 38.0
 let wrapThreshold = 165.0
 
-// Cool slate capsule gradient: maintains ~4.0:1 against white labels (Dark Mode)
-// and >5:1 against near-black labels (Light Mode).
-let pillTopColor = "80848e"
-let pillBottomColor = "757983"
+// Light translucent mist-slate gradient (no hard border): airy in Light Mode
+// while keeping white Dark Mode Finder labels readable.
+let pillTopColor = "8f96a6"
+let pillBottomColor = "848b9c"
+let pillAlpha: CGFloat = 0.44
 
 // Site palette, light theme (xdremux.app CSS variables).
 let fg = "1d1d1f", fgDim = "6e6e73", teal = "0a8a76", blue = "0066cc"
@@ -197,32 +198,16 @@ func drawLabelPill(_ ctx: CGContext, centerX: CGFloat, top: CGFloat, label: Stri
     let rect = CGRect(x: centerX - pillW / 2.0, y: top, width: pillW, height: pillH)
     let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
-    // Subtle soft ambient drop shadow.
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 3, color: color("000000", 0.08))
-    ctx.addPath(path)
-    ctx.setFillColor(color(pillTopColor))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // Crisp cool-slate vertical gradient fill.
+    // Borderless translucent mist gradient fill so pills sit softly over the glows.
     ctx.saveGState()
     ctx.addPath(path)
     ctx.clip()
     let g = CGGradient(
         colorsSpace: sRGB,
-        colors: [color(pillTopColor), color(pillBottomColor)] as CFArray,
+        colors: [color(pillTopColor, pillAlpha), color(pillBottomColor, pillAlpha)] as CFArray,
         locations: [0, 1]
     )!
     ctx.drawLinearGradient(g, start: CGPoint(x: rect.midX, y: rect.minY), end: CGPoint(x: rect.midX, y: rect.maxY), options: [])
-    ctx.restoreGState()
-
-    // Hairline highlight rim.
-    ctx.saveGState()
-    ctx.addPath(CGPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerWidth: max(1, radius - 0.5), cornerHeight: max(1, radius - 0.5), transform: nil))
-    ctx.setStrokeColor(color("ffffff", 0.22))
-    ctx.setLineWidth(1.0)
-    ctx.strokePath()
     ctx.restoreGState()
 }
 
