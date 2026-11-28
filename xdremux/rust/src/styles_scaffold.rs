@@ -40,7 +40,7 @@ struct NewProp {
     index: u32,
 }
 
-pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
+pub fn scaffold(standard: &[u8], preserve_hdr_properties: bool) -> Result<Vec<u8>, String> {
     // ---- 1. Parse ------------------------------------------------------
     let std_top = top_level_boxes(standard)?;
     let std_meta_hdr = find_top(&std_top, b"meta").ok_or("no meta box")?;
@@ -73,7 +73,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
         .iter()
         .find(|r| r.rtype == "dimg" && r.from == primary)
         .map(|r| r.to.clone())
-        .ok_or("primary grid has no dimg tiles")?;
+        .unwrap_or_default();
 
     // Primary dimensions from the grid's ispe.
     if std::env::var("XSCAFFOLD_DEBUG").is_ok() {
@@ -277,7 +277,7 @@ pub fn scaffold(standard: &[u8]) -> Result<Vec<u8>, String> {
     // new items go into `extra` (build_output would otherwise duplicate the
     // source entries — the doubling bug found via ipma count 151 vs 78).
     let mut ipma_base: Vec<IpmaEntry> = std_meta.ipma_entries.clone();
-    for entry in ipma_base.iter_mut() {
+    for entry in ipma_base.iter_mut().filter(|_| !preserve_hdr_properties) {
         if entry.item_id == primary {
             // Primary grid: + pixi [8,8,8] (non-essential).
             if !entry.associations.iter().any(|(i, _)| *i == pixi_rgb8_idx) {

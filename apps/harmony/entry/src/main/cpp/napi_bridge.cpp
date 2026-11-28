@@ -919,8 +919,7 @@ bool read_convert_config(napi_env env, napi_value value, XdremuxConvertConfig &c
     const bool compat_valid = config.oppo_compat <= 6;
     const bool tail_valid = config.oppo_camera_tail <= 9 || config.oppo_camera_tail == 255;
     const bool flags_valid = (config.strict_tmap == 0 || config.strict_tmap == 1) &&
-                             (config.apple_photographic_styles == 0 ||
-                              config.apple_photographic_styles == 1) &&
+                             config.apple_photographic_styles <= 2 &&
                              (config.apple_portrait == 0 || config.apple_portrait == 1);
     return compat_valid && tail_valid && flags_valid;
 }
@@ -1328,9 +1327,9 @@ napi_value convert(napi_env env, napi_callback_info info)
         }
         if (context->ps3.enabled) {
             // PS3's 2026 texture contract is an extension of the 2023 Apple
-            // styles graph. Enforce the same dependency at the native edge
-            // for direct callers that do not use Index.ets normalization.
-            context->config.apple_photographic_styles = 1;
+            // styles graph. Encoding 2 here tells Rust to either generate
+            // Styles 2 or keep an existing Styles 2 graph before appending PS3.
+            context->config.apple_photographic_styles = 2;
             context->config.oppo_compat = 0;
             context->config.oppo_camera_tail = 0;
         }

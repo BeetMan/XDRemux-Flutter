@@ -943,6 +943,24 @@ fn build_padded_gain_tile(
     Ok(tile)
 }
 
+/// Whether gain-map tiles are coded 4:2:0 (rather than 4:4:4 / 4:0:0) when
+/// `oppo_compat` and the target platform are as given.
+///
+/// OPPO Gallery reads 4:2:0 only. HarmonyOS decoders (both the hardware and the
+/// software `IHW265D` path of the system HEIF codec) reject the 4:4:4 RExt
+/// `main444-8` stream with `DoHeifDecode_ -3` / `IHW265D_DecodeAU failed`, so
+/// the gain map is lost while the `tmap` item still reports the image as HDR.
+/// Everywhere else, 4:4:4 is kept when OPPO compat is off for the best chroma
+/// precision — this is also what Windows/Android originally produced.
+const fn gain_map_wants_420(oppo_compat: OppoCompat, harmonyos: bool) -> bool {
+    oppo_compat.wants_oppo_compat() || harmonyos
+}
+
+/// [`gain_map_wants_420`] for the platform this library is built for.
+pub(crate) const fn gain_map_use_420(oppo_compat: OppoCompat) -> bool {
+    gain_map_wants_420(oppo_compat, cfg!(target_env = "ohos"))
+}
+
 fn tile_and_encode(
     pixels: &[u8],
     width: u32,
@@ -981,11 +999,7 @@ fn tile_and_encode(
     }
 
     let tile_refs: Vec<&[u8]> = padded.iter().map(|t| t.as_slice()).collect();
-    // 4:2:0 gain maps are only required for OPPO-compatible output (OPPO
-    // Gallery reads 4:2:0 only). When OPPO compat is off, keep 4:4:4 for the
-    // best chroma precision — this is also what Windows/Android originally
-    // produced.
-    let use_420 = oppo_compat.wants_oppo_compat();
+    let use_420 = gain_map_use_420(oppo_compat);
     let batch = crate::hevc::encode_tiles(
         &tile_refs,
         tile_size,
@@ -2383,6 +2397,20 @@ mod tests {
         let written = std::fs::read(&tmp).expect("read generated HEIC");
         std::fs::remove_file(&tmp).expect("remove generated HEIC");
         isobmff::parse_source_meta(&written).expect("parse generated HEIC metadata")
+    }
+
+    #[test]
+    fn gain_map_chroma_is_420_for_oppo_compat_and_always_on_harmonyos() {
+        assert!(!gain_map_wants_420(OppoCompat::Off, false));
+        assert!(gain_map_wants_420(OppoCompat::On, false));
+        assert!(gain_map_wants_420(OppoCompat::Auto, false));
+        // HarmonyOS cannot decode 4:4:4 gain maps even in Apple-standard mode.
+        assert!(gain_map_wants_420(OppoCompat::Off, true));
+        assert!(gain_map_wants_420(OppoCompat::On, true));
+        assert_eq!(
+            gain_map_use_420(OppoCompat::Off),
+            cfg!(target_env = "ohos")
+        );
     }
 
     #[test]

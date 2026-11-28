@@ -129,7 +129,8 @@ pub struct ClassificationResult {
 ///   255 selects the compatibility-dependent default.
 /// - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
 ///   ISO 21496-1 65/145-byte payload.
-/// - `apple_photographic_styles`: 1 generates the native Rust Styles graph.
+/// - `apple_photographic_styles`: 1 generates the native Rust Styles 2 graph;
+///   2 generates or upgrades Styles 2 to Photographic Styles 3.
 #[repr(C)]
 pub struct ConvertConfig {
     pub oppo_compat: u8,
@@ -1780,6 +1781,7 @@ fn xdremux_convert_impl(
         oppo_camera_tail,
         strict_tmap,
         apple_photographic_styles,
+        wants_styles3,
         apple_portrait,
     ) = if config.is_null() {
         let oppo_compat = OppoCompat::Off;
@@ -1789,15 +1791,18 @@ fn xdremux_convert_impl(
             false,
             false,
             false,
+            false,
         )
     } else {
         let oppo_compat = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
         let tail_value = unsafe { (*config).oppo_camera_tail };
+        let styles_mode = unsafe { (*config).apple_photographic_styles };
         (
             oppo_compat,
             OppoCameraTail::resolve(tail_value, oppo_compat),
             unsafe { (*config).strict_tmap != 0 },
-            unsafe { (*config).apple_photographic_styles != 0 },
+            styles_mode != 0,
+            styles_mode >= 2,
             unsafe { (*config).apple_portrait != 0 },
         )
     };
@@ -1871,6 +1876,15 @@ fn xdremux_convert_impl(
             };
         }
     };
+
+    // A finished ISO HDR HEIC only needs the Styles layers added: its own
+    // primary and gain map are kept byte-for-byte, so nothing is decoded,
+    // re-encoded or promoted and the lossy-promotion guard does not apply.
+    if apple_photographic_styles && !apple_portrait {
+        if let Some(meta) = iso_styles_source_meta(&source) {
+            return add_styles_to_iso_source(&source, &meta, output, strict_tmap, wants_styles3);
+        }
+    }
 
     if let Err(error) = reject_lossy_gainmap_promotion(&source, oppo_compat) {
         return ConversionResult {
@@ -2446,6 +2460,103 @@ fn portrait_src_image_base(source: &[u8]) -> Option<(Vec<u8>, container::Extract
     ))
 }
 
+/// A finished ISO 21496-1 HDR HEIC (an earlier Apple-standard conversion or a
+/// native Apple photo) rather than an OPPO ProXDR, Ultra HDR JPEG or Huawei
+/// HDR source. Such a file has no LHDR/UHDR tail, so it would otherwise be
+/// decoded as plain SDR and lose its gain map.
+fn iso_styles_source_meta(source: &[u8]) -> Option<isobmff::ParsedMeta> {
+    if source.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let meta = isobmff::parse_source_meta(source).ok()?;
+    (meta.items.iter().any(|item| item.itype == "tmap")
+        && container::extract_lhdr_from_bytes(source).is_err()
+        && !huawei_heic::inspect_bytes(source).is_huawei_hdr)
+        .then_some(meta)
+}
+
+fn conversion_failure(message: String) -> ConversionResult {
+    ConversionResult {
+        success: false,
+        mode: ptr::null_mut(),
+        family: ptr::null_mut(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: CString::new(message).unwrap().into_raw(),
+    }
+}
+
+/// Add Photographic Styles to a finished ISO HDR HEIC, keeping its HDR graph.
+///
+/// The linear thumbnail is generated without the gain map (its plane is not
+/// decoded back out of the HEVC-coded item), so the Styles preview carries no
+/// HDR headroom; the primary image and gain map themselves are untouched.
+/// When the source already carries Styles 2 (`styleMetadata`) without Styles 3
+/// (`texture_styles` / 2026 semantic mattes) and `wants_styles3` is set, the
+/// existing HDR + Styles 2 container is kept intact so callers can append
+/// Styles 3 layers on top without rejecting or stacking a second Styles graph.
+fn add_styles_to_iso_source(
+    source: &[u8],
+    meta: &isobmff::ParsedMeta,
+    output: &str,
+    strict_tmap: bool,
+    wants_styles3: bool,
+) -> ConversionResult {
+    let has_styles2 = photographic_styles_item(meta).is_some();
+    let has_styles3 = has_texture_styles(meta) || has_semantic_mattes(source);
+    if has_styles3 {
+        return conversion_failure(
+            if wants_styles3 {
+                "source already carries Photographic Styles 3"
+            } else {
+                "source already carries Photographic Styles"
+            }
+            .into(),
+        );
+    }
+    if has_styles2 && !wants_styles3 {
+        return conversion_failure("source already carries Photographic Styles".into());
+    }
+    let Some((tmap, _)) = isobmff::primary_tone_map(meta) else {
+        return conversion_failure("source has no valid primary tone-map relationship".into());
+    };
+    let styled = (|| -> Result<Vec<u8>, String> {
+        let strict_payload = if strict_tmap {
+            let payload = iso_validate::read_item_payload(source, meta, tmap)?;
+            match payload.len() {
+                65 | 145 if payload[6..9] == [0, 0, 0] => None,
+                _ => Some(iso21496::make_strict_tmap_payload(&payload)?),
+            }
+        } else {
+            None
+        };
+        let mut styled = if has_styles2 {
+            source.to_vec()
+        } else {
+            styles_native::styles_native_preserving_hdr(source)?
+        };
+        if let Some(payload) = strict_payload {
+            isobmff_write::replace_item_payload(&mut styled, tmap, None, &payload)?;
+        }
+        Ok(styled)
+    })();
+    let styled = match styled {
+        Ok(bytes) => bytes,
+        Err(e) => return conversion_failure(format!("Rust Photographic Styles: {e}")),
+    };
+    if let Err(e) = std::fs::write(output, styled) {
+        return conversion_failure(format!("write Rust Photographic Styles output: {e}"));
+    }
+    ConversionResult {
+        success: true,
+        mode: CString::new("iso").unwrap().into_raw(),
+        family: CString::new("iso").unwrap().into_raw(),
+        edr_scale: 0.0,
+        gain_map_max: 0.0,
+        error_message: ptr::null_mut(),
+    }
+}
+
 fn reject_lossy_gainmap_promotion(source: &[u8], oppo_compat: OppoCompat) -> Result<(), String> {
     if should_reject_lossy_gainmap_promotion(
         isobmff::has_lossy_iso_gainmap_420(source),
@@ -2462,7 +2573,7 @@ const fn should_reject_lossy_gainmap_promotion(
     has_lossy_gainmap: bool,
     oppo_compat: OppoCompat,
 ) -> bool {
-    has_lossy_gainmap && !oppo_compat.wants_oppo_compat()
+    has_lossy_gainmap && !isobmff_write::gain_map_use_420(oppo_compat)
 }
 
 fn convert_lhdr(
@@ -2810,27 +2921,19 @@ pub extern "C" fn xdremux_progress_report(handle: u32, current: u32, total: u32)
 // FFI: verify
 // ---------------------------------------------------------------------------
 
-/// Verifies an output file contains ISO gain-map auxiliary data.
-///
-/// Checks for:
-/// 1. `auxC` property box with `urn:iso:std:iso:ts:21496:-1` in ipco
-/// 2. `tmap` item type in iinf
-/// 3. `auxl` reference in iref
-///
-/// All three must be present for the output to be considered valid ISO HDR.
+/// Verifies the output's `tmap` links the primary and gain-map image items.
 #[no_mangle]
 pub extern "C" fn xdremux_verify_output(path: *const c_char) -> bool {
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    let data = match std::fs::read(path_str) {
-        Ok(d) => d,
-        Err(_) => return false,
-    };
-
-    verify_iso_gain_map(&data)
+    if path.is_null() {
+        return false;
+    }
+    ffi_guard::catch_or(false, || {
+        unsafe { CStr::from_ptr(path) }
+            .to_str()
+            .ok()
+            .and_then(|path| std::fs::read(path).ok())
+            .is_some_and(|data| verify_iso_gain_map(&data))
+    })
 }
 
 /// Verifies a Rust Photographic Styles output in addition to the ordinary
@@ -2933,145 +3036,47 @@ fn contains_ascii(data: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && data.windows(needle.len()).any(|window| window == needle)
 }
 
+fn photographic_styles_item(meta: &isobmff::ParsedMeta) -> Option<&isobmff::ItemInfo> {
+    meta.items.iter().find(|item| {
+        item.itype == "uri "
+            && (contains_ascii(&item.raw_infe, b"styleMetadata\0")
+                || contains_ascii(&item.raw_infe, b"tag:apple.com,2023:photo:metadata:styles\0"))
+    })
+}
+
+fn has_texture_styles(meta: &isobmff::ParsedMeta) -> bool {
+    meta.items.iter().any(|item| {
+        item.itype == "uri "
+            && contains_ascii(
+                &item.raw_infe,
+                b"tag:apple.com,2026:photo:metadata:texture_styles\0",
+            )
+    })
+}
+
+fn has_semantic_mattes(data: &[u8]) -> bool {
+    contains_ascii(data, semantic_mattes::SEMANTIC_MATTE_URNS[0].as_bytes())
+}
+
 fn verify_photographic_styles(data: &[u8]) -> bool {
     let meta = match isobmff::parse_source_meta(data) {
         Ok(meta) => meta,
         Err(_) => return false,
     };
-    let style_item = match meta.items.iter().find(|item| {
-        item.itype.contains("styleMetadata")
-            || item
-                .raw_infe
-                .windows(13)
-                .any(|window| window == b"styleMetadata")
-    }) {
-        Some(item) => item,
-        None => return false,
-    };
-    let location = match meta
-        .iloc_entries
-        .iter()
-        .find(|entry| entry.item_id == style_item.item_id)
-    {
-        Some(entry) if entry.construction_method == 1 && entry.extents.len() == 1 => {
-            entry.extents[0]
-        }
-        _ => return false,
-    };
-    let top = isobmff::parse_boxes(data, 0, data.len());
-    let meta_box = match top.iter().find(|box_| &box_.btype == b"meta") {
-        Some(box_) => box_,
-        None => return false,
-    };
-    let meta_kids = isobmff::parse_boxes(data, meta_box.data_start + 4, meta_box.data_end);
-    let idat = match meta_kids.iter().find(|box_| &box_.btype == b"idat") {
-        Some(box_) => box_,
-        None => return false,
-    };
-    let start = match idat
-        .data_start
-        .checked_add(location.0 as usize)
-    {
-        Some(start) => start,
-        None => return false,
-    };
-    let end = match start.checked_add(location.1 as usize) {
-        Some(end) => end,
-        None => return false,
-    };
-    if end > idat.data_end || end > data.len() {
+    let Some(style_item) = photographic_styles_item(&meta) else {
         return false;
-    }
-    styles_bplist::contains_data_object(&data[start..end], 51_840)
+    };
+    let Ok(payload) = iso_validate::read_item_payload(data, &meta, style_item.item_id) else {
+        return false;
+    };
+    styles_bplist::contains_data_object(&payload, 51_840)
 }
 
 fn verify_iso_gain_map(data: &[u8]) -> bool {
-    let top = isobmff::parse_boxes(data, 0, data.len());
-
-    // Find meta box
-    let meta = match top.iter().find(|b| &b.btype == b"meta") {
-        Some(m) => m,
-        None => return false,
-    };
-
-    let meta_kids = isobmff::parse_boxes(data, meta.data_start + 4, meta.data_end);
-
-    // 1. Check auxC in ipco
-    let has_auxc = check_auxc_in_ipco(data, &meta_kids);
-
-    // 2. Check tmap item in iinf
-    let has_tmap = check_tmap_in_iinf(data, &meta_kids);
-
-    // 3. Check tmap→primary dimg reference in iref (ISO gain map signal)
-    let has_tmap_ref = check_tmap_dimg_in_iref(data, &meta_kids);
-
-    has_auxc && has_tmap && has_tmap_ref
-}
-
-fn check_auxc_in_ipco(data: &[u8], meta_kids: &[isobmff::BoxHeader]) -> bool {
-    let iprp = match meta_kids.iter().find(|b| &b.btype == b"iprp") {
-        Some(b) => b,
-        None => return false,
-    };
-    let iprp_kids = isobmff::parse_boxes(data, iprp.data_start, iprp.data_end);
-    let ipco = match iprp_kids.iter().find(|b| &b.btype == b"ipco") {
-        Some(b) => b,
-        None => return false,
-    };
-
-    // Scan for auxC box containing the ISO 21496-1 URN
-    let ipco_boxes = isobmff::parse_boxes(data, ipco.data_start, ipco.data_end);
-    for b in &ipco_boxes {
-        if &b.btype == b"auxC" {
-            let payload = &data[b.data_start..b.data_end];
-            // auxC payload: 4-byte aux_type (0), then null-terminated URN
-            // Check for the URN substring
-            const URN: &[u8] = b"urn:iso:std:iso:ts:21496:-1";
-            if payload.windows(URN.len()).any(|w| w == URN) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn check_tmap_in_iinf(data: &[u8], meta_kids: &[isobmff::BoxHeader]) -> bool {
-    let iinf = match meta_kids.iter().find(|b| &b.btype == b"iinf") {
-        Some(b) => b,
-        None => return false,
-    };
-    // Scan iinf payload for "tmap" type string in infe entries
-    let iinf_data = &data[iinf.data_start..iinf.data_end];
-    // infe entries contain the type string after item_ID and protection_index
-    // Simple scan: look for "tmap" as a 4-byte string in the iinf payload
-    iinf_data.windows(4).any(|w| w == b"tmap")
-}
-
-fn check_tmap_dimg_in_iref(data: &[u8], meta_kids: &[isobmff::BoxHeader]) -> bool {
-    // Find tmap item ID from iinf
-    let tmap_id = {
-        let iinf = match meta_kids.iter().find(|b| &b.btype == b"iinf") {
-            Some(b) => b,
-            None => return false,
-        };
-        let items = match isobmff::parse_iinf(data, iinf) {
-            Ok(items) => items,
-            Err(_) => return false,
-        };
-        match items.iter().find(|it| it.itype == "tmap") {
-            Some(it) => it.item_id,
-            None => return false,
-        }
-    };
-
-    let iref = match meta_kids.iter().find(|b| &b.btype == b"iref") {
-        Some(b) => b,
-        None => return false,
-    };
-    let (_, refs) = isobmff::parse_iref(data, iref);
-    // Check that tmap has a dimg reference to at least one other item
-    refs.iter()
-        .any(|r| r.rtype == "dimg" && r.from == tmap_id && !r.to.is_empty())
+    isobmff::parse_source_meta(data)
+        .ok()
+        .and_then(|meta| isobmff::primary_tone_map(&meta))
+        .is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -3408,8 +3413,11 @@ mod tests {
     }
 
     #[test]
-    fn lossy_gainmap_promotion_is_rejected_only_for_clean_iso_output() {
-        assert!(should_reject_lossy_gainmap_promotion(true, OppoCompat::Off));
+    fn lossy_gainmap_promotion_is_rejected_only_when_output_requires_full_chroma() {
+        assert_eq!(
+            should_reject_lossy_gainmap_promotion(true, OppoCompat::Off),
+            !cfg!(target_env = "ohos")
+        );
         assert!(!should_reject_lossy_gainmap_promotion(
             false,
             OppoCompat::Off
@@ -3423,6 +3431,227 @@ mod tests {
             true,
             OppoCompat::Iso
         ));
+    }
+
+    /// Build a finished ISO HDR HEIC with non-neutral gain metadata.
+    fn iso_hdr_fixture(tag: &str) -> (Vec<u8>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("xdremux_iso_styles_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exif = Some(sdr_source::minimal_exif_tiff("2020:01:01 00:00:00"));
+        let source = uhdr_jpeg::synthesize_source_container_from_rgb(
+            &vec![80; 128 * 96 * 3], 128, 96, exif, true).unwrap();
+        let mut meta_floats = uhdr_jpeg::neutral_meta_floats();
+        meta_floats[4..7].fill(4.0);
+        meta_floats[17..19].fill(4.0);
+        let extracted = container::ExtractedLhdr {
+            mode: "uhdr".into(),
+            meta_bytes: Vec::new(),
+            meta_floats,
+            gainmap_use_base_color_space: true,
+            mask_data: None,
+            gainmap_data: Some(uhdr_jpeg::IDENTITY_GAINMAP_JPEG.to_vec()),
+            manifest_entries: None,
+        };
+        let base = dir.join("base.heic");
+        convert_uhdr(&extracted, &source, base.to_str().unwrap(), OppoCompat::Off,
+            OppoCameraTail::default_for_compat(OppoCompat::Off), false).unwrap();
+        (std::fs::read(&base).unwrap(), dir)
+    }
+
+    #[test]
+    fn iso_styles_source_is_only_a_finished_iso_hdr_heic() {
+        assert!(iso_styles_source_meta(b"not a photo").is_none());
+        assert!(iso_styles_source_meta(&[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
+        let (iso, dir) = iso_hdr_fixture("detect");
+        assert!(iso_styles_source_meta(&iso).is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn styles_are_added_to_an_iso_hdr_heic_without_touching_its_hdr_graph() {
+        let (mut iso, dir) = iso_hdr_fixture("add");
+        // Native HEICs may signal HDR through tmap/dimg alone.
+        let urn = b"urn:iso:std:iso:ts:21496:-1";
+        let urn_start = iso.windows(urn.len()).position(|w| w == urn).unwrap();
+        iso[urn_start] = b'x';
+        let input = dir.join("input.heic");
+        std::fs::write(&input, &iso).unwrap();
+        let output = dir.join("styled.heic");
+        let cfg = r#"{"outputMode":"apple","applePhotographicStyles":true,"strictTmap":true}"#;
+        let result =
+            pipeline::run_pipeline(input.to_str().unwrap(), output.to_str().unwrap(), cfg, 0);
+        assert_eq!(result["success"], true, "{result}");
+        assert_eq!(result["mode"], "iso", "{result}");
+        let styled = std::fs::read(&output).unwrap();
+        let before = isobmff::parse_source_meta(&iso).unwrap();
+        let after = isobmff::parse_source_meta(&styled).unwrap();
+        let (tmap, gain) = isobmff::primary_tone_map(&before).unwrap();
+        assert_eq!(isobmff::primary_tone_map(&after), Some((tmap, gain)));
+        let original_tmap = iso_validate::read_item_payload(&iso, &before, tmap).unwrap();
+        let strict_tmap = iso_validate::read_item_payload(&styled, &after, tmap).unwrap();
+        assert_eq!(
+            strict_tmap,
+            iso21496::make_strict_tmap_payload(&original_tmap).unwrap()
+        );
+        for id in [before.primary_id, gain] {
+            let tile_refs = |meta: &isobmff::ParsedMeta| {
+                meta.refs
+                    .iter()
+                    .find(|r| r.rtype == "dimg" && r.from == id)
+                    .map(|r| r.to.clone())
+                    .unwrap_or_default()
+            };
+            let tiles = tile_refs(&before);
+            assert_eq!(tiles, tile_refs(&after));
+            for item in std::iter::once(id).chain(tiles) {
+                assert_eq!(
+                    iso_validate::read_item_payload(&iso, &before, item).unwrap(),
+                    iso_validate::read_item_payload(&styled, &after, item).unwrap()
+                );
+            }
+        }
+
+        // A second pass must refuse rather than stack a second Styles graph.
+        let twice = dir.join("twice.heic");
+        let again = pipeline::run_pipeline(output.to_str().unwrap(), twice.to_str().unwrap(), cfg, 0);
+        assert_eq!(
+            again["errorMessage"],
+            "source already carries Photographic Styles"
+        );
+        assert!(!twice.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn styles2_iso_hdr_heic_upgrades_to_styles3_preserving_hdr_and_styles2() {
+        let (iso, dir) = iso_hdr_fixture("upgrade_s2_s3");
+        let input = dir.join("input.heic");
+        std::fs::write(&input, &iso).unwrap();
+
+        let styles2_path = dir.join("styles2.heic");
+        let cfg_s2 = r#"{"outputMode":"apple","applePhotographicStyles":true}"#;
+        let r2 = pipeline::run_pipeline(
+            input.to_str().unwrap(),
+            styles2_path.to_str().unwrap(),
+            cfg_s2,
+            0,
+        );
+        assert_eq!(r2["success"], true, "{r2}");
+
+        let styles2_bytes = std::fs::read(&styles2_path).unwrap();
+        let meta_s2 = isobmff::parse_source_meta(&styles2_bytes).unwrap();
+        let style_id_s2 = photographic_styles_item(&meta_s2).unwrap().item_id;
+        let style_payload_s2 =
+            iso_validate::read_item_payload(&styles2_bytes, &meta_s2, style_id_s2).unwrap();
+        let (tmap, gain) = isobmff::primary_tone_map(&meta_s2).unwrap();
+        let tmap_payload_s2 = iso_validate::read_item_payload(&styles2_bytes, &meta_s2, tmap).unwrap();
+
+        // Adding Styles 3 on top of Styles 2 must keep HDR + Styles 2 intact and add PS3 layers.
+        let styles3_path = dir.join("styles3.heic");
+        let cfg_s3 =
+            r#"{"outputMode":"apple","applePhotographicStyles":true,"applePhotographicStyles3":true}"#;
+        let r3 = pipeline::run_pipeline(
+            styles2_path.to_str().unwrap(),
+            styles3_path.to_str().unwrap(),
+            cfg_s3,
+            0,
+        );
+        assert_eq!(r3["success"], true, "{r3}");
+        assert_eq!(r3["mode"], "iso", "{r3}");
+        assert_eq!(r3["styles3Applied"], true, "{r3}");
+
+        let styles3_bytes = std::fs::read(&styles3_path).unwrap();
+        let meta_s3 = isobmff::parse_source_meta(&styles3_bytes).unwrap();
+        assert_eq!(isobmff::primary_tone_map(&meta_s3), Some((tmap, gain)));
+        assert_eq!(
+            iso_validate::read_item_payload(&styles3_bytes, &meta_s3, tmap).unwrap(),
+            tmap_payload_s2
+        );
+        let style_items_s3: Vec<_> = meta_s3
+            .items
+            .iter()
+            .filter(|item| {
+                item.itype == "uri "
+                    && (contains_ascii(&item.raw_infe, b"styleMetadata\0")
+                        || contains_ascii(
+                            &item.raw_infe,
+                            b"tag:apple.com,2023:photo:metadata:styles\0",
+                        ))
+            })
+            .collect();
+        assert_eq!(style_items_s3.len(), 1);
+        assert_eq!(
+            iso_validate::read_item_payload(&styles3_bytes, &meta_s3, style_items_s3[0].item_id)
+                .unwrap(),
+            style_payload_s2
+        );
+        assert!(verify_photographic_styles(&styles3_bytes));
+        assert!(has_texture_styles(&meta_s3));
+        assert!(has_semantic_mattes(&styles3_bytes));
+
+        // Duplicate Styles 2 and Styles 3 passes on the Styles 3 output must still refuse.
+        let dup_s3 = dir.join("dup_s3.heic");
+        let again_s3 = pipeline::run_pipeline(
+            styles3_path.to_str().unwrap(),
+            dup_s3.to_str().unwrap(),
+            cfg_s3,
+            0,
+        );
+        assert_eq!(again_s3["success"], false, "{again_s3}");
+        assert_eq!(
+            again_s3["errorMessage"],
+            "source already carries Photographic Styles 3"
+        );
+        let dup_s2 = dir.join("dup_s2.heic");
+        let again_s2 = pipeline::run_pipeline(
+            styles3_path.to_str().unwrap(),
+            dup_s2.to_str().unwrap(),
+            cfg_s2,
+            0,
+        );
+        assert_eq!(again_s2["success"], false, "{again_s2}");
+        assert_eq!(
+            again_s2["errorMessage"],
+            "source already carries Photographic Styles"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn native_cm0_styles2_heic_verifies_and_upgrades_to_styles3() {
+        let (iso, dir) = iso_hdr_fixture("cm0_s2_s3");
+        let style_payload = styles_native::debug_build(&styles_native::StyleStateOverride::identity());
+        let native_s2 = texture_styles::inject_uri_metadata_item(
+            &iso,
+            styles_attach::STYLES_URI,
+            &style_payload,
+        )
+        .unwrap();
+        assert!(
+            verify_photographic_styles(&native_s2),
+            "cm=0 mdat Styles 2 item must verify"
+        );
+
+        let input = dir.join("native_s2.heic");
+        std::fs::write(&input, &native_s2).unwrap();
+        let output = dir.join("native_s3.heic");
+        let cfg_s3 =
+            r#"{"outputMode":"apple","applePhotographicStyles":true,"applePhotographicStyles3":true}"#;
+        let report = pipeline::run_pipeline(
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            cfg_s3,
+            0,
+        );
+        assert_eq!(report["success"], true, "{report}");
+        assert_eq!(report["styles3Applied"], true, "{report}");
+        let out_bytes = std::fs::read(&output).unwrap();
+        let out_meta = isobmff::parse_source_meta(&out_bytes).unwrap();
+        assert!(verify_iso_gain_map(&out_bytes));
+        assert!(verify_photographic_styles(&out_bytes));
+        assert!(has_texture_styles(&out_meta));
+        assert!(has_semantic_mattes(&out_bytes));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

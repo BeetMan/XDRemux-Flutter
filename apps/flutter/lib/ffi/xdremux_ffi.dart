@@ -19,7 +19,8 @@ extension ToDartStringOrNull on ffi.Pointer<Utf8> {
 /// - `oppoCameraTail`: 0=off through 9=preserve-no-hdr; 255=automatic
 /// - `strictTmap`: false=ImageIO-compatible 62/142-byte payload;
 ///   true=strict ISO 65/145-byte payload
-/// - `applePhotographicStyles`: generate the native Rust Styles graph
+/// - `applePhotographicStyles`: 1 generates the native Rust Styles 2 graph;
+///   2 generates or upgrades Styles 2 to Photographic Styles 3.
 /// - `applePortrait`: generate the native Rust Apple Portrait graph
 final class ConvertConfig extends ffi.Struct {
   @ffi.Uint8()
@@ -572,6 +573,7 @@ class XdRemuxFFI {
     int oppoCameraTail = 255,
     bool strictTmap = false,
     bool applePhotographicStyles = false,
+    bool applePhotographicStyles3 = false,
     bool applePortrait = false,
   }) {
     final input = inputPath.toNativeUtf8();
@@ -580,7 +582,9 @@ class XdRemuxFFI {
     cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
-    cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
+    cfg.ref.applePhotographicStyles = applePhotographicStyles3
+        ? 2
+        : (applePhotographicStyles ? 1 : 0);
     cfg.ref.applePortrait = applePortrait ? 1 : 0;
     try {
       return _convert(input, output, cfg);
@@ -603,6 +607,7 @@ class XdRemuxFFI {
     int oppoCameraTail = 255,
     bool strictTmap = false,
     bool applePhotographicStyles = false,
+    bool applePhotographicStyles3 = false,
     bool applePortrait = false,
   }) {
     final input = inputPath.toNativeUtf8();
@@ -611,7 +616,9 @@ class XdRemuxFFI {
     cfg.ref.oppoCompat = oppoCompat.clamp(0, 6);
     cfg.ref.oppoCameraTail = oppoCameraTail.clamp(0, 255);
     cfg.ref.strictTmap = strictTmap ? 1 : 0;
-    cfg.ref.applePhotographicStyles = applePhotographicStyles ? 1 : 0;
+    cfg.ref.applePhotographicStyles = applePhotographicStyles3
+        ? 2
+        : (applePhotographicStyles ? 1 : 0);
     cfg.ref.applePortrait = applePortrait ? 1 : 0;
     try {
       return _convertWithProgress(input, output, cfg, progressHandle);
