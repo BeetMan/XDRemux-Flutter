@@ -21,16 +21,16 @@
 import os
 
 # Content area of the window in points; background.png is drawn for it.
-CONTENT = (660, 470)
-HERO_Y = 172
-SMALL_Y = 340
-# Wide enough that the privacy shortcut's name, at text_size 12, does not
-# touch its neighbour or the window edge. Tightened only when four or more
-# items are staged.
-SMALL_SPACING = 200
-# Website link, under the top-right corner, clear of the hero row. Far
-# enough from the edge for its label, even when Finder shows extensions.
-LINK = (536, 58)
+CONTENT = (660, 476)
+HERO_Y = 188
+SMALL_Y = 352
+# Wide enough that the privacy shortcut's name, at text_size 12, fits cleanly
+# inside the bottom shelf. Tightened only when four or more items are staged.
+SMALL_SPACING = 186
+# Website link, under the top-right corner, clear of the hero row (14pt gap
+# between the bottom of the 24pt label mat and Applications' icon top) and
+# far enough from the edge even when Finder shows extensions.
+LINK = (548, 52)
 
 # Finder's window bounds include the title bar, so the window is taller than
 # the picture. 32 is the title bar of a toolbar-less window on macOS 26; on

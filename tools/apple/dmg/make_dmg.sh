@@ -35,8 +35,24 @@ if [ -z "$VOL" ] || [ -z "$OUT" ] || [ -z "$STAGE" ] || [ ! -d "$STAGE" ]; then
 fi
 STAGE="$(cd "$STAGE" && pwd)"
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
-[ -n "$ICON" ] || ICON=""
+if [ -n "$ICON" ] && [ ! -f "$ICON" ]; then
+  echo "warning: volume icon not found, omitting ($ICON)" >&2
+  ICON=""
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+APPS=()
+for p in "$STAGE"/*.app; do
+  [ -d "$p" ] && APPS+=("$(basename "$p")")
+done
+if [ "${#APPS[@]}" -eq 0 ]; then
+  echo "no .app bundle in $STAGE" >&2
+  exit 1
+elif [ "${#APPS[@]}" -gt 1 ]; then
+  echo "expected one .app bundle in $STAGE, found ${#APPS[@]}" >&2
+  exit 1
+fi
+APP="${APPS[0]}"
 
 plain_dmg() {
   echo "warning: building $OUT without the installer layout ($1)" >&2
@@ -81,15 +97,6 @@ if [ ! -x "$VENV/bin/dmgbuild" ] || ! "$VENV/bin/python" -c 'import dmgbuild' >/
     plain_dmg "cannot install dmgbuild"
     exit 0
   fi
-fi
-
-APP=""
-for p in "$STAGE"/*.app; do
-  [ -d "$p" ] && APP="$(basename "$p")"
-done
-if [ -z "$APP" ]; then
-  echo "no .app bundle in $STAGE" >&2
-  exit 1
 fi
 
 # Shortcut files show the generic document icon. Give them an icon of the
