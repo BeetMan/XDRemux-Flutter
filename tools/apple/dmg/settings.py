@@ -5,6 +5,8 @@
 #   app    name of the .app bundle inside it
 #   icon   .icns used as the volume icon ("" for none)
 #   assets directory holding background.png / background@2x.png
+#   decorated  directory with copies of the .inetloc shortcuts that carry a
+#               custom Finder icon ("" to take them from the staging folder)
 #
 # Everything else in the staging directory (licence files, the Privacy &
 # Security shortcut) goes into a row along the bottom of the window.
@@ -33,6 +35,14 @@ TITLE_BAR = 32
 stage = defines["stage"]
 app = defines["app"]
 volume_icon = defines.get("icon") or None
+decorated = defines.get("decorated") or ""
+
+
+def source(name):
+    """Staged path for an item, preferring the icon-decorated copy."""
+    copy = os.path.join(decorated, name)
+    return copy if decorated and os.path.isfile(copy) else os.path.join(stage, name)
+
 
 files = []
 extras = []
@@ -44,7 +54,7 @@ for name in sorted(os.listdir(stage)):
         extras.append(name)
         if name.endswith(".inetloc"):
             hide_extensions.append(name)
-    files.append((os.path.join(stage, name), name))
+    files.append((source(name), name))
 
 symlinks = {"Applications": "/Applications"}
 

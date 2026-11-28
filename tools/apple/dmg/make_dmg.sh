@@ -6,8 +6,7 @@
 # The window shows the app on the left, the /Applications link on the right
 # with an arrow between them, and the remaining staged files (licence files,
 # the Privacy & Security shortcut) in a row along the bottom. See settings.py
-# for the positions and gen_background.swift for the background picture.
-#
+# for the positions and gen_background.swift for the background picture.#
 # dmgbuild writes the Finder layout (.DS_Store) itself, so no Finder session
 # or AppleScript is needed and a developer Mac and CI produce the same image.
 # It needs Python >= 3.11 and is installed once into a cached virtualenv from
@@ -87,10 +86,30 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
+# A .inetloc shortcut shows the generic document icon. Give it the System
+# Settings icon of the build machine as a custom Finder icon. That needs
+# extended attributes, which exFAT/SMB staging folders drop, so work on a
+# copy in a temporary directory rather than in the staging folder.
+DECORATED=""
+cleanup() { [ -n "$DECORATED" ] && rm -rf "$DECORATED"; }
+trap cleanup EXIT
+SETTINGS_ICON="/System/Applications/System Settings.app/Contents/Resources/Settings.icns"
+if [ -f "$SETTINGS_ICON" ] && /bin/ls "$STAGE"/*.inetloc >/dev/null 2>&1; then
+  DECORATED="$(mktemp -d)"
+  for f in "$STAGE"/*.inetloc; do
+    cp "$f" "$DECORATED/" && "$PY" "$HERE/set_file_icon.py" "$DECORATED/$(basename "$f")" "$SETTINGS_ICON" || {
+      echo "warning: no custom icon for $(basename "$f")" >&2
+      DECORATED=""
+      break
+    }
+  done
+fi
+
 rm -f "$OUT"
 echo "==> DMG layout: $APP -> Applications (+ extras), window from settings.py"
 if ! "$VENV/bin/dmgbuild" -s "$HERE/settings.py" \
       -D "stage=$STAGE" -D "app=$APP" -D "icon=$ICON" -D "assets=$HERE" \
+      -D "decorated=$DECORATED" \
       --detach-retries 8 "$VOL" "$OUT"; then
   if [ "${XDREMUX_DMG_STRICT:-0}" = "1" ]; then
     echo "dmgbuild failed" >&2
