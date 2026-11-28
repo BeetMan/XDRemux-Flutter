@@ -40,6 +40,9 @@ pub struct PhotoDetails {
     pub hdr_parse_error: Option<String>,
     pub edr_scale: Option<f64>,
     pub gain_map_max: Option<f64>,
+
+    // OPPO private tail data, see `oppo_details`. Absent without a tail.
+    pub oppo: Option<serde_json::Value>,
 }
 
 impl PhotoDetails {
@@ -105,6 +108,9 @@ impl PhotoDetails {
             if let Some(n) = serde_json::Number::from_f64(v) {
                 map.insert("gainMapMax".into(), serde_json::Value::Number(n));
             }
+        }
+        if let Some(v) = &self.oppo {
+            map.insert("oppo".into(), v.clone());
         }
         serde_json::Value::Object(map)
     }
@@ -553,6 +559,9 @@ pub fn inspect_photo_details_from_bytes(data: &[u8]) -> PhotoDetails {
         details.edr_scale = Some((edr_scale * 10.0).round() / 10.0);
         details.gain_map_max = Some((gain_map_max * 10.0).round() / 10.0);
     }
+
+    // 4. OPPO private tail
+    details.oppo = crate::oppo_details::inspect(data);
 
     details
 }

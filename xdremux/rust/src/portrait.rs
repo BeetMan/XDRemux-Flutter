@@ -776,7 +776,7 @@ fn source_is_mirrored(input: &[u8]) -> bool {
 /// `mirrorEnable` of `front.depth.config`. The entry ends with `mirrorEnable`,
 /// `cameraRoll` and, from version 1.1, the f-number, so the field is found
 /// from the end. `None` when the two integers are not a flag and a rotation.
-fn front_config_mirror(config: &[u8]) -> Option<bool> {
+pub(crate) fn front_config_mirror(config: &[u8]) -> Option<bool> {
     let version = pd::read_f32le(config, 0)?;
     let end = if version >= 1.1 { config.len().checked_sub(4)? } else { config.len() };
     // The fixed fields before the two integers take 276 bytes.
@@ -936,7 +936,7 @@ fn rotate_cw90(plane: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
 }
 
 /// The base primary's ispe dims (frame the aux maps must align with).
-fn base_primary_dims(meta: &ParsedMeta) -> Result<(u32, u32), String> {
+pub(crate) fn base_primary_dims(meta: &ParsedMeta) -> Result<(u32, u32), String> {
     let entry = meta
         .ipma_entries
         .iter()

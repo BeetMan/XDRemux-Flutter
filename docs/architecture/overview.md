@@ -28,6 +28,7 @@ XDRemux-Flutter/
 │   │   ├── apple_log.rs        # Apple Log 传递函数
 │   │   ├── heif_decode.rs / huawei_heic.rs # HEIF 解码、华为 HEIC 识别
 │   │   ├── photo_details.rs    # 照片详情（EXIF / HDR 摘要）
+│   │   ├── oppo_details.rs     # 照片详情里的 OPPO 私有数据（水印、滤镜、人像、尾部条目）
 │   │   ├── codec_capabilities.rs # 编码路径能力报告（8/10-bit）
 │   │   ├── styles_bplist.rs    # Apple 二进制 plist 写入器
 │   │   ├── styles_scaffold.rs  # 风格容器脚手架
@@ -104,7 +105,7 @@ XDRemux-Flutter/
 | `xdremux_service` | Rust FFI 调用的主门面（含平台分流）；部分服务与页面也直接用 `ffi/xdremux_ffi.dart` |
 | `motion_photo_service` | 动态照片异步识别、拆分与策略应用 |
 | `output_export_service` | 输出导出与分享（`.pvt` 包在 iOS/macOS 直接分享，其他平台打包 `.pvt.zip`） |
-| `photo_details_service` | 照片详情（EXIF / HDR 摘要） |
+| `photo_details_service` | 照片详情（EXIF / HDR 摘要、OPPO 私有数据） |
 | `codec_diagnostics` | 编码路径诊断（8/10-bit、硬件编码） |
 | `huawei_photo_policy` | 华为照片处理策略 |
 | `conversion_backend` | 后端选择（Rust / Swift） |
