@@ -38,7 +38,6 @@ class AppleOppoWorkflowService {
         outputPath: outputPath,
         oppoCompat: OppoCompatMode.off.rustValue,
         oppoCameraTail: OppoCameraTailMode.off.rustValue,
-        strictTmap: false,
         applePhotographicStyles: true,
         appleWatermarkPolicy: watermarkPolicy,
       ),

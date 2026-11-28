@@ -707,7 +707,6 @@ package func writeHybridPrimaryPassthrough(
     outputURL: URL,
     patchedUserComment: String?,
     preserveTmapColor: Bool = false,
-    strictISO21496Tmap: Bool = false,
     fallbackXMPPayload: Data? = nil
 ) throws {
     let source = try Data(contentsOf: sourceURL)
@@ -889,17 +888,7 @@ package func writeHybridPrimaryPassthrough(
         throw CLIError.invalidContainer("preserve gain grid/tmap has no iloc entry")
     }
     let gainGridPayload = try itemPayload(in: preserved, entry: gainGridEntry, idat: preservedIDAT)
-    let preservedTmapPayload = try itemPayload(in: preserved, entry: tmapEntry, idat: preservedIDAT)
-    let tmapPayload: Data
-    if strictISO21496Tmap, preservedTmapPayload.count == 62 || preservedTmapPayload.count == 142 {
-        // ImageIO omits the three reserved GainMapMetadata bytes. Restore them
-        // after the flags byte so one/three-channel ISO payloads are 65/145 B.
-        tmapPayload = preservedTmapPayload.prefix(6)
-            + Data([0x00, 0x00, 0x00])
-            + preservedTmapPayload.dropFirst(6)
-    } else {
-        tmapPayload = preservedTmapPayload
-    }
+    let tmapPayload = try itemPayload(in: preserved, entry: tmapEntry, idat: preservedIDAT)
     let xmpPayload: Data?
     if let preservedXMPID {
         guard let xmpEntry = preservedIlocByID[preservedXMPID] else {

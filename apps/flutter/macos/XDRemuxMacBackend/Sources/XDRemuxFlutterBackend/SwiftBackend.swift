@@ -9,7 +9,6 @@ public struct SwiftBackendRequest: Sendable {
     public let outputMode: String
     public let oppoCompatibility: Int
     public let oppoCameraTail: Int
-    public let strictTmap: Bool
     public let applePhotographicStyles: Bool
     public let applePortrait: Bool
     public let appleWatermarkPolicy: String
@@ -21,7 +20,6 @@ public struct SwiftBackendRequest: Sendable {
         outputMode: String = "oppo",
         oppoCompatibility: Int,
         oppoCameraTail: Int,
-        strictTmap: Bool,
         applePhotographicStyles: Bool = false,
         applePortrait: Bool = false,
         appleWatermarkPolicy: String = "preserve"
@@ -32,7 +30,6 @@ public struct SwiftBackendRequest: Sendable {
         self.outputMode = outputMode
         self.oppoCompatibility = oppoCompatibility
         self.oppoCameraTail = oppoCameraTail
-        self.strictTmap = strictTmap
         self.applePhotographicStyles = applePhotographicStyles
         self.applePortrait = applePortrait
         self.appleWatermarkPolicy = appleWatermarkPolicy
@@ -190,7 +187,6 @@ public enum XDRemuxSwiftBackend {
             oppoCompatibility: oppoCompatibility,
             inputProcessingBranch: .hybrid,
             oppoCameraTail: oppoCameraTail,
-            tmapFormat: request.strictTmap ? .strict : .imageIO,
             applePhotographicStyles: request.applePhotographicStyles,
             applePortrait: request.applePortrait,
             eventHandler: { event in

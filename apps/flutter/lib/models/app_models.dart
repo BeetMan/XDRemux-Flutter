@@ -468,7 +468,6 @@ class ConversionConfig {
   String? outputDirectory;
   OppoCompatMode oppoCompatibility;
   OppoCameraTailMode oppoCameraTail;
-  bool strictTmap;
   bool applePhotographicStyles;
   bool applePortrait;
 
@@ -499,7 +498,6 @@ class ConversionConfig {
     this.outputDirectory,
     this.oppoCompatibility = OppoCompatMode.on,
     this.oppoCameraTail = OppoCameraTailMode.automatic,
-    this.strictTmap = false,
     this.applePhotographicStyles = false,
     this.applePortrait = false,
     this.applePhotographicStyles3 = false,
@@ -522,7 +520,6 @@ class ConversionConfig {
     'outputDirectory': outputDirectory,
     'oppoCompatibility': oppoCompatibility.name,
     'oppoCameraTail': oppoCameraTail.name,
-    'strictTmap': strictTmap,
     'applePhotographicStyles': applePhotographicStyles,
     'applePortrait': applePortrait,
     'applePhotographicStyles3': applePhotographicStyles3,
@@ -560,7 +557,6 @@ class ConversionConfig {
         (e) => e.name == json['oppoCameraTail'],
         orElse: () => OppoCameraTailMode.automatic,
       ),
-      strictTmap: json['strictTmap'] as bool? ?? false,
       applePhotographicStyles:
           json['applePhotographicStyles'] as bool? ?? false,
       applePortrait: json['applePortrait'] as bool? ?? false,
@@ -588,7 +584,6 @@ class ConversionConfig {
     outputDirectory: outputDirectory,
     oppoCompatibility: oppoCompatibility,
     oppoCameraTail: oppoCameraTail,
-    strictTmap: strictTmap,
     applePhotographicStyles: applePhotographicStyles,
     applePortrait: applePortrait,
     applePhotographicStyles3: applePhotographicStyles3,

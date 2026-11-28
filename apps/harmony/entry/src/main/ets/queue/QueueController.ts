@@ -741,7 +741,7 @@ export class QueueController {
       config: {
         oppoCompat: captured.config.oppoCompat,
         oppoCameraTail: captured.config.oppoCameraTail,
-        strictTmap: captured.config.strictTmap,
+        strictTmap: 0,
         applePhotographicStyles: captured.config.applePhotographicStyles,
         applePortrait: captured.config.applePortrait
       }

@@ -114,10 +114,6 @@ struct SettingsView: View {
                 }
                 #endif
 
-                Section("高级") {
-                    Toggle("严格 ISO 21496-1 tmap", isOn: $model.config.strictTmap)
-                }
-
                 // Checkpoint interop only makes sense where both apps see the
                 // same paths; on iOS the two sandboxes cannot, so the entries
                 // would import as unreadable.

@@ -57,7 +57,6 @@ void main() {
         outputPath: photoOut,
         oppoCompat: OppoCompatMode.on.rustValue,
         oppoCameraTail: OppoCameraTailMode.preserve.rustValue,
-        strictTmap: false,
       ),
     );
     expect(r1.success, isTrue, reason: r1.errorMessage);
@@ -74,7 +73,6 @@ void main() {
         outputPath: motionOut,
         oppoCompat: OppoCompatMode.on.rustValue,
         oppoCameraTail: OppoCameraTailMode.preserve.rustValue,
-        strictTmap: false,
       ),
     );
     expect(r2.success, isTrue, reason: r2.errorMessage);

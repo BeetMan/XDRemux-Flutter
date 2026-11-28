@@ -67,7 +67,6 @@ pub fn write_lhdr_iso_output(
     edr_scale: f32,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
@@ -152,11 +151,6 @@ pub fn write_lhdr_iso_output(
     } else {
         crate::iso21496::make_apple_tmap_payload(&iso_meta)
     };
-    let tmap_payload = if strict_tmap {
-        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
-    } else {
-        tmap_payload
-    };
 
     // Item IDs
     let (gain_grid_id, tmap_id, xmp_id, group_id) =
@@ -215,11 +209,10 @@ pub fn write_uhdr_iso_output(
     meta_floats: &[f32],
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
     write_uhdr_iso_output_with_color_space(source_data, gainmap_jpeg, meta_floats, true,
-        oppo_compat, tail_policy, strict_tmap, output_path)
+        oppo_compat, tail_policy, output_path)
 }
 
 pub fn write_uhdr_iso_output_with_color_space(
@@ -229,7 +222,6 @@ pub fn write_uhdr_iso_output_with_color_space(
     use_base_color_space: bool,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
     output_path: &str,
 ) -> Result<(), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
@@ -295,11 +287,6 @@ pub fn write_uhdr_iso_output_with_color_space(
     } else {
         crate::iso21496::make_clean_tmap_payload(&iso_meta)
     };
-    let tmap_payload = if strict_tmap {
-        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
-    } else {
-        tmap_payload
-    };
 
     // Item IDs
     let (gain_grid_id, tmap_id, xmp_id, group_id) =
@@ -364,7 +351,6 @@ pub struct PreparedOutput {
     pub family: String,
     pub oppo_compat: OppoCompat,
     pub tail_policy: OppoCameraTail,
-    pub strict_tmap: bool,
     pub orientation: ExifOrientation,
     pub gain_width: u32,
     pub gain_height: u32,
@@ -443,7 +429,6 @@ pub fn prepare_lhdr_tiles(
     edr_scale: f32,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
 ) -> Result<(PreparedOutput, Vec<u8>), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
     let meta = find(&top, b"meta")?;
@@ -503,7 +488,6 @@ pub fn prepare_lhdr_tiles(
             family: family.into(),
             oppo_compat,
             tail_policy,
-            strict_tmap,
             orientation,
             gain_width,
             gain_height,
@@ -523,10 +507,9 @@ pub fn prepare_uhdr_tiles(
     meta_floats: &[f32],
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
 ) -> Result<(PreparedOutput, Vec<u8>), String> {
     prepare_uhdr_tiles_with_color_space(source_data, gainmap_jpeg, meta_floats, true,
-        oppo_compat, tail_policy, strict_tmap)
+        oppo_compat, tail_policy)
 }
 
 pub fn prepare_uhdr_tiles_with_color_space(
@@ -536,7 +519,6 @@ pub fn prepare_uhdr_tiles_with_color_space(
     use_base_color_space: bool,
     oppo_compat: OppoCompat,
     tail_policy: OppoCameraTail,
-    strict_tmap: bool,
 ) -> Result<(PreparedOutput, Vec<u8>), String> {
     let top = isobmff::parse_boxes(source_data, 0, source_data.len());
     let meta = find(&top, b"meta")?;
@@ -575,7 +557,6 @@ pub fn prepare_uhdr_tiles_with_color_space(
             family: "x7".into(),
             oppo_compat,
             tail_policy,
-            strict_tmap,
             orientation,
             gain_width,
             gain_height,
@@ -643,11 +624,6 @@ pub fn assemble_prepared_tiles(
         crate::iso21496::make_imageio_native_tmap_payload(&iso_meta)
     } else {
         crate::iso21496::make_clean_tmap_payload(&iso_meta)
-    };
-    let tmap_payload = if prepared.strict_tmap {
-        crate::iso21496::make_strict_tmap_payload(&tmap_payload)?
-    } else {
-        tmap_payload
     };
 
     let tile_ids: Vec<u32> = {
@@ -2317,7 +2293,6 @@ mod tests {
             3.0,
             OppoCompat::Off,
             OppoCameraTail::default_for_compat(OppoCompat::Off),
-            false,
             tmp.to_str().unwrap(),
         );
         if let Err(ref e) = result {
@@ -2389,7 +2364,6 @@ mod tests {
             3.0,
             oppo_compat,
             OppoCameraTail::default_for_compat(oppo_compat),
-            false,
             tmp.to_str().expect("temporary path is valid UTF-8"),
         )
         .expect("writer accepts a minimal LHDR source");
@@ -2474,7 +2448,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_tmap_is_written_as_a_65_byte_item() {
+    fn lhdr_iso_tmap_is_written_as_normative_62_byte_item() {
         let source = make_minimal_heic();
         let mask = vec![128u8; 16];
         let mut meta = [0.0f32; 36];
@@ -2487,7 +2461,7 @@ mod tests {
         meta[32] = 30000.0;
 
         let unique = format!(
-            "xdremux_test_strict_tmap_{}_{}.heic",
+            "xdremux_test_normative_tmap_{}_{}.heic",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2504,10 +2478,9 @@ mod tests {
             3.0,
             OppoCompat::Off,
             OppoCameraTail::default_for_compat(OppoCompat::Off),
-            true,
             tmp.to_str().expect("temporary path is valid UTF-8"),
         )
-        .expect("writer accepts strict tmap output");
+        .expect("writer writes normative tmap output");
 
         let written = std::fs::read(&tmp).expect("read generated HEIC");
         std::fs::remove_file(&tmp).expect("remove generated HEIC");
@@ -2524,7 +2497,7 @@ mod tests {
             .find(|entry| entry.item_id == tmap_id)
             .and_then(|entry| entry.extents.first())
             .expect("tmap item extent");
-        assert_eq!(tmap_extent.1, 65);
+        assert_eq!(tmap_extent.1, 62);
     }
 
     /// A source primary without its own `irot` gets the EXIF-derived rotation
@@ -2561,7 +2534,6 @@ mod tests {
             3.0,
             OppoCompat::Off,
             OppoCameraTail::default_for_compat(OppoCompat::Off),
-            false,
             tmp.to_str().expect("temporary path is valid UTF-8"),
         )
         .expect("writer accepts a valid HEIC with EXIF orientation");
@@ -2622,7 +2594,6 @@ mod tests {
             3.0,
             OppoCompat::Off,
             OppoCameraTail::default_for_compat(OppoCompat::Off),
-            false,
         )
         .expect("prepare_lhdr_tiles succeeds");
         assert_eq!(prepared.rows, 1);

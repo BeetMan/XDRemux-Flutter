@@ -906,19 +906,29 @@ bool read_ps3_options(
 
 bool read_convert_config(napi_env env, napi_value value, XdremuxConvertConfig &config)
 {
+    std::uint8_t strict_tmap = 0;
+    bool has_strict_tmap = false;
+    if (napi_has_named_property(env, value, "strictTmap", &has_strict_tmap) != napi_ok) {
+        return false;
+    }
+    if (has_strict_tmap && !read_uint8_property(env, value, "strictTmap", strict_tmap)) {
+        return false;
+    }
     if (!read_uint8_property(env, value, "oppoCompat", config.oppo_compat) ||
         !read_uint8_property(env, value, "oppoCameraTail", config.oppo_camera_tail) ||
-        !read_uint8_property(env, value, "strictTmap", config.strict_tmap) ||
         !read_uint8_property(env, value, "applePhotographicStyles",
                              config.apple_photographic_styles) ||
         !read_uint8_property(env, value, "applePortrait", config.apple_portrait)) {
         return false;
     }
     // Keep the native boundary aligned with the Rust config's documented
-    // domains instead of allowing arbitrary byte values from JS.
+    // domains instead of allowing arbitrary byte values from JS. `strict_tmap`
+    // is kept at offset 2 for C ABI layout compatibility and always ignored
+    // (normalized to 0).
+    config.strict_tmap = 0;
     const bool compat_valid = config.oppo_compat <= 6;
     const bool tail_valid = config.oppo_camera_tail <= 9 || config.oppo_camera_tail == 255;
-    const bool flags_valid = (config.strict_tmap == 0 || config.strict_tmap == 1) &&
+    const bool flags_valid = (!has_strict_tmap || strict_tmap == 0 || strict_tmap == 1) &&
                              config.apple_photographic_styles <= 2 &&
                              (config.apple_portrait == 0 || config.apple_portrait == 1);
     return compat_valid && tail_valid && flags_valid;

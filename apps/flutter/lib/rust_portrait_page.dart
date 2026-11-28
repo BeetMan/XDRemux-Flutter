@@ -146,7 +146,6 @@ class _RustPortraitPageState extends State<RustPortraitPage> {
               outputPath: output,
               oppoCompat: OppoCompatMode.off.rustValue,
               oppoCameraTail: OppoCameraTailMode.off.rustValue,
-              strictTmap: false,
               applePortrait: true,
             ),
           );

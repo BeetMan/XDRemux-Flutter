@@ -348,7 +348,6 @@ class XdRemuxService {
     String outputPath, {
     int oppoCompat = 0,
     int oppoCameraTail = 255,
-    bool strictTmap = false,
     int progressHandle = 0,
   }) {
     return convertWithBackend(
@@ -359,7 +358,6 @@ class XdRemuxService {
         outputPath: outputPath,
         oppoCompat: oppoCompat,
         oppoCameraTail: oppoCameraTail,
-        strictTmap: strictTmap,
         progressHandle: progressHandle,
       ),
     ).then((result) => result.toMap());
@@ -567,7 +565,6 @@ class XdRemuxService {
   static const _keyOutputDirectory = 'outputDirectory';
   static const _keyOppoCompat = 'oppoCompatibility';
   static const _keyOppoCameraTail = 'oppoCameraTail';
-  static const _keyStrictTmap = 'strictTmap';
   static const _keyApplePhotographicStyles = 'applePhotographicStyles';
   static const _keyApplePortrait = 'applePortrait';
   static const _keySkipExisting = 'skipExisting';
@@ -603,7 +600,6 @@ class XdRemuxService {
         (e) => e.name == prefs.getString(_keyOppoCameraTail),
         orElse: () => OppoCameraTailMode.automatic,
       ),
-      strictTmap: prefs.getBool(_keyStrictTmap) ?? false,
       applePhotographicStyles:
           prefs.getBool(_keyApplePhotographicStyles) ?? false,
       applePortrait: prefs.getBool(_keyApplePortrait) ?? false,
@@ -634,7 +630,6 @@ class XdRemuxService {
     }
     await prefs.setString(_keyOppoCompat, config.oppoCompatibility.name);
     await prefs.setString(_keyOppoCameraTail, config.oppoCameraTail.name);
-    await prefs.setBool(_keyStrictTmap, config.strictTmap);
     await prefs.setBool(
       _keyApplePhotographicStyles,
       config.applePhotographicStyles,

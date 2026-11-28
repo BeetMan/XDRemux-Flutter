@@ -301,7 +301,9 @@ function copyModeOverride(value: QueueModeSnapshot): QueueModeSnapshot {
     applePhotographicStyles?: Object; applePortrait?: Object };
   const oppoCompat: number = requiredCounter(config.oppoCompat, 'modeOverride.config.oppoCompat');
   const oppoCameraTail: number = requiredCounter(config.oppoCameraTail, 'modeOverride.config.oppoCameraTail');
-  const strictTmap: number = requiredCounter(config.strictTmap, 'modeOverride.config.strictTmap');
+  const strictTmap: number = config.strictTmap === undefined
+    ? 0
+    : requiredCounter(config.strictTmap, 'modeOverride.config.strictTmap');
   const applePhotographicStyles: number = requiredCounter(
     config.applePhotographicStyles, 'modeOverride.config.applePhotographicStyles'
   );
@@ -330,7 +332,8 @@ function copyModeOverride(value: QueueModeSnapshot): QueueModeSnapshot {
     config: {
       oppoCompat: oppoCompat,
       oppoCameraTail: oppoCameraTail,
-      strictTmap: strictTmap,
+      // Legacy persisted queue snapshots may carry strictTmap=1; normalize to 0.
+      strictTmap: 0,
       applePhotographicStyles: applePhotographicStyles,
       applePortrait: applePortrait
     }

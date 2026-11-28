@@ -58,8 +58,8 @@ typedef struct ConversionResult {
  *   5=iso-no-local, 6=iso-graph
  * - `oppo_camera_tail`: 0=off through 9=preserve-no-hdr;
  *   255 selects the compatibility-dependent default.
- * - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
- *   ISO 21496-1 65/145-byte payload.
+ * - `strict_tmap`: deprecated/ignored (kept at offset 2 for C ABI layout);
+ *   callers should pass 0. Outputs always use normative 62/142-byte payloads.
  * - `apple_photographic_styles`: 1 generates the native Rust Styles 2 graph;
  *   2 generates or upgrades Styles 2 to Photographic Styles 3.
  */

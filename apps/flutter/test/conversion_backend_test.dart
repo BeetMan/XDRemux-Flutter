@@ -44,6 +44,13 @@ void main() {
     expect(restored.backend, ConversionBackend.rust);
     expect(restored.applePhotographicStyles, isTrue);
     expect(restored.applePortrait, isTrue);
+
+    final legacy = ConversionConfig.fromJson({
+      'outputMode': 'oppo',
+      'strictTmap': true,
+    });
+    expect(legacy.outputMode, OutputMode.oppo);
+    expect(legacy.toJson().containsKey('strictTmap'), isFalse);
   });
 
   test('Rust Apple feature requests are available independently of Swift', () {
@@ -55,7 +62,6 @@ void main() {
       outputPath: 'output.heic',
       oppoCompat: 0,
       oppoCameraTail: 0,
-      strictTmap: false,
       applePhotographicStyles: true,
       applePortrait: true,
     );
@@ -73,7 +79,6 @@ void main() {
         outputPath: 'output.heic',
         oppoCompat: 0,
         oppoCameraTail: 0,
-        strictTmap: false,
       );
       expect(request.appleWatermarkPolicy, AppleWatermarkPolicy.preserve);
       const isolated = ConversionRequest(
@@ -83,7 +88,6 @@ void main() {
         outputPath: 'output.heic',
         oppoCompat: 0,
         oppoCameraTail: 0,
-        strictTmap: false,
         appleWatermarkPolicy: AppleWatermarkPolicy.isolate,
       );
       expect(isolated.appleWatermarkPolicy, AppleWatermarkPolicy.isolate);

@@ -43,7 +43,6 @@ void main() {
         outputPath: output.path,
         oppoCompat: OppoCompatMode.on.rustValue,
         oppoCameraTail: OppoCameraTailMode.preserve.rustValue,
-        strictTmap: false,
       ),
     );
 

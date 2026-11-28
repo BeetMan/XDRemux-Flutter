@@ -1217,7 +1217,6 @@ mod tests {
             &info.meta_floats,
             crate::exif::OppoCompat::Off,
             crate::container::OppoCameraTail::default_for_compat(crate::exif::OppoCompat::Off),
-            false,
             tmp.to_str().expect("temporary path is valid UTF-8"),
         )
         .expect("UHDR writer accepts the synthesized container");

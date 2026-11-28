@@ -127,8 +127,8 @@ pub struct ClassificationResult {
 ///   5=iso-no-local, 6=iso-graph
 /// - `oppo_camera_tail`: 0=off through 9=preserve-no-hdr;
 ///   255 selects the compatibility-dependent default.
-/// - `strict_tmap`: 0=ImageIO-compatible 62/142-byte payload, 1=strict
-///   ISO 21496-1 65/145-byte payload.
+/// - `strict_tmap`: deprecated/ignored (kept at offset 2 for C ABI layout);
+///   callers should pass 0. Outputs always use normative 62/142-byte payloads.
 /// - `apple_photographic_styles`: 1 generates the native Rust Styles 2 graph;
 ///   2 generates or upgrades Styles 2 to Photographic Styles 3.
 #[repr(C)]
@@ -1025,7 +1025,6 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                         &extracted.meta_floats,
                         OppoCompat::Iso,
                         OppoCameraTail::Off,
-                        false,
                         &iso_path,
                     )?;
                     let base = std::fs::read(&iso_path)
@@ -1083,7 +1082,6 @@ pub extern "C" fn xdremux_writeback_returned_photo(
                     &extracted.meta_floats,
                     OppoCompat::Iso,
                     OppoCameraTail::Off,
-                    false,
                     &iso_path,
                 )?;
                 watermark_codec::record_phase("iso_write", t);
@@ -1779,7 +1777,6 @@ fn xdremux_convert_impl(
     let (
         oppo_compat,
         oppo_camera_tail,
-        strict_tmap,
         apple_photographic_styles,
         wants_styles3,
         apple_portrait,
@@ -1791,7 +1788,6 @@ fn xdremux_convert_impl(
             false,
             false,
             false,
-            false,
         )
     } else {
         let oppo_compat = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
@@ -1800,7 +1796,6 @@ fn xdremux_convert_impl(
         (
             oppo_compat,
             OppoCameraTail::resolve(tail_value, oppo_compat),
-            unsafe { (*config).strict_tmap != 0 },
             styles_mode != 0,
             styles_mode >= 2,
             unsafe { (*config).apple_portrait != 0 },
@@ -1882,7 +1877,7 @@ fn xdremux_convert_impl(
     // re-encoded or promoted and the lossy-promotion guard does not apply.
     if apple_photographic_styles && !apple_portrait {
         if let Some(meta) = iso_styles_source_meta(&source) {
-            return add_styles_to_iso_source(&source, &meta, output, strict_tmap, wants_styles3);
+            return add_styles_to_iso_source(&source, &meta, output, wants_styles3);
         }
     }
 
@@ -2116,7 +2111,6 @@ fn xdremux_convert_impl(
             &standard_output,
             oppo_compat,
             oppo_camera_tail,
-            strict_tmap,
         )
     } else {
         convert_lhdr(
@@ -2125,7 +2119,6 @@ fn xdremux_convert_impl(
             &standard_output,
             oppo_compat,
             oppo_camera_tail,
-            strict_tmap,
         )
     };
 
@@ -2499,7 +2492,6 @@ fn add_styles_to_iso_source(
     source: &[u8],
     meta: &isobmff::ParsedMeta,
     output: &str,
-    strict_tmap: bool,
     wants_styles3: bool,
 ) -> ConversionResult {
     let has_styles2 = photographic_styles_item(meta).is_some();
@@ -2517,29 +2509,14 @@ fn add_styles_to_iso_source(
     if has_styles2 && !wants_styles3 {
         return conversion_failure("source already carries Photographic Styles".into());
     }
-    let Some((tmap, _)) = isobmff::primary_tone_map(meta) else {
+    if isobmff::primary_tone_map(meta).is_none() {
         return conversion_failure("source has no valid primary tone-map relationship".into());
+    }
+    let styled = if has_styles2 {
+        Ok(source.to_vec())
+    } else {
+        styles_native::styles_native_preserving_hdr(source)
     };
-    let styled = (|| -> Result<Vec<u8>, String> {
-        let strict_payload = if strict_tmap {
-            let payload = iso_validate::read_item_payload(source, meta, tmap)?;
-            match payload.len() {
-                65 | 145 if payload[6..9] == [0, 0, 0] => None,
-                _ => Some(iso21496::make_strict_tmap_payload(&payload)?),
-            }
-        } else {
-            None
-        };
-        let mut styled = if has_styles2 {
-            source.to_vec()
-        } else {
-            styles_native::styles_native_preserving_hdr(source)?
-        };
-        if let Some(payload) = strict_payload {
-            isobmff_write::replace_item_payload(&mut styled, tmap, None, &payload)?;
-        }
-        Ok(styled)
-    })();
     let styled = match styled {
         Ok(bytes) => bytes,
         Err(e) => return conversion_failure(format!("Rust Photographic Styles: {e}")),
@@ -2582,7 +2559,6 @@ fn convert_lhdr(
     output: &str,
     oppo_compat: OppoCompat,
     oppo_camera_tail: OppoCameraTail,
-    strict_tmap: bool,
 ) -> Result<(f32, f32), String> {
     progress::set_progress(1, 0, 0); // extract
 
@@ -2607,7 +2583,6 @@ fn convert_lhdr(
         edr,
         oppo_compat,
         oppo_camera_tail,
-        strict_tmap,
         output,
     )?;
 
@@ -2622,7 +2597,6 @@ fn convert_uhdr(
     output: &str,
     oppo_compat: OppoCompat,
     oppo_camera_tail: OppoCameraTail,
-    strict_tmap: bool,
 ) -> Result<(f32, f32), String> {
     progress::set_progress(1, 0, 0); // extract
 
@@ -2641,7 +2615,6 @@ fn convert_uhdr(
         extracted.gainmap_use_base_color_space,
         oppo_compat,
         oppo_camera_tail,
-        strict_tmap,
         output,
     )?;
 
@@ -2703,15 +2676,14 @@ pub extern "C" fn xdremux_prepare_tiles(
         tile_count: 0,
         error_message: ptr::null_mut(),
     };
-    let (oppo_compat, tail_policy, strict_tmap) = if config.is_null() {
+    let (oppo_compat, tail_policy) = if config.is_null() {
         let c = OppoCompat::Off;
-        (c, OppoCameraTail::default_for_compat(c), false)
+        (c, OppoCameraTail::default_for_compat(c))
     } else {
         let c = OppoCompat::from_u8(unsafe { (*config).oppo_compat });
         (
             c,
             OppoCameraTail::resolve(unsafe { (*config).oppo_camera_tail }, c),
-            unsafe { (*config).strict_tmap != 0 },
         )
     };
     let input = match unsafe { CStr::from_ptr(input_path) }.to_str() {
@@ -2758,7 +2730,6 @@ pub extern "C" fn xdremux_prepare_tiles(
                 extracted.gainmap_use_base_color_space,
                 oppo_compat,
                 tail_policy,
-                strict_tmap,
             )
         } else {
             let mask = extracted
@@ -2778,7 +2749,6 @@ pub extern "C" fn xdremux_prepare_tiles(
                 edr,
                 oppo_compat,
                 tail_policy,
-                strict_tmap,
             )
         }
     })();
@@ -3454,7 +3424,7 @@ mod tests {
         };
         let base = dir.join("base.heic");
         convert_uhdr(&extracted, &source, base.to_str().unwrap(), OppoCompat::Off,
-            OppoCameraTail::default_for_compat(OppoCompat::Off), false).unwrap();
+            OppoCameraTail::default_for_compat(OppoCompat::Off)).unwrap();
         (std::fs::read(&base).unwrap(), dir)
     }
 
@@ -3477,6 +3447,8 @@ mod tests {
         let input = dir.join("input.heic");
         std::fs::write(&input, &iso).unwrap();
         let output = dir.join("styled.heic");
+        // Deprecated `strictTmap:true` in legacy configs must be ignored so the
+        // existing normative tmap payload is preserved untouched.
         let cfg = r#"{"outputMode":"apple","applePhotographicStyles":true,"strictTmap":true}"#;
         let result =
             pipeline::run_pipeline(input.to_str().unwrap(), output.to_str().unwrap(), cfg, 0);
@@ -3488,11 +3460,8 @@ mod tests {
         let (tmap, gain) = isobmff::primary_tone_map(&before).unwrap();
         assert_eq!(isobmff::primary_tone_map(&after), Some((tmap, gain)));
         let original_tmap = iso_validate::read_item_payload(&iso, &before, tmap).unwrap();
-        let strict_tmap = iso_validate::read_item_payload(&styled, &after, tmap).unwrap();
-        assert_eq!(
-            strict_tmap,
-            iso21496::make_strict_tmap_payload(&original_tmap).unwrap()
-        );
+        let preserved_tmap = iso_validate::read_item_payload(&styled, &after, tmap).unwrap();
+        assert_eq!(preserved_tmap, original_tmap);
         for id in [before.primary_id, gain] {
             let tile_refs = |meta: &isobmff::ParsedMeta| {
                 meta.refs
@@ -3683,7 +3652,7 @@ mod tests {
         let output = CString::new(output_path.to_str().unwrap()).unwrap();
         for styles in [0, 1] {
             let config = ConvertConfig {
-                oppo_compat: 0, oppo_camera_tail: 0, strict_tmap: 1,
+                oppo_compat: 0, oppo_camera_tail: 0, strict_tmap: 0,
                 apple_photographic_styles: styles, apple_portrait: 0,
             };
             let result = xdremux_convert(input.as_ptr(), output.as_ptr(), &config);
