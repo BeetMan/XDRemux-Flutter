@@ -108,6 +108,26 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 DECORATED="$WORK/decorated"; mkdir -p "$DECORATED"
 LINKS="$WORK/links"; mkdir -p "$LINKS"
+ICONS="$WORK/icons"; mkdir -p "$ICONS"
+ASSETS="$HERE"
+
+resolve_app_icon() {  # <app-path> <out-icns> <fallback1> [fallback2...]
+  local app_path="$1" out_icns="$2"; shift 2
+  if command -v swift >/dev/null 2>&1 && [ -d "$app_path" ]; then
+    if swift "$HERE/extract_app_icon.swift" "$app_path" "$out_icns" >/dev/null 2>&1 && [ -f "$out_icns" ]; then
+      printf '%s\n' "$out_icns"
+      return 0
+    fi
+  fi
+  local p
+  for p in "$@"; do
+    if [ -f "$p" ]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
 
 decorate() {  # <file> <icon.icns>: copy into DECORATED with the icon
   local name; name="$(basename "$1")"
@@ -121,11 +141,19 @@ decorate() {  # <file> <icon.icns>: copy into DECORATED with the icon
   }
 }
 
-SETTINGS_ICON="/System/Applications/System Settings.app/Contents/Resources/Settings.icns"
-if [ -f "$SETTINGS_ICON" ]; then
+SETTINGS_ICON=""
+if SETTINGS_ICON="$(resolve_app_icon "/System/Applications/System Settings.app" "$ICONS/Settings.icns" \
+     "/System/Applications/System Settings.app/Contents/Resources/Settings.icns" \
+     "/System/Applications/System Settings.app/Contents/Resources/SystemSettings.icns")"; then
   for f in "$STAGE"/*.inetloc; do
     if [ -e "$f" ]; then
       decorate "$f" "$SETTINGS_ICON" || true
+    fi
+  done
+else
+  for f in "$STAGE"/*.inetloc; do
+    if [ -e "$f" ]; then
+      echo "warning: no System Settings icon found for $(basename "$f")" >&2
     fi
   done
 fi
@@ -143,18 +171,44 @@ cat > "$LINKS/$WEBSITE_NAME" <<'PLIST'
 </plist>
 PLIST
 SAFARI_ICON=""
-for p in /Applications/Safari.app/Contents/Resources/AppIconUpdated.icns \
-         /Applications/Safari.app/Contents/Resources/App.icns; do
-  [ -f "$p" ] && SAFARI_ICON="$p" && break
-done
-if [ -n "$SAFARI_ICON" ]; then
+if SAFARI_ICON="$(resolve_app_icon "/Applications/Safari.app" "$ICONS/Safari.icns" \
+     "/Applications/Safari.app/Contents/Resources/AppIconUpdated.icns" \
+     "/Applications/Safari.app/Contents/Resources/App.icns" \
+     "/Applications/Safari.app/Contents/Resources/Compass.icns")"; then
   decorate "$LINKS/$WEBSITE_NAME" "$SAFARI_ICON" || true
+else
+  echo "warning: no Safari icon found for $WEBSITE_NAME" >&2
+fi
+
+# Render per-image background so label pills tightly match this DMG's app name
+# and bottom-row items (2 items when notarized, 3 when unnotarized).
+EXTRAS_LIST=""
+for entry in "$STAGE"/*; do
+  [ -e "$entry" ] || continue
+  base="$(basename "$entry")"
+  case "$base" in
+    .|..|Applications|"$APP"|.*) continue ;;
+  esac
+  if [ -z "$EXTRAS_LIST" ]; then
+    EXTRAS_LIST="$base"
+  else
+    EXTRAS_LIST="$EXTRAS_LIST,$base"
+  fi
+done
+if command -v swift >/dev/null 2>&1; then
+  GEN_ASSETS="$WORK/assets"
+  if swift "$HERE/gen_background.swift" --out-dir "$GEN_ASSETS" --app "$APP" \
+       --extras "$EXTRAS_LIST" --website "$WEBSITE_NAME" >/dev/null 2>&1; then
+    ASSETS="$GEN_ASSETS"
+  else
+    echo "warning: could not render custom DMG background, using committed assets" >&2
+  fi
 fi
 
 rm -f "$OUT"
 echo "==> DMG layout: $APP -> Applications (+ extras), window from settings.py"
 if ! "$VENV/bin/dmgbuild" -s "$HERE/settings.py" \
-      -D "stage=$STAGE" -D "app=$APP" -D "icon=$ICON" -D "assets=$HERE" \
+      -D "stage=$STAGE" -D "app=$APP" -D "icon=$ICON" -D "assets=$ASSETS" \
       -D "decorated=$DECORATED" -D "links=$LINKS" \
       --detach-retries 8 "$VOL" "$OUT"; then
   if [ "${XDREMUX_DMG_STRICT:-0}" = "1" ]; then

@@ -44,6 +44,22 @@ class DmgInstallerTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 set_file_icon.set_file_icon(str(target), str(bad_icns))
 
+    @unittest.skipUnless(sys.platform == "darwin", "requires macOS xattr")
+    def test_set_file_icon_handles_large_icns_over_argv_limit(self):
+        with tempfile.TemporaryDirectory(prefix="xdremux-large-icns-") as tmp:
+            root = Path(tmp)
+            target = root / "sample.inetloc"
+            target.write_text("placeholder", encoding="utf-8")
+            # >600 KB binary would exceed macOS ARG_MAX when hex-encoded on argv.
+            large_icns = b"icns" + struct.pack(">I", 700_008) + (b"\x5A" * 700_000)
+            icns_path = root / "large.icns"
+            icns_path.write_bytes(large_icns)
+            set_file_icon.set_file_icon(str(target), str(icns_path))
+            rsrc = subprocess.check_output(
+                ["/usr/bin/xattr", "-p", "com.apple.ResourceFork", str(target)]
+            )
+            self.assertTrue(len(rsrc) > 0)
+
     def test_settings_and_background_geometry_stay_aligned_and_clear(self):
         with tempfile.TemporaryDirectory(prefix="xdremux-dmg-settings-") as tmp:
             stage = Path(tmp) / "stage"
@@ -80,12 +96,19 @@ class DmgInstallerTests(unittest.TestCase):
             )
             hero_y = float(re.search(r"let heroY = ([0-9.]+)", swift_src).group(1))
             small_y = float(re.search(r"let smallY = ([0-9.]+)", swift_src).group(1))
+            divider_y = float(re.search(r"let dividerY = ([0-9.]+)", swift_src).group(1))
             link_match = re.search(
                 r"let link = \(x: ([0-9.]+), y: ([0-9.]+)\)", swift_src
             )
             link_x, link_y = float(link_match.group(1)), float(link_match.group(2))
-            link_mat_h = float(
-                re.search(r"linkMat = CGRect\([^)]*height: ([0-9.]+)\)", swift_src).group(1)
+            one_pill_h = float(
+                re.search(r"let oneLinePillHeight = ([0-9.]+)", swift_src).group(1)
+            )
+            two_pill_h = float(
+                re.search(r"let twoLinePillHeight = ([0-9.]+)", swift_src).group(1)
+            )
+            pill_top_offset = float(
+                re.search(r"let pillTopOffset = iconSize / 2\.0 \+ ([0-9.]+)", swift_src).group(1)
             )
 
             self.assertEqual(ns["CONTENT"], (int(content_w), int(content_h)))
@@ -93,12 +116,26 @@ class DmgInstallerTests(unittest.TestCase):
             self.assertEqual(ns["SMALL_Y"], int(small_y))
             self.assertEqual(ns["LINK"], (int(link_x), int(link_y)))
 
-            # The website link label mat must keep a positive gap above the
-            # top of the Applications icon below it.
+            # Top icon stays >= 16pt below the titlebar so Finder does not clamp
+            # and shift the entire icon canvas downward (+12pt shift seen at y=52).
             icon_half = ns["icon_size"] / 2.0
-            link_mat_bottom = link_y + icon_half + 2.0 + link_mat_h
+            self.assertGreaterEqual(link_y - icon_half, 16.0)
+
+            # Pills start strictly below the 96pt icon box (+4pt clear of selection halo).
+            self.assertGreaterEqual(pill_top_offset, 6.0)
+
+            # Website label pill must clear the Applications icon below it.
+            link_pill_bottom = link_y + icon_half + pill_top_offset + one_pill_h
             apps_icon_top = hero_y - icon_half
-            self.assertGreaterEqual(apps_icon_top - link_mat_bottom, 10.0)
+            self.assertGreaterEqual(apps_icon_top - link_pill_bottom, 16.0)
+
+            # Hero pills clear the divider; bottom icons clear the divider;
+            # 2-line bottom pill keeps generous bottom window margin.
+            hero_pill_bottom = hero_y + icon_half + pill_top_offset + one_pill_h
+            self.assertGreaterEqual(divider_y - hero_pill_bottom, 16.0)
+            self.assertGreaterEqual((small_y - icon_half) - divider_y, 16.0)
+            bottom_pill_bottom = small_y + icon_half + pill_top_offset + two_pill_h
+            self.assertGreaterEqual(content_h - bottom_pill_bottom, 30.0)
 
             # Bottom row items stay centered symmetrically with margin for the
             # long Privacy & Security shortcut name.
