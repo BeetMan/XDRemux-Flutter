@@ -3,10 +3,12 @@
 #
 #   make_dmg.sh <volume-name> <output.dmg> <stage-dir> [volume-icon.icns]
 #
-# The window shows the app on the left, the /Applications link on the right
-# with an arrow between them, and the remaining staged files (licence files,
-# the Privacy & Security shortcut) in a row along the bottom. See settings.py
-# for the positions and gen_background.swift for the background picture.#
+# The window follows xdremux.app (black, glows, gradient wordmark drawn by
+# gen_background.swift) and shows the app on the left, the /Applications link
+# on the right with an arrow between them, the website link in the top-right
+# corner and the remaining staged files (licence files, the Privacy &
+# Security shortcut) in a row along the bottom. See settings.py for the
+# positions.#
 # dmgbuild writes the Finder layout (.DS_Store) itself, so no Finder session
 # or AppleScript is needed and a developer Mac and CI produce the same image.
 # It needs Python >= 3.11 and is installed once into a cached virtualenv from
@@ -86,30 +88,56 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
-# A .inetloc shortcut shows the generic document icon. Give it the System
-# Settings icon of the build machine as a custom Finder icon. That needs
-# extended attributes, which exFAT/SMB staging folders drop, so work on a
-# copy in a temporary directory rather than in the staging folder.
-DECORATED=""
-cleanup() { [ -n "$DECORATED" ] && rm -rf "$DECORATED"; }
-trap cleanup EXIT
+# Shortcut files show the generic document icon. Give them an icon of the
+# build machine as a custom Finder icon (see set_file_icon.py): System
+# Settings for the Privacy & Security .inetloc, Safari for the website link.
+# That needs extended attributes, which exFAT/SMB staging folders drop, so
+# work on copies in a temporary directory rather than in the staging folder.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+DECORATED="$WORK/decorated"; mkdir -p "$DECORATED"
+LINKS="$WORK/links"; mkdir -p "$LINKS"
+
+decorate() {  # <file> <icon.icns>: copy into DECORATED with the icon
+  local name; name="$(basename "$1")"
+  cp "$1" "$DECORATED/$name" && "$PY" "$HERE/set_file_icon.py" "$DECORATED/$name" "$2" || {
+    echo "warning: no custom icon for $name" >&2
+    rm -f "$DECORATED/$name"
+    return 1
+  }
+}
+
 SETTINGS_ICON="/System/Applications/System Settings.app/Contents/Resources/Settings.icns"
-if [ -f "$SETTINGS_ICON" ] && /bin/ls "$STAGE"/*.inetloc >/dev/null 2>&1; then
-  DECORATED="$(mktemp -d)"
+if [ -f "$SETTINGS_ICON" ]; then
   for f in "$STAGE"/*.inetloc; do
-    cp "$f" "$DECORATED/" && "$PY" "$HERE/set_file_icon.py" "$DECORATED/$(basename "$f")" "$SETTINGS_ICON" || {
-      echo "warning: no custom icon for $(basename "$f")" >&2
-      DECORATED=""
-      break
-    }
+    [ -e "$f" ] && decorate "$f" "$SETTINGS_ICON"
   done
 fi
+
+# Website link in the top-right corner of the window.
+WEBSITE_NAME="官网 xdremux.app.webloc"
+cat > "$LINKS/$WEBSITE_NAME" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>URL</key>
+	<string>https://xdremux.app/</string>
+</dict>
+</plist>
+PLIST
+SAFARI_ICON=""
+for p in /Applications/Safari.app/Contents/Resources/AppIconUpdated.icns \
+         /Applications/Safari.app/Contents/Resources/App.icns; do
+  [ -f "$p" ] && SAFARI_ICON="$p" && break
+done
+[ -z "$SAFARI_ICON" ] || decorate "$LINKS/$WEBSITE_NAME" "$SAFARI_ICON"
 
 rm -f "$OUT"
 echo "==> DMG layout: $APP -> Applications (+ extras), window from settings.py"
 if ! "$VENV/bin/dmgbuild" -s "$HERE/settings.py" \
       -D "stage=$STAGE" -D "app=$APP" -D "icon=$ICON" -D "assets=$HERE" \
-      -D "decorated=$DECORATED" \
+      -D "decorated=$DECORATED" -D "links=$LINKS" \
       --detach-retries 8 "$VOL" "$OUT"; then
   if [ "${XDREMUX_DMG_STRICT:-0}" = "1" ]; then
     echo "dmgbuild failed" >&2

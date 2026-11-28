@@ -4,19 +4,25 @@
 //   tools/apple/dmg/background.png     660x530  (1x)
 //   tools/apple/dmg/background@2x.png  1320x1060 (Retina)
 //
-// Light surface with a faint curved grid (the lines bow away from the
-// centre), an arrow between the app icon and the Applications link, and a
-// hairline above the row of smaller items (licence files, privacy shortcut).
+// Follows the light theme of xdremux.app: an off-white surface with soft
+// teal, blue and warm horizon glows, the "XDRemux" wordmark in the site's
+// blue-grey to purple to orange gradient with its tagline underneath, a dark
+// drag arrow between the app icon and the Applications link, and a hairline
+// above the row of smaller items (licence files, privacy shortcut).
+//
+// Deliberately light, not the site's black: Finder draws icon labels in the
+// system appearance's colour, which is near-black in light mode and would
+// vanish on a dark picture.
+//
 // The picture is drawn 470 points tall like the window's content area, plus
-// 60 points of plain grid underneath: Finder crops the picture at the bottom
-// of the content area, whose height depends on the title bar, and a little
-// spare pattern keeps that edge invisible on every macOS version.
+// 60 points of spare background underneath: Finder crops the picture at the
+// bottom of the content area, whose height depends on the title bar.
 // The window size and the icon positions live in settings.py; keep the
 // numbers here in step with them.
 //
 // Regenerate:  swift tools/apple/dmg/gen_background.swift
 
-import Foundation
+import AppKit
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
@@ -26,29 +32,90 @@ let contentHeight = 470.0
 let height = contentHeight + 60.0
 
 // Icon centres from settings.py.
-let appX = 170.0, linkX = 490.0, heroY = 172.0
+let heroY = 172.0
 let dividerY = 286.0
-let arrowY = heroY
 
-// Bow the grid outward: zero at the centre, about 18% at the corners.
-func warp(_ x: Double, _ y: Double) -> (Double, Double) {
-    let nx = (x - width / 2) / (width / 2)
-    let ny = (y - contentHeight / 2) / (contentHeight / 2)
-    let f = 1.0 + 0.09 * (nx * nx + ny * ny)
-    return (width / 2 + (x - width / 2) * f, height / 2 + (y - height / 2) * f)
+// Site palette, light theme (xdremux.app CSS variables).
+let fg = "1d1d1f", fgDim = "6e6e73", teal = "0a8a76", blue = "0066cc"
+let warm1 = "ffe0b0", warm2 = "ff9a5c", warm3 = "d4577c"
+
+let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+
+func color(_ hex: String, _ alpha: CGFloat = 1) -> CGColor {
+    let v = UInt32(hex, radix: 16)!
+    return CGColor(srgbRed: CGFloat((v >> 16) & 0xff) / 255, green: CGFloat((v >> 8) & 0xff) / 255,
+                   blue: CGFloat(v & 0xff) / 255, alpha: alpha)
 }
 
-func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
-    CGColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255,
-            green: CGFloat((hex >> 8) & 0xff) / 255,
-            blue: CGFloat(hex & 0xff) / 255,
-            alpha: alpha)
+func glow(_ ctx: CGContext, center: CGPoint, radius: CGFloat, _ hex: String, alpha: CGFloat) {
+    let g = CGGradient(colorsSpace: sRGB, colors: [color(hex, alpha), color(hex, 0)] as CFArray,
+                       locations: [0, 1])!
+    ctx.drawRadialGradient(g, startCenter: center, startRadius: 0,
+                           endCenter: center, endRadius: radius, options: [])
+}
+
+func makeLine(_ string: String, size: CGFloat, weight: NSFont.Weight) -> CTLine {
+    let font = NSFont.systemFont(ofSize: size, weight: weight)
+    let ns = NSAttributedString(string: string, attributes: [.font: font])
+    return CTLineCreateWithAttributedString(ns as CFAttributedString)
+}
+
+/// Draw glyphs upright with their baseline at (x, y) in top-left coordinates.
+func drawGlyphs(_ ctx: CGContext, _ line: CTLine, x: CGFloat, y: CGFloat) {
+    ctx.saveGState()
+    ctx.translateBy(x: x, y: y)
+    ctx.scaleBy(x: 1, y: -1)   // undo the flipped context for CoreText
+    ctx.textMatrix = .identity
+    ctx.textPosition = .zero
+    CTLineDraw(line, ctx)
+    ctx.restoreGState()
+}
+
+/// One line of text in a solid colour.
+func text(_ ctx: CGContext, _ string: String, x: CGFloat, baseline y: CGFloat, size: CGFloat,
+          weight: NSFont.Weight = .regular, fill: CGColor) {
+    ctx.saveGState()
+    ctx.setFillColor(fill)
+    drawGlyphs(ctx, makeLine(string, size: size, weight: weight), x: x, y: y)
+    ctx.restoreGState()
+}
+
+/// One line of text filled with a horizontal gradient: the glyphs are drawn
+/// into an offscreen bitmap as a mask and the gradient is painted through
+/// them with sourceIn; the result is composited onto the background.
+func gradientText(_ ctx: CGContext, _ string: String, x: CGFloat, baseline y: CGFloat, size: CGFloat,
+                  weight: NSFont.Weight, stops: [String], at locations: [CGFloat]) {
+    let line = makeLine(string, size: size, weight: weight)
+    let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
+    let pad: CGFloat = 8
+    let w = Int(ceil(bounds.width)) + 2 * Int(pad), h = Int(ceil(bounds.height)) + 2 * Int(pad)
+    guard let mask = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return }
+    // The bitmap is y-up; the baseline sits pad above the bottom of the glyph box.
+    mask.setFillColor(.black)
+    mask.textMatrix = .identity
+    mask.textPosition = CGPoint(x: pad - bounds.minX, y: pad + bounds.minY)
+    CTLineDraw(line, mask)
+    mask.setBlendMode(.sourceIn)
+    let g = CGGradient(colorsSpace: sRGB, colors: stops.map { color($0) } as CFArray,
+                       locations: locations)!
+    mask.drawLinearGradient(g, start: CGPoint(x: pad, y: 0), end: CGPoint(x: pad + bounds.width, y: 0),
+                            options: [])
+    guard let image = mask.makeImage() else { return }
+    // The context is flipped (y down) and would mirror the bitmap, so undo
+    // the flip for this draw; the baseline lands on y.
+    let top = y + bounds.minY - CGFloat(h) + pad
+    ctx.saveGState()
+    ctx.translateBy(x: 0, y: top + CGFloat(h))
+    ctx.scaleBy(x: 1, y: -1)
+    ctx.draw(image, in: CGRect(x: x - pad, y: 0, width: CGFloat(w), height: CGFloat(h)))
+    ctx.restoreGState()
 }
 
 func render(scale: Int) -> CGImage? {
-    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-          let ctx = CGContext(data: nil, width: Int(width) * scale, height: Int(height) * scale,
-                              bitsPerComponent: 8, bytesPerRow: 0, space: space,
+    guard let ctx = CGContext(data: nil, width: Int(width) * scale, height: Int(height) * scale,
+                              bitsPerComponent: 8, bytesPerRow: 0, space: sRGB,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     else { return nil }
 
@@ -57,52 +124,42 @@ func render(scale: Int) -> CGImage? {
     ctx.translateBy(x: 0, y: CGFloat(height))
     ctx.scaleBy(x: 1, y: -1)
 
-    // Surface: almost white at the top, a touch cooler at the bottom.
-    let gradient = CGGradient(colorsSpace: space,
-                              colors: [color(0xfcfcfd), color(0xf1f1f4), color(0xf1f1f4)] as CFArray,
-                              locations: [0, 1, 1].map { CGFloat($0) * contentHeight / height })!
-    ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: height), options: [])
+    // Off-white surface, a touch cooler towards the bottom like the site.
+    let k = contentHeight / height
+    let base = CGGradient(colorsSpace: sRGB,
+                          colors: [color("ffffff"), color("f5f5f7"), color("ececF0")] as CFArray,
+                          locations: [0, 0.6 * k, k])!
+    ctx.drawLinearGradient(base, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: height), options: [])
 
-    // Curved grid.
-    ctx.setStrokeColor(color(0x000000, 0.075))
-    ctx.setLineWidth(1)
-    let step = 48.0, margin = 60.0, sample = 4.0
-    func samples(from start: Double, to end: Double) -> [Double] {
-        stride(from: start, through: end, by: sample).map { $0 }
-    }
-    for x in stride(from: step, to: width, by: step) {
-        ctx.move(to: CGPoint(x: x, y: -margin))
-        for y in samples(from: -margin, to: height + margin) {
-            let p = warp(x, y)
-            ctx.addLine(to: CGPoint(x: p.0, y: p.1))
-        }
-    }
-    for y in stride(from: step, to: height, by: step) {
-        ctx.move(to: CGPoint(x: -margin, y: y))
-        for x in samples(from: -margin, to: width + margin) {
-            let p = warp(x, y)
-            ctx.addLine(to: CGPoint(x: p.0, y: p.1))
-        }
-    }
-    ctx.strokePath()
+    // Glows: teal left, blue right, a warm horizon at the bottom centre.
+    glow(ctx, center: CGPoint(x: 110, y: 150), radius: 300, teal, alpha: 0.11)
+    glow(ctx, center: CGPoint(x: 560, y: 120), radius: 300, blue, alpha: 0.09)
+    glow(ctx, center: CGPoint(x: 330, y: contentHeight + 40), radius: 330, warm2, alpha: 0.17)
+    glow(ctx, center: CGPoint(x: 330, y: contentHeight + 60), radius: 200, warm3, alpha: 0.09)
+    glow(ctx, center: CGPoint(x: 330, y: 190), radius: 320, warm1, alpha: 0.16)
+
+    // Wordmark and tagline, top-left.
+    gradientText(ctx, "XDRemux", x: 48, baseline: 78, size: 40, weight: .bold,
+                 stops: ["5d86c4", "8b6aa8", "d07a4c"], at: [0, 0.45, 1])
+    text(ctx, "让照片跨越设备，也保留继续创作的可能。", x: 50, baseline: 104, size: 13, fill: color(fgDim))
 
     // Hairline between the drag row and the small print.
-    ctx.setStrokeColor(color(0x000000, 0.08))
+    ctx.setStrokeColor(color("000000", 0.10))
     ctx.setLineWidth(1)
     ctx.move(to: CGPoint(x: 48, y: dividerY))
     ctx.addLine(to: CGPoint(x: width - 48, y: dividerY))
     ctx.strokePath()
 
     // Drag arrow.
-    ctx.setStrokeColor(color(0x1d1d1f))
+    ctx.setStrokeColor(color(fg))
     ctx.setLineWidth(5)
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
-    ctx.move(to: CGPoint(x: 296, y: arrowY))
-    ctx.addLine(to: CGPoint(x: 366, y: arrowY))
-    ctx.move(to: CGPoint(x: 350, y: arrowY - 14))
-    ctx.addLine(to: CGPoint(x: 366, y: arrowY))
-    ctx.addLine(to: CGPoint(x: 350, y: arrowY + 14))
+    ctx.move(to: CGPoint(x: 296, y: heroY))
+    ctx.addLine(to: CGPoint(x: 366, y: heroY))
+    ctx.move(to: CGPoint(x: 350, y: heroY - 14))
+    ctx.addLine(to: CGPoint(x: 366, y: heroY))
+    ctx.addLine(to: CGPoint(x: 350, y: heroY + 14))
     ctx.strokePath()
 
     return ctx.makeImage()

@@ -5,16 +5,18 @@
 #   app    name of the .app bundle inside it
 #   icon   .icns used as the volume icon ("" for none)
 #   assets directory holding background.png / background@2x.png
-#   decorated  directory with copies of the .inetloc shortcuts that carry a
-#               custom Finder icon ("" to take them from the staging folder)
+#   decorated  directory with copies of the shortcuts that carry a custom
+#               Finder icon ("" to take them from the staging folder)
+#   links   directory with the website .webloc shown in the top-right corner
+#           ("" for none)
 #
 # Everything else in the staging directory (licence files, the Privacy &
 # Security shortcut) goes into a row along the bottom of the window.
 #
 # The window size and the icon centres are shared with gen_background.swift,
-# which draws the arrow between the app and the Applications link and the
-# hairline above the bottom row. Change both together and regenerate the
-# background.
+# which draws the wordmark, the arrow between the app and the Applications
+# link and the hairline above the bottom row. Change both together and
+# regenerate the background.
 
 import os
 
@@ -25,6 +27,9 @@ SMALL_Y = 340
 # Wide enough that the two-line labels of the licence files and the privacy
 # shortcut do not touch; tightened only when four or more items are staged.
 SMALL_SPACING = 200
+# Website link, under the top-right corner, clear of the hero row. Far
+# enough from the edge for its label, even when Finder shows extensions.
+LINK = (536, 58)
 
 # Finder's window bounds include the title bar, so the window is taller than
 # the picture. 32 is the title bar of a toolbar-less window on macOS 26; on
@@ -38,10 +43,15 @@ volume_icon = defines.get("icon") or None
 decorated = defines.get("decorated") or ""
 
 
-def source(name):
-    """Staged path for an item, preferring the icon-decorated copy."""
+links = defines.get("links") or ""
+
+
+def source(name, default_dir):
+    """Path for an item, preferring the icon-decorated copy."""
     copy = os.path.join(decorated, name)
-    return copy if decorated and os.path.isfile(copy) else os.path.join(stage, name)
+    if decorated and os.path.isfile(copy):
+        return copy
+    return os.path.join(default_dir, name)
 
 
 files = []
@@ -54,11 +64,18 @@ for name in sorted(os.listdir(stage)):
         extras.append(name)
         if name.endswith(".inetloc"):
             hide_extensions.append(name)
-    files.append((source(name), name))
+    files.append((source(name, stage), name))
 
 symlinks = {"Applications": "/Applications"}
 
 icon_locations = {app: (170, HERO_Y), "Applications": (490, HERO_Y)}
+if links and os.path.isdir(links):
+    for name in sorted(os.listdir(links)):
+        if name.startswith("."):
+            continue
+        files.append((source(name, links), name))
+        hide_extensions.append(name)
+        icon_locations[name] = LINK
 count = len(extras)
 spacing = SMALL_SPACING if count < 2 else min(SMALL_SPACING, (CONTENT[0] - 120) / (count - 1))
 for index, name in enumerate(extras):
